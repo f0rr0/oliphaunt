@@ -104,9 +104,10 @@ native supervisor and compiler-free WASIX executor
 
 The postmaster guest deliberately does not consume the single-backend patches
 that remove concurrent observers, workers, process creation, or PostgreSQL's
-normal spinlock/atomic behavior. Compatible PostgreSQL optimizations are
-referenced from the canonical WASIX product where possible; postmaster-only
-concurrency patches remain local and are justified in
+normal spinlock/atomic behavior. The shared series retains the canonical WASIX
+tool-linkage repair and direct getrandom adaptation, not the retired hash,
+XID, LIKE or B-tree shortcuts. Postmaster-only concurrency patches remain
+local and are justified in
 `postgres/product-patch-provenance.toml`.
 
 Maintainer architecture, failure semantics, performance interpretation, and

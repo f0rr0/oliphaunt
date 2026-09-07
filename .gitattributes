@@ -2,6 +2,7 @@
 # security and release fingerprints intentionally hash tracked source bytes.
 * text=auto eol=lf
 
-*.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
-*.diff text eol=lf whitespace=-blank-at-eol,-space-before-tab
+# Blank context lines at the end of a diff are not added source whitespace.
+*.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab,-blank-at-eof
+*.diff text eol=lf whitespace=-blank-at-eol,-space-before-tab,-blank-at-eof
 src/**/patches/series text eol=lf

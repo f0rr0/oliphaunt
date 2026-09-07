@@ -21,6 +21,12 @@ version = "6.1.0"
 url = "https://static.crates.io/crates/wasmer/wasmer-6.1.0.crate"
 sha256 = "2d85671948f8886a1cc946141c0b688a5617603c103699a5fceeebeb4e75b0b6"
 
+[virtual-fs]
+name = "virtual-fs"
+version = "0.601.0"
+url = "https://static.crates.io/crates/virtual-fs/virtual-fs-0.601.0.crate"
+sha256 = "8defc513ce70576bdbb4305ee67c0cba647af18c0995de8f1fa1271b724c9859"
+
 [patches]
 series = [
   "0001-wasmer-js-run-configured-wasix-process.patch",
@@ -37,12 +43,18 @@ series = [
   "0013-wasmer-wasix-fast-single-backend-clock.patch",
   "0014-wasmer-js-track-directory-mutations.patch",
   "0015-wasmer-js-add-sync-filesystem-bridge.patch",
-  "0016-wasmer-wasix-direct-single-backend-clock.patch",
+  "0016-wasmer-wasix-expose-direct-memory.patch",
   "0017-wasmer-js-direct-pgwire-memory-bridge.patch",
   "0018-wasmer-js-bound-direct-stderr.patch",
   "0019-wasmer-parse-exception-reference-types.patch",
   "0020-wasmer-wasix-preserve-posix-close-durability.patch",
   "0021-wasmer-js-stream-direct-pgwire.patch",
+  # Typed recovery, checked entropy, fail-closed guest phases and independent
+  # handle ownership fixes. Optional drain/immutable-file experiments stay out.
+  "0023-wasmer-js-prepare-trusted-embedded-session.patch",
+  "0024-virtual-fs-propagate-random-errors.patch",
+  "0025-wasmer-js-fail-closed-direct-guest-phases.patch",
+  "0027-wasmer-wasix-isolate-thread-local-handle-borrows.patch",
   # Independently preserve provider failures and cursor state in the
   # synchronous JavaScript filesystem bridge.
   "0034-wasmer-js-preserve-seek-end-errors.patch",

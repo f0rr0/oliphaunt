@@ -6,6 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["runtime", "wasix", "wasm", "postgres", "release-product"]
 dependsOn:
+  - id: "postgres-protocol-transport-contract"
+    scope: "build"
   - id: "postgres18"
     scope: "build"
   - id: "source-toolchains"
@@ -58,8 +60,18 @@ tasks:
       set -e
       bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh
       bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh
+      bash src/runtimes/liboliphaunt/wasix/assets/build/verify_wasix_sjlj_artifact.test.sh
+      node --test src/runtimes/liboliphaunt/wasix/tools/*contract.test.mjs
     inputs:
       - "assets/build/docker/**/*"
+      - "assets/build/postgres/**/*"
+      - "assets/build/verify_wasix_sjlj_artifact*"
+      - "assets/generated/wasix-dl.exports"
+      - "tools/*contract.test.mjs"
+      - "/src/bindings/wasix-ts/host/source.toml"
+      - "/src/bindings/wasix-ts/host/patches/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod/task_policy.rs"
     options:
       cache: true
       runFromWorkspaceRoot: true

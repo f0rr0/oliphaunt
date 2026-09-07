@@ -22,10 +22,10 @@ wasix-dl port header.
  4 files changed, 30 insertions(+)
 
 diff --git a/src/backend/commands/copyfromparse.c b/src/backend/commands/copyfromparse.c
-index 97a4c387a3..0f0eb63c8c 100644
+index f5fc346e20..1f6770dd1c 100644
 --- a/src/backend/commands/copyfromparse.c
 +++ b/src/backend/commands/copyfromparse.c
-@@ -66,6 +66,9 @@
+@@ -69,6 +69,9 @@
  #include "libpq/libpq.h"
  #include "libpq/pqformat.h"
  #include "mb/pg_wchar.h"
@@ -38,7 +38,7 @@ index 97a4c387a3..0f0eb63c8c 100644
 @@ -174,6 +177,9 @@ ReceiveCopyBegin(CopyFromState cstate)
  	int16		format = (cstate->opts.binary ? 1 : 0);
  	int			i;
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
 +#endif
@@ -46,10 +46,10 @@ index 97a4c387a3..0f0eb63c8c 100644
  	pq_sendbyte(&buf, format);	/* overall format */
  	pq_sendint16(&buf, natts);
 diff --git a/src/backend/commands/copyto.c b/src/backend/commands/copyto.c
-index 84dc465cba..705f42916f 100644
+index ea6f18f2c8..80545ecd48 100644
 --- a/src/backend/commands/copyto.c
 +++ b/src/backend/commands/copyto.c
-@@ -24,6 +24,9 @@
+@@ -27,6 +27,9 @@
  #include "libpq/libpq.h"
  #include "libpq/pqformat.h"
  #include "mb/pg_wchar.h"
@@ -59,10 +59,10 @@ index 84dc465cba..705f42916f 100644
  #include "miscadmin.h"
  #include "pgstat.h"
  #include "storage/fd.h"
-@@ -394,6 +397,9 @@ SendCopyBegin(CopyToState cstate)
+@@ -395,6 +398,9 @@ SendCopyBegin(CopyToState cstate)
  	int16		format = (cstate->opts.binary ? 1 : 0);
  	int			i;
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_OUT);
 +#endif
@@ -70,10 +70,10 @@ index 84dc465cba..705f42916f 100644
  	pq_sendbyte(&buf, format);	/* overall format */
  	pq_sendint16(&buf, natts);
 diff --git a/src/backend/replication/walsender.c b/src/backend/replication/walsender.c
-index ff1c357870..a4608ae247 100644
+index 70d90699cc..5840e7238e 100644
 --- a/src/backend/replication/walsender.c
 +++ b/src/backend/replication/walsender.c
-@@ -61,6 +61,9 @@
+@@ -67,6 +67,9 @@
  #include "libpq/pqformat.h"
  #include "miscadmin.h"
  #include "nodes/replnodes.h"
@@ -83,9 +83,9 @@ index ff1c357870..a4608ae247 100644
  #include "pgstat.h"
  #include "postmaster/interrupt.h"
  #include "replication/decode.h"
-@@ -686,6 +689,9 @@ UploadManifest(void)
+@@ -687,6 +690,9 @@ UploadManifest(void)
  	ib = CreateIncrementalBackupInfo(mcxt);
-
+ 
  	/* Send a CopyInResponse message */
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
@@ -95,7 +95,7 @@ index ff1c357870..a4608ae247 100644
  	pq_sendint16(&buf, 0);
 @@ -940,6 +946,9 @@ StartReplication(StartReplicationCmd *cmd)
  		WalSndSetState(WALSNDSTATE_CATCHUP);
-
+ 
  		/* Send a CopyBothResponse message, and start streaming */
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +		oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH);
@@ -105,7 +105,7 @@ index ff1c357870..a4608ae247 100644
  		pq_sendint16(&buf, 0);
 @@ -1487,6 +1496,9 @@ StartLogicalReplication(StartReplicationCmd *cmd)
  	WalSndSetState(WALSNDSTATE_CATCHUP);
-
+ 
  	/* Send a CopyBothResponse message, and start streaming */
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH);
@@ -114,25 +114,26 @@ index ff1c357870..a4608ae247 100644
  	pq_sendbyte(&buf, 0);
  	pq_sendint16(&buf, 0);
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
-index 70e2debc5c..7754c1eef9 100644
+index e3a6243c93..f4fc290feb 100644
 --- a/src/include/port/wasix-dl.h
 +++ b/src/include/port/wasix-dl.h
-@@ -10,10 +10,16 @@
-
+@@ -12,11 +12,17 @@
+ 
  struct Port;
-
-+#define OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE 0
-+#define OLIPHAUNT_WASIX_PROTOCOL_COPY_IN 1
-+#define OLIPHAUNT_WASIX_PROTOCOL_COPY_OUT 2
-+#define OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH 3
-+
+ 
++#include "port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
++/*
++ * Mode and COPY state numbers come only from the generated contract.
++ * Keep PostgreSQL call sites on that shared private ABI.
++ */
  extern sigjmp_buf postgresmain_sigjmp_buf;
  extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
  extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
+ extern int oliphaunt_wasix_output_status(void);
  extern void oliphaunt_wasix_process_startup_options(struct Port *port);
 +extern void oliphaunt_wasix_protocol_report_copy_response(int state);
  #endif
-
+ 
  #endif
 --
 2.49.0

@@ -19,13 +19,13 @@ it with the ABI name expected by the current host.
  1 file changed, 18 insertions(+)
 
 diff --git a/src/backend/tcop/backend_startup.c b/src/backend/tcop/backend_startup.c
-index dd3307cb76..f7b053e3b8 100644
+index c89fe12825..9acecd5e8c 100644
 --- a/src/backend/tcop/backend_startup.c
 +++ b/src/backend/tcop/backend_startup.c
-@@ -44,9 +44,19 @@ char	   *log_connections_string = NULL;
+@@ -57,9 +57,19 @@ char	   *log_connections_string = NULL;
   */
  ConnectionTiming conn_timing = {.ready_for_use = TIMESTAMP_MINUS_INFINITY};
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +#define OLIPHAUNT_WASM_HOST_EXPORT(name) __attribute__((export_name(name)))
 +#else
@@ -42,7 +42,7 @@ index dd3307cb76..f7b053e3b8 100644
  static void ProcessCancelRequestPacket(Port *port, void *pkt, int pktlen);
  static void SendNegotiateProtocolVersion(List *unrecognized_protocol_options);
  static void process_startup_packet_die(SIGNAL_ARGS);
-@@ -489,7 +499,11 @@ reject:
+@@ -488,7 +498,11 @@ reject:
   * should make no assumption here about the order in which the client may make
   * requests.
   */

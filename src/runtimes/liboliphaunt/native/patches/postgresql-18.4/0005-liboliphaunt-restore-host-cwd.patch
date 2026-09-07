@@ -4,41 +4,86 @@ Date: Wed, 13 May 2026 00:00:00 +0000
 Subject: [PATCH] liboliphaunt: restore host cwd after embedded shutdown
 
 PostgreSQL's standalone startup changes the process working directory to
-PGDATA.  Embedded liboliphaunt must not leave the host process in that directory
-after close, so preserve the caller cwd around the embedded backend lifetime
-and restore it after PostgreSQL's normal exit cleanup callbacks run.
+PGDATA. Embedded liboliphaunt must not leave the host process there after
+terminal close, so preserve the caller cwd around the physical backend lifetime
+and restore it after PostgreSQL's normal exit callbacks run.
+
+Capture is a startup precondition: if the caller cwd is already unresolvable,
+fail before consuming PostgreSQL process state. On POSIX, retain a directory
+descriptor and restore with fchdir() so a rename or replacement of the original
+pathname cannot redirect cleanup. Windows has no portable directory-handle
+equivalent and retains path-based restoration. Track the later ChangeToDataDir
+boundary separately so cleanup never mistakes capture for a mutation owned by
+this invocation.
+
+This is terminal cleanup, not lifetime isolation. Direct execution still uses
+the process-wide cwd until the physical backend exits; process-isolated callers
+must use the broker.
 ---
- src/backend/tcop/postgres.c | 7 +++++++
- 1 file changed, 7 insertions(+)
+ src/backend/tcop/postgres.c | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 31e14a1..56888c4 100644
+index 31e14a1..70f1baf 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -4199,6 +4199,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4199,11 +4199,24 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	int			socket_pair[2] = {-1, -1};
  	ClientSocket client_sock;
  	struct sockaddr_in *addr;
 +	char		original_cwd[MAXPGPATH];
-+	bool		have_original_cwd;
-
++#ifndef WIN32
++	int			original_cwd_fd = -1;
++#endif
++	bool		cwd_restore_required = false;
+ 
  	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
  		username == NULL || io == NULL)
-@@ -4226,6 +4228,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
- 	if (!SelectConfigFiles(userDoption, progname))
  		return -1;
-
-+	have_original_cwd = (getcwd(original_cwd, sizeof(original_cwd)) != NULL);
+ 
++	if (getcwd(original_cwd, sizeof(original_cwd)) == NULL)
++		return -1;
++#ifndef WIN32
++	original_cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
++	if (original_cwd_fd < 0)
++		return -1;
++#endif
 +
+ 	Assert(!IsUnderPostmaster);
+ 
+ 	if (progname == NULL)
+@@ -4224,9 +4237,15 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 				 errmsg("embedded liboliphaunt database name was provided twice")));
+ 
+ 	if (!SelectConfigFiles(userDoption, progname))
++	{
++#ifndef WIN32
++		close(original_cwd_fd);
++#endif
+ 		return -1;
++	}
+ 
  	checkDataDir();
++	cwd_restore_required = true;
  	ChangeToDataDir();
  	CreateDataDirLockFile(false);
-@@ -4275,5 +4279,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	LocalProcessControlFile(false);
+@@ -4275,5 +4294,18 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	PostgresMain(dbname, username);
  	oliphaunt_embedded_proc_exit(0);
-
-+	if (have_original_cwd && chdir(original_cwd) != 0)
+ 
++#ifdef WIN32
++	if (cwd_restore_required && chdir(original_cwd) != 0)
 +		return -1;
++#else
++	if (cwd_restore_required && fchdir(original_cwd_fd) != 0)
++	{
++		close(original_cwd_fd);
++		return -1;
++	}
++	if (close(original_cwd_fd) != 0)
++		return -1;
++#endif
 +
  	if (socket_pair[1] >= 0)
  		close(socket_pair[1]);

@@ -160,6 +160,7 @@ impl WasixBackendSession {
         self.pg.attach_protocol_stream(stream)
     }
 
+    #[cfg(feature = "tools")]
     pub(crate) fn send_with_protocol_pump(
         &mut self,
         message: &[u8],
@@ -170,6 +171,18 @@ impl WasixBackendSession {
         );
         self.pg
             .send_protocol_pump(message, Vec::new, ProtocolPumpScope::Copy)
+    }
+
+    pub(crate) fn send_with_output_stream(
+        &mut self,
+        message: &[u8],
+    ) -> Result<ProtocolPumpOutcome> {
+        ensure!(
+            self.supports_protocol_pump(),
+            "WASIX runtime is missing backend-owned protocol pump exports"
+        );
+        self.pg
+            .send_protocol_pump(message, Vec::new, ProtocolPumpScope::OutputStream)
     }
 
     pub(crate) fn send_with_connection_protocol_pump(
@@ -259,11 +272,19 @@ impl BackendSession {
         self.0.attach_protocol_stream(stream)
     }
 
+    #[cfg(feature = "tools")]
     pub(crate) fn send_with_protocol_pump(
         &mut self,
         message: &[u8],
     ) -> Result<ProtocolPumpOutcome> {
         self.0.send_with_protocol_pump(message)
+    }
+
+    pub(crate) fn send_with_output_stream(
+        &mut self,
+        message: &[u8],
+    ) -> Result<ProtocolPumpOutcome> {
+        self.0.send_with_output_stream(message)
     }
 
     pub(crate) fn send_with_connection_protocol_pump(

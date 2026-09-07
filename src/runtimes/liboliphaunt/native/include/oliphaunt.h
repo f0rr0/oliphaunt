@@ -49,6 +49,12 @@ typedef struct OliphauntStaticExtension {
  * releases a logical direct-mode lease but keeps the resident backend alive;
  * oliphaunt_close is terminal for the process lifetime and restores the caller's
  * previous PGDATA value, or unsets it if it was unset.
+ * Startup temporarily changes process cwd; POSIX restores its directory
+ * identity using a retained descriptor. Host signal handlers/masks and process
+ * timers are not backend-owned. Cancellation is consumed on the backend
+ * thread; deadlines cannot preempt a blocking host streaming callback.
+ * The configured identity is trusted by the host, but PostgreSQL login and
+ * connection eligibility, role/database settings, and login triggers apply.
  *
  * Every successful oliphaunt_init establishes a current
  * logical lease generation. Hosts with independent cleanup owners must capture

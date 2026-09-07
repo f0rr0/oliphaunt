@@ -51,6 +51,10 @@ const PROTOCOL_CALLBACK_CHUNK_BYTES: usize = 64 * 1024;
 #[cfg(feature = "tools")]
 const DIRECT_TOOL_READ_BUFFER_BYTES: usize = 64 * 1024;
 
+fn protocol_callback_chunks(bytes: &[u8]) -> std::slice::Chunks<'_, u8> {
+    bytes.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES)
+}
+
 /// Direct, single-session Oliphaunt WASIX database.
 pub struct Oliphaunt {
     backend: TeardownOwnership<BackendSession>,
@@ -423,7 +427,7 @@ impl Write for CallbackProtocolStream {
         if state.error.is_some() || state.panic.is_some() {
             return Ok(buffer.len());
         }
-        for chunk in buffer.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
+        for chunk in protocol_callback_chunks(buffer) {
             let result = {
                 let callback = state.callback.as_mut().ok_or_else(|| {
                     io::Error::new(
@@ -964,7 +968,7 @@ impl Oliphaunt {
             state.error = None;
             state.panic = None;
         }
-        let outcome = self.backend.send_with_protocol_pump(request);
+        let outcome = self.backend.send_with_output_stream(request);
         let (callback_error, callback_panic, callback, outcome) =
             match (self.protocol_stream.lock(), outcome) {
                 (Ok(mut state), outcome) => (
@@ -994,7 +998,7 @@ impl Oliphaunt {
         })?;
         match outcome {
             ProtocolPumpOutcome::Buffered(response) => {
-                for chunk in response.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
+                for chunk in protocol_callback_chunks(&response) {
                     match invoke_protocol_callback(&mut callback, chunk) {
                         Ok(()) => {}
                         Err(ProtocolCallbackFailure::Error(error)) => {
@@ -2122,7 +2126,7 @@ mod transaction_state_tests {
 }
 
 #[cfg(test)]
-mod protocol_callback_tests {
+mod protocol_callback_outcome_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -2237,6 +2241,40 @@ fn materialize_storage(storage: &PgDataStorage) -> Result<tempfile::TempDir> {
     match storage {
         PgDataStorage::HostDirectory(pgdata) => materialize_pgdata(pgdata),
         PgDataStorage::Memory(filesystem) => materialize_virtual_pgdata_view(filesystem.as_ref()),
+    }
+}
+
+#[cfg(test)]
+mod protocol_callback_tests {
+    use super::*;
+
+    #[test]
+    fn callback_chunks_are_bounded_and_preserve_exact_bytes() {
+        for (length, expected_lengths) in [
+            (0, vec![]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES, vec![65_536]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES + 1, vec![65_536, 1]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES * 2, vec![65_536, 65_536]),
+            (
+                PROTOCOL_CALLBACK_CHUNK_BYTES * 2 + 1,
+                vec![65_536, 65_536, 1],
+            ),
+        ] {
+            let input = (0..length)
+                .map(|offset| (offset % 251) as u8)
+                .collect::<Vec<_>>();
+            let chunks = protocol_callback_chunks(&input).collect::<Vec<_>>();
+            assert_eq!(
+                chunks.iter().map(|chunk| chunk.len()).collect::<Vec<_>>(),
+                expected_lengths
+            );
+            assert!(
+                chunks
+                    .iter()
+                    .all(|chunk| chunk.len() <= PROTOCOL_CALLBACK_CHUNK_BYTES)
+            );
+            assert_eq!(chunks.concat(), input);
+        }
     }
 }
 

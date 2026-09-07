@@ -1,3 +1,32 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer: provide the isolated WASIX postmaster runtime
+
+Base: Wasmer 1d1b3420beef28550afbb4692b664bd7f6bc2581.
+
+PostgreSQL EXEC_BACKEND needs fresh instances with explicit process handoff,
+coherent fixed-address shared mappings, reliable waits/signals/readiness, and
+real file durability. Retain those contracts through module loading, resource
+ownership, compiler lowering, and cleanup rather than cloning a live Store or
+replacing synchronization with polling or success stubs.
+
+This bundle also contains the repository-owned compiler-free sealed executor,
+artifact admission and memory-image policies. Those product policies are not
+generic Wasmer fixes and should remain outside a proposed upstream series.
+Generic engine, libc-facing syscall and ownership repairs are candidates for
+separate upstream submissions with their focused regressions. The existing
+bundle is retained as a dependent product input, not claimed upstream-ready;
+decomposition must preserve the combined tree and runtime ABI identities.
+
+The source and patch identities are pinned in sources.lock.toml. Contract
+ownership and relevant probes are indexed in runtime/capabilities.tsv, with
+product rationale in docs/maintainers/wasix-postmaster.md. Runtime patch tests,
+cross-instance concurrency and lifecycle checks are required in addition to
+clean application. Performance-only lowering and cache paths require separate
+non-regression evidence; the bundle's size is not evidence of their merit.
+---
+
 diff --git a/Cargo.lock b/Cargo.lock
 index 19464e5..8c36cb7 100644
 --- a/Cargo.lock

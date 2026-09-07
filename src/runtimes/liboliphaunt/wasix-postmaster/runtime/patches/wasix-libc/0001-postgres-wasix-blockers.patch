@@ -1,3 +1,28 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasix-libc: support the isolated postmaster process model
+
+Base: wasix-libc 34178a6272804f90448b5bd08dc7bcf0d85438e3.
+
+Provide the libc side of real EXEC_BACKEND process creation, signal recovery,
+shared mappings, allocator ownership, descriptor flags and durability. These
+are correctness requirements for isolated backends sharing PostgreSQL memory,
+not permission to emulate successful syscalls. The memcmp change is a separate
+optimization and must retain independent performance and boundary evidence.
+
+The versioned oliphaunt_postmaster_v1 fd_sync_range import is repository-owned;
+it must stay paired with the pinned host runtime and must not be presented as
+an upstream WASIX ABI. Generic libc repairs are upstream candidates, but this
+dependent product bundle is not an upstream-ready submission. Decompose those
+repairs by subsystem before submission, preserving the exact combined tree.
+
+Source pins and digests live in sources.lock.toml. Runtime capability probes,
+the mmap/writeback and sync_file_range fixtures, and postmaster lifecycle
+checks cover the intended contract; a header or patch-apply check alone does
+not qualify a new runtime or guest artifact.
+---
+
 diff --git a/dlmalloc/src/dlmalloc.c b/dlmalloc/src/dlmalloc.c
 index 331536b..e7063c5 100644
 --- a/dlmalloc/src/dlmalloc.c
@@ -895,11 +920,13 @@ diff --git a/libc-top-half/musl/include/setjmp.h b/libc-top-half/musl/include/se
 index 3961c02..f92f9f0 100644
 --- a/libc-top-half/musl/include/setjmp.h
 +++ b/libc-top-half/musl/include/setjmp.h
-@@ -48,7 +48,13 @@ _Noreturn void _longjmp (jmp_buf, int);
+@@ -48,7 +48,15 @@ _Noreturn void _longjmp (jmp_buf, int);
  #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
  	defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
  	typedef jmp_buf sigjmp_buf;
-+#ifndef __WASIX_LIBC_BUILDING_SETJMP
++#if !defined(__wasilibc_unmodified_upstream) && \
++    defined(__wasm_exception_handling__) && \
++    !defined(__WASIX_LIBC_BUILDING_SETJMP)
 +	int __wasilibc_sigsetjmp_save(sigjmp_buf, int);
 +#define sigsetjmp(buf, savesigs) \
 +	(__wasilibc_sigsetjmp_save((buf), (savesigs)), setjmp((buf)))

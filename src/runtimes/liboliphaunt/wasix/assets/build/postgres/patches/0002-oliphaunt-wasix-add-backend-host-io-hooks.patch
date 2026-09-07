@@ -19,13 +19,13 @@ lifecycle, authentication, or protocol-pump behavior.
  3 files changed, 29 insertions(+)
 
 diff --git a/src/backend/libpq/be-secure.c b/src/backend/libpq/be-secure.c
-index 2c9dfc28f0..d069849c9d 100644
+index d723e74e81..40eae70ab5 100644
 --- a/src/backend/libpq/be-secure.c
 +++ b/src/backend/libpq/be-secure.c
-@@ -288,6 +288,11 @@ secure_raw_read(Port *port, void *ptr, size_t len)
+@@ -282,6 +282,11 @@ secure_raw_read(Port *port, void *ptr, size_t len)
  		return len;
  	}
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	if (port->oliphaunt_wasix_io != NULL && port->oliphaunt_wasix_io->read != NULL)
 +		return port->oliphaunt_wasix_io->read(port->oliphaunt_wasix_io->context, ptr, len);
@@ -34,10 +34,10 @@ index 2c9dfc28f0..d069849c9d 100644
  	/*
  	 * Try to read from the socket without blocking. If it succeeds we're
  	 * done, otherwise we'll wait for the socket using the latch mechanism.
-@@ -381,6 +386,11 @@ secure_raw_write(Port *port, const void *ptr, size_t len)
+@@ -378,6 +383,11 @@ secure_raw_write(Port *port, const void *ptr, size_t len)
  {
  	ssize_t		n;
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	if (port->oliphaunt_wasix_io != NULL && port->oliphaunt_wasix_io->write != NULL)
 +		return port->oliphaunt_wasix_io->write(port->oliphaunt_wasix_io->context, ptr, len);
@@ -47,7 +47,7 @@ index 2c9dfc28f0..d069849c9d 100644
  	pgwin32_noblock = true;
  #endif
 diff --git a/src/backend/libpq/pqcomm.c b/src/backend/libpq/pqcomm.c
-index 6f7b4f62b6..742d1856e5 100644
+index e5171467de..673bcd9966 100644
 --- a/src/backend/libpq/pqcomm.c
 +++ b/src/backend/libpq/pqcomm.c
 @@ -309,6 +309,14 @@ pq_init(ClientSocket *client_sock)
@@ -64,15 +64,15 @@ index 6f7b4f62b6..742d1856e5 100644
 +#endif
  	AddWaitEventToSet(FeBeWaitSet, WL_POSTMASTER_DEATH, PGINVALID_SOCKET,
  					  NULL, NULL);
-
+ 
 diff --git a/src/include/libpq/libpq-be.h b/src/include/libpq/libpq-be.h
-index 6aa52a64ff..6068a0cb8f 100644
+index d6e671a638..9925538d1a 100644
 --- a/src/include/libpq/libpq-be.h
 +++ b/src/include/libpq/libpq-be.h
-@@ -99,6 +99,15 @@ typedef struct ClientConnectionInfo
+@@ -105,6 +105,15 @@ typedef struct ClientConnectionInfo
  	UserAuth	auth_method;
  } ClientConnectionInfo;
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +typedef struct OliphauntWasmHostIO
 +{
@@ -85,7 +85,7 @@ index 6aa52a64ff..6068a0cb8f 100644
  /*
   * The Port structure holds state information about a client connection in a
   * backend process.  It is available in the global variable MyProcPort.  The
-@@ -244,6 +253,9 @@ typedef struct Port
+@@ -238,6 +247,9 @@ typedef struct Port
  	char	   *raw_buf;
  	ssize_t		raw_buf_consumed,
  				raw_buf_remaining;
@@ -93,7 +93,7 @@ index 6aa52a64ff..6068a0cb8f 100644
 +	OliphauntWasmHostIO *oliphaunt_wasix_io;
 +#endif
  } Port;
-
+ 
  /*
 --
 2.49.0

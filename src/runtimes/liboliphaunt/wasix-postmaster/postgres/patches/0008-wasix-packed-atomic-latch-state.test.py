@@ -100,6 +100,8 @@ def main() -> None:
     options = parser.parse_args()
 
     patch = PATCH_PATH.read_text(encoding="utf-8")
+    # Mail headers and their separator are metadata, not removed C source.
+    patch = patch[patch.index("diff --git "):]
     series = [
         line
         for line in (PATCH_DIR / "series").read_text(encoding="utf-8").splitlines()

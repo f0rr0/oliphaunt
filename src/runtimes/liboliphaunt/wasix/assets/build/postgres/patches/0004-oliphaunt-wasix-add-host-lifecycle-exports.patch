@@ -12,20 +12,27 @@ The host ABI added here only attaches a direct FE/BE Port after that backend
 state exists, then sends the normal AuthenticationOk, ParameterStatus,
 BackendKeyData, and ReadyForQuery messages through libpq.
 
+Buffered bridge output has a sticky first-failure status: zero means no failed
+buffered write, otherwise the value is the first positive errno and only the
+bridge output reset clears it.  The flush export samples that status after
+`pq_flush()`, so a send failure consumed by PostgreSQL still prevents the host
+from accepting a partial response.  Once set, the bridge rejects protocol
+writes in every transport mode until that explicit reset.
+
 The exported names intentionally keep the current `oliphaunt_wasix_*` spelling so the Rust
 release lane can be brought up before a host-side ABI rename.  The code path is
 guarded by `OLIPHAUNT_WASM_SINGLE_USER`.
 ---
- src/backend/tcop/postgres.c       | 120 ++++++++++++++++++++++++++++++++++++++
+ src/backend/tcop/postgres.c       | 123 ++++++++++++++++++++++++++++++++++++++
  src/backend/utils/init/postinit.c |   9 +++
- src/include/port/wasix-dl.h       |  10 ++++
- 3 files changed, 139 insertions(+)
+ src/include/port/wasix-dl.h       |  12 ++++
+ 3 files changed, 144 insertions(+)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 39e4e3216d..674dd23641 100644
+index 115a634c64..6e74a7f43c 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -24,6 +24,9 @@
+@@ -25,6 +25,9 @@
  #include <unistd.h>
  #include <sys/resource.h>
  #include <sys/socket.h>
@@ -33,9 +40,9 @@ index 39e4e3216d..674dd23641 100644
 +#include <netinet/in.h>
 +#endif
  #include <sys/time.h>
-
+ 
  #ifdef USE_VALGRIND
-@@ -40,13 +43,20 @@
+@@ -41,6 +44,10 @@
  #include "common/pg_prng.h"
  #include "jit/jit.h"
  #include "libpq/libpq.h"
@@ -46,7 +53,7 @@ index 39e4e3216d..674dd23641 100644
  #include "libpq/pqformat.h"
  #include "libpq/pqsignal.h"
  #include "mb/pg_wchar.h"
- #include "mb/stringinfo_mb.h"
+@@ -48,6 +55,9 @@
  #include "miscadmin.h"
  #include "nodes/print.h"
  #include "optimizer/optimizer.h"
@@ -56,10 +63,10 @@ index 39e4e3216d..674dd23641 100644
  #include "parser/analyze.h"
  #include "parser/parser.h"
  #include "pg_getopt.h"
-@@ -158,6 +168,111 @@ static volatile sig_atomic_t RecoveryConflictPendingReasons[NUM_PROCSIGNALS];
+@@ -163,6 +173,114 @@ static volatile sig_atomic_t RecoveryConflictPendingReasons[NUM_PROCSIGNALS];
  static MemoryContext row_description_context = NULL;
  static StringInfoData row_description_buf;
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +#define OLIPHAUNT_WASM_EXIT_ALIVE 99
 +#define OLIPHAUNT_WASM_HOST_EXPORT(name) __attribute__((export_name(name)))
@@ -111,10 +118,13 @@ index 39e4e3216d..674dd23641 100644
 +	MyBackendType = B_BACKEND;
 +}
 +
-+OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_pq_flush") void
++OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_pq_flush") int
 +oliphaunt_wasix_pq_flush(void)
 +{
-+	pq_flush();
++	int			status = pq_flush();
++	int			bridge_status = oliphaunt_wasix_output_status();
++
++	return status != 0 ? status : bridge_status;
 +}
 +
 +OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_get_proc_port") struct Port *
@@ -168,7 +178,7 @@ index 39e4e3216d..674dd23641 100644
  /* ----------------------------------------------------------------
   *		decls for routines only used in this file
   * ----------------------------------------------------------------
-@@ -5109,6 +5220,11 @@ PostgresMain(const char *dbname, const char *username)
+@@ -5003,6 +5121,11 @@ PostgresMain(const char *dbname, const char *username)
  				 * it will fail to be called during other backend-shutdown
  				 * scenarios.
  				 */
@@ -178,16 +188,16 @@ index 39e4e3216d..674dd23641 100644
 +#endif
 +
  				proc_exit(0);
-
+ 
  			case PqMsg_CopyData:
 diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
-index 47925d6848..bcce4363fe 100644
+index c86ceefda9..53e65b73ec 100644
 --- a/src/backend/utils/init/postinit.c
 +++ b/src/backend/utils/init/postinit.c
-@@ -1290,6 +1290,15 @@ process_startup_options(Port *port, bool am_superuser)
+@@ -1299,6 +1299,15 @@ process_startup_options(Port *port, bool am_superuser)
  	}
  }
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +void
 +oliphaunt_wasix_process_startup_options(Port *port)
@@ -201,12 +211,10 @@ index 47925d6848..bcce4363fe 100644
   * Load GUC settings from pg_db_role_setting.
   *
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
-index 630687ec15..dfae28b4cc 100644
+index 24eeecbf98..512c0a2ee6 100644
 --- a/src/include/port/wasix-dl.h
 +++ b/src/include/port/wasix-dl.h
-@@ -3,6 +3,17 @@
-  *	  Port-specific declarations for the Oliphaunt WASIX side-module build.
-  *-------------------------------------------------------------------------
+@@ -5,4 +5,16 @@
   */
  #ifndef PG_PORT_WASIX_DL_H
  #define PG_PORT_WASIX_DL_H
@@ -218,6 +226,7 @@ index 630687ec15..dfae28b4cc 100644
 +
 +extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
 +extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
++extern int oliphaunt_wasix_output_status(void);
 +extern void oliphaunt_wasix_process_startup_options(struct Port *port);
 +#endif
 +

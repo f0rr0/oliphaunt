@@ -1,0 +1,1823 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Thu, 27 Aug 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: preserve host process boundaries
+
+A Direct backend shares its process with the embedding application, but the
+existing containment only reserved SIGUSR1. PostgresMain still replaced nine
+host signal dispositions, the timeout subsystem repurposed ITIMER_REAL, and
+latch wakeups emitted process-directed SIGURG. In a multithreaded host that
+SIGURG can land outside the backend thread, both violating host ownership and
+failing to wake cancellation promptly.
+
+Treat process signal state as host-owned. Direct pqsignal calls become inert;
+nonzero kill and raise operations fail closed. Route public cancellation
+through an atomic mailbox and a PostgreSQL-owned raw wake endpoint so only the
+backend thread mutates PostgreSQL interrupt state. Preserve PostgreSQL's normal
+wait provider in ordinary modes; Direct adds a hidden pipe/event to each wait
+set and publishes only the stable raw wake token to the host.
+
+Keep PostgreSQL timeout ordering and handler semantics, but publish a lazy
+one-shot deadline to the synchronous host waiter while bounding backend latch
+and input waits directly. The private IO ABI is versioned, endpoint publication
+is synchronized with host cancellation, and teardown unpublishes before close.
+Direct teardown also releases retained latch wait sets and the Windows local
+latch event that process exit would normally reclaim.
+The hot interrupt path only reads an atomic cancel/timeout mailbox; exchanges
+and clock reads stay on the uncommon slow path. Direct inherits the embedding
+thread's signal mask instead of changing process-wide signal ownership.
+
+COPY FROM input waits consume Direct cancellation only at a validated frontend
+frame boundary. This is safe because the Native ABI rejects truncated frontend
+headers and bodies before publishing a request to PostgreSQL; ordinary protocol
+and postmaster paths retain their upstream behavior.
+
+Reject PID-based SQL signalling, external pipe programs, and configured
+archive/recovery shell commands because Direct cannot safely provide those
+process capabilities. Broker isolation remains required for arbitrary native
+extensions, external commands, blocking foreign code, and other process-global
+behavior. This is a correctness boundary, not a performance optimization.
+---
+diff --git a/src/backend/access/transam/xact.c b/src/backend/access/transam/xact.c
+index b885513f76541bc165a41ce78f83623703c2410a..ddd112f69b49e268f76e5e96d5314b94817b8ce4 100644
+--- a/src/backend/access/transam/xact.c
++++ b/src/backend/access/transam/xact.c
+@@ -2866,7 +2866,12 @@ AbortTransaction(void)
+ 	 * handler.  We do this fairly early in the sequence so that the timeout
+ 	 * infrastructure will be functional if needed while aborting.
+ 	 */
+-	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++		(void) SetTrustedEmbeddedThreadSignalMask(&UnBlockSig);
++	else
++#endif
++		sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+ 
+ 	/*
+ 	 * check the current transaction state
+@@ -5271,7 +5276,12 @@ AbortSubTransaction(void)
+ 	 * handler.  We do this fairly early in the sequence so that the timeout
+ 	 * infrastructure will be functional if needed while aborting.
+ 	 */
+-	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++		(void) SetTrustedEmbeddedThreadSignalMask(&UnBlockSig);
++	else
++#endif
++		sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+ 
+ 	/*
+ 	 * check the current transaction state
+diff --git a/src/backend/commands/copyfromparse.c b/src/backend/commands/copyfromparse.c
+index f5fc346e2013bb2332a7521d203eeb1a0ec2f920..5edf1b51109a00ac3c5c4d7bfeba0024b759effa 100644
+--- a/src/backend/commands/copyfromparse.c
++++ b/src/backend/commands/copyfromparse.c
+@@ -271,7 +271,21 @@ CopyGetData(CopyFromState cstate, void *databuf, int minread, int maxread)
+ 			readmessage:
+ 					HOLD_CANCEL_INTERRUPTS();
+ 					pq_startmsgread();
++#ifdef OLIPHAUNT_EMBEDDED
++					if (IsTrustedEmbeddedProcess())
++						mtype = pq_getbyte_interruptible();
++					else
++#endif
+ 					mtype = pq_getbyte();
++#ifdef OLIPHAUNT_EMBEDDED
++					if (mtype == PQ_READ_INTERRUPTED)
++					{
++						pq_endmsgread();
++						RESUME_CANCEL_INTERRUPTS();
++						CHECK_FOR_INTERRUPTS();
++						goto readmessage;
++					}
++#endif
+ 					if (mtype == EOF)
+ 						ereport(ERROR,
+ 								(errcode(ERRCODE_CONNECTION_FAILURE),
+diff --git a/src/backend/libpq/be-secure.c b/src/backend/libpq/be-secure.c
+index b56bfb41d53166af4c92e0999bf0080e6ec4a6c2..7c2cae95139856dc9a0081c7d10cbd8101e56b8b 100644
+--- a/src/backend/libpq/be-secure.c
++++ b/src/backend/libpq/be-secure.c
+@@ -31,6 +31,7 @@
+ #include "miscadmin.h"
+ #include "tcop/tcopprot.h"
+ #include "utils/injection_point.h"
++#include "utils/timeout.h"
+ #include "utils/wait_event.h"
+ 
+ char	   *ssl_library;
+@@ -284,7 +285,8 @@ secure_raw_read(Port *port, void *ptr, size_t len)
+ 
+ #ifdef OLIPHAUNT_EMBEDDED
+ 	if (port->oliphaunt_io != NULL && port->oliphaunt_io->read != NULL)
+-		return port->oliphaunt_io->read(port->oliphaunt_io->context, ptr, len);
++		return port->oliphaunt_io->read(port->oliphaunt_io->context, ptr, len,
++									 GetEmbeddedTimeoutDelayMilliseconds());
+ #endif
+ 
+ 	/*
+diff --git a/src/backend/libpq/pqcomm.c b/src/backend/libpq/pqcomm.c
+index 4181d9c88411d02ccf47be17e9864a00b2dd02ec..bb230c1fe6643f2c46301f278fde004f20654d47 100644
+--- a/src/backend/libpq/pqcomm.c
++++ b/src/backend/libpq/pqcomm.c
+@@ -903,7 +903,7 @@ socket_set_nonblocking(bool nonblocking)
+  * --------------------------------
+  */
+ static int
+-pq_recvbuf(void)
++pq_recvbuf_internal(bool allow_trusted_interrupt)
+ {
+ 	if (PqRecvPointer > 0)
+ 	{
+@@ -935,7 +935,16 @@ pq_recvbuf(void)
+ 		if (r < 0)
+ 		{
+ 			if (errno == EINTR)
++			{
++#ifdef OLIPHAUNT_EMBEDDED
++				if (allow_trusted_interrupt &&
++					TrustedEmbeddedInterruptPending())
++					return PQ_READ_INTERRUPTED;
++#else
++				(void) allow_trusted_interrupt;
++#endif
+ 				continue;		/* Ok if interrupted */
++			}
+ 
+ 			/*
+ 			 * Careful: an ereport() that tries to write to the client would
+@@ -964,6 +973,12 @@ pq_recvbuf(void)
+ 	}
+ }
+ 
++static int
++pq_recvbuf(void)
++{
++	return pq_recvbuf_internal(false);
++}
++
+ /* --------------------------------
+  *		pq_getbyte	- get a single byte from connection, or return EOF
+  * --------------------------------
+@@ -981,6 +996,27 @@ pq_getbyte(void)
+ 	return (unsigned char) PqRecvBuffer[PqRecvPointer++];
+ }
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++/*
++ * COPY-only variant that can expose a validated Native transport boundary.
++ * Generic socket callers retain pq_getbyte()'s ordinary EOF/retry contract.
++ */
++int
++pq_getbyte_interruptible(void)
++{
++	Assert(PqCommReadingMsg);
++
++	while (PqRecvPointer >= PqRecvLength)
++	{
++		int			rc = pq_recvbuf_internal(true);
++
++		if (rc != 0)
++			return rc == PQ_READ_INTERRUPTED ? PQ_READ_INTERRUPTED : EOF;
++	}
++	return (unsigned char) PqRecvBuffer[PqRecvPointer++];
++}
++#endif
++
+ /* --------------------------------
+  *		pq_peekbyte		- peek at next byte from connection
+  *
+diff --git a/src/backend/port/win32/signal.c b/src/backend/port/win32/signal.c
+index d051b15c0ddb38128d9f7b40c77630eabe32d8d2..01b748d56ad849c3178303c76ec2df42e266bea1 100644
+--- a/src/backend/port/win32/signal.c
++++ b/src/backend/port/win32/signal.c
+@@ -36,6 +36,7 @@ static CRITICAL_SECTION pg_signal_crit_sec;
+ /* Note that array elements 0 are unused since they correspond to signal 0 */
+ static struct sigaction pg_signal_array[PG_SIGNAL_COUNT];
+ static pqsigfunc pg_signal_defaults[PG_SIGNAL_COUNT];
++static bool pgwin32_embedded_signal_initialized = false;
+ 
+ 
+ /* Signal handling thread functions */
+@@ -74,12 +75,11 @@ pg_usleep(long microsec)
+ }
+ 
+ 
+-/* Initialization */
+-void
+-pgwin32_signal_initialize(void)
++/* Initialize state shared by normal and trusted embedded signal providers. */
++static void
++pgwin32_signal_initialize_common(void)
+ {
+ 	int			i;
+-	HANDLE		signal_thread_handle;
+ 
+ 	InitializeCriticalSection(&pg_signal_crit_sec);
+ 
+@@ -98,6 +98,41 @@ pgwin32_signal_initialize(void)
+ 	if (pgwin32_signal_event == NULL)
+ 		ereport(FATAL,
+ 				(errmsg_internal("could not create signal event: error code %lu", GetLastError())));
++}
++
++/*
++ * Initialize only PostgreSQL's thread-local emulation state and wake event.
++ * A trusted embedded backend must not create a process signal listener or
++ * claim the embedding application's console-control handler.
++ */
++void
++pgwin32_signal_initialize_embedded(void)
++{
++	pgwin32_signal_initialize_common();
++	pgwin32_embedded_signal_initialized = true;
++}
++
++void
++pgwin32_signal_shutdown_embedded(void)
++{
++	if (!pgwin32_embedded_signal_initialized)
++		return;
++	if (pgwin32_signal_event != NULL)
++	{
++		(void) CloseHandle(pgwin32_signal_event);
++		pgwin32_signal_event = NULL;
++	}
++	DeleteCriticalSection(&pg_signal_crit_sec);
++	pgwin32_embedded_signal_initialized = false;
++}
++
++/* Initialization */
++void
++pgwin32_signal_initialize(void)
++{
++	HANDLE		signal_thread_handle;
++
++	pgwin32_signal_initialize_common();
+ 
+ 	/* Create thread for handling signals */
+ 	signal_thread_handle = CreateThread(NULL, 0, pg_signal_thread, NULL, 0, NULL);
+diff --git a/src/backend/storage/file/fd.c b/src/backend/storage/file/fd.c
+index 378c078c7c7f347e4d3c5bf00477c6804a600364..31d93e1f270fe329f5b8f311cab60efad7579d33 100644
+--- a/src/backend/storage/file/fd.c
++++ b/src/backend/storage/file/fd.c
+@@ -2749,6 +2749,13 @@ OpenPipeStream(const char *command, const char *mode)
+ 	FILE	   *file;
+ 	int			save_errno;
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("external programs are not supported in a trusted embedded backend")));
++#endif
++
+ 	DO_DB(elog(LOG, "OpenPipeStream: Allocated %d (%s)",
+ 			   numAllocatedDescs, command));
+ 
+diff --git a/src/backend/storage/ipc/ipc.c b/src/backend/storage/ipc/ipc.c
+index 97edd034ca46a669feee954c25225fcd3f40218e..17ae5c22dcc7d87f15a0c97e0409a713f550f32e 100644
+--- a/src/backend/storage/ipc/ipc.c
++++ b/src/backend/storage/ipc/ipc.c
+@@ -269,18 +269,6 @@ oliphaunt_embedded_clear_proc_exit_handler(oliphaunt_embedded_proc_exit_handler
+ 	return true;
+ }
+ 
+-/*
+- * Run PostgreSQL's normal backend exit callbacks without terminating the host
+- * process.  This is only valid for the embedded thread owner that already
+- * arranged for PostgresMain() to return on frontend Terminate.
+- */
+-void
+-oliphaunt_embedded_proc_exit(int code)
+-{
+-	proc_exit_prepare(code);
+-
+-	proc_exit_inprogress = false;
+-}
+ #endif
+ 
+ /* ------------------
+diff --git a/src/backend/storage/ipc/latch.c b/src/backend/storage/ipc/latch.c
+index beadeb5e46afa2c2d88c1a2a75bc951f5bd538aa..f29cccd1e3ec84e985e7d37a9c657777289b9aef 100644
+--- a/src/backend/storage/ipc/latch.c
++++ b/src/backend/storage/ipc/latch.c
+@@ -56,6 +56,25 @@ InitializeLatchWaitSet(void)
+ 	}
+ }
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++/*
++ * A normal backend lets process exit reclaim this session-lifetime wait set.
++ * Direct returns to a retained host process, so release it explicitly before
++ * the provider-private wake endpoint is closed.
++ */
++void
++ShutdownTrustedEmbeddedLatchWaitSet(void)
++{
++	Assert(IsTrustedEmbeddedProcess());
++
++	if (LatchWaitSet != NULL)
++	{
++		FreeWaitEventSet(LatchWaitSet);
++		LatchWaitSet = NULL;
++	}
++}
++#endif
++
+ /*
+  * Initialize a process-local latch.
+  */
+diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
+index b4bb246dec4a1b6293eeda45304df6013514b56d..62c0581e095720d3942694d491a602657d23edb7 100644
+--- a/src/backend/storage/ipc/procsignal.c
++++ b/src/backend/storage/ipc/procsignal.c
+@@ -278,21 +278,23 @@ static int
+ oliphaunt_send_proc_signal(pid_t pid)
+ {
+ #ifdef OLIPHAUNT_EMBEDDED
+-	int			save_errno;
+-
+-	if (pid != MyProcPid)
++	if (IsTrustedEmbeddedProcess())
+ 	{
+-		errno = ESRCH;
+-		return -1;
+-	}
++		int			save_errno;
+ 
+-	save_errno = errno;
+-	procsignal_sigusr1_handler(SIGUSR1);
+-	errno = save_errno;
+-	return 0;
+-#else
+-	return kill(pid, SIGUSR1);
++		if (pid != MyProcPid)
++		{
++			errno = ESRCH;
++			return -1;
++		}
++
++		save_errno = errno;
++		procsignal_sigusr1_handler(SIGUSR1);
++		errno = save_errno;
++		return 0;
++	}
+ #endif
++	return kill(pid, SIGUSR1);
+ }
+ 
+ /*
+diff --git a/src/backend/storage/ipc/signalfuncs.c b/src/backend/storage/ipc/signalfuncs.c
+index 563bc047bb22009099da9a2ac1ab273a014aa23e..05ee07dee9836ff9b42f6476170a9d278540d2c8 100644
+--- a/src/backend/storage/ipc/signalfuncs.c
++++ b/src/backend/storage/ipc/signalfuncs.c
+@@ -135,7 +135,15 @@ pg_signal_backend(int pid, int sig)
+ Datum
+ pg_cancel_backend(PG_FUNCTION_ARGS)
+ {
+-	int			r = pg_signal_backend(PG_GETARG_INT32(0), SIGINT);
++	int			r;
++
++	if (IsTrustedEmbeddedSession())
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("backend cancellation by process ID is not supported in a trusted embedded session"),
++				 errhint("Use the embedding host's cancellation API for the active session.")));
++
++	r = pg_signal_backend(PG_GETARG_INT32(0), SIGINT);
+ 
+ 	if (r == SIGNAL_BACKEND_NOSUPERUSER)
+ 		ereport(ERROR,
+@@ -243,6 +251,11 @@ pg_terminate_backend(PG_FUNCTION_ARGS)
+ 	pid = PG_GETARG_INT32(0);
+ 	timeout = PG_GETARG_INT64(1);
+ 
++	if (IsTrustedEmbeddedSession())
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("backend termination by process ID is not supported in a trusted embedded session")));
++
+ 	if (timeout < 0)
+ 		ereport(ERROR,
+ 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+diff --git a/src/backend/storage/ipc/waiteventset.c b/src/backend/storage/ipc/waiteventset.c
+index b0746521ae4251b459f85429661bb80e8227de4d..5088bb3cb7dd64272a5eb2af5474d0e3693cb2d3 100644
+--- a/src/backend/storage/ipc/waiteventset.c
++++ b/src/backend/storage/ipc/waiteventset.c
+@@ -65,6 +65,9 @@
+ #endif
+ 
+ #include "libpq/pqsignal.h"
++#ifdef OLIPHAUNT_EMBEDDED
++#include "libpq/libpq-be.h"
++#endif
+ #include "miscadmin.h"
+ #include "pgstat.h"
+ #include "port/atomics.h"
+@@ -77,6 +80,7 @@
+ #include "storage/waiteventset.h"
+ #include "utils/memutils.h"
+ #include "utils/resowner.h"
++#include "utils/timeout.h"
+ 
+ /*
+  * Select the fd readiness primitive to use. Normally the "most modern"
+@@ -111,6 +115,17 @@
+ #else
+ #define WAIT_USE_SELF_PIPE
+ #endif
++
++#endif
++
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++/* Stable raw wake endpoint owned by the selected Direct backend. */
++static int	trusted_embedded_wakeup_readfd = -1;
++static int	trusted_embedded_wakeup_writefd = -1;
++static bool trusted_embedded_wakeup_reserved = false;
++
++static bool InitializeTrustedEmbeddedWakeup(void);
++static void DrainTrustedEmbeddedWakeup(void);
+ #endif
+ 
+ /* typedef in waiteventset.h */
+@@ -230,6 +245,67 @@ ResourceOwnerForgetWaitEventSet(ResourceOwner owner, WaitEventSet *set)
+ 	ResourceOwnerForget(owner, PointerGetDatum(set), &wait_event_set_resowner_desc);
+ }
+ 
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++static bool
++InitializeTrustedEmbeddedWakeup(void)
++{
++	int			pipefd[2];
++	int			save_errno;
++
++	if (trusted_embedded_wakeup_readfd != -1 ||
++		trusted_embedded_wakeup_writefd != -1)
++	{
++		errno = EALREADY;
++		return false;
++	}
++	if (pipe(pipefd) < 0)
++		return false;
++
++	trusted_embedded_wakeup_readfd = pipefd[0];
++	trusted_embedded_wakeup_writefd = pipefd[1];
++	if (fcntl(pipefd[0], F_SETFL, O_NONBLOCK) == -1 ||
++		fcntl(pipefd[1], F_SETFL, O_NONBLOCK) == -1 ||
++		fcntl(pipefd[0], F_SETFD, FD_CLOEXEC) == -1 ||
++		fcntl(pipefd[1], F_SETFD, FD_CLOEXEC) == -1)
++	{
++		save_errno = errno;
++		(void) close(pipefd[0]);
++		(void) close(pipefd[1]);
++		trusted_embedded_wakeup_readfd = -1;
++		trusted_embedded_wakeup_writefd = -1;
++		errno = save_errno;
++		return false;
++	}
++
++	ReserveExternalFD();
++	ReserveExternalFD();
++	trusted_embedded_wakeup_reserved = true;
++	return true;
++}
++
++static void
++DrainTrustedEmbeddedWakeup(void)
++{
++	char		buf[128];
++
++	for (;;)
++	{
++		ssize_t		rc = read(trusted_embedded_wakeup_readfd,
++							  buf, sizeof(buf));
++
++		if (rc > 0)
++			continue;
++		if (rc < 0 && errno == EINTR)
++			continue;
++		if (rc < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
++			return;
++		if (rc == 0)
++			elog(ERROR, "unexpected EOF on trusted embedded wakeup pipe");
++		elog(ERROR, "read() on trusted embedded wakeup pipe failed: %m");
++	}
++}
++#endif
++
+ 
+ /*
+  * Initialize the process-local wait event infrastructure.
+@@ -240,8 +316,16 @@ ResourceOwnerForgetWaitEventSet(ResourceOwner owner, WaitEventSet *set)
+ void
+ InitializeWaitEventSupport(void)
+ {
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++	if (IsTrustedEmbeddedProcess() && !InitializeTrustedEmbeddedWakeup())
++		elog(FATAL, "could not initialize trusted embedded wakeup pipe: %m");
++#endif
+ #if defined(WAIT_USE_SELF_PIPE)
+-	int			pipefd[2];
++#ifdef OLIPHAUNT_EMBEDDED
++	if (!IsTrustedEmbeddedProcess())
++#endif
++	{
++		int			pipefd[2];
+ 
+ 	if (IsUnderPostmaster)
+ 	{
+@@ -310,12 +394,16 @@ InitializeWaitEventSupport(void)
+ 	/* Tell fd.c about these two long-lived FDs */
+ 	ReserveExternalFD();
+ 	ReserveExternalFD();
+-
+ 	pqsignal(SIGURG, latch_sigurg_handler);
++	}
+ #endif
+ 
+ #ifdef WAIT_USE_SIGNALFD
+-	sigset_t	signalfd_mask;
++#ifdef OLIPHAUNT_EMBEDDED
++	if (!IsTrustedEmbeddedProcess())
++#endif
++	{
++		sigset_t	signalfd_mask;
+ 
+ 	if (IsUnderPostmaster)
+ 	{
+@@ -343,11 +431,15 @@ InitializeWaitEventSupport(void)
+ 	if (signal_fd < 0)
+ 		elog(FATAL, "signalfd() failed");
+ 	ReserveExternalFD();
++	}
+ #endif
+ 
+ #ifdef WAIT_USE_KQUEUE
+ 	/* Ignore SIGURG, because we'll receive it via kqueue. */
+-	pqsignal(SIGURG, SIG_IGN);
++#ifdef OLIPHAUNT_EMBEDDED
++	if (!IsTrustedEmbeddedProcess())
++#endif
++		pqsignal(SIGURG, SIG_IGN);
+ #endif
+ }
+ 
+@@ -381,7 +473,12 @@ CreateWaitEventSet(ResourceOwner resowner, int nevents)
+ #elif defined(WAIT_USE_KQUEUE)
+ 	sz += MAXALIGN(sizeof(struct kevent) * nevents);
+ #elif defined(WAIT_USE_POLL)
++	/* Direct reserves one extra provider-private wakeup slot. */
++#ifdef OLIPHAUNT_EMBEDDED
++	sz += MAXALIGN(sizeof(struct pollfd) * (nevents + 1));
++#else
+ 	sz += MAXALIGN(sizeof(struct pollfd) * nevents);
++#endif
+ #elif defined(WAIT_USE_WIN32)
+ 	/* need space for the pgwin32_signal_event */
+ 	sz += MAXALIGN(sizeof(HANDLE) * (nevents + 1));
+@@ -406,7 +503,11 @@ CreateWaitEventSet(ResourceOwner resowner, int nevents)
+ 	data += MAXALIGN(sizeof(struct kevent) * nevents);
+ #elif defined(WAIT_USE_POLL)
+ 	set->pollfds = (struct pollfd *) data;
++#ifdef OLIPHAUNT_EMBEDDED
++	data += MAXALIGN(sizeof(struct pollfd) * (nevents + 1));
++#else
+ 	data += MAXALIGN(sizeof(struct pollfd) * nevents);
++#endif
+ #elif defined(WAIT_USE_WIN32)
+ 	set->handles = (HANDLE) data;
+ 	data += MAXALIGN(sizeof(HANDLE) * nevents);
+@@ -465,6 +566,29 @@ CreateWaitEventSet(ResourceOwner resowner, int nevents)
+ 	StaticAssertStmt(WSA_INVALID_EVENT == NULL, "");
+ #endif
+ 
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++	if (IsTrustedEmbeddedProcess())
++	{
++#if defined(WAIT_USE_EPOLL)
++		struct epoll_event wakeup_event;
++
++		MemSet(&wakeup_event, 0, sizeof(wakeup_event));
++		wakeup_event.events = EPOLLIN | EPOLLERR | EPOLLHUP;
++		wakeup_event.data.ptr = NULL;
++		if (epoll_ctl(set->epoll_fd, EPOLL_CTL_ADD,
++					  trusted_embedded_wakeup_readfd, &wakeup_event) < 0)
++			elog(ERROR, "could not register trusted embedded epoll wakeup: %m");
++#elif defined(WAIT_USE_KQUEUE)
++		struct kevent wakeup_event;
++
++		EV_SET(&wakeup_event, trusted_embedded_wakeup_readfd,
++			   EVFILT_READ, EV_ADD, 0, 0, NULL);
++		if (kevent(set->kqueue_fd, &wakeup_event, 1, NULL, 0, NULL) < 0)
++			elog(ERROR, "could not register trusted embedded kqueue wakeup: %m");
++#endif
++	}
++#endif
++
+ 	return set;
+ }
+ 
+@@ -613,6 +737,17 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
+ 	{
+ 		set->latch = latch;
+ 		set->latch_pos = event->pos;
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++		if (IsTrustedEmbeddedProcess())
++		{
++			event->fd = PGINVALID_SOCKET;
++#ifdef WAIT_USE_POLL
++			set->pollfds[event->pos].fd = -1;
++			set->pollfds[event->pos].events = 0;
++#endif
++			return event->pos;
++		}
++#endif
+ #if defined(WAIT_USE_SELF_PIPE)
+ 		event->fd = selfpipe_readfd;
+ #elif defined(WAIT_USE_SIGNALFD)
+@@ -1070,6 +1205,19 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 	while (returned_events == 0)
+ 	{
+ 		int			rc;
++#ifdef OLIPHAUNT_EMBEDDED
++		bool		trusted_embedded_wait = IsTrustedEmbeddedProcess();
++		bool		embedded_timeout_selected = false;
++		long		block_timeout;
++
++		/*
++		 * This is a blocking boundary, so consume unconditionally.  The hot
++		 * CHECK_FOR_INTERRUPTS predicate remains a plain atomic hint, while a
++		 * provider wake can never be lost to a stale speculative read here.
++		 */
++		if (trusted_embedded_wait)
++			ProcessTrustedEmbeddedInterrupts();
++#endif
+ 
+ 		/*
+ 		 * Check if the latch is set already first.  If so, we either exit
+@@ -1136,7 +1284,29 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 		 * this file. If -1 is returned, a timeout has occurred, if 0 we have
+ 		 * to retry, everything >= 1 is the number of returned events.
+ 		 */
++		/*
++		 * PostgreSQL's process timer is cooperative in a trusted embedded
++		 * backend.  Bound waits on the owning latch by its nearest deadline.
++		 */
++#ifdef OLIPHAUNT_EMBEDDED
++		/* cur_timeout may have been reduced to zero by an already-set latch. */
++		block_timeout = cur_timeout;
++		if (trusted_embedded_wait)
++		{
++			long		embedded_timeout =
++				GetEmbeddedTimeoutDelayMilliseconds();
++
++			if (embedded_timeout >= 0 &&
++				(block_timeout < 0 || embedded_timeout <= block_timeout))
++			{
++				block_timeout = embedded_timeout;
++				embedded_timeout_selected = true;
++			}
++		}
++		rc = WaitEventSetWaitBlock(set, block_timeout,
++#else
+ 		rc = WaitEventSetWaitBlock(set, cur_timeout,
++#endif
+ 								   occurred_events, nevents - returned_events);
+ 
+ 		if (set->latch &&
+@@ -1144,7 +1314,16 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 			set->latch->maybe_sleeping = false;
+ 
+ 		if (rc == -1)
+-			break;				/* timeout occurred */
++		{
++#ifdef OLIPHAUNT_EMBEDDED
++			if (embedded_timeout_selected)
++			{
++				/* PostgreSQL's deadline wins ties with a caller timeout. */
++				ProcessEmbeddedTimeouts();
++				continue;
++			}
++#endif
++		}
+ 		else
+ 			returned_events += rc;
+ 
+@@ -1157,6 +1336,9 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
+ 			if (cur_timeout <= 0)
+ 				break;
+ 		}
++
++		if (rc == -1)
++			break;				/* caller timeout occurred */
+ 	}
+ #ifndef WIN32
+ 	waiting = false;
+@@ -1221,6 +1403,13 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
+ 		 returned_events < nevents;
+ 		 cur_epoll_event++)
+ 	{
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++		if (cur_epoll_event->data.ptr == NULL)
++		{
++			DrainTrustedEmbeddedWakeup();
++			continue;
++		}
++#endif
+ 		/* epoll's data pointer is set to the associated WaitEvent */
+ 		cur_event = (WaitEvent *) cur_epoll_event->data.ptr;
+ 
+@@ -1383,6 +1572,13 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
+ 		 returned_events < nevents;
+ 		 cur_kqueue_event++)
+ 	{
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++		if (AccessWaitEvent(cur_kqueue_event) == NULL)
++		{
++			DrainTrustedEmbeddedWakeup();
++			continue;
++		}
++#endif
+ 		/* kevent's udata points to the associated WaitEvent */
+ 		cur_event = AccessWaitEvent(cur_kqueue_event);
+ 
+@@ -1473,11 +1669,24 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
+ {
+ 	int			returned_events = 0;
+ 	int			rc;
++	int			poll_nevents = set->nevents;
+ 	WaitEvent  *cur_event;
+ 	struct pollfd *cur_pollfd;
+ 
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++	if (IsTrustedEmbeddedProcess())
++	{
++		struct pollfd *wakeup_pollfd = &set->pollfds[set->nevents];
++
++		wakeup_pollfd->fd = trusted_embedded_wakeup_readfd;
++		wakeup_pollfd->events = POLLIN;
++		wakeup_pollfd->revents = 0;
++		poll_nevents++;
++	}
++#endif
++
+ 	/* Sleep */
+-	rc = poll(set->pollfds, set->nevents, (int) cur_timeout);
++	rc = poll(set->pollfds, poll_nevents, (int) cur_timeout);
+ 
+ 	/* Check return code */
+ 	if (rc < 0)
+@@ -1499,6 +1708,12 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
+ 		return -1;
+ 	}
+ 
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(WIN32)
++	if (IsTrustedEmbeddedProcess() &&
++		set->pollfds[set->nevents].revents != 0)
++		DrainTrustedEmbeddedWakeup();
++#endif
++
+ 	for (cur_event = set->events, cur_pollfd = set->pollfds;
+ 		 cur_event < (set->events + set->nevents) &&
+ 		 returned_events < nevents;
+@@ -2019,6 +2234,11 @@ ResOwnerReleaseWaitEventSet(Datum res)
+ void
+ WakeupMyProc(void)
+ {
++#ifdef OLIPHAUNT_EMBEDDED
++	/* Direct host threads use the separately-published raw wake endpoint. */
++	if (IsTrustedEmbeddedProcess())
++		return;
++#endif
+ #if defined(WAIT_USE_SELF_PIPE)
+ 	if (waiting)
+ 		sendSelfPipeByte();
+@@ -2035,3 +2255,55 @@ WakeupOtherProc(int pid)
+ 	kill(pid, SIGURG);
+ }
+ #endif
++
++#ifdef OLIPHAUNT_EMBEDDED
++bool
++PublishTrustedEmbeddedWakeup(OliphauntEmbeddedIO *io)
++{
++	uint32		kind;
++	uintptr_t	token;
++
++	if (!IsTrustedEmbeddedProcess() || io == NULL ||
++		io->set_interrupt_wakeup == NULL)
++		return false;
++#ifdef WIN32
++	kind = OLIPHAUNT_EMBEDDED_WAKE_WIN32_EVENT;
++	token = (uintptr_t) pgwin32_signal_event;
++#else
++	if (trusted_embedded_wakeup_writefd < 0)
++		return false;
++	kind = OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD;
++	token = (uintptr_t) trusted_embedded_wakeup_writefd;
++#endif
++	return io->set_interrupt_wakeup(io->context, kind, token) == 0;
++}
++
++bool
++UnpublishTrustedEmbeddedWakeup(OliphauntEmbeddedIO *io)
++{
++	return io != NULL && io->set_interrupt_wakeup != NULL &&
++		io->set_interrupt_wakeup(io->context,
++								 OLIPHAUNT_EMBEDDED_WAKE_NONE, 0) == 0;
++}
++
++void
++ShutdownTrustedEmbeddedWakeup(void)
++{
++#ifdef WIN32
++	pgwin32_signal_shutdown_embedded();
++#else
++	if (trusted_embedded_wakeup_readfd >= 0)
++		(void) close(trusted_embedded_wakeup_readfd);
++	if (trusted_embedded_wakeup_writefd >= 0)
++		(void) close(trusted_embedded_wakeup_writefd);
++	trusted_embedded_wakeup_readfd = -1;
++	trusted_embedded_wakeup_writefd = -1;
++	if (trusted_embedded_wakeup_reserved)
++	{
++		ReleaseExternalFD();
++		ReleaseExternalFD();
++		trusted_embedded_wakeup_reserved = false;
++	}
++#endif
++}
++#endif
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index fd020198f3b6f7ebd122f757ed286cdac617ced1..b9718e038c89874b33ca517b10b07820224b2a5c 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4234,6 +4234,8 @@ typedef struct OliphauntEmbeddedLifecycle
+ 	bool		cwd_restore_required;
+ 	bool		proc_exit_handler_armed;
+ 	bool		entrypoint_admitted;
++	bool		wakeup_published;
++	OliphauntEmbeddedIO *io;
+ } OliphauntEmbeddedLifecycle;
+ 
+ static void
+@@ -4388,7 +4390,11 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	int			socket_error;
+ 
+ 	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
+-		username == NULL || io == NULL)
++		username == NULL || io == NULL ||
++		io->abi_version != OLIPHAUNT_EMBEDDED_IO_ABI_VERSION ||
++		io->struct_size < sizeof(*io) || io->context == NULL ||
++		io->read == NULL || io->write == NULL || io->set_timeout == NULL ||
++		io->set_interrupt_wakeup == NULL)
+ 		return -1;
+ 
+ 	lifecycle = calloc(1, sizeof(*lifecycle));
+@@ -4396,6 +4402,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 		return -1;
+ 	lifecycle->socket_pair[0] = PGINVALID_SOCKET;
+ 	lifecycle->socket_pair[1] = PGINVALID_SOCKET;
++	lifecycle->io = io;
+ #ifndef WIN32
+ 	lifecycle->original_cwd_fd = -1;
+ #endif
+@@ -4463,6 +4470,10 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 		set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("postgres"));
+ 
+ 	InitStandaloneProcess(argv[0]);
++	if (!PublishTrustedEmbeddedWakeup(io))
++		ereport(FATAL,
++				(errmsg("could not publish trusted embedded wakeup endpoint: %m")));
++	lifecycle->wakeup_published = true;
+ 	InitializeGUCOptions();
+ 	process_postgres_switches(argc, argv, PGC_POSTMASTER, &switch_dbname);
+ 
+@@ -4542,10 +4553,16 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	}
+ 
+ 	PostgresMain(dbname, username, INIT_PG_TRUSTED_CLIENT);
+-	oliphaunt_embedded_proc_exit(0);
+-	lifecycle->rc = 0;
+ 
+ embedded_cleanup:
++	if (lifecycle->wakeup_published)
++	{
++		if (!UnpublishTrustedEmbeddedWakeup(lifecycle->io))
++			lifecycle->rc = lifecycle->rc == 0 ? -1 : lifecycle->rc;
++		else
++			lifecycle->wakeup_published = false;
++	}
++
+ 	if (lifecycle->proc_exit_handler_armed &&
+ 		!oliphaunt_embedded_clear_proc_exit_handler(
+ 			oliphaunt_embedded_throw_proc_exit, lifecycle))
+@@ -4571,6 +4588,11 @@ embedded_cleanup:
+ 		FreeWaitEventSet(FeBeWaitSet);
+ 		FeBeWaitSet = NULL;
+ 	}
++	if (lifecycle->entrypoint_admitted)
++		ShutdownTrustedEmbeddedLatchSupport();
++	/* Never close a token that the host failed to forget under its mutex. */
++	if (!lifecycle->wakeup_published)
++		ShutdownTrustedEmbeddedWakeup();
+ 
+ 	if (lifecycle->socket_pair[1] != PGINVALID_SOCKET)
+ 	{
+@@ -4674,12 +4696,7 @@ PostgresMain(const char *dbname, const char *username,
+ 		 * midst of output during who-knows-what operation...
+ 		 */
+ 		pqsignal(SIGPIPE, SIG_IGN);
+-#ifndef OLIPHAUNT_EMBEDDED
+ 		pqsignal(SIGUSR1, procsignal_sigusr1_handler);
+-#else
+-		/* ProcSignal delivery is synchronous and the host owns SIGUSR1. */
+-		Assert(!IsUnderPostmaster);
+-#endif
+ 		pqsignal(SIGUSR2, SIG_IGN);
+ 		pqsignal(SIGFPE, FloatExceptionHandler);
+ 
+@@ -4695,7 +4712,12 @@ PostgresMain(const char *dbname, const char *username,
+ 	BaseInit();
+ 
+ 	/* We need to allow SIGINT, etc during the initial transaction */
+-	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++		(void) SetTrustedEmbeddedThreadSignalMask(&UnBlockSig);
++	else
++#endif
++		sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+ 
+ 	/*
+ 	 * Generate a random cancel key, if this is a backend serving a
+@@ -5438,15 +5460,10 @@ PostgresMain(const char *dbname, const char *username,
+ 				 * Whatever you had in mind to do should be set up as an
+ 				 * on_proc_exit or on_shmem_exit callback, instead. Otherwise
+ 				 * it will fail to be called during other backend-shutdown
+-				 * scenarios.  Embedded liboliphaunt owns the backend thread and
+-				 * returns here so the host can join it without terminating the
+-				 * process.
++				 * scenarios.  Trusted embedded mode intercepts proc_exit on the
++				 * owning backend thread after all ordinary callbacks have run.
+ 				 */
+-#ifdef OLIPHAUNT_EMBEDDED
+-				return;
+-#else
+ 				proc_exit(0);
+-#endif
+ 
+ 			case PqMsg_CopyData:
+ 			case PqMsg_CopyDone:
+diff --git a/src/backend/utils/init/embedded_session.c b/src/backend/utils/init/embedded_session.c
+index d5060947bed0896e777355ee05377e2c672f3d35..25b215f33a1cd89b77355ebbb36e54855b5896f0 100644
+--- a/src/backend/utils/init/embedded_session.c
++++ b/src/backend/utils/init/embedded_session.c
+@@ -20,7 +20,11 @@
+ #include "port/atomics.h"
+ #include "replication/walsender.h"
+ #include "storage/aio.h"
++#include "storage/latch.h"
++#include "storage/waiteventset.h"
++#include "tcop/tcopprot.h"
+ #include "utils/guc.h"
++#include "utils/timeout.h"
+ 
+ typedef enum TrustedEmbeddedSessionLifecycle
+ {
+@@ -34,17 +38,67 @@ typedef enum TrustedEmbeddedSessionLifecycle
+  * deliberately not an active user session: PostgreSQL startup still owns the
+  * decision to attach the trusted client at the catalog-safe point.
+  */
+-static pg_atomic_uint32 trusted_embedded_session_lifecycle = {0};
++pg_atomic_uint32 TrustedEmbeddedLifecycleState = {0};
++pg_atomic_uint32 TrustedEmbeddedInterruptRequests = {0};
+ 
+ bool
+ PrepareTrustedEmbeddedSession(void)
+ {
+ 	uint32		expected = TRUSTED_EMBEDDED_SESSION_UNSELECTED;
+ 
+-	return pg_atomic_compare_exchange_u32(
+-		&trusted_embedded_session_lifecycle,
+-		&expected,
+-		TRUSTED_EMBEDDED_SESSION_PREPARED);
++	if (!pg_atomic_compare_exchange_u32(
++			&TrustedEmbeddedLifecycleState,
++			&expected,
++			TRUSTED_EMBEDDED_SESSION_PREPARED))
++		return false;
++	pg_atomic_write_u32(&TrustedEmbeddedInterruptRequests, 0);
++	return true;
++}
++
++/*
++ * Host-thread entrypoint.  Do not touch PostgreSQL's signal-style globals or
++ * Latch fields here: neither is a C thread-atomic interface.  The atomic
++ * mailbox coalesces repeated requests and the provider wake only makes the
++ * backend thread runnable.
++ */
++void
++RequestTrustedEmbeddedQueryCancel(void)
++{
++	pg_atomic_fetch_or_u32(&TrustedEmbeddedInterruptRequests,
++						   TRUSTED_EMBEDDED_INTERRUPT_CANCEL);
++}
++
++/* Host-thread request to recheck PostgreSQL's current cooperative deadline. */
++void
++RequestTrustedEmbeddedTimeoutCheck(void)
++{
++	pg_atomic_fetch_or_u32(&TrustedEmbeddedInterruptRequests,
++						   TRUSTED_EMBEDDED_INTERRUPT_TIMEOUT_RECHECK);
++}
++
++bool
++TrustedEmbeddedInterruptPending(void)
++{
++	return IsTrustedEmbeddedProcess() &&
++		pg_atomic_read_u32(&TrustedEmbeddedInterruptRequests) != 0;
++}
++
++/*
++ * Backend-thread interrupt ingress.  This is deliberately safe before
++ * attachment so cancellation during startup retains the previous public ABI
++ * behavior.  Cooperative timeout handlers run on this same owning thread.
++ */
++void
++ProcessTrustedEmbeddedInterrupts(void)
++{
++	uint32		requests = pg_atomic_exchange_u32(
++		&TrustedEmbeddedInterruptRequests, 0);
++
++	if ((requests & TRUSTED_EMBEDDED_INTERRUPT_CANCEL) != 0)
++		StatementCancelHandler(SIGINT);
++
++	if ((requests & TRUSTED_EMBEDDED_INTERRUPT_TIMEOUT_RECHECK) != 0)
++		ProcessEmbeddedTimeouts();
+ }
+ 
+ static bool
+@@ -61,7 +115,15 @@ trusted_embedded_settings_are_safe(void)
+ void
+ ConfigurePreparedTrustedEmbeddedSession(void)
+ {
+-	if (pg_atomic_read_u32(&trusted_embedded_session_lifecycle) !=
++	static const char *const unsupported_commands[] = {
++		"archive_command",
++		"restore_command",
++		"archive_cleanup_command",
++		"recovery_end_command",
++	};
++	int			command_index;
++
++	if (pg_atomic_read_u32(&TrustedEmbeddedLifecycleState) !=
+ 		TRUSTED_EMBEDDED_SESSION_PREPARED)
+ 		ereport(FATAL,
+ 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+@@ -83,6 +145,20 @@ ConfigurePreparedTrustedEmbeddedSession(void)
+ 					PGC_S_OVERRIDE);
+ 	SetConfigOption("max_wal_senders", "0", PGC_POSTMASTER, PGC_S_OVERRIDE);
+ 
++	for (command_index = 0;
++		 command_index < lengthof(unsupported_commands);
++		 command_index++)
++	{
++		const char *value = GetConfigOption(unsupported_commands[command_index],
++										true, false);
++
++		if (value != NULL && value[0] != '\0')
++			ereport(FATAL,
++					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++					 errmsg("%s is not supported in a trusted embedded session",
++							unsupported_commands[command_index])));
++	}
++
+ 	if (!trusted_embedded_settings_are_safe())
+ 		ereport(FATAL,
+ 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+@@ -97,15 +173,22 @@ AttachPreparedTrustedEmbeddedSession(void)
+ 	if (!trusted_embedded_settings_are_safe())
+ 		return false;
+ 	return pg_atomic_compare_exchange_u32(
+-		&trusted_embedded_session_lifecycle,
++		&TrustedEmbeddedLifecycleState,
+ 		&expected,
+ 		TRUSTED_EMBEDDED_SESSION_ATTACHED);
+ }
+ 
++bool
++IsTrustedEmbeddedProcess(void)
++{
++	return pg_atomic_read_u32(&TrustedEmbeddedLifecycleState) !=
++		TRUSTED_EMBEDDED_SESSION_UNSELECTED;
++}
++
+ bool
+ IsTrustedEmbeddedSession(void)
+ {
+-	return pg_atomic_read_u32(&trusted_embedded_session_lifecycle) ==
++	return pg_atomic_read_u32(&TrustedEmbeddedLifecycleState) ==
+ 		TRUSTED_EMBEDDED_SESSION_ATTACHED;
+ }
+ 
+diff --git a/src/backend/utils/init/miscinit.c b/src/backend/utils/init/miscinit.c
+index 2000cc1487519196e6a8b7b1a22764938332325d..0132a33bf7c36d36821640262a3ebb2d07fd9016 100644
+--- a/src/backend/utils/init/miscinit.c
++++ b/src/backend/utils/init/miscinit.c
+@@ -40,6 +40,9 @@
+ #include "postmaster/autovacuum.h"
+ #include "postmaster/interrupt.h"
+ #include "postmaster/postmaster.h"
++#ifndef WIN32
++#include "port/pg_pthread.h"
++#endif
+ #include "replication/slotsync.h"
+ #include "storage/fd.h"
+ #include "storage/ipc.h"
+@@ -68,6 +71,50 @@ static List *lock_files = NIL;
+ 
+ static Latch LocalLatchData;
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++/*
++ * Preserve the mask inherited from the embedding thread.  PostgreSQL later
++ * restores UnBlockSig after startup and transaction error recovery, so all
++ * three masks must describe the host state rather than PostgreSQL's normal
++ * standalone signal policy.
++ */
++static void
++InitializeTrustedEmbeddedSignalMasks(void)
++{
++	int			rc;
++
++#ifdef WIN32
++	rc = sigprocmask(SIG_SETMASK, NULL, &UnBlockSig);
++#else
++	rc = pthread_sigmask(SIG_SETMASK, NULL, &UnBlockSig);
++#endif
++	if (rc != 0)
++	{
++		errno = rc;
++		elog(FATAL, "could not read trusted embedded thread signal mask: %m");
++	}
++	memcpy(&BlockSig, &UnBlockSig, sizeof(sigset_t));
++	memcpy(&StartupBlockSig, &UnBlockSig, sizeof(sigset_t));
++}
++
++/*
++ * sigprocmask() is unspecified once the host process is multithreaded.  Keep
++ * PostgreSQL's normal process-oriented path unchanged, but use the POSIX
++ * thread API whenever Direct restores its inherited embedding-thread mask.
++ */
++int
++SetTrustedEmbeddedThreadSignalMask(const sigset_t *mask)
++{
++	Assert(IsTrustedEmbeddedProcess());
++
++#ifdef WIN32
++	return sigprocmask(SIG_SETMASK, mask, NULL);
++#else
++	return pthread_sigmask(SIG_SETMASK, mask, NULL);
++#endif
++}
++#endif
++
+ /* ----------------------------------------------------------------
+  *		ignoring system indexes support stuff
+  *
+@@ -182,7 +229,12 @@ InitStandaloneProcess(const char *argv0)
+ 	 * Start our win32 signal implementation
+ 	 */
+ #ifdef WIN32
+-	pgwin32_signal_initialize();
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++		pgwin32_signal_initialize_embedded();
++	else
++#endif
++		pgwin32_signal_initialize();
+ #endif
+ 
+ 	InitProcessGlobals();
+@@ -196,8 +248,15 @@ InitStandaloneProcess(const char *argv0)
+ 	 * For consistency with InitPostmasterChild, initialize signal mask here.
+ 	 * But we don't unblock SIGQUIT or provide a default handler for it.
+ 	 */
+-	pqinitmask();
+-	sigprocmask(SIG_SETMASK, &BlockSig, NULL);
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++		InitializeTrustedEmbeddedSignalMasks();
++	else
++#endif
++	{
++		pqinitmask();
++		sigprocmask(SIG_SETMASK, &BlockSig, NULL);
++	}
+ 
+ 	/* Compute paths, no postmaster to inherit from */
+ 	if (my_exec_path[0] == '\0')
+@@ -238,6 +297,25 @@ InitProcessLocalLatch(void)
+ 	InitLatch(MyLatch);
+ }
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++/* Release process-lifetime latch state before Direct returns to its host. */
++void
++ShutdownTrustedEmbeddedLatchSupport(void)
++{
++	Assert(IsTrustedEmbeddedProcess());
++
++	ShutdownTrustedEmbeddedLatchWaitSet();
++#ifdef WIN32
++	if (LocalLatchData.event != NULL)
++	{
++		(void) CloseHandle(LocalLatchData.event);
++		LocalLatchData.event = NULL;
++	}
++#endif
++	MyLatch = NULL;
++}
++#endif
++
+ void
+ SwitchBackToLocalLatch(void)
+ {
+diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
+index 497ce5e507bbf8ed18172d566c9c3733dc41868b..5a2fe0adf18c8140a5775f3c14c018c0004a1c68 100644
+--- a/src/backend/utils/init/postinit.c
++++ b/src/backend/utils/init/postinit.c
+@@ -1390,6 +1390,16 @@ ShutdownPostgres(int code, Datum arg)
+ static void
+ StatementTimeoutHandler(void)
+ {
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++	{
++		if (ClientAuthInProgress)
++			die(SIGTERM);
++		else
++			StatementCancelHandler(SIGINT);
++		return;
++	}
++#endif
+ 	int			sig = SIGINT;
+ 
+ 	/*
+@@ -1412,6 +1422,13 @@ StatementTimeoutHandler(void)
+ static void
+ LockTimeoutHandler(void)
+ {
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++	{
++		StatementCancelHandler(SIGINT);
++		return;
++	}
++#endif
+ #ifdef HAVE_SETSID
+ 	/* try to signal whole process group */
+ 	kill(-MyProcPid, SIGINT);
+diff --git a/src/backend/utils/misc/timeout.c b/src/backend/utils/misc/timeout.c
+index d92efa12550ae09df03c50829d5f6428dcb4f6f8..17b7582a072904a2cec0d0305f9aaa9fddbf8e31 100644
+--- a/src/backend/utils/misc/timeout.c
++++ b/src/backend/utils/misc/timeout.c
+@@ -16,6 +16,9 @@
+ 
+ #include <sys/time.h>
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++#include "libpq/libpq-be.h"
++#endif
+ #include "miscadmin.h"
+ #include "storage/latch.h"
+ #include "utils/timeout.h"
+@@ -209,6 +212,46 @@ enable_timeout(TimeoutId id, TimestampTz now, TimestampTz fin_time,
+ static void
+ schedule_alarm(TimestampTz now)
+ {
++#ifdef OLIPHAUNT_EMBEDDED
++	if (IsTrustedEmbeddedProcess())
++	{
++		long		timeout_ms = -1;
++		OliphauntEmbeddedIO *io =
++			MyProcPort != NULL ? MyProcPort->oliphaunt_io : NULL;
++
++		/*
++		 * The host owns SIGALRM and ITIMER_REAL only for the selected Direct
++		 * entrypoint.  Retain PostgreSQL's ordered deadline queue, but publish
++		 * the nearest relative deadline to its private host I/O provider.
++		 */
++		if (num_active_timeouts > 0)
++		{
++			TimestampTz nearest_timeout = active_timeouts[0]->fin_time;
++
++			enable_alarm();
++			/* Reuse an already-published wake that is early enough. */
++			if (signal_pending && nearest_timeout >= signal_due_at)
++				return;
++			timeout_ms = TimestampDifferenceMilliseconds(now, nearest_timeout);
++			if (io == NULL || io->set_timeout == NULL ||
++				io->set_timeout(io->context, timeout_ms) != 0)
++				elog(FATAL, "could not publish trusted embedded timeout: %m");
++			signal_due_at = nearest_timeout;
++			signal_pending = true;
++		}
++		else
++		{
++			disable_alarm();
++			/* Preserve upstream's lazy arm/disarm behavior. */
++			if (signal_pending)
++				return;
++			if (io == NULL || io->set_timeout == NULL ||
++				io->set_timeout(io->context, -1) != 0)
++				elog(FATAL, "could not disarm trusted embedded timeout: %m");
++		}
++		return;
++	}
++#endif
+ 	if (num_active_timeouts > 0)
+ 	{
+ 		struct itimerval timeval;
+@@ -350,6 +393,42 @@ schedule_alarm(TimestampTz now)
+ }
+ 
+ 
++/* Process every timeout due at or before now, preserving priority order. */
++static void
++process_expired_timeouts(TimestampTz now)
++{
++	while (num_active_timeouts > 0 &&
++		   now >= active_timeouts[0]->fin_time)
++	{
++		timeout_params *this_timeout = active_timeouts[0];
++
++		remove_timeout_index(0);
++		this_timeout->indicator = true;
++		this_timeout->timeout_handler();
++
++		if (this_timeout->interval_in_ms > 0)
++		{
++			TimestampTz new_fin_time;
++
++			new_fin_time =
++				TimestampTzPlusMilliseconds(this_timeout->fin_time,
++										this_timeout->interval_in_ms);
++			if (new_fin_time < now)
++				new_fin_time =
++					TimestampTzPlusMilliseconds(now,
++										this_timeout->interval_in_ms);
++			enable_timeout(this_timeout->index, now, new_fin_time,
++						   this_timeout->interval_in_ms);
++		}
++
++		/* A timeout handler such as deadlock detection need not be cheap. */
++		now = GetCurrentTimestamp();
++	}
++
++	schedule_alarm(now);
++}
++
++
+ /*****************************************************************************
+  * Signal handler
+  *****************************************************************************/
+@@ -395,58 +474,7 @@ handle_sig_alarm(SIGNAL_ARGS)
+ 		disable_alarm();
+ 
+ 		if (num_active_timeouts > 0)
+-		{
+-			TimestampTz now = GetCurrentTimestamp();
+-
+-			/* While the first pending timeout has been reached ... */
+-			while (num_active_timeouts > 0 &&
+-				   now >= active_timeouts[0]->fin_time)
+-			{
+-				timeout_params *this_timeout = active_timeouts[0];
+-
+-				/* Remove it from the active list */
+-				remove_timeout_index(0);
+-
+-				/* Mark it as fired */
+-				this_timeout->indicator = true;
+-
+-				/* And call its handler function */
+-				this_timeout->timeout_handler();
+-
+-				/* If it should fire repeatedly, re-enable it. */
+-				if (this_timeout->interval_in_ms > 0)
+-				{
+-					TimestampTz new_fin_time;
+-
+-					/*
+-					 * To guard against drift, schedule the next instance of
+-					 * the timeout based on the intended firing time rather
+-					 * than the actual firing time. But if the timeout was so
+-					 * late that we missed an entire cycle, fall back to
+-					 * scheduling based on the actual firing time.
+-					 */
+-					new_fin_time =
+-						TimestampTzPlusMilliseconds(this_timeout->fin_time,
+-													this_timeout->interval_in_ms);
+-					if (new_fin_time < now)
+-						new_fin_time =
+-							TimestampTzPlusMilliseconds(now,
+-														this_timeout->interval_in_ms);
+-					enable_timeout(this_timeout->index, now, new_fin_time,
+-								   this_timeout->interval_in_ms);
+-				}
+-
+-				/*
+-				 * The handler might not take negligible time (CheckDeadLock
+-				 * for instance isn't too cheap), so let's update our idea of
+-				 * "now" after each one.
+-				 */
+-				now = GetCurrentTimestamp();
+-			}
+-
+-			/* Done firing timeouts, so reschedule next interrupt if any */
+-			schedule_alarm(now);
+-		}
++			process_expired_timeouts(GetCurrentTimestamp());
+ 	}
+ 
+ 	RESUME_INTERRUPTS();
+@@ -489,9 +517,67 @@ InitializeTimeouts(void)
+ 
+ 	all_timeouts_initialized = true;
+ 
+-	/* Now establish the signal handler */
+-	pqsignal(SIGALRM, handle_sig_alarm);
++	/* Only the selected Direct entrypoint leaves the host's SIGALRM untouched. */
++#ifdef OLIPHAUNT_EMBEDDED
++	if (!IsTrustedEmbeddedProcess())
++#endif
++		pqsignal(SIGALRM, handle_sig_alarm);
++}
++
++#ifdef OLIPHAUNT_EMBEDDED
++/*
++ * Return the rounded-up delay to the nearest PostgreSQL timeout, or -1 if
++ * there is none.  This is suitable for WaitLatch and host condition waits.
++ */
++long
++GetEmbeddedTimeoutDelayMilliseconds(void)
++{
++	if (!IsTrustedEmbeddedProcess() || !all_timeouts_initialized || !alarm_enabled ||
++		num_active_timeouts == 0)
++		return -1;
++
++	return TimestampDifferenceMilliseconds(GetCurrentTimestamp(),
++									   active_timeouts[0]->fin_time);
++}
++
++/* Fire due timeouts synchronously on the backend's owning thread. */
++void
++ProcessEmbeddedTimeouts(void)
++{
++	TimestampTz now;
++	int			save_errno;
++
++	if (!IsTrustedEmbeddedProcess() || !all_timeouts_initialized)
++		return;
++
++	save_errno = errno;
++	now = GetCurrentTimestamp();
++	/* The provider wake is one-shot, even when its deadline became stale. */
++	signal_pending = false;
++	if (!alarm_enabled || num_active_timeouts == 0)
++	{
++		schedule_alarm(now);
++		errno = save_errno;
++		return;
++	}
++	if (now < active_timeouts[0]->fin_time)
++	{
++		/* A rounded or stale host expiry must republish the current deadline. */
++		schedule_alarm(now);
++		errno = save_errno;
++		return;
++	}
++
++	HOLD_INTERRUPTS();
++	if (MyLatch != NULL)
++		SetLatch(MyLatch);
++	signal_pending = false;
++	disable_alarm();
++	process_expired_timeouts(now);
++	RESUME_INTERRUPTS();
++	errno = save_errno;
+ }
++#endif
+ 
+ /*
+  * Register a timeout reason
+diff --git a/src/include/libpq/libpq-be.h b/src/include/libpq/libpq-be.h
+index e415b277a54aa29e190b1146218e12e89c591561..dcbdfa165b494fe940793cbdb44e03a7126cc43d 100644
+--- a/src/include/libpq/libpq-be.h
++++ b/src/include/libpq/libpq-be.h
+@@ -106,11 +106,23 @@ typedef struct ClientConnectionInfo
+ } ClientConnectionInfo;
+ 
+ #ifdef OLIPHAUNT_EMBEDDED
++#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 1U
++
++#define OLIPHAUNT_EMBEDDED_WAKE_NONE 0U
++#define OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD 1U
++#define OLIPHAUNT_EMBEDDED_WAKE_WIN32_EVENT 2U
++
+ typedef struct OliphauntEmbeddedIO
+ {
++	uint32		abi_version;
++	uint32		struct_size;
+ 	void	   *context;
+-	ssize_t		(*read) (void *context, void *ptr, size_t len);
++	ssize_t		(*read) (void *context, void *ptr, size_t len,
++						 long timeout_ms);
+ 	ssize_t		(*write) (void *context, const void *ptr, size_t len);
++	int			(*set_timeout) (void *context, long timeout_ms);
++	int			(*set_interrupt_wakeup) (void *context, uint32 kind,
++											 uintptr_t token);
+ } OliphauntEmbeddedIO;
+ #endif
+ 
+diff --git a/src/include/libpq/libpq.h b/src/include/libpq/libpq.h
+index aeb66ca40cf38da9f78feb66a80521323e90753b..8a9fb0b880bcc170ab849ef40b52ce086a7621ff 100644
+--- a/src/include/libpq/libpq.h
++++ b/src/include/libpq/libpq.h
+@@ -77,6 +77,10 @@ extern void pq_endmsgread(void);
+ extern bool pq_is_reading_msg(void);
+ extern int	pq_getmessage(StringInfo s, int maxlen);
+ extern int	pq_getbyte(void);
++#ifdef OLIPHAUNT_EMBEDDED
++#define PQ_READ_INTERRUPTED (-2)
++extern int	pq_getbyte_interruptible(void);
++#endif
+ extern int	pq_peekbyte(void);
+ extern int	pq_getbyte_if_available(unsigned char *c);
+ extern ssize_t pq_buffer_remaining_data(void);
+diff --git a/src/include/miscadmin.h b/src/include/miscadmin.h
+index addc3469b0ef6a0dc8254dfa8c0433bc714f8956..34bc20224b4ad1c8cff8007dfe29163ebc3589e0 100644
+--- a/src/include/miscadmin.h
++++ b/src/include/miscadmin.h
+@@ -27,6 +27,9 @@
+ 
+ #include "datatype/timestamp.h" /* for TimestampTz */
+ #include "pgtime.h"				/* for pg_time_t */
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
++#include "port/atomics.h"
++#endif
+ 
+ 
+ #define InvalidPid				(-1)
+@@ -109,7 +112,30 @@ extern PGDLLIMPORT volatile uint32 CritSectionCount;
+ extern void ProcessInterrupts(void);
+ 
+ /* Test whether an interrupt is pending */
+-#ifndef WIN32
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
++#define TRUSTED_EMBEDDED_INTERRUPT_CANCEL		(1U << 0)
++#define TRUSTED_EMBEDDED_INTERRUPT_TIMEOUT_RECHECK	(1U << 1)
++extern PGDLLIMPORT pg_atomic_uint32 TrustedEmbeddedLifecycleState;
++extern PGDLLIMPORT pg_atomic_uint32 TrustedEmbeddedInterruptRequests;
++
++#define TRUSTED_EMBEDDED_PROCESS_SELECTED() \
++	(unlikely(pg_atomic_read_u32( \
++		&TrustedEmbeddedLifecycleState) != 0))
++#define TRUSTED_EMBEDDED_INTERRUPT_PENDING() \
++	(unlikely(pg_atomic_read_u32( \
++		&TrustedEmbeddedInterruptRequests) != 0))
++#ifdef WIN32
++#define INTERRUPTS_PENDING_CONDITION() \
++	(TRUSTED_EMBEDDED_PROCESS_SELECTED() ? \
++	 (unlikely(InterruptPending) || TRUSTED_EMBEDDED_INTERRUPT_PENDING()) : \
++	 (unlikely(UNBLOCKED_SIGNAL_QUEUE()) ? \
++	  pgwin32_dispatch_queued_signals() : (void) 0, \
++	  unlikely(InterruptPending)))
++#else
++#define INTERRUPTS_PENDING_CONDITION() \
++	(unlikely(InterruptPending) || TRUSTED_EMBEDDED_INTERRUPT_PENDING())
++#endif
++#elif !defined(WIN32)
+ #define INTERRUPTS_PENDING_CONDITION() \
+ 	(unlikely(InterruptPending))
+ #else
+@@ -120,11 +146,24 @@ extern void ProcessInterrupts(void);
+ #endif
+ 
+ /* Service interrupt, if one is pending and it's safe to service it now */
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
++#define CHECK_FOR_INTERRUPTS() \
++do { \
++	if (INTERRUPTS_PENDING_CONDITION()) \
++	{ \
++		if (IsTrustedEmbeddedProcess()) \
++			ProcessTrustedEmbeddedInterrupts(); \
++		if (unlikely(InterruptPending)) \
++			ProcessInterrupts(); \
++	} \
++} while(0)
++#else
+ #define CHECK_FOR_INTERRUPTS() \
+ do { \
+ 	if (INTERRUPTS_PENDING_CONDITION()) \
+ 		ProcessInterrupts(); \
+ } while(0)
++#endif
+ 
+ /* Is ProcessInterrupts() guaranteed to clear InterruptPending? */
+ #define INTERRUPTS_CAN_BE_PROCESSED() \
+@@ -168,12 +207,23 @@ extern PGDLLIMPORT bool IsPostmasterEnvironment;
+ extern PGDLLIMPORT bool IsUnderPostmaster;
+ extern PGDLLIMPORT bool IsBinaryUpgrade;
+ 
+-#ifdef OLIPHAUNT_EMBEDDED
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
+ extern bool PrepareTrustedEmbeddedSession(void);
+ extern void ConfigurePreparedTrustedEmbeddedSession(void);
+ extern bool AttachPreparedTrustedEmbeddedSession(void);
++extern bool IsTrustedEmbeddedProcess(void);
+ extern bool IsTrustedEmbeddedSession(void);
++extern void RequestTrustedEmbeddedQueryCancel(void);
++extern void RequestTrustedEmbeddedTimeoutCheck(void);
++extern bool TrustedEmbeddedInterruptPending(void);
++extern void ProcessTrustedEmbeddedInterrupts(void);
+ #else
++static inline bool
++IsTrustedEmbeddedProcess(void)
++{
++	return false;
++}
++
+ static inline bool
+ IsTrustedEmbeddedSession(void)
+ {
+@@ -351,6 +401,10 @@ extern void InitStandaloneProcess(const char *argv0);
+ extern void InitProcessLocalLatch(void);
+ extern void SwitchToSharedLatch(void);
+ extern void SwitchBackToLocalLatch(void);
++#ifdef OLIPHAUNT_EMBEDDED
++extern void ShutdownTrustedEmbeddedLatchSupport(void);
++extern int SetTrustedEmbeddedThreadSignalMask(const sigset_t *mask);
++#endif
+ 
+ /*
+  * MyBackendType indicates what kind of a backend this is.
+diff --git a/src/include/port/win32_port.h b/src/include/port/win32_port.h
+index 14f97815f810929b7481b06393bf0d0c23479837..3f6892ddd658ddf04e739254c1c97779e367683f 100644
+--- a/src/include/port/win32_port.h
++++ b/src/include/port/win32_port.h
+@@ -482,6 +482,8 @@ extern PGDLLIMPORT HANDLE pgwin32_initial_signal_pipe;
+ #define PG_SIGNAL_COUNT 32
+ 
+ extern void pgwin32_signal_initialize(void);
++extern void pgwin32_signal_initialize_embedded(void);
++extern void pgwin32_signal_shutdown_embedded(void);
+ extern HANDLE pgwin32_create_signal_listener(pid_t pid);
+ extern void pgwin32_dispatch_queued_signals(void);
+ extern void pg_queue_signal(int signum);
+diff --git a/src/include/storage/ipc.h b/src/include/storage/ipc.h
+index 395a73a10d7fa06948ade74b7f0b81990bbe9391..8fc338bb5235df4f07904b728570a6ae05604fa0 100644
+--- a/src/include/storage/ipc.h
++++ b/src/include/storage/ipc.h
+@@ -69,7 +69,6 @@ pg_noreturn extern void proc_exit(int code);
+ extern void shmem_exit(int code);
+ #ifdef OLIPHAUNT_EMBEDDED
+ typedef void (*oliphaunt_embedded_proc_exit_handler) (int code, void *context);
+-extern void oliphaunt_embedded_proc_exit(int code);
+ extern bool oliphaunt_embedded_install_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
+ 												  void *context);
+ extern bool oliphaunt_embedded_clear_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
+diff --git a/src/include/storage/latch.h b/src/include/storage/latch.h
+index e41dc70785afe78ea5effd7509d848e5106d5041..3c13e7b3fc35d2acbd3973a0796a206a93e1e3f6 100644
+--- a/src/include/storage/latch.h
++++ b/src/include/storage/latch.h
+@@ -134,7 +134,10 @@ extern void ResetLatch(Latch *latch);
+ extern int	WaitLatch(Latch *latch, int wakeEvents, long timeout,
+ 					  uint32 wait_event_info);
+ extern int	WaitLatchOrSocket(Latch *latch, int wakeEvents,
+-							  pgsocket sock, long timeout, uint32 wait_event_info);
++								  pgsocket sock, long timeout, uint32 wait_event_info);
+ extern void InitializeLatchWaitSet(void);
++#ifdef OLIPHAUNT_EMBEDDED
++extern void ShutdownTrustedEmbeddedLatchWaitSet(void);
++#endif
+ 
+ #endif							/* LATCH_H */
+diff --git a/src/include/storage/waiteventset.h b/src/include/storage/waiteventset.h
+index dd514d5299104e800ca09ea8f1b2cecc15a77671..2e62c7ec3473e1fe85d5b070cfc9978449a0cf28 100644
+--- a/src/include/storage/waiteventset.h
++++ b/src/include/storage/waiteventset.h
+@@ -71,6 +71,9 @@ typedef struct WaitEvent
+ typedef struct WaitEventSet WaitEventSet;
+ 
+ struct Latch;
++#ifdef OLIPHAUNT_EMBEDDED
++struct OliphauntEmbeddedIO;
++#endif
+ 
+ /*
+  * prototypes for functions in waiteventset.c
+@@ -94,5 +97,10 @@ extern bool WaitEventSetCanReportClosed(void);
+ extern void WakeupMyProc(void);
+ extern void WakeupOtherProc(int pid);
+ #endif
++#ifdef OLIPHAUNT_EMBEDDED
++extern bool PublishTrustedEmbeddedWakeup(struct OliphauntEmbeddedIO *io);
++extern bool UnpublishTrustedEmbeddedWakeup(struct OliphauntEmbeddedIO *io);
++extern void ShutdownTrustedEmbeddedWakeup(void);
++#endif
+ 
+ #endif							/* WAITEVENTSET_H */
+diff --git a/src/include/tcop/tcopprot.h b/src/include/tcop/tcopprot.h
+index 69164e11425bcde5388e22d1434ba576eb421da0..92c5eecfb90334fe29ceeb03c786294c4af64d4d 100644
+--- a/src/include/tcop/tcopprot.h
++++ b/src/include/tcop/tcopprot.h
+@@ -81,20 +81,14 @@ extern void process_postgres_switches(int argc, char *argv[],
+ #ifdef OLIPHAUNT_EMBEDDED
+ typedef struct OliphauntEmbeddedIO OliphauntEmbeddedIO;
+ extern int	oliphaunt_embedded_main(int argc, char *argv[],
+-							 const char *dbname, const char *username,
+-							 OliphauntEmbeddedIO *io);
+-extern void PostgresSingleUserMain(int argc, char *argv[],
+-								   const char *username);
+-extern void PostgresMain(const char *dbname,
+-						 const char *username,
+-						 bits32 init_postgres_flags);
+-#else
++								 const char *dbname, const char *username,
++								 OliphauntEmbeddedIO *io);
++#endif
+ pg_noreturn extern void PostgresSingleUserMain(int argc, char *argv[],
+ 											   const char *username);
+ pg_noreturn extern void PostgresMain(const char *dbname,
+ 									 const char *username,
+ 									 bits32 init_postgres_flags);
+-#endif
+ extern void ResetUsage(void);
+ extern void ShowUsage(const char *title);
+ extern int	check_log_duration(char *msec_str, bool was_logged);
+diff --git a/src/include/utils/timeout.h b/src/include/utils/timeout.h
+index 7b19beafdc950488349d09ed0e906e31d61e696c..45719dcd2980184744bf8be897108ebdd69b501c 100644
+--- a/src/include/utils/timeout.h
++++ b/src/include/utils/timeout.h
+@@ -87,6 +87,11 @@ extern void disable_timeout(TimeoutId id, bool keep_indicator);
+ extern void disable_timeouts(const DisableTimeoutParams *timeouts, int count);
+ extern void disable_all_timeouts(bool keep_indicators);
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++extern void ProcessEmbeddedTimeouts(void);
++extern long GetEmbeddedTimeoutDelayMilliseconds(void);
++#endif
++
+ /* accessors */
+ extern bool get_timeout_active(TimeoutId id);
+ extern bool get_timeout_indicator(TimeoutId id, bool reset_indicator);
+diff --git a/src/port/pqsignal.c b/src/port/pqsignal.c
+index 146d085906352e179a416d6eefa52300270d39aa..1aa8451f7050096c22ad776e63e1d40dc8d10cae 100644
+--- a/src/port/pqsignal.c
++++ b/src/port/pqsignal.c
+@@ -73,13 +73,15 @@ static volatile pqsigfunc pqsignal_handlers[PG_NSIG];
+ 
+ #if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
+ /*
+- * Embedded backends may use the ordinary signal APIs for non-host signals.
+- * Reject SIGUSR1, and bypass the port.h macros when delegating everything else.
++ * A trusted embedded backend shares its process with the host application.
++ * Signal delivery is therefore a host-owned capability, not a PostgreSQL
++ * process-control primitive.  Signal zero remains useful for liveness checks
++ * because it performs no delivery and changes no host process state.
+  */
+ int
+ oliphaunt_embedded_kill(pid_t pid, int signo)
+ {
+-	if (signo == SIGUSR1)
++	if (IsTrustedEmbeddedProcess() && signo != 0)
+ 	{
+ 		errno = EPERM;
+ 		return -1;
+@@ -95,8 +97,9 @@ oliphaunt_embedded_kill(pid_t pid, int signo)
+ int
+ oliphaunt_embedded_raise(int signo)
+ {
+-	if (signo == SIGUSR1)
++	if (IsTrustedEmbeddedProcess())
+ 	{
++		(void) signo;
+ 		errno = EPERM;
+ 		return -1;
+ 	}
+@@ -164,7 +167,8 @@ pqsignal(int signo, pqsigfunc func)
+ 	Assert(signo < PG_NSIG);
+ 
+ #if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
+-	if (signo == SIGUSR1)
++	/* The embedding provider owns every process-wide signal disposition. */
++	if (IsTrustedEmbeddedProcess())
+ 		return;
+ #endif
+ 

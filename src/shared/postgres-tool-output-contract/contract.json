@@ -1,0 +1,8 @@
+{
+  "schema": "oliphaunt-postgres-tool-output-contract-v1",
+  "capturedOutputLimitBytes": 67108864,
+  "scope": "stdout-and-stderr-aggregate-per-process",
+  "belowLimit": "preserve-exact-bytes",
+  "overflow": "fail-closed-without-returning-partial-output",
+  "streamingEscapeHatch": "required-for-larger-valid-output"
+}

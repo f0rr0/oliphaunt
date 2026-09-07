@@ -76,6 +76,8 @@ const RELEASE_ASSET_BUNDLE_DIR: &str = "target/oliphaunt-wasix/release-assets";
 const LEGACY_STATIC_WASI_ARCHIVE: &str = concat!("assets/", "oliphaunt-", "wasi.tar.zst");
 const RUST_HOST_REQUIRED_RUNTIME_EXPORTS: &[&str] = &[
     "_start",
+    "oliphaunt_wasix_prepare_trusted_embedded_session",
+    "oliphaunt_wasix_startup_outcome_v1",
     "oliphaunt_wasix_set_active",
     "oliphaunt_wasix_start",
     "oliphaunt_wasix_get_proc_port",
@@ -85,7 +87,6 @@ const RUST_HOST_REQUIRED_RUNTIME_EXPORTS: &[&str] = &[
     "pq_buffer_remaining_data",
     "PostgresMainLoopOnce",
     "PostgresSendReadyForQueryIfNecessary",
-    "PostgresMainLongJmp",
     "oliphaunt_wasix_protocol_stream_active",
     "oliphaunt_wasix_input_reset",
     "oliphaunt_wasix_input_reserve",
@@ -94,19 +95,15 @@ const RUST_HOST_REQUIRED_RUNTIME_EXPORTS: &[&str] = &[
     "oliphaunt_wasix_output_reset",
     "oliphaunt_wasix_output_len",
     "oliphaunt_wasix_output_data",
-    "oliphaunt_wasix_output_contains_error",
 ];
 const RUST_HOST_OPTIONAL_RUNTIME_EXPORTS: &[&str] = &[
-    "oliphaunt_wasix_set_force_host_error_recovery",
     "oliphaunt_wasix_run_atexit_funcs",
-    "oliphaunt_wasix_set_protocol_transport",
-];
-const RUNTIME_EXPORT_LIST_COMPAT_EXPORTS: &[&str] = &[
-    "oliphaunt_wasix_set_force_host_error_recovery",
     "oliphaunt_wasix_set_protocol_transport",
 ];
 const REQUIRED_RUNTIME_ABI_EXPORTS: &[&str] = &[
     "_start",
+    "oliphaunt_wasix_prepare_trusted_embedded_session",
+    "oliphaunt_wasix_startup_outcome_v1",
     "oliphaunt_wasix_set_active",
     "oliphaunt_wasix_start",
     "oliphaunt_wasix_get_proc_port",
@@ -116,8 +113,6 @@ const REQUIRED_RUNTIME_ABI_EXPORTS: &[&str] = &[
     "pq_buffer_remaining_data",
     "PostgresMainLoopOnce",
     "PostgresSendReadyForQueryIfNecessary",
-    "PostgresMainLongJmp",
-    "oliphaunt_wasix_set_force_host_error_recovery",
     "oliphaunt_wasix_protocol_stream_active",
     "oliphaunt_wasix_input_reset",
     "oliphaunt_wasix_input_reserve",
@@ -127,6 +122,7 @@ const REQUIRED_RUNTIME_ABI_EXPORTS: &[&str] = &[
     "oliphaunt_wasix_output_len",
     "oliphaunt_wasix_output_data",
     "oliphaunt_wasix_output_contains_error",
+    "oliphaunt_wasix_output_status",
     "oliphaunt_wasix_set_protocol_transport",
 ];
 fn main() -> Result<()> {

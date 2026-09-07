@@ -15,12 +15,12 @@ use zstd::stream::read::Decoder as ZstdDecoder;
 use super::assets;
 
 const RUNTIME_ARTIFACT: &str = "runtime:oliphaunt";
-const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
+const EXPECTED_AOT_ENGINE: &str = "llvm-opta-ro_ftable";
 const EXPECTED_WASMER_VERSION: &str = "7.2.1";
 const EXPECTED_WASMER_WASIX_VERSION: &str = "0.702.1";
 const AOT_ENGINE_ID: &str = concat!(
     "engine=",
-    "llvm-opta",
+    "llvm-opta-ro_ftable",
     ";wasmer=",
     "7.2.1",
     ";wasmer-wasix=",

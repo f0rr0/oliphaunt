@@ -12,21 +12,22 @@ Use argv[0] as a host-provided install-root anchor for embedded mode when it is
 already absolute. This initializes my_exec_path and pgservice paths before
 InitStandaloneProcess(), avoiding find_my_exec()'s executable-bit requirement
 while preserving PostgreSQL's existing path derivation for share/etc resources.
-When the host provides OLIPHAUNT_EMBEDDED_MODULE_DIR, use that as pkglib_path so
-the embedded backend loads liboliphaunt-linked modules without mutating the
-standalone runtime tree used by initdb.
+When the host provides OLIPHAUNT_EMBEDDED_MODULE_DIR, require an absolute,
+non-truncated value and use it as pkglib_path so the embedded backend loads
+liboliphaunt-linked modules without mutating the standalone runtime tree used by
+initdb. Reject overlong anchors instead of accepting a different truncated path.
 ---
- src/backend/tcop/postgres.c | 60 +++++++++++++++++++++++++++++++++++--
- 1 file changed, 58 insertions(+), 2 deletions(-)
+ src/backend/tcop/postgres.c | 64 ++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 63 insertions(+), 1 deletion(-)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index c96011f..402b66b 100644
+index 226174c..2e6a788 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -4195,6 +4195,61 @@ oliphaunt_embedded_throw_proc_exit(int code, void *context)
- 	siglongjmp(guard->env, 1);
+@@ -4209,6 +4209,67 @@ oliphaunt_embedded_throw_proc_exit(int code, void *context)
+ 	siglongjmp(lifecycle->proc_exit_env, 1);
  }
-
+ 
 +static bool
 +oliphaunt_embedded_set_runtime_paths(const char *argv0)
 +{
@@ -43,17 +44,23 @@ index c96011f..402b66b 100644
 +	 */
 +	if (my_exec_path[0] == '\0')
 +	{
-+		strlcpy(my_exec_path, argv0, MAXPGPATH);
++		if (strlcpy(my_exec_path, argv0, MAXPGPATH) >= MAXPGPATH)
++			ereport(FATAL,
++					(errmsg("embedded PostgreSQL runtime anchor is too long")));
 +		canonicalize_path(my_exec_path);
 +	}
 +
 +	if (pkglib_path[0] == '\0')
 +	{
 +		module_dir = getenv("OLIPHAUNT_EMBEDDED_MODULE_DIR");
-+		if (module_dir != NULL && module_dir[0] != '\0' &&
-+			is_absolute_path(module_dir))
++		if (module_dir != NULL && module_dir[0] != '\0')
 +		{
-+			strlcpy(pkglib_path, module_dir, MAXPGPATH);
++			if (!is_absolute_path(module_dir))
++				ereport(FATAL,
++						(errmsg("embedded PostgreSQL module directory must be absolute")));
++			if (strlcpy(pkglib_path, module_dir, MAXPGPATH) >= MAXPGPATH)
++				ereport(FATAL,
++						(errmsg("embedded PostgreSQL module directory is too long")));
 +			canonicalize_path(pkglib_path);
 +		}
 +		else
@@ -85,22 +92,13 @@ index c96011f..402b66b 100644
  /*
   * oliphaunt_embedded_main
   *
-@@ -4217,7 +4272,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
- 	OliphauntEmbeddedProcExitGuard exit_guard;
- 	int			rc = 0;
- 	char		original_cwd[MAXPGPATH];
--	bool		have_original_cwd;
-+	bool		have_original_cwd = false;
-
- 	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
- 		username == NULL || io == NULL)
-@@ -4240,7 +4295,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4278,7 +4339,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	if (TopMemoryContext == NULL)
  		MemoryContextInit();
  	(void) set_stack_base();
 -	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("postgres"));
 +	if (!oliphaunt_embedded_set_runtime_paths(argv[0]))
 +		set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("postgres"));
-
+ 
  	InitStandaloneProcess(argv[0]);
  	InitializeGUCOptions();

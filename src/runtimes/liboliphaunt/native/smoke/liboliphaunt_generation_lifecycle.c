@@ -127,6 +127,19 @@ int main(void) {
     };
     CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
           "an internally locked resident runtime must accept the same reopen mode");
+    reopen_config.username = "";
+    reopen_config.database = "";
+    CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "empty reopen identities must use the same defaults as initial open");
+    reopen_config.username = NULL;
+    reopen_config.database = NULL;
+    CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "null reopen identities must use the same defaults as initial open");
+    reopen_config.username = "other";
+    CHECK(!oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "explicit non-default reopen identities must still be rejected");
+    reopen_config.username = "postgres";
+    reopen_config.database = "postgres";
     reopen_config.flags = OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK;
     CHECK(!oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
           "an internally locked resident runtime must reject external-lock reopen");

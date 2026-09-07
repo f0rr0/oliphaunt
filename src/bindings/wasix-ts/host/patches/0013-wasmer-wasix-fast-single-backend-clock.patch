@@ -1,9 +1,23 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: bound direct JavaScript clock dispatch
+
+Install an opt-in JavaScript clock provider for single-program WASIX guests.
+Realtime and monotonic state remain independent, and each selected domain
+returns to the canonical syscall after either 16 observed milliseconds or
+1,024 direct reads. Unsupported clocks, invalid memory, clock setters,
+journaling, and CPU backoff retain canonical or fail-closed behavior.
+
+Also correct the canonical wasm32 JavaScript platform clock implementation so
+realtime and monotonic clocks use their respective domains and unsupported CPU
+clocks report Notsup.
+
 diff --git a/Cargo.toml b/Cargo.toml
-index dc2cfe4..1e9c0dc 100644
+index dc2cfe4f..8af5dc5d 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -156,6 +156,11 @@ features = [
- ]
+@@ -160,6 +160,11 @@ optional = true
+ version = "0.3.64"
  optional = true
  
 +[dependencies.instant]
@@ -11,9 +25,9 @@ index dc2cfe4..1e9c0dc 100644
 +features = ["wasm-bindgen"]
 +optional = true
 +
- [dependencies.js-sys]
- version = "0.3.64"
- optional = true
+ [dependencies.linked_hash_set]
+ version = "0.1"
+ 
 @@ -432,6 +437,7 @@ js = [
      "virtual-fs/js",
      "getrandom/js",
@@ -22,150 +36,340 @@ index dc2cfe4..1e9c0dc 100644
      "js-sys",
      "wasm-bindgen",
      "wasm-bindgen-futures",
+diff --git a/src/lib.rs b/src/lib.rs
+index 287f2a4b..a68a6630 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -92,6 +92,214 @@ pub use virtual_net::{
+ };
+ use wasmer_wasix_types::wasi::{Errno, ExitCode};
+ 
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
++
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++#[wasm_bindgen(inline_js = r#"
++export function oliphauntDirectClockImport(memory, fallback) {
++    const MAX_CANONICAL_INTERVAL_MILLIS = 16;
++    // Coarsened or stalled clock sources must not suppress
++    // canonical checkpoints forever.
++    const MAX_DIRECT_READS_BETWEEN_FALLBACKS = 1024;
++    const MAX_CANONICAL_NANOSECONDS = 9223372036854775807n;
++    let lastRealtimeFallbackMillis;
++    let lastMonotonicFallbackMillis;
++    let realtimeDirectReadsSinceFallback = 0;
++    let monotonicDirectReadsSinceFallback = 0;
++    let monotonicAnchor;
++    let buffer = memory.buffer;
++    let view = new DataView(buffer);
++
++    function sampleRealtimeMillis() {
++        const millis = Date.now();
++        return Number.isFinite(millis) && millis >= 0 ? millis : undefined;
++    }
++
++    function samplePerformanceMillis() {
++        const performanceObject = globalThis.performance;
++        if (performanceObject === undefined || typeof performanceObject.now !== "function") {
++            return undefined;
++        }
++        const millis = performanceObject.now();
++        return Number.isFinite(millis) && millis >= 0 ? millis : undefined;
++    }
++
++    function refreshView(timePointer) {
++        let pointer;
++        if (typeof timePointer === "bigint") {
++            if (timePointer < 0n || timePointer > BigInt(Number.MAX_SAFE_INTEGER)) {
++                return undefined;
++            }
++            pointer = Number(timePointer);
++        } else if (typeof timePointer === "number" && Number.isInteger(timePointer)) {
++            pointer = timePointer >>> 0;
++        } else {
++            return undefined;
++        }
++
++        if (buffer !== memory.buffer) {
++            buffer = memory.buffer;
++            view = new DataView(buffer);
++        }
++        return pointer <= buffer.byteLength - 8 ? pointer : undefined;
++    }
++
++    function callFallback(clockId, precision, timePointer) {
++        const errno = fallback(clockId, precision, timePointer);
++        if (clockId === 0) {
++            realtimeDirectReadsSinceFallback = 0;
++            lastRealtimeFallbackMillis =
++                errno === 0 ? sampleRealtimeMillis() : undefined;
++        } else if (clockId === 1) {
++            monotonicDirectReadsSinceFallback = 0;
++            const sampledMonotonicMillis =
++                errno === 0 ? samplePerformanceMillis() : undefined;
++            lastMonotonicFallbackMillis = sampledMonotonicMillis;
++            const pointer = errno === 0 ? refreshView(timePointer) : undefined;
++            monotonicAnchor =
++                sampledMonotonicMillis !== undefined && pointer !== undefined
++                    ? {
++                        millis: sampledMonotonicMillis,
++                        nanoseconds: view.getBigUint64(pointer, true),
++                    }
++                    : undefined;
++        }
++        return errno;
++    }
++
++    return function clock_time_get(clockId, precision, timePointer) {
++        let nanoseconds;
++        if (clockId === 0) {
++            const realtimeMillis = sampleRealtimeMillis();
++            if (realtimeMillis === undefined ||
++                lastRealtimeFallbackMillis === undefined ||
++                realtimeMillis < lastRealtimeFallbackMillis ||
++                realtimeDirectReadsSinceFallback >= MAX_DIRECT_READS_BETWEEN_FALLBACKS ||
++                realtimeMillis - lastRealtimeFallbackMillis >= MAX_CANONICAL_INTERVAL_MILLIS) {
++                return callFallback(clockId, precision, timePointer);
++            }
++            nanoseconds = BigInt(Math.trunc(realtimeMillis)) * 1000000n;
++        } else if (clockId === 1) {
++            const monotonicMillis = samplePerformanceMillis();
++            if (monotonicMillis === undefined ||
++                lastMonotonicFallbackMillis === undefined ||
++                monotonicMillis < lastMonotonicFallbackMillis ||
++                monotonicDirectReadsSinceFallback >= MAX_DIRECT_READS_BETWEEN_FALLBACKS ||
++                monotonicMillis - lastMonotonicFallbackMillis >= MAX_CANONICAL_INTERVAL_MILLIS ||
++                monotonicAnchor === undefined ||
++                monotonicMillis < monotonicAnchor.millis) {
++                return callFallback(clockId, precision, timePointer);
++            }
++            nanoseconds = monotonicAnchor.nanoseconds +
++                BigInt(Math.trunc((monotonicMillis - monotonicAnchor.millis) * 1000000));
++        } else {
++            return callFallback(clockId, precision, timePointer);
++        }
++
++        if (nanoseconds > MAX_CANONICAL_NANOSECONDS) {
++            return callFallback(clockId, precision, timePointer);
++        }
++
++        const pointer = refreshView(timePointer);
++        if (pointer === undefined) {
++            return callFallback(clockId, precision, timePointer);
++        }
++        view.setBigUint64(pointer, nanoseconds, true);
++        if (clockId === 0) {
++            realtimeDirectReadsSinceFallback += 1;
++        } else {
++            monotonicDirectReadsSinceFallback += 1;
++        }
++        return 0;
++    };
++}
++"#)]
++extern "C" {
++    #[wasm_bindgen(js_name = oliphauntDirectClockImport)]
++    fn oliphaunt_direct_clock_import(memory: &JsValue, fallback: &JsValue) -> js_sys::Function;
++}
++
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++pub(crate) fn install_oliphaunt_direct_clock(
++    store: &mut impl AsStoreMut,
++    module: &wasmer::Module,
++    env: &FunctionEnv<WasiEnv>,
++    memory: Option<&wasmer::Memory>,
++    imports: &mut Imports,
++) -> Result<(), String> {
++    use wasmer::js::AsJs;
++
++    let (host_policy, has_backoff, has_journal) = {
++        let store_ref = store.as_store_ref();
++        let env = env.as_ref(&store_ref);
++        (
++            env.host_policy,
++            env.enable_exponential_cpu_backoff.is_some(),
++            env.enable_journal,
++        )
++    };
++    if host_policy.clock_time_get() != capabilities::WasiClockTimeGetMode::DirectJs {
++        return Ok(());
++    }
++    if host_policy.guest_execution() != capabilities::WasiGuestExecutionMode::SingleProgram {
++        return Err("direct JavaScript clock requires single-program guest execution".into());
++    }
++    if has_backoff {
++        return Err("direct JavaScript clock is incompatible with CPU backoff".into());
++    }
++    if has_journal {
++        return Err("direct JavaScript clock is incompatible with journaling".into());
++    }
++
++    const CLOCK_NAMESPACES: [&str; 4] = [
++        "wasi_snapshot_preview1",
++        "wasi_unstable",
++        "wasix_32v1",
++        "wasix_64v1",
++    ];
++    if let Some(import) = module.imports().find(|import| {
++        CLOCK_NAMESPACES.contains(&import.module()) && import.name() == "clock_time_set"
++    }) {
++        return Err(format!(
++            "direct JavaScript clock cannot preserve {}.clock_time_set semantics",
++            import.module()
++        ));
++    }
++
++    let namespaces = module
++        .imports()
++        .filter(|import| {
++            CLOCK_NAMESPACES.contains(&import.module()) && import.name() == "clock_time_get"
++        })
++        .map(|import| import.module().to_string())
++        .collect::<Vec<_>>();
++    if namespaces.is_empty() {
++        return Ok(());
++    }
++    let memory = memory.ok_or_else(|| {
++        "direct JavaScript clock requires memory to be available before instantiation".to_string()
++    })?;
++
++    let raw_memory = memory.as_jsvalue(&store.as_store_ref());
++    for namespace in namespaces {
++        let fallback = imports
++            .get_export(&namespace, "clock_time_get")
++            .and_then(|export| match export {
++                wasmer::Extern::Function(function) => Some(function),
++                _ => None,
++            })
++            .ok_or_else(|| format!("missing {namespace}.clock_time_get canonical fallback"))?;
++        let function_type = fallback.ty(&store.as_store_ref());
++        let raw_fallback = fallback.as_jsvalue(&store.as_store_ref());
++        let raw_direct = oliphaunt_direct_clock_import(&raw_memory, &raw_fallback);
++        let direct = wasmer::Function::from_jsvalue(store, &function_type, raw_direct.as_ref())
++            .map_err(|error| format!("failed to install {namespace}.clock_time_get: {error:?}"))?;
++        imports.define(&namespace, "clock_time_get", direct);
++    }
++    Ok(())
++}
++
+ pub use crate::{
+     fs::{default_fs_backing, Fd, WasiFs, WasiInodes, VIRTUAL_ROOT_FD},
+     os::{
 diff --git a/src/state/env.rs b/src/state/env.rs
-index a9701e1..6895971 100644
+index 77d8a892..11842968 100644
 --- a/src/state/env.rs
 +++ b/src/state/env.rs
-@@ -139,6 +139,14 @@ pub struct WasiEnv {
-     pub vfork: Option<WasiVFork>,
-     /// Seed used to rotate around the events returned by `poll_oneoff`
-     pub poll_seed: u64,
-+    /// Cached Oliphaunt runtime profile. This avoids locking and scanning the
-+    /// guest environment on high-frequency syscall paths.
-+    pub(crate) oliphaunt_single_backend: bool,
-+    /// Counts fast clock reads so pending signals are still serviced at a
-+    /// bounded interval without paying that cost on every timing sample.
-+    pub(crate) oliphaunt_fast_clock_calls: u16,
-+    /// Whether this environment has installed a synthetic WASI clock offset.
-+    pub(crate) oliphaunt_clock_offset_active: bool,
-     /// Shared state of the WASI system. Manages all the data that the
-     /// executing WASI program can see.
-     pub(crate) state: Arc<WasiState>,
-@@ -193,6 +201,9 @@ impl Clone for WasiEnv {
-             control_plane: self.control_plane.clone(),
-             process: self.process.clone(),
-             poll_seed: self.poll_seed,
-+            oliphaunt_single_backend: self.oliphaunt_single_backend,
-+            oliphaunt_fast_clock_calls: 0,
-+            oliphaunt_clock_offset_active: self.oliphaunt_clock_offset_active,
-             thread: self.thread.clone(),
-             layout: self.layout.clone(),
-             vfork: self.vfork.clone(),
-@@ -237,6 +248,9 @@ impl WasiEnv {
-             layout: self.layout.clone(),
-             vfork: None,
-             poll_seed: 0,
-+            oliphaunt_single_backend: self.oliphaunt_single_backend,
-+            oliphaunt_fast_clock_calls: 0,
-+            oliphaunt_clock_offset_active: self.oliphaunt_clock_offset_active,
-             bin_factory,
-             state,
-             inner: Default::default(),
-@@ -348,6 +362,18 @@ impl WasiEnv {
-         init: WasiEnvInit,
-         module_hash: ModuleHash,
-     ) -> Result<Self, WasiRuntimeError> {
-+        const OLIPHAUNT_SINGLE_BACKEND_ENV: &[u8] =
-+            b"OLIPHAUNT_WASIX_SINGLE_BACKEND=1";
+@@ -546,6 +546,20 @@ impl WasiEnv {
+             None
+         };
+ 
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        crate::install_oliphaunt_direct_clock(
++            &mut store,
++            &module,
++            &func_env.env,
++            imported_memory.as_ref(),
++            &mut import_object,
++        )
++        .map_err(|error| {
++            WasiThreadError::InstanceCreateFailed(Box::new(wasmer::InstantiationError::Link(
++                wasmer::LinkError::Resource(error),
++            )))
++        })?;
 +
-+        let oliphaunt_single_backend = init
-+            .state
-+            .envs
-+            .lock()
-+            .map(|envs| {
-+                envs.iter()
-+                    .any(|entry| entry.as_slice() == OLIPHAUNT_SINGLE_BACKEND_ENV)
-+            })
-+            .unwrap_or(true);
-         let process = if let Some(p) = init.process {
-             p
-         } else {
-@@ -375,6 +401,9 @@ impl WasiEnv {
-             layout,
-             vfork: None,
-             poll_seed: 0,
-+            oliphaunt_single_backend,
-+            oliphaunt_fast_clock_calls: 0,
-+            oliphaunt_clock_offset_active: false,
-             state: Arc::new(init.state),
-             inner: Default::default(),
-             owned_handles: Vec::new(),
-diff --git a/src/syscalls/wasi/clock_time_get.rs b/src/syscalls/wasi/clock_time_get.rs
-index 434bd95..4400a63 100644
---- a/src/syscalls/wasi/clock_time_get.rs
-+++ b/src/syscalls/wasi/clock_time_get.rs
-@@ -28,20 +28,31 @@ pub fn clock_time_get<M: MemorySize>(
-     precision: Timestamp,
-     time: WasmPtr<Timestamp, M>,
- ) -> Result<Errno, WasiError> {
--    WasiEnv::do_pending_operations(&mut ctx)?;
--
--    ctx = wasi_try_ok!(maybe_backoff::<M>(ctx)?);
-+    let oliphaunt_fast_path = ctx.data().oliphaunt_single_backend;
-+    if oliphaunt_fast_path {
-+        let check_pending = {
-+            let env = ctx.data_mut();
-+            env.oliphaunt_fast_clock_calls = env.oliphaunt_fast_clock_calls.wrapping_add(1);
-+            env.oliphaunt_fast_clock_calls & 0x03ff == 0
-+        };
-+        if check_pending {
-+            WasiEnv::do_pending_operations(&mut ctx)?;
-+        }
-+    } else {
-+        WasiEnv::do_pending_operations(&mut ctx)?;
-+        ctx = wasi_try_ok!(maybe_backoff::<M>(ctx)?);
-+    }
+         // Construct the instance.
+         let instance_result = if async_instantiation {
+             #[cfg(all(feature = "js", target_arch = "wasm32"))]
+diff --git a/src/state/linker.rs b/src/state/linker.rs
+index 4f509100..e462986d 100644
+--- a/src/state/linker.rs
++++ b/src/state/linker.rs
+@@ -1180,6 +1180,20 @@ impl Linker {
+             &well_known_imports,
+         )?;
  
-     let env = ctx.data();
-     let memory = unsafe { env.memory_view(&ctx) };
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        crate::install_oliphaunt_direct_clock(
++            store,
++            main_module,
++            &func_env.env,
++            Some(&memory),
++            &mut imports,
++        )
++        .map_err(|error| {
++            LinkError::InstantiationError(InstantiationError::Link(wasmer::LinkError::Resource(
++                error,
++            )))
++        })?;
++
+         // TODO: figure out which way is faster (stubs in main or stubs in sides),
+         // use that ordering. My *guess* is that, since main exports all the libc
+         // functions and those are called frequently by basically any code, then giving
+@@ -1428,6 +1442,20 @@ impl Linker {
+             &mut pending_resolutions,
+         )?;
  
-     let mut t_out = wasi_try_ok!(platform_clock_time_get(clock_id, precision));
--    {
-+    if !oliphaunt_fast_path || env.oliphaunt_clock_offset_active {
-         let guard = env.state.clock_offset.lock().unwrap();
-         if let Some(offset) = guard.get(&clock_id) {
-             t_out += *offset;
-         }
--    };
-+    }
-     wasi_try_mem_ok!(time.write(&memory, t_out as Timestamp));
-     Ok(Errno::Success)
- }
-diff --git a/src/syscalls/wasi/clock_time_set.rs b/src/syscalls/wasi/clock_time_set.rs
-index 2c1354e..db9996f 100644
---- a/src/syscalls/wasi/clock_time_set.rs
-+++ b/src/syscalls/wasi/clock_time_set.rs
-@@ -47,5 +47,7 @@ pub fn clock_time_set_internal(
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        crate::install_oliphaunt_direct_clock(
++            store,
++            &main_module,
++            &func_env.env,
++            Some(&memory),
++            &mut imports,
++        )
++        .map_err(|error| {
++            LinkError::InstantiationError(InstantiationError::Link(wasmer::LinkError::Resource(
++                error,
++            )))
++        })?;
++
+         let main_instance = Instance::new(store, &main_module, &imports)?;
  
-     let mut guard = env.state.clock_offset.lock().unwrap();
-     guard.insert(clock_id, t_offset);
-+    drop(guard);
-+    ctx.data_mut().oliphaunt_clock_offset_active = true;
-     Errno::Success
- }
-diff --git a/src/syscalls/wasix/mod.rs b/src/syscalls/wasix/mod.rs
-index ac01c1f..d11763e 100644
---- a/src/syscalls/wasix/mod.rs
-+++ b/src/syscalls/wasix/mod.rs
-@@ -176,15 +176,6 @@ use tracing::{debug_span, field, instrument, trace_span, Span};
+         instance_group.main_instance = Some(main_instance.clone());
+@@ -2647,6 +2675,20 @@ impl InstanceGroupState {
+             &well_known_imports,
+         )?;
  
- use crate::WasiEnv;
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        crate::install_oliphaunt_direct_clock(
++            store,
++            &module,
++            env,
++            Some(&self.memory),
++            &mut imports,
++        )
++        .map_err(|error| {
++            LinkError::InstantiationError(InstantiationError::Link(wasmer::LinkError::Resource(
++                error,
++            )))
++        })?;
++
+         let instance = Instance::new(store, &module, &imports)?;
  
--const OLIPHAUNT_SINGLE_BACKEND_ENV: &[u8] = b"OLIPHAUNT_WASIX_SINGLE_BACKEND=1";
--
- fn oliphaunt_single_backend_requested(env: &WasiEnv) -> bool {
--    env.state
--        .envs
--        .lock()
--        .map(|envs| {
--            envs.iter()
--                .any(|entry| entry.as_slice() == OLIPHAUNT_SINGLE_BACKEND_ENV)
--        })
--        .unwrap_or(true)
-+    env.oliphaunt_single_backend
- }
+         let instance_handles = WasiModuleInstanceHandles::new(
+@@ -2757,6 +2799,20 @@ impl InstanceGroupState {
+             pending_resolutions,
+         )?;
+ 
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        crate::install_oliphaunt_direct_clock(
++            store,
++            &dl_module.module,
++            env,
++            Some(&self.memory),
++            &mut imports,
++        )
++        .map_err(|error| {
++            LinkError::InstantiationError(InstantiationError::Link(wasmer::LinkError::Resource(
++                error,
++            )))
++        })?;
++
+         let instance = Instance::new(store, &dl_module.module, &imports)?;
+ 
+         // This is a non-main instance of a side module, so it needs a new TLS area
 diff --git a/src/syscalls/wasm.rs b/src/syscalls/wasm.rs
-index dd731f0..1cac381 100644
+index dd731f02..eb39f9fa 100644
 --- a/src/syscalls/wasm.rs
 +++ b/src/syscalls/wasm.rs
 @@ -1,6 +1,5 @@
@@ -196,14 +400,14 @@ index dd731f0..1cac381 100644
 -        Snapshot0Clockid::Realtime => 1,
 -        Snapshot0Clockid::ProcessCputimeId => 1,
 -        Snapshot0Clockid::ThreadCputimeId => 1,
-+        Snapshot0Clockid::Monotonic => 1_000_000,
-+        Snapshot0Clockid::Realtime => 1_000_000,
-+        Snapshot0Clockid::ProcessCputimeId => 1_000_000,
-+        Snapshot0Clockid::ThreadCputimeId => 1_000_000,
++        Snapshot0Clockid::Monotonic | Snapshot0Clockid::Realtime => 1_000_000,
++        Snapshot0Clockid::ProcessCputimeId | Snapshot0Clockid::ThreadCputimeId => {
++            return Err(Errno::Notsup)
++        }
          _ => return Err(Errno::Inval),
      };
      Ok(t_out)
-@@ -24,10 +29,21 @@ pub fn platform_clock_res_get(
+@@ -24,10 +29,22 @@ pub fn platform_clock_res_get(
  
  pub fn platform_clock_time_get(
      clock_id: Snapshot0Clockid,
@@ -224,9 +428,10 @@ index dd731f0..1cac381 100644
 +                .checked_mul(1_000_000)
 +                .ok_or(Errno::Overflow)
 +        }
-+        Snapshot0Clockid::Monotonic
-+        | Snapshot0Clockid::ProcessCputimeId
-+        | Snapshot0Clockid::ThreadCputimeId => monotonic_time_ns(),
++        Snapshot0Clockid::Monotonic => monotonic_time_ns(),
++        Snapshot0Clockid::ProcessCputimeId | Snapshot0Clockid::ThreadCputimeId => {
++            Err(Errno::Notsup)
++        }
 +        _ => Err(Errno::Inval),
 +    }
  }

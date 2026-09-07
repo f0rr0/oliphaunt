@@ -25,6 +25,7 @@
 #else
 #include <dirent.h>
 #include <errno.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -55,6 +56,55 @@ static const char *last_error_message(OliphauntHandle *handle) {
         sizeof(last_error_buffer));
     return last_error_buffer;
 }
+
+#ifndef _WIN32
+static volatile sig_atomic_t host_sigusr1_sentinel_calls = 0;
+
+static void host_sigusr1_sentinel(int signo) {
+    if (signo == SIGUSR1) {
+        host_sigusr1_sentinel_calls++;
+    }
+}
+
+static int install_host_sigusr1_sentinel(struct sigaction *previous) {
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = host_sigusr1_sentinel;
+    if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGUSR1, &action, previous) != 0) {
+        fprintf(stderr, "could not install host SIGUSR1 sentinel: %s\n", strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+
+static int verify_host_sigusr1_sentinel(const struct sigaction *previous) {
+    struct sigaction current;
+
+    if (sigaction(SIGUSR1, NULL, &current) != 0) {
+        fprintf(stderr, "could not inspect host SIGUSR1 sentinel: %s\n", strerror(errno));
+        return 1;
+    }
+    if (current.sa_handler != host_sigusr1_sentinel) {
+        fprintf(stderr, "embedded PostgreSQL replaced the host SIGUSR1 handler\n");
+        return 1;
+    }
+    if (host_sigusr1_sentinel_calls != 0) {
+        fprintf(stderr, "embedded PostgreSQL emitted %d host SIGUSR1 signal(s)\n",
+                (int)host_sigusr1_sentinel_calls);
+        return 1;
+    }
+    if ((raise)(SIGUSR1) != 0 || host_sigusr1_sentinel_calls != 1) {
+        fprintf(stderr, "host SIGUSR1 sentinel was not callable after embedded shutdown\n");
+        return 1;
+    }
+    if (sigaction(SIGUSR1, previous, NULL) != 0) {
+        fprintf(stderr, "could not restore host SIGUSR1 handler: %s\n", strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+#endif
 
 Datum liboliphaunt_smoke_static_answer(PG_FUNCTION_ARGS) {
     (void)fcinfo;
@@ -1259,6 +1309,32 @@ static int exec_plpgsql_smoke(OliphauntHandle *db) {
         "$$; "
         "SELECT liboliphaunt_plpgsql_answer()",
         "31415");
+}
+
+static int exec_event_trigger_smoke(OliphauntHandle *db) {
+    return exec_simple_query_expect_bytes(
+        db,
+        "DROP EVENT TRIGGER IF EXISTS liboliphaunt_ddl_end; "
+        "DROP FUNCTION IF EXISTS liboliphaunt_record_event() CASCADE; "
+        "DROP TABLE IF EXISTS liboliphaunt_event_on; "
+        "DROP TABLE IF EXISTS liboliphaunt_event_off; "
+        "DROP TABLE IF EXISTS liboliphaunt_event_log; "
+        "CREATE TABLE liboliphaunt_event_log(tag text NOT NULL); "
+        "CREATE FUNCTION liboliphaunt_record_event() RETURNS event_trigger "
+        "LANGUAGE plpgsql AS $$ BEGIN "
+        "INSERT INTO liboliphaunt_event_log VALUES (TG_TAG); "
+        "END $$; "
+        "CREATE EVENT TRIGGER liboliphaunt_ddl_end ON ddl_command_end "
+        "EXECUTE FUNCTION liboliphaunt_record_event(); "
+        "SET event_triggers = off; "
+        "CREATE TABLE liboliphaunt_event_off(value integer); "
+        "SET event_triggers = on; "
+        "CREATE TABLE liboliphaunt_event_on(value integer); "
+        "SELECT count(*)::text || ':' || min(tag) FROM liboliphaunt_event_log; "
+        "DROP EVENT TRIGGER liboliphaunt_ddl_end; "
+        "DROP FUNCTION liboliphaunt_record_event(); "
+        "DROP TABLE liboliphaunt_event_on, liboliphaunt_event_off, liboliphaunt_event_log",
+        "1:CREATE TABLE");
 }
 
 static int file_exists(const char *path) {
@@ -2690,6 +2766,11 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
+    if (exec_event_trigger_smoke(db) != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
     if (exec_static_extension_registry_smoke(db) != 0) {
         oliphaunt_close(db);
         return 1;
@@ -2833,6 +2914,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+#ifndef _WIN32
+    struct sigaction previous_sigusr1;
+    if (install_host_sigusr1_sentinel(&previous_sigusr1) != 0) {
+        return 1;
+    }
+#endif
+
     const char *host_pgdata = "/tmp/oliphaunt-host-pgdata-sentinel";
     if (set_pgdata_env_for_smoke(host_pgdata) != 0) {
         return 1;
@@ -2843,6 +2931,11 @@ int main(int argc, char **argv) {
     if (expect_pgdata_env("oliphaunt_close", host_pgdata) != 0) {
         return 1;
     }
+#ifndef _WIN32
+    if (verify_host_sigusr1_sentinel(&previous_sigusr1) != 0) {
+        return 1;
+    }
+#endif
     if (expect_terminal_shutdown_reopen_rejected(argv[1], argv[2]) != 0) {
         return 1;
     }

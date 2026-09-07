@@ -1,3 +1,12 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: propagate asynchronous main-module instantiation
+
+Thread the asynchronous engine instantiation API through the WASIX builder,
+environment and linker while preserving the synchronous entrypoint. This is
+the host-side companion to the engine API patch, needed to start large browser
+guests without falling back to worker-only placement.
+
 diff --git a/src/state/builder.rs b/src/state/builder.rs
 --- a/src/state/builder.rs
 +++ b/src/state/builder.rs

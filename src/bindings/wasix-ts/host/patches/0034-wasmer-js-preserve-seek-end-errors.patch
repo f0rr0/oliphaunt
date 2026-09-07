@@ -1,3 +1,13 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: preserve seek-from-end provider failures
+
+Compute seek-from-end using the synchronous filesystem provider's result and
+leave the cursor unchanged on provider or arithmetic errors. Do not translate
+a failed length lookup into a successful seek. The tests cover positive and
+negative offsets, overflow and failed providers; this is a bridge correctness
+fix independent of performance claims.
+
 diff --git a/src/fs/sync_bridge.rs b/src/fs/sync_bridge.rs
 index e37f33e..7e79d76 100644
 --- a/src/fs/sync_bridge.rs

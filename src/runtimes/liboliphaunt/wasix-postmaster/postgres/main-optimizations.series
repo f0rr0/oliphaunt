@@ -1,15 +1,13 @@
-# Compatible PostgreSQL optimizations owned by the main WASIX runtime.
+# Shared PostgreSQL port/linkage adaptations owned by the main WASIX runtime.
 #
-# Deliberately excluded from this multi-backend lane:
-# - 0035 and 0036 specialize spinlocks and atomics for the canonical guest
-#   shared by Rust and TypeScript bindings, whose hosts enforce one PostgreSQL
-#   backend execution context per isolated instance.
-# The postmaster and its backends coordinate concurrently through shared
-# memory, so this lane retains PostgreSQL's normal spinlock and atomic paths.
-0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch
-0015-oliphaunt-wasix-add-top-xid-current-transaction-fast-path.patch
-0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch
+# The retired hash, XID, LIKE and B-tree shortcuts (0014, 0015, 0016, 0024,
+# 0026) must not survive in this product after removal from the canonical stack.
+# The B-tree shortcuts were already inert without OLIPHAUNT_WASM_SINGLE_USER.
+# No retained patch depends on those changes.
+#
+# Concurrent postmaster/backends retain normal spinlocks and atomics; the
+# retired single-backend substitutions (0035/0036) never belonged in this lane.
+# 0018 fixes tool symbol linkage. 0037 uses getrandom directly in Postmaster,
+# without the single-backend entropy reservoir that a fork could duplicate.
 0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch
-0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch
-0026-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch
-0037-oliphaunt-wasix-buffer-strong-random.patch
+0037-oliphaunt-wasix-use-checked-getrandom.patch

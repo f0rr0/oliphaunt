@@ -6,7 +6,6 @@
 #include "liboliphaunt_internal.h"
 
 #include <errno.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,12 +25,7 @@ extern int oliphaunt_embedded_main(
     const char *username,
     OliphauntEmbeddedIO *io);
 
-typedef struct Latch Latch;
-
-extern volatile sig_atomic_t InterruptPending;
-extern volatile sig_atomic_t QueryCancelPending;
-extern Latch *MyLatch;
-extern void SetLatch(Latch *latch);
+extern void RequestTrustedEmbeddedQueryCancel(void);
 
 static int32_t close_unpublished_handle(OliphauntHandle *handle);
 
@@ -409,9 +403,13 @@ static int start_backend(OliphauntHandle *handle) {
         return -1;
     }
 
+    handle->io.abi_version = OLIPHAUNT_EMBEDDED_IO_ABI_VERSION;
+    handle->io.struct_size = (uint32_t)sizeof(handle->io);
     handle->io.context = handle;
     handle->io.read = oliphaunt_embedded_read;
     handle->io.write = oliphaunt_embedded_write;
+    handle->io.set_timeout = oliphaunt_embedded_set_timeout;
+    handle->io.set_interrupt_wakeup = oliphaunt_embedded_set_interrupt_wakeup;
 
     pthread_attr_t attr;
     int rc = pthread_attr_init(&attr);
@@ -619,6 +617,22 @@ int32_t oliphaunt_init_with_error(
     return run_init_operation(config, out, error, true);
 }
 
+static int32_t reset_session_command(OliphauntHandle *handle, const char *sql) {
+    OliphauntResponse response = {0};
+    int32_t rc = oliphaunt_exec_simple_query(handle, sql, strlen(sql), &response);
+    if (rc == 0) {
+        bool tag_matches = false;
+        if (!oliphaunt_response_confirms_command(
+                response.data, response.len, sql, &tag_matches) ||
+            !tag_matches || handle->transaction_status != 'I') {
+            set_error(handle, "native session reset was not confirmed; logical handle remains active");
+            rc = -1;
+        }
+    }
+    oliphaunt_free_response(&response);
+    return rc;
+}
+
 static int32_t oliphaunt_detach_impl(OliphauntHandle *handle) {
     if (handle == NULL) {
         return 0;
@@ -647,19 +661,13 @@ static int32_t oliphaunt_detach_impl(OliphauntHandle *handle) {
 
     if (can_reset) {
         if (in_transaction) {
-            OliphauntResponse response = {0};
-            static const char rollback_sql[] = "ROLLBACK";
-            int32_t rc = oliphaunt_exec_simple_query(handle, rollback_sql, sizeof(rollback_sql) - 1, &response);
-            oliphaunt_free_response(&response);
+            int32_t rc = reset_session_command(handle, "ROLLBACK");
             if (rc != 0) {
                 return rc;
             }
         }
 
-        OliphauntResponse response = {0};
-        static const char discard_sql[] = "DISCARD ALL";
-        int32_t rc = oliphaunt_exec_simple_query(handle, discard_sql, sizeof(discard_sql) - 1, &response);
-        oliphaunt_free_response(&response);
+        int32_t rc = reset_session_command(handle, "DISCARD ALL");
         if (rc != 0) {
             return rc;
         }
@@ -871,15 +879,12 @@ static int32_t oliphaunt_cancel_impl(OliphauntHandle *handle) {
         return -1;
     }
 
-    InterruptPending = true;
-    QueryCancelPending = true;
-    if (MyLatch != NULL) {
-        SetLatch(MyLatch);
-    }
+    RequestTrustedEmbeddedQueryCancel();
+    int wake_rc = oliphaunt_wake_backend_locked(handle);
     pthread_cond_broadcast(&handle->input_cond);
     pthread_cond_broadcast(&handle->output_cond);
     pthread_mutex_unlock(&handle->mutex);
-    return 0;
+    return wake_rc;
 }
 
 int32_t oliphaunt_cancel(OliphauntHandle *handle) {

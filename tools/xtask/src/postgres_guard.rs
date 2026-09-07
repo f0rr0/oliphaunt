@@ -314,7 +314,12 @@ fn postgres_patch_series_hash() -> Result<String> {
 }
 
 fn postgres_fingerprint_inputs() -> Result<Vec<PathBuf>> {
-    let mut paths = vec![repo_relative_path(POSTGRES_PATCH_SERIES_PATH)];
+    let mut paths = vec![
+        repo_relative_path(POSTGRES_PATCH_SERIES_PATH),
+        repo_relative_path(
+            "src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h",
+        ),
+    ];
     for entry in sorted_children(&repo_relative_path(POSTGRES_PATCH_DIR))? {
         if entry.extension().and_then(|extension| extension.to_str()) == Some("patch") {
             paths.push(entry);
@@ -357,7 +362,8 @@ pub(crate) fn check_source_lane_isolation() -> Result<()> {
         generated_aot_source_dir_for_source_lane("aarch64", "stable")?
             == Path::new(WASIX_POSTGRES_GENERATED_BUILD_DIR)
                 .join("aot")
-                .join("aarch64"),
+                .join("aarch64")
+                .join(crate::aot_serializer::AOT_ENGINE_PROFILE),
         "PG18 AOT source path drifted"
     );
     ensure!(
@@ -432,6 +438,10 @@ fn check_postgres_packaging_inputs(source: &Path) -> Result<()> {
         "src/timezone/tznames/Default",
     ] {
         ensure_file(&source.join(required))?;
+    }
+
+    if skip_extensions_for_perf_probe() {
+        return Ok(());
     }
 
     let extension_specs = extension_catalog::extension_build_specs()?;
@@ -678,13 +688,12 @@ fn ensure_pg18_experiment_patch_disposition() -> Result<()> {
         "0011-btree-first-int4-compare-fast-path.patch",
         "0012-hash-bytes-unaligned-load-fast-path.patch",
         "do-not-port-experiment-patches-without-a-recorded-wasix-runtime-rationale",
-        "ported as 0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch",
-        "ported as 0015-oliphaunt-wasix-add-top-xid-current-transaction-fast-path.patch",
-        "ported as 0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch",
-        "ported as 0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch",
+        "removed-after-toolchain-review",
+        "removed-after-evidence-review",
+        "removed-after-correctness-review",
+        "removed-after-design-review",
         "ported as 0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch",
         "rejected-for-default-lane",
-        "deferred",
     ] {
         ensure!(
             text.contains(required),
@@ -770,9 +779,8 @@ pub(crate) fn check_rust_startup_abi_boundary() -> Result<()> {
         "struct OliphauntLifecycleExports",
         "struct WasixProtocolExports",
         "fn ensure_integrated_oliphaunt_contract",
-        "fn host_requires_process_exit_error_recovery() -> bool",
-        "cfg!(target_env = \"msvc\")",
-        "oliphaunt_wasix_set_force_host_error_recovery",
+        "oliphaunt_wasix_prepare_trusted_embedded_session",
+        "oliphaunt_wasix_startup_outcome_v1",
         "oliphaunt_wasix_set_protocol_transport",
         "oliphaunt_wasix_protocol_stream_active",
         "The upstream lifecycle is already running by this point",
@@ -814,7 +822,8 @@ pub(crate) fn check_rust_startup_abi_boundary() -> Result<()> {
     }
     for lifecycle_marker in [
         "wasi_start",
-        "set_force_host_error_recovery",
+        "prepare_trusted_embedded_session",
+        "startup_outcome_ptr",
         "set_active",
         "start_oliphaunt",
     ] {
@@ -851,22 +860,15 @@ fn check_rust_host_runtime_abi_surface(postgres_mod: &str) -> Result<()> {
             "Rust WASIX host must consciously load optional runtime export {export}"
         );
     }
-    for &export in RUNTIME_EXPORT_LIST_COMPAT_EXPORTS {
-        ensure!(
-            runtime_exports.contains(export),
-            "WASIX runtime export validator must keep compatibility export {export}"
-        );
-    }
-    for export in [
-        "oliphaunt_wasix_set_force_host_error_recovery",
-        "oliphaunt_wasix_set_protocol_transport",
-    ] {
+    for export in ["oliphaunt_wasix_set_protocol_transport"] {
         ensure!(
             runtime_exports.contains(export),
             "WASIX runtime export validator must require optional Rust host export {export} for current generated assets"
         );
     }
     for legacy in [
+        "PostgresMainLongJmp",
+        "oliphaunt_wasix_set_force_host_error_recovery",
         "oliphaunt_wasix_initdb",
         "oliphaunt_wasix_backend",
         "PostgresRecoverProtocolError",

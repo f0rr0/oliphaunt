@@ -1,3 +1,28 @@
+From 0000000000000000000000000000000000000004 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] postgres: integrate the WASIX EXEC_BACKEND process model
+
+Base: PostgreSQL REL_18_4; apply after the wasix-core overlay and in series order.
+
+Use fresh WASIX module instances for postmaster children and initdb servers,
+preserving PostgreSQL's explicit EXEC_BACKEND handoff. Use the serialized
+header length rather than padded sizeof(BackendParameters), retry interrupted
+reads, and avoid parent-mutating exit handlers after failed vfork/exec.
+
+WASIX has subprocesses and pipes but no ambient shell/locale utility. Launch
+owned argument vectors directly and preserve executable-version failures as
+errors, not NULL dereferences. Encode the pinned runtime's credential, session,
+directory-entry and shared-memory limitations explicitly under WASIX guards;
+none of these exceptions grants host privileges or changes native behavior.
+
+This dependent port integration bundle is repository-specific in its current
+form. Before upstream submission, separate portable serialization/error fixes
+from process, tooling and credential seams; keep their actual dependencies.
+The ordered series, version-probe failure test, initdb, concurrent connection
+and immediate-recovery tests cover different contracts and are all relevant.
+---
+
 diff --git a/src/backend/commands/collationcmds.c b/src/backend/commands/collationcmds.c
 index 8acbfbb..ee138a5 100644
 --- a/src/backend/commands/collationcmds.c
@@ -790,7 +815,7 @@ index 8b690a1..e9dac8b 100644
  	char	   *line;
 
  	if (find_my_exec(argv0, retpath) < 0)
-@@ -327,10 +338,17 @@ find_other_exec(const char *argv0, const char *target,
+@@ -327,10 +338,18 @@ find_other_exec(const char *argv0, const char *target,
  	if (validate_exec(retpath) != 0)
  		return -1;
 
@@ -803,13 +828,16 @@ index 8b690a1..e9dac8b 100644
 +	}
 +#else
 +	snprintf(cmd, sizeof(cmd), "\"%s\" -V", retpath);
- 	if ((line = pipe_read_line(cmd)) == NULL)
- 		return -1;
+-	if ((line = pipe_read_line(cmd)) == NULL)
+-		return -1;
++	line = pipe_read_line(cmd);
 +#endif
++	if (line == NULL)
++		return -1;
 
  	if (strcmp(line, versionstr) != 0)
  	{
-@@ -342,6 +360,191 @@ find_other_exec(const char *argv0, const char *target,
+@@ -342,6 +361,191 @@ find_other_exec(const char *argv0, const char *target,
  	return 0;
  }
 

@@ -29,6 +29,14 @@ test("accepts AOT metadata that exactly matches the canonical WASIX toolchain", 
   );
 });
 
+test("rejects the legacy codegen-ambiguous AOT identity", () => {
+  assert.equal(canonicalWasixAotMetadata().engine, "llvm-opta-ro_ftable");
+  assert.throws(
+    () => assertCanonicalWasixAotManifest(manifest({ engine: "llvm-opta" })),
+    /engine must match canonical WASIX metadata/u,
+  );
+});
+
 test("rejects stale prerelease Wasmer metadata", () => {
   assert.throws(
     () =>

@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000037 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 17 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: use checked getrandom
+
+PostgreSQL otherwise opens the virtual /dev/urandom device for every strong
+random request. That adds virtual descriptor pressure. The pinned Wasmer
+source's RandomFile also discards entropy-provider errors before returning
+zero-filled bytes; the host stack fixes device users independently.
+
+Use the pinned WASIX libc getrandom interface directly. Retry interrupted
+reads, complete short reads, and report errors or zero-length progress through
+pg_strong_random's existing boolean contract. Keep no guest entropy reservoir:
+fork, clone, snapshot, and re-entry cannot duplicate buffered bytes. Batching
+must earn its place independently before adding lifecycle-sensitive state.
+Non-WASIX PostgreSQL builds retain upstream behavior.
+---
+ src/port/pg_strong_random.c | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/src/port/pg_strong_random.c b/src/port/pg_strong_random.c
+index ea6780d..df61fbd 100644
+--- a/src/port/pg_strong_random.c
++++ b/src/port/pg_strong_random.c
+@@ -92,6 +92,41 @@ pg_strong_random(void *buf, size_t len)
+ 	return false;
+ }
+ 
++#elif defined(__wasi__)
++
++#include <sys/random.h>
++
++void
++pg_strong_random_init(void)
++{
++	/* No guest-side state to initialize or duplicate. */
++}
++
++bool
++pg_strong_random(void *buf, size_t len)
++{
++	unsigned char *p = buf;
++
++	while (len > 0)
++	{
++		ssize_t		res;
++
++		res = getrandom(p, len, 0);
++		if (res < 0)
++		{
++			if (errno == EINTR)
++				continue;
++			return false;
++		}
++		if (res == 0)
++			return false;
++		p += res;
++		len -= res;
++	}
++
++	return true;
++}
++
+ #elif WIN32
+ 
+ #include <wincrypt.h>
+-- 
+2.51.0

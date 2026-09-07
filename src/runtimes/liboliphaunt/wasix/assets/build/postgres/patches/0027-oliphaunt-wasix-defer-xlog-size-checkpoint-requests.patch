@@ -1,25 +1,29 @@
 From 0000000000000000000000000000000000000027 Mon Sep 17 00:00:00 2001
 From: Oliphaunt Maintainers <dev@oliphaunt.dev>
 Date: Fri, 29 May 2026 00:00:00 +0530
-Subject: [PATCH] oliphaunt-wasix: avoid XLog-size checkpoint requests
+Subject: [PATCH] oliphaunt-wasix: defer XLog-size checkpoint requests
 
 The embedded backend has no checkpointer process, and running a checkpoint
 inside XLogWrite is unsafe. Record the normal XLog-size request there and let
 the host-pumped traffic cop perform it at the next ReadyForQuery boundary when
 the backend is outside a transaction. This keeps PostgreSQL's WAL recycling
 policy without recursive checkpoints or an absent background process.
+
+The embedded topology keeps IsPostmasterEnvironment false, so upstream
+RequestCheckpoint already performs the requested checkpoint locally. Do not
+override that topology-sensitive branch here.
 ---
- src/backend/access/transam/xlog.c    | 29 +++++++++++++++++++++++++++--
- src/backend/postmaster/checkpointer.c |  2 ++
- src/backend/tcop/postgres.c           |  6 ++++++
- src/include/access/xlog.h             |  4 ++++
- 4 files changed, 39 insertions(+), 2 deletions(-)
+ src/backend/access/transam/xlog.c | 29 +++++++++++++++++++++++++++--
+ src/backend/tcop/postgres.c        |  6 ++++++
+ src/include/access/xlog.h          |  4 ++++
+ 3 files changed, 37 insertions(+), 2 deletions(-)
 
 diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+index 47c04f26d4..6b4a99ebd6 100644
 --- a/src/backend/access/transam/xlog.c
 +++ b/src/backend/access/transam/xlog.c
-@@ -164,6 +164,10 @@ static WalLevel wal_level = WAL_LEVEL_MINIMAL;
- /* See check_wal_consistency_checking */
+@@ -166,6 +166,10 @@ static double PrevCheckPointDistance = 0;
+  */
  static bool check_wal_consistency_checking_deferred = false;
  
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
@@ -27,9 +31,9 @@ diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog
 +#endif
 +
  /*
-  * During recovery, we keep a copy of the latest checkpoint record here.
-  * lastCheckPointRecPtr points to start of checkpoint record and
-@@ -2300,6 +2304,17 @@ XLogCheckpointNeeded(XLogSegNo new_segno)
+  * GUC support
+  */
+@@ -2288,6 +2292,17 @@ XLogCheckpointNeeded(XLogSegNo new_segno)
  	return false;
  }
  
@@ -47,7 +51,7 @@ diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog
  /*
   * Write and/or fsync the log at least as far as WriteRqst indicates.
   *
-@@ -2501,15 +2516,24 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+@@ -2496,12 +2511,21 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
  				 * like a checkpoint is needed, forcibly update RedoRecPtr and
  				 * recheck.
  				 */
@@ -69,26 +73,11 @@ diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog
  			}
  		}
  
- 		if (ispartialpage)
- 		{
- 			/* Only asked to write a partial page */
-diff --git a/src/backend/postmaster/checkpointer.c b/src/backend/postmaster/checkpointer.c
---- a/src/backend/postmaster/checkpointer.c
-+++ b/src/backend/postmaster/checkpointer.c
-@@ -1009,7 +1009,9 @@ RequestCheckpoint(int flags)
- 	/*
- 	 * If in a standalone backend, just do it ourselves.
- 	 */
-+#ifndef OLIPHAUNT_WASM_SINGLE_USER
- 	if (!IsPostmasterEnvironment)
-+#endif
- 	{
- 		/*
- 		 * There's no point in doing slow checkpoints in a standalone backend,
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 06f64145cc..dc8bf8dfa6 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -31,6 +31,9 @@
+@@ -37,6 +37,9 @@
  #include "access/parallel.h"
  #include "access/printtup.h"
  #include "access/xact.h"
@@ -98,7 +87,7 @@ diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
  #include "catalog/pg_type.h"
  #include "commands/async.h"
  #include "commands/event_trigger.h"
-@@ -4470,6 +4473,9 @@ PostgresSendReadyForQueryIfNecessary(void)
+@@ -4398,6 +4401,9 @@ PostgresSendReadyForQueryIfNecessary(void)
  		else
  		{
  			long		stats_timeout;
@@ -109,10 +98,10 @@ diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
  			/*
  			 * Process incoming notifies (including self-notifies), if
 diff --git a/src/include/access/xlog.h b/src/include/access/xlog.h
+index f20f5edb43..b588eae759 100644
 --- a/src/include/access/xlog.h
 +++ b/src/include/access/xlog.h
-@@ -242,7 +242,11 @@ extern void LocalProcessControlFile(bool reset);
- extern WalLevel GetActiveWalLevelOnStandby(void);
+@@ -244,6 +244,10 @@ extern WalLevel GetActiveWalLevelOnStandby(void);
  extern void StartupXLOG(void);
  extern void ShutdownXLOG(int code, Datum arg);
  extern bool CreateCheckPoint(int flags);

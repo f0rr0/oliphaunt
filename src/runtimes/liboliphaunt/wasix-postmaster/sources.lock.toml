@@ -12,48 +12,48 @@ bytes = 3445
 
 [[current_postgresql_product_inputs.file]]
 path = "postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch"
-sha256 = "17435fd5261a641837053728ed3314a2145307ab25bea473d5529b62a6a5aa3b"
-bytes = 883
+sha256 = "3812827c98112dd1f83ad1a545836ba0f47e8f91f5e80c7416b3a5781f65e0e7"
+bytes = 1867
 
 [[current_postgresql_product_inputs.file]]
 path = "postgres/patches/0003-wasix-libpq-static-encoding-shim.patch"
-sha256 = "a7eb6c9bd4366938fd40de1e8bdeaba600f4d9a42f5d2935677a795c3fcefc43"
-bytes = 501
+sha256 = "c7ae5e9e442bdd1bf6d23323101a5334d5237b8245600d53bd33cba6a7c622f9"
+bytes = 1481
 
 [[current_postgresql_product_inputs.file]]
 path = "postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch"
-sha256 = "acf40abd1498a92d122f939857086003e66962e51a2501b927391939981de502"
-bytes = 28650
+sha256 = "4c579969e3282fb644a2790d8756e20e389d2da0acfc99634032c7b6c4ca3a9a"
+bytes = 30109
 
 [[current_postgresql_product_inputs.file]]
 path = "postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch"
-sha256 = "329fb6d098240b96d504165043f5b9f41f67439032b7dbf672367bffa4c78c14"
-bytes = 1751
+sha256 = "69c0f31b752f203daf0ad229ec4e7775a4ee352d84e8759626eb9b6341973c5f"
+bytes = 2718
 
 [[current_postgresql_product_inputs.file]]
 path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
-sha256 = "419eb45d4ee33aac428bc21a819409e4cd5fac5a227562c3e2c60a1a697fef43"
-bytes = 10236
+sha256 = "22a41205cdcccb0eb012fd2237bf0166e498955e8d296405d7579e2825b84d68"
+bytes = 11680
 
 [current_postgresql_patches.packed_atomic_latch_state]
 path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
 base_tag = "REL_18_4"
-sha256 = "419eb45d4ee33aac428bc21a819409e4cd5fac5a227562c3e2c60a1a697fef43"
-bytes = 10236
+sha256 = "22a41205cdcccb0eb012fd2237bf0166e498955e8d296405d7579e2825b84d68"
+bytes = 11680
 feature_macro = "PG_WASIX_ATOMIC_LATCH_STATE"
 native_behavior_preserved = true
 
 [current_runtime_patches.wasmer]
 path = "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
 base_commit = "1d1b3420beef28550afbb4692b664bd7f6bc2581"
-sha256 = "dc08e0449829f42c23fbf822e87d61da5a500d5ced39bef2e501e7eec070d510"
-bytes = 1726836
+sha256 = "2f96deacd77fca90b5010bf54e5b7db8c3de13f6f8137a337ac30b0a03005fdb"
+bytes = 1728487
 
 [current_runtime_patches.wasix_libc]
 path = "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
 base_commit = "34178a6272804f90448b5bd08dc7bcf0d85438e3"
-sha256 = "116f0728a06e7b2e8e4189b0af6a7d22f40fb0fdda597a6170b5b6e712ddc3dc"
-bytes = 57623
+sha256 = "27cee4e4670a9862b1487db75882e6b8583d6f9cd91a564075e15a4462fd1251"
+bytes = 59078
 
 [postgresql]
 version = "18.4"

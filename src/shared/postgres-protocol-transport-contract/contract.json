@@ -1,0 +1,184 @@
+{
+  "schema": "oliphaunt-wasix-postgres-protocol-transport-contract-v1",
+  "transportSelector": {
+    "name": "oliphaunt_wasix_set_protocol_transport",
+    "parameters": [
+      "i32"
+    ],
+    "result": "i32",
+    "success": "previous-mode",
+    "invalid": "minus-one-with-einval"
+  },
+  "streamActive": {
+    "name": "oliphaunt_wasix_protocol_stream_active",
+    "parameters": [],
+    "result": "i32",
+    "meaning": "duplex-stream-active-not-output-only-mode"
+  },
+  "modes": [
+    {
+      "name": "buffered",
+      "value": 0,
+      "input": "buffered",
+      "output": "buffered",
+      "streamActive": "false"
+    },
+    {
+      "name": "stream",
+      "value": 1,
+      "input": "streamed",
+      "output": "streamed",
+      "streamActive": "true"
+    },
+    {
+      "name": "hybrid",
+      "value": 2,
+      "input": "buffered-until-copy-then-streamed",
+      "output": "buffered-until-copy-then-streamed",
+      "transition": "reported-copy-response",
+      "activation": "after-full-buffered-prefix-flush-succeeds",
+      "streamActive": "false-until-transition-then-true"
+    },
+    {
+      "name": "buffered-input-streamed-output",
+      "value": 3,
+      "input": "buffered",
+      "output": "streamed",
+      "streamActive": "false-output-only-does-not-claim-duplex"
+    }
+  ],
+  "copyStates": [
+    {
+      "name": "none",
+      "value": 0
+    },
+    {
+      "name": "in",
+      "value": 1
+    },
+    {
+      "name": "out",
+      "value": 2
+    },
+    {
+      "name": "both",
+      "value": 3
+    }
+  ],
+  "bufferedOutput": {
+    "limitBytes": 67108864,
+    "boundary": "inclusive",
+    "appliesTo": [
+      "buffered-mode",
+      "hybrid-mode-before-transition"
+    ],
+    "overflow": "efbig-fail-closed-without-partial-publication",
+    "sessionAfterOverflow": "terminal-reopen-required",
+    "ownership": "guest-owned-until-host-copy-before-output-reset",
+    "hostReadOrder": [
+      "validate-limit",
+      "copy-to-host-owned-buffer",
+      "output-reset"
+    ]
+  },
+  "streamedOutput": {
+    "callbackChunkMaxBytes": 65536,
+    "chunkLimitOwner": "host-callback-boundary-not-c-guest",
+    "javascriptOwnership": "fresh-owned-copy-per-callback",
+    "rustOwnership": "borrowed-only-for-synchronous-callback",
+    "failure": "terminal-no-further-delivery-already-delivered-prefix-is-not-retracted"
+  },
+  "flush": {
+    "name": "oliphaunt_wasix_pq_flush",
+    "parameters": [],
+    "cResult": "int",
+    "wasmResult": "i32",
+    "success": 0,
+    "failure": "nonzero",
+    "evaluationOrder": [
+      "postgres-pq-flush",
+      "sticky-output-status"
+    ],
+    "precedence": "postgres-pq-flush-first"
+  },
+  "outputReset": {
+    "name": "oliphaunt_wasix_output_reset",
+    "parameters": [],
+    "result": "i32",
+    "success": 0,
+    "clears": [
+      "buffered-output-length-and-scan",
+      "buffered-error-marker",
+      "sticky-buffered-output-failure",
+      "copy-state-and-pending-transition"
+    ],
+    "doesNotClear": [
+      "transport-mode",
+      "already-active-duplex-stream-flag"
+    ]
+  },
+  "stickyBufferedOutputFailure": {
+    "status": "first-positive-errno",
+    "recordedBy": "buffered-write-and-hybrid-prefix-flush-failures",
+    "sendGate": "all-modes-before-dispatch-once-recorded",
+    "clear": "output-reset-only"
+  },
+  "directStreamWriteFailure": {
+    "status": "first-positive-errno-visible-to-postgres-pq-flush",
+    "effect": "terminal-no-further-delivery",
+    "alreadyDeliveredPrefix": "not-retracted",
+    "clear": "output-reset-only"
+  },
+  "hostProtocolWasmExports": [
+    {
+      "name": "oliphaunt_wasix_set_protocol_transport",
+      "parameters": ["i32"],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_protocol_stream_active",
+      "parameters": [],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_input_reset",
+      "parameters": [],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_input_reserve",
+      "parameters": ["i32"],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_input_commit",
+      "parameters": ["i32"],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_input_available",
+      "parameters": [],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_output_reset",
+      "parameters": [],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_output_len",
+      "parameters": [],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_output_data",
+      "parameters": [],
+      "results": ["i32"]
+    },
+    {
+      "name": "oliphaunt_wasix_pq_flush",
+      "parameters": [],
+      "results": ["i32"]
+    }
+  ]
+}
