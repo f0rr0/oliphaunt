@@ -921,17 +921,28 @@ describe("GitHub release attestation receipt", () => {
 
   });
 
-  test("accepts only gh's known empty RFC3161 protobuf canonicalization", () => {
+  test("accepts only gh's known empty signature key ID and RFC3161 protobuf defaults", () => {
     const supplied = bundleFor(receiptSubjects()[0].subjects);
+    supplied.dsseEnvelope.signatures[0].keyid = "";
     supplied.verificationMaterial = {
       certificate: { rawBytes: "certificate" },
       timestampVerificationData: { rfc3161Timestamps: [] },
       tlogEntries: [{ logIndex: "1" }],
     };
     const verified = structuredClone(supplied);
+    delete verified.dsseEnvelope.signatures[0].keyid;
     verified.verificationMaterial.timestampVerificationData = {};
 
     expect(() => assertGhVerifiedBundleMatchesSupplied(verified, supplied)).not.toThrow();
+    expect(() => assertGhVerifiedBundleMatchesSupplied(supplied, verified)).not.toThrow();
+
+    for (const keyid of ["different", null, 0]) {
+      const changedKeyId = structuredClone(verified);
+      changedKeyId.dsseEnvelope.signatures[0].keyid = keyid;
+      expect(() => assertGhVerifiedBundleMatchesSupplied(changedKeyId, supplied)).toThrow(
+        "does not contain the supplied bundle",
+      );
+    }
 
     const changedEnvelope = structuredClone(verified);
     changedEnvelope.dsseEnvelope.signatures[0].sig = "different";
