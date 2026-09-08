@@ -103,6 +103,7 @@ const tasks = {
   generate: [['node', ['tools/generate-content.mjs']], fumadocsMdx, checkFumadocsSource],
   check: [
     ['node', ['tools/check-docs-product.mjs']],
+    ['node', ['tools/check-docs-snippets.mjs']],
     fumadocsMdx,
     checkFumadocsSource,
     ['pnpm', ['exec', 'next', 'typegen']],
@@ -112,6 +113,7 @@ const tasks = {
   ],
   build: [
     ['node', ['tools/check-docs-product.mjs']],
+    ['node', ['tools/check-docs-snippets.mjs']],
     fumadocsMdx,
     checkFumadocsSource,
     ['pnpm', ['exec', 'next', 'build']],

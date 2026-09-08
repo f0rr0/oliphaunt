@@ -1,70 +1,60 @@
 ---
-sidebar_position: 1
-title: Moving From SQLite
-description: Map SQLite storage, SQL, backup, and extension assumptions to embedded PostgreSQL.
+title: Moving from SQLite
+description: Port SQLite schemas, queries, and persistence to embedded PostgreSQL.
 ---
 
-# Moving From SQLite
+Use this guide when your app needs PostgreSQL types, queries, or extensions and currently stores data in SQLite. Oliphaunt opens PostgreSQL storage; it does not open an existing SQLite database file.
 
-Oliphaunt is embedded PostgreSQL, so migration from SQLite starts by mapping a
-single-file database model to PostgreSQL directory storage, WAL, extensions, and PostgreSQL
-SQL semantics.
+## Compare the storage and SQL model
 
-Use this guide when an app already uses SQLite and you are evaluating whether a
-PostgreSQL-compatible embedded runtime is worth the extra footprint.
-
-<SqliteMigrationMap />
-
-## Concept Map
-
-| SQLite concept | Oliphaunt concept |
+| SQLite assumption | PostgreSQL equivalent |
 | --- | --- |
-| One database file | One PostgreSQL storage directory |
-| Pragmas | PostgreSQL startup and session settings (GUCs) |
-| SQLite transaction | PostgreSQL transaction |
-| SQLite extension loading | Exact PostgreSQL extension selection before open |
-| File copy backup | SDK backup/export API |
-| Multiple library handles | Database sessions or the native server product |
+| One database file | A managed directory or an explicit WASIX storage provider |
+| `?` query parameters | `$1`, `$2`, and subsequent parameters |
+| Flexible column typing | Declared PostgreSQL types and explicit casts |
+| `INTEGER PRIMARY KEY` row IDs | An identity column or an application-generated key |
+| `PRAGMA` configuration | PostgreSQL startup or session settings |
+| Load an extension library | Package/select the extension, then `CREATE EXTENSION` |
+| Copy a database file | Use SDK backup and restore |
 
-## Schema And SQL Differences
+## Port a small schema first
 
-PostgreSQL is stricter and richer than SQLite:
+Create a disposable Oliphaunt database and port one table. For example, use an identity column for generated IDs and a PostgreSQL timestamp for creation time:
 
-- column types and casts matter more;
-- `SERIAL`, `IDENTITY`, sequences, arrays, JSONB, and enums replace many
-  SQLite-specific conventions;
-- PostgreSQL query parameters are `$1`, `$2`, and so on;
-- constraints, indexes, and generated columns follow PostgreSQL syntax;
-- extension-backed types and operators require exact extension selection.
+```sql
+CREATE TABLE notes (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+```
 
-Start with a small schema slice. Port table definitions, then migrate one query
-path at a time so type and constraint differences are visible early.
+Port the corresponding queries with parameters:
 
-## Storage And Backup
+```sql
+INSERT INTO notes (body) VALUES ($1) RETURNING id;
+SELECT id, body, created_at FROM notes ORDER BY created_at DESC;
+```
 
-SQLite apps often back up by copying one file. Oliphaunt live storage is a
-PostgreSQL directory, so data movement goes through SDK backup and restore
-APIs. Backup coordinates PostgreSQL online-backup state and required WAL.
-Restore validates one fixed physical archive and publishes a new managed root.
-Required extension code is still selected and packaged separately with the app.
+Bind values through your SDK. Check its decoding rules for `bigint`, timestamps, JSON, arrays, and null values before changing application models.
 
-For mobile apps, keep persistent database storage app-private and use the platform's
-normal user-data protection choices. For desktop apps, choose direct, broker, or
-server mode based on the concurrency and process-isolation model your app needs.
+## Transfer application data
 
-## Migration Path
+1. Create the PostgreSQL schema in a new persistent database.
+2. Read records through your existing SQLite integration.
+3. Convert values to the PostgreSQL types you chose, including dates and booleans.
+4. Insert with parameterized queries in bounded transactions.
+5. Compare row counts and representative values, including nulls and large integers.
+6. Switch the app to the new storage only after validation succeeds.
 
-1. Choose the SDK for the app target.
-2. Open an Oliphaunt database with temporary storage and port the schema.
-3. Port read paths before write-heavy sync/import paths.
-4. Add selected extensions explicitly.
-5. Add backup/restore and inspect the built app artifact before shipping.
-6. Compare app-start, first-query, memory, and built artifact size against the
-   SQLite baseline.
+Keep the original SQLite database until migration is complete and recoverable. A SQLite file or SQL dump is not an Oliphaunt physical backup; PostgreSQL may reject SQLite-specific SQL in a dump.
 
-## When SQLite Is Still The Better Fit
+## Revisit concurrency and backups
 
-Use Oliphaunt when PostgreSQL compatibility, richer SQL, extensions, and
-server-compatible workflows are worth the larger runtime and directory storage
-model. Use SQLite when a tiny single-file dependency and SQLite-specific
-semantics are the better fit.
+One embedded handle executes one session's work in order. Use a [native server](/docs/learn/native-runtime#server) if the app requires a PostgreSQL connection pool with independent sessions.
+
+Replace file-copy backup code with the SDK's backup and restore methods. Test restore to a new destination with the app's selected extensions.
+
+## Measure the tradeoff
+
+Compare startup time, first-query latency, memory, and installed size using your actual schema and workload. PostgreSQL adds capabilities and a larger runtime. SQLite remains a good choice when a small single-file database already meets your app's needs. See [Measure performance](/docs/reference/performance).

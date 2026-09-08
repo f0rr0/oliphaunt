@@ -123,8 +123,7 @@ export const PUBLIC_PLATFORM_COMPATIBILITY_BLOCK = Object.freeze({
 
 /**
  * Render the consumer-facing compatibility table from the same contract used
- * to inspect release binaries. The public release reference keeps this block
- * byte-for-byte synchronized in platform-compatibility-policy.test.mjs.
+ * to inspect release binaries. Docs generation embeds this table directly.
  */
 export function renderPublicPlatformCompatibilityTable() {
   const linuxX64 = PLATFORM_COMPATIBILITY_POLICY["linux-x64-gnu"].elf.maximumRequiredVersions;
@@ -142,12 +141,12 @@ export function renderPublicPlatformCompatibilityTable() {
   const directMacos = PLATFORM_COMPATIBILITY_POLICY["macos-arm64"].apple.platforms.macos;
   const xcframework = PLATFORM_COMPATIBILITY_POLICY["ios-xcframework"].apple.platforms;
   return [
-    "| Published carrier | Enforced consumer compatibility contract |",
+    "| Package target | Platform requirements |",
     "| --- | --- |",
-    `| Linux x64/arm64 GNU | Required symbol versions do not exceed \`GLIBC_${displayVersion(linuxX64.GLIBC)}\` or \`GLIBCXX_${displayVersion(linuxX64.GLIBCXX)}\`. |`,
+    `| Linux x64/arm64 GNU | Compatible system libraries must provide symbols through \`GLIBC_${displayVersion(linuxX64.GLIBC)}\` and \`GLIBCXX_${displayVersion(linuxX64.GLIBCXX)}\`. |`,
     `| Direct macOS arm64 runtime | Minimum deployment target is macOS ${displayVersion(directMacos.maximumMinimumOs)}. |`,
-    `| Android \`arm64-v8a\` and \`x86_64\` | Minimum Android API level is ${androidArm64}; Android binaries must not require GLIBC/GLIBCXX symbol families. |`,
-    `| Apple XCFramework | Contains macOS arm64, iOS device arm64, and iOS Simulator arm64 slices; minimum targets are macOS ${displayVersion(xcframework.macos.maximumMinimumOs)}, iOS ${displayVersion(xcframework.ios.maximumMinimumOs)}, and iOS Simulator ${displayVersion(xcframework.iosSimulator.maximumMinimumOs)}. |`,
-    "| Windows x64 MSVC | Requires the x64 PE/COFF contract and the declared app-local Visual C++ runtime profile; Windows ARM64 is not published. |",
+    `| Android \`arm64-v8a\` and \`x86_64\` | Android API ${androidArm64} or later. |`,
+    `| Apple XCFramework | macOS arm64, iOS device arm64, and iOS Simulator arm64; minimum versions are macOS ${displayVersion(xcframework.macos.maximumMinimumOs)}, iOS ${displayVersion(xcframework.ios.maximumMinimumOs)}, and iOS Simulator ${displayVersion(xcframework.iosSimulator.maximumMinimumOs)}. |`,
+    "| Windows x64 MSVC | x64 application with the packaged Visual C++ runtime files. |",
   ].join("\n");
 }

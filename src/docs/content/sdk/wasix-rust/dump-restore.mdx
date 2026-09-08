@@ -1,173 +1,78 @@
 ---
-title: Rust WASIX Dump, Restore, And Upgrade
-description: Use the Rust binding's logical dumps, physical archives, CLI exports, and restore flows.
+title: Dump and restore
+description: Choose a physical backup or a logical PostgreSQL dump for data movement and upgrades.
 ---
 
-# Rust WASIX Dump, Restore, And Upgrade
+Use a physical backup for compatible WASIX restores. Use a logical SQL dump for upgrades that change the physical format or transfers between native and WASIX runtimes.
 
-`oliphaunt-wasix` uses the WASIX `pg_dump` binary from the shipped portable
-runtime asset for portable SQL exports, restores, and version-to-version
-upgrades.
-
-<WasmDataMovement />
-
-## Choose The Right Export Format
-
-Use logical dumps when you need:
-
-- a portable SQL export;
-- an upgrade path between `oliphaunt-wasix` releases;
-- a way to move data between different stores safely.
-
-Use physical archives when you need:
-
-- a same-version clone;
-- a same-runtime restore into another `oliphaunt-wasix` store;
-- a fast local backup of the current cluster state.
-
-Use logical dumps for cross-version upgrades. Keep physical archives for
-same-version clones and restores.
-
-## Tool API
-
-Enable the `tools` feature for fluent database tool methods and the optional
-`tools` options/error namespace:
+## Enable logical tools
 
 ```toml
 [dependencies]
-oliphaunt-wasix = { version = "0.1", features = ["tools"] }
+oliphaunt-wasix = { version = "@VERSION(oliphaunt-wasix-rust)@", features = ["tools"] }
 ```
 
-Run the tools directly against an open database:
+## Export and import SQL
 
-```rust,no_run
+This complete example exports a database and restores it into another in-memory database:
+
+```rust
 use oliphaunt_wasix::{Oliphaunt, tools};
 
-fn run() -> oliphaunt_wasix::Result<()> {
-    let mut database = Oliphaunt::open()?;
-    let sql = database.pg_dump(tools::PgDumpOptions::new().arg("--schema-only"))?;
-    assert!(!sql.is_empty());
-    database.close()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut source = Oliphaunt::open()?;
+    source.execute("CREATE TABLE notes (body text NOT NULL)")?;
+    source.execute("INSERT INTO notes VALUES ('First note')")?;
+    let sql = source.pg_dump(tools::PgDumpOptions::new())?;
+    source.close()?;
+
+    let mut target = Oliphaunt::open()?;
+    target.psql(tools::PsqlOptions::new().script(sql))?;
+    let rows = target.query("SELECT body FROM notes")?;
+    let body: String = rows.rows()[0].try_get("body")?;
+    assert_eq!(body, "First note");
+    target.close()?;
     Ok(())
 }
 ```
 
-The methods are available on database handles, not server or transaction
-handles. On root `Oliphaunt` they take `&mut self` and run synchronously against
-the caller-owned session. They cannot run inside a callback transaction. The tool connection resets PostgreSQL
-session state before and after it runs, so
-prepared statements and session settings on the direct handle do not survive.
-`database.pg_dump()` returns UTF-8 SQL text and `database.psql()` returns UTF-8
-standard output. Use `PsqlOptions::command(...)` for one
-command or `PsqlOptions::script(...)` for a complete SQL script. `pg_dump()`
-returns standard PostgreSQL 18 plain-text output unchanged, including its
-`COPY` data and `\\restrict`/`\\unrestrict` security delimiters.
+`pg_dump` returns ordinary UTF-8 PostgreSQL SQL. It can contain COPY data and psql commands, so pass it to `psql`, not `execute`. The async handle exposes the same tool methods with `.await`.
 
-Use the same fluent methods on `AsyncOliphaunt` to run the operation through a
-dedicated database owner thread:
+Tools reset session state and cannot run inside a callback transaction. Restore into an empty database with required extensions available, then verify schema and data before switching the application to it.
 
-```rust,no_run
-use oliphaunt_wasix::{AsyncOliphaunt, tools};
+## Shape a dump
 
-async fn run_asynchronously() -> oliphaunt_wasix::Result<()> {
-    let database = AsyncOliphaunt::open().await?;
-    let sql = database.pg_dump(tools::PgDumpOptions::new()).await?;
-    assert!(!sql.is_empty());
-    database.close().await
-}
-```
+Use `PgDumpOptions::new().arg("--schema-only")` for schema-only output. Other shaping options include `--quote-all-identifiers`, `-n` for a schema, and `-t` for a table.
 
-## `PgDumpOptions`
+The SDK manages connection and output settings. Do not override host, port, username, database, file, encoding, compression, format, or parallel-job flags. This API returns uncompressed plain SQL; it does not provide custom archives or `pg_restore`.
 
-`PgDumpOptions` controls the managed parts of the dump command:
+## Use the command line
 
-```rust,no_run
-use oliphaunt_wasix::tools::PgDumpOptions;
-
-let options = PgDumpOptions::new()
-    .args(["--schema-only", "--quote-all-identifiers"]);
-```
-
-Useful passthrough flags include dump-shaping options such as:
-
-- `--schema-only`
-- `--quote-all-identifiers`
-- `-n <schema>`
-- `-t <table>`
-
-Managed connection and output flags are reserved by the API:
-`--file`, `--format`, `--compress`, `--encoding`, `--host`, `--port`,
-`--username`, `--dbname`, and `--jobs` are configured by Oliphaunt instead of
-`arg(...)` or `args(...)`. The returned script is always uncompressed UTF-8
-plain text.
-
-## CLI
-
-The CLI is also part of the crate's `tools` feature.
-
-Dump a persistent directory:
+Install the CLI with the tools feature:
 
 ```sh
-oliphaunt-wasix-dump --directory ./.oliphaunt
+cargo install oliphaunt-wasix --version @VERSION(oliphaunt-wasix-rust)@ --features tools
+oliphaunt-wasix-dump --directory ./data/notes > notes.sql
 ```
 
-Select a non-default database or user with `--database` and `--username`. If
-the root uses installed extensions, repeat `--extension NAME` for every
-extension that must be mounted before PostgreSQL starts:
+Close other owners of that root first. Use `--database` and `--username` only for identities already present in the database. Enable required extension Cargo features at installation and repeat `--extension NAME` for each selection when dumping an extension-bearing root.
+
+Pass dump-shaping arguments after `--`:
 
 ```sh
-oliphaunt-wasix-dump --directory ./.oliphaunt \
-  --database app --username owner \
-  --extension vector --extension pg_trgm
+oliphaunt-wasix-dump --directory ./data/notes -- --schema-only
 ```
 
-Pass through normal `pg_dump` shaping flags after `--`:
+## Restore a physical backup
 
-```sh
-oliphaunt-wasix-dump --directory ./.oliphaunt -- --schema-only
-oliphaunt-wasix-dump --directory ./.oliphaunt -- --quote-all-identifiers
+```rust
+let archive = db.backup()?;
+db.close()?;
+Oliphaunt::restore("./data/restored", archive)?;
 ```
 
-## Restore
+This fragment assumes an open source `db`. The destination must be absent or empty. Restore does not replace a nonempty root. Reopen it with a compatible WASIX runtime and the required extension selection.
 
-For same-version physical copies, use direct `backup()` and static
-`Oliphaunt::restore(destination, bytes)`; both are synchronous on the root API:
+## Upgrade application data
 
-```rust,no_run
-use oliphaunt_wasix::Oliphaunt;
-
-fn clone_database() -> oliphaunt_wasix::Result<()> {
-    let mut source = Oliphaunt::open()?;
-    let archive = source.backup()?;
-    source.close()?;
-    Oliphaunt::restore("./restored", archive)
-}
-```
-
-Physical restore accepts an absent or empty managed-root directory and
-publishes a new root only after validating and staging the complete archive.
-The root call runs to completion or returns an error. The async
-`AsyncOliphaunt::restore` uses a temporary owner thread; once publication
-starts, abandoning its future does not promise cancellation.
-
-For a logical restore, run
-`database.psql(PsqlOptions::new().script(sql))`. Do not pass the
-script to `database.execute(...)`: plain `pg_dump` output can include `psql`
-meta commands. Oliphaunt does not expose a second logical-restore abstraction.
-With an async handle, await the corresponding
-`database.psql(...).await` call.
-
-## Upgrade Guidance
-
-Use logical dump and restore when upgrading between `oliphaunt-wasix` versions or
-changing shipped runtime assets:
-
-1. Open the old database with the old crate/runtime.
-2. Create a logical dump with `database.pg_dump(...)`, or use
-   `oliphaunt-wasix-dump`.
-3. Open a fresh database with the new crate/runtime.
-4. Feed the script through
-   `database.psql(PsqlOptions::new().script(sql))`.
-
-Use logical dumps for general upgrades. Physical data-dir archives are for the
-same runtime family and database format.
+Keep a recoverable copy of the old data. Read the SDK and runtime release notes, choose physical restore only when compatibility is documented, and otherwise export logical SQL with the old runtime. Import into a fresh database with the new runtime, verify application queries and constraints, then switch the app to the new root.

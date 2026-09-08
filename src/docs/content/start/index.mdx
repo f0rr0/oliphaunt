@@ -1,37 +1,21 @@
 ---
-sidebar_position: 1
-title: Start With Oliphaunt
-description: Choose an Oliphaunt SDK, open embedded PostgreSQL storage, and run the first query.
+title: Get started
+description: Run PostgreSQL inside your app. Choose an SDK and make your first query.
 ---
 
-Oliphaunt is embedded PostgreSQL for apps. Install the SDK for your runtime
-owner, open with its sensible storage default, run SQL, and select only the
-extensions your app ships. Native, Rust WASIX, and WASIX TypeScript are
-separate product choices.
+Oliphaunt is PostgreSQL embedded in your application. Use PostgreSQL queries, types, and extensions through an SDK for your language, without setting up a separate database service.
 
-This page is the shortest tutorial path. Pick one app target, prove the runtime
-with one query, then move into the SDK, runtime, extension, or storage page that
-matches the next decision.
+## Choose your SDK
 
-## Start In One App Target
+<SdkChooser />
 
-<QuickstartPath />
+Start with the native SDK for your app's platform. For a browser app, use **WASIX TypeScript**. WASIX runs PostgreSQL as WebAssembly and also has a Rust binding.
 
-## First Query Shape
+Each quickstart includes installation, a complete query example, and persistent storage setup. Compare [runtime support](/docs/reference/capabilities) if you need process isolation, an ORM, or browser storage.
 
-Every SDK uses ecosystem-native syntax. The application flow stays the same:
-choose the runtime product and storage, select exact extensions, open, query,
-and close.
+## After your first query
 
-<FirstQueryFlow />
-
-Use the SDK page for your app target when you need platform setup, native build
-consequences, app-owned cancel/close behavior, PostgreSQL maintenance SQL,
-extension artifacts, backup, restore, and troubleshooting.
-
-## After The First Query
-
-Use these pages when the first runtime path works and the app needs the next
-production decision.
-
-<StartNextSteps />
+- **Build application features.** Your SDK's guide covers parameters, transactions, backups, and errors.
+- **Understand storage.** [Embedded PostgreSQL](/docs/learn/embedded-postgres) explains database lifetime and recovery.
+- **Add PostgreSQL extensions.** [Choose an extension](/docs/reference/extensions), then follow your SDK's setup.
+- **Bring an existing app.** Read [Moving from SQLite](/docs/learn/sqlite-upgrade) or [Use with Tauri](/docs/learn/tauri).

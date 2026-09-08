@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-
-import { generateDocs } from './generate-content.mjs';
+import { generateDocs, replaceVersionVariables } from './generate-content.mjs';
 
 const args = new Set(process.argv.slice(2));
 const apiReferenceRequested = args.has('--api-reference');
@@ -34,17 +35,6 @@ function readText(relativePath) {
 
 function readJsonFile(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function escapeMarkdownCell(value) {
-  return String(value ?? '')
-    .replaceAll('\\', '\\\\')
-    .replaceAll('|', '\\|')
-    .replaceAll('\n', ' ');
 }
 
 function routeSourcePagePath(route, page) {
@@ -167,8 +157,6 @@ function assertGeneratedFiles() {
     .map((page) => path.join(siteDocsRoot, 'reference', `${page}.md`));
   const required = [
     ...generatedReferencePages,
-    path.join(staticRoot, 'llms.txt'),
-    path.join(staticRoot, 'llms-full.txt'),
     path.join(generatedMetaRoot, 'routes.json'),
     path.join(generatedMetaRoot, 'navigation.json'),
     path.join(repoRoot, 'target', 'docs', 'generated', 'api', 'summary.json'),
@@ -222,10 +210,8 @@ function assertGeneratedFumadocsMetadata() {
       if (!metadata.pages?.includes('guide')) {
         fail(`${route.id} SDK metadata must expose guide in the SDK folder`);
       }
-      if (metadata.pages?.includes('api-reference')) {
-        fail(
-          `${route.id} SDK metadata must keep API Reference out of the primary sidebar; link it from Reference and SDK page bodies`,
-        );
+      if (!metadata.pages?.includes('api-reference')) {
+        fail(`${route.id} SDK metadata must expose its API reference`);
       }
       for (const page of ['api-reference']) {
         const routePath = page === 'index' ? `/${route.route}` : `/${route.route}/${page}`;
@@ -238,63 +224,35 @@ function assertGeneratedFumadocsMetadata() {
 }
 
 function assertSdkSidebarPages() {
-  const expectedOrder = [
-    'oliphaunt-rust',
-    'oliphaunt-swift',
-    'oliphaunt-kotlin',
-    'oliphaunt-react-native',
-    'oliphaunt-js',
-    'oliphaunt-wasix-rust',
-    'oliphaunt-wasix-typescript',
-    'liboliphaunt-native',
-  ];
-  const actualOrder = manifest.routes
-    .filter((entry) => entry.kind === 'sdk')
-    .map((entry) => entry.id);
-  if (JSON.stringify(actualOrder) !== JSON.stringify(expectedOrder)) {
-    fail(`SDK route order must stay app-developer first: ${expectedOrder.join(' -> ')}`);
-  }
-
   for (const route of manifest.routes.filter((entry) => entry.kind === 'sdk')) {
-    const expected =
-      route.id === 'oliphaunt-react-native'
-        ? ['index', 'guide', 'architecture']
-        : route.id === 'oliphaunt-wasix-rust'
-          ? ['index', 'guide', 'runtime', 'dump-restore']
-          : ['index', 'guide'];
-    const actual = route.sidebar_pages ?? [];
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-      fail(`${route.id} sidebar_pages must be ${expected.join(', ')}`);
+    const pages = sidebarPagesForRoute(route);
+    for (const required of ['index', 'guide', 'api-reference']) {
+      if (!pages.includes(required)) fail(`${route.id} sidebar must expose ${required}`);
     }
-    if (actual.includes('api-reference')) {
-      fail(`${route.id} sidebar_pages must not expose API Reference as a primary SDK page`);
+    if (new Set(pages).size !== pages.length) fail(`${route.id} has duplicate sidebar pages`);
+    for (const page of pages) {
+      if (!route.page_order.includes(page))
+        fail(`${route.id} sidebar points to undeclared ${page}`);
     }
   }
 }
 
 function assertReferenceSidebarPages() {
   const route = manifest.routes.find((entry) => entry.id === 'reference');
-  if (!route) {
-    fail('docs manifest is missing reference route');
+  if (!route) fail('docs manifest is missing reference route');
+  for (const page of sidebarPagesForRoute(route)) {
+    if (!route.page_order.includes(page)) fail(`reference sidebar points to undeclared ${page}`);
   }
-  const expected = ['index', 'capabilities', 'extensions', 'performance'];
-  const actual = route.sidebar_pages ?? [];
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    fail(`reference sidebar_pages must stay focused: ${expected.join(', ')}`);
-  }
-  for (const reachable of [
+  for (const page of [
     'sdk-products',
+    'capabilities',
+    'extensions',
     'releases',
     'version-matrix',
     'extension-catalog',
     'api-reference',
   ]) {
-    if (!(route.page_order ?? []).includes(reachable)) {
-      fail(`reference page_order must keep ${reachable} reachable from lookup pages`);
-    }
-    if (actual.includes(reachable)) {
-      fail(`reference sidebar_pages must keep ${reachable} as a lookup page, not primary nav`);
-    }
+    if (!route.page_order.includes(page)) fail(`reference must keep ${page} reachable`);
   }
 }
 
@@ -393,66 +351,33 @@ function assertApplicabilityMetadata() {
 }
 
 function assertLightweightVersioning() {
-  const releaseIndex = readText('src/docs/content/reference/releases.mdx');
-  for (const required of [
-    '`latest` channel',
-    'package versions',
-    'compatibility notes',
-    'release notes',
-    'Versioned docs remain available',
-    'Documentation changes can update the docs site',
-  ]) {
-    if (!releaseIndex.includes(required)) {
-      fail(`release docs must describe lightweight docs versioning policy: missing ${required}`);
-    }
-  }
-  const versionMatrix = readText(
-    path.relative(repoRoot, path.join(siteDocsRoot, 'reference', 'version-matrix.md')),
+  const versions = readJsonFile(path.join(staticRoot, 'docs-version.json'));
+  const expected = Object.fromEntries(
+    Object.entries(releaseGraph.products).map(([id, product]) => [id, product.current_version]),
   );
-  for (const required of [
-    '| Product | Current source version | First public version | Version relationship | Publish targets | Tag prefix |',
-    'unreleased sentinel',
-    'Shared PostgreSQL contrib carrier inputs select both runtime owners',
-    'upstream-bound',
-    'Release Please selects changed product paths',
-    'Native and WASIX are independent products',
-    'liboliphaunt-native',
-    'oliphaunt-react-native',
-    'oliphaunt-wasix-rust',
-  ]) {
-    if (!versionMatrix.includes(required)) {
-      fail(`generated version matrix is missing compatibility/release data: ${required}`);
-    }
+  assert.deepEqual(versions.products, expected, 'docs version record must match release metadata');
+  assert.match(versions.sourceRevision, /^[a-f0-9]{40}$/u);
+  assert.equal(typeof versions.sourceDirty, 'boolean');
+  const matrix = fs.readFileSync(path.join(siteDocsRoot, 'reference/version-matrix.md'), 'utf8');
+  for (const [id, version] of Object.entries(expected)) {
+    if (!matrix.includes(`| ${id} | ${version} |`)) fail(`version table missing ${id} ${version}`);
   }
-  const products = Object.entries(releaseGraph.products ?? {}).sort(([left], [right]) =>
-    left.localeCompare(right),
+  const sample = '@VERSION(sdk)@ / @VERSION(extension)@';
+  assert.equal(
+    replaceVersionVariables(sample, {
+      sdk: { current_version: '1.2.3' },
+      extension: { current_version: '2.0.0-rc.1' },
+    }),
+    '1.2.3 / 2.0.0-rc.1',
   );
-  if (products.length === 0) {
-    fail('generated version matrix has no canonical release products');
-  }
-  for (const [productId, product] of products) {
-    const currentVersion =
-      product.current_version === '0.0.0'
-        ? `${product.current_version} (unreleased)`
-        : product.current_version;
-    const expectedRow = `| ${[
-      productId,
-      currentVersion,
-      product.initial_version,
-      product.version_relationship,
-      (product.publish_targets ?? []).join(', ') || 'none',
-      product.tag_prefix,
-    ]
-      .map(escapeMarkdownCell)
-      .join(' | ')} |`;
-    if (!versionMatrix.includes(expectedRow)) {
-      fail(
-        `generated version matrix is missing the canonical row for ${productId}: ${expectedRow}`,
-      );
-    }
-  }
-  if (releaseGraph.products?.['oliphaunt-swift']?.initial_version !== '0.6.0') {
-    fail('oliphaunt-swift must retain the collision-free first public version 0.6.0');
+  assert.throws(() => replaceVersionVariables(sample, {}), /unknown or invalid docs version/u);
+  assert.throws(
+    () => replaceVersionVariables('@VERSION(sdk)@', { sdk: { current_version: 'latest' } }),
+    /unknown or invalid docs version/u,
+  );
+  for (const record of routeRecords) {
+    if (fs.readFileSync(record.file, 'utf8').includes('@VERSION('))
+      fail(`unresolved version in ${record.route}`);
   }
 }
 
@@ -486,19 +411,6 @@ function assertPublicRootLandingPages() {
   }
 }
 
-function assertLlmRouteCoverage() {
-  const llms = readText(path.relative(repoRoot, path.join(staticRoot, 'llms.txt')));
-  const full = readText(path.relative(repoRoot, path.join(staticRoot, 'llms-full.txt')));
-  for (const record of routeRecords) {
-    if (!llms.includes(record.route)) {
-      fail(`llms.txt is missing route ${record.route}`);
-    }
-    if (!full.includes(`Route: ${record.route}`)) {
-      fail(`llms-full.txt is missing route ${record.route}`);
-    }
-  }
-}
-
 function stripMarkdownCodeBlocks(markdown) {
   return markdown.replace(/```[\s\S]*?```/gu, '');
 }
@@ -524,7 +436,7 @@ function normalizedDocsPath(href) {
   if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//iu.test(href) || /^[a-z][a-z0-9+.-]*:/iu.test(href)) {
     return null;
   }
-  if (!href.startsWith('/docs')) {
+  if (href !== '/docs' && !href.startsWith('/docs/')) {
     return null;
   }
   const [withoutHash] = href.split('#');
@@ -578,423 +490,17 @@ function assertDocsInternalLinksResolve() {
 }
 
 function assertSdkSectionCoverage() {
-  const guideSummaryIds = {
-    'liboliphaunt-native': 'c-abi',
-    'oliphaunt-rust': 'rust',
-    'oliphaunt-swift': 'swift',
-    'oliphaunt-kotlin': 'kotlin',
-    'oliphaunt-react-native': 'react-native',
-    'oliphaunt-js': 'typescript',
-    'oliphaunt-wasix-rust': 'wasix-rust',
-    'oliphaunt-wasix-typescript': 'wasix-typescript',
-  };
-  const guideHeadingOrder = {
-    'liboliphaunt-native': [
-      'Install',
-      'Open and query',
-      'Configure',
-      'Choose a mode',
-      'Handle lifecycle',
-      'Select extensions',
-      'Back up and restore',
-    ],
-    default: [
-      'Install',
-      'Open and query',
-      'Create app data',
-      'Configure',
-      'Choose a mode',
-      'Handle lifecycle',
-      'Select extensions',
-      'Back up and restore',
-    ],
-    'oliphaunt-wasix-rust': [
-      'Install',
-      'Open and query',
-      'Create app data',
-      'Configure',
-      'Choose execution placement',
-      'Handle lifecycle',
-      'Select extensions',
-      'Back up, dump, and restore',
-    ],
-    'oliphaunt-wasix-typescript': [
-      'Install',
-      'Open and query',
-      'Create app data',
-      'Configure',
-      'Choose execution placement',
-      'Handle lifecycle',
-      'Select extensions',
-      'Back up and restore',
-    ],
-  };
   for (const route of manifest.routes.filter((entry) => entry.kind === 'sdk')) {
-    const requiredPages = route.required_pages ?? [];
-    for (const required of ['index', 'guide', 'api-reference']) {
-      if (!requiredPages.includes(required)) {
-        fail(`${route.id} docs must declare ${required} in docs-manifest.toml`);
-      }
+    const quickstart = readText(routeSourcePagePath(route, 'index'));
+    if (
+      !quickstart.includes(`\`\`\`${route.snippet_language}`) &&
+      !(route.snippet_language === 'typescript' && quickstart.includes('```ts'))
+    ) {
+      fail(`${route.id} quickstart needs a language-specific code example`);
     }
-    if ((route.page_order ?? []).length > 6) {
-      fail(
-        `${route.id} docs sidebar is too granular; keep Overview, Guide, API Reference, and only justified deep pages`,
-      );
-    }
-    for (const page of requiredPages) {
-      const pagePath = routeSourcePagePath(route, page);
-      if (!pagePath) {
-        fail(`${route.id} docs are missing required page ${page}.md or ${page}.mdx`);
-      }
-    }
-    const indexPath = routeSourcePagePath(route, 'index');
-    const indexMarkdown = readText(indexPath);
-    const landingId = guideSummaryIds[route.id];
-    if (!landingId || !indexMarkdown.includes(`<SdkLanding id="${landingId}" />`)) {
-      fail(`${route.id} SDK overview is missing the SDK landing component`);
-    }
-    const requiredOverviewHeadings = [
-      'Install',
-      'Open And Query',
-      'Runtime Shape',
-      'App Responsibilities',
-      'First Query',
-    ];
-    let previousHeadingIndex = -1;
-    for (const heading of requiredOverviewHeadings) {
-      const headingPattern = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu');
-      const headingIndex = indexMarkdown.search(headingPattern);
-      if (!headingPattern.test(indexMarkdown)) {
-        fail(`${route.id} SDK overview is missing required section: ${heading}`);
-      }
-      if (headingIndex < previousHeadingIndex) {
-        fail(
-          `${route.id} SDK overview sections must use this order: ${requiredOverviewHeadings.join(' -> ')}`,
-        );
-      }
-      previousHeadingIndex = headingIndex;
-    }
-    const guidePath = routeSourcePagePath(route, 'guide');
-    const guideMarkdown = readText(guidePath);
-    const guideSummaryId = guideSummaryIds[route.id];
-    const hasGuideSummary =
-      guideSummaryId && guideMarkdown.includes(`<SdkGuideSummary id="${guideSummaryId}" />`);
-    const hasEquivalentGuideSummary =
-      route.id === 'oliphaunt-react-native' &&
-      guideMarkdown.includes('<ReactNativeApproachTable />');
-    if (!hasGuideSummary && !hasEquivalentGuideSummary) {
-      fail(`${route.id} developer guide is missing the SDK guide summary component`);
-    }
-    if (!guideMarkdown.includes(`<SdkGuideProof id="${guideSummaryId}" />`)) {
-      fail(`${route.id} developer guide is missing the SDK guide proof component`);
-    }
-    const expectedGuideHeadings = guideHeadingOrder[route.id] ?? guideHeadingOrder.default;
-    let previousGuideHeadingIndex = -1;
-    for (const heading of expectedGuideHeadings) {
-      const headingIndex = guideMarkdown.search(
-        new RegExp(`^###\\s+${escapeRegExp(heading)}\\s*$`, 'mu'),
-      );
-      if (headingIndex < 0) {
-        fail(`${route.id} developer guide is missing required step heading: ${heading}`);
-      }
-      if (headingIndex < previousGuideHeadingIndex) {
-        fail(
-          `${route.id} developer guide steps must use this order: ${expectedGuideHeadings.join(' -> ')}`,
-        );
-      }
-      previousGuideHeadingIndex = headingIndex;
-    }
-    if (!/^##\s+Troubleshooting\s*$/mu.test(guideMarkdown)) {
-      fail(`${route.id} developer guide is missing Troubleshooting`);
-    }
-    const sourceFiles = requiredPages.map((page) =>
-      readText(routeSourcePagePath(route, page)).toLowerCase(),
-    );
-    const combined = sourceFiles.join('\n');
-    if (!combined.includes('exact') || !combined.includes('extension')) {
-      fail(`${route.id} docs must explain exact extension selection across its SDK section`);
-    }
-    if (!combined.includes('backup') || !combined.includes('restore')) {
-      fail(`${route.id} docs must include backup and restore guidance`);
-    }
-    if (route.id === 'oliphaunt-react-native') {
-      const architecturePath = routeSourcePagePath(route, 'architecture');
-      if (!architecturePath) {
-        fail('React Native SDK docs are missing architecture.md or architecture.mdx');
-      }
-      const architectureMarkdown = readText(architecturePath);
-      if (!architectureMarkdown.includes('<ReactNativeBoundaryMap />')) {
-        fail('React Native architecture docs are missing ReactNativeBoundaryMap');
-      }
-      for (const heading of [
-        'Ownership',
-        'JavaScript surface',
-        'Binary transport',
-        'Storage and lifecycle',
-        'Extensions and packaging',
-      ]) {
-        if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu').test(architectureMarkdown)) {
-          fail(`React Native architecture docs are missing required section: ${heading}`);
-        }
-      }
-    }
-    if (route.id === 'oliphaunt-wasix-rust') {
-      const runtimePath = routeSourcePagePath(route, 'runtime');
-      if (!runtimePath) {
-        fail('Rust WASIX docs are missing runtime.md or runtime.mdx');
-      }
-      const runtimeMarkdown = readText(runtimePath);
-      if (!runtimeMarkdown.includes('<WasmRuntimeMap />')) {
-        fail('Rust WASIX runtime docs are missing WasmRuntimeMap');
-      }
-      for (const heading of [
-        'Direct and server hosts',
-        'Storage',
-        'Startup and extensions',
-        'Data movement and tools',
-        'Lifecycle',
-        'Supported hosts',
-      ]) {
-        if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu').test(runtimeMarkdown)) {
-          fail(`Rust WASIX runtime docs are missing required section: ${heading}`);
-        }
-      }
-
-      const dumpRestorePath = routeSourcePagePath(route, 'dump-restore');
-      if (!dumpRestorePath) {
-        fail('Rust WASIX docs are missing dump-restore.md or dump-restore.mdx');
-      }
-      const dumpRestoreMarkdown = readText(dumpRestorePath);
-      if (!dumpRestoreMarkdown.includes('<WasmDataMovement />')) {
-        fail('Rust WASIX dump/restore docs are missing WasmDataMovement');
-      }
-      for (const heading of [
-        'Choose The Right Export Format',
-        'Tool API',
-        '`PgDumpOptions`',
-        'CLI',
-        'Restore',
-        'Upgrade Guidance',
-      ]) {
-        if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu').test(dumpRestoreMarkdown)) {
-          fail(`Rust WASIX dump/restore docs are missing required section: ${heading}`);
-        }
-      }
-    }
-  }
-}
-
-function assertStartPageCoverage() {
-  const startRoute = manifest.routes.find((entry) => entry.id === 'start');
-  if (!startRoute) {
-    fail('docs manifest is missing the Start route');
-  }
-  const startPath = routeSourcePagePath(startRoute, 'index');
-  if (!startPath) {
-    fail('Start docs are missing index.md or index.mdx');
-  }
-  const markdown = readText(startPath);
-  const requiredComponents = ['QuickstartPath', 'FirstQueryFlow', 'StartNextSteps'];
-  for (const component of requiredComponents) {
-    if (!markdown.includes(`<${component}`)) {
-      fail(`Start docs are missing ${component}`);
-    }
-  }
-  const requiredHeadings = [
-    'Start In One App Target',
-    'First Query Shape',
-    'After The First Query',
-  ];
-  let previousHeadingIndex = -1;
-  for (const heading of requiredHeadings) {
-    const headingIndex = markdown.search(new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu'));
-    if (headingIndex < 0) {
-      fail(`Start docs are missing required section: ${heading}`);
-    }
-    if (headingIndex < previousHeadingIndex) {
-      fail(`Start docs sections must use this order: ${requiredHeadings.join(' -> ')}`);
-    }
-    previousHeadingIndex = headingIndex;
-  }
-}
-
-function assertReferencePageCoverage() {
-  const referenceRoute = manifest.routes.find((entry) => entry.id === 'reference');
-  if (!referenceRoute) {
-    fail('docs manifest is missing the Reference route');
-  }
-  const requirements = [
-    {
-      page: 'capabilities',
-      title: 'Runtime Support',
-      components: ['CapabilitySnapshot'],
-      headings: ['Products', 'Feature support', 'Selection guidance'],
-    },
-    {
-      page: 'extensions',
-      title: 'Extensions',
-      components: ['ExactExtensionRule', 'ExtensionArtifactFlow'],
-      headings: [
-        'Native selection',
-        'Rust WASIX selection',
-        'WASIX TypeScript selection',
-        'Platform Behavior',
-        'Dependencies',
-        'External Extensions',
-        'Verifying App Artifacts',
-      ],
-    },
-    {
-      page: 'performance',
-      title: 'Performance',
-      components: ['PerformanceResultsGrid'],
-      headings: [
-        'What to measure',
-        'Compare modes honestly',
-        'SQLite comparison',
-        'Release Measurements',
-      ],
-    },
-    {
-      page: 'releases',
-      title: 'Releases',
-      components: ['ReleaseLookup'],
-      headings: [
-        'First Release Boundary',
-        'Version Relationships',
-        'Target Availability',
-        'What A Release Tells You',
-        'Docs Versioning',
-      ],
-    },
-  ];
-  for (const requirement of requirements) {
-    const pagePath = routeSourcePagePath(referenceRoute, requirement.page);
-    if (!pagePath) {
-      fail(`Reference docs are missing ${requirement.page}.md or ${requirement.page}.mdx`);
-    }
-    const markdown = readText(pagePath);
-    if (!new RegExp(`^#\\s+${escapeRegExp(requirement.title)}\\s*$`, 'mu').test(markdown)) {
-      fail(`Reference page ${requirement.page} is missing title heading: ${requirement.title}`);
-    }
-    for (const component of requirement.components) {
-      if (!markdown.includes(`<${component}`)) {
-        fail(`Reference page ${requirement.page} is missing ${component}`);
-      }
-    }
-    let previousHeadingIndex = -1;
-    for (const heading of requirement.headings) {
-      const headingIndex = markdown.search(
-        new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu'),
-      );
-      if (headingIndex < 0) {
-        fail(`Reference page ${requirement.page} is missing required section: ${heading}`);
-      }
-      if (headingIndex < previousHeadingIndex) {
-        fail(
-          `Reference page ${requirement.page} sections must use this order: ${requirement.headings.join(' -> ')}`,
-        );
-      }
-      previousHeadingIndex = headingIndex;
-    }
-  }
-}
-
-function assertLearnPageCoverage() {
-  const learnRoute = manifest.routes.find((entry) => entry.id === 'learn');
-  if (!learnRoute) {
-    fail('docs manifest is missing the Learn route');
-  }
-  const requirements = [
-    {
-      page: 'embedded-postgres',
-      title: 'Embedded PostgreSQL',
-      components: ['EmbeddedPostgresModel'],
-      headings: [
-        'Database storage',
-        'Lifecycle Contract',
-        'Extension Selection',
-        'What is different from SQLite?',
-      ],
-    },
-    {
-      page: 'native-runtime',
-      title: 'Native Runtime',
-      components: ['ModeMatrix'],
-      headings: [
-        'Choose a mode',
-        'Storage',
-        'Startup configuration',
-        'Backup and restore',
-        'Extensions',
-        'Fixed support',
-      ],
-    },
-    {
-      page: 'mobile-stability',
-      title: 'Mobile Stability',
-      components: ['MobileStabilityContract'],
-      headings: [
-        'What developers can rely on',
-        'Close and reopen',
-        'Background and foreground',
-        'Choosing the mode',
-      ],
-    },
-    {
-      page: 'sqlite-upgrade',
-      title: 'Moving From SQLite',
-      components: ['SqliteMigrationMap'],
-      headings: [
-        'Concept Map',
-        'Schema And SQL Differences',
-        'Storage And Backup',
-        'Migration Path',
-        'When SQLite Is Still The Better Fit',
-      ],
-    },
-    {
-      page: 'tauri',
-      title: 'Tauri Usage',
-      components: ['TauriAppPattern'],
-      headings: [
-        'App Shape',
-        'Direct Topology In Async Rust State',
-        'Existing Postgres Clients',
-        'Extensions And Assets',
-        'Backup And Restore',
-        'Operational Guidance',
-      ],
-    },
-  ];
-  for (const requirement of requirements) {
-    const pagePath = routeSourcePagePath(learnRoute, requirement.page);
-    if (!pagePath) {
-      fail(`Learn docs are missing ${requirement.page}.md or ${requirement.page}.mdx`);
-    }
-    const markdown = readText(pagePath);
-    if (!new RegExp(`^#\\s+${escapeRegExp(requirement.title)}\\s*$`, 'mu').test(markdown)) {
-      fail(`Learn page ${requirement.page} is missing title heading: ${requirement.title}`);
-    }
-    for (const component of requirement.components) {
-      if (!markdown.includes(`<${component}`)) {
-        fail(`Learn page ${requirement.page} is missing ${component}`);
-      }
-    }
-    let previousHeadingIndex = -1;
-    for (const heading of requirement.headings) {
-      const headingIndex = markdown.search(
-        new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu'),
-      );
-      if (headingIndex < 0) {
-        fail(`Learn page ${requirement.page} is missing required section: ${heading}`);
-      }
-      if (headingIndex < previousHeadingIndex) {
-        fail(
-          `Learn page ${requirement.page} sections must use this order: ${requirement.headings.join(' -> ')}`,
-        );
-      }
-      previousHeadingIndex = headingIndex;
+    for (const page of ['guide', 'api-reference']) {
+      if (!quickstart.includes(`/docs/${route.route}/${page}`))
+        fail(`${route.id} quickstart must link to ${page}`);
     }
   }
 }
@@ -1010,13 +516,13 @@ function assertSnippetMarkers() {
     if (!source.includes(marker)) {
       fail(`${route.id} snippet source is missing marker "${marker}" in ${snippetPath}`);
     }
-    const guidePath = routeSourcePagePath(route, 'guide');
+    const guidePath = routeSourcePagePath(route, 'index');
     if (!guidePath) {
       fail(`${route.id} guide source is missing`);
     }
     const guide = readText(guidePath);
     if (!guide.includes(`oliphaunt-snippet: ${route.id}`)) {
-      fail(`${route.id} guide must include the manifest-owned snippet directive`);
+      fail(`${route.id} quickstart must include the manifest-owned snippet directive`);
     }
   }
 }
@@ -1151,8 +657,7 @@ function assertNoNodeModulesGenerated() {
 }
 
 function assertMdxComponentPagesStayMdx() {
-  const componentPattern =
-    /<(SdkChooser|SdkLanding|SdkGuideProof|StartOutcome|StartNextSteps|EmbeddedPostgresModel|MobileStabilityContract|SqliteMigrationMap|TauriAppPattern|ReactNativeBoundaryMap|WasmRuntimeMap|WasmDataMovement|CapabilitySnapshot|ExtensionArtifactFlow|PerformanceResultsGrid|ReleaseLookup|QuickstartPath|FirstQueryFlow|VerifyChecklist|ModeMatrix|ExactExtensionRule|Steps|Step|Callout|Tabs|Tab|Cards|Card|Files|File|Folder)\b/u;
+  const componentPattern = /<(SdkChooser|Steps|Step|Callout|Tabs|Tab|Cards|Card)\b/u;
   const bad = routeRecords.filter(
     (record) => record.file.endsWith('.md') && componentPattern.test(readText(record.source)),
   );
@@ -1160,64 +665,6 @@ function assertMdxComponentPagesStayMdx() {
     fail(
       `docs pages with React components must be emitted as .mdx, not .md:\n${bad.map((record) => record.source).join('\n')}`,
     );
-  }
-}
-
-function assertPublicDocsLanguageHygiene() {
-  const disallowed = [
-    { label: 'stale sdk-parity route', pattern: /sdk-parity/u },
-    { label: 'source checkout', pattern: /\bsource checkout\b/iu },
-    { label: 'stale Expo Go wording', pattern: /\bExpo Go\b/u },
-    { label: 'stale base64 transport wording', pattern: /\bbase64\b/iu },
-    { label: 'advisory should wording', pattern: /\bshould\b/iu },
-    { label: 'defensive should-not wording', pattern: /\bshould not\b/iu },
-    { label: 'planning phrase "not pretend"', pattern: /\bnot pretend\b/iu },
-    { label: 'runtime smoke evidence', pattern: /\bruntime smoke evidence\b/iu },
-    { label: 'package evidence', pattern: /\bpackage evidence\b/iu },
-    { label: 'real device evidence', pattern: /\breal device evidence\b/iu },
-    { label: 'internal evidence wording', pattern: /\bevidence\b/iu },
-    {
-      label: 'future or placeholder language',
-      pattern: /\b(?:TODO|placeholder|not yet|coming soon|eventually|can be added later)\b/iu,
-    },
-    { label: 'release metadata internals', pattern: /\brelease metadata\b/iu },
-    { label: 'maintainer-facing language', pattern: /\bmaintainer\b/iu },
-    { label: 'internal-facing language', pattern: /\binternal\b/iu },
-    { label: 'CI internals', pattern: /\bCI\b/u },
-    { label: 'tooling path', pattern: /tools\//u },
-    { label: 'source path', pattern: /src\//u },
-    { label: 'target path', pattern: /target\//u },
-    { label: 'fixture path', pattern: /fixtures\//u },
-    { label: 'repo-structure language', pattern: /\bmonorepo\b/iu },
-    { label: 'pre-release status language', pattern: /\bbefore the first stable\b/iu },
-    { label: 'publication timing language', pattern: /\bonce release artifacts are published\b/iu },
-    { label: 'defensive fallback wording', pattern: /\bfallback paths\b/iu },
-    {
-      label: 'stale unavailable extension wording',
-      pattern: /\b(?:not available|not selected|not a pack)\b/iu,
-    },
-    { label: 'stale WASM comparison wording', pattern: /\bOlder WASM examples\b/u },
-    { label: 'defensive crash isolation wording', pattern: /\bCrash isolation belongs\b/u },
-    {
-      label: 'defensive unsupported wording',
-      pattern: /\bunsupported (?:operation|extension|extensions)\b/iu,
-    },
-    { label: 'internal lane wording', pattern: /\blane\b/iu },
-  ];
-  const failures = [];
-  for (const record of routeRecords) {
-    const markdown = readText(record.source);
-    const lines = markdown.split('\n');
-    lines.forEach((line, index) => {
-      for (const rule of disallowed) {
-        if (rule.pattern.test(line)) {
-          failures.push(`${record.route}:${index + 1}: ${rule.label}: ${line.trim()}`);
-        }
-      }
-    });
-  }
-  if (failures.length > 0) {
-    fail(`public generated docs include maintainer or planning language:\n${failures.join('\n')}`);
   }
 }
 
@@ -1247,55 +694,18 @@ function assertPublicGeneratedOutputHygiene() {
   }
 
   const disallowed = [
-    { label: 'stale sdk-parity route', pattern: /sdk-parity/iu },
-    { label: 'source checkout', pattern: /\bsource checkout\b/iu },
-    { label: 'stale Expo Go wording', pattern: /\bExpo Go\b/u },
-    { label: 'stale base64 transport wording', pattern: /\bbase64\b/iu },
-    { label: 'advisory should wording', pattern: /\bshould\b/iu },
-    { label: 'defensive should-not wording', pattern: /\bshould not\b/iu },
-    { label: 'planning phrase "not pretend"', pattern: /\bnot pretend\b/iu },
-    { label: 'runtime smoke evidence', pattern: /\bruntime smoke evidence\b/iu },
-    { label: 'package evidence', pattern: /\bpackage evidence\b/iu },
-    { label: 'real device evidence', pattern: /\breal device evidence\b/iu },
-    { label: 'internal evidence wording', pattern: /\bevidence\b/iu },
+    { label: 'unfinished authoring note', pattern: /\b(?:TODO|FIXME|coming soon)\b/u },
     {
-      label: 'future or placeholder language',
-      pattern: /\b(?:TODO|placeholder|not yet|coming soon|eventually|can be added later)\b/iu,
+      label: 'maintainer workflow leak',
+      pattern:
+        /docs\/(?:maintainers|internal)|release-please|\bMoon (?:production|peer|task)|runtime smoke evidence/iu,
     },
-    { label: 'release metadata internals', pattern: /\brelease metadata\b/iu },
-    { label: 'maintainer-facing language', pattern: /\bmaintainer\b/iu },
-    { label: 'internal-facing language', pattern: /\binternal\b/iu },
-    { label: 'CI internals', pattern: /\bCI\b/u },
-    { label: 'tooling path', pattern: /tools\//u },
-    { label: 'source path', pattern: /src\//u },
-    { label: 'target path', pattern: /target\//u },
-    { label: 'fixture path', pattern: /fixtures\//u },
-    { label: 'repo-structure language', pattern: /\bmonorepo\b/iu },
-    { label: 'pre-release status language', pattern: /\bbefore the first stable\b/iu },
-    { label: 'publication timing language', pattern: /\bonce release artifacts are published\b/iu },
-    { label: 'defensive fallback wording', pattern: /\bfallback paths\b/iu },
+    { label: 'unresolved generated variable', pattern: /@VERSION\(|@EXTVERSION@|@MODULEPATH@/u },
     {
-      label: 'stale unavailable extension wording',
-      pattern: /\b(?:not available|not selected|not a pack)\b/iu,
+      label: 'generated implementation field',
+      pattern: /\b(?:implementation_path|tested_snippet|reference_artifact)\b/u,
     },
-    { label: 'stale WASM comparison wording', pattern: /\bOlder WASM examples\b/u },
-    { label: 'defensive crash isolation wording', pattern: /\bCrash isolation belongs\b/u },
-    {
-      label: 'defensive unsupported wording',
-      pattern: /\bunsupported (?:operation|extension|extensions)\b/iu,
-    },
-    { label: 'internal lane wording', pattern: /\blane\b/iu },
-    {
-      label: 'generated API field',
-      pattern: /\b(?:implementation_path|documentation_path|tested_snippet|reference_artifact)\b/iu,
-    },
-    { label: 'raw extension source kind', pattern: /\boliphaunt-other-extension\b/iu },
-    { label: 'unrendered extension placeholder', pattern: /@EXTVERSION@|@MODULEPATH@/u },
-    { label: 'generated reference wording', pattern: /\bgenerated language reference/iu },
-    {
-      label: 'removed upstream reference',
-      pattern: new RegExp(`\\b${'pg'}${'lite'}\\b`, 'iu'),
-    },
+    { label: 'stale route', pattern: /sdk-parity/u },
   ];
   const failures = [];
   for (const file of [...walkPublicTextFiles(siteDocsRoot), ...walkPublicTextFiles(staticRoot)]) {
@@ -1340,86 +750,31 @@ function assertReleaseReadinessDocs() {
 }
 
 function assertSdkInstallReleaseContracts() {
-  const releasePlease = JSON.parse(readText('release-please-config.json'));
-  const packages = Object.values(releasePlease.packages ?? {});
-  const packageConfig = (component) => {
-    const matches = packages.filter((entry) => entry?.component === component);
-    if (matches.length !== 1) {
-      fail(`release-please must define exactly one ${component} package`);
-    }
-    return matches[0];
-  };
-  const initialVersion = (component) =>
-    packageConfig(component)['initial-version'] ?? releasePlease['initial-version'];
-  const swiftInitialVersion = initialVersion('oliphaunt-swift');
-  if (swiftInitialVersion !== '0.6.0') {
-    fail(
-      `the first SwiftPM-compatible Oliphaunt version must remain 0.6.0; got ${swiftInitialVersion}`,
-    );
+  const contracts = [
+    ['oliphaunt-rust', 'sdk/rust/index.mdx', 'oliphaunt = "'],
+    ['oliphaunt-swift', 'sdk/swift/index.mdx', 'exact: "'],
+    ['oliphaunt-kotlin', 'sdk/kotlin/index.mdx', 'dev.oliphaunt:oliphaunt-android:'],
+    ['oliphaunt-react-native', 'sdk/react-native/index.mdx', '@oliphaunt/react-native@'],
+    ['oliphaunt-js', 'sdk/typescript/index.mdx', '@oliphaunt/ts@'],
+    ['oliphaunt-wasix-rust', 'sdk/wasix-rust/index.mdx', 'oliphaunt-wasix = "'],
+    ['oliphaunt-wasix-ts', 'sdk/wasix-typescript/index.mdx', '@oliphaunt/wasix-ts@'],
+  ];
+  for (const [id, file, prefix] of contracts) {
+    const authored = readText(`src/docs/content/${file}`);
+    if (!authored.includes(`@VERSION(${id})@`)) fail(`${file} must use its centralized version`);
+    const generated = fs.readFileSync(path.join(siteDocsRoot, file), 'utf8');
+    if (!generated.includes(prefix + releaseGraph.products[id].current_version))
+      fail(`${file} install version does not match ${id}`);
   }
-  const swiftVersion = releaseGraph.products?.['oliphaunt-swift']?.current_version;
-  const kotlinVersion = releaseGraph.products?.['oliphaunt-kotlin']?.current_version;
-  if (!swiftVersion || !kotlinVersion) {
-    fail('release graph must provide current Swift and Kotlin SDK versions');
-  }
-
-  const required = new Map([
-    [
-      'src/docs/content/sdk/swift/index.mdx',
-      `.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "${swiftVersion}")`,
-    ],
-    [
-      'src/docs/content/sdk/swift/guide.mdx',
-      `.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "${swiftVersion}")`,
-    ],
-    [
-      'src/sdks/swift/README.md',
-      `.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "${swiftVersion}")`,
-    ],
-    [
-      'src/docs/content/sdk/kotlin/index.mdx',
-      `implementation("dev.oliphaunt:oliphaunt-android:${kotlinVersion}")`,
-    ],
-    [
-      'src/docs/content/sdk/kotlin/guide.mdx',
-      `implementation("dev.oliphaunt:oliphaunt-android:${kotlinVersion}")`,
-    ],
-    [
-      'src/sdks/kotlin/README.md',
-      `implementation("dev.oliphaunt:oliphaunt-android:${kotlinVersion}")`,
-    ],
-    ['src/docs/src/lib/docs-data.ts', `packageName: 'dev.oliphaunt:oliphaunt-android'`],
-  ]);
-  for (const [file, text] of required) {
-    if (!readText(file).includes(text)) {
-      fail(`${file} must use the release-owned SDK install contract ${JSON.stringify(text)}`);
-    }
-  }
-
-  const publicKotlin = [
-    'src/docs/content/sdk/kotlin/index.mdx',
-    'src/docs/content/sdk/kotlin/guide.mdx',
-    'src/docs/src/lib/docs-data.ts',
-  ]
-    .map(readText)
-    .join('\n');
-  if (publicKotlin.includes('dev.oliphaunt:oliphaunt:')) {
-    fail(
-      'public Kotlin install docs must not advertise the unpublished dev.oliphaunt:oliphaunt coordinate',
-    );
-  }
-  const wasixTypescriptDocs = readText('src/docs/content/sdk/wasix-typescript/guide.mdx');
-  for (const contract of [
-    "npm:@oliphaunt/wasix-ts';",
-    "npm:@oliphaunt/wasix-ts/storage/deno';",
-    'same npm package as browsers, Node.js, Bun, and Electron',
-    '`--allow-ffi`, `--allow-read`, and',
-    '`app.asar.unpacked` beside',
-  ]) {
-    if (!wasixTypescriptDocs.includes(contract)) {
-      fail(`WASIX TypeScript public docs must include ${JSON.stringify(contract)}`);
-    }
-  }
+  const kotlin = fs.readFileSync(path.join(siteDocsRoot, 'sdk/kotlin/index.mdx'), 'utf8');
+  if (kotlin.includes('dev.oliphaunt:oliphaunt:'))
+    fail('Kotlin docs advertise an unpublished coordinate');
+  if (
+    !kotlin.includes(
+      `id("dev.oliphaunt.android") version "${releaseGraph.products['oliphaunt-kotlin'].current_version}"`,
+    )
+  )
+    fail('Android plugin and SDK versions must match');
 }
 
 assertNoTrackedRootProductsDocs();
@@ -1440,18 +795,13 @@ assertApplicabilityMetadata();
 assertLightweightVersioning();
 assertRouteCoverage();
 assertPublicRootLandingPages();
-assertLlmRouteCoverage();
 assertDocsInternalLinksResolve();
-assertStartPageCoverage();
-assertLearnPageCoverage();
-assertReferencePageCoverage();
 assertSdkSectionCoverage();
 assertSnippetMarkers();
 assertSdkManifestCoverage();
 assertReleaseGraphPolicy();
 assertNoNodeModulesGenerated();
 assertMdxComponentPagesStayMdx();
-assertPublicDocsLanguageHygiene();
 assertPublicGeneratedOutputHygiene();
 assertFumadocsMetaCoverage();
 assertNavigationCoverage();

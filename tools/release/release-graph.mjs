@@ -1317,6 +1317,7 @@ export function buildPlan(graph, files, prefix = "release-graph") {
     fail(prefix, "Moon project graph is missing from release plan metadata");
   }
   const directProjects = new Set();
+  const changelogs = new Set(Object.values(products).map((product) => product.changelog_path));
   for (const file of files) {
     const sharedImpacts = (graph.shared_release_sources ?? [])
       .filter((impact) =>
@@ -1335,6 +1336,9 @@ export function buildPlan(graph, files, prefix = "release-graph") {
       // source project's other consumers would fabricate downstream releases.
       continue;
     }
+    // Documentation alone does not request a product release. Declared
+    // changelogs and explicit shared release inputs remain release-affecting.
+    if (/\.(?:md|mdx)$/iu.test(file) && !changelogs.has(file)) continue;
     const owner = ownerProjectForPath(projects, file);
     if (owner !== undefined) {
       directProjects.add(owner);

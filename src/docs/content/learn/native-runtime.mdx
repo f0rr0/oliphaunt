@@ -1,79 +1,40 @@
 ---
-title: Native Runtime
-description: Direct, broker, and server runtime behavior for native Oliphaunt SDKs.
+title: Choose a native runtime mode
+description: Choose direct embedding, process isolation, or a local server for your application.
 ---
 
-# Native Runtime
+Native Rust and desktop TypeScript offer three runtime modes. Swift, Kotlin, and React Native use direct embedding. Choose a mode based on process isolation and the number of database sessions your application needs.
 
-The native SDK family shares PostgreSQL 18 through `liboliphaunt`. Rust WASIX
-and WASIX TypeScript are separate products documented under
-[`WASIX`](/docs/sdk/wasix-rust).
+| Mode | Database runs in | Access | Choose it when |
+| --- | --- | --- | --- |
+| Direct | Your application process | SDK query handle, one session | You want embedded queries with the fewest moving parts |
+| Broker | A helper process | SDK query handle, one session | You need to isolate database execution from your app process |
+| Server | A server process | PostgreSQL connection string | You need a driver, ORM, pool, or independent sessions |
 
-## Choose a mode
+## Direct
 
-<ModeMatrix />
+Direct mode is the default. The SDK manages a resident native backend in the application process. Keep one application-owned database handle and share it according to your language's concurrency rules.
 
-- Native direct embeds one process-resident PostgreSQL backend and one
-  serialized physical session. It is the lowest-overhead path.
-- Native broker runs the same direct boundary in an SDK-owned helper process.
-  It adds isolation and lets desktop applications own several instances.
-- Native server starts packaged PostgreSQL and exposes a connection string for
-  pools, ORMs, tools, and independent client sessions.
+The first successful direct open binds the process to that root and configuration. Closing the handle releases the logical session; it does not unload PostgreSQL or let the process switch roots. Reopen the same root with compatible settings, or use broker/server mode for multiple roots. Mobile apps switch to restored data on a subsequent process launch.
 
-Direct and broker SDK handle clones share one executor and one session.
-Transactions reserve that session. Server mode uses ordinary PostgreSQL client
-session semantics.
+In Rust, the synchronous handle blocks the calling thread. Use `AsyncOliphaunt` for async tasks. Swift, Kotlin, and JavaScript expose async APIs; those APIs serialize database work rather than creating a session per call.
 
-## Storage
+## Broker
 
-Native defaults to an SDK-owned temporary directory. Persistent storage is an
-explicit application-owned managed root with `.oliphaunt.json` and `pgdata`.
-Native does not label a temporary directory as memory storage.
+Broker mode moves execution into a helper process while retaining the SDK query API. It is available in native Rust and desktop TypeScript.
 
-SDKs initialize new roots from the packaged cluster seed and publish the descriptor
-last. The low-level C runtime only validates a complete managed root; it never
-runs `initdb`, adopts raw PGDATA, or creates a descriptor during open.
+If the helper exits unexpectedly, the database handle becomes unusable. Close it and open a new handle on the same persistent directory. PostgreSQL recovers committed data from WAL. The SDK does not replay a failed operation, because its commit outcome may be unknown.
 
-Application-owned storage survives close. A direct close may detach the logical
-SDK owner while PostgreSQL remains resident in the process. Crash recovery is
-normal PostgreSQL WAL recovery on the next process launch. Use broker or server
-when the application process must survive a database-process failure.
+Package the helper executable and runtime resources with your app. Use the package's normal resource resolution unless your deployment layout requires an explicit path.
 
-## Startup configuration
+## Server
 
-Choose username, database, and validated PostgreSQL startup GUCs before open.
-Later GUC values win, matching PostgreSQL command-line behavior. There are no
-runtime-footprint or durability profile enums; tune the PostgreSQL settings the
-application actually needs.
+Server mode returns a lifecycle handle with a PostgreSQL connection string. Connect with a PostgreSQL driver or ORM to run queries; the server handle itself does not provide the embedded query API.
 
-## Backup and restore
+Keep the server handle alive for as long as clients use it. At shutdown, stop accepting application work, close client connections and pools, then close the server. A copied connection string does not keep the server running.
 
-Direct and broker expose one native PostgreSQL 18 physical backup. Mobile
-direct SDKs reach the same C implementation. Static restore accepts a new or
-existing-empty managed-root destination and never replaces nonempty data.
+See [Rust runtime recipes](/docs/sdk/rust/guide#choose-a-runtime-mode) or [TypeScript runtime recipes](/docs/sdk/typescript/guide#choose-a-runtime-mode). For a desktop webview, see [Use with Tauri](/docs/learn/tauri).
 
-Native server SDK backup is not currently exposed. Server applications use
-normal PostgreSQL tooling such as `pg_basebackup` or logical `pg_dump` where
-appropriate. Logical dump/restore is also the portable path across PostgreSQL
-versions and between native and WASIX families.
+## WASIX endpoints
 
-Use the server handle's `connection_string()` in Rust or `connectionString` in
-TypeScript with PostgreSQL's standard streamed-WAL command:
-
-```sh
-pg_basebackup --dbname "$CONNECTION_STRING" --pgdata ./server-backup --wal-method=stream
-```
-
-## Extensions
-
-Select exact extensions before open and enable them with standard PostgreSQL
-SQL. Desktop modes use packaged dynamic modules; mobile direct builds register
-selected static modules. Reopening a database requires the receiving runtime to
-carry the extensions already installed in its catalog.
-
-## Fixed support
-
-Runtime support is documented in the [static matrix](/docs/reference/capabilities).
-SDKs expose operations directly rather than returning a capability report.
-Unsupported mode operations return a clear error and never fall back to another
-runtime.
+WASIX SDKs have their own local endpoint on socket-capable hosts. It serves one connected client at a time; it is not a replacement for a native server with independent sessions. Browser apps do not expose a TCP listener.

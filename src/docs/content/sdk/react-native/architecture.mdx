@@ -1,85 +1,57 @@
 ---
-title: Architecture
-description: How React Native delegates native PostgreSQL behavior to Swift and Kotlin while owning the TypeScript and app-build boundary.
+title: Native integration
+description: Understand React Native packaging and the Swift/Android runtime boundary.
 ---
 
-# Architecture
+The React Native package uses Swift on iOS and Kotlin on Android. It supplies TypeScript APIs over the same native PostgreSQL runtime used by those platform SDKs.
 
-`@oliphaunt/react-native` is the New Architecture adapter over the Swift SDK on
-Apple platforms and the Kotlin SDK on Android.
+## What runs where
 
-<ReactNativeBoundaryMap />
+Database and filesystem work execute on the platform SDK's native owner queue. JavaScript receives promises and typed query results. Binary protocol and backup bytes cross JSI as buffers; this is not a synchronous SQL interface on the JavaScript thread.
 
-## Ownership
+One mobile direct database can be pending, active, or closing at a time. Keep it in application state and share it through a service. Closing or invalidating the native module retires that owner; it does not add desktop broker or server modes.
 
-| Layer | Owns |
-| --- | --- |
-| React Native package | TypeScript API, config plugin, TurboModule schema, JSI byte transport, installed app wiring |
-| Swift SDK | Apple storage, cluster-seed hydration, native direct lifecycle, queries, extensions, backup/restore |
-| Kotlin SDK | Android storage, cluster-seed hydration, native direct lifecycle, queries, extensions, backup/restore |
-| `liboliphaunt` | Embedded PostgreSQL lifecycle, raw protocol, cancellation, direct ownership, physical archive |
+## Expo integration
 
-The adapter does not duplicate runtime behavior or add broker/server modes.
-Platform-native applications and React Native applications therefore use the
-same direct-mode semantics on each mobile OS.
+The [quickstart](/docs/sdk/react-native) uses the config plugin to prepare native projects. The plugin stages iOS runtime resources, configures local CocoaPods dependencies, and applies the Android Gradle integration. Expo Go cannot load this custom native module.
 
-## JavaScript surface
+For an existing Expo native project, rerun prebuild when the plugin configuration changes, then rebuild the app. Review generated native changes alongside any native customizations you maintain.
 
-```ts
-import Oliphaunt from '@oliphaunt/react-native';
+## Native projects managed directly
 
-await using database = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'main' },
-  startupGUCs: { application_name: 'mobile-app' },
-});
+Use the package's same platform integration when maintaining native projects without Expo prebuild. Match versions to the installed React Native package rather than mixing platform SDK releases.
 
-const result = await database.query('SELECT 1::text AS value');
+On Android, add `mavenCentral()` to plugin and dependency repositories and apply the `dev.oliphaunt.android` plugin to the app module using version `@VERSION(oliphaunt-kotlin)@`. The React Native package supplies its Kotlin dependency. Configure selected extensions through the Gradle integration and rebuild.
+
+On iOS, set deployment target 17.0 or later. The npm package includes local `COliphaunt` and `Oliphaunt` podspecs plus a staging tool. Before running CocoaPods, stage the app payload using the package's exported integration helper. Save this script in your app root and run it with Node:
+
+```js title="prepare-oliphaunt.cjs"
+const fs = require('node:fs');
+const path = require('node:path');
+const packageRoot = path.dirname(require.resolve('@oliphaunt/react-native/package.json'));
+const plugin = require(path.join(packageRoot, 'app.plugin.js'));
+const options = plugin.normalizeOptions({ extensions: [] });
+const iosRoot = path.resolve('ios');
+plugin.stageIosAppPayload(process.cwd(), iosRoot, options);
+const podfile = path.join(iosRoot, 'Podfile');
+fs.writeFileSync(
+  podfile,
+  plugin.insertIosPodfileBlock(fs.readFileSync(podfile, 'utf8'), options),
+);
 ```
 
-The public surface is open, typed query/execute, buffered and callback-streamed
-raw protocol, transaction, cancellation, physical backup, static
-restore, and close. There is no app-background mode.
+The Podfile must already call `use_native_modules!`. The helper adds the local platform podspecs and staged payload dependency. Run `bundle exec pod install` from `ios`, then rebuild the app. Keep this preparation step in the application's native build process.
 
-Every operation returns a JavaScript promise. JSI performs the required binary
-copy and callback registration, then delegates PostgreSQL and filesystem work
-to the Swift or Kotlin SDK's serial native owner. Module invalidation stops
-callback delivery to the retiring JSI runtime and schedules native close
-asynchronously; it never waits on the JavaScript, iOS main, or Android UI
-thread. A thrown raw-stream callback rejects the operation before the owner
-admits subsequent work. Chunk delivery is a synchronous backpressure boundary:
-returning a Promise or thenable, or reentering the same database or transaction
-from the callback, rejects the stream. The original callback error is preserved
-only after native recovery confirms a known PostgreSQL protocol boundary; an
-execution, transport, or recovery failure is authoritative instead and poisons
-the database. A recovered callback-only failure leaves the handle reusable; a
-buffered raw-protocol rejection poisons it because the session outcome is
-unknown. `cancel()` remains independently admitted so it can interrupt active
-native work. It remains callable after close admission while earlier FIFO work
-drains and stops at native teardown.
+## Extension resources
 
-## Binary transport
+Install the native extension packages your app uses before plugin or manual setup. For example:
 
-Raw protocol and archive bytes use the JSI `ArrayBuffer` path. Small
-configuration and handle-lifecycle calls use the TurboModule boundary. The
-transport preserves typed-array offsets and explicit ownership, keeping
-payloads binary end to end.
+```sh
+npm install @oliphaunt/extension-vector@@VERSION(oliphaunt-extension-vector)@
+```
 
-## Storage and lifecycle
+Pass the selected names to the plugin or native preparation configuration, and repeat the names in `Oliphaunt.open({ extensions: [...] })`. Selection at runtime verifies the installed resources; it cannot add missing native code. See the [extension recipe](/docs/sdk/react-native/guide#add-an-extension).
 
-Omitted storage uses an SDK-owned temporary directory. `applicationData(name)`
-lets native platform code resolve an app-private path; `directory(path)` is for
-applications that already own one. Each path names a managed root, not PGDATA.
+## Lifecycle
 
-The bridge owns one mobile direct database at a time. It rejects another open
-while one is pending, active, or closing. App lifecycle policy calls `cancel()`
-or `close()` explicitly. A JavaScript finalizer can only request cleanup of the
-exact process-unique generation it owned, so stale cleanup cannot affect a
-newer native session; module invalidation remains the fallback. Restore accepts
-a new or existing-empty destination and does not replace data.
-
-## Extensions and packaging
-
-The config plugin selects exact extension artifacts at build time. `open()`
-repeats the selected SQL names at runtime so the platform SDK validates that
-the installed app contains them. PostgreSQL `CREATE EXTENSION` remains the SQL
-activation step.
+Explicitly await `close()` to observe cleanup. Module invalidation and finalizers provide fallback cleanup only. Cancel active SQL through `cancel()`, then observe its outcome. The app remains responsible for backgrounding policy and persistent storage; see [Ship a mobile database](/docs/learn/mobile-stability).

@@ -1,59 +1,49 @@
 ---
-title: API Reference
-description: Kotlin and Android SDK API map for configuration, coroutine execution, lifecycle, and resources.
+title: Kotlin API reference
+description: Android configuration, coroutine operations, typed results, and exceptions.
 ---
 
-# API Reference
+Import `dev.oliphaunt.*`. The Android `Oliphaunt` facade prepares runtime resources and returns an `OliphauntDatabase`.
 
-Use the Dokka reference for exact declarations. This page maps the Kotlin SDK
-surface by task.
+## Open and restore
 
-| Area | Public surface | Use it for |
-| --- | --- | --- |
-| Opening | `Oliphaunt.open`, `OliphauntConfig`, `DatabaseStorage` | Use temporary storage by default or an explicit persistent directory |
-| Android facade | `Oliphaunt` | Resolve Android resources, ABI assets, and app-context defaults |
-| Single-statement SQL | `query`, `execute`, `QueryResult` | Return ordered raw rows or assert that one extended-query command returns no rows |
-| Multi-statement and metadata | `exec`, `describe` | Return ordered command-or-row results or resolve parameter/result OIDs without executing |
-| Parameters and rows | `PostgresOid`, `QueryParam`, `ValueFormat`, `QueryRow.value`, `PostgresDecoder`, `PostgresDecoders` | Encode typed/null values and decode by OID-validated index or unambiguous name while retaining `ByteArray` |
-| Raw protocol | database `execProtocolRaw`, `execProtocolRawStream` | Send PostgreSQL protocol bytes as one result or synchronous callback chunks; raw ownership stays outside managed transaction handles, all same-handle work is rejected while a callback runs, confirmed callback recovery leaves the session reusable, and transport/recovery failures poison it |
-| Transactions | `transaction`, transaction `query`/`execute`/`exec`/`describe`, `OliphauntTransaction.rollback`, transaction `isClosed` | Keep typed work inside the pinned session, return to commit, explicitly roll back without a later commit, and use savepoints for nested work |
-| Lifecycle | database `isClosed`, `cancel`, `close` | FIFO admission drains calls accepted before the close cutoff; cancellation remains available until native teardown starts, with nonblocking cleaner fallback for forgotten handles |
-| Data movement | `backup`, static `restore` | Move app data through the native physical archive |
-| Diagnostics | result `notices`, `OliphauntException`, `PostgresException`, `OliphauntTransactionRollbackException`, `OliphauntTransactionDatabaseException` | Preserve PostgreSQL diagnostics and independent transaction failures without dropping the callback exception |
+| Function | Result |
+| --- | --- |
+| `Oliphaunt.open(context, config, runtimeDirectory, resourceRoot)` | Suspends and returns `OliphauntDatabase` |
+| `Oliphaunt.restore(context, destination, bytes)` | Restores into a new or empty `File` destination |
 
-```kotlin
-val result = database.query(
-    "SELECT $1::int4 AS answer",
-    listOf(QueryParam.int(41)),
-)
-val answer = result.rows.first().value("answer", PostgresDecoders.int)
-```
+Only `context` is required for `open`. Resource overrides are optional `File` values; normal applications use package defaults.
 
-The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+| `OliphauntConfig` field | Type / default |
+| --- | --- |
+| `storage` | `DatabaseStorage.TemporaryDirectory` |
+| Persistent storage | `DatabaseStorage.Directory(File)` |
+| `startupGucs` | `List<PostgresStartupGuc>`; empty |
+| `username`, `database` | Nullable strings; fresh roots use `postgres` |
+| `extensions` | `List<String>`; empty |
 
-Managed transaction callbacks must not issue outer-lifecycle SQL: `BEGIN`/`START
-TRANSACTION`, `COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND
-[NO] CHAIN`), or `PREPARE TRANSACTION`. Use
-`rollback()` or return from the callback for outer settlement; `SAVEPOINT`,
-`RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` remain supported SQL. PostgreSQL
-reports `ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command
-tag and transactional ready status, so the SDK rejects `ROLLBACK`/`ABORT ...
-AND CHAIN` before dispatch and still validates every actual protocol boundary.
-If the callback catches a poisoning database or rollback error and returns, the
-transaction still fails with the stored original exception.
+The spelling is `startupGucs` in Kotlin. `PostgresStartupGuc` carries a setting name and value.
 
-After automatic rollback succeeds, the original callback exception is rethrown.
-`OliphauntTransactionRollbackException` exposes `callbackError` and
-`rollbackError`, uses the callback as `cause`, and records the rollback as a
-suppressed exception. If the callback throws a different exception after an
-earlier independent database or protocol failure poisoned or expired ownership,
-`OliphauntTransactionDatabaseException` exposes `callbackError` and
-`databaseError`, uses the callback as `cause`, and records the database error as
-a suppressed exception; the database is close-only. Ordinary PostgreSQL
-statement errors that remain safely rollbackable do not automatically create
-either composite exception.
+## Query extensions
 
-Android apps use the Android facade for packaged runtime resources. It keeps
-native library loading, selected extension assets, and app-private storage in
-the platform layer.
+`query`, `execute`, `exec`, and `describe` are public extension functions on database and transaction handles. Import them explicitly or use the package import above.
+
+`query(sql, parameters)` returns `QueryResult`; `execute` returns `CommandResult`. `exec` returns ordered results for multiple statements, and `describe` returns statement metadata. Parameters are `List<QueryParam>` values such as `QueryParam.int(...)` and `QueryParam.text(...)`.
+
+Read `result.rows` and decode with `row.value(column, decoder)`, using a name or index and a `PostgresDecoders` member. Raw bytes are available through `raw`, text through `text`, and null values remain nullable. Duplicate column names require positional lookup.
+
+## Transactions and lifecycle
+
+`transaction { tx -> ... }` returns the callback result after commit. Throwing rolls back. The callback receives typed query methods and `rollback()`; the handle expires after settlement. Savepoints are allowed, but manual outer transaction-lifecycle SQL is unsupported.
+
+`backup()` returns `ByteArray`. `cancel()` interrupts active work. `close()` performs observable teardown and `isClosed` reports terminal state. All are suspend functions except the state property. Coroutine cancellation alone is not the PostgreSQL interrupt API.
+
+## Raw protocol
+
+`execProtocolRaw(request)` returns a buffered `ByteArray`. `execProtocolRawStream` delivers raw chunks through a synchronous callback. Do not re-enter ordinary database or transaction methods from that callback. These methods belong to the database, not callback transactions.
+
+## Exceptions
+
+`PostgresException` contains `postgresError`, including nullable `sqlstate`. `OliphauntException` represents SDK failures. Composite transaction exceptions preserve `callbackError` plus `rollbackError` or `databaseError`. An unrecoverable protocol or teardown failure makes the database terminal; close it and reopen persistent storage when appropriate.
+
+See the [Kotlin guide](/docs/sdk/kotlin/guide) for recipes and troubleshooting.

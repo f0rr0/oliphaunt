@@ -1,108 +1,39 @@
 ---
-sidebar_position: 1
-title: Releases
-description: Match SDK versions, runtime artifacts, selected extensions, release notes, and docs versions.
+title: Releases and upgrades
+description: Match documentation to your SDK version and plan database or extension upgrades.
 ---
 
-# Releases
+Oliphaunt SDKs and runtimes have independent versions. Use the [version table](/docs/reference/version-matrix) to see the package versions documented by this site, and the package's linked release notes for changes.
 
-Oliphaunt products are released independently. Start from the package your app
-installs, then check the runtime artifacts and selected extensions that package
-expects.
+## Match your dependency
 
-<ReleaseLookup />
+Install examples use the versions associated with this documentation build. Pin dependencies in your package manifest or lockfile so an application rebuild uses the versions you tested.
 
-## First Release Boundary
+The SDK package selects compatible runtime dependencies. Keep those dependencies together instead of independently replacing a native library, WebAssembly runtime, or helper executable. React Native also depends on compatible Swift and Kotlin integrations.
 
-Before the first public release, tracked product versions remain `0.0.0`. That
-is an unreleased source sentinel, not a registry version. The generated release
-PR advances new products to `0.1.0`, except Swift, which starts at `0.6.0`
-because legacy unscoped SwiftPM tags already occupy `0.1.0` through `0.5.1`.
+Extension packages have their own versions and runtime compatibility. A matching numeric version across unrelated products is not a compatibility guarantee.
 
-An install command is a package contract, not proof that a registry identity
-exists. Check the product's promoted tag/release and registry page before using
-it in an application.
+## Current integration limitations
 
-## Version Relationships
+The 0.2.0 native Rust quickstart requires the complete runtime archive and explicit environment setup; see [native runtime configuration](/docs/sdk/rust#configure-the-native-runtime). Build-helper registration alone is insufficient in this release.
 
-| Relationship | Products | Rule |
-| --- | --- | --- |
-| Independently versioned | Native, WASIX, external extensions, SDKs, and helper runtimes | Release Please selects changed product paths; each product owns its SemVer, and native and WASIX do not move together |
-| Runtime-owned distribution | PostgreSQL contrib | Native and WASIX carriers inherit their owning runtime's version; contrib has no independent release identity |
-| Exact compatibility | Products with dependency or runtime compatibility fields | The consumer pins an exact published product version; dependency changes do not create consumer releases |
-| Upstream-bound | External exact-extension products | Packaging SemVer is independent; immutable upstream version/commit and compatible runtime versions are recorded separately |
-| Documentation | Public documentation site | Guides and references can change without a package release |
+Native TypeScript 0.2.0 fails fresh-database initialization on Linux x64 under Node.js and Bun with a data-directory permission error. See the [TypeScript quickstart](/docs/sdk/typescript) for the current limitation. The [WASIX TypeScript](/docs/sdk/wasix-typescript) and [WASIX Rust](/docs/sdk/wasix-rust) quickstarts have been verified against their published packages on Linux x64.
 
-React Native spans two native platform SDKs. A JavaScript package release may
-need matching Swift and Kotlin artifacts even when the TypeScript API shape is
-unchanged.
+## Upgrade an application
 
-## Target Availability
+1. Read release notes for your SDK, its runtime changes, and selected extensions.
+2. Create a recoverable backup and test the upgrade against a copy of application data.
+3. Update the application dependency and its lockfile.
+4. Rebuild native applications when runtime resources or extensions change.
+5. Apply documented schema or extension migrations.
+6. Verify queries, transactions, restart recovery, and restore before switching user data.
 
-The first native desktop carriers cover Linux x64/arm64 GNU, macOS arm64, and
-Windows x64 MSVC. Android carriers cover `arm64-v8a` and `x86_64`. Apple uses
-the declared iOS XCFramework plus the macOS arm64 runtime carrier. WASIX ships a
-portable carrier and AOT carriers for the supported desktop hosts.
+Use physical restore only when runtime-family and format compatibility are documented. Use logical dump/restore for incompatible formats or transfers between native and WASIX. See [WASIX dump and restore](/docs/sdk/wasix-rust/dump-restore) for an example.
 
-macOS x64, Windows ARM64, Linux musl, Android 32-bit, and undeclared Apple
-architectures are not first-release targets. Every extension on `main` supports
-the complete canonical target profile. Exact extension carrier metadata is
-generated from that shared profile; uncatalogued branch work has no release
-surface.
+## Documentation versions
 
-### Consumer Compatibility Floors
+This site describes one set of SDK versions at a time, shown in [Versions](/docs/reference/version-matrix). Documentation fixes can update the site without changing a package version.
 
-The release gate inspects staged binaries against the following contract. These
-are consumer compatibility floors, not merely the operating systems used to
-build the artifacts.
+Each build also provides a [version record](/docs-version.json) containing its source revision and exact product versions. Use it when reporting a discrepancy between the docs and an installed SDK. Release tags retain the source and documentation for that release; this site does not currently host a separate historical site for every package version.
 
-{/* BEGIN GENERATED PLATFORM COMPATIBILITY */}
-| Published carrier | Enforced consumer compatibility contract |
-| --- | --- |
-| Linux x64/arm64 GNU | Required symbol versions do not exceed `GLIBC_2.38` or `GLIBCXX_3.4.30`. |
-| Direct macOS arm64 runtime | Minimum deployment target is macOS 11.0. |
-| Android `arm64-v8a` and `x86_64` | Minimum Android API level is 24; Android binaries must not require GLIBC/GLIBCXX symbol families. |
-| Apple XCFramework | Contains macOS arm64, iOS device arm64, and iOS Simulator arm64 slices; minimum targets are macOS 14.0, iOS 17.0, and iOS Simulator 17.0. |
-| Windows x64 MSVC | Requires the x64 PE/COFF contract and the declared app-local Visual C++ runtime profile; Windows ARM64 is not published. |
-{/* END GENERATED PLATFORM COMPATIBILITY */}
-
-The table is synchronized with the authoritative binary compatibility policy
-used by release staging. A carrier fails qualification when its inspected ELF,
-Mach-O, Android, or PE metadata exceeds this contract.
-
-### Mobile Package And Runtime Coverage
-
-Package availability and installed-app execution are separate support claims:
-
-| Surface | Built and binary-inspected release candidates | Required installed-app execution |
-| --- | --- | --- |
-| Android | Both `arm64-v8a` and `x86_64` runtime and exact-extension carriers, plus release APKs for both ABIs | The `x86_64` APK runs the full installed-app workload on the API 35 emulator. Android arm64 is not executed on a physical device in the required first-release gate. |
-| Apple | The XCFramework's macOS arm64, iOS device arm64, and iOS Simulator arm64 runtime and exact-extension slices | The iOS Simulator arm64 app runs the full installed-app workload. The iOS device arm64 slice is built and inspected, but is not installed or executed on a physical iOS device in the required first-release gate. |
-
-This boundary does not mean that Android arm64 or iOS device packages are
-absent. It distinguishes artifact construction and binary compatibility proof
-from hardware-specific execution coverage, so release notes state exactly which
-installed-app workloads are required for each platform.
-
-## What A Release Tells You
-
-Release notes answer these questions:
-
-- PostgreSQL baseline used by the runtime;
-- SDK packages published in the release;
-- platforms and architectures with artifacts;
-- exact SQL extensions available for each target;
-- direct, broker, server, buffered raw protocol, low-level C callback streaming,
-  backup, and restore support;
-- migration or rebuild steps for app developers.
-
-## Docs Versioning
-
-The docs site has a `latest` channel for the current product shape. Package
-versions, compatibility notes, and release notes tell developers which docs
-match the SDK installed in an app. Versioned docs remain available by released
-product version when a package line needs stable historical documentation.
-
-Documentation changes can update the docs site without changing Rust, Swift,
-Kotlin, React Native, TypeScript, C ABI, Rust WASIX, or WASIX TypeScript
-package versions.
+See all [GitHub releases](https://github.com/f0rr0/oliphaunt/releases) for release notes and downloadable artifacts.

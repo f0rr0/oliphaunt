@@ -1,80 +1,63 @@
 ---
-title: API Reference
-description: Rust SDK API map for builders, runtime modes, query results, lifecycle, and data movement.
+title: Rust API reference
+description: Native Rust entry points, builder options, queries, transactions, and ownership.
 ---
 
-# API Reference
+The `oliphaunt` crate exports synchronous and asynchronous database APIs. Start with the [quickstart](/docs/sdk/rust) for a complete program.
 
-Use the Rust API reference for exact signatures. This page maps the public
-surface so you can jump from a product concept to the item you need.
+## Database types
 
-| Area | Public surface | Use it for |
+| Type | Ownership | Execution |
 | --- | --- | --- |
-| Calling shape | database `Oliphaunt`, `AsyncOliphaunt`; lifecycle `OliphauntServer`, `AsyncOliphauntServer` | Block the caller directly, or choose cloneable async handles backed by a dedicated owner thread |
-| Opening | database `open()`, server `start()`, type-associated `builder()`, `DatabaseStorage` | Use the default temporary direct database, configure direct/broker databases, or start a local server through its dedicated builder |
-| Topology | database `direct()`, `broker()`, `open()`; server `OliphauntServer::builder().start()` | Choose an in-process database, broker process, or endpoint/lifecycle-only local-server handle without mixing topology-specific options |
-| Single-statement SQL | `query`, `execute`, parameterized variants, fluent `sql(...).bind(...)` | Return a row-shaped result or assert that one extended-query command returns no rows |
-| Multi-statement and metadata | `exec`, `describe`, fluent `sql(...).describe()` | Return ordered simple-query results or resolve parameter/result OIDs without executing; use the fluent form for typed parameters |
-| Parameters and rows | `TypeOid`, `Parameter`, `IntoParameter`, `ValueFormat`, `QueryRow::try_get`, `FromSql` | Encode typed/null values and decode by OID-validated index or unambiguous name while retaining raw bytes |
-| Raw protocol | `exec_protocol_raw`, `exec_protocol_raw_stream`, `RawStreamResult`, `RawStreamError` | Send PostgreSQL protocol bytes as one owned response, or return bounded chunks to an infallible `()` or typed `Result<(), E>` callback |
-| Transactions | callback `transaction`, `TransactionResult`, `TransactionError`, `Transaction::rollback`, `Transaction::is_closed` | Pin the physical session, use `?` with `E: From<Error>`, and retain typed business plus settlement failures |
-| Lifecycle | database `is_closed`, `cancel`, root `cancel_handle`, `close`; server `connection_string`, `is_closed`, `close` | Observe terminal retirement, interrupt database work out of band, connect external server clients, and close synchronously or at the async owner FIFO boundary |
-| Data movement | database `backup`, static `Oliphaunt::restore` | Export and restore the one embedded physical archive |
-| Optional tools | `pg_dump`, `psql`, `PgDumpOptions`, `PsqlOptions` from `oliphaunt-tools` | Run standard logical tools against a native server connection string without adding tools to the core SDK |
-| Diagnostics | result `notices`, opaque `Error`, non-exhaustive `ErrorKind`, `PostgresError`, `TransactionError`, `RawStreamError`, `DecodeError` | Match stable recovery categories while preserving SQLSTATE, callback, settlement, and codec failures without conflation |
+| `Oliphaunt` | Exclusive, `Send`, not `Sync` | Blocks the caller |
+| `AsyncOliphaunt` | Cloneable, `Send + Sync` | Work runs on an SDK thread |
+| `OliphauntServer` | Server lifecycle owner | PostgreSQL clients use its endpoint |
+| `AsyncOliphauntServer` | Async server lifecycle owner | PostgreSQL clients use its endpoint |
 
-```rust
-let result = db
-    .sql("SELECT $1::int4 AS answer")
-    .bind(41_i32)
-    .query()?;
-let answer: i32 = result.rows()[0].try_get("answer")?;
-```
+Async clones share one PostgreSQL session. They are not a connection pool.
 
-Root database and server lifecycle handles are exclusive and `Send + !Sync`.
-Database operations and synchronous server close use exclusive ownership.
-Ownership may move between threads, but the same owner cannot be shared
-concurrently. Calls block until completion without first dispatching through an
-async SDK owner. Server handles expose no hidden SQL, transaction, raw-protocol,
-or cancellation session; use a PostgreSQL client through `connection_string()`.
-In native direct mode,
-`liboliphaunt` owns PostgreSQL execution on its backend thread, so synchronous
-describes the caller's wait rather than PostgreSQL's OS-thread placement.
-Raw-stream callbacks execute inline and may borrow caller state.
-Their original panic is resumed only after the adapter confirms
-`ReadyForQuery`; an independent recovery failure is returned instead and makes
-the session close-only.
-Use `|chunk| { consume(chunk); }` for infallible delivery. A fallible callback
-returns a concrete `Result<(), E>`; a recovered error is
-`RawStreamError::Callback(E)`. On the async owner thread, a panic after confirmed
-recovery is `CallbackPanicked` and the session remains reusable. A simultaneous
-runtime/recovery failure is always `Database` and poisons the session.
-Obtain a root `CancelHandle` before entering a long call when another thread
-must be able to interrupt it.
+## Open and configure
 
-`AsyncOliphaunt` handles are cloneable and `Send + Sync`. A method future is
-`Send` when its captured inputs, callback, and output are `Send`; raw-stream
-callbacks run on the owner thread and therefore must be `Send + 'static`.
-Callback panics resolve as SDK errors after confirmed
-recovery rather than unwinding on the awaiting thread. One async handle still represents one serialized
-PostgreSQL session rather than a connection pool. Ordinary work awaits fair,
-bounded admission before entering the owner FIFO; saturation suspends the
-future instead of returning a queue-full error.
+`Oliphaunt::open()` creates a temporary direct database. `Oliphaunt::builder()` configures storage and selects `direct().open()` or `broker().open()`. `AsyncOliphaunt` exposes the corresponding async open methods.
 
-Transaction callbacks return ordinary `Result<T, E>` with `E: From<Error>`.
-`TransactionError::CallbackAndRollback` means rollback was sent and failed;
-`CallbackAndDatabase` means an independent database or raw-protocol failure
-expired the transaction and no rollback was sent. The corresponding accessors
-preserve that distinction.
-Managed transaction handles omit raw protocol and do not support manual
-transaction-lifecycle SQL or `AND CHAIN`; use callback return, `rollback()`, or
-a root raw-protocol adapter that owns the complete lifecycle. Savepoints and
-`ROLLBACK TO SAVEPOINT` remain valid.
+`DatabaseStorage::TemporaryDirectory` is disposable; `DatabaseStorage::Directory(PathBuf)` persists data. Builder configuration includes startup PostgreSQL settings, username/database, and exact `Extension` selections. Fresh storage starts with the `postgres` user and database; setting a username does not create a role.
 
-The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+Server builders terminate with `start()`. Listener and server executable options belong to server builders; the broker executable option belongs to broker mode.
 
-The Rust SDK is the full native topology surface for Tauri and Rust desktop
-apps. Use server mode when you need independent PostgreSQL clients. Choosing an
-`Async*` type changes calling shape and scheduling, not topology or session
-cardinality.
+## Queries and results
+
+| Operation | Purpose |
+| --- | --- |
+| `query(sql)` | Buffered typed rows |
+| `query_with_params(sql, params)` | Query with parameters |
+| `execute(sql)` / `execute_with_params(sql, params)` | Command metadata |
+| `sql(sql).bind(value).query()` / `.execute()` | Fluent typed parameters |
+| `exec(sql)` | Multiple SQL statements |
+| `describe(sql)` | Statement metadata |
+| `transaction(callback)` | Callback-owned transaction |
+
+Use `QueryResult::rows()` and `Row::try_get` to decode columns by name or index. The PostgreSQL type and requested Rust type must be compatible; represent nullable values with `Option<T>`.
+
+## Transactions and errors
+
+A transaction exclusively owns the session until settlement. Its typed operations omit raw protocol access. Return a result or use its rollback method; manual outer transaction-control SQL is unsupported. Savepoints are allowed.
+
+`TransactionResult<T, E>` preserves your callback error type. `TransactionError::CallbackAndRollback` retains both failures when rollback was sent and failed. `CallbackAndDatabase` retains an independent database failure that invalidated ownership without sending another rollback. A normal statement error can still be rolled back safely.
+
+Use structured PostgreSQL error fields, including SQLSTATE, to classify database errors. A transport or protocol-recovery failure can leave a handle close-only.
+
+## Backup and lifecycle
+
+`backup()` returns archive bytes. `Oliphaunt::restore(destination, bytes)` restores into new or empty storage; the async type has an async restore operation. Native direct and broker use the same archive family.
+
+`close()` reports teardown errors and makes the handle terminal. `is_closed()` reports its state. Use `cancel_handle()` for out-of-thread cancellation of synchronous work, or `cancel().await` on the async type.
+
+Server handles expose `connection_string()`, closed state, and close. Querying, pooling, and logical tools use ordinary PostgreSQL connections.
+
+## Raw protocol
+
+Buffered and callback-streamed raw protocol APIs are intended for protocol integrations. Root callbacks can borrow caller state; async callbacks must be `Send + 'static`. Callbacks provide synchronous backpressure. Do not re-enter the same database from a callback.
+
+`RawStreamError` distinguishes callback failure from database/recovery failure. A confirmed recovery permits reuse; an independent protocol failure takes precedence and can make the database close-only.
+
+See the [Rust guide](/docs/sdk/rust/guide) for transactions, backups, and runtime recipes.

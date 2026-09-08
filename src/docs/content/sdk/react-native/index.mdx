@@ -1,95 +1,79 @@
 ---
 title: React Native SDK
-description: New Architecture package with Expo config plugin, TurboModule, and JSI transport.
+description: Run PostgreSQL in an iOS or Android app using TypeScript and native platform SDKs.
 ---
 
-<SdkLanding id="react-native" />
+Use `@oliphaunt/react-native` with React Native's New Architecture on iOS or Android. The current package requires React Native 0.85+ and React 19+. Expo integration requires Expo 56+ and a native development or production build; Expo Go does not include this native module.
 
-The React Native SDK is a New Architecture package over the Swift and Kotlin
-SDKs. It provides TypeScript APIs, an Expo config plugin, TurboModule codegen,
-and JSI ArrayBuffer transport while native execution stays in the platform SDKs.
-
-Use this package for Expo development builds and React Native New Architecture
-apps on iOS and Android. Apple runtime behavior flows through the Swift SDK;
-Android runtime behavior flows through the Kotlin SDK. The JavaScript package
-owns TypeScript ergonomics, config plugin output, binary transport, and
-installed-app integration.
-
-## Install
-
-Install the package and build a development client or native app binary:
+## Install and build
 
 ```sh
-npx expo install @oliphaunt/react-native
+npm install @oliphaunt/react-native@@VERSION(oliphaunt-react-native)@
 ```
 
-Oliphaunt includes native Swift and Kotlin code, so React Native apps run it
-from an Expo development build or a native app binary. The config plugin
-selects the native runtime and exact extension artifacts that ship in the app.
+For an Expo app, add the config plugin:
 
-Configure selected extensions in app config:
-
-```json
+```json title="app.json"
 {
   "expo": {
-    "plugins": [
-      [
-        "@oliphaunt/react-native",
-        {
-          "extensions": ["vector"]
-        }
-      ]
-    ]
+    "plugins": ["@oliphaunt/react-native"]
   }
 }
 ```
 
-Rebuild the development client or native app binary after changing native
-runtime or extension selections.
+Build the native app for the platform you are testing:
 
-## Open And Query
+<Tabs items={["iOS", "Android"]}>
+<Tab value="iOS">
 
-Open from TypeScript and keep the handle in app state, a data service, or a
-provider that matches your navigation lifetime:
+```sh
+npx expo run:ios
+```
+
+</Tab>
+<Tab value="Android">
+
+```sh
+npx expo run:android
+```
+
+</Tab>
+</Tabs>
+
+If you manage native projects directly, integrate the package's iOS CocoaPods and Android Gradle setup as described in [native integration](/docs/sdk/react-native/architecture). Rebuild after changing native resources or extensions.
+
+## Run your first query
+
+Call this function from application initialization or a user action, not during React rendering:
+
+<!-- oliphaunt-snippet: oliphaunt-react-native -->
 
 ```ts
 import Oliphaunt from '@oliphaunt/react-native';
 
-const db = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'main' },
-  extensions: ['vector'],
-});
-
-const rows = await db.query('SELECT 1::text AS value');
-await db.close();
+export async function firstQuery() {
+  const db = await Oliphaunt.open();
+  try {
+    const result = await db.query('SELECT $1::int4 AS answer', [42]);
+    console.log(result.rows[0]?.answer); // 42
+  } finally {
+    await db.close();
+  }
+}
 ```
 
-Use high-level SQL helpers for app code. Use the buffered raw protocol API
-when building adapters that need PostgreSQL wire messages directly.
+## Keep data between launches
 
-## Runtime Shape
+Use this storage configuration instead of the disposable example above. Direct mode stays bound to its first root for the lifetime of the process; closing does not let the same process switch roots.
 
-React Native owns the JavaScript boundary: typed configuration, SQL helpers,
-raw protocol bytes, backup/restore, and explicit lifecycle operations.
-Apple calls flow through Swift; Android calls flow through Kotlin.
+Let the platform SDK choose an app-private directory by name:
 
-Direct mobile mode owns one resident backend per app process and one serialized
-physical PostgreSQL session. Multiple JavaScript calls can share a handle and
-are queued through the platform SDK.
+```ts
+const db = await Oliphaunt.open({
+  storage: { kind: 'applicationData', name: 'main' },
+});
+```
 
-## App Responsibilities
+Keep this handle in an application service. Reopen the same name to use its data again. The default temporary storage is disposable.
 
-- Build with a native app binary or development client.
-- Omit `storage` for temporary work, or select `applicationData` for persistent
-  app data without constructing platform-specific paths.
-- Select exact SQL extension names so only selected extension artifacts and
-  declared dependencies enter the iOS or Android app artifact.
-- Use SDK backup and restore APIs for user-visible export/import flows instead
-  of copying platform storage directories from JavaScript.
-
-## First Query
-
-Use [Build With React Native](/docs/sdk/react-native/guide) for Expo setup, first
-query, config plugin options, JSI transport, lifecycle, extensions, and backup.
-Use the [architecture](/docs/sdk/react-native/architecture) page for the native
-boundary model.
+Continue with the [React Native guide](/docs/sdk/react-native/guide) or [API reference](/docs/sdk/react-native/api-reference).

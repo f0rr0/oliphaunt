@@ -66,35 +66,20 @@ const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
   "src/extensions/generated/docs/extension-evidence.json",
 );
 const EXTENSION_MODEL_CHECK_PATH = "src/extensions/tools/check-extension-model.mjs";
+// MDX install versions resolve from release metadata during docs generation.
 export const SDK_INSTALL_VERSION_RULES = Object.freeze([
-  {
-    product: "oliphaunt-swift",
-    file: "src/docs/content/sdk/swift/index.mdx",
-    prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "',
-    suffix: '")',
-  },
-  {
-    product: "oliphaunt-swift",
-    file: "src/docs/content/sdk/swift/guide.mdx",
-    prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "',
-    suffix: '")',
-  },
   {
     product: "oliphaunt-swift",
     file: "src/sdks/swift/README.md",
     prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "',
     suffix: '")',
   },
-  ...[
-    "src/docs/content/sdk/kotlin/index.mdx",
-    "src/docs/content/sdk/kotlin/guide.mdx",
-    "src/sdks/kotlin/README.md",
-  ].map((file) => ({
+  {
     product: "oliphaunt-kotlin",
-    file,
+    file: "src/sdks/kotlin/README.md",
     prefix: 'implementation("dev.oliphaunt:oliphaunt-android:',
     suffix: '")',
-  })),
+  },
 ]);
 
 function fail(message) {

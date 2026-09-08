@@ -1,85 +1,68 @@
 ---
 title: Kotlin SDK
-description: Android SDK with coroutine-first database APIs and native resource handling.
+description: Add embedded PostgreSQL to an Android app using coroutine APIs.
 ---
 
-<SdkLanding id="kotlin" />
-
-The Kotlin SDK is the Android SDK for Oliphaunt. It provides coroutine-first
-database APIs plus an Android facade for native library loading, runtime asset
-materialization, ABI selection, and app-private storage.
-
-Use this SDK directly from Android apps written with Kotlin, Java interop, or
-Jetpack Compose. React Native on Android delegates runtime work through this SDK,
-so Android packaging, lifecycle, and resource selection are defined here.
+Use `dev.oliphaunt:oliphaunt-android` in Android apps with API level 24 or later. The SDK provides suspend functions and supports `arm64-v8a` and `x86_64` native targets.
 
 ## Install
 
-Add the Android package to your app:
+Ensure `mavenCentral()` is available in both plugin and dependency repositories in `settings.gradle.kts`. Apply the Oliphaunt plugin alongside your app's existing Android/Kotlin plugins:
 
-```kotlin
+```kotlin title="app/build.gradle.kts"
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "0.1.1"
+    id("dev.oliphaunt.android") version "@VERSION(oliphaunt-kotlin)@"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.2.0")
-}
-
-oliphaunt {
-    selectedExtensions.add("vector")
+    implementation("dev.oliphaunt:oliphaunt-android:@VERSION(oliphaunt-kotlin)@")
 }
 ```
 
-The Gradle plugin verifies and packages selected native runtime artifacts,
-Android ABIs, and exact extension files. The app ships only the selected
-extensions plus declared dependencies.
+The plugin packages the native runtime resources needed by the app. Build and run a native Android application after changing this configuration.
 
-## Open And Query
+## Run your first query
 
-Open a database from a coroutine:
+Call this function from a coroutine. It opens disposable storage, binds a value, reads a typed result, and closes the database.
+
+<!-- oliphaunt-snippet: oliphaunt-kotlin -->
 
 ```kotlin
-import dev.oliphaunt.DatabaseStorage
-import dev.oliphaunt.Oliphaunt
-import dev.oliphaunt.OliphauntConfig
+import android.content.Context
+import dev.oliphaunt.*
 
-val database = Oliphaunt.open(
-    context = applicationContext,
-    config = OliphauntConfig(
-        storage = DatabaseStorage.Directory(
-            applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
-        ),
-        extensions = listOf("vector"),
-    ),
-)
-
-val rows = database.query("SELECT 1::text AS value")
-database.close()
+suspend fun firstQuery(context: Context) {
+    val db = Oliphaunt.open(context.applicationContext)
+    try {
+        val result = db.query(
+            "SELECT $1::int4 AS answer",
+            parameters = listOf(QueryParam.int(42)),
+        )
+        println(result.rows[0].value("answer", PostgresDecoders.int)) // 42
+    } finally {
+        db.close()
+    }
+}
 ```
 
-## Runtime Shape
+The SDK serializes work on one native PostgreSQL session. Keep the database in application state when multiple coroutines need it.
 
-Android direct mode owns one resident backend per app process and one serialized
-physical session.
+## Keep data between launches
 
-Coroutine callers may share a database handle. Direct mode queues work against
-the resident backend and preserves transaction ordering. Android packaging owns
-ABI selection, native library loading, and runtime resource hydration before the
-first open.
+Use this storage configuration instead of the disposable example above. Direct mode stays bound to its first root for the lifetime of the process; closing does not let the same process switch roots.
 
-## App Responsibilities
+Use an app-private `File` as the persistent root:
 
-- Store persistent data in app-private storage unless the app deliberately
-  exports a backup.
-- Select exact SQL extension names at build/configuration time so the APK or AAB
-  contains only selected extension artifacts and declared dependencies.
-- Use SDK backup and restore APIs for archive validation and destination
-  materialization.
+```kotlin
+val db = Oliphaunt.open(
+    context = context.applicationContext,
+    config = OliphauntConfig(
+        storage = DatabaseStorage.Directory(context.filesDir.resolve("main.oliphaunt")),
+    ),
+)
+```
 
-## First Query
+`Directory` accepts `java.io.File`, not a path string. Reopen the same directory to access saved data; the default `TemporaryDirectory` is disposable.
 
-Use [Build With Kotlin](/docs/sdk/kotlin/guide) for open/query,
-configuration, lifecycle, exact extensions, backup, restore, and troubleshooting.
-Use the [API reference](/docs/sdk/kotlin/api-reference) for the public API map.
+Continue with the [Kotlin guide](/docs/sdk/kotlin/guide), [mobile lifecycle guide](/docs/learn/mobile-stability), or [API reference](/docs/sdk/kotlin/api-reference).

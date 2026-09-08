@@ -533,3 +533,45 @@ unrelated = { version = "${unrelatedVersion}" }
     /derived file examples\/tauri\/src-tauri\/Cargo[.]toml contains a non-version semantic change/u,
   );
 });
+
+
+test("historical SDK docs accept only their exact release version substitution", { timeout: 20_000 }, () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-legacy-doc-release-"));
+  try {
+    git(repo, "init", "-q");
+    git(repo, "config", "user.name", "Release Test");
+    git(repo, "config", "user.email", "release@example.invalid");
+    const packages = Object.fromEntries(["swift", "kotlin"].map((sdk) => [
+      `packages/${sdk}`,
+      { "release-type": "simple", component: `oliphaunt-${sdk}`, "version-file": "VERSION", "changelog-path": "CHANGELOG.md" },
+    ]));
+    write(repo, "release-please-config.json", JSON.stringify({ packages }));
+    const docs = (version) => ({
+      swift: `.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "${version}")`,
+      kotlin: `implementation("dev.oliphaunt:oliphaunt-android:${version}")`,
+    });
+    const releaseFiles = (version) => {
+      write(repo, ".release-please-manifest.json", JSON.stringify({ "packages/swift": version, "packages/kotlin": version }));
+      for (const sdk of ["swift", "kotlin"]) {
+        write(repo, `packages/${sdk}/VERSION`, version);
+        write(repo, `packages/${sdk}/CHANGELOG.md`, `# Changelog\n\n## ${version} (2026-09-08)\n`);
+        for (const page of ["index", "guide"]) {
+          write(repo, `src/docs/content/sdk/${sdk}/${page}.mdx`, docs(version)[sdk]);
+        }
+      }
+    };
+    releaseFiles("0.1.0");
+    const base = commit(repo, "feat: introduce SDK docs");
+    releaseFiles("0.2.0");
+    const clean = commit(repo, "chore(release): update SDKs");
+    const products = ["oliphaunt-kotlin", "oliphaunt-swift"];
+    assert.deepEqual(verifyReleaseCommit({ repo, headRef: clean, products }).products, products);
+    git(repo, "switch", "-q", "-c", "changed-prose", base);
+    releaseFiles("0.2.0");
+    write(repo, "src/docs/content/sdk/swift/index.mdx", `${docs("0.2.0").swift}\nUnrelated new instructions.\n`);
+    const invalid = commit(repo, "chore(release): update SDKs");
+    assert.throws(() => verifyReleaseCommit({ repo, headRef: invalid, products }), /non-version semantic change/u);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

@@ -1,88 +1,53 @@
 ---
-title: WASIX TypeScript API Reference
-description: Public API map for portable TypeScript database, storage, query, and physical archive operations.
+title: WASIX TypeScript API reference
+description: Imports, storage descriptors, configuration, methods, and runtime-specific constraints.
 ---
 
-# WASIX TypeScript API Reference
+`@oliphaunt/wasix-ts` exports `Oliphaunt` and its TypeScript declarations. The default export is the same client.
 
-Use the generated TypeDoc reference for exact declarations.
+## Entry points
 
-| Area | Public surface | Purpose |
-| --- | --- | --- |
-| Client | `Oliphaunt.open`, `Oliphaunt.restore` | Open a database or restore an archive into persistent storage |
-| Single-statement SQL | decoded `query`, byte-preserving `queryRaw`, `execute` | Read object or array rows, retain exact wire rows, or assert that a command returns no rows |
-| Multi-statement and metadata | `exec`, `describe` | Return simple-query results in order or resolve parameter/result OIDs without executing |
-| Parameters and codecs | `text`, `binary`, `typedNull`, `json`, `array`, `postgresOids`, per-query encoders and decoders | Use safe scalar inference, deterministic PostgreSQL types, or extension-owned OID codecs |
-| Transactions | `transaction`, `OliphauntTransaction.rollback`, transaction `closed` | Reserve the session for a callback and explicitly roll back without a later commit |
-| Raw protocol | database `execProtocolRaw`, `execProtocolRawStream` | Send PostgreSQL protocol bytes as one result or synchronous bounded callback chunks; transaction handles deliberately do not expose this bypass, confirmed callback recovery preserves the original error and session, and execution, transport, or recovery failures poison it |
-| Data movement | `backup` | Create the single supported WASIX physical archive |
-| Persistence | Implicit operation and transaction publication boundaries | Publish persistent changes before the owning promise settles |
-| Lifecycle | read-only `closed`, `close`, `Symbol.asyncDispose` | Perform one terminal teardown, stop the database, and release provider ownership |
-| Storage | `memory`, plus the `storage/indexed-db`, `storage/opfs`, `storage/node`, `storage/bun`, and `storage/deno` subpaths | Select one host-appropriate storage provider |
-| Query values | `QueryParam`, `QueryResult`, `RawQueryResult`, `QueryField`, `CommandResult`, `ExecResult`, `DescribeResult` | Use decoded or lossless PostgreSQL parameter and result values |
-| Diagnostics | query-scoped `notices`, `PostgresError`, `WasixStorageError` | Distinguish PostgreSQL diagnostics from host persistence failures |
-| Extensions | `WasixExtensionDescriptor` | Materialize an exact independently packaged WASIX extension and its startup config; run normal database-local `CREATE EXTENSION`/`LOAD` explicitly in app or ORM migrations |
-| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run a standard plain logical dump against root, direct, or Worker handles; non-interactive psql accepts any native-host placement and requires a Worker handle in browsers |
-| Optional local server | `openServer`, `ServerListen`, `OliphauntServer.connectionString`, read-only `OliphauntServer.closed`, `close`, and `Symbol.asyncDispose` from `@oliphaunt/wasix-ts/server` | Publish and lifecycle-manage one loopback TCP or PostgreSQL-named Unix endpoint on Node, Bun, Deno, or Electron |
+| Import | Exports / purpose |
+| --- | --- |
+| Package root | `Oliphaunt.open`, `Oliphaunt.restore`, query types and helpers |
+| `/direct` | Explicit caller-thread placement |
+| `/worker` | Worker placement with the same query contract |
+| `/server` | Desktop-only `openServer` |
+| `/storage/indexed-db`, `/storage/opfs` | Browser persistent providers |
+| `/storage/node`, `/storage/bun`, `/storage/deno` | Desktop directory providers |
 
-```ts
-const result = await database.query('select $1::int4 as answer', [41]);
-const answer = result.rows[0]?.answer;
-const raw = await database.queryRaw('select $1::bytea as payload', [new Uint8Array([1, 2])]);
-```
+`open(config?)` returns `Promise<OliphauntDatabase>`. `restore(storage, bytes)` returns `Promise<void>` and requires a `PersistentWasixStorage` destination.
 
-The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+## Configuration
 
-Inside a callback transaction, do not issue manual `BEGIN`, `START
-TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`.
-Use callback return/throw or `rollback()`; `SAVEPOINT` and `ROLLBACK TO` are
-supported. `ROLLBACK AND CHAIN` is unsupported and wire-indistinguishable from
-`ROLLBACK TO`, so Oliphaunt rejects `ROLLBACK`/`ABORT ... AND CHAIN` before
-dispatch and enforces every other ownership boundary from PostgreSQL response
-frames. A proven escape makes the database close-only and suppresses any
-follow-up SDK transaction command.
+| Field | Type / default |
+| --- | --- |
+| `storage` | `WasixStorage`; fresh memory filesystem |
+| `extensions` | `readonly WasixExtensionDescriptor[]`; empty |
+| `startupGUCs` | `Record<string, string>`; no extra settings |
+| `username`, `database` | Optional strings; fresh roots use `postgres` |
+| `icu` | Optional imported `WasixIcuDescriptor` |
 
-After rollback and required persistence publication succeed, the original
-callback failure is rethrown unchanged. If rollback also fails, an
-`AggregateError` contains the callback failure followed by the rollback failure.
-If the callback throws a different value after an earlier independent database
-or protocol failure poisoned or expired ownership, an `AggregateError` contains
-the callback failure followed by that database failure and the database is
-close-only. Ordinary PostgreSQL statement errors that remain safely rollbackable
-do not automatically produce an aggregate.
+Extension descriptors come from `@oliphaunt/extension-*-wasix` packages. SQL-name strings are not accepted. Host placement is selected by import, not an `execution` configuration option.
 
-WASIX `close()` has one memoized terminal outcome. It stops admission as soon
-as close begins and lets already accepted database work finish. The root actor
-drains its Rust owner, `/direct` closes on its owning thread, and `/worker`
-closes at quiescence, posts its reply, then exits itself without terminating an
-active Node-API frame. A
-rejected close still leaves `closed === true`; repeat calls return the same
-rejected promise rather than claiming the destroyed session can be retried.
-Provider close and allocation release are attempted before that rejection is
-reported. A close call made from the active transaction callback rejects before
-teardown begins and leaves the database open; call it again after the callback
-settles.
+## Queries and transactions
 
-An unexpected package-Worker failure also makes `closed === true` immediately.
-Later operations fail locally instead of posting to the terminal transport.
-`close()` remains idempotent and reports that transport failure while finishing
-any remaining package-owned cleanup.
+`query`, `execute`, `queryRaw`, `exec`, and `describe` provide typed queries, command metadata, raw column values, multiple statements, and statement metadata. They accept positional parameters and appropriate query options. Typed rows are buffered.
 
-A raw-stream callback cannot return a thenable or reenter the same database or
-transaction. Its original error is surfaced only after the runtime confirms a
-known recovered protocol boundary, leaving the database reusable. A buffered
-raw rejection or streamed execution, transport, or recovery failure is
-authoritative instead, poisons the database, and is never masked by a callback
-error.
+`transaction(body)` owns one session until settlement. Returning commits; throwing rolls back. The transaction handle exposes typed query methods and `rollback()`, and expires after use. Raw protocol and backup belong only to the database. Manual outer transaction-lifecycle SQL is unsupported; savepoints are supported.
 
-An unreachable database handle has generation-guarded best-effort cleanup. It
-can retire only its own actor, direct guest/storage lease, or Worker, and a stale
-finalizer is a no-op. This is a leak-safety fallback, not a prompt lifecycle
-boundary; use `close()` or `await using` whenever teardown must be observed.
+## Persistence and close
 
-The public API has no backup-format enum, capability object, initialization
-profile, replace policy, runtime fallback, cancellation, or dedicated COPY
-streaming mode. Server and tool support is deliberately absent from the core
-database object and exposed only through the optional surfaces above. These are
-fixed semantics rather than configuration switches.
+`backup()` returns `Promise<Uint8Array>`. Persistent operations settle only after required provider publication. Restore validates archive compatibility and rejects nonempty destinations.
+
+`close()` returns `Promise<void>` and performs one terminal teardown attempt. `closed` reports terminal state, including unexpected isolated-host termination. Repeated close calls share the same result. `Symbol.asyncDispose` uses the same close operation.
+
+There is no public direct-query `cancel()` method. Browser TCP listeners and independent endpoint sessions are unavailable.
+
+## Protocol and errors
+
+`execProtocolRaw` returns buffered backend bytes. `execProtocolRawStream` accepts a synchronous callback returning `undefined`. The callback is a backpressure boundary and cannot return a promise or re-enter the same database.
+
+`PostgresError` contains SQLSTATE and backend diagnostics. A recovered callback failure can leave a session usable; transport, recovery, or persistence-publication failure can make it close-only. Composite transaction failures retain both relevant causes.
+
+See the [guide](/docs/sdk/wasix-typescript/guide) for tools, storage examples, and host requirements.
