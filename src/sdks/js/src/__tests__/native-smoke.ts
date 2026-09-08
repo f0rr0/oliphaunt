@@ -7,7 +7,7 @@ import { Oliphaunt } from '../index.js';
 import { simpleQuery } from '../protocol.js';
 import { parseSimpleQueryRawResponse } from '../query.js';
 import { PostgresWireClient } from '../runtime/pgwire.js';
-import { assertNativeDatabaseContract } from './native-direct-contract.mjs';
+import { assertNativeDatabaseContract } from './native-direct-contract.mts';
 
 async function main(): Promise<void> {
   const libraryPath = requiredEnv('LIBOLIPHAUNT_PATH');

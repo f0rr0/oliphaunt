@@ -56,7 +56,7 @@ fresh_require_command cp
 fresh_require_command find
 fresh_require_command flock
 fresh_require_command grep
-fresh_require_command python3
+fresh_require_command bun
 fresh_require_command sha256sum
 fresh_require_command sort
 
@@ -90,30 +90,7 @@ fresh_require_managed_generated_path "$publication_lock_dir" sealed-export-publi
 mkdir -p "$publication_lock_dir"
 [ -d "$publication_lock_dir" ] && [ ! -L "$publication_lock_dir" ] ||
   fail "unsafe publication lock directory: $publication_lock_dir"
-publication_lock_subject="$(python3 - "$install_dir" <<'PY'
-import os
-import stat
-import sys
-
-path = sys.argv[1]
-before = os.lstat(path)
-if not stat.S_ISDIR(before.st_mode) or stat.S_ISLNK(before.st_mode):
-    raise SystemExit("install prefix is not a non-symlink directory")
-flags = (
-    os.O_RDONLY
-    | getattr(os, "O_CLOEXEC", 0)
-    | getattr(os, "O_DIRECTORY", 0)
-    | getattr(os, "O_NOFOLLOW", 0)
-)
-descriptor = os.open(path, flags)
-try:
-    opened = os.fstat(descriptor)
-    if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
-        raise SystemExit("install prefix changed while deriving lock identity")
-    print(f"{opened.st_dev}:{opened.st_ino}")
-finally:
-    os.close(descriptor)
-PY
+publication_lock_subject="$(bun "$FRESH_ROOT/lib/durable-publication.mts" directory-identity "$install_dir"
 )" || fail 'could not derive publication lock subject'
 publication_lock_key="$(printf '%s' "$publication_lock_subject" | sha256sum)" ||
   fail 'could not derive publication lock identity'
@@ -130,52 +107,11 @@ publication_completion="$publication_lock_dir/$publication_lock_key.completed"
 publication_completion_pending="$publication_lock_dir/$publication_lock_key.completed.pending"
 
 fsync_paths() {
-  python3 - "$@" <<'PY'
-import os
-import stat
-import sys
-
-for raw in sys.argv[1:]:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(raw, flags)
-    try:
-        mode = os.fstat(fd).st_mode
-        if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
-            raise SystemExit(f"refusing to fsync non-file path: {raw}")
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-PY
+  bun "$FRESH_ROOT/lib/durable-publication.mts" fsync-paths "$@"
 }
 
 fsync_tree_directories() {
-  python3 - "$1" <<'PY'
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-directories = []
-for current, names, _files in os.walk(root, topdown=True, followlinks=False):
-    names.sort()
-    for name in names:
-        candidate = os.path.join(current, name)
-        mode = os.lstat(candidate).st_mode
-        if stat.S_ISLNK(mode):
-            raise SystemExit(f"refusing symlink directory in publication tree: {candidate}")
-        if not stat.S_ISDIR(mode):
-            raise SystemExit(f"refusing non-directory in publication tree: {candidate}")
-    directories.append(current)
-for current in reversed(directories):
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(current, flags)
-    try:
-        if not stat.S_ISDIR(os.fstat(fd).st_mode):
-            raise SystemExit(f"publication path changed type: {current}")
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-PY
+  bun "$FRESH_ROOT/lib/durable-publication.mts" fsync-tree-directories "$1"
 }
 
 remove_pending_path() {
@@ -214,86 +150,12 @@ remove_completion_path() {
 
 completion_matches_live() {
   [ -f "$publication_completion" ] && [ ! -L "$publication_completion" ] || return 1
-  python3 - \
-    "$publication_completion" \
-    "$completion_schema" \
-    "$install_dir" \
-    "${publication_relatives[@]}" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-from pathlib import Path, PurePosixPath
-
-receipt = Path(sys.argv[1])
-schema = sys.argv[2]
-install = Path(sys.argv[3])
-relatives = sys.argv[4:]
-
-def digest(path: Path) -> str:
-    value = hashlib.sha256()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
-    info = os.fstat(descriptor)
-    if not stat.S_ISREG(info.st_mode):
-        os.close(descriptor)
-        raise SystemExit(1)
-    with os.fdopen(descriptor, "rb", closefd=True) as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            value.update(chunk)
-    return value.hexdigest()
-
-identity = os.stat(install, follow_symlinks=False)
-lines = [f"schema={schema}", f"install_identity={identity.st_dev}:{identity.st_ino}"]
-for relative in relatives:
-    pure = PurePosixPath(relative)
-    if pure.is_absolute() or any(part in ("", ".", "..") for part in pure.parts):
-        raise SystemExit(1)
-    lines.append(f"file_sha256.{relative}={digest(install.joinpath(*pure.parts))}")
-expected = ("\n".join(lines) + "\n").encode("ascii")
-if receipt.read_bytes() != expected:
-    raise SystemExit(1)
-PY
+  bun "$FRESH_ROOT/lib/sealed-export-chain.mts" completion "$completion_schema" "$install_dir" "${publication_relatives[@]}" | cmp - "$publication_completion"
 }
 
 publish_completion() {
   remove_completion_path "$publication_completion_pending"
-  python3 - \
-    "$completion_schema" \
-    "$install_dir" \
-    "${publication_relatives[@]}" >"$publication_completion_pending" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-from pathlib import Path, PurePosixPath
-
-schema = sys.argv[1]
-install = Path(sys.argv[2])
-relatives = sys.argv[3:]
-
-def digest(path: Path) -> str:
-    value = hashlib.sha256()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
-    info = os.fstat(descriptor)
-    if not stat.S_ISREG(info.st_mode):
-        os.close(descriptor)
-        raise SystemExit(f"completion input is not regular: {path}")
-    with os.fdopen(descriptor, "rb", closefd=True) as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            value.update(chunk)
-    return value.hexdigest()
-
-identity = os.stat(install, follow_symlinks=False)
-lines = [f"schema={schema}", f"install_identity={identity.st_dev}:{identity.st_ino}"]
-for relative in relatives:
-    pure = PurePosixPath(relative)
-    if pure.is_absolute() or any(part in ("", ".", "..") for part in pure.parts):
-        raise SystemExit(f"unsafe completion path: {relative}")
-    lines.append(f"file_sha256.{relative}={digest(install.joinpath(*pure.parts))}")
-sys.stdout.write("\n".join(lines) + "\n")
-PY
+  bun "$FRESH_ROOT/lib/sealed-export-chain.mts" completion "$completion_schema" "$install_dir" "${publication_relatives[@]}" >"$publication_completion_pending"
   fsync_paths "$publication_completion_pending"
   mv -f -- "$publication_completion_pending" "$publication_completion"
   fsync_paths "$publication_lock_dir"
@@ -309,11 +171,11 @@ validate_existing_export_generation() {
     [ -f "$install_dir/$relative" ] && [ ! -L "$install_dir/$relative" ] ||
       fail "sealed export generation is missing a regular member: $relative"
   done
-  python3 "$FRESH_ROOT/lib/sealed_export_chain.py" \
+  bun "$FRESH_ROOT/lib/sealed-export-chain.mts" \
     --install-root "$install_dir" \
     --project-root "$FRESH_ROOT" ||
     fail 'installed sealed export proof chain is invalid'
-  python3 "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.py" "$postgres" >/dev/null ||
+  bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" "$postgres" >/dev/null ||
     fail 'installed sealed export module import contract is invalid'
   fresh_require_start_proof_tool \
     "$FRESH_START_PROOF_BIN" \
@@ -326,7 +188,7 @@ validate_existing_export_generation() {
     fail 'installed sealed export deterministic-start proof differs'
   }
   remove_completion_path "$start_validation_pending"
-  python3 "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.py" \
+  bun "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
     --expected-total "$expected_total" \
     --latch-state-contract packed-atomic-v1 \
     --verified-receipt "$installed_concurrency_receipt" \
@@ -451,7 +313,7 @@ linear_memory_descendant="$install_dir/share/postgresql/wasix-postmaster.linear-
 if [ -e "$linear_memory_descendant" ] || [ -L "$linear_memory_descendant" ]; then
   [ -f "$linear_memory_descendant" ] && [ ! -L "$linear_memory_descendant" ] ||
     fail "unsafe linear-memory descendant receipt: $linear_memory_descendant"
-  python3 "$FRESH_ROOT/lib/sealed_export_chain.py" \
+  bun "$FRESH_ROOT/lib/sealed-export-chain.mts" \
     --install-root "$install_dir" \
     --project-root "$FRESH_ROOT" \
     --allow-linear-memory-descendant ||
@@ -636,22 +498,15 @@ chmod --reference="$postgres" "$stage/bin/postgres"
     "${side_modules[@]}"
 )
 
-python3 "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.py" "$stage/bin/postgres"
+bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" "$stage/bin/postgres"
 fresh_require_start_proof_tool "$FRESH_START_PROOF_BIN" "$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT"
 "$FRESH_START_PROOF_BIN" "$stage/bin/postgres" >"$start_proof"
 
-"$docker_bin" run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$REPO_ROOT:/work" \
-  -w /work \
-  "$docker_image_id" \
-  python3 \
-  /work/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-concurrency-contract.py \
+bash "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
+  "$stage/bin/postgres" \
   --expected-total "$expected_total" \
   --latch-state-contract packed-atomic-v1 \
-  --wasm-dis /opt/wasixcc-home/.wasixcc/binaryen/bin/wasm-dis \
-  --receipt "$docker_stage/share/postgresql/wasix-postmaster.sealed-export.concurrency.intermediate.receipt" \
-  "$docker_stage/bin/postgres"
+  --receipt "$stage/share/postgresql/wasix-postmaster.sealed-export.concurrency.intermediate.receipt"
 
 for artifact in \
   "$seed_proof" \

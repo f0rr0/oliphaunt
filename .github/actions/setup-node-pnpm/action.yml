@@ -33,7 +33,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-pnpm-runtime
-        key: verified-pnpm-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-pnpm/action.yml', '.github/actions/setup-node-pnpm/install-pinned-pnpm.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/pnpm.toml', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-pnpm-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-pnpm/action.yml', '.github/actions/setup-node-pnpm/install-pinned-pnpm.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'src/sources/toolchains/pnpm.toml', 'src/shared/artifact-packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}
 
     - name: Install verified pnpm
       id: install
@@ -71,4 +71,4 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-pnpm-runtime
-        key: verified-pnpm-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-pnpm/action.yml', '.github/actions/setup-node-pnpm/install-pinned-pnpm.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/pnpm.toml', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-pnpm-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-pnpm/action.yml', '.github/actions/setup-node-pnpm/install-pinned-pnpm.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'src/sources/toolchains/pnpm.toml', 'src/shared/artifact-packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}

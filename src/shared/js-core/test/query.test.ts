@@ -1,6 +1,6 @@
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
 
 import {
   PostgresError,
@@ -22,10 +22,10 @@ import {
   responseTransactionStatus,
   text,
   typedNull,
-} from "../src/query.ts";
-import { assertSharedProtocolFixtures } from "./protocol-fixtures.mjs";
+} from '../src/query.ts';
+import { assertSharedProtocolFixtures } from './protocol-fixtures.mts';
 
-test("protocol fixtures", () => {
+test('protocol fixtures', () => {
   assertSharedProtocolFixtures({
     parseSimpleQueryResponse: parseSimpleQueryRawResponse,
     parseExtendedQueryResponse: parseQueryRawResponse,
@@ -33,43 +33,37 @@ test("protocol fixtures", () => {
   });
 });
 
-test("parameter plans infer OIDs without exposing mutable values across the await", () => {
+test('parameter plans infer OIDs without exposing mutable values across the await', () => {
   const value = { stable: 1 };
-  const plan = planQuery("SELECT $1::jsonb", [value]);
-  assert.equal(plan.kind, "describe");
+  const plan = planQuery('SELECT $1::jsonb', [value]);
+  assert.equal(plan.kind, 'describe');
   value.stable = 2;
-  if (plan.kind !== "describe") throw new Error("expected describe plan");
+  if (plan.kind !== 'describe') throw new Error('expected describe plan');
   const bind = frontendMessages(plan.bind([postgresOids.jsonb]));
   assert.deepEqual(
     bind.map((message) => message.tag),
-    ["P", "B", "D", "E", "S"],
+    ['P', 'B', 'D', 'E', 'S'],
   );
   assert.match(new TextDecoder().decode(bind[1]!.body), /"stable":1/);
 
-  assert.throws(
-    () => plan.bind([postgresOids.text]),
-    /cannot safely encode object/,
-  );
-  assert.throws(
-    () => planQuery("SELECT $1", [undefined as never]),
-    /must not be undefined/,
-  );
+  assert.throws(() => plan.bind([postgresOids.text]), /cannot safely encode object/);
+  assert.throws(() => planQuery('SELECT $1', [undefined as never]), /must not be undefined/);
 });
 
-test("typed helpers make a one-exchange OID-aware plan", () => {
-  const plan = planQuery("SELECT $1, $2, $3, $4, $5", [
+test('typed helpers make a one-exchange OID-aware plan', () => {
+  const plan = planQuery('SELECT $1, $2, $3, $4, $5', [
     json({ ok: true }),
     array([1, null, 2], postgresOids.int4Array),
-    text("550e8400-e29b-41d4-a716-446655440000", postgresOids.uuid),
+    text('550e8400-e29b-41d4-a716-446655440000', postgresOids.uuid),
     binary(Uint8Array.of(0, 255), postgresOids.bytea),
     typedNull(postgresOids.int8),
   ]);
-  assert.equal(plan.kind, "complete");
-  if (plan.kind !== "complete") throw new Error("expected complete plan");
+  assert.equal(plan.kind, 'complete');
+  if (plan.kind !== 'complete') throw new Error('expected complete plan');
   const messages = frontendMessages(plan.input);
   assert.deepEqual(
     messages.map((message) => message.tag),
-    ["P", "B", "D", "E", "S"],
+    ['P', 'B', 'D', 'E', 'S'],
   );
   assert.deepEqual(readParseTypeOids(messages[0]!.body), [
     postgresOids.jsonb,
@@ -81,24 +75,18 @@ test("typed helpers make a one-exchange OID-aware plan", () => {
   assert.equal(Object.isFrozen(postgresOids), true);
 });
 
-test("sparse parameter and PostgreSQL arrays reject their undefined holes", () => {
-  assert.throws(
-    () => planQuery("SELECT $1", Array(1)),
-    /query parameters must not be undefined/,
-  );
+test('sparse parameter and PostgreSQL arrays reject their undefined holes', () => {
+  assert.throws(() => planQuery('SELECT $1', Array(1)), /query parameters must not be undefined/);
   assert.throws(
     () => array(Array(1), postgresOids.textArray),
     /PostgreSQL arrays cannot contain undefined/,
   );
-  assert.throws(
-    () => planQuery("SELECT $1", [Array(1)]),
-    /query parameters must not be undefined/,
-  );
+  assert.throws(() => planQuery('SELECT $1', [Array(1)]), /query parameters must not be undefined/);
 });
 
-test("array helpers reject explicit element OID mismatches", () => {
+test('array helpers reject explicit element OID mismatches', () => {
   for (const value of [
-    text("1", postgresOids.int4),
+    text('1', postgresOids.int4),
     typedNull(postgresOids.int4),
     binary(Uint8Array.of(1), postgresOids.bytea),
   ]) {
@@ -108,85 +96,73 @@ test("array helpers reject explicit element OID mismatches", () => {
     );
   }
 
-  assert.equal(array([text("raw")], postgresOids.textArray).value, '{"raw"}');
-  assert.equal(
-    array([binary(Uint8Array.of(0xff))], postgresOids.byteaArray).value,
-    '{"\\\\xff"}',
-  );
+  assert.equal(array([text('raw')], postgresOids.textArray).value, '{"raw"}');
+  assert.equal(array([binary(Uint8Array.of(0xff))], postgresOids.byteaArray).value, '{"\\\\xff"}');
 });
 
-test("decoded rows reject ambiguous object fields and preserve them in array mode", () => {
+test('decoded rows reject ambiguous object fields and preserve them in array mode', () => {
   const response = queryResponse(
     [
-      field("__proto__", postgresOids.text),
-      field("constructor", postgresOids.int4),
-      field("constructor", postgresOids.int8),
-      field("payload", postgresOids.jsonb),
-      field("bytes", postgresOids.bytea),
-      field("dates", postgresOids.dateArray),
+      field('__proto__', postgresOids.text),
+      field('constructor', postgresOids.int4),
+      field('constructor', postgresOids.int8),
+      field('payload', postgresOids.jsonb),
+      field('bytes', postgresOids.bytea),
+      field('dates', postgresOids.dateArray),
     ],
-    [
-      [
-        "safe",
-        "7",
-        "9007199254740993",
-        '{"ok":true}',
-        "\\x00ff",
-        "{2026-01-01,NULL}",
-      ],
-    ],
-    "SELECT 1",
+    [['safe', '7', '9007199254740993', '{"ok":true}', '\\x00ff', '{2026-01-01,NULL}']],
+    'SELECT 1',
   );
   const raw = parseQueryRawResponse(response);
-  assert.throws(() => raw.getText(0, "constructor"), /more than one column/);
+  assert.throws(() => raw.getText(0, 'constructor'), /more than one column/);
   assert.throws(
     () => decodeQueryResult(raw),
     /cannot represent more than one column named "constructor"; use \{ rowMode: 'array' \}/,
   );
 
   const custom = decodeQueryResult(raw, {
-    rowMode: "array",
-    valueMode: "text",
-    decoders: { [postgresOids.int4]: (value) => "int:" + value },
+    rowMode: 'array',
+    valueMode: 'text',
+    decoders: { [postgresOids.int4]: (value) => 'int:' + value },
   });
   assert.deepEqual(custom.rows[0], [
-    "safe",
-    "int:7",
-    "9007199254740993",
+    'safe',
+    'int:7',
+    '9007199254740993',
     '{"ok":true}',
-    "\\x00ff",
-    "{2026-01-01,NULL}",
+    '\\x00ff',
+    '{2026-01-01,NULL}',
   ]);
 });
 
-test("decoded object rows remain prototype safe when field names are unique", () => {
+test('decoded object rows remain prototype safe when field names are unique', () => {
   const decoded = decodeQueryResult(
     parseQueryRawResponse(
       queryResponse(
-        [field("__proto__", postgresOids.text), field("constructor", postgresOids.int4)],
-        [["safe", "7"]],
-        "SELECT 1",
+        [field('__proto__', postgresOids.text), field('constructor', postgresOids.int4)],
+        [['safe', '7']],
+        'SELECT 1',
       ),
     ),
   );
   const row = decoded.rows[0]!;
-  assert.equal(Object.prototype.hasOwnProperty.call(row, "__proto__"), true);
-  assert.equal(row.__proto__, "safe");
+  assert.equal(Object.prototype.hasOwnProperty.call(row, '__proto__'), true);
+  assert.equal(row.__proto__, 'safe');
   assert.equal(row.constructor, 7);
 });
 
-test("decoded floating-point scalars and arrays preserve PostgreSQL non-finite values", () => {
+test('decoded floating-point scalars and arrays preserve PostgreSQL non-finite values', () => {
   const decoded = decodeQueryResult(
     parseQueryRawResponse(
       queryResponse(
         [
-          field("nan", postgresOids.float4),
-          field("positive", postgresOids.float8),
-          field("negative", postgresOids.float8),
-          field("values", postgresOids.float8Array),
+          field('nan', postgresOids.float4),
+          field('positive', postgresOids.float8),
+          field('negative', postgresOids.float8),
+          field('values', postgresOids.float8Array),
         ],
-        [["NaN", "Infinity", "-Infinity", "{NaN,Infinity,-Infinity,NULL}"]],
-        "SELECT 1",
+        [['NaN', 'Infinity', '-Infinity', '{NaN,Infinity,-Infinity,NULL}']],
+        'SELECT 1',
       ),
     ),
   );
@@ -200,7 +176,7 @@ test("decoded floating-point scalars and arrays preserve PostgreSQL non-finite v
   assert.deepEqual(values.slice(1), [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, null]);
 });
 
-test("built-in ORM OIDs and text-fallback arrays stay portable", () => {
+test('built-in ORM OIDs and text-fallback arrays stay portable', () => {
   assert.deepEqual(
     {
       char: postgresOids.char,
@@ -230,69 +206,64 @@ test("built-in ORM OIDs and text-fallback arrays stay portable", () => {
     parseQueryRawResponse(
       queryResponse(
         [
-          field("chars", postgresOids.charArray),
-          field("names", postgresOids.nameArray),
-          field("fixed", postgresOids.bpcharArray),
-          field("xml", postgresOids.xmlArray),
-          field("literal", postgresOids.unknown),
+          field('chars', postgresOids.charArray),
+          field('names', postgresOids.nameArray),
+          field('fixed', postgresOids.bpcharArray),
+          field('xml', postgresOids.xmlArray),
+          field('literal', postgresOids.unknown),
         ],
-        [["{a,b}", "{one,two}", "{fixed,padded}", "{<a/>,<b/>}", "value"]],
-        "SELECT 1",
+        [['{a,b}', '{one,two}', '{fixed,padded}', '{<a/>,<b/>}', 'value']],
+        'SELECT 1',
       ),
     ),
   );
   assert.deepEqual(decoded.rows, [
     {
-      chars: ["a", "b"],
-      names: ["one", "two"],
-      fixed: ["fixed", "padded"],
-      xml: ["<a/>", "<b/>"],
-      literal: "value",
+      chars: ['a', 'b'],
+      names: ['one', 'two'],
+      fixed: ['fixed', 'padded'],
+      xml: ['<a/>', '<b/>'],
+      literal: 'value',
     },
   ]);
-  assert.equal(
-    array(["a"], postgresOids.charArray).typeOid,
-    postgresOids.charArray,
-  );
+  assert.equal(array(['a'], postgresOids.charArray).typeOid, postgresOids.charArray);
 });
 
-test("exec attributes notices to each statement and retains aggregate operation notices", () => {
+test('exec attributes notices to each statement and retains aggregate operation notices', () => {
   const response = backendResponse([
-    [0x4e, diagnostic("NOTICE", "00000", "before create")],
-    [0x43, cstring("CREATE TABLE")],
+    [0x4e, diagnostic('NOTICE', '00000', 'before create')],
+    [0x43, cstring('CREATE TABLE')],
     [0x49, []],
-    [0x4e, diagnostic("NOTICE", "00000", "before select")],
-    [0x54, rowDescription([field("value", postgresOids.int4)])],
-    [0x44, dataRow(["42"])],
-    [0x43, cstring("SELECT 1")],
-    [0x4e, diagnostic("NOTICE", "00000", "after statements")],
+    [0x4e, diagnostic('NOTICE', '00000', 'before select')],
+    [0x54, rowDescription([field('value', postgresOids.int4)])],
+    [0x44, dataRow(['42'])],
+    [0x43, cstring('SELECT 1')],
+    [0x4e, diagnostic('NOTICE', '00000', 'after statements')],
     [0x5a, [0x49]],
   ]);
   const result = parseExecResponse(response);
   assert.equal(result.statements.length, 2);
-  assert.equal(result.statements[0]!.kind, "command");
-  assert.equal(result.statements[1]!.kind, "rows");
+  assert.equal(result.statements[0]!.kind, 'command');
+  assert.equal(result.statements[1]!.kind, 'rows');
   assert.deepEqual(result.statements[1]!.rows, [{ value: 42 }]);
   assert.deepEqual(
-    result.statements.map((statement) =>
-      statement.notices.map((notice) => notice.message),
-    ),
-    [["before create"], ["before select"]],
+    result.statements.map((statement) => statement.notices.map((notice) => notice.message)),
+    [['before create'], ['before select']],
   );
   assert.deepEqual(
     result.notices.map((notice) => notice.message),
-    ["before create", "before select", "after statements"],
+    ['before create', 'before select', 'after statements'],
   );
 });
 
-test("exec validates the complete response before decoding and snapshots options once", () => {
+test('exec validates the complete response before decoding and snapshots options once', () => {
   const validResponse = backendResponse([
-    [0x54, rowDescription([field("value", postgresOids.int4)])],
-    [0x44, dataRow(["1"])],
-    [0x43, cstring("SELECT 1")],
-    [0x54, rowDescription([field("value", postgresOids.int4)])],
-    [0x44, dataRow(["2"])],
-    [0x43, cstring("SELECT 1")],
+    [0x54, rowDescription([field('value', postgresOids.int4)])],
+    [0x44, dataRow(['1'])],
+    [0x43, cstring('SELECT 1')],
+    [0x54, rowDescription([field('value', postgresOids.int4)])],
+    [0x44, dataRow(['2'])],
+    [0x43, cstring('SELECT 1')],
     [0x5a, [0x49]],
   ]);
   let optionReads = 0;
@@ -336,9 +307,9 @@ test("exec validates the complete response before decoding and snapshots options
     () =>
       parseExecResponse(
         backendResponse([
-          [0x54, rowDescription([field("value", postgresOids.int4)])],
-          [0x44, dataRow(["1"])],
-          [0x43, cstring("SELECT 1")],
+          [0x54, rowDescription([field('value', postgresOids.int4)])],
+          [0x44, dataRow(['1'])],
+          [0x43, cstring('SELECT 1')],
           [0x31, []],
           [0x5a, [0x49]],
         ]),
@@ -356,27 +327,27 @@ test("exec validates the complete response before decoding and snapshots options
   assert.equal(decoderCalls, 0);
 });
 
-test("exec decoder failures stop later decoding but retain all operation notices", () => {
+test('exec decoder failures stop later decoding but retain all operation notices', () => {
   let decoderCalls = 0;
   const failure = thrownBy(() =>
     parseExecResponse(
       backendResponse([
-        [0x4e, diagnostic("NOTICE", "00000", "before first")],
-        [0x54, rowDescription([field("value", postgresOids.int4)])],
-        [0x44, dataRow(["1"])],
-        [0x43, cstring("SELECT 1")],
-        [0x4e, diagnostic("NOTICE", "00000", "before second")],
-        [0x54, rowDescription([field("value", postgresOids.int4)])],
-        [0x44, dataRow(["2"])],
-        [0x43, cstring("SELECT 1")],
-        [0x4e, diagnostic("NOTICE", "00000", "after statements")],
+        [0x4e, diagnostic('NOTICE', '00000', 'before first')],
+        [0x54, rowDescription([field('value', postgresOids.int4)])],
+        [0x44, dataRow(['1'])],
+        [0x43, cstring('SELECT 1')],
+        [0x4e, diagnostic('NOTICE', '00000', 'before second')],
+        [0x54, rowDescription([field('value', postgresOids.int4)])],
+        [0x44, dataRow(['2'])],
+        [0x43, cstring('SELECT 1')],
+        [0x4e, diagnostic('NOTICE', '00000', 'after statements')],
         [0x5a, [0x49]],
       ]),
       {
         decoders: {
           [postgresOids.int4]: () => {
             decoderCalls += 1;
-            throw new Error("decoder stopped");
+            throw new Error('decoder stopped');
           },
         },
       },
@@ -387,28 +358,25 @@ test("exec decoder failures stop later decoding but retain all operation notices
     (failure as Error & { notices: Array<{ message: string }> }).notices.map(
       (notice) => notice.message,
     ),
-    ["before first", "before second", "after statements"],
+    ['before first', 'before second', 'after statements'],
   );
-  assert.equal(responseTransactionStatus(failure as object), "idle");
+  assert.equal(responseTransactionStatus(failure as object), 'idle');
 });
 
-test("exec extracts row counts without narrowing backend whitespace semantics", () => {
+test('exec extracts row counts without narrowing backend whitespace semantics', () => {
   const commandTags = [
-    "SELECT 42",
-    " INSERT 0 7 ",
-    "\u00a0UPDATE\t0003\u3000",
-    "FETCH FORWARD 9",
-    "COPY 10",
-    "CREATE TABLE",
-    "SELECT 9007199254740992",
-    "SELECT +1",
-    "SELECT",
+    'SELECT 42',
+    ' INSERT 0 7 ',
+    '\u00a0UPDATE\t0003\u3000',
+    'FETCH FORWARD 9',
+    'COPY 10',
+    'CREATE TABLE',
+    'SELECT 9007199254740992',
+    'SELECT +1',
+    'SELECT',
   ];
   const result = parseExecResponse(
-    backendResponse([
-      ...commandTags.map((tag) => [0x43, cstring(tag)] as const),
-      [0x5a, [0x49]],
-    ]),
+    backendResponse([...commandTags.map((tag) => [0x43, cstring(tag)] as const), [0x5a, [0x49]]]),
   );
   assert.deepEqual(
     result.statements.map((statement) => statement.rowCount),
@@ -416,66 +384,64 @@ test("exec extracts row counts without narrowing backend whitespace semantics", 
   );
 });
 
-test("describe is structured and errors drain through ReadyForQuery with notices", () => {
+test('describe is structured and errors drain through ReadyForQuery with notices', () => {
   const described = parseDescribeResponse(
     backendResponse([
       [0x31, []],
       [0x74, [...i16(1), ...i32(postgresOids.jsonb)]],
-      [0x54, rowDescription([field("payload", postgresOids.jsonb)])],
+      [0x54, rowDescription([field('payload', postgresOids.jsonb)])],
       [0x5a, [0x49]],
     ]),
   );
   assert.deepEqual(described.parameterTypeOids, [postgresOids.jsonb]);
-  assert.equal(described.fields?.[0]?.name, "payload");
+  assert.equal(described.fields?.[0]?.name, 'payload');
   assert.deepEqual(
-    frontendMessages(describeQuery("SELECT $1", [0])).map(
-      (message) => message.tag,
-    ),
-    ["P", "D", "S"],
+    frontendMessages(describeQuery('SELECT $1', [0])).map((message) => message.tag),
+    ['P', 'D', 'S'],
   );
 
   const failure = thrownBy(() =>
     parseQueryRawResponse(
       backendResponse([
-        [0x4e, diagnostic("NOTICE", "00000", "before error")],
-        [0x45, diagnostic("ERROR", "22023", "bad value")],
-        [0x53, [...cstring("application_name"), ...cstring("test")]],
+        [0x4e, diagnostic('NOTICE', '00000', 'before error')],
+        [0x45, diagnostic('ERROR', '22023', 'bad value')],
+        [0x53, [...cstring('application_name'), ...cstring('test')]],
         [0x5a, [0x45]],
       ]),
     ),
   );
   assert.ok(failure instanceof PostgresError);
-  assert.equal(failure.notices[0]!.message, "before error");
-  assert.equal(responseTransactionStatus(failure), "failed");
-  assert.equal(failure.sqlstate, "22023");
-  assert.equal(failure.message, "bad value");
+  assert.equal(failure.notices[0]!.message, 'before error');
+  assert.equal(responseTransactionStatus(failure), 'failed');
+  assert.equal(failure.sqlstate, '22023');
+  assert.equal(failure.message, 'bad value');
 });
 
-test("diagnostics promote standard PostgreSQL fields and preserve unknown fields", () => {
+test('diagnostics promote standard PostgreSQL fields and preserve unknown fields', () => {
   const noticeFields: Array<readonly [number, string]> = [
-    [0x53, "AVERTISSEMENT"],
-    [0x56, "WARNING"],
-    [0x43, "01000"],
-    [0x4d, "notice message"],
-    [0x70, "3"],
-    [0x71, "SELECT notice"],
-    [0x57, "PL/pgSQL function notice_fn() line 1"],
-    [0x46, "pl_exec.c"],
-    [0x4c, "100"],
-    [0x52, "exec_stmt_raise"],
+    [0x53, 'AVERTISSEMENT'],
+    [0x56, 'WARNING'],
+    [0x43, '01000'],
+    [0x4d, 'notice message'],
+    [0x70, '3'],
+    [0x71, 'SELECT notice'],
+    [0x57, 'PL/pgSQL function notice_fn() line 1'],
+    [0x46, 'pl_exec.c'],
+    [0x4c, '100'],
+    [0x52, 'exec_stmt_raise'],
   ];
   const errorFields: Array<readonly [number, string]> = [
-    [0x53, "ERREUR"],
-    [0x56, "ERROR"],
-    [0x43, "XX000"],
-    [0x4d, "error message"],
-    [0x70, "7"],
-    [0x71, "SELECT broken"],
-    [0x57, "PL/pgSQL function broken_fn() line 2"],
-    [0x46, "postgres.c"],
-    [0x4c, "200"],
-    [0x52, "exec_simple_query"],
-    [0x58, "future diagnostic"],
+    [0x53, 'ERREUR'],
+    [0x56, 'ERROR'],
+    [0x43, 'XX000'],
+    [0x4d, 'error message'],
+    [0x70, '7'],
+    [0x71, 'SELECT broken'],
+    [0x57, 'PL/pgSQL function broken_fn() line 2'],
+    [0x46, 'postgres.c'],
+    [0x4c, '200'],
+    [0x52, 'exec_simple_query'],
+    [0x58, 'future diagnostic'],
   ];
 
   const failure = thrownBy(() =>
@@ -501,20 +467,20 @@ test("diagnostics promote standard PostgreSQL fields and preserve unknown fields
       routine: failure.routine,
     },
     {
-      severity: "ERREUR",
-      localizedSeverity: "ERREUR",
-      nonlocalizedSeverity: "ERROR",
-      internalPosition: "7",
-      internalQuery: "SELECT broken",
-      whereText: "PL/pgSQL function broken_fn() line 2",
-      file: "postgres.c",
-      line: "200",
-      routine: "exec_simple_query",
+      severity: 'ERREUR',
+      localizedSeverity: 'ERREUR',
+      nonlocalizedSeverity: 'ERROR',
+      internalPosition: '7',
+      internalQuery: 'SELECT broken',
+      whereText: 'PL/pgSQL function broken_fn() line 2',
+      file: 'postgres.c',
+      line: '200',
+      routine: 'exec_simple_query',
     },
   );
   assert.deepEqual(failure.fields.at(-1), {
     code: 0x58,
-    value: "future diagnostic",
+    value: 'future diagnostic',
   });
 
   const notice = failure.notices[0]!;
@@ -531,32 +497,32 @@ test("diagnostics promote standard PostgreSQL fields and preserve unknown fields
       routine: notice.routine,
     },
     {
-      severity: "AVERTISSEMENT",
-      localizedSeverity: "AVERTISSEMENT",
-      nonlocalizedSeverity: "WARNING",
-      internalPosition: "3",
-      internalQuery: "SELECT notice",
-      whereText: "PL/pgSQL function notice_fn() line 1",
-      file: "pl_exec.c",
-      line: "100",
-      routine: "exec_stmt_raise",
+      severity: 'AVERTISSEMENT',
+      localizedSeverity: 'AVERTISSEMENT',
+      nonlocalizedSeverity: 'WARNING',
+      internalPosition: '3',
+      internalQuery: 'SELECT notice',
+      whereText: 'PL/pgSQL function notice_fn() line 1',
+      file: 'pl_exec.c',
+      line: '100',
+      routine: 'exec_stmt_raise',
     },
   );
 });
 
-test("custom decoder failures retain query notices and normalize unattachable throws", () => {
+test('custom decoder failures retain query notices and normalize unattachable throws', () => {
   const queryRaw = parseQueryRawResponse(
     backendResponse([
       [0x31, []],
       [0x32, []],
-      [0x54, rowDescription([field("value", postgresOids.int4)])],
-      [0x4e, diagnostic("NOTICE", "00000", "query notice")],
-      [0x44, dataRow(["42"])],
-      [0x43, cstring("SELECT 1")],
+      [0x54, rowDescription([field('value', postgresOids.int4)])],
+      [0x4e, diagnostic('NOTICE', '00000', 'query notice')],
+      [0x44, dataRow(['42'])],
+      [0x43, cstring('SELECT 1')],
       [0x5a, [0x49]],
     ]),
   );
-  const extensible = new Error("extensible decoder failure");
+  const extensible = new Error('extensible decoder failure');
   const queryFailure = thrownBy(() =>
     decodeQueryResult(queryRaw, {
       decoders: {
@@ -571,18 +537,18 @@ test("custom decoder failures retain query notices and normalize unattachable th
     (queryFailure as { notices: Array<{ message: string }> }).notices.map(
       (notice) => notice.message,
     ),
-    ["query notice"],
+    ['query notice'],
   );
-  assert.equal(responseTransactionStatus(queryFailure as object), "idle");
+  assert.equal(responseTransactionStatus(queryFailure as object), 'idle');
 
-  const frozen = Object.freeze(new Error("frozen decoder failure"));
+  const frozen = Object.freeze(new Error('frozen decoder failure'));
   const execFailure = thrownBy(() =>
     parseExecResponse(
       backendResponse([
-        [0x54, rowDescription([field("value", postgresOids.int4)])],
-        [0x4e, diagnostic("NOTICE", "00000", "exec notice")],
-        [0x44, dataRow(["42"])],
-        [0x43, cstring("SELECT 1")],
+        [0x54, rowDescription([field('value', postgresOids.int4)])],
+        [0x4e, diagnostic('NOTICE', '00000', 'exec notice')],
+        [0x44, dataRow(['42'])],
+        [0x43, cstring('SELECT 1')],
         [0x5a, [0x49]],
       ]),
       {
@@ -598,37 +564,35 @@ test("custom decoder failures retain query notices and normalize unattachable th
   assert.notEqual(execFailure, frozen);
   assert.equal(execFailure.cause, frozen);
   assert.deepEqual(
-    (
-      execFailure as Error & { notices: Array<{ message: string }> }
-    ).notices.map((notice) => notice.message),
-    ["exec notice"],
+    (execFailure as Error & { notices: Array<{ message: string }> }).notices.map(
+      (notice) => notice.message,
+    ),
+    ['exec notice'],
   );
-  assert.equal(responseTransactionStatus(execFailure), "idle");
+  assert.equal(responseTransactionStatus(execFailure), 'idle');
 
   const primitiveFailure = thrownBy(() =>
     decodeQueryResult(queryRaw, {
       decoders: {
         [postgresOids.int4]: () => {
-          throw "primitive decoder failure";
+          throw 'primitive decoder failure';
         },
       },
     }),
   );
   assert.ok(primitiveFailure instanceof Error);
-  assert.equal(primitiveFailure.message, "primitive decoder failure");
-  assert.equal(primitiveFailure.cause, "primitive decoder failure");
+  assert.equal(primitiveFailure.message, 'primitive decoder failure');
+  assert.equal(primitiveFailure.cause, 'primitive decoder failure');
   assert.deepEqual(
-    (
-      primitiveFailure as Error & { notices: Array<{ message: string }> }
-    ).notices.map((notice) => notice.message),
-    ["query notice"],
+    (primitiveFailure as Error & { notices: Array<{ message: string }> }).notices.map(
+      (notice) => notice.message,
+    ),
+    ['query notice'],
   );
 
-  const frozenWithoutNotices = Object.freeze(
-    new Error("frozen failure without notices"),
-  );
+  const frozenWithoutNotices = Object.freeze(new Error('frozen failure without notices'));
   const noNoticeRaw = parseQueryRawResponse(
-    queryResponse([field("value", postgresOids.int4)], [["42"]], "SELECT 1"),
+    queryResponse([field('value', postgresOids.int4)], [['42']], 'SELECT 1'),
   );
   const noNoticeFailure = thrownBy(() =>
     decodeQueryResult(noNoticeRaw, {
@@ -645,24 +609,18 @@ test("custom decoder failures retain query notices and normalize unattachable th
     decodeQueryResult(noNoticeRaw, {
       decoders: {
         [postgresOids.int4]: () => {
-          throw "primitive failure without notices";
+          throw 'primitive failure without notices';
         },
       },
     }),
   );
   assert.ok(primitiveWithoutNotices instanceof Error);
-  assert.equal(
-    primitiveWithoutNotices.cause,
-    "primitive failure without notices",
-  );
-  assert.equal(responseTransactionStatus(primitiveWithoutNotices), "idle");
+  assert.equal(primitiveWithoutNotices.cause, 'primitive failure without notices');
+  assert.equal(responseTransactionStatus(primitiveWithoutNotices), 'idle');
 });
 
-test("readiness inspection is decode-independent and malformed errors stay protocol errors", () => {
-  assert.equal(
-    inspectReadyForQuery(backendResponse([[0x5a, [0x54]]])),
-    "transaction",
-  );
+test('readiness inspection is decode-independent and malformed errors stay protocol errors', () => {
+  assert.equal(inspectReadyForQuery(backendResponse([[0x5a, [0x54]]])), 'transaction');
   assert.throws(
     () =>
       inspectReadyForQuery(
@@ -674,17 +632,17 @@ test("readiness inspection is decode-independent and malformed errors stay proto
     /bytes after ReadyForQuery/,
   );
   assert.throws(
-    () => inspectReadyForQuery(backendResponse([[0x43, cstring("SELECT 0")]])),
+    () => inspectReadyForQuery(backendResponse([[0x43, cstring('SELECT 0')]])),
     /before ReadyForQuery/,
   );
   assert.equal(
     inspectReadyForQuery(
       backendResponse([
-        [0x43, cstring("SÉLECT 0")],
+        [0x43, cstring('SÉLECT 0')],
         [0x5a, [0x49]],
       ]),
     ),
-    "idle",
+    'idle',
   );
   assert.throws(
     () =>
@@ -693,7 +651,7 @@ test("readiness inspection is decode-independent and malformed errors stay proto
           [0x43, [0xc0, 0]],
           [0x5a, [0x49]],
         ]),
-    ),
+      ),
     /CommandComplete tag is not valid UTF-8/,
   );
   assert.throws(
@@ -710,7 +668,7 @@ test("readiness inspection is decode-independent and malformed errors stay proto
     () =>
       inspectReadyForQuery(
         backendResponse([
-          [0x43, [...cstring("SELECT 0"), 0x53]],
+          [0x43, [...cstring('SELECT 0'), 0x53]],
           [0x5a, [0x49]],
         ]),
       ),
@@ -738,17 +696,17 @@ test("readiness inspection is decode-independent and malformed errors stay proto
   assert.ok(malformed instanceof Error);
   assert.equal(malformed instanceof PostgresError, false);
   assert.match(malformed.message, /ErrorResponse field is not valid UTF-8/);
-  assert.equal(responseTransactionStatus(malformed), "idle");
+  assert.equal(responseTransactionStatus(malformed), 'idle');
 });
 
-test("managed transaction inspection uses every protocol tag and final readiness boundary", () => {
+test('managed transaction inspection uses every protocol tag and final readiness boundary', () => {
   for (const tag of [
-    "BEGIN",
-    "START TRANSACTION",
-    "COMMIT",
-    "PREPARE TRANSACTION",
-    "COMMIT PREPARED",
-    "ROLLBACK PREPARED",
+    'BEGIN',
+    'START TRANSACTION',
+    'COMMIT',
+    'PREPARE TRANSACTION',
+    'COMMIT PREPARED',
+    'ROLLBACK PREPARED',
   ]) {
     assert.throws(
       () =>
@@ -767,9 +725,9 @@ test("managed transaction inspection uses every protocol tag and final readiness
     () =>
       inspectManagedTransactionResponse(
         backendResponse([
-          [0x43, cstring("COMMIT")],
-          [0x43, cstring("BEGIN")],
-          [0x45, diagnostic("ERROR", "XX000", "later failure")],
+          [0x43, cstring('COMMIT')],
+          [0x43, cstring('BEGIN')],
+          [0x45, diagnostic('ERROR', 'XX000', 'later failure')],
           [0x5a, [0x54]],
         ]),
       ),
@@ -779,8 +737,8 @@ test("managed transaction inspection uses every protocol tag and final readiness
     () =>
       inspectManagedTransactionResponse(
         backendResponse([
-          [0x43, cstring("ROLLBACK")],
-          [0x43, cstring("BEGIN")],
+          [0x43, cstring('ROLLBACK')],
+          [0x43, cstring('BEGIN')],
           [0x5a, [0x54]],
         ]),
       ),
@@ -790,7 +748,7 @@ test("managed transaction inspection uses every protocol tag and final readiness
     () =>
       inspectManagedTransactionResponse(
         backendResponse([
-          [0x43, cstring("ROLLBACK")],
+          [0x43, cstring('ROLLBACK')],
           [0x5a, [0x49]],
         ]),
       ),
@@ -798,15 +756,15 @@ test("managed transaction inspection uses every protocol tag and final readiness
   );
 
   for (const [tag, status] of [
-    ["ROLLBACK", 0x54],
-    ["ROLLBACK", 0x45],
-    ["SAVEPOINT", 0x54],
-    ["RELEASE", 0x54],
-    ["SET", 0x54],
-    ["PREPARE", 0x54],
-    ["CREATE FUNCTION", 0x54],
-    ["CALL", 0x54],
-    ["DO", 0x54],
+    ['ROLLBACK', 0x54],
+    ['ROLLBACK', 0x45],
+    ['SAVEPOINT', 0x54],
+    ['RELEASE', 0x54],
+    ['SET', 0x54],
+    ['PREPARE', 0x54],
+    ['CREATE FUNCTION', 0x54],
+    ['CALL', 0x54],
+    ['DO', 0x54],
   ] as const) {
     assert.equal(
       inspectManagedTransactionResponse(
@@ -815,13 +773,13 @@ test("managed transaction inspection uses every protocol tag and final readiness
           [0x5a, [status]],
         ]),
       ),
-      status === 0x45 ? "failed" : "transaction",
+      status === 0x45 ? 'failed' : 'transaction',
       tag,
     );
   }
 });
 
-test("structured parsers require exact completion and reject post-completion rows", () => {
+test('structured parsers require exact completion and reject post-completion rows', () => {
   const readyOnly = backendResponse([[0x5a, [0x49]]]);
   assert.throws(
     () => parseQueryRawResponse(readyOnly),
@@ -835,7 +793,7 @@ test("structured parsers require exact completion and reject post-completion row
     () =>
       parseQueryRawResponse(
         backendResponse([
-          [0x43, cstring("UPDATE 1")],
+          [0x43, cstring('UPDATE 1')],
           [0x5a, [0x49]],
         ]),
       ),
@@ -859,8 +817,8 @@ test("structured parsers require exact completion and reject post-completion row
           [0x31, []],
           [0x32, []],
           [0x6e, []],
-          [0x43, cstring("UPDATE 1")],
-          [0x43, cstring("UPDATE 1")],
+          [0x43, cstring('UPDATE 1')],
+          [0x43, cstring('UPDATE 1')],
           [0x5a, [0x49]],
         ]),
       ),
@@ -873,8 +831,8 @@ test("structured parsers require exact completion and reject post-completion row
           [0x31, []],
           [0x32, []],
           [0x6e, []],
-          [0x43, cstring("SELECT 1")],
-          [0x44, dataRow(["late"])],
+          [0x43, cstring('SELECT 1')],
+          [0x44, dataRow(['late'])],
           [0x5a, [0x49]],
         ]),
       ),
@@ -890,20 +848,20 @@ test("structured parsers require exact completion and reject post-completion row
       [0x5a, [0x49]],
     ]),
   );
-  assert.equal(empty.kind, "command");
+  assert.equal(empty.kind, 'command');
   assert.equal(empty.commandTag, undefined);
 
   const multi = parseExecResponse(
     backendResponse([
-      [0x43, cstring("UPDATE 1")],
+      [0x43, cstring('UPDATE 1')],
       [0x49, []],
-      [0x43, cstring("DELETE 2")],
+      [0x43, cstring('DELETE 2')],
       [0x5a, [0x49]],
     ]),
   );
   assert.deepEqual(
     multi.statements.map((statement) => statement.commandTag),
-    ["UPDATE 1", "DELETE 2"],
+    ['UPDATE 1', 'DELETE 2'],
   );
 
   assert.throws(
@@ -924,7 +882,7 @@ test("structured parsers require exact completion and reject post-completion row
           [0x31, []],
           [0x74, [...i16(0)]],
           [0x6e, []],
-          [0x45, diagnostic("ERROR", "XX000", "late describe error")],
+          [0x45, diagnostic('ERROR', 'XX000', 'late describe error')],
           [0x5a, [0x49]],
         ]),
       ),
@@ -937,7 +895,7 @@ test("structured parsers require exact completion and reject post-completion row
         backendResponse([
           [0x32, []],
           [0x6e, []],
-          [0x43, cstring("UPDATE 1")],
+          [0x43, cstring('UPDATE 1')],
           [0x5a, [0x49]],
         ]),
       ),
@@ -950,7 +908,7 @@ test("structured parsers require exact completion and reject post-completion row
           [0x31, []],
           [0x32, []],
           [0x6e, []],
-          [0x43, cstring("UPDATE 1")],
+          [0x43, cstring('UPDATE 1')],
           [0x33, []],
           [0x5a, [0x49]],
         ]),
@@ -962,7 +920,7 @@ test("structured parsers require exact completion and reject post-completion row
       parseExecResponse(
         backendResponse([
           [0x31, []],
-          [0x43, cstring("UPDATE 1")],
+          [0x43, cstring('UPDATE 1')],
           [0x5a, [0x49]],
         ]),
       ),
@@ -975,8 +933,8 @@ test("structured parsers require exact completion and reject post-completion row
           [0x31, []],
           [0x32, []],
           [0x6e, []],
-          [0x43, cstring("UPDATE 1")],
-          [0x45, diagnostic("ERROR", "XX000", "late error")],
+          [0x43, cstring('UPDATE 1')],
+          [0x45, diagnostic('ERROR', 'XX000', 'late error')],
           [0x5a, [0x49]],
         ]),
       ),
@@ -984,14 +942,11 @@ test("structured parsers require exact completion and reject post-completion row
   );
 });
 
-test("structured SQL scanners match the shared lexical corpus", () => {
+test('structured SQL scanners match the shared lexical corpus', () => {
   const fixture = JSON.parse(
     readFileSync(
-      new URL(
-        "../../fixtures/protocol/structured-sql-cases.json",
-        import.meta.url,
-      ),
-      "utf8",
+      new URL('../../fixtures/protocol/structured-sql-cases.json', import.meta.url),
+      'utf8',
     ),
   ) as {
     schemaVersion: number;
@@ -1004,16 +959,8 @@ test("structured SQL scanners match the shared lexical corpus", () => {
   };
   assert.equal(fixture.schemaVersion, 2);
   for (const entry of fixture.cases) {
-    assert.equal(
-      containsTopLevelCopy(entry.sql),
-      entry.containsTopLevelCopy,
-      entry.name,
-    );
-    assert.equal(
-      containsTransactionChain(entry.sql),
-      entry.containsTransactionChain,
-      entry.name,
-    );
+    assert.equal(containsTopLevelCopy(entry.sql), entry.containsTopLevelCopy, entry.name);
+    assert.equal(containsTransactionChain(entry.sql), entry.containsTransactionChain, entry.name);
   }
 });
 
@@ -1023,11 +970,7 @@ function field(name: string, typeOid: number): FieldInput {
   return { name, typeOid };
 }
 
-function queryResponse(
-  fields: FieldInput[],
-  rows: string[][],
-  commandTag: string,
-): Uint8Array {
+function queryResponse(fields: FieldInput[], rows: string[][], commandTag: string): Uint8Array {
   return backendResponse([
     [0x31, []],
     [0x32, []],
@@ -1063,11 +1006,7 @@ function dataRow(values: string[]): number[] {
   ];
 }
 
-function diagnostic(
-  severity: string,
-  sqlstate: string,
-  message: string,
-): number[] {
+function diagnostic(severity: string, sqlstate: string, message: string): number[] {
   return diagnosticFields([
     [0x53, severity],
     [0x43, sqlstate],
@@ -1075,9 +1014,7 @@ function diagnostic(
   ]);
 }
 
-function diagnosticFields(
-  fields: ReadonlyArray<readonly [number, string]>,
-): number[] {
+function diagnosticFields(fields: ReadonlyArray<readonly [number, string]>): number[] {
   return [...fields.flatMap(([code, value]) => [code, ...cstring(value)]), 0];
 }
 
@@ -1100,17 +1037,10 @@ function i16(value: number): number[] {
 
 function i32(value: number): number[] {
   const bits = value >>> 0;
-  return [
-    (bits >>> 24) & 0xff,
-    (bits >>> 16) & 0xff,
-    (bits >>> 8) & 0xff,
-    bits & 0xff,
-  ];
+  return [(bits >>> 24) & 0xff, (bits >>> 16) & 0xff, (bits >>> 8) & 0xff, bits & 0xff];
 }
 
-function frontendMessages(
-  bytes: Uint8Array,
-): Array<{ tag: string; body: Uint8Array }> {
+function frontendMessages(bytes: Uint8Array): Array<{ tag: string; body: Uint8Array }> {
   const messages: Array<{ tag: string; body: Uint8Array }> = [];
   let offset = 0;
   while (offset < bytes.length) {
@@ -1158,5 +1088,5 @@ function thrownBy(callback: () => unknown): unknown {
   } catch (error) {
     return error;
   }
-  throw new Error("expected callback to throw");
+  throw new Error('expected callback to throw');
 }

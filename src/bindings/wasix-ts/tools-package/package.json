@@ -39,10 +39,10 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "build": "bash -c \"rm -rf lib\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__",
-    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
+    "clean": "bash -c \"rm -rf lib\""
   },
   "dependencies": {
     "@oliphaunt/liboliphaunt-wasix-tools": "workspace:*"

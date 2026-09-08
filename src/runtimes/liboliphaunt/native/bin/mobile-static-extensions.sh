@@ -52,7 +52,7 @@ oliphaunt_native_component_contract_field() {
   script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   repo_root="$(CDPATH= cd -- "$script_dir/../../../../.." && pwd)"
   "$repo_root/tools/dev/bun.sh" \
-    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    "$repo_root/src/extensions/tools/native-component-contract.mts" \
     field "$extension" "$family" "$kind" "$target" "$field"
 }
 
@@ -138,7 +138,7 @@ oliphaunt_mobile_static_dependency_archive_candidates() {
     printf '%s/%s\n' "$dependency_root" "$candidate"
   done < <(
     "$repo_root/tools/dev/bun.sh" \
-      "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+      "$repo_root/src/extensions/tools/native-component-contract.mts" \
       archive-candidates "$dependency"
   )
 }

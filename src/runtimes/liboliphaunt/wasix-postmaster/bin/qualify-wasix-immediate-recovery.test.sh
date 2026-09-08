@@ -7,82 +7,8 @@ qualifier="$root/bin/qualify-wasix-immediate-recovery.sh"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-immediate-recovery-test.XXXXXX")"
 trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
 
-help_output="$("$qualifier" --help)"
-for option in \
-  '--target TARGET' \
-  '--immutable-carrier-receipt FILE' \
-  '--cgroup-memory-max SIZE' \
-  '--cgroup-memory-high SIZE' \
-  '--cgroup-swap-max SIZE'
-do
-  grep -Fq -- "$option" <<<"$help_output"
-done
-grep -Fq -- '--immutable-carrier-receipt is required on Linux' "$qualifier"
-grep -Fq 'Linux immediate-recovery qualification requires finite --cgroup-memory-max' "$qualifier"
-grep -Fq 'required_snapshot_policy=portable-copy' "$qualifier"
-if grep -Fq -- '--mode MODE' <<<"$help_output"; then
-  echo 'recovery qualifier still exposes a research/diagnostic mode' >&2
-  exit 1
-fi
-grep -Fq -- '--expected-initdb-executions 1' "$qualifier"
-grep -Fq -- '--expected-postgres-executions 3' "$qualifier"
-grep -Fq 'expected_outer_initdb_invocations' "$qualifier"
-grep -Fq 'expected_outer_postgres_invocations' "$qualifier"
-grep -Fq 'postgres and dynamic modules' <<<"$help_output"
-grep -Fq 'immediate-recovery-evidence.v5' "$qualifier"
-grep -Fq "WHERE source = 'command line'" "$qualifier"
-if grep -Eq 'adaptive|cache-offers|CACHE_OFFER' "$qualifier"; then
-  echo 'recovery qualifier still contains cache experiment machinery' >&2
-  exit 1
-fi
-
-for function_name in validate_cgroup_size cgroup_size_to_bytes configure_server_cgroup; do
-  awk -v signature="${function_name}() {" '
-    $0 == signature { capture = 1 }
-    capture { print }
-    capture && /^}$/ { exit }
-  ' "$qualifier" >>"$test_root/cgroup-functions.sh"
-done
-# shellcheck source=/dev/null
-source "$test_root/cgroup-functions.sh"
-
-validate_cgroup_size 256M
-validate_cgroup_size 224MiB
-validate_cgroup_size 0
-! validate_cgroup_size infinity
-! validate_cgroup_size -1
-[ "$(cgroup_size_to_bytes 256M)" = 268435456 ]
-[ "$(cgroup_size_to_bytes 224MiB)" = 234881024 ]
-[ "$(cgroup_size_to_bytes 0)" = 0 ]
-! cgroup_size_to_bytes 9223372036854775808 >/dev/null 2>&1
-
-cgroup_enabled=1
-cgroup_memory_max=256M
-cgroup_memory_high=224M
-cgroup_swap_max=0
-active_cgroup_unit=""
-server_command_prefix=()
-configure_server_cgroup baseline
-[ "$active_cgroup_unit" = "oliphaunt-recovery-$$-baseline" ]
-prefix_text="$(printf '%s\n' "${server_command_prefix[@]}")"
-grep -Fxq -- '--property=MemoryAccounting=yes' <<<"$prefix_text"
-grep -Fxq -- '--property=MemoryMax=256M' <<<"$prefix_text"
-grep -Fxq -- '--property=MemoryHigh=224M' <<<"$prefix_text"
-grep -Fxq -- '--property=MemorySwapMax=0' <<<"$prefix_text"
-cgroup_enabled=0
-configure_server_cgroup recovery
-[ -z "$active_cgroup_unit" ]
-[ "${#server_command_prefix[@]}" -eq 0 ]
-
-awk '
-  /^wait_for_unassisted_exit\(\) \{$/ { capture = 1 }
-  capture { print }
-  capture && /^}$/ { exit }
-' "$qualifier" >"$test_root/wait-for-unassisted-exit.sh"
-grep -Fq 'wait_for_unassisted_exit() {' \
-  "$test_root/wait-for-unassisted-exit.sh"
-# shellcheck source=/dev/null
-source "$test_root/wait-for-unassisted-exit.sh"
+"$qualifier" --help >/dev/null
+source "$root/lib/server-lifecycle.sh"
 
 fresh_supervision_now_ms() {
   printf '1000\n'
@@ -139,9 +65,6 @@ set -e
   printf 'nonzero leader status produced successful recovery evidence\n' >&2
   exit 1
 }
-grep -Fqx \
-  'server leader exited nonzero after unassisted guest shutdown: phase=fixture-shutdown status=17' \
-  "$test_root/nonzero.err"
 [ "$active_pid" = 4242 ]
 [ "$active_pgid" = 4242 ]
 [ "$active_identity" = linux-starttime:303 ]

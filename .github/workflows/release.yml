@@ -1,33 +1,28 @@
 name: Release
 run-name: Release / ${{ inputs.operation }} / ${{ github.ref_name }}
-
 on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Prepare, dry-run, publish with trusted publishers, or bootstrap first registry versions
+        description: Prepare the release PR, or freeze and publish the qualified candidate
         required: true
         type: choice
         default: prepare-release-pr
         options:
           - prepare-release-pr
-          - publish-dry-run
           - publish
-          - publish-bootstrap
       release_commit:
-        description: Candidate source SHA; publish/bootstrap may reuse an approved ancestor after publication-only fixes
+        description: Optional approved source SHA for recovery after publication-only fixes
         required: false
         type: string
         default: ""
       approval_run_id:
-        description: Successful publish-dry-run workflow run that froze the approved candidate (required for publish/bootstrap)
+        description: Optional previous Release run with a successfully prepared frozen candidate
         required: false
         type: string
         default: ""
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -35,34 +30,21 @@ env:
   NODE_VERSION: 22.22.3
   NPM_VERSION: 11.18.0
   PNPM_VERSION: 11.5.0
-  BUN_VERSION: 1.3.14
+  BUN_VERSION: 1.4.2
   PUBLICATION_LOCK_PATH: target/release/publication-lock.json
   BOOTSTRAP_LEDGER_PATH: target/release/bootstrap-ledger
-  # Normal publication and bootstrap each run within one hosted-runner window.
-  # Normal publication keeps enough time after registry writes for public
-  # consumer verification and GitHub draft promotion.
   RELEASE_JOB_HARD_WINDOW_SECONDS: 21180
   BOOTSTRAP_REGISTRY_MUTATION_WINDOW_SECONDS: 19800
   POST_REGISTRY_RESERVE_SECONDS: 3240
-  # Public consumer lanes run concurrently under one 13-minute internal
-  # deadline and stop with ten minutes preserved for evidence, lock proof, and
-  # draft promotion. The enclosing workflow step has a 15-minute hard bound.
   PUBLIC_CONSUMER_SMOKE_TIMEOUT_SECONDS: 780
   PUBLIC_CONSUMER_FINALIZATION_RESERVE_SECONDS: 600
   MAVEN_CENTRAL_NAMESPACE: dev.oliphaunt
-
 concurrency:
-  # Every registry-writing or release-branch-writing operation shares one
-  # non-cancelling lock. GitHub permits one pending run while the active run
-  # completes, so maintainers must not stack mutation dispatches. Dry-runs are
-  # read-only and may run once per exact SHA.
-  group: release-${{ inputs.operation == 'publish-dry-run' && github.sha || 'mutation' }}
+  group: release-mutation
   cancel-in-progress: false
-
 defaults:
   run:
     shell: bash
-
 jobs:
   validate-inputs:
     name: Validate release inputs
@@ -78,14 +60,12 @@ jobs:
             echo "Release workflow is pinned to ${CANONICAL_RELEASE_REPOSITORY}; got ${GITHUB_REPOSITORY}" >&2
             exit 1
           fi
-
       - name: Checkout exact workflow commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
-
       - name: Validate release workflow inputs
         id: validate_release_inputs
         env:
@@ -93,7 +73,6 @@ jobs:
           RELEASE_COMMIT: ${{ inputs.release_commit }}
           RELEASE_APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
         run: bash .github/scripts/validate-release-workflow-inputs.sh
-
       - name: Set up pinned Node.js
         id: setup_release_validation_node
         if: ${{ inputs.operation == 'prepare-release-pr' }}
@@ -101,15 +80,13 @@ jobs:
         uses: ./.github/actions/setup-node-runtime
         with:
           node-version: ${{ env.NODE_VERSION }}
-
       - name: Require clear Release Please lifecycle
         id: require_release_please_lifecycle
         if: ${{ inputs.operation == 'prepare-release-pr' }}
         timeout-minutes: 1
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tools/release/release-please-pr-lifecycle.mjs assert-clean --base main
-
+        run: node tools/release/release-please-pr-lifecycle.mts assert-clean --base main
   prepare-release-pr:
     name: Prepare release PR
     needs: validate-inputs
@@ -128,18 +105,15 @@ jobs:
             echo "Releases must be run from main; got ${GITHUB_REF}" >&2
             exit 1
           fi
-
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
           persist-credentials: false
-
       - name: Require current main
         id: require_current_main
         timeout-minutes: 1
         run: bash .github/scripts/require-current-main.sh "$GITHUB_SHA"
-
       - name: Require release PR token
         env:
           RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
@@ -149,15 +123,12 @@ jobs:
             echo "Configure a GitHub App or maintainer bot token in the release-pr environment." >&2
             exit 1
           fi
-
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
           install-workspace: "true"
-
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-
       - name: Create or update release-please PR
         id: release_please
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
@@ -167,7 +138,6 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true
-
       - name: Sync derived release PR files
         id: sync_release_pr
         env:
@@ -178,14 +148,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          release_pr_number="$(bun .github/scripts/resolve-release-please-pr.mjs)"
+          release_pr_number="$(bun .github/scripts/resolve-release-please-pr.mts)"
           if [[ -z "${release_pr_number}" ]]; then
             if [[ "${RELEASE_PLEASE_PRS_CREATED}" == "true" ]]; then
               echo "release-please reported PR changes, but no release PR number could be resolved." >&2
               exit 1
             fi
             shared_contrib_status="$(
-              tools/dev/bun.sh tools/release/sync-release-pr.mjs --shared-contrib-status
+              bash tools/release/sync-release-pr.sh --shared-contrib-status
             )"
             if [[ "${shared_contrib_status}" != "required=true" ]]; then
               echo "Release Please produced no PR and no unreleased shared contrib source change was found."
@@ -197,7 +167,7 @@ jobs:
             gh auth setup-git
             bash .github/scripts/require-current-main.sh "$GITHUB_SHA"
             git switch -c "${release_pr_branch}"
-            tools/dev/bun.sh tools/release/sync-release-pr.mjs --bootstrap-shared-contrib
+            bash tools/release/sync-release-pr.sh --bootstrap-shared-contrib
             if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
               echo "Shared contrib release bootstrap created untracked files." >&2
               git status --short >&2
@@ -211,7 +181,7 @@ jobs:
               exit 1
             fi
             git commit -m "${release_pr_title}"
-            tools/dev/bun.sh tools/release/sync-release-pr.mjs --check
+            bash tools/release/sync-release-pr.sh --check
             git push --set-upstream origin "${release_pr_branch}"
             gh pr create \
               --base main \
@@ -255,12 +225,12 @@ jobs:
             --title "${release_pr_title}"
             --main-sha "$GITHUB_SHA"
           )
-          bun .github/scripts/normalize-release-please-pr.mjs \
+          bash .github/scripts/normalize-release-please-pr.sh \
             normalize \
             "${release_pr_identity_args[@]}"
 
-          tools/dev/bun.sh tools/release/sync-release-pr.mjs
-          tools/dev/bun.sh tools/release/sync-release-pr.mjs --check
+          bash tools/release/sync-release-pr.sh
+          bash tools/release/sync-release-pr.sh --check
 
           if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
             echo "Derived release synchronization created untracked files; refusing an incomplete amend." >&2
@@ -278,18 +248,17 @@ jobs:
           fi
 
           release_products_json="$(
-            tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+            bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" HEAD tools/dev/bun.sh tools/release/verify-release-commit.mts \
               --derive-products \
               --head-ref HEAD
           )"
-          tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+          bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" HEAD tools/dev/bun.sh tools/release/verify-release-commit.mts \
             --products-json "${release_products_json}" \
             --head-ref HEAD
-          tools/dev/bun.sh tools/release/release-metadata-check.mjs
-          bun .github/scripts/normalize-release-please-pr.mjs \
+          bash tools/release/release-metadata-check.sh
+          bash .github/scripts/normalize-release-please-pr.sh \
             push \
             "${release_pr_identity_args[@]}"
-
       - name: Report release-please PR result
         env:
           RELEASE_PLEASE_PRS_CREATED: ${{ steps.release_please.outputs.prs_created }}
@@ -300,71 +269,40 @@ jobs:
           else
             echo "release-please found no releasable changes."
           fi
-
-  publish-dry-run:
-    name: Prepare release dry run
+  prepare-candidate:
+    name: Prepare frozen publication candidate
     needs:
       - validate-inputs
     runs-on: macos-26
     timeout-minutes: 360
-    if: ${{ inputs.operation == 'publish-dry-run' }}
+    if: ${{ inputs.operation == 'publish' }}
     environment: release-dry-run
     permissions:
       actions: read
       contents: read
       pull-requests: read
-    steps: &release_candidate_steps
-      - name: Record release deadline
-        id: release_job_deadline
-        if: ${{ inputs.operation == 'publish' }}
-        run: |
-          if [[ ! "$RELEASE_JOB_HARD_WINDOW_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-            echo 'RELEASE_JOB_HARD_WINDOW_SECONDS must be a positive integer' >&2
-            exit 1
-          fi
-          hard_deadline=$(( $(date +%s) + RELEASE_JOB_HARD_WINDOW_SECONDS ))
-          {
-            echo "RELEASE_JOB_HARD_DEADLINE_EPOCH=$hard_deadline"
-            echo "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH=$RUNNER_TEMP/oliphaunt-github-content-write-pacer.json"
-            echo "OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH=$RUNNER_TEMP/oliphaunt-github-core-request-journal.json"
-            echo "OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true"
-            echo "OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR=$RUNNER_TEMP/oliphaunt-github-run-snapshots"
-          } >> "$GITHUB_ENV"
-          echo "The release must finish before Unix time $hard_deadline."
-
+    steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
           persist-credentials: false
-
       - name: Resolve release commit
         id: release_head
         timeout-minutes: 1
         env:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
-
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
           install-workspace: "true"
-
-      - name: Require checked publishing code
-        if: ${{ inputs.operation == 'publish' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
-
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-
       - name: Configure macOS release toolchains
         id: configure_release_candidate_toolchains
-        if: ${{ inputs.operation == 'publish-dry-run' }}
+        if: ${{ inputs.approval_run_id == '' }}
         run: bash .github/scripts/configure-macos-release-toolchains.sh --android
-
       - name: Plan product releases
         id: release_plan
         run: |
@@ -374,26 +312,16 @@ jobs:
             --head-ref "$RELEASE_HEAD_SHA"
             --format github-output
           )
-          tools/dev/bun.sh tools/release/release_plan.mjs "${release_plan_args[@]}" >> "$GITHUB_OUTPUT"
-
+          bash tools/release/release-plan.sh "${release_plan_args[@]}" >> "$GITHUB_OUTPUT"
       - name: No package release planned
         if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}
         run: echo "No release-affecting product changes were found since the last product tag."
-
       - name: Resolve selected registry authentication needs
         id: registry_needs
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: bun .github/scripts/selected-registry-needs.mjs
-
-      - name: Verify direct-workflow OIDC identity
-        id: verify_oidc_identity
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        env:
-          RELEASE_OPERATION: ${{ inputs.operation }}
-        run: bun .github/scripts/verify-github-oidc-identity.mjs
-
+        run: bun .github/scripts/selected-registry-needs.mts
       - name: Prove pending release identity
         id: verify_publication_candidate
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
@@ -401,11 +329,10 @@ jobs:
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
+          bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" "$RELEASE_HEAD_SHA" tools/dev/bun.sh tools/release/verify-publication-candidate.mts \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
             --github-output "$GITHUB_OUTPUT"
-
       - name: Prove Release Please PR can complete after publication
         id: assert_release_please_markable
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
@@ -413,76 +340,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \
             assert-markable \
             --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
             --base main
-
-      - name: Preflight selected product tag and release collisions
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          gh auth setup-git
-          tools/dev/bun.sh tools/release/verify_product_tags.mjs \
-            --products-json "$PRODUCTS_JSON" \
-            --target "$RELEASE_HEAD_SHA" \
-            --allow-missing
-          bun .github/scripts/manage-release-drafts.mjs preflight \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA"
-
-      - name: Check release tag App permissions
-        id: check_release_tag_app
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with: &release_tag_app
-          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
-          owner: f0rr0
-          repositories: oliphaunt
-          permission-contents: write
-          permission-workflows: write
-
-      - name: Check publish environment
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: tools/release/check_publish_environment.mjs --products-json "${PRODUCTS_JSON}"
-
-      - name: Verify external registry ownership and trust links
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-        run: bun .github/scripts/verify-external-publish-readiness.mjs
-
-      - name: Import, sign, and verify Maven credentials before mutation
-        id: verify_maven_signing
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.registry_needs.outputs.needs_maven == 'true' }}
-        timeout-minutes: 2
-        env:
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: tools/dev/bun.sh tools/release/verify-maven-signing-readiness.mjs
-
       - name: Require qualified release-commit CI run
         id: ci_qualification
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_OPERATION: ${{ inputs.operation }}
+          RELEASE_OPERATION: publish-dry-run
           REQUIRES_WASIX_EVIDENCE: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
         run: |
           qualification_timeout=7200
@@ -508,69 +376,64 @@ jobs:
             qualification_args+=(--artifact oliphaunt-extension-package-artifacts)
           fi
           bash .github/scripts/require-workflow-success.sh "${qualification_args[@]}"
-
       - name: Download exact-SHA qualification record
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/release-candidate \
             --run-id "$CI_RUN_ID" \
             --job Qualified \
             --artifact oliphaunt-release-candidate
-
       - name: Download exact-SHA affected plan
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/release-candidate/affected-plan \
             --run-id "$CI_RUN_ID" \
             --job "Planning / Affected Work" \
             --artifact artifact-build-plan
-
       - name: Download required exact-SHA WASIX evidence
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.requires_wasix_release_regression_evidence == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && steps.release_plan.outputs.requires_wasix_release_regression_evidence == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/release-candidate/wasix-evidence \
             --run-id "$CI_RUN_ID" \
             --job "E2E / WASIX Release Regression" \
             --artifact wasix-release-regression-evidence
-
       - name: Verify exact-SHA qualification record
         id: verify_qualification
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           WASIX_EVIDENCE_REQUIRED: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
         run: |
-          node .github/scripts/verify-release-candidate.mjs \
+          bash .github/scripts/release-candidate.sh verify \
             target/release-candidate/oliphaunt-release-candidate.json \
             --plan target/release-candidate/affected-plan/ci-plan.json \
             --qualification-mode full-payload \
             --wasix-evidence-required "$WASIX_EVIDENCE_REQUIRED" \
             --wasix-evidence-root target/release-candidate/wasix-evidence
-
-      - name: Require the explicitly approved dry-run candidate
+      - name: Require the explicitly selected prepared candidate
         id: approved_publication_lock
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -587,41 +450,32 @@ jobs:
             "$RELEASE_HEAD_SHA" \
             0 \
             --run-id "$APPROVAL_RUN_ID" \
+            --release-candidate \
             --event workflow_dispatch \
             "${approved_artifacts[@]}"
           cat "$gate_output" >> "$GITHUB_OUTPUT"
-
       - name: Download the approved lock and frozen candidate
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_LOCK_RUN_ID: ${{ steps.approved_publication_lock.outputs.run_id }}
-          APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.approved_publication_lock.outputs.artifact_metadata_json }}
-        run: |
-          node .github/scripts/download-build-artifacts.mjs \
-            Release \
-            "$RELEASE_HEAD_SHA" \
-            "$RUNNER_TEMP/approved-publication" \
-            --run-id "$RELEASE_LOCK_RUN_ID" \
-            --artifact-metadata-json "$APPROVED_ARTIFACT_METADATA_JSON" \
-            --artifact oliphaunt-publication-lock \
-            --artifact oliphaunt-publication-candidate
-
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.approved_publication_lock.outputs.run_id }}
+          artifact-ids: ${{ steps.approved_publication_lock.outputs.artifact_ids }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/approved-publication
       - name: Verify and install the complete approved candidate
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id != '' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
           APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
         run: |
-          tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mjs verify-extract \
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mts verify-extract \
             --transport "$RUNNER_TEMP/approved-publication/oliphaunt-publication-candidate.tar" \
             --approved-lock "$RUNNER_TEMP/approved-publication/publication-lock.json" \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
             --approval-run-id "$APPROVAL_RUN_ID" \
             --workspace-root "$GITHUB_WORKSPACE"
-
       - name: Validate product versions and registry state
         id: validate_release_registry_state
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
@@ -630,68 +484,63 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          tools/dev/bun.sh tools/release/release-check-registries.mjs \
+          bash tools/release/release-check-registries.sh \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
-
       - name: Download WASIX runtime build artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
-        run: bun .github/scripts/download-wasix-runtime-build-artifacts.mjs
-
+        run: bash .github/scripts/download-wasix-runtime-build-artifacts.sh
       - name: Download WASIX release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_ARTIFACT_SHA" \
             target/oliphaunt-wasix/release-assets \
             --run-id "$CI_RUN_ID" \
             --job Builds \
             --artifact liboliphaunt-wasix-release-assets
-
       - name: Download WASIX postmaster release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_ARTIFACT_SHA" \
             target/oliphaunt-wasix-postmaster/release-assets \
             --run-id "$CI_RUN_ID" \
             --job Builds \
             --artifact liboliphaunt-wasix-postmaster-release-assets
-
       - name: Download exact-extension package artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_extension_artifacts == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && steps.release_plan.outputs.has_extension_artifacts == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_ARTIFACT_SHA" \
             target/extension-artifacts \
             --run-id "$CI_RUN_ID" \
             --job Builds \
             --artifact oliphaunt-extension-package-artifacts
-
       - name: Download SDK package artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -704,8 +553,8 @@ jobs:
             local artifact_args=()
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
-            done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --family sdk-package --format lines)
-            node .github/scripts/download-build-artifacts.mjs \
+            done < <(tools/dev/bun.sh src/shared/product-metadata/query.mts ci-artifact-names --product "$product" --family sdk-package --format lines)
+            bash .github/scripts/download-build-artifacts.sh \
               CI \
               "$RELEASE_ARTIFACT_SHA" \
               "target/sdk-artifacts/$product" \
@@ -715,43 +564,38 @@ jobs:
           }
           while IFS= read -r product; do
             download_sdk_artifact "$product"
-          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines)
-
+          done < <(tools/dev/bun.sh src/shared/product-metadata/query.mts ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines)
       - name: Download liboliphaunt release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_ARTIFACT_SHA" \
             target/liboliphaunt/release-assets \
             --run-id "$CI_RUN_ID" \
             --job Builds \
             --artifact liboliphaunt-native-release-assets
-
       - name: Prove native and WASIX ICU data identity
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         run: |
-          tools/dev/bun.sh tools/release/check-cross-family-icu-data.mjs \
+          tools/dev/bun.sh src/shared/artifact-packaging/check-cross-family-icu-data.mts \
             target/liboliphaunt/release-assets \
             target/oliphaunt-wasix/release-assets
-
       - name: Set up Bun for TypeScript npm consumer checks
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
-
       - name: Install TypeScript release tooling
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         run: pnpm install --frozen-lockfile
-
       - name: Download native helper release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi')) }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi')) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -768,8 +612,8 @@ jobs:
             local artifact_args=()
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
-            done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --kind "$kind" --family release-assets --format lines)
-            node .github/scripts/download-build-artifacts.mjs \
+            done < <(tools/dev/bun.sh src/shared/product-metadata/query.mts ci-artifact-names --product "$product" --kind "$kind" --family release-assets --format lines)
+            bash .github/scripts/download-build-artifacts.sh \
               CI \
               "$RELEASE_ARTIFACT_SHA" \
               "$destination" \
@@ -795,9 +639,8 @@ jobs:
               wasix-napi-addon \
               target/oliphaunt-wasix-napi/release-assets
           fi
-
       - name: Download Node direct optional npm packages
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -807,17 +650,16 @@ jobs:
           artifact_args=()
           while IFS= read -r artifact; do
             artifact_args+=(--artifact "$artifact")
-          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines)
-          node .github/scripts/download-build-artifacts.mjs \
+          done < <(tools/dev/bun.sh src/shared/product-metadata/query.mts ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines)
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_ARTIFACT_SHA" \
             target/oliphaunt-node-direct/npm-packages \
             --run-id "$CI_RUN_ID" \
             --job Builds \
             "${artifact_args[@]}"
-
       - name: Download WASIX Node-API optional npm packages
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -827,22 +669,20 @@ jobs:
           artifact_args=()
           while IFS= read -r artifact; do
             artifact_args+=(--artifact "$artifact")
-          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-wasix-napi --kind wasix-napi-addon --family npm-package --format lines)
-          node .github/scripts/download-build-artifacts.mjs \
+          done < <(tools/dev/bun.sh src/shared/product-metadata/query.mts ci-artifact-names --product oliphaunt-wasix-napi --kind wasix-napi-addon --family npm-package --format lines)
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_ARTIFACT_SHA" \
             target/oliphaunt-wasix-napi/npm-packages \
             --run-id "$CI_RUN_ID" \
             --job Builds \
             "${artifact_args[@]}"
-
       - name: Freeze canonical Apple extension carrier input
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-react-native')) }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-react-native')) }}
         env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          includes_swift: ${{ contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
+          includes_react_native: ${{ contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-react-native') }}
         run: |
-          includes_swift="$(bun -e 'console.log(JSON.parse(process.argv[1]).includes("oliphaunt-swift"))' "$PRODUCTS_JSON")"
-          includes_react_native="$(bun -e 'console.log(JSON.parse(process.argv[1]).includes("oliphaunt-react-native"))' "$PRODUCTS_JSON")"
           swift_source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
           react_native_source_carrier=target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json
           extension_manifest_args=()
@@ -864,7 +704,7 @@ jobs:
               exit 1
             fi
             extension_carrier_args+=(--extension-carrier "${product_carriers[0]}")
-          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs \
+          done < <(tools/dev/bun.sh src/shared/product-metadata/query.mts \
             ci-products \
             --family extension-artifacts \
             --carrier-family native \
@@ -885,7 +725,7 @@ jobs:
               "${extension_manifest_args[@]}"
               --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
             )
-            tools/dev/bun.sh tools/release/ios-carrier-manifest.mjs "${public_args[@]}"
+            tools/dev/bun.sh src/shared/artifact-packaging/ios-carrier-manifest.mts "${public_args[@]}"
           fi
 
           if [[ "$includes_swift" == true && ${#extension_manifest_args[@]} -gt 0 ]]; then
@@ -897,25 +737,22 @@ jobs:
               --output "$local_aggregate_carrier"
               --local-urls
             )
-            tools/dev/bun.sh tools/release/ios-carrier-manifest.mjs "${local_args[@]}"
-            extensions_csv="$(bun -e '
-              const manifest = JSON.parse(await Bun.file(process.argv[1]).text());
-              console.log(manifest.extensions.map((row) => row.sqlName).sort().join(","));
-            ' "$local_aggregate_carrier")"
+            tools/dev/bun.sh src/shared/artifact-packaging/ios-carrier-manifest.mts "${local_args[@]}"
+            extensions_csv="$(bun src/shared/artifact-packaging/ios-carrier-manifest.mts list-extensions "$local_aggregate_carrier")"
             if [[ -z "$extensions_csv" || ${#extension_carrier_args[@]} == 0 ]]; then
               echo 'Swift extension validation requires selected extension carrier assets.' >&2
               exit 1
             fi
-            swift_version="$(tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-swift)"
+            swift_version="$(tools/dev/bun.sh src/shared/product-metadata/product-version.mts version oliphaunt-swift)"
             cache=target/release-work/swiftpm-extension-cache
-            node src/sdks/swift/tools/render-extension-products.mjs \
+            node src/sdks/swift/tools/render-extension-products.mts \
               --carrier "$local_aggregate_carrier" \
               --extensions "$extensions_csv" \
               --cache-dir "$cache" \
               --allow-file-urls \
               --base-package-version "$swift_version" \
               --output-dir target/release-work/swiftpm-extension-cache-warm
-            node src/sdks/swift/tools/render-extension-products.mjs \
+            node src/sdks/swift/tools/render-extension-products.mts \
               --carrier "$swift_source_carrier" \
               "${extension_carrier_args[@]}" \
               --extensions "$extensions_csv" \
@@ -924,7 +761,6 @@ jobs:
               --base-package-version "$swift_version" \
               --output-dir target/release/swiftpm-extension-consumer-fixture
           fi
-
       - name: Set up pinned npm publisher
         id: setup_github_stage_npm
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.registry_needs.outputs.needs_npm == 'true' }}
@@ -932,28 +768,25 @@ jobs:
         uses: ./.github/actions/setup-npm-publisher
         with:
           npm-version: ${{ env.NPM_VERSION }}
-
       - name: Validate selected release
         id: validate_release
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
           WASIX_EVIDENCE_REQUIRED: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
-        run: tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --qualified-ci --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
-
+        run: bash tools/release/release-dry-run.sh --qualified-ci --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
       - name: Package public release carriers
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
           OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
           OLIPHAUNT_WASIX_NAPI_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-wasix-napi/release-assets
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/dev/bun.sh tools/release/package-release-carriers.mjs --products-json "$PRODUCTS_JSON"
-
+        run: bash tools/release/package-release-carriers.sh --products-json "$PRODUCTS_JSON"
       - name: Freeze exhaustive publication lock
         id: freeze_publication_lock
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id == '' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
@@ -987,86 +820,36 @@ jobs:
               exit 1
             fi
             lock_args+=(--artifact-root "$artifact_root")
-          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs \
+          done < <(tools/dev/bun.sh src/shared/product-metadata/query.mts \
             ci-products \
             --family extension-artifacts \
             --products-json "$PRODUCTS_JSON" \
             --field artifact-root \
             --format lines)
-          tools/dev/bun.sh tools/release/publication-lock.mjs "${lock_args[@]}"
-          tools/dev/bun.sh tools/release/publication-lock.mjs \
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts "${lock_args[@]}"
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts \
             verify \
             --lock target/release/publication-lock.json \
             --head-ref "$RELEASE_HEAD_SHA"
-
-      - name: Assemble and sign the exact Maven Central bundle before release mutation
-        id: preflight_maven_bundle
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.registry_needs.outputs.needs_maven == 'true' }}
-        timeout-minutes: 15
-        env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: |
-          tools/dev/bun.sh tools/release/preflight-maven-central-bundle.mjs \
-            --publication-lock "$PUBLICATION_LOCK_PATH" \
-            --products-json "$PRODUCTS_JSON" \
-            --release-commit "$RELEASE_HEAD_SHA"
-
-      - name: Prove the exact SwiftPM source tag is remotely collision-free
-        id: preflight_swift_source_tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
-        timeout-minutes: 2
-        run: |
-          tools/dev/bun.sh tools/release/preflight-swiftpm-source-tag.mjs \
-            --publication-lock "$PUBLICATION_LOCK_PATH" \
-            --release-commit "$RELEASE_HEAD_SHA"
-
-      - name: Classify pre-tag registry publication state
-        id: bootstrap_ledger_state
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && (steps.registry_needs.outputs.needs_cargo == 'true' || steps.registry_needs.outputs.needs_npm == 'true') }}
-        env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          RELEASE_HEAD_SHA: ${{ steps.release_head.outputs.sha }}
-        run: bun .github/scripts/registry-bootstrap-ledger-state.mjs
-
-      - name: Download immutable registry bootstrap ledger
-        if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: bun .github/scripts/download-completed-bootstrap.mjs
-
-      - name: Verify immutable bootstrap ledger and registry existence
-        if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' }}
-        env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          tools/dev/bun.sh tools/release/bootstrap-ledger.mjs verify \
-            --lock "$PUBLICATION_LOCK_PATH" \
-            --ledger "$BOOTSTRAP_LEDGER_PATH" \
-            --products-json "$PRODUCTS_JSON" \
-            --require-complete \
-            --verify-registries
-
       - name: Freeze complete publication candidate
         id: freeze_publication_candidate
-        if: ${{ inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ inputs.approval_run_id == '' && steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mjs pack \
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mts pack \
             --lock "$PUBLICATION_LOCK_PATH" \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
             --approval-run-id "$GITHUB_RUN_ID" \
             --qualification-run-id "${{ steps.ci_qualification.outputs.run_id }}" \
             --output target/release/oliphaunt-publication-candidate.tar
-
+      - name: Preserve the approved recovery capsule unchanged
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.approval_run_id != '' }}
+        run: cp "$RUNNER_TEMP/approved-publication/oliphaunt-publication-candidate.tar" target/release/oliphaunt-publication-candidate.tar
       - name: Upload frozen publication lock
         id: preserve_publication_lock
-        if: ${{ inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-publication-lock
@@ -1074,10 +857,9 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 90
-
       - name: Upload complete frozen publication candidate
         id: preserve_publication_candidate
-        if: ${{ inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-publication-candidate
@@ -1085,431 +867,27 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 90
-
-      - name: Upload publication lock audit evidence
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: oliphaunt-publication-lock-${{ inputs.operation }}
-          path: target/release/publication-lock.json
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 90
-
-      - name: Create release tag token
-        id: release_tag_token
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with: *release_tag_app
-
-      - name: Reserve release transport content write
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 3
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve \
-            --label "release transport tag"
-
-      - name: Ensure exact immutable release transport ref
-        id: ensure_release_transport_ref
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 3
-        env:
-          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_OPERATION: publish
-          RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: pre-reserved
-        run: node .github/scripts/release-transport-ref.mjs ensure "$RELEASE_HEAD_SHA"
-
-      - name: Stage exact-SHA product tags and draft releases
-        id: stage_github_releases
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 31
-        env:
-          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          bun .github/scripts/manage-release-drafts.mjs stage \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA" \
-            --state staged
-
-      - name: Verify exact product tags
-        id: verify_product_tags
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/dev/bun.sh tools/release/verify_product_tags.mjs --products-json "${PRODUCTS_JSON}" --target "$RELEASE_HEAD_SHA"
-
-      - name: Verify exact-SHA GitHub release staging
-        id: verify_github_staging
-        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: bun .github/scripts/manage-release-drafts.mjs verify --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA" --state staged
-
-      - name: Publish all selected GitHub release asset sets concurrently
-        id: publish_github_assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 95
-        env:
-          GITHUB_RELEASE_ASSET_UPLOAD_REPORT_PATH: ${{ runner.temp }}/oliphaunt-github-release-asset-upload-report.json
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --step github-release-assets --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
-
-      - name: Resolve exact selected extension attestation subjects
-        id: extension_attestation_subjects
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
-        env:
-          EXTENSION_PRODUCTS_JSON: ${{ steps.release_plan.outputs.extension_products_json }}
-        run: |
-          tools/dev/bun.sh tools/release/locked-attestation-subjects.mjs \
-            --publication-lock "$PUBLICATION_LOCK_PATH" \
-            --products-json "$EXTENSION_PRODUCTS_JSON" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Reserve extension provenance write (batch 1)
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_1 == 'true' }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "extension provenance batch 1"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "extension provenance batch 1 API attempt"
-
-      - name: Attest extension release assets (batch 1)
-        id: attest_extensions_1
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_1 == 'true' }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: ${{ steps.extension_attestation_subjects.outputs.paths_1 }}
-
-      - name: Reserve extension provenance write (batch 2)
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_2 == 'true' }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "extension provenance batch 2"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "extension provenance batch 2 API attempt"
-
-      - name: Attest extension release assets (batch 2)
-        id: attest_extensions_2
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_2 == 'true' }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: ${{ steps.extension_attestation_subjects.outputs.paths_2 }}
-
-      - name: Reserve liboliphaunt attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "liboliphaunt native attestation"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "liboliphaunt native attestation API attempt"
-
-      - name: Attest liboliphaunt release assets
-        id: attest_liboliphaunt_native
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: |
-            target/liboliphaunt/release-assets/*.tar.gz
-            target/liboliphaunt/release-assets/*.tar.zst
-            target/liboliphaunt/release-assets/*.zip
-            target/liboliphaunt/release-assets/*.tsv
-            target/liboliphaunt/release-assets/*.sha256
-            target/extension-artifacts/liboliphaunt-native/oliphaunt-extension-contrib-pg18/release-assets/*
-
-      - name: Create fresh SwiftPM tag token
-        id: swift_tag_token
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with: *release_tag_app
-
-      - name: Publish Swift SDK GitHub release and SwiftPM tags
-        id: publish_swift_source_tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
-        timeout-minutes: 6
-        env:
-          GH_TOKEN: ${{ steps.swift_tag_token.outputs.token }}
-        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-swift --step github-release --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
-
-      - name: Reserve broker attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "broker attestation"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "broker attestation API attempt"
-
-      - name: Attest broker release assets
-        id: attest_broker
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: |
-            target/oliphaunt-broker/release-assets/*.tar.gz
-            target/oliphaunt-broker/release-assets/*.zip
-            target/oliphaunt-broker/release-assets/*.sha256
-
-      - name: Reserve Node direct attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "Node direct attestation"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "Node direct attestation API attempt"
-
-      - name: Attest Node direct release assets
-        id: attest_node_direct
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: |
-            target/oliphaunt-node-direct/release-assets/*.tar.gz
-            target/oliphaunt-node-direct/release-assets/*.zip
-            target/oliphaunt-node-direct/release-assets/*.sha256
-
-      - name: Reserve WASIX Node-API attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "WASIX Node-API attestation"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "WASIX Node-API attestation API attempt"
-
-      - name: Attest WASIX Node-API release assets
-        id: attest_wasix_napi
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: |
-            target/oliphaunt-wasix-napi/release-assets/*.tar.gz
-            target/oliphaunt-wasix-napi/release-assets/*.zip
-            target/oliphaunt-wasix-napi/release-assets/*.sha256
-
-      - name: Reserve WASIX attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "WASIX attestation"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "WASIX attestation API attempt"
-
-      - name: Attest WASIX release assets
-        id: attest_wasix
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: |
-            target/oliphaunt-wasix/release-assets/*.tar.zst
-            target/oliphaunt-wasix/release-assets/*.sha256
-            target/extension-artifacts/liboliphaunt-wasix/oliphaunt-extension-contrib-pg18/release-assets/*
-
-      - name: Reserve WASIX postmaster attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "WASIX postmaster attestation"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "WASIX postmaster attestation API attempt"
-
-      - name: Attest WASIX postmaster release assets
-        id: attest_wasix_postmaster
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: |
-            target/oliphaunt-wasix-postmaster/release-assets/*.tar.zst
-            target/oliphaunt-wasix-postmaster/release-assets/*.sha256
-
-      - name: Freeze exact GitHub release asset and attestation evidence
-        id: freeze_github_evidence
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 10
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          EXTENSIONS_ATTESTATION_BUNDLE_1: ${{ steps.attest_extensions_1.outputs.bundle-path }}
-          EXTENSIONS_ATTESTATION_BUNDLE_2: ${{ steps.attest_extensions_2.outputs.bundle-path }}
-          LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE: ${{ steps.attest_liboliphaunt_native.outputs.bundle-path }}
-          BROKER_ATTESTATION_BUNDLE: ${{ steps.attest_broker.outputs.bundle-path }}
-          NODE_DIRECT_ATTESTATION_BUNDLE: ${{ steps.attest_node_direct.outputs.bundle-path }}
-          WASIX_NAPI_ATTESTATION_BUNDLE: ${{ steps.attest_wasix_napi.outputs.bundle-path }}
-          WASIX_ATTESTATION_BUNDLE: ${{ steps.attest_wasix.outputs.bundle-path }}
-          WASIX_POSTMASTER_ATTESTATION_BUNDLE: ${{ steps.attest_wasix_postmaster.outputs.bundle-path }}
-        run: |
-          bundle_args=()
-          for bundle in \
-            "$EXTENSIONS_ATTESTATION_BUNDLE_1" \
-            "$EXTENSIONS_ATTESTATION_BUNDLE_2" \
-            "$LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE" \
-            "$BROKER_ATTESTATION_BUNDLE" \
-            "$NODE_DIRECT_ATTESTATION_BUNDLE" \
-            "$WASIX_NAPI_ATTESTATION_BUNDLE" \
-            "$WASIX_ATTESTATION_BUNDLE" \
-            "$WASIX_POSTMASTER_ATTESTATION_BUNDLE"
-          do
-            if [[ -n "$bundle" ]]; then
-              bundle_args+=(--attestation-bundle "$bundle")
-            fi
-          done
-          tools/dev/bun.sh tools/release/verify_github_release_attestations.mjs pre-mutation \
-            --publication-lock "$PUBLICATION_LOCK_PATH" \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA" \
-            --output target/release/github-release-attestation-receipt.json \
-            "${bundle_args[@]}"
-
-      - name: Open registry publication window
-        id: registry_publication_window
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        run: |
-          for name in RELEASE_JOB_HARD_DEADLINE_EPOCH POST_REGISTRY_RESERVE_SECONDS; do
-            if [[ ! "${!name:-}" =~ ^[1-9][0-9]*$ ]]; then
-              echo "$name must be a positive integer" >&2
-              exit 1
-            fi
-          done
-          mutation_deadline=$(( RELEASE_JOB_HARD_DEADLINE_EPOCH - POST_REGISTRY_RESERVE_SECONDS ))
-          if (( $(date +%s) >= mutation_deadline )); then
-            echo 'Not enough time remains for registry publication and final verification; rerun this idempotent release.' >&2
-            exit 1
-          fi
-          echo "REGISTRY_MUTATION_DEADLINE_EPOCH=$mutation_deadline" >> "$GITHUB_ENV"
-
-      - name: Publish and reconcile every exact-lock registry carrier
-        id: publish_registries
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 240
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: |
-          tools/dev/bun.sh tools/release/release-publish.mjs publish \
-            --registry-plan \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA" \
-            --publication-lock "$PUBLICATION_LOCK_PATH"
-
-      - name: Verify published release
-        id: verify_published_release
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 8
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          gh auth setup-git
-          git fetch --force --tags origin
-          tools/dev/bun.sh tools/release/release-verify.mjs \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA" \
-            --publication-lock "$PUBLICATION_LOCK_PATH" \
-            --registry-receipts target/release/registry-integrity-receipts.json \
-            --github-release-receipt target/release/github-release-attestation-receipt.json
-
-      - name: Resolve and install exact public consumer surfaces
-        id: public_consumer_smoke
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+      - name: Check whether first registry identities need credentials
+        id: bootstrap_credentials
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         timeout-minutes: 15
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          tools/dev/bun.sh tools/release/public-consumer-smoke.mjs \
-            --publication-lock "$PUBLICATION_LOCK_PATH" \
-            --products-json "$PRODUCTS_JSON" \
-            --registry-receipts target/release/registry-integrity-receipts.json \
-            --github-release-receipt target/release/github-release-attestation-receipt.json \
-            --output target/release/public-consumer-smoke.json
-
-      - name: Preserve public consumer evidence
-        id: preserve_consumer_evidence
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: public-consumer-evidence-${{ github.sha }}
-          path: target/release/public-consumer-smoke.json
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 90
-
-      - name: Reverify exact publication lock before promotion
-        id: reverify_publication_lock
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 2
-        run: |
-          tools/dev/bun.sh tools/release/publication-lock.mjs \
-            verify \
-            --lock "$PUBLICATION_LOCK_PATH" \
-            --head-ref "$RELEASE_HEAD_SHA"
-
-      - name: Preserve release evidence
-        id: preserve_release_evidence
-        if: ${{ always() && inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        continue-on-error: true
-        timeout-minutes: 3
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: release-evidence-${{ github.sha }}
-          path: |
-            target/release/publication-lock.json
-            target/release/registry-integrity-receipts.json
-            target/release/github-release-attestation-receipt.json
-            target/release/public-consumer-smoke.json
-            ${{ runner.temp }}/oliphaunt-github-release-asset-upload-report.json
-          if-no-files-found: warn
-          include-hidden-files: true
-          overwrite: true
-          retention-days: 90
-
-      - name: Promote verified GitHub release drafts
-        id: promote_github_releases
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 16
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
-            assert-markable \
-            --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
-            --base main
-          bun .github/scripts/manage-release-drafts.mjs promote \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA"
-          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
-            mark-tagged \
-            --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
-            --base main
-
-  publish:
-    name: Publish release
-    needs:
-      - validate-inputs
-    runs-on: macos-26
-    timeout-minutes: 360
-    if: ${{ inputs.operation == 'publish' }}
-    environment: release-publish
-    permissions:
-      actions: read
-      artifact-metadata: write
-      attestations: write
-      contents: write
-      id-token: write
-      pull-requests: write
-    steps: *release_candidate_steps
-
+        run: |-
+          export REGISTRY_MUTATION_DEADLINE_EPOCH="$(( $(date +%s) + 840 ))"
+          bun .github/scripts/bootstrap-registry-identities.mts --credential-needs
+    outputs:
+      has_release_changes: ${{ steps.release_plan.outputs.has_release_changes }}
+      lock_artifact_id: ${{ steps.preserve_publication_lock.outputs.artifact-id }}
+      candidate_artifact_id: ${{ steps.preserve_publication_candidate.outputs.artifact-id }}
+      bootstrap_required: ${{ steps.bootstrap_credentials.outputs.needs_cargo_token == 'true' || steps.bootstrap_credentials.outputs.needs_npm_token == 'true' }}
   publish-bootstrap:
     name: Bootstrap registry identities
     needs:
-      - validate-inputs
+      - prepare-candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    if: ${{ inputs.operation == 'publish-bootstrap' }}
+    if: ${{ needs.prepare-candidate.outputs.bootstrap_required == 'true' }}
     environment: release-bootstrap
     permissions:
       actions: read
@@ -1530,65 +908,56 @@ jobs:
             echo "OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR=$RUNNER_TEMP/oliphaunt-github-run-snapshots"
           } >> "$GITHUB_ENV"
           echo "The bootstrap job must stop registry work before Unix time $hard_deadline."
-
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
           persist-credentials: false
-
       - name: Resolve exact release commit
         id: release_head
         timeout-minutes: 1
         env:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
-
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
           install-workspace: "false"
-
       - name: Require checked publishing code
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
-
       - name: Plan bootstrap releases
         id: release_plan
         run: |
-          tools/dev/bun.sh tools/release/release_plan.mjs \
+          bash tools/release/release-plan.sh \
             --from-product-tags \
             --include-current-tags \
             --head-ref "$RELEASE_HEAD_SHA" \
             --format github-output \
             >> "$GITHUB_OUTPUT"
-
       - name: No package release planned
         if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}
         run: echo "No release-affecting product changes were found since the last product tag."
-
       - name: Prove Release Please PR can complete after bootstrap
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
+          bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" "$RELEASE_HEAD_SHA" tools/dev/bun.sh tools/release/verify-publication-candidate.mts \
             --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA" \
             --github-output "$RUNNER_TEMP/bootstrap-release-identity"
           release_sha="$(sed -n 's/^release_sha=//p' "$RUNNER_TEMP/bootstrap-release-identity")"
-          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \
             assert-markable --release-sha "$release_sha" --base main
-
       - name: Resolve selected bootstrap authentication needs
         id: registry_needs
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: bun .github/scripts/selected-registry-needs.mjs
-
+        run: bun .github/scripts/selected-registry-needs.mts
       - name: Resolve registry identity bootstrap scope
         id: bootstrap_scope
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
@@ -1601,11 +970,9 @@ jobs:
             required=true
           fi
           echo "required=$required" >> "$GITHUB_OUTPUT"
-
       - name: No registry identities require bootstrap
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.bootstrap_scope.outputs.required != 'true' }}
         run: echo 'The selected release has no Cargo or npm identities; bootstrap is a no-op.'
-
       - name: Set up pinned npm publisher
         id: setup_bootstrap_npm
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' && steps.registry_needs.outputs.needs_npm == 'true' }}
@@ -1613,77 +980,44 @@ jobs:
         uses: ./.github/actions/setup-npm-publisher
         with:
           npm-version: ${{ env.NPM_VERSION }}
-
       - name: Preflight selected product tag and release collisions
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          tools/dev/bun.sh tools/release/verify_product_tags.mjs \
+          bash tools/release/verify-product-tags.sh \
             --products-json "$PRODUCTS_JSON" \
             --target "$RELEASE_HEAD_SHA" \
             --allow-missing
-          bun .github/scripts/manage-release-drafts.mjs preflight \
+          bun .github/scripts/manage-release-drafts.mts preflight \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
-
-      - name: Require the explicitly approved dry-run candidate
-        id: approved_candidate
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
-        run: |
-          approved_artifacts=(
-            --artifact oliphaunt-publication-lock
-            --artifact oliphaunt-publication-candidate
-          )
-          bash .github/scripts/require-workflow-success.sh \
-            Release \
-            "$RELEASE_HEAD_SHA" \
-            0 \
-            --run-id "$APPROVAL_RUN_ID" \
-            --event workflow_dispatch \
-            "${approved_artifacts[@]}"
-
-      - name: Download approved lock and candidate from one dry-run
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          DRY_RUN_ID: ${{ steps.approved_candidate.outputs.run_id }}
-          APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.approved_candidate.outputs.artifact_metadata_json }}
-        run: |
-          node .github/scripts/download-build-artifacts.mjs \
-            Release \
-            "$RELEASE_HEAD_SHA" \
-            "$RUNNER_TEMP/approved-bootstrap" \
-            --run-id "$DRY_RUN_ID" \
-            --artifact-metadata-json "$APPROVED_ARTIFACT_METADATA_JSON" \
-            --artifact oliphaunt-publication-lock \
-            --artifact oliphaunt-publication-candidate
-
+      - name: Download the frozen candidate from preparation
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ format('{0},{1}', needs.prepare-candidate.outputs.lock_artifact_id, needs.prepare-candidate.outputs.candidate_artifact_id) }}
+          path: ${{ runner.temp }}/approved-bootstrap
+          merge-multiple: true
       - name: Verify and install approved publication candidate
         id: verify_bootstrap_candidate
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id || github.run_id }}
         run: |
           if [[ -e "$GITHUB_WORKSPACE/target" ]]; then
             echo 'publication candidate installation requires an absent workspace target directory' >&2
             exit 1
           fi
-          tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mjs verify-extract \
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mts verify-extract \
             --transport "$RUNNER_TEMP/approved-bootstrap/oliphaunt-publication-candidate.tar" \
             --approved-lock "$RUNNER_TEMP/approved-bootstrap/publication-lock.json" \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
             --approval-run-id "$APPROVAL_RUN_ID" \
             --workspace-root "$GITHUB_WORKSPACE"
-
       - name: Verify external lock equals installed candidate lock
         id: verify_bootstrap_lock
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
@@ -1692,26 +1026,23 @@ jobs:
             echo 'installed candidate lock differs from the separately downloaded approved publication lock' >&2
             exit 1
           fi
-          tools/dev/bun.sh tools/release/publication-lock.mjs verify \
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts verify \
             --lock "$PUBLICATION_LOCK_PATH" \
             --head-ref "$RELEASE_HEAD_SHA"
-
       - name: Restore prior bootstrap checkpoint chain
         id: restore_bootstrap_checkpoint
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: node .github/scripts/download-bootstrap-ledger.mjs
-
+        run: node .github/scripts/download-bootstrap-ledger.mts
       - name: Classify exact bootstrap credential needs
         id: bootstrap_credential_needs
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
           REGISTRY_MUTATION_DEADLINE_EPOCH: ${{ env.REGISTRY_JOB_HARD_DEADLINE_EPOCH }}
-        run: bun .github/scripts/bootstrap-registry-identities.mjs --credential-needs
-
+        run: bun .github/scripts/bootstrap-registry-identities.mts --credential-needs
       - name: Require bootstrap credentials before mutation
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
@@ -1728,13 +1059,17 @@ jobs:
             echo 'approved candidate contains absent npm names but NPM_BOOTSTRAP_TOKEN is unavailable' >&2
             exit 1
           fi
-
       - name: Create bootstrap transport tag token
         id: bootstrap_tag_token
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with: *release_tag_app
-
+        with: &release_tag_app
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
+          permission-workflows: write
       - name: Ensure exact immutable release transport ref
         id: ensure_bootstrap_transport_ref
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
@@ -1744,8 +1079,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_OPERATION: publish-bootstrap
           RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: isolated-bootstrap
-        run: node .github/scripts/release-transport-ref.mjs ensure "$RELEASE_HEAD_SHA"
-
+        run: bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA" node .github/scripts/release-transport-ref.mts ensure "$RELEASE_HEAD_SHA"
       - name: Start bounded bootstrap mutation window
         id: bootstrap_mutation_deadline
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
@@ -1766,7 +1100,6 @@ jobs:
           fi
           echo "REGISTRY_MUTATION_DEADLINE_EPOCH=$deadline" >> "$GITHUB_ENV"
           echo "Bootstrap registry mutation must stop before Unix time $deadline."
-
       - name: Configure npm identity-bootstrap authentication
         id: configure_bootstrap_npm_auth
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' && steps.bootstrap_credential_needs.outputs.needs_npm_token == 'true' }}
@@ -1776,7 +1109,6 @@ jobs:
           umask 077
           npmrc="$RUNNER_TEMP/oliphaunt-bootstrap.npmrc"
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_BOOTSTRAP_TOKEN" > "$npmrc"
-
       - name: Bootstrap missing Cargo and npm identities
         id: bootstrap_registry_identities
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
@@ -1788,8 +1120,7 @@ jobs:
           REGISTRY_BOOTSTRAP_NPM_SECONDS_PER_CARRIER: ${{ vars.REGISTRY_BOOTSTRAP_NPM_SECONDS_PER_CARRIER || '30' }}
           REGISTRY_BOOTSTRAP_RECONCILIATION_SECONDS_PER_CARRIER: ${{ vars.REGISTRY_BOOTSTRAP_RECONCILIATION_SECONDS_PER_CARRIER || '6' }}
           REGISTRY_BOOTSTRAP_RESERVE_SECONDS: ${{ vars.REGISTRY_BOOTSTRAP_RESERVE_SECONDS || '600' }}
-        run: bun .github/scripts/bootstrap-registry-identities.mjs
-
+        run: bash .github/scripts/bootstrap-registry-identities.sh
       - name: Require a typed bootstrap execution decision
         id: require_bootstrap_execution_decision
         if: ${{ steps.bootstrap_registry_identities.outcome == 'success' }}
@@ -1848,7 +1179,6 @@ jobs:
             echo "remaining_count=$REMAINING_COUNT"
             echo "not_before_epoch=$NOT_BEFORE_EPOCH"
           } >> "$GITHUB_OUTPUT"
-
       - name: Record bootstrap identity result
         if: ${{ steps.require_bootstrap_execution_decision.outputs.complete == 'true' }}
         run: |
@@ -1859,14 +1189,12 @@ jobs:
             echo "- Release commit: \`$RELEASE_HEAD_SHA\`"
             echo "- Publication lock SHA-256: \`$lock_sha256\`"
             echo '- Scope: selected Cargo and npm identities only'
-            echo '- Next: configure trusted publishers, revoke bootstrap tokens, then run the normal publish operation'
+            echo '- Publication continues automatically after this job. Configure trusted publishers before the next version, then revoke bootstrap tokens.'
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Remove bootstrap npm credentials
         id: remove_bootstrap_credentials
         if: ${{ always() }}
         run: rm -f "$RUNNER_TEMP/oliphaunt-bootstrap.npmrc"
-
       - name: Upload bootstrap identity ledger
         id: preserve_bootstrap_ledger
         if: ${{ always() }}
@@ -1877,14 +1205,13 @@ jobs:
           if-no-files-found: warn
           overwrite: true
           retention-days: 90
-
       - name: Stop incomplete bootstrap for manual rerun
         if: ${{ steps.require_bootstrap_execution_decision.outputs.deferred == 'true' }}
         env:
           DEFERRAL_MODE: ${{ steps.require_bootstrap_execution_decision.outputs.deferral_mode }}
           NOT_BEFORE_EPOCH: ${{ steps.require_bootstrap_execution_decision.outputs.not_before_epoch }}
           REMAINING_COUNT: ${{ steps.require_bootstrap_execution_decision.outputs.remaining_count }}
-          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id || github.run_id }}
         run: |
           {
             echo '## Registry identity bootstrap incomplete—rerun required'
@@ -1898,3 +1225,605 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Bootstrap is incomplete; rerun failed jobs for workflow run $GITHUB_RUN_ID after $NOT_BEFORE_EPOCH." >&2
           exit 1
+    outputs:
+      ledger_artifact_id: ${{ steps.preserve_bootstrap_ledger.outputs.artifact-id }}
+  publish:
+    name: Publish release
+    needs:
+      - prepare-candidate
+      - publish-bootstrap
+    runs-on: macos-26
+    timeout-minutes: 360
+    if: ${{ always() && !cancelled() && inputs.operation == 'publish' && needs.prepare-candidate.result == 'success' && needs.prepare-candidate.outputs.has_release_changes == 'true' && (needs.publish-bootstrap.result == 'success' || needs.publish-bootstrap.result == 'skipped') }}
+    environment: release-publish
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Record release deadline
+        id: release_job_deadline
+        run: |
+          if [[ ! "$RELEASE_JOB_HARD_WINDOW_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo 'RELEASE_JOB_HARD_WINDOW_SECONDS must be a positive integer' >&2
+            exit 1
+          fi
+          hard_deadline=$(( $(date +%s) + RELEASE_JOB_HARD_WINDOW_SECONDS ))
+          {
+            echo "RELEASE_JOB_HARD_DEADLINE_EPOCH=$hard_deadline"
+            echo "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH=$RUNNER_TEMP/oliphaunt-github-content-write-pacer.json"
+            echo "OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH=$RUNNER_TEMP/oliphaunt-github-core-request-journal.json"
+            echo "OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true"
+            echo "OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR=$RUNNER_TEMP/oliphaunt-github-run-snapshots"
+          } >> "$GITHUB_ENV"
+          echo "The release must finish before Unix time $hard_deadline."
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve release commit
+        id: release_head
+        timeout-minutes: 1
+        env:
+          INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: .github/scripts/resolve-release-head.sh
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+      - name: Require checked publishing code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+      - name: Plan product releases
+        id: release_plan
+        run: |
+          release_plan_args=(
+            --from-product-tags
+            --include-current-tags
+            --head-ref "$RELEASE_HEAD_SHA"
+            --format github-output
+          )
+          bash tools/release/release-plan.sh "${release_plan_args[@]}" >> "$GITHUB_OUTPUT"
+      - name: No package release planned
+        if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}
+        run: echo "No release-affecting product changes were found since the last product tag."
+      - name: Resolve selected registry authentication needs
+        id: registry_needs
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: bun .github/scripts/selected-registry-needs.mts
+      - name: Verify direct-workflow OIDC identity
+        id: verify_oidc_identity
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          RELEASE_OPERATION: publish
+        run: bun .github/scripts/verify-github-oidc-identity.mts
+      - name: Prove pending release identity
+        id: verify_publication_candidate
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 2
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" "$RELEASE_HEAD_SHA" tools/dev/bun.sh tools/release/verify-publication-candidate.mts \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Prove Release Please PR can complete after publication
+        id: assert_release_please_markable
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \
+            assert-markable \
+            --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
+            --base main
+      - name: Preflight selected product tag and release collisions
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          gh auth setup-git
+          bash tools/release/verify-product-tags.sh \
+            --products-json "$PRODUCTS_JSON" \
+            --target "$RELEASE_HEAD_SHA" \
+            --allow-missing
+          bun .github/scripts/manage-release-drafts.mts preflight \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA"
+      - name: Check release tag App permissions
+        id: check_release_tag_app
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: *release_tag_app
+      - name: Check publish environment
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: tools/release/check_publish_environment.mts --products-json "${PRODUCTS_JSON}"
+      - name: Verify external registry ownership and trust links
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: bun .github/scripts/verify-external-publish-readiness.mts
+      - name: Import, sign, and verify Maven credentials before mutation
+        id: verify_maven_signing
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.registry_needs.outputs.needs_maven == 'true' }}
+        timeout-minutes: 2
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: bash tools/release/verify-maven-signing-readiness.sh
+      - name: Download the frozen candidate from preparation
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ format('{0},{1}', needs.prepare-candidate.outputs.lock_artifact_id, needs.prepare-candidate.outputs.candidate_artifact_id) }}
+          path: ${{ runner.temp }}/approved-publication
+          merge-multiple: true
+      - name: Verify and install the complete approved candidate
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id || github.run_id }}
+        run: |
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mts verify-extract \
+            --transport "$RUNNER_TEMP/approved-publication/oliphaunt-publication-candidate.tar" \
+            --approved-lock "$RUNNER_TEMP/approved-publication/publication-lock.json" \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --approval-run-id "$APPROVAL_RUN_ID" \
+            --workspace-root "$GITHUB_WORKSPACE"
+      - name: Validate product versions and registry state
+        id: validate_release_registry_state
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          bash tools/release/release-check-registries.sh \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA"
+      - name: Set up pinned npm publisher
+        id: setup_github_stage_npm
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.registry_needs.outputs.needs_npm == 'true' }}
+        timeout-minutes: 3
+        uses: ./.github/actions/setup-npm-publisher
+        with:
+          npm-version: ${{ env.NPM_VERSION }}
+      - name: Assemble and sign the exact Maven Central bundle before release mutation
+        id: preflight_maven_bundle
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.registry_needs.outputs.needs_maven == 'true' }}
+        timeout-minutes: 15
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          bash tools/release/preflight-maven-central-bundle.sh \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --products-json "$PRODUCTS_JSON" \
+            --release-commit "$RELEASE_HEAD_SHA"
+      - name: Prove the exact SwiftPM source tag is remotely collision-free
+        id: preflight_swift_source_tag
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
+        timeout-minutes: 2
+        run: |
+          bash tools/release/publish-swiftpm-source-tag.sh --preflight \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --release-commit "$RELEASE_HEAD_SHA"
+      - name: Classify pre-tag registry publication state
+        id: bootstrap_ledger_state
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (steps.registry_needs.outputs.needs_cargo == 'true' || steps.registry_needs.outputs.needs_npm == 'true') }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          RELEASE_HEAD_SHA: ${{ steps.release_head.outputs.sha }}
+        run: bash .github/scripts/registry-bootstrap-ledger-state.sh
+      - name: Download the bootstrap ledger from this run
+        if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' && needs.publish-bootstrap.outputs.ledger_artifact_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.publish-bootstrap.outputs.ledger_artifact_id }}
+          path: ${{ env.BOOTSTRAP_LEDGER_PATH }}
+      - name: Restore completed bootstrap evidence for this candidate
+        if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' && needs.publish-bootstrap.outputs.ledger_artifact_id == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash .github/scripts/download-completed-bootstrap.sh
+      - name: Verify immutable bootstrap ledger and registry existence
+        if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/bootstrap-ledger.mts verify \
+            --lock "$PUBLICATION_LOCK_PATH" \
+            --ledger "$BOOTSTRAP_LEDGER_PATH" \
+            --products-json "$PRODUCTS_JSON" \
+            --require-complete \
+            --verify-registries
+      - name: Upload publication lock audit evidence
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-publication-lock-${{ inputs.operation }}
+          path: target/release/publication-lock.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+      - name: Create release tag token
+        id: release_tag_token
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: *release_tag_app
+      - name: Reserve release transport content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 3
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve \
+            --label "release transport tag"
+      - name: Ensure exact immutable release transport ref
+        id: ensure_release_transport_ref
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_OPERATION: publish
+          RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: pre-reserved
+        run: bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA" node .github/scripts/release-transport-ref.mts ensure "$RELEASE_HEAD_SHA"
+      - name: Stage exact-SHA product tags and draft releases
+        id: stage_github_releases
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 31
+        env:
+          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          bun .github/scripts/manage-release-drafts.mts stage \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --state staged
+      - name: Verify exact product tags
+        id: verify_product_tags
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: bash tools/release/verify-product-tags.sh --products-json "${PRODUCTS_JSON}" --target "$RELEASE_HEAD_SHA"
+      - name: Verify exact-SHA GitHub release staging
+        id: verify_github_staging
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: bun .github/scripts/manage-release-drafts.mts verify --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA" --state staged
+      - name: Publish all selected GitHub release asset sets concurrently
+        id: publish_github_assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 95
+        env:
+          GITHUB_RELEASE_ASSET_UPLOAD_REPORT_PATH: ${{ runner.temp }}/oliphaunt-github-release-asset-upload-report.json
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/release-publish.mts publish --step github-release-assets --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
+      - name: Resolve exact selected extension attestation subjects
+        id: extension_attestation_subjects
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' }}
+        env:
+          EXTENSION_PRODUCTS_JSON: ${{ steps.release_plan.outputs.extension_products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/locked-attestation-subjects.mts \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --products-json "$EXTENSION_PRODUCTS_JSON" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Reserve extension provenance write (batch 1)
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_1 == 'true' }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "extension provenance batch 1"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "extension provenance batch 1 API attempt"
+      - name: Attest extension release assets (batch 1)
+        id: attest_extensions_1
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_1 == 'true' }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: ${{ steps.extension_attestation_subjects.outputs.paths_1 }}
+      - name: Reserve extension provenance write (batch 2)
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_2 == 'true' }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "extension provenance batch 2"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "extension provenance batch 2 API attempt"
+      - name: Attest extension release assets (batch 2)
+        id: attest_extensions_2
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_2 == 'true' }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: ${{ steps.extension_attestation_subjects.outputs.paths_2 }}
+      - name: Reserve liboliphaunt attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "liboliphaunt native attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "liboliphaunt native attestation API attempt"
+      - name: Attest liboliphaunt release assets
+        id: attest_liboliphaunt_native
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/liboliphaunt/release-assets/*.tar.gz
+            target/liboliphaunt/release-assets/*.tar.zst
+            target/liboliphaunt/release-assets/*.zip
+            target/liboliphaunt/release-assets/*.tsv
+            target/liboliphaunt/release-assets/*.sha256
+            target/extension-artifacts/liboliphaunt-native/oliphaunt-extension-contrib-pg18/release-assets/*
+      - name: Create fresh SwiftPM tag token
+        id: swift_tag_token
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: *release_tag_app
+      - name: Publish Swift SDK GitHub release and SwiftPM tags
+        id: publish_swift_source_tag
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
+        timeout-minutes: 6
+        env:
+          GH_TOKEN: ${{ steps.swift_tag_token.outputs.token }}
+        run: bash tools/release/publish-swiftpm-source-tag.sh --push --target "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
+      - name: Reserve broker attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "broker attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "broker attestation API attempt"
+      - name: Attest broker release assets
+        id: attest_broker
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-broker/release-assets/*.tar.gz
+            target/oliphaunt-broker/release-assets/*.zip
+            target/oliphaunt-broker/release-assets/*.sha256
+      - name: Reserve Node direct attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "Node direct attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "Node direct attestation API attempt"
+      - name: Attest Node direct release assets
+        id: attest_node_direct
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-node-direct/release-assets/*.tar.gz
+            target/oliphaunt-node-direct/release-assets/*.zip
+            target/oliphaunt-node-direct/release-assets/*.sha256
+      - name: Reserve WASIX Node-API attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "WASIX Node-API attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "WASIX Node-API attestation API attempt"
+      - name: Attest WASIX Node-API release assets
+        id: attest_wasix_napi
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-wasix-napi/release-assets/*.tar.gz
+            target/oliphaunt-wasix-napi/release-assets/*.zip
+            target/oliphaunt-wasix-napi/release-assets/*.sha256
+      - name: Reserve WASIX attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "WASIX attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "WASIX attestation API attempt"
+      - name: Attest WASIX release assets
+        id: attest_wasix
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-wasix/release-assets/*.tar.zst
+            target/oliphaunt-wasix/release-assets/*.sha256
+            target/extension-artifacts/liboliphaunt-wasix/oliphaunt-extension-contrib-pg18/release-assets/*
+      - name: Reserve WASIX postmaster attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "WASIX postmaster attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "WASIX postmaster attestation API attempt"
+      - name: Attest WASIX postmaster release assets
+        id: attest_wasix_postmaster
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-wasix-postmaster/release-assets/*.tar.zst
+            target/oliphaunt-wasix-postmaster/release-assets/*.sha256
+      - name: Freeze exact GitHub release asset and attestation evidence
+        id: freeze_github_evidence
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          EXTENSIONS_ATTESTATION_BUNDLE_1: ${{ steps.attest_extensions_1.outputs.bundle-path }}
+          EXTENSIONS_ATTESTATION_BUNDLE_2: ${{ steps.attest_extensions_2.outputs.bundle-path }}
+          LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE: ${{ steps.attest_liboliphaunt_native.outputs.bundle-path }}
+          BROKER_ATTESTATION_BUNDLE: ${{ steps.attest_broker.outputs.bundle-path }}
+          NODE_DIRECT_ATTESTATION_BUNDLE: ${{ steps.attest_node_direct.outputs.bundle-path }}
+          WASIX_NAPI_ATTESTATION_BUNDLE: ${{ steps.attest_wasix_napi.outputs.bundle-path }}
+          WASIX_ATTESTATION_BUNDLE: ${{ steps.attest_wasix.outputs.bundle-path }}
+          WASIX_POSTMASTER_ATTESTATION_BUNDLE: ${{ steps.attest_wasix_postmaster.outputs.bundle-path }}
+        run: |
+          bundle_args=()
+          for bundle in \
+            "$EXTENSIONS_ATTESTATION_BUNDLE_1" \
+            "$EXTENSIONS_ATTESTATION_BUNDLE_2" \
+            "$LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE" \
+            "$BROKER_ATTESTATION_BUNDLE" \
+            "$NODE_DIRECT_ATTESTATION_BUNDLE" \
+            "$WASIX_NAPI_ATTESTATION_BUNDLE" \
+            "$WASIX_ATTESTATION_BUNDLE" \
+            "$WASIX_POSTMASTER_ATTESTATION_BUNDLE"
+          do
+            if [[ -n "$bundle" ]]; then
+              bundle_args+=(--attestation-bundle "$bundle")
+            fi
+          done
+          bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA" bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/release/verify-github-release-attestations.sh pre-mutation \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --output target/release/github-release-attestation-receipt.json \
+            "${bundle_args[@]}"
+      - name: Open registry publication window
+        id: registry_publication_window
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        run: |
+          for name in RELEASE_JOB_HARD_DEADLINE_EPOCH POST_REGISTRY_RESERVE_SECONDS; do
+            if [[ ! "${!name:-}" =~ ^[1-9][0-9]*$ ]]; then
+              echo "$name must be a positive integer" >&2
+              exit 1
+            fi
+          done
+          mutation_deadline=$(( RELEASE_JOB_HARD_DEADLINE_EPOCH - POST_REGISTRY_RESERVE_SECONDS ))
+          if (( $(date +%s) >= mutation_deadline )); then
+            echo 'Not enough time remains for registry publication and final verification; rerun this idempotent release.' >&2
+            exit 1
+          fi
+          echo "REGISTRY_MUTATION_DEADLINE_EPOCH=$mutation_deadline" >> "$GITHUB_ENV"
+      - name: Publish and reconcile every exact-lock registry carrier
+        id: publish_registries
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 240
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          bash tools/release/publish-registries.sh \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --publication-lock "$PUBLICATION_LOCK_PATH"
+      - name: Verify published release
+        id: verify_published_release
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          gh auth setup-git
+          git fetch --force --tags origin
+          bash tools/release/release-verify.sh \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --registry-receipts target/release/registry-integrity-receipts.json \
+            --github-release-receipt target/release/github-release-attestation-receipt.json
+      - name: Resolve and install exact public consumer surfaces
+        id: public_consumer_smoke
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 15
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          command -v gtimeout >/dev/null || brew install coreutils
+          bash tools/release/public-consumer-smoke.sh \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --products-json "$PRODUCTS_JSON" \
+            --registry-receipts target/release/registry-integrity-receipts.json \
+            --github-release-receipt target/release/github-release-attestation-receipt.json \
+            --output target/release/public-consumer-smoke.json
+      - name: Preserve public consumer evidence
+        id: preserve_consumer_evidence
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: public-consumer-evidence-${{ github.sha }}
+          path: target/release/public-consumer-smoke.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+      - name: Reverify exact publication lock before promotion
+        id: reverify_publication_lock
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 2
+        run: |
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/publication-lock.mts \
+            verify \
+            --lock "$PUBLICATION_LOCK_PATH" \
+            --head-ref "$RELEASE_HEAD_SHA"
+      - name: Preserve release evidence
+        id: preserve_release_evidence
+        if: ${{ always() && steps.release_plan.outputs.has_release_changes == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: |
+            target/release/publication-lock.json
+            target/release/registry-integrity-receipts.json
+            target/release/github-release-attestation-receipt.json
+            target/release/public-consumer-smoke.json
+            ${{ runner.temp }}/oliphaunt-github-release-asset-upload-report.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          overwrite: true
+          retention-days: 90
+      - name: Promote verified GitHub release drafts
+        id: promote_github_releases
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 16
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \
+            assert-markable \
+            --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
+            --base main
+          bun .github/scripts/manage-release-drafts.mts promote \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA"
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \
+            mark-tagged \
+            --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
+            --base main

@@ -34,10 +34,7 @@ moon run release-tools:graph-unit
 moon run policy-tools:unit
 
 # Exact release candidate (metadata plus both unit suites):
-tools/dev/bun.sh tools/release/release-check.mjs
-
-# Committed generated runtime assets only:
-cargo run -p xtask -- assets verify-committed
+bash tools/release/release-check.sh
 
 # Extension catalog, recipe, carrier, or generated extension metadata only:
 moon run extensions:lint extensions:unit
@@ -55,13 +52,13 @@ replaying source-only checks. Do not schedule both forms in one lane.
 The macOS publication-host metadata job is affected-only on pull requests and
 mandatory on exhaustive push/manual runs; product source alone does not justify
 that toolchain setup unless it changes release metadata or graph inputs.
-`tools/graph/ci_plan.mjs` writes `target/graph/ci-plan.json`; there is no
+`tools/graph/ci_plan.mts` writes `target/graph/ci-plan.json`; there is no
 `graph-tools` Moon project. Do not substitute policy unit tests: they prove the
 classifiers but do not scan the candidate tree.
 
 For source-acquisition policy or a source `mirror_url`, run
-`tools/dev/bun.sh test src/sources/tools/source-fetch-core.test.mjs` and
-`tools/dev/bun.sh src/sources/tools/fetch-sources.mjs all --validate-only`. Prove a
+`tools/dev/bun.sh test src/sources/tools/source-fetch-core.test.mts` and
+`bash src/sources/tools/fetch-sources.sh all --validate-only`. Prove a
 new endpoint with a live exact-commit fetch, but keep reachability out of the
 deterministic unit gate. Qualification must show bounded canonical-to-mirror
 failover, exact-pin rejection, canonical durable origin, and transactional
@@ -90,7 +87,7 @@ preservation of an existing checkout when every endpoint fails.
    "$bash3" -c '((BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2))'
    PATH="$(dirname "$bash3"):$PATH" \
      OLIPHAUNT_TEST_BASH="$bash3" \
-     "$bash3" tools/dev/bun.sh tools/release/release-check.mjs
+     "$bash3" tools/release/release-check.sh
    ```
 
    This behavioral gate is authoritative for Bash 3.2 `set -u` empty-array
@@ -109,16 +106,16 @@ product-owned fault test and source verifier before the expensive build:
 
 ```sh
 bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh
-tools/dev/bun.sh src/sources/tools/fetch-sources.mjs wasix-runtime --verify-only
-cargo run -p xtask -- assets source-spine --strict-local
+bash src/sources/tools/fetch-sources.sh wasix-runtime --verify-only
+cargo run -p xtask -- assets check
 ```
 
 Then build the pinned Dockerfile from a clean builder context. Require a
 successful TLS-verified snapshot transaction and the exact declared wasixcc,
-Clang, and Binaryen versions; a source-spine/static check alone does not prove
+Clang, and Binaryen versions; a source/static check alone does not prove
 that the pinned trust chain still reaches the snapshot service.
 
-For an SDK change, run `moon run sdk-contracts:all`, then run each affected
+For an SDK change, run `moon run liboliphaunt-native:headers`, then run each affected
 SDK's `compile`, `unit`, and `package` tasks in one Moon invocation. These tasks
 are independent; `package` does not silently rerun source qualification. Set
 `MOON_BASE` and `MOON_HEAD`, inspect affected SDK projects, and pass the exact
@@ -153,7 +150,7 @@ implementation-source spellings.
   the final `main` SHA. Do not also create a push run: non-PR runs for the same
   SHA serialize rather than cancel one another.
 - The release prerequisite is the non-cancelled `Qualified` gate for that SHA, including required checks, builds, policy, tests, and selected E2E.
-- When WASIX or an extension is selected, require the same-run full lifecycle evidence artifact. It must cover every catalogued extension in direct, server, restart, materialization, and dump/restore modes and satisfy `--require-current-evidence` for the candidate source digest.
+- When WASIX or an extension is selected, require the same-run full lifecycle evidence artifact. It must cover every catalogued extension in direct, server, restart, materialization, and physical backup/restore modes and satisfy `--require-current-evidence` for the candidate source digest.
 - Ensure artifact attestations and the publication lock reference the same SHA/tree.
 - Require artifact evidence for the compatibility floors in
   `docs/maintainers/release.md`: inspect Mach-O load commands, Android API/ELF

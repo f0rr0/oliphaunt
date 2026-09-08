@@ -4,7 +4,7 @@ id: "liboliphaunt-wasix"
 language: "rust"
 layer: "library"
 stack: "systems"
-tags: ["runtime", "wasix", "wasm", "postgres", "release-product"]
+tags: ["javascript-quality", "runtime", "wasix", "wasm", "postgres", "release-product"]
 dependsOn:
   - id: "postgres18"
     scope: "build"
@@ -50,56 +50,50 @@ fileGroups:
     - "release.toml"
   crates:
     - "crates/**/*"
+  extension-smoke-inputs:
+    - "tools/runtime-smoke.sh"
+    - "tools/wasix-extension-features.mts"
+    - "tools/wasix-aot-manifest.mts"
+    - "tools/wasix-cargo-artifact-contract.mts"
+    - "/src/extensions/artifacts/packages/tools/{build-extension-ci-artifacts,contrib-carriers,extension-registry-packages,extension-runtime-asset-contract}.mts"
+    - "/src/shared/artifact-packaging/{archive-directory,cargo-source-package,ios-carrier-manifest,portable-archive,release-directory-safety,release-notices}.mts"
+    - "/src/shared/extension-runtime-contract/{extension-target-profiles,wasix-extension-install}.mts"
+    - "/src/shared/product-metadata/{platform-compatibility-policy,release-artifact-targets,release-graph,release-history,wasix-cargo-toolchain-policy}.mts"
+    - "/tools/dev/bun.sh"
 
 tasks:
+  build-orchestration-test:
+    tags: ["quality", "unit"]
+    script: |
+      set -e
+      bash src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.test.sh
+      bash src/runtimes/liboliphaunt/wasix/tools/serialize-aot.test.sh
+    inputs: ["tools/build-runtime-portable.sh", "tools/build-runtime-portable.test.sh", "tools/extension-build-scripts.mts", "tools/serialize-aot.sh", "tools/serialize-aot.test.sh"]
+    options:
+      runFromWorkspaceRoot: true
   unit:
     tags: ["quality", "unit"]
     script: |
       set -e
+      bash src/runtimes/liboliphaunt/wasix/tools/check-shim-abi.sh
       bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh
       bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh
     inputs:
       - "assets/build/docker/**/*"
+      - "assets/build/wasix_shim/**/*"
+      - "tools/check-shim-abi.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true
 
   lint:
     tags: ["quality", "static"]
-    command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
-    inputs:
-      - "assets/build/postgres/**/*"
-      - "tools/check-patch-stack.mjs"
-      - "/src/postgres/versions/18/source.toml"
-      - "/docs/internal/WASIX_PATCH_STACK.md"
+    script: |
+      set -e
+      while IFS= read -r -d '' script; do bash -n "$script"; done < <(find src/runtimes/liboliphaunt/wasix -type f \( -name '*.sh' -o -name '*.bash' \) -print0)
+    inputs: ["**/*.sh", "**/*.bash"]
     options:
       cache: true
-      runFromWorkspaceRoot: true
-
-  assets-verify:
-    tags: ["quality", "static", "requires-rust"]
-    command: "bash src/runtimes/liboliphaunt/wasix/tools/verify-committed-assets.sh"
-    inputs:
-      - "@group(cargo-workspace)"
-      - project: "postgres18"
-        group: "source"
-      - project: "source-toolchains"
-        group: "wasix"
-      - project: "third-party-shared"
-        group: "sources"
-      - project: "extensions"
-        group: "build"
-      - project: "extension-runtime-contract"
-        group: "contract"
-      - "assets/build/**/*"
-      - "assets/generated/**/*"
-      - "crates/**/*"
-      - "tools/verify-committed-assets.sh"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
-      - "/tools/xtask/**/*"
-      - "/src/sources/tools/verify-source-tree.py"
-    options:
-      cache: false
       runFromWorkspaceRoot: true
 
   runtime-portable:
@@ -125,12 +119,13 @@ tasks:
       - "assets/build/**/*"
       - "crates/**/*"
       - "tools/build-runtime-portable.sh"
+      - "tools/extension-build-scripts.mts"
       - "!assets/generated"
       - "!assets/generated/**"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
-      - "/tools/xtask/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools/xtask/**/*"
       - "@group(release-archive-contract)"
-      - "/src/sources/tools/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.mts"
     outputs:
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
@@ -148,6 +143,7 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
+      - "@group(extension-smoke-inputs)"
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
       - "/src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md"
@@ -164,12 +160,14 @@ tasks:
         group: "contract"
       - "crates/**/*"
       - "tools/build-aot-target.sh"
+      - "tools/serialize-aot.sh"
       - "tools/cargo-test-filter.sh"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
-      - "/tools/xtask/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-asset-mode.mts"
+      - "/src/runtimes/liboliphaunt/wasix/tools/xtask/**/*"
       - "@group(release-archive-contract)"
-      - "/src/sources/tools/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.mts"
     outputs:
       - "/target/oliphaunt-wasix/aot/**/*"
       - "/target/extensions/wasix/aot-artifacts/**/*"
@@ -182,9 +180,7 @@ tasks:
 
   release-assets:
     tags: ["release", "artifact", "ci-liboliphaunt-wasix-release-assets"]
-    command: "cargo run -p xtask -- release package-assets"
-    env:
-      CARGO_TARGET_DIR: "target/moon/liboliphaunt-wasix/release-assets"
+    command: "bun src/runtimes/liboliphaunt/wasix/tools/package-release-assets.mts"
     deps:
       - "liboliphaunt-wasix:runtime-portable"
       - "liboliphaunt-wasix:runtime-aot"
@@ -200,10 +196,16 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/src/runtimes/liboliphaunt/wasix/crates/assets/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/aot/**/*"
-      - "/tools/xtask/**/*"
-      - "/tools/release/check-liboliphaunt-wasix-release-assets.mjs"
+      - "tools/package-release-assets.mts"
+      - "tools/wasix-cargo-artifact-contract.mts"
+      - "tools/wasix-aot-manifest.mts"
+      - "/src/shared/artifact-packaging/**/*.mts"
+      - "/src/shared/cluster-seed-contract/*.mts"
+      - "/src/shared/product-metadata/**/*.mts"
+      - "assets/build/postgres/patches/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools/check-release-assets.mts"
       - "@group(release-archive-contract)"
-      - "/src/sources/tools/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.mts"
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
@@ -221,6 +223,7 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-aot"
     inputs:
+      - "@group(extension-smoke-inputs)"
       - "@group(cargo-workspace)"
       - project: "postgres18"
         group: "source"
@@ -232,11 +235,13 @@ tasks:
         group: "build"
       - "tools/cargo-test-filter.sh"
       - "tools/runtime-preflight.sh"
+      - "tools/runtime-asset-mode.mts"
       - "tools/runtime-smoke.sh"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
-      - "/tools/xtask/**/*"
-      - "/src/sources/tools/verify-source-tree.py"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-asset-mode.mts"
+      - "/src/runtimes/liboliphaunt/wasix/tools/xtask/**/*"
+      - "/src/sources/tools/verify-source-tree.mts"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -248,6 +253,7 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-aot"
     inputs:
+      - "@group(extension-smoke-inputs)"
       - "@group(cargo-workspace)"
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"
@@ -261,17 +267,19 @@ tasks:
         group: "build"
       - "tools/cargo-test-filter.sh"
       - "tools/runtime-preflight.sh"
+      - "tools/runtime-asset-mode.mts"
       - "tools/runtime-smoke.sh"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/bindings/wasix-ts/**/*"
       - "/src/shared/js-core/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
-      - "/tools/release/wasix-runtime-npm-*.mjs"
-      - "/tools/release/wasix-tools-npm-carrier.mjs"
-      - "/tools/release/wasix-typescript-package.mjs"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-asset-mode.mts"
+      - "/src/runtimes/liboliphaunt/wasix/tools/wasix-runtime-npm-*.mts"
+      - "/src/runtimes/liboliphaunt/wasix/tools/wasix-tools-npm-carrier.mts"
+      - "/src/bindings/wasix-ts/tools/wasix-typescript-package.mts"
       - "@group(release-archive-contract)"
-      - "/tools/xtask/**/*"
-      - "/src/sources/tools/verify-source-tree.py"
+      - "/src/runtimes/liboliphaunt/wasix/tools/xtask/**/*"
+      - "/src/sources/tools/verify-source-tree.mts"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -281,10 +289,49 @@ tasks:
     command: "true"
     deps:
       - "liboliphaunt-wasix:lint"
-      - "liboliphaunt-wasix:assets-verify"
       - "liboliphaunt-wasix:release-assets"
       - "liboliphaunt-wasix:smoke"
       - "liboliphaunt-wasix:regression"
     inputs: []
     options:
       runInCI: false
+
+
+  rust-format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p liboliphaunt-wasix-portable -p oliphaunt-wasix-tools -p liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p liboliphaunt-wasix-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p liboliphaunt-wasix-aot-x86_64-pc-windows-msvc -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --check"
+    inputs: ["/src/runtimes/liboliphaunt/wasix/crates/assets/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  rust-lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p liboliphaunt-wasix-portable -p oliphaunt-wasix-tools -p liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p liboliphaunt-wasix-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p liboliphaunt-wasix-aot-x86_64-pc-windows-msvc -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --all-targets --locked -- -D warnings"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs: ["/src/runtimes/liboliphaunt/wasix/crates/assets/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc/Cargo.toml","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/**/*.rs","/src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+
+  packaging-unit:
+    tags: ["quality", "unit"]
+    command: "bun test --timeout=30000 src/runtimes/liboliphaunt/wasix/tools"
+    inputs:
+      - "tools/*.sh"
+      - "/src/extensions/tools/extension-upstream-licenses.mts"
+      - "/src/extensions/external/**/upstream-license-data.json"
+      - "/src/extensions/external/**/upstream-licenses/**/*"
+      - "/src/shared/cluster-seed-contract/*.mts"
+      - "/src/runtimes/liboliphaunt/licenses/*"
+      - "THIRD_PARTY_NOTICES.md"
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "/tools/test/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/shared/artifact-packaging/*.{mts,sh}"
+      - "/src/shared/cluster-seed-contract/*.mts"
+      - "/src/shared/product-metadata/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

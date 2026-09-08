@@ -340,7 +340,11 @@ build_xcframework() {
   mkdir -p "$out_dir" "$headers_dir"
   rsync -a --delete "$repo_root/src/runtimes/liboliphaunt/native/include/" "$headers_dir/"
 
+  mkdir -p "$work_root/logs"
   local macos_library="$default_macos_library"
+  local simulator_library="$default_simulator_library"
+  local device_library="$default_device_library"
+  macos_slice() {
   if ! "$macos_script" --check-oliphaunt-current >/dev/null 2>&1 ||
     ! assert_library_slice "$macos_library" MACOS >/dev/null 2>&1; then
     macos_library="$(oliphaunt_capture_build_artifact_path \
@@ -349,8 +353,9 @@ build_xcframework() {
       "$macos_script")"
   fi
 
-  local simulator_library="$default_simulator_library"
-  local device_library="$default_device_library"
+    printf '%s\n' "$macos_library" > "$work_root/logs/macos-artifact.path"
+  }
+  simulator_slice() {
   if ! OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="${OLIPHAUNT_MOBILE_STATIC_EXTENSIONS:-}" \
        "$simulator_script" --check-current >/dev/null 2>&1 ||
      ! assert_library_slice "$simulator_library" IOSSIMULATOR >/dev/null 2>&1; then
@@ -359,6 +364,9 @@ build_xcframework() {
       "$work_root/logs/build-ios-simulator.log" \
       env OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="${OLIPHAUNT_MOBILE_STATIC_EXTENSIONS:-}" "$simulator_script")"
   fi
+    printf '%s\n' "$simulator_library" > "$work_root/logs/simulator-artifact.path"
+  }
+  device_slice() {
   if ! OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="${OLIPHAUNT_MOBILE_STATIC_EXTENSIONS:-}" \
        "$device_script" --check-current >/dev/null 2>&1 ||
      ! assert_library_slice "$device_library" IOS >/dev/null 2>&1; then
@@ -367,6 +375,12 @@ build_xcframework() {
       "$work_root/logs/build-ios-device.log" \
       env OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="${OLIPHAUNT_MOBILE_STATIC_EXTENSIONS:-}" "$device_script")"
   fi
+    printf '%s\n' "$device_library" > "$work_root/logs/device-artifact.path"
+  }
+  oliphaunt_parallel_apple_builds macos_slice simulator_slice device_slice
+  macos_library="$(cat "$work_root/logs/macos-artifact.path")"
+  simulator_library="$(cat "$work_root/logs/simulator-artifact.path")"
+  device_library="$(cat "$work_root/logs/device-artifact.path")"
   assert_library_slice "$macos_library" MACOS
   assert_library_slice "$simulator_library" IOSSIMULATOR
   assert_library_slice "$device_library" IOS

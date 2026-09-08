@@ -4,8 +4,12 @@ id: "oliphaunt-react-native"
 language: "typescript"
 layer: "library"
 stack: "frontend"
-tags: ["sdk", "react-native", "typescript", "ios", "android", "release-product"]
+tags: ["javascript-quality", "sdk", "react-native", "typescript", "ios", "android", "release-product"]
 dependsOn:
+  - id: "shared-js-core"
+    scope: "build"
+  - id: "shared-test-fixtures"
+    scope: "development"
   - id: "extensions"
     scope: "build"
   - id: "cluster-seed-contract"
@@ -49,6 +53,7 @@ tasks:
     deps:
       - "shared-js-core:build"
     inputs:
+      - "/src/shared/artifact-packaging/portable-archive.mts"
       - project: "shared-js-core"
         group: "sources"
       - "@group(pnpm-workspace)"
@@ -64,6 +69,12 @@ tasks:
       - "!/src/sdks/react-native/ios/vendor/**"
     outputs:
       - "lib/**/*"
+      - "app.plugin.js"
+      - "react-native.config.js"
+      - "tools/codegen-check.cjs"
+      - "tools/native-resource-closure.mjs"
+      - "tools/stage-ios-app.mjs"
+      - "tools/verify-ios-package.mjs"
     options:
       cache: true
   unit-distinct:
@@ -71,11 +82,18 @@ tasks:
     script: |
       set -e
       bash tools/verify-android-apk.test.sh
-      bun test tools/validate-android-link-evidence.test.mjs
-      node tools/stage-ios-app.test.mjs
+      bash tools/expo-android-gradle-limits.test.sh
+      bash tools/expo-runner-android-device.test.sh
+      bash tools/expo-runner-ios-installed-app.test.sh
+      bash tools/expo-runner-workspace.test.sh
+      bun test tools/validate-android-link-evidence.test.mts tools/expo-ios-runner.test.mts
+      node tools/stage-ios-app.test.mts
+      node --test tools/ios-app-transport.test.mts
+      bun test --timeout=30000 tools/mobile-extension-artifact-paths.test.mts
     deps:
       - "shared-js-core:build"
     inputs:
+      - "/src/shared/artifact-packaging/portable-archive.mts"
       - project: "shared-js-core"
         group: "sources"
       - "@group(pnpm-workspace)"
@@ -96,6 +114,7 @@ tasks:
     options:
       cache: true
   unit-shared:
+    tags: ["quality", "unit"]
     command: "pnpm test"
     deps:
       - "shared-js-core:build"
@@ -108,7 +127,6 @@ tasks:
       - "!/src/sdks/react-native/**/lib/**"
     options:
       cache: true
-      runInCI: false
   unit:
     command: "true"
     deps:
@@ -128,7 +146,7 @@ tasks:
       mkdir -p target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated
       cp src/extensions/generated/sdk/extensions.json src/extensions/generated/sdk/ios-static-dependencies.json target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated/
       cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/
-      node src/shared/js-core/tools/stage-package.mjs target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native src/shared/js-core
+      node src/shared/js-core/tools/stage-package.mts target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native src/shared/js-core
     deps:
       - "oliphaunt-react-native:compile"
     inputs:
@@ -138,7 +156,7 @@ tasks:
       - project: "extensions"
         group: "sdk-metadata"
       - "@group(pnpm-workspace)"
-      - "/src/shared/js-core/tools/stage-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mts"
       - "**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -164,3 +182,68 @@ tasks:
     inputs: []
     options:
       cache: true
+
+  coverage:
+    tags: ["coverage"]
+    command: "pnpm run coverage"
+    deps: ["shared-js-core:build"]
+    inputs:
+      - "@group(code)"
+      - "@group(pnpm-workspace)"
+      - project: "shared-js-core"
+        group: "sources"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    outputs: ["/target/coverage/oliphaunt-react-native/**/*"]
+    options:
+      cache: false
+      runInCI: false
+
+  release-package:
+    tags: ["release", "artifact-package", "ci-react-native-sdk-package"]
+    script: |
+      set -eu
+      bash src/sdks/react-native/tools/stage-release-artifacts.sh
+      bash tools/dev/bun.sh src/sdks/react-native/tools/check-package.mts
+    env:
+      OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: "target/liboliphaunt/abi-compatible-release-assets/ios-datum64"
+    deps:
+      - "oliphaunt-react-native:package"
+      - "liboliphaunt-native:finalize-runtime-ios-abi"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/src/sdks/react-native/tools/check-package.mts"
+      - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
+      - "/src/shared/artifact-packaging/ios-carrier-manifest.mts"
+      - "/src/shared/product-metadata/release-graph.mts"
+      - "/src/shared/artifact-packaging/npm-package.mts"
+      - "/src/sdks/react-native/tools/stage-release-artifacts.mts"
+      - "/src/sdks/react-native/tools/stage-release-artifacts.sh"
+      - "/src/shared/artifact-packaging/staging.mts"
+      - "/src/shared/artifact-packaging/source-only-sdk-package.mts"
+      - "/src/shared/js-core/tools/stage-package.mts"
+      - "/src/runtimes/liboliphaunt/native/icu-npm/**/*"
+      - "/examples/react-native-expo/package.json"
+      - "/src/sdks/react-native/tools/icu-autolinking-fixture.mts"
+      - "/src/sdks/react-native/tools/check-icu-autolinking.sh"
+      - "/src/shared/artifact-packaging/portable-archive.mts"
+      - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  docs-api:
+    tags: ["docs"]
+    script: "pnpm --dir src/sdks/react-native run docs:api"
+    inputs: ["**/*", "/src/shared/rust-query-core/src/**/*", "/src/shared/js-core/src/**/*", "@group(cargo-workspace)"]
+    outputs: ["/target/docs/generated/api/react-native/html/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+      runInCI: false

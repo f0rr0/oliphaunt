@@ -1,6 +1,6 @@
 DROP TABLE IF EXISTS oliphaunt_postgis_points;
 -- oliphaunt-statement
-CREATE TEMP TABLE oliphaunt_postgis_points(id int PRIMARY KEY, geom geometry(Point, 4326));
+CREATE TABLE oliphaunt_postgis_points(id int PRIMARY KEY, geom geometry(Point, 4326));
 -- oliphaunt-statement
 INSERT INTO oliphaunt_postgis_points VALUES
   (1, ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)),
@@ -8,6 +8,7 @@ INSERT INTO oliphaunt_postgis_points VALUES
 -- oliphaunt-statement
 CREATE INDEX oliphaunt_postgis_points_gix ON oliphaunt_postgis_points USING GIST (geom);
 -- oliphaunt-statement
+-- oliphaunt-verify
 DO $$
 DECLARE
   distance float8;

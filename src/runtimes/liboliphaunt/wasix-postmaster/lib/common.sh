@@ -22,15 +22,33 @@ export FRESH_PROJECT_SOURCE_ID_PREFIX
 export WASIX_TOOLCHAIN_ROOT="${WASIX_TOOLCHAIN_ROOT:-$REPO_ROOT/src/runtimes/liboliphaunt/wasix/assets/build}"
 export FRESH_WORK_ROOT="${FRESH_WORK_ROOT:-$REPO_ROOT/target/oliphaunt-wasix-postmaster}"
 
-export POSTGRES_TAG="${POSTGRES_TAG:-REL_18_4}"
-export POSTGRES_VERSION="${POSTGRES_VERSION:-18.4}"
+# Source manifests contain only plain quoted scalars for these fields. Read the
+# authoritative pin directly; checkout verification below binds the actual tree.
+fresh_source_scalar() {
+  [ -f "$1" ] && [ ! -L "$1" ] || return 2
+  awk -F= -v key="$2" '
+    $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+      count++
+      value = $2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (NF != 2 || (key == "url" ? value !~ /^"https:\/\/[A-Za-z0-9_.+\/-]+"$/ : value !~ /^"[A-Za-z0-9_.+-]+"$/)) exit 2
+      value = substr(value, 2, length(value) - 2)
+    }
+    END { if (count != 1 || value == "") exit 2; print value }
+  ' "$1"
+}
+
 export POSTGRES_SOURCE_TOML="${POSTGRES_SOURCE_TOML:-$REPO_ROOT/src/postgres/versions/18/source.toml}"
+POSTGRES_VERSION="${POSTGRES_VERSION:-$(fresh_source_scalar "$POSTGRES_SOURCE_TOML" version)}" || return 2
+export POSTGRES_VERSION
+export POSTGRES_TAG="${POSTGRES_TAG:-REL_${POSTGRES_VERSION//./_}}"
 export BASELINE_DIR="${BASELINE_DIR:-$FRESH_WORK_ROOT/sources/postgresql-$POSTGRES_VERSION}"
 export WASIX_SRC_DIR="${WASIX_SRC_DIR:-$FRESH_WORK_ROOT/work/postgres-wasix-core-src}"
 export CLIENT_TOOLS_BUILD_DIR="${CLIENT_TOOLS_BUILD_DIR:-$FRESH_WORK_ROOT/builds/native-client-tools}"
 export CLIENT_TOOLS_INSTALL_DIR="${CLIENT_TOOLS_INSTALL_DIR:-$FRESH_WORK_ROOT/install/native-client-tools}"
 export FRESH_WASIX_DOCKER_IMAGE="${FRESH_WASIX_DOCKER_IMAGE:-oliphaunt-wasix-wasix-build:local}"
-export FRESH_WASMER_VERSION="${FRESH_WASMER_VERSION:-7.2.0-alpha.2}"
+_fresh_wasmer_tag="$(fresh_source_scalar "$REPO_ROOT/src/sources/third-party/wasix-postmaster/wasmer.toml" branch)" || return 2
+export FRESH_WASMER_VERSION="${FRESH_WASMER_VERSION:-${_fresh_wasmer_tag#v}}"
 export FRESH_WASMER_WASIX_VERSION="${FRESH_WASMER_WASIX_VERSION:-0.702.0-alpha.2}"
 export FRESH_WASMER_COMPILER_FEATURES="${FRESH_WASMER_COMPILER_FEATURES:-llvm,wat}"
 export FRESH_WASMER_HEADLESS_FEATURES="${FRESH_WASMER_HEADLESS_FEATURES:-headless-minimal}"
@@ -58,11 +76,16 @@ export FRESH_POSTMASTER_BLOCKING_WORKER_IDLE_TIMEOUT_MS="1000"
 export FRESH_POSTMASTER_EXECUTOR_RUNTIME_POLICY_ID="oliphaunt.wasix-postmaster.tokio.2-async.embedded-postmaster-v1-budget96.v2"
 export FRESH_POSTMASTER_EXECUTOR_CLI_CONTRACT="sealed-postmaster-run-v1"
 export FRESH_WASMER_ARTIFACT_ABI_VERSION="${FRESH_WASMER_ARTIFACT_ABI_VERSION:-21}"
-export FRESH_WASMER_SOURCE_COMMIT="${FRESH_WASMER_SOURCE_COMMIT:-1d1b3420beef28550afbb4692b664bd7f6bc2581}"
-export FRESH_WASMER_NAPI_COMMIT="${FRESH_WASMER_NAPI_COMMIT:-706383f42391cb4e4e82e5fd5e63a0ebf81ae19d}"
-export FRESH_WASMER_TEST_FILES_COMMIT="${FRESH_WASMER_TEST_FILES_COMMIT:-7f27e84c69af3b772f751d6c4a733d9f448b2c70}"
-export FRESH_WASMER_SPEC_COMMIT="${FRESH_WASMER_SPEC_COMMIT:-7e0b83aba9dbbb6e0623c9334b0f73b3bb584b90}"
-export FRESH_WASIX_LIBC_SOURCE_COMMIT="${FRESH_WASIX_LIBC_SOURCE_COMMIT:-34178a6272804f90448b5bd08dc7bcf0d85438e3}"
+FRESH_WASMER_SOURCE_COMMIT="${FRESH_WASMER_SOURCE_COMMIT:-$(fresh_source_scalar "$REPO_ROOT/src/sources/third-party/wasix-postmaster/wasmer.toml" commit)}" || return 2
+export FRESH_WASMER_SOURCE_COMMIT
+FRESH_WASMER_NAPI_COMMIT="${FRESH_WASMER_NAPI_COMMIT:-$(fresh_source_scalar "$REPO_ROOT/src/sources/third-party/wasix-postmaster/wasmer-napi.toml" commit)}" || return 2
+export FRESH_WASMER_NAPI_COMMIT
+FRESH_WASMER_TEST_FILES_COMMIT="${FRESH_WASMER_TEST_FILES_COMMIT:-$(fresh_source_scalar "$REPO_ROOT/src/sources/third-party/wasix-postmaster/wasmer-test-files.toml" commit)}" || return 2
+export FRESH_WASMER_TEST_FILES_COMMIT
+FRESH_WASMER_SPEC_COMMIT="${FRESH_WASMER_SPEC_COMMIT:-$(fresh_source_scalar "$REPO_ROOT/src/sources/third-party/wasix-postmaster/webassembly-testsuite.toml" commit)}" || return 2
+export FRESH_WASMER_SPEC_COMMIT
+FRESH_WASIX_LIBC_SOURCE_COMMIT="${FRESH_WASIX_LIBC_SOURCE_COMMIT:-$(fresh_source_scalar "$REPO_ROOT/src/sources/third-party/wasix-postmaster/wasix-libc.toml" commit)}" || return 2
+export FRESH_WASIX_LIBC_SOURCE_COMMIT
 export FRESH_UPSTREAM_WASMER_BIN="${FRESH_UPSTREAM_WASMER_BIN:-$FRESH_WORK_ROOT/runtime/wasmer/target/release/wasmer}"
 export FRESH_UPSTREAM_WASMER_HEADLESS_BIN="${FRESH_UPSTREAM_WASMER_HEADLESS_BIN:-$FRESH_WORK_ROOT/runtime/wasmer/target/release/wasmer-headless}"
 export FRESH_WASMER_BUILD_RECEIPT="${FRESH_WASMER_BUILD_RECEIPT:-$FRESH_WORK_ROOT/runtime/build/wasmer-build.receipt}"
@@ -605,32 +628,8 @@ fresh_postgres_baseline_fingerprint() {
     printf 'missing regular PostgreSQL source manifest: %s\n' "$POSTGRES_SOURCE_TOML" >&2
     return 2
   }
-  version="$(awk -F= '
-    $1 ~ /^[[:space:]]*version[[:space:]]*$/ {
-      count += 1
-      value = $2
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      gsub(/^"|"$/, "", value)
-    }
-    END { if (count != 1 || value == "") exit 2; print value }
-  ' "$POSTGRES_SOURCE_TOML")" || {
-    printf 'PostgreSQL source manifest must contain one version: %s\n' \
-      "$POSTGRES_SOURCE_TOML" >&2
-    return 2
-  }
-  archive_sha256="$(awk -F= '
-    $1 ~ /^[[:space:]]*sha256[[:space:]]*$/ {
-      count += 1
-      value = $2
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      gsub(/^"|"$/, "", value)
-    }
-    END { if (count != 1 || value == "") exit 2; print value }
-  ' "$POSTGRES_SOURCE_TOML")" || {
-    printf 'PostgreSQL source manifest must contain one SHA-256: %s\n' \
-      "$POSTGRES_SOURCE_TOML" >&2
-    return 2
-  }
+  version="$(fresh_source_scalar "$POSTGRES_SOURCE_TOML" version)" || return 2
+  archive_sha256="$(fresh_source_scalar "$POSTGRES_SOURCE_TOML" sha256)" || return 2
   [ "$version" = "$POSTGRES_VERSION" ] && fresh_is_sha256 "$archive_sha256" || {
     printf 'invalid PostgreSQL baseline source identity in %s\n' \
       "$POSTGRES_SOURCE_TOML" >&2
@@ -903,6 +902,23 @@ fresh_wasix_builder_recipe_sha256() {
   } | fresh_sha256_stream
 }
 
+fresh_executor_source_sha256() {
+  local path digest
+  fresh_require_canonical_directory executor "$FRESH_ROOT/runtime/executor" || return
+  [ -f "$FRESH_ROOT/runtime/executor/Cargo.toml.in" ] || return 2
+  fresh_require_canonical_directory executor-source "$FRESH_ROOT/runtime/executor/src" || return
+  (
+    cd "$FRESH_ROOT/runtime/executor"
+    while IFS= read -r -d '' path; do
+      [ -f "$path" ] && [ ! -L "$path" ] || exit 2
+      digest="$(fresh_wasmer_bin_hash "$path")" || exit 2
+      fresh_is_sha256 "$digest" || exit 2
+      printf '%s\0%s\0' "$path" "$digest"
+      if [ -x "$path" ]; then printf 'executable\0'; else printf 'data\0'; fi
+    done < <(find Cargo.toml.in src \( -type f -o -type l \) -print0 | LC_ALL=C sort -z)
+  ) | fresh_sha256_stream
+}
+
 fresh_runtime_build_recipe_sha256() {
   local builder_recipe_sha256
   local file_sha256
@@ -911,15 +927,12 @@ fresh_runtime_build_recipe_sha256() {
   local path
   local recipe_paths=(
     "$FRESH_ROOT/lib/common.sh"
-    "$FRESH_ROOT/sources.lock.toml"
-    "$FRESH_ROOT/runtime/capabilities.tsv"
     "$FRESH_POSTMASTER_TASK_BUDGET_PROFILE"
     "$FRESH_POSTMASTER_RUNTIME_FOOTPRINT_PROFILE"
     "$FRESH_ROOT/runtime/bin/prepare-upstream-checkouts.sh"
     "$FRESH_ROOT/runtime/bin/build-runtime.sh"
     "$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh"
     "$FRESH_ROOT/runtime/bin/validate-runtime-capabilities.sh"
-    "$FRESH_ROOT/runtime/bin/verify-source-lock.py"
     "$WASIX_TOOLCHAIN_ROOT/docker_wasix_env.sh"
   )
 
@@ -941,6 +954,7 @@ fresh_runtime_build_recipe_sha256() {
   {
     printf '%s\0%s\0' schema oliphaunt.wasix-postmaster.runtime-build-recipe.v3
     printf '%s\0%s\0' wasix-builder-recipe-sha256 "$builder_recipe_sha256"
+    printf '%s\0%s\0' executor-source-sha256 "$(fresh_executor_source_sha256)"
     for path in "${recipe_paths[@]}"; do
       case "$path" in
         "$FRESH_ROOT"/*)
@@ -1082,7 +1096,7 @@ fresh_require_local_wasmer_build_state() {
   wasix_libc_patch_hash="$(fresh_wasmer_bin_hash "$wasix_libc_patch")"
   fresh_require_prepared_worktree \
     Wasmer "$wasmer_root" "$FRESH_WASMER_SOURCE_COMMIT" "$wasmer_patch_hash" \
-    "$FRESH_WASMER_NAPI_COMMIT:$FRESH_WASMER_TEST_FILES_COMMIT:$FRESH_WASMER_SPEC_COMMIT" \
+    "$FRESH_WASMER_NAPI_COMMIT:$FRESH_WASMER_TEST_FILES_COMMIT:$FRESH_WASMER_SPEC_COMMIT:$(fresh_executor_source_sha256)" \
     "$wasmer_signature" || return
   fresh_require_prepared_worktree \
     wasix-libc "$wasix_libc_root" "$FRESH_WASIX_LIBC_SOURCE_COMMIT" "$wasix_libc_patch_hash" \
@@ -1335,7 +1349,7 @@ fresh_require_memory_profile_tool() {
   fresh_require_manifest_value \
     "$executor_receipt" memory_profile_binary_sha256 \
     "$(fresh_wasmer_bin_hash "$profile_bin")" || return
-  actual_id="$("$profile_bin" --profile-json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" || {
+  actual_id="$("$profile_bin" --profile-json | bun "$FRESH_ROOT/lib/linear-memory-profile.mts" profile-id)" || {
     printf 'could not read linear-memory profile identity from %s\n' "$profile_bin" >&2
     return 2
   }

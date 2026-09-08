@@ -8,12 +8,15 @@ if [[ -z "$job" || "$#" -gt 2 ]]; then
   exit 2
 fi
 
-execution_file="$(mktemp)"
-trap 'rm -f "$execution_file"' EXIT
+plan_dir="$(mktemp -d)"
+trap 'rm -rf "$plan_dir"' EXIT
+execution_file="$plan_dir/execution"
+"${MOON_BIN:-moon}" task-graph --json >"$plan_dir/graph.json"
 
 resolve_args=("$job")
 if [[ -n "$target" ]]; then resolve_args+=("$target"); fi
-bun .github/scripts/resolve-planned-moon-execution.mjs "${resolve_args[@]}" >"$execution_file"
+OLIPHAUNT_MOON_TASK_GRAPH_FILE="$plan_dir/graph.json" \
+  bun .github/scripts/resolve-planned-moon-execution.mts "${resolve_args[@]}" >"$execution_file"
 
 targets=()
 local_dependencies=()
@@ -24,7 +27,10 @@ while IFS=$'\t' read -r kind target; do
     local) local_dependencies+=("$target") ;;
     target) targets+=("$target") ;;
     transferred) transferred_dependencies+=("$target") ;;
-    *) echo "CI job '$job' has invalid execution-plan row: $kind" >&2; exit 2 ;;
+    *)
+      echo "CI job '$job' has invalid execution-plan row: $kind" >&2
+      exit 2
+      ;;
   esac
 done <"$execution_file"
 

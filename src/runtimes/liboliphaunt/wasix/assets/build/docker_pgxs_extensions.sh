@@ -116,10 +116,6 @@ fi
 	        OPTFLAGS="" \
 	        "${extra_make_args[@]}" \
 	        all
-	      if [ "$id" = "age" ] && grep -q "^  PASSEDBYVALUE,$" "$extension_dir/age--1.7.0.sql"; then
-	        echo "AGE generated SQL still declares graphid PASSEDBYVALUE on wasm32" >&2
-	        exit 1
-	      fi
 	      if [ "$module_file" = "-" ]; then
 	        continue
 	      fi

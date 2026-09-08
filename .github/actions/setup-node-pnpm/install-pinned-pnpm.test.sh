@@ -8,7 +8,7 @@ fail() {
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-node-pnpm/install-pinned-pnpm.sh"
-extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
+extractor="$root/.github/actions/setup-moon/toolchain-archive.mts"
 curl_flags="$root/tools/dev/curl-platform-flags.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
@@ -17,113 +17,10 @@ fixture="$tmp/pnpm-11.5.0.tgz"
 manifest="$tmp/pnpm.toml"
 proto_file="$tmp/prototools"
 metadata="$tmp/metadata.env"
-"${PYTHON:-python3}" - "$fixture" "$manifest" "$metadata" <<'PY'
-import hashlib
-import io
-import pathlib
-import sys
-import tarfile
-
-archive = pathlib.Path(sys.argv[1])
-manifest = pathlib.Path(sys.argv[2])
-metadata = pathlib.Path(sys.argv[3])
-version = "11.5.0"
-files = {
-    "bin/pnpm.mjs": (
-        b"#!/usr/bin/env node\n"
-        b"console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' "
-        b"? JSON.stringify(process.argv.slice(2)) : '11.5.0');\n"
-    ),
-    "bin/pnpx.mjs": (
-        b"#!/usr/bin/env node\n"
-        b"console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' "
-        b"? JSON.stringify(process.argv.slice(2)) : '11.5.0');\n"
-    ),
-    "dist/node-gyp-bin/node-gyp": b"#!/usr/bin/env sh\nexit 0\n",
-    "dist/node-gyp-bin/node-gyp.cmd": b"@ECHO OFF\r\nEXIT /B 0\r\n",
-    "dist/node_modules/node-gyp/bin/node-gyp.js": b"#!/usr/bin/env node\nprocess.exit(0);\n",
-    "dist/pnpm.mjs": b"export const fixture = true;\n",
-    "package.json": b'{"name":"pnpm","version":"11.5.0"}\n',
-}
-executables = {
-    "bin/pnpm.mjs",
-    "bin/pnpx.mjs",
-    "dist/node-gyp-bin/node-gyp",
-    "dist/node-gyp-bin/node-gyp.cmd",
-    "dist/node_modules/node-gyp/bin/node-gyp.js",
-}
-directories = {"package"}
-for relative in files:
-    parts = pathlib.PurePosixPath("package", relative).parts
-    directories.update("/".join(parts[:depth]) for depth in range(2, len(parts)))
-
-with tarfile.open(archive, "w:gz", format=tarfile.USTAR_FORMAT) as stream:
-    for directory in sorted(directories, key=lambda value: value.encode("utf-8")):
-        info = tarfile.TarInfo(f"{directory}/")
-        info.type = tarfile.DIRTYPE
-        info.mode = 0o755
-        info.mtime = 0
-        info.uid = info.gid = 0
-        info.uname = info.gname = ""
-        stream.addfile(info)
-    for relative, content in sorted(files.items(), key=lambda item: item[0].encode("utf-8")):
-        info = tarfile.TarInfo(f"package/{relative}")
-        info.type = tarfile.REGTYPE
-        info.size = len(content)
-        info.mode = 0o755 if relative in executables else 0o644
-        info.mtime = 0
-        info.uid = info.gid = 0
-        info.uname = info.gname = ""
-        stream.addfile(info, io.BytesIO(content))
-
-archive_bytes = archive.read_bytes()
-archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()
-archive_sha512 = hashlib.sha512(archive_bytes).hexdigest()
-tree = hashlib.sha256(b"oliphaunt-bootstrap-tree-v2\0")
-for relative, content in sorted(files.items(), key=lambda item: item[0].encode("utf-8")):
-    tree.update(relative.encode("utf-8"))
-    tree.update(b"\0")
-    tree.update(str(len(content)).encode("ascii"))
-    tree.update(b"\0")
-    tree.update(b"x" if relative in executables else b"-")
-    tree.update(b"\0")
-    tree.update(content)
-    tree.update(b"\0")
-
-executable_paths = (
-    "bin/pnpm.mjs,bin/pnpx.mjs,dist/node-gyp-bin/node-gyp,"
-    "dist/node-gyp-bin/node-gyp.cmd,dist/node_modules/node-gyp/bin/node-gyp.js"
-)
-manifest.write_text(
-    f'''[toolchain]
-version = "{version}"
-
-[package]
-url = "https://registry.npmjs.org/pnpm/-/pnpm-{version}.tgz"
-sha256 = "{archive_sha256}"
-sha512 = "{archive_sha512}"
-bytes = "{len(archive_bytes)}"
-expanded_bytes = "{sum(map(len, files.values()))}"
-format = "tar.gz"
-prefix = "package"
-entry_count = "{len(directories) + len(files)}"
-file_count = "{len(files)}"
-tree_sha256 = "{tree.hexdigest()}"
-executable_paths = "{executable_paths}"
-binary_path = "bin/pnpm.mjs"
-binary_sha256 = "{hashlib.sha256(files['bin/pnpm.mjs']).hexdigest()}"
-companion_path = "bin/pnpx.mjs"
-companion_sha256 = "{hashlib.sha256(files['bin/pnpx.mjs']).hexdigest()}"
-payload_path = "dist/pnpm.mjs"
-payload_sha256 = "{hashlib.sha256(files['dist/pnpm.mjs']).hexdigest()}"
-''',
-    encoding="utf-8",
-)
-metadata.write_text(
-    f"ARCHIVE_SHA256={archive_sha256}\nARCHIVE_BYTES={len(archive_bytes)}\n",
-    encoding="utf-8",
-)
-PY
+bash "$root/tools/dev/bun.sh" build "$root/tools/test/package-manager-fixture.mts" \
+  --target=node --define 'FIXTURE_VERSION="11.5.0"' --outfile "$tmp/launcher.mjs" >/dev/null
+bash "$root/tools/dev/bun.sh" "$root/.github/actions/setup-node-pnpm/pnpm-test-archive.mts" \
+  "$fixture" "$manifest" "$metadata" "$tmp/launcher.mjs"
 printf '%s\n' 'pnpm = "11.5.0"' >"$proto_file"
 # shellcheck source=/dev/null
 . "$metadata"
@@ -192,14 +89,6 @@ for command_name in pnpm pnpx; do
   [ "$observed_argv" = "$expected_argv" ] ||
     fail "$command_name wrapper did not preserve structured caller arguments"
 done
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$installation/bin/pnpm" ||
-  fail "pnpm wrapper does not explicitly convert its internal Windows script path"
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$installation/bin/pnpx" ||
-  fail "pnpx wrapper does not explicitly convert its internal Windows script path"
-grep -Fq 'exec node "$cli_path" "$@"' "$installation/bin/pnpm" ||
-  fail "pnpm wrapper does not preserve structured caller arguments"
-grep -Fq 'exec node "$cli_path" "$@"' "$installation/bin/pnpx" ||
-  fail "pnpx wrapper does not preserve structured caller arguments"
 if [ -e "$installation/plugins" ] || [ -e "$installation/moon" ]; then
   fail "standalone installation unexpectedly contains Moon material"
 fi

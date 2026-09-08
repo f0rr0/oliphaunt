@@ -56,7 +56,7 @@ if [ "$portable_inputs" -eq 1 ]; then
     fresh_manifest_value "$guest_receipt" installed_closure_sha256
   )"
   actual_guest_identity="$(
-    python3 "$FRESH_ROOT/lib/guest_build_provenance.py" identity \
+    bun "$FRESH_ROOT/lib/guest-build-provenance.mts" identity \
       "$WASIX_INSTALL_DIR"
   )"
   [ "$actual_guest_identity" = "$expected_guest_identity" ] || {
@@ -81,9 +81,9 @@ fresh_require_managed_generated_path "$RUN_DIR" RUN_DIR
 
 fresh_ensure_dirs
 fresh_require_command git
-fresh_require_command python3
+fresh_require_command bun
 
-durable_publication="$FRESH_ROOT/lib/durable_publication.py"
+durable_publication="$FRESH_ROOT/lib/durable-publication.mts"
 [ -f "$durable_publication" ] && [ ! -L "$durable_publication" ] || {
   printf 'missing regular durable-publication helper: %s\n' "$durable_publication" >&2
   exit 2
@@ -135,13 +135,16 @@ compute_source_signature() {
       "$FRESH_ROOT/bin/apply-wasix-core-overlay.sh" \
       "$FRESH_ROOT/lib/common.sh" \
       "$FRESH_ROOT/lib/wasix-build-lock.sh" \
-      "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.py" \
-      "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.py" \
+      "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" \
+      "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
+      "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" \
       "$FRESH_ROOT/bin/seal-wasix-core-exports.sh" \
       "$FRESH_ROOT/bin/seal-wasix-linear-memory.sh" \
-      "$FRESH_ROOT/lib/guest_build_provenance.py" \
-      "$FRESH_ROOT/lib/linear_memory_transaction.py" \
-      "$FRESH_ROOT/lib/sealed_export_chain.py" \
+      "$FRESH_ROOT/lib/guest-build-provenance.mts" \
+      "$FRESH_ROOT/lib/linear-memory-transaction.mts" \
+      "$FRESH_ROOT/lib/linear-memory-profile.mts" \
+      "$REPO_ROOT/src/shared/artifact-packaging/strict-json.mts" \
+      "$FRESH_ROOT/lib/sealed-export-chain.mts" \
       "$FRESH_ROOT/runtime/policies/sealed-main-runtime-exports.v1.txt" \
       "$FRESH_ROOT/runtime/policies/sealed-main-dlsym-exports.v1.txt" \
       "$FRESH_ROOT/runtime/policies/sealed-side-modules.v1.tsv" \
@@ -447,26 +450,23 @@ fi
     for dir in "${core_dirs[@]}"; do
       make -C "$dir" -j "$JOBS" install DESTDIR="/work/$INSTALL_DIR"
     done
-    python3 \
-      /work/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-wasm-import.py \
-      "/work/$INSTALL_DIR/bin/postgres"
-    concurrency_args=()
-    if [ -n "$EXPECTED_ATOMIC_FENCE_TOTAL" ]; then
-      concurrency_args+=(--expected-total "$EXPECTED_ATOMIC_FENCE_TOTAL")
-    fi
-    if [ "$WASIX_CORE_LATCH_STATE_CONTRACT" = packed-atomic-v1 ]; then
-      concurrency_args+=(
-        --latch-state-contract packed-atomic-v1
-        --wasm-dis /opt/wasixcc-home/.wasixcc/binaryen/bin/wasm-dis
-      )
-    fi
-    python3 \
-      /work/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-concurrency-contract.py \
-      "${concurrency_args[@]}" \
-      "/work/$INSTALL_DIR/bin/postgres"
   ' >>"$log" 2>&1
 status=$?
 set -e
+
+if [ "$status" -eq 0 ] && [ "$mode" = build ]; then
+  bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" \
+    "$WASIX_INSTALL_DIR/bin/postgres" >>"$log" 2>&1 || status=$?
+fi
+
+if [ "$status" -eq 0 ] && [ "$mode" = build ]; then
+  concurrency_args=(--latch-state-contract "$wasix_core_latch_state_contract")
+  if [ -n "$expected_atomic_fence_total" ]; then
+    concurrency_args+=(--expected-total "$expected_atomic_fence_total")
+  fi
+  bash "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
+    "$WASIX_INSTALL_DIR/bin/postgres" "${concurrency_args[@]}" >>"$log" 2>&1 || status=$?
+fi
 
 if [ "$status" -eq 0 ] && [ "$mode" = build ] && \
   [ "$wasix_core_latch_state_contract" = packed-atomic-v1 ]
@@ -489,7 +489,7 @@ then
         --install-dir "$WASIX_INSTALL_DIR" \
         --predecessor-receipt "$sealed_export_receipt"
 
-      python3 "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.py" \
+      bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" \
         "$WASIX_INSTALL_DIR/bin/postgres"
       fresh_require_start_proof_tool \
         "$FRESH_START_PROOF_BIN" \
@@ -504,14 +504,14 @@ then
         printf 'unsafe final-proof directory: %s\n' "$proof_dir" >&2
         exit 2
       }
-      python3 "$durable_publication" discard-private "$final_start_proof_pending"
-      python3 "$durable_publication" discard-private "$final_concurrency_receipt_pending"
+      bun "$durable_publication" discard-private "$final_start_proof_pending"
+      bun "$durable_publication" discard-private "$final_concurrency_receipt_pending"
       cleanup_final_proof_stage() {
         status=$?
         trap - EXIT
-        python3 "$durable_publication" discard-private \
+        bun "$durable_publication" discard-private \
           "$final_start_proof_pending" || status=2
-        python3 "$durable_publication" discard-private \
+        bun "$durable_publication" discard-private \
           "$final_concurrency_receipt_pending" || status=2
         exit "$status"
       }
@@ -521,18 +521,18 @@ then
 
       validate_final_proof_generation() {
         "$FRESH_START_PROOF_BIN" "$WASIX_INSTALL_DIR/bin/postgres" \
-          | python3 "$durable_publication" write-stdin \
+          | bun "$durable_publication" write-stdin \
             "$final_start_proof_pending"
         [ -s "$final_start_proof_pending" ] && \
           [ ! -L "$final_start_proof_pending" ] || {
           printf 'deterministic-start analyzer did not produce a regular proof\n' >&2
           return 2
         }
-        python3 "$durable_publication" require-equal \
+        bun "$durable_publication" require-equal \
           "$final_start_proof_pending" "$final_start_proof"
-        python3 "$durable_publication" discard-private "$final_start_proof_pending"
-        python3 \
-          "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.py" \
+        bun "$durable_publication" discard-private "$final_start_proof_pending"
+        bun \
+          "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
           --expected-total "$expected_final_atomic_fence_total" \
           --latch-state-contract packed-atomic-v1 \
           --verified-receipt "$final_concurrency_receipt" \
@@ -558,7 +558,7 @@ then
       else
         final_start_proof_identity="$(
           "$FRESH_START_PROOF_BIN" "$WASIX_INSTALL_DIR/bin/postgres" |
-            python3 "$durable_publication" write-stdin-identified \
+            bun "$durable_publication" write-stdin-identified \
               "$final_start_proof_pending"
         )"
         IFS=$'\t' read -r final_start_proof_dev final_start_proof_ino \
@@ -575,42 +575,35 @@ then
               "$final_start_proof" >&2
             exit 2
           }
-          python3 "$durable_publication" require-equal \
+          bun "$durable_publication" require-equal \
             "$final_start_proof_pending" "$final_start_proof"
-          python3 "$durable_publication" discard-private "$final_start_proof_pending"
+          bun "$durable_publication" discard-private "$final_start_proof_pending"
         else
-          python3 "$durable_publication" publish-identified \
+          bun "$durable_publication" publish-identified \
             "$final_start_proof_pending" "$final_start_proof" \
             "$final_start_proof_dev" "$final_start_proof_ino" \
             "$final_start_proof_size" "$final_start_proof_sha"
         fi
 
-        "$docker_bin" run --rm \
-          --user "$(id -u):$(id -g)" \
-          -v "$REPO_ROOT:/work" \
-          -w /work \
-          "$docker_image_id" \
-          python3 \
-          /work/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-concurrency-contract.py \
+        bash "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
+          "$WASIX_INSTALL_DIR/bin/postgres" \
           --expected-total "$expected_final_atomic_fence_total" \
           --latch-state-contract packed-atomic-v1 \
-          --wasm-dis /opt/wasixcc-home/.wasixcc/binaryen/bin/wasm-dis \
-          --receipt "$docker_install_dir/share/postgresql/$(basename "$final_concurrency_receipt_pending")" \
-          "$docker_install_dir/bin/postgres"
+          --receipt "$final_concurrency_receipt_pending"
         [ -f "$final_concurrency_receipt_pending" ] && \
           [ ! -L "$final_concurrency_receipt_pending" ] || {
           printf 'concurrency analyzer did not produce a regular receipt\n' >&2
           exit 2
           }
         final_concurrency_identity="$(
-          python3 "$durable_publication" identify-source \
+          bun "$durable_publication" identify-source \
             "$final_concurrency_receipt_pending"
         )"
         IFS=$'\t' read -r final_concurrency_dev final_concurrency_ino \
           final_concurrency_size final_concurrency_sha \
           <<<"$final_concurrency_identity"
-        python3 \
-          "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.py" \
+        bun \
+          "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
           --expected-total "$expected_final_atomic_fence_total" \
           --latch-state-contract packed-atomic-v1 \
           --verified-receipt "$final_concurrency_receipt_pending" \
@@ -619,7 +612,7 @@ then
         # This receipt is the admission record for the pair and is therefore
         # published last, without replacement, only after the start proof is
         # durable at its public name.
-        python3 "$durable_publication" publish-identified \
+        bun "$durable_publication" publish-identified \
           "$final_concurrency_receipt_pending" "$final_concurrency_receipt" \
           "$final_concurrency_dev" "$final_concurrency_ino" \
           "$final_concurrency_size" "$final_concurrency_sha"
@@ -660,7 +653,7 @@ if [ "$status" -eq 0 ]; then
       }
     fi
     concurrency_contract_output="$(
-      python3 "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.py" \
+      bun "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
         "${concurrency_args[@]}" "$WASIX_INSTALL_DIR/bin/postgres"
     )" || exit
     atomic_fence_total="$(
@@ -677,18 +670,6 @@ if [ "$status" -eq 0 ]; then
       echo 'missing regular linear-memory install receipt' >&2
       exit 125
     }
-    python3 - "$linear_memory_install_receipt" "$linear_memory_profile_id" <<'PY'
-import json
-import sys
-
-path, expected_profile = sys.argv[1:]
-with open(path, encoding="utf-8") as stream:
-    receipt = json.load(stream)
-if receipt.get("schema") != "oliphaunt.wasix-postmaster.linear-memory-install.v1":
-    raise SystemExit("linear-memory install receipt schema differs")
-if receipt.get("profile-id") != expected_profile:
-    raise SystemExit("linear-memory install receipt profile differs")
-PY
     linear_memory_install_receipt_sha256="$(
       fresh_wasmer_bin_hash "$linear_memory_install_receipt"
     )" || exit
@@ -698,7 +679,7 @@ PY
     }
     require_build_inputs_unchanged 'before guest receipt publication' || exit
     installed_closure_sha256="$(
-      python3 "$FRESH_ROOT/lib/guest_build_provenance.py" \
+      bun "$FRESH_ROOT/lib/guest-build-provenance.mts" \
         seal-identity "$WASIX_INSTALL_DIR"
     )" || exit
     fresh_is_sha256 "$installed_closure_sha256" || {
@@ -712,7 +693,7 @@ PY
         exit 2
         ;;
     esac
-    python3 "$durable_publication" discard-private "$guest_build_receipt_pending"
+    bun "$durable_publication" discard-private "$guest_build_receipt_pending"
     guest_build_receipt_identity="$({
       printf 'schema=oliphaunt.wasix-postmaster.guest-build.v5\n'
       printf 'core_profile=%s\n' "$WASIX_CORE_PROFILE"
@@ -738,7 +719,7 @@ PY
       printf 'postgres_tag=%s\n' "$POSTGRES_TAG"
       printf 'postgres_version=%s\n' "$POSTGRES_VERSION"
       printf 'sysroot_variant=%s\n' "$WASIXCC_SYSROOT_VARIANT"
-    } | python3 "$durable_publication" write-stdin-identified \
+    } | bun "$durable_publication" write-stdin-identified \
       "$guest_build_receipt_pending")"
     IFS=$'\t' read -r guest_build_receipt_dev guest_build_receipt_ino \
       guest_build_receipt_size guest_build_receipt_sha \
@@ -750,15 +731,15 @@ PY
           "$guest_build_receipt" >&2
         exit 125
       }
-      python3 "$durable_publication" require-equal \
+      bun "$durable_publication" require-equal \
         "$guest_build_receipt_pending" "$guest_build_receipt" || exit 125
-      python3 "$durable_publication" discard-private \
+      bun "$durable_publication" discard-private \
         "$guest_build_receipt_pending" || exit 125
     else
       # The guest receipt admits the complete installed closure.  It is
       # synchronized and published without replacement only after every
       # predecessor proof above has been replayed against that closure.
-      python3 "$durable_publication" publish-identified \
+      bun "$durable_publication" publish-identified \
         "$guest_build_receipt_pending" "$guest_build_receipt" \
         "$guest_build_receipt_dev" "$guest_build_receipt_ino" \
         "$guest_build_receipt_size" "$guest_build_receipt_sha" || exit 125

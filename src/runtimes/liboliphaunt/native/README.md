@@ -37,16 +37,8 @@ PostgreSQL internals.
   units; not part of the public ABI.
 - `patches/postgresql-18.4/`: minimal PostgreSQL patch stack.
 - `postgres18/source.toml`: pinned PostgreSQL source manifest.
-- `postgres18/external-extensions.toml`: pinned external PG18 extension
-  candidate manifest for pgrx-backed extensions such as pgGraph and ParadeDB
-  `pg_search`.
 - `bin/build-postgres18-macos.sh`: macOS build harness.
-- `bin/check-external-extension-pins.sh`: no-network source-pin checker for
-  external extension candidates.
-- `bin/build-external-pgrx-extensions-macos.sh`: opt-in pgrx artifact harness
-  for SDK-known external extension candidates, producing both normal server modules and
-  liboliphaunt-linked embedded modules.
-- `tools/run-host-c-smoke.mjs --abi-only`: consumer-style C ABI check that
+- `tools/run-host-c-smoke.sh --abi-only`: consumer-style C ABI check that
   includes only `oliphaunt.h`, links the public dylib, and verifies stable
   constants, structs, exported symbols, and safe global calls.
 - `bin/smoke-host-happy-path.sh`: host C ABI smoke harness for macOS, Linux,
@@ -66,49 +58,7 @@ extension artifacts by default. Set `OLIPHAUNT_BUILD_EXTENSIONS=1` only when
 refreshing or validating exact extension artifacts; the
 `extension-artifacts-native:build-target` sets that flag when building extension artifacts.
 
-External pgrx extensions are not folded into the first-party extension build by
-default. Their source pins live in
-`src/runtimes/liboliphaunt/native/postgres18/external-extensions.toml`; the native validation wrapper
-runs `src/runtimes/liboliphaunt/native/bin/check-external-extension-pins.sh` without network access and
-verifies any local checkout that exists under `target/oliphaunt-sources/checkouts`. Use
-`src/runtimes/liboliphaunt/native/bin/check-external-extension-pins.sh --online` when intentionally
-refreshing the pins against upstream refs.
-
-Build the opt-in pgrx artifacts with:
-
-```sh
-src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh --fetch
-src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh
-```
-
-`--fetch` never changes a durable checkout in place. It fetches only the exact
-manifest commit over credential-free HTTPS into a unique sibling stage, with a
-wall-clock deadline, low-speed cutoff, shallow/no-submodule transport, and
-per-extension source-size bound. A small bounded retry budget uses linear
-backoff and a newly initialized stage for every attempt; retries always request
-the immutable commit, never its mutable provenance ref. Git object integrity,
-the detached `HEAD`, and the clean worktree are verified before a
-same-filesystem rename. A failed or interrupted promotion restores the prior
-clean checkout. Any tracked, staged, or untracked local state makes fetch fail
-without network access or mutation; `OLIPHAUNT_EXTERNAL_PGRX_ALLOW_DIRTY=1`
-permits local build experiments but does not authorize source replacement.
-
-The harness requires the manifest-pinned `cargo-pgrx` version and automatically
-uses `target/liboliphaunt-tools/bin/cargo-pgrx` when it exists. It packages each
-selected extension once for the normal PostgreSQL server module path and once
-with linker flags that bind PostgreSQL symbols to `@rpath/liboliphaunt.dylib` for
-direct/broker embedded loading. Use
-`OLIPHAUNT_EXTERNAL_PGRX_EXTENSIONS=pggraph` or
-`OLIPHAUNT_EXTERNAL_PGRX_EXTENSIONS=paradedb-pg-search` to restrict the build.
-The ParadeDB lane is intentionally disk-guarded because `pg_search` pulls a
-large DataFusion/Tantivy release build; free target space first, or set
-`OLIPHAUNT_EXTERNAL_PGRX_SKIP_DISK_PREFLIGHT=1` only for local experiments.
-Run `src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh --check-current`
-for the no-build freshness gate.
-The build-input digest excludes harness prose and other non-build text.
-When only the digest schema changes, use `--refresh-current-stamps` to
-validate the existing normal/embedded payloads and restamp them without running
-the expensive pgrx packaging step.
+Released extensions use the catalog and recipes under `src/extensions`.
 
 `OLIPHAUNT_STARTUP_TIMEOUT_MS` bounds only initial backend startup readiness.
 Normal `oliphaunt_exec_protocol`, `oliphaunt_exec_simple_query`, and streaming
@@ -139,7 +89,7 @@ GUC overrides above the stable C boundary without inventing tuning profiles.
 
 SDKs must hydrate PGDATA from a packaged cluster seed before calling
 `oliphaunt_init`; the C boundary never runs `initdb` or initializes an empty
-root. `tools/run-host-c-smoke.mjs` performs that preparation explicitly before
+root. `tools/run-host-c-smoke.sh` performs that preparation explicitly before
 running the C consumer and includes a fast iOS simulator syntax
 check over the liboliphaunt C shim files. `bin/check-postgres18-ios-simulator.sh`
 then validates the upstream PostgreSQL patch touchpoints that matter for the

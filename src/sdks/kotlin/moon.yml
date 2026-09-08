@@ -41,7 +41,7 @@ tasks:
   check:
     tags: ["quality", "static", "requires-android-sdk"]
     env:
-      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../target/moon/oliphaunt-kotlin/check"
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../target"
     command: >-
       ./gradlew
       :oliphaunt:spotlessCheck
@@ -64,7 +64,7 @@ tasks:
   unit:
     tags: ["quality", "unit", "requires-android-sdk"]
     env:
-      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../target/moon/oliphaunt-kotlin/unit"
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../target"
     script: |
       set -e
       sh tools/test-cpp-bridge.sh
@@ -114,3 +114,83 @@ tasks:
     inputs: []
     options:
       cache: true
+
+  coverage:
+    tags: ["coverage", "requires-android-sdk"]
+    command: "./gradlew :oliphaunt:koverXmlReport --configuration-cache"
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../target/coverage/oliphaunt-kotlin"
+    inputs:
+      - "@group(code)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    outputs: ["/target/coverage/oliphaunt-kotlin/**/*"]
+    options:
+      cache: false
+      runInCI: false
+
+  release-package:
+    tags: ["release", "artifact-package", "ci-kotlin-sdk-package"]
+    script: |
+      set -eu
+      bash tools/dev/bun.sh src/sdks/kotlin/tools/stage-release-artifacts.mts
+      bash tools/dev/bun.sh src/sdks/kotlin/tools/check-package.mts
+    deps:
+      - "oliphaunt-kotlin:package"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/src/sdks/kotlin/tools/check-package.mts"
+      - "/src/sdks/kotlin/tools/stage-release-artifacts.mts"
+      - "/src/shared/artifact-packaging/staging.mts"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+
+  maven-staging:
+    tags: ["release", "artifact-package", "ci-kotlin-maven-staging"]
+    command: "tools/dev/bun.sh src/sdks/kotlin/tools/kotlin-maven-staging.mts"
+    deps:
+      - "oliphaunt-kotlin:release-package"
+    inputs:
+      - "/src/sdks/kotlin/gradle.properties"
+      - "/src/sdks/kotlin/tools/kotlin-maven-staging.mts"
+      - "/src/shared/artifact-packaging/maven-central-contract.mts"
+      - "/target/sdk-artifacts/oliphaunt-kotlin/maven/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  packaging-unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -eu
+      for test_file in src/sdks/kotlin/tools/maven-artifact-staging.test.mts src/sdks/kotlin/tools/kotlin-maven-staging.test.mts; do
+        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
+      done
+    inputs:
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "/tools/test/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/shared/artifact-packaging/*.{mts,sh}"
+      - "/src/shared/product-metadata/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  docs-api:
+    tags: ["docs"]
+    script: "cd src/sdks/kotlin && ./gradlew --no-daemon :oliphaunt:dokkaGeneratePublicationHtml"
+    inputs: ["**/*", "/src/shared/rust-query-core/src/**/*", "/src/shared/js-core/src/**/*", "@group(cargo-workspace)"]
+    outputs: ["/target/docs/generated/api/kotlin/html/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+      runInCI: false

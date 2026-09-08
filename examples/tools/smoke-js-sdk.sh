@@ -18,4 +18,4 @@ export OLIPHAUNT_NODE_ADDON="${OLIPHAUNT_NODE_ADDON:-$root/target/oliphaunt-arti
 test -x "$OLIPHAUNT_BROKER"
 test -f "$OLIPHAUNT_NODE_ADDON"
 pnpm --dir src/sdks/js exec tsx src/__tests__/native-smoke.ts
-deno run --allow-all src/sdks/js/src/__tests__/deno-native-smoke.mjs
+deno run --allow-all src/sdks/js/src/__tests__/deno-native-smoke.mts

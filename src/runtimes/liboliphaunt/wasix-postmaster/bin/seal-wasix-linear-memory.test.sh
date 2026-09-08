@@ -26,81 +26,14 @@ make_fixture() {
     "$root/install/bin" \
     "$root/install/lib/postgresql" \
     "$root/install/share/postgresql"
-  python3 - "$root" <<'PY'
-import os
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-module = bytes.fromhex(
-    "0061736d01000000"
-    "0212"
-    "01"
-    "03656e76"
-    "066d656d6f7279"
-    "02"
-    "03"
-    "01"
-    "808004"
-)
-for relative in (
-    "bin/initdb",
-    "bin/postgres",
-    "lib/libpq.so.5.18",
-    "lib/postgresql/dict_snowball.so",
-    "lib/postgresql/plpgsql.so",
-):
-    path = root / "install" / relative
-    path.write_bytes(module)
-    os.chmod(path, 0o755)
-PY
-  python3 "$project_root/testdata/make-sealed-export-fixture.py" \
+  for relative in bin/initdb bin/postgres lib/libpq.so.5.18 lib/postgresql/dict_snowball.so lib/postgresql/plpgsql.so; do
+    printf '\x00\x61\x73\x6d\x01\x00\x00\x00\x02\x12\x01\x03\x65\x6e\x76\x06\x6d\x65\x6d\x6f\x72\x79\x02\x03\x01\x80\x80\x04' >"$root/install/$relative"
+    chmod 0755 "$root/install/$relative"
+  done
+  bun "$project_root/testdata/make-sealed-export-fixture.mts" \
     --install-root "$root/install" \
     --project-root "$project_root"
-  memory_hash="$(sha256sum "$memory_tool" | awk '{print $1}')"
-  python3 - "$receipt" "$memory_hash" <<'PY'
-import sys
-
-path, memory_hash = sys.argv[1:]
-fields = [
-    ("schema", "oliphaunt.wasix-postmaster.postmaster-executor-build.v3"),
-    ("build_recipe_sha256", "1" * 64),
-    ("wasmer_build_receipt_sha256", "2" * 64),
-    ("wasmer_source_commit", "3" * 40),
-    ("wasmer_patch_sha256", "4" * 64),
-    ("wasmer_prepared_signature_sha256", "5" * 64),
-    ("wasmer_cargo_lock_sha256", "6" * 64),
-    ("runtime_abi_id", "7" * 64),
-    ("artifact_abi_version", "21"),
-    ("executor_package", "oliphaunt-wasix-postmaster-executor"),
-    ("executor_binary", "oliphaunt-wasix-postmaster-executor"),
-    ("executor_features", "product-executor"),
-    ("executor_role", "postmaster-product"),
-    ("runtime_policy_id", "fixture"),
-    ("cli_contract", "fixture"),
-    ("executor_binary_sha256", "8" * 64),
-    ("start_proof_binary", "oliphaunt-wasix-start-proof"),
-    ("start_proof_features", "start-proof-tool"),
-    ("start_proof_policy", "fixture"),
-    ("start_proof_binary_sha256", "9" * 64),
-    ("memory_profile_binary", "oliphaunt-wasix-memory-profile"),
-    ("memory_profile_features", "memory-profile-tool"),
-    ("linear_memory_profile_id", "oliphaunt.wasix-postmaster.linear-memory.wasm32-max256m-u64-static4g-guard2g.v1"),
-    ("memory_profile_binary_sha256", memory_hash),
-    ("postmaster_compiler_binary", "oliphaunt-wasix-postmaster-compiler"),
-    ("postmaster_compiler_features", "product-compiler"),
-    ("compiler_cpu_policy", "generic-baseline"),
-    ("compiler_cpu_features", "none"),
-    ("postmaster_compiler_binary_sha256", "a" * 64),
-    ("host_platform", "fixture"),
-    ("host_abi", "fixture"),
-    ("rustc_host", "fixture"),
-    ("rustc_version", "fixture"),
-]
-with open(path, "x", encoding="utf-8", newline="\n") as stream:
-    for key, value in fields:
-        stream.write(f"{key}={value}\n")
-PY
+  cp "$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT" "$receipt"
   printf '%s\n' "$root"
 }
 
@@ -118,25 +51,12 @@ invoke() {
 
 success_root="$(make_fixture success)"
 invoke "$success_root"
-python3 - "$success_root/install" "$memory_tool" <<'PY'
-import json
-import subprocess
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-tool = sys.argv[2]
-receipt = json.loads(
-    (root / "share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json").read_text()
-)
-assert receipt["module-count"] == 29
-assert [record["path"] for record in receipt["modules"]] == sorted(
-    record["path"] for record in receipt["modules"]
-)
-for record in receipt["modules"]:
-    assert record["source-module-sha256"] != record["module-sha256"]
-    subprocess.run([tool, "verify", root / record["path"]], check=True, stdout=subprocess.DEVNULL)
-PY
+module_paths="$(bun "$project_root/lib/linear-memory-profile.mts" modules "$success_root/install/share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json")"
+[ "$(printf '%s\n' "$module_paths" | wc -l | tr -d '[:space:]')" = 29 ]
+printf '%s\n' "$module_paths" | LC_ALL=C sort -c
+while IFS= read -r relative; do
+  "$memory_tool" verify "$success_root/install/$relative" >/dev/null
+done <<<"$module_paths"
 receipt_before="$(sha256sum "$success_root/install/share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json" | awk '{print $1}')"
 invoke "$success_root" >/dev/null
 receipt_after="$(sha256sum "$success_root/install/share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json" | awk '{print $1}')"
@@ -155,7 +75,7 @@ flock -u "$held_lock_fd"
 exec {held_lock_fd}>&-
 
 stale_root="$(make_fixture stale-staging)"
-python3 "$project_root/lib/linear_memory_transaction.py" init \
+bun "$project_root/lib/linear-memory-transaction.mts" init \
   --install-root "$stale_root/install" \
   --stage "$stale_root/install/.oliphaunt-linear-memory.pending"
 invoke "$stale_root" >/dev/null

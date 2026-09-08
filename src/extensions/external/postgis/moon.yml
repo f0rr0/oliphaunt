@@ -17,3 +17,14 @@ project:
   release:
     component: "oliphaunt-extension-postgis"
     packagePath: "src/extensions/external/postgis"
+
+tasks:
+  unit:
+    tags: ["quality", "unit"]
+    command: "bun test src/extensions/external/postgis/tools/preprocess-sql.test.mts"
+    inputs:
+      - "tools/preprocess-sql.mts"
+      - "tools/preprocess-sql.test.mts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

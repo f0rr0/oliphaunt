@@ -36,146 +36,27 @@ oliphaunt_dev_normalize_mobile_extensions() {
   local raw="$1"
   local platform="$2"
   case "$platform" in
-    Android*|iOS*) ;;
+    Android* | iOS*) ;;
     *) fail "unsupported mobile extension platform: $platform" ;;
   esac
 
   [ -n "$(printf '%s' "$raw" | tr -d '[:space:],')" ] || return 0
-  node - "$(oliphaunt_dev_sdk_extension_json)" "$raw" "$platform" <<'NODE'
-const fs = require('node:fs');
-const [metadataPath, requestedRaw, platformLabel] = process.argv.slice(2);
-const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-const bySqlName = new Map();
-for (const row of metadata.extensions ?? []) {
-  if (typeof row['sql-name'] === 'string') {
-    bySqlName.set(row['sql-name'], row);
-  }
-}
-
-const supported = [...bySqlName.values()]
-  .map((row) => row['sql-name'])
-  .sort();
-const ordered = [];
-const seen = new Set();
-function visit(sqlName) {
-  if (seen.has(sqlName)) {
-    return;
-  }
-  const row = bySqlName.get(sqlName);
-  if (!row) {
-    throw new Error(
-      `unsupported mobile extension for ${platformLabel} Expo smoke: ${sqlName} `
-      + `(supported: ${supported.join(',')})`,
-    );
-  }
-  seen.add(sqlName);
-  const dependencies = row['selected-extension-dependencies'] ?? [];
-  if (!Array.isArray(dependencies) || dependencies.some((dependency) => typeof dependency !== 'string')) {
-    throw new Error(`extension ${sqlName} has invalid selected-extension-dependencies metadata`);
-  }
-  for (const dependency of dependencies) {
-    visit(dependency);
-  }
-  ordered.push(sqlName);
-}
-for (const sqlName of requestedRaw.split(',').map((value) => value.trim()).filter(Boolean)) {
-  visit(sqlName);
-}
-process.stdout.write(ordered.join(','));
-NODE
+  node "$root/src/sdks/react-native/tools/mobile-extension-runtime.mts" normalize "$(oliphaunt_dev_sdk_extension_json)" "$raw" "$platform"
 }
 
 oliphaunt_dev_mobile_createable_extensions_for_selection() {
   local selected_extensions="$1"
   [ -n "$(printf '%s' "$selected_extensions" | tr -d '[:space:],')" ] || return 0
-  node - "$(oliphaunt_dev_sdk_extension_json)" "$selected_extensions" <<'NODE'
-const fs = require('node:fs');
-const [metadataPath, selectedRaw] = process.argv.slice(2);
-const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-const bySqlName = new Map(
-  (metadata.extensions ?? [])
-    .filter((row) => typeof row['sql-name'] === 'string')
-    .map((row) => [row['sql-name'], row]),
-);
-const selected = [...new Set(
-  selectedRaw.split(',').map((value) => value.trim()).filter(Boolean),
-)].sort();
-const createable = [];
-for (const sqlName of selected) {
-  const row = bySqlName.get(sqlName);
-  if (row === undefined) {
-    throw new Error(`selected mobile extension is missing from generated metadata: ${sqlName}`);
-  }
-  if (row['creates-extension'] === true) {
-    createable.push(sqlName);
-  }
-}
-process.stdout.write(createable.join(','));
-NODE
+  node "$root/src/sdks/react-native/tools/mobile-extension-runtime.mts" createable "$(oliphaunt_dev_sdk_extension_json)" "$selected_extensions"
 }
 
 oliphaunt_dev_mobile_static_extensions_for_selection() {
   local selected_extensions="$1"
   [ -n "$(printf '%s' "$selected_extensions" | tr -d '[:space:],')" ] || return 0
-  node - \
+  node "$root/src/sdks/react-native/tools/mobile-extension-runtime.mts" static \
     "$(oliphaunt_dev_sdk_extension_json)" \
     "$(oliphaunt_mobile_static_specs_tsv)" \
-    "$selected_extensions" <<'NODE'
-const fs = require('node:fs');
-const [metadataPath, staticSpecsPath, selectedRaw] = process.argv.slice(2);
-const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-const bySqlName = new Map(
-  (metadata.extensions ?? [])
-    .filter((row) => typeof row['sql-name'] === 'string')
-    .map((row) => [row['sql-name'], row]),
-);
-const specLines = fs.readFileSync(staticSpecsPath, 'utf8')
-  .split(/\r?\n/u)
-  .filter((line) => line.length > 0 && !line.startsWith('#'));
-const header = specLines.shift()?.split('\t') ?? [];
-const sqlNameIndex = header.indexOf('sql-name');
-const moduleStemIndex = header.indexOf('native-module-stem');
-if (sqlNameIndex === -1 || moduleStemIndex === -1) {
-  throw new Error('generated mobile static extension specs are missing identity columns');
-}
-const staticSpecs = new Map();
-for (const line of specLines) {
-  const fields = line.split('\t');
-  staticSpecs.set(fields[sqlNameIndex], fields[moduleStemIndex]);
-}
-const selectedStatic = [];
-const seen = new Set();
-for (const sqlName of selectedRaw.split(',').map((value) => value.trim()).filter(Boolean)) {
-  if (seen.has(sqlName)) continue;
-  seen.add(sqlName);
-  const row = bySqlName.get(sqlName);
-  if (!row) {
-    throw new Error(`selected mobile extension ${sqlName} is absent from generated React Native metadata`);
-  }
-  const metadataStem = row['native-module-stem'];
-  const staticStem = staticSpecs.get(sqlName);
-  if (metadataStem === null) {
-    if (staticStem !== undefined) {
-      throw new Error(`SQL-only mobile extension ${sqlName} must not have a native static-module spec`);
-    }
-    continue;
-  }
-  if (typeof metadataStem !== 'string' || metadataStem.length === 0) {
-    throw new Error(`selected mobile extension ${sqlName} has invalid native-module-stem metadata`);
-  }
-  if (staticStem === undefined) {
-    throw new Error(`selected native mobile extension is missing a static-module spec: ${sqlName}`);
-  }
-  if (staticStem !== metadataStem) {
-    throw new Error(
-      `selected mobile extension ${sqlName} static-module stem mismatch: `
-      + `metadata=${metadataStem}, static-spec=${staticStem}`,
-    );
-  }
-  selectedStatic.push(sqlName);
-}
-process.stdout.write(selectedStatic.join(','));
-NODE
+    "$selected_extensions"
 }
 
 oliphaunt_dev_mobile_module_stems_for_selection() {
@@ -227,7 +108,7 @@ oliphaunt_dev_prebuilt_extension_asset_paths_for_selection() {
     return 1
   fi
 
-  "$root/tools/dev/bun.sh" "$root/src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs" \
+  "$root/tools/dev/bun.sh" "$root/src/sdks/react-native/tools/mobile-extension-artifact-paths.mts" \
     --root "$root" \
     --artifact-root "$artifact_root" \
     --materialize-root "$materialize_root" \
@@ -259,7 +140,7 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   local icu_data_dir="${7:-}"
 
   case "$icu_enabled" in
-    0|1) ;;
+    0 | 1) ;;
     *) fail "prebuilt mobile runtime ICU selection must be 0 or 1" ;;
   esac
   [ -n "$selected_extensions" ] || [ "$icu_enabled" = "1" ] || return 1
@@ -373,7 +254,7 @@ oliphaunt_dev_unpack_ios_extension_frameworks_for_selection() {
   while IFS= read -r archive; do
     [ -n "$archive" ] || continue
     index=$((index + 1))
-    if ! node "$root/src/sdks/swift/tools/extract-verified-zip.mjs" \
+    if ! node "$root/src/sdks/swift/tools/extract-verified-zip.mts" \
       --archive "$archive" \
       --destination "$extraction_root/$index"; then
       rm -rf "$extraction_root"
@@ -504,32 +385,7 @@ oliphaunt_dev_runtime_extension_files() {
 oliphaunt_dev_mobile_registry_data_files() {
   local mode="$1"
   local selected_extensions="${2:-}"
-  node - "$(oliphaunt_dev_mobile_registry_json)" "$mode" "$selected_extensions" <<'NODE'
-const fs = require('node:fs');
-const [registryPath, mode, selectedRaw] = process.argv.slice(2);
-const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-const selected = new Set(
-  selectedRaw
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean),
-);
-const files = new Set();
-for (const module of registry.modules ?? []) {
-  const sqlName = module['sql-name'];
-  if (mode === 'selected' && !selected.has(sqlName)) {
-    continue;
-  }
-  for (const file of module['data-files'] ?? []) {
-    if (typeof file === 'string' && file.length > 0) {
-      files.add(file);
-    }
-  }
-}
-for (const file of [...files].sort()) {
-  console.log(file);
-}
-NODE
+  node "$root/src/sdks/react-native/tools/mobile-extension-runtime.mts" data-files "$(oliphaunt_dev_mobile_registry_json)" "$mode" "$selected_extensions"
 }
 
 oliphaunt_dev_hash_mobile_runtime_extension_assets() {
@@ -566,7 +422,7 @@ oliphaunt_dev_copy_mobile_runtime_extension_assets() {
       [ -n "$file" ] || continue
       file_name="$(basename "$file")"
       case "$file_name" in
-        "$extension.control"|"$extension.control.in")
+        "$extension.control" | "$extension.control.in")
           default_version="$(oliphaunt_dev_extension_default_version "$file" || true)"
           [ "$file_name" = "$extension.control.in" ] && file_name="$extension.control"
           ;;
@@ -649,7 +505,7 @@ oliphaunt_dev_assert_runtime_extension_tree() {
   local runtime_dest="$1"
   local selected_extensions="$2"
   local platform="$3"
-  node "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs" \
+  node "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mts" \
     --metadata "$(oliphaunt_dev_sdk_extension_json)" \
     --registry "$(oliphaunt_dev_mobile_registry_json)" \
     --selected "$selected_extensions" \
@@ -663,13 +519,12 @@ oliphaunt_dev_assert_runtime_file_list() {
   local file_list
   file_list="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-runtime-file-list.XXXXXX")"
   cat >"$file_list"
-  if ! node "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs" \
+  if ! node "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mts" \
     --metadata "$(oliphaunt_dev_sdk_extension_json)" \
     --registry "$(oliphaunt_dev_mobile_registry_json)" \
     --selected "$selected_extensions" \
     --platform "$platform" \
-    --file-list "$file_list"
-  then
+    --file-list "$file_list"; then
     rm -f "$file_list"
     return 1
   fi

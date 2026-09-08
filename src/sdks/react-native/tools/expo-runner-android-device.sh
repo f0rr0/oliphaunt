@@ -6,7 +6,7 @@ should_use_maestro_e2e() {
   [ "$runner" = "smoke" ] || return 1
   case "$e2e_assertion_runner" in
     maestro)
-      maestro_binary >/dev/null || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
+      maestro_binary >/dev/null || fail "missing required command: maestro; run src/shared/mobile-tools/setup-maestro.sh"
       return 0
       ;;
     auto)
@@ -25,7 +25,7 @@ run_maestro_installed_smoke() {
   local reports_dir="$scratch_root/reports"
   [ -f "$maestro_flow" ] || fail "missing Maestro installed-app smoke flow: $maestro_flow"
   local maestro
-  maestro="$(maestro_binary)" || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
+  maestro="$(maestro_binary)" || fail "missing required command: maestro; run src/shared/mobile-tools/setup-maestro.sh"
   mkdir -p "$reports_dir"
   echo "==> $maestro --device $device_id test $maestro_flow"
   MAESTRO_CLI_NO_ANALYTICS=true \

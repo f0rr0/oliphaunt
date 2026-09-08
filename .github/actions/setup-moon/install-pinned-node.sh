@@ -15,7 +15,7 @@ fi
 action_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 manifest="${OLIPHAUNT_NODE_RUNTIME_MANIFEST:-$root/src/sources/toolchains/node-runtime.toml}"
 proto_file="${OLIPHAUNT_NODE_RUNTIME_PROTO_FILE:-$root/.prototools}"
-extractor="${OLIPHAUNT_NODE_RUNTIME_ARCHIVE_EXTRACTOR:-$action_dir/toolchain-archive.py}"
+extractor="$action_dir/../../../tools/dev/extract-pinned-binary.sh"
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_NODE_RUNTIME_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-node-runtime}"
 
@@ -34,14 +34,6 @@ done
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
 
-python=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    python="$candidate"
-    break
-  fi
-done
-[ -n "$python" ] || fail "python3 or python is required for safe archive extraction"
 
 manifest_value() {
   local section="$1"
@@ -96,17 +88,7 @@ sha256_file() {
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
   else
-    "$python" - "$1" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-digest = hashlib.sha256()
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum or shasum is required"
   fi
 }
 
@@ -267,15 +249,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 mkdir -p "$stage/bin"
-"$python" "$extractor" extract-file \
-  --archive "$archive" \
-  --format "$archive_format" \
-  --expected-bytes "$archive_bytes" \
-  --member "$binary_path" \
-  --member-bytes "$binary_bytes" \
-  --member-sha256 "$binary_sha256" \
-  --destination "$stage/bin/$binary_name" \
-  --executable
+bash "$extractor" "$archive_format" "$archive" "$binary_path" "$stage/bin/$binary_name" "$binary_sha256" "$binary_bytes"
 chmod 0555 "$stage/bin/$binary_name"
 printf '%s\n' "$receipt_text" >"$stage/receipt"
 chmod 0444 "$stage/receipt"

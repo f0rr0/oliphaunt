@@ -447,6 +447,7 @@ mod extension_tests {
             run_direct_smoke(&mut db, extension)?;
             db.close()
                 .with_context(|| format!("close temporary database with extension {name}"))?;
+            record_mode(extension, "direct")?;
         }
 
         let root = tempfile::TempDir::new()
@@ -474,8 +475,11 @@ mod extension_tests {
                     format!("reopen persistent database with extension {name} after restart")
                 })?;
             assert_extension_catalog_state(&mut db, extension)?;
+            verify_persisted_fixture(&mut db, extension)?;
+            verify_backup_restore(&mut db, extension)?;
             db.close()
                 .with_context(|| format!("close restarted database with extension {name}"))?;
+            record_mode(extension, "restart")?;
         }
         Ok(())
     }
@@ -513,6 +517,7 @@ mod extension_tests {
             .close()
             .await
             .with_context(|| format!("shutdown server with extension {name}"))?;
+        record_mode(extension, "server")?;
         Ok(())
     }
 
@@ -549,14 +554,18 @@ mod extension_tests {
             assert_only_resolved_extension_libraries_are_materialized(runtime_root, extension)?;
             db.close()
                 .with_context(|| format!("close lifecycle database with extension {name}"))?;
+            record_mode(extension, "materialization")?;
         }
         Ok(())
     }
 
     fn run_direct_smoke(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
+        ensure!(
+            db.exec("SELECT 1 / 0").is_err(),
+            "SQL errors must fail direct smoke"
+        );
         for statement in extension_activation_sql_for_test(extension)? {
-            let request = crate::oliphaunt::query::simple_query(statement)?;
-            db.exec_protocol_raw(request).with_context(|| {
+            db.exec(statement).with_context(|| {
                 format!(
                     "explicit activation failed for extension {} while running:\n{}",
                     extension.sql_name(),
@@ -566,8 +575,7 @@ mod extension_tests {
         }
         let smoke_sql = extension_smoke_sql(extension.sql_name());
         for statement in extension_smoke_statements(&smoke_sql) {
-            let request = crate::oliphaunt::query::simple_query(statement)?;
-            db.exec_protocol_raw(request).with_context(|| {
+            db.exec(statement).with_context(|| {
                 format!(
                     "direct smoke failed for extension {} while running:\n{}",
                     extension.sql_name(),
@@ -576,6 +584,50 @@ mod extension_tests {
             })?;
         }
         Ok(())
+    }
+
+    fn record_mode(extension: Extension, mode: &str) -> Result<()> {
+        if let Some(root) = std::env::var_os("OLIPHAUNT_EXTENSION_EVIDENCE_DIR") {
+            std::fs::write(
+                Path::new(&root).join(format!("{}.{mode}", extension.sql_name())),
+                "passed\n",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn verify_persisted_fixture(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
+        let recipe = extension_smoke_sql(extension.sql_name());
+        if let Some((_, verification)) = recipe.split_once("-- oliphaunt-verify") {
+            for statement in extension_smoke_statements(verification) {
+                db.exec(statement).with_context(|| {
+                    format!("verify persisted state for {}", extension.sql_name())
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_backup_restore(source: &mut Oliphaunt, extension: Extension) -> Result<()> {
+        source.exec("CREATE TABLE oliphaunt_restore_probe(value text); INSERT INTO oliphaunt_restore_probe VALUES ('retained')")?;
+        let backup = source.backup()?;
+        let root = tempfile::TempDir::new()?;
+        let destination = root.path().join("restored");
+        Oliphaunt::restore(&destination, backup)?;
+        let mut restored = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(destination))
+            .extension(extension)
+            .open()?;
+        assert_extension_catalog_state(&mut restored, extension)?;
+        verify_persisted_fixture(&mut restored, extension)?;
+        ensure!(
+            restored
+                .query("SELECT value FROM oliphaunt_restore_probe")?
+                .get_text(0, "value")?
+                == Some("retained")
+        );
+        restored.close()?;
+        record_mode(extension, "backup-restore")
     }
 
     async fn run_server_smoke(conn: &mut PgConnection, extension: Extension) -> Result<()> {

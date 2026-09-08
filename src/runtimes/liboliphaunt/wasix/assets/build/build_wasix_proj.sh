@@ -13,7 +13,7 @@ SQLITE_PREFIX="${SQLITE_PREFIX:-$("$ROOT/build_wasix_sqlite.sh")}"
 JOBS="${JOBS:-4}"
 
 if [ ! -f "$PROJ_SOURCE_DIR/CMakeLists.txt" ]; then
-  echo "missing PROJ source checkout at $PROJ_SOURCE_DIR; run assets fetch/source-spine first" >&2
+  echo "missing PROJ source checkout at $PROJ_SOURCE_DIR; run bash src/sources/tools/fetch-sources.sh wasix-runtime --force first" >&2
   exit 1
 fi
 

@@ -354,7 +354,7 @@ fn run_direct_extension_child_install_backup(
     install_or_load_extension(&db, TestMode::Direct, extension)?;
     assert_repeated_create_extension_error_recovers(&db, TestMode::Direct, extension)?;
     assert_extension_visible(&db, TestMode::Direct, extension)?;
-    run_extension_functional_smoke(&db, TestMode::Direct, extension)?;
+    run_extension_functional_smoke(&db, TestMode::Direct, extension, false)?;
     assert_extension_root_artifacts(root, TestMode::Direct, extension);
     let archive = block_on(db.backup())?;
     fs::write(backup_path, &archive).expect("failed to write direct extension backup artifact");
@@ -370,7 +370,7 @@ fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path)
             .open(),
     )?);
     assert_extension_visible(&db, TestMode::Direct, extension)?;
-    run_extension_functional_smoke(&db, TestMode::Direct, extension)?;
+    run_extension_functional_smoke(&db, TestMode::Direct, extension, true)?;
     assert_extension_root_artifacts(root, TestMode::Direct, extension);
     block_on(db.close())
 }
@@ -403,7 +403,7 @@ fn run_extension_recovery_smoke(
     install_or_load_extension(&db, mode, extension)?;
     assert_repeated_create_extension_error_recovers(&db, mode, extension)?;
     assert_extension_visible(&db, mode, extension)?;
-    run_extension_functional_smoke(&db, mode, extension)?;
+    run_extension_functional_smoke(&db, mode, extension, false)?;
     assert_extension_root_artifacts(root, mode, extension);
     let archive = if mode == TestMode::Server {
         None
@@ -414,7 +414,7 @@ fn run_extension_recovery_smoke(
 
     let reopened = block_on(open_extension_database(mode, broker, extension, root))?;
     assert_extension_visible(&reopened, mode, extension)?;
-    run_extension_functional_smoke(&reopened, mode, extension)?;
+    run_extension_functional_smoke(&reopened, mode, extension, true)?;
     assert_extension_root_artifacts(root, mode, extension);
     block_on(reopened.close())?;
 
@@ -429,7 +429,7 @@ fn run_extension_recovery_smoke(
         restored_root,
     ))?;
     assert_extension_visible(&restored, mode, extension)?;
-    run_extension_functional_smoke(&restored, mode, extension)?;
+    run_extension_functional_smoke(&restored, mode, extension, true)?;
     assert_extension_root_artifacts(restored_root, mode, extension);
     block_on(restored.close())
 }
@@ -641,9 +641,17 @@ fn run_extension_functional_smoke(
     db: &TestDatabase,
     mode: TestMode,
     extension: Extension,
+    existing: bool,
 ) -> Result<()> {
     let recipe = extension_smoke_recipe(extension.sql_name());
-    for statement in extension_smoke_statements(&recipe) {
+    let sql = if existing {
+        recipe
+            .split_once("-- oliphaunt-verify")
+            .map_or(recipe.as_str(), |(_, sql)| sql)
+    } else {
+        &recipe
+    };
+    for statement in extension_smoke_statements(sql) {
         exec_extension_sql(db, mode, extension, "functional smoke", statement)?;
     }
     Ok(())

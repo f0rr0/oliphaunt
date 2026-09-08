@@ -46,7 +46,7 @@ out_dir="${OLIPHAUNT_WASIX_EXTENSION_RELEASE_ASSET_DIR:-$default_out_dir}"
 [ -d "$asset_root/extensions" ] || fail "missing WASIX extension asset directory: ${asset_root#$root/}/extensions"
 
 bun \
-  "$root/src/extensions/artifacts/wasix/tools/package-release-assets.mjs" \
+  "$root/src/extensions/artifacts/wasix/tools/package-release-assets.mts" \
   --root "$root" \
   --asset-root "$asset_root" \
   --metadata "$generated_metadata" \

@@ -9,7 +9,7 @@
   "exports": {
     ".": {
       "types": "./index.d.ts",
-      "default": "./index.js"
+      "default": "./index.mts"
     },
     "./package.json": "./package.json"
   }

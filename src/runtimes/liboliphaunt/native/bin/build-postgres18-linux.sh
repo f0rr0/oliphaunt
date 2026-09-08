@@ -1047,7 +1047,7 @@ native_extension_component_field() {
   local extension="${1:?missing extension}"
   local field="${2:?missing native component field}"
   "$repo_root/tools/dev/bun.sh" \
-    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    "$repo_root/src/extensions/tools/native-component-contract.mts" \
     field "$extension" native native-dynamic "$target_id" "$field"
 }
 

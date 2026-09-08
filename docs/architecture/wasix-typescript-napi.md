@@ -531,7 +531,7 @@ Phase 1 acceptance:
   `moon run oliphaunt-wasix-rust:compile`,
   `moon run oliphaunt-wasix-ts:unit`,
   `moon run oliphaunt-wasix-ts:compile`, and the product package checks.
-- [x] Run `moon run sdk-contracts:check` for public-surface changes.
+- [x] Run the affected SDK compile, unit, and package tasks for public-surface changes.
 - [x] Run workflow-policy, release-check, committed-asset, extension-model,
   WASIX source/patch, portable/AOT, carrier, license, provenance, and Linux ABI
   checks selected by the repository qualification graph.

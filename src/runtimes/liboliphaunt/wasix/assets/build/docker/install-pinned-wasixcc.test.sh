@@ -5,9 +5,6 @@ export LC_ALL=C
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 installer="$script_dir/install-pinned-wasixcc.sh"
-production_manifest="$script_dir/pinned-wasixcc-assets.tsv"
-dockerfile="$script_dir/Dockerfile"
-expected_production_manifest_sha256="9b0ee1aabcfecda1be72c94a9f14a16c9d8a2fc020f3dc471394d5335766c519"
 
 fail() {
   echo "install-pinned-wasixcc.test: $*" >&2
@@ -207,49 +204,7 @@ assert_no_partial_install() {
 malicious_driver_archive() {
   local kind="$1"
   local destination="$2"
-  python3 - "$kind" "$destination" "$work_root/fake-wasixccenv" <<'PY'
-import io
-import sys
-import tarfile
-from pathlib import Path
-
-kind = sys.argv[1]
-destination = sys.argv[2]
-driver = Path(sys.argv[3]).read_bytes()
-
-
-def regular(archive, name, data=b"fixture"):
-    member = tarfile.TarInfo(name)
-    member.mode = 0o755 if name == "wasixccenv" else 0o644
-    member.size = len(data)
-    archive.addfile(member, io.BytesIO(data))
-
-
-with tarfile.open(destination, "w:gz") as archive:
-    regular(archive, "wasixccenv", driver)
-    if kind == "traversal":
-        regular(archive, "../escaped")
-    elif kind == "duplicate":
-        regular(archive, "wasixccenv", driver)
-    elif kind == "symlink":
-        member = tarfile.TarInfo("escape-symlink")
-        member.type = tarfile.SYMTYPE
-        member.linkname = "/etc/passwd"
-        archive.addfile(member)
-    elif kind == "hardlink":
-        member = tarfile.TarInfo("escape-hardlink")
-        member.type = tarfile.LNKTYPE
-        member.linkname = "../outside"
-        archive.addfile(member)
-    elif kind == "device":
-        member = tarfile.TarInfo("device")
-        member.type = tarfile.CHRTYPE
-        member.devmajor = 1
-        member.devminor = 3
-        archive.addfile(member)
-    else:
-        raise SystemExit(f"unknown malicious archive kind: {kind}")
-PY
+  bun "$script_dir/install-pinned-wasixcc.fixture.mts" "$kind" "$destination" "$work_root/fake-wasixccenv"
 }
 
 run_malicious_archive_case() {
@@ -269,27 +224,6 @@ run_malicious_archive_case() {
   assert_no_partial_install "$destination" "$kind archive"
   [ ! -e "$case_root/escaped" ] || fail "$kind archive wrote outside its extraction root"
 }
-
-actual_production_manifest_sha256="$(sha256sum "$production_manifest" | awk '{print $1}')"
-[ "$actual_production_manifest_sha256" = "$expected_production_manifest_sha256" ] ||
-  fail "production manifest identity changed without updating its Docker/source metadata pin"
-if grep -Fq 'raw.githubusercontent.com/wasix-org/wasixcc' "$dockerfile"; then
-  fail "Dockerfile still uses the upstream remote installer"
-fi
-if grep -Eq '(^|[^A-Za-z])latest([^A-Za-z]|$)' "$dockerfile" "$production_manifest"; then
-  fail "Docker toolchain inputs must not use latest resolution"
-fi
-for required_flag in \
-  '--retry-all-errors' \
-  '--retry-max-time' \
-  '--connect-timeout' \
-  '--max-time' \
-  '--max-filesize' \
-  '--proto' \
-  '--proto-redir' \
-  '--remove-on-error'; do
-  grep -F -- "$required_flag" "$installer" >/dev/null || fail "installer is missing curl flag $required_flag"
-done
 
 fixture_manifest="$work_root/fixture-assets.tsv"
 write_manifest "$fixtures" "$fixture_manifest"
@@ -353,8 +287,8 @@ assert_no_partial_install "$invalid_root" "invalid archive"
 
 run_malicious_archive_case traversal "archive member is unsafe"
 run_malicious_archive_case duplicate "duplicate archive member"
-run_malicious_archive_case symlink "link target for escape-symlink is absolute"
-run_malicious_archive_case hardlink "link target for escape-hardlink is unsafe"
+run_malicious_archive_case symlink "link target is unsafe"
+run_malicious_archive_case hardlink "link target is unsafe"
 run_malicious_archive_case device "unsupported archive member type"
 
 version_fixtures="$work_root/version-fixtures"

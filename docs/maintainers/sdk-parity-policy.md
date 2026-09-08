@@ -275,7 +275,7 @@ IDs.
 The lightweight contract checks are:
 
 ```sh
-moon run sdk-contracts:all
+moon run liboliphaunt-native:headers
 moon run extensions:lint
 ```
 

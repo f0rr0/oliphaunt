@@ -37,8 +37,16 @@ fi
 asset_mode="$OLIPHAUNT_RUNTIME_WASM_ASSET_MODE"
 full_evidence_features=""
 if [ "$asset_mode" = "full" ]; then
+  if [ -z "${OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT:-}" ]; then
+    export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$root/target/wasix-smoke/extension-artifacts"
+    OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$root/target/oliphaunt-wasix/assets" \
+    OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$root/target/extensions/wasix/aot-artifacts" \
+      tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \
+        --output-root "$OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT" \
+        --all --family wasix --require-wasix
+  fi
   full_evidence_features="$(
-    tools/dev/bun.sh tools/release/wasix-extension-features.mjs \
+    tools/dev/bun.sh src/runtimes/liboliphaunt/wasix/tools/wasix-extension-features.mts \
       "$root/target/oliphaunt-wasix/assets/manifest.json"
   )"
 fi
@@ -81,9 +89,8 @@ oliphaunt_wasix_cargo_test \
   --test postgres_regression \
   -- --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
-  # The three exhaustive tests cover every catalogued extension through direct,
-  # restart, server, and materialization paths. Logical dump/restore is a
-  # separate shared-fixture proof below; it does not claim every extension.
+  # Each extension must pass direct execution, restart, physical backup/restore,
+  # server execution and materialization. Tests record only completed modes.
   oliphaunt_wasix_counted_library_tests 3 extension_tests::public_extensions
   if [ "$mode" = "regression" ]; then
     oliphaunt_wasix_cargo_test --test client_compat -- --nocapture --test-threads=1

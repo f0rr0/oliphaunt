@@ -17,6 +17,7 @@ CREATE INDEX oliphaunt_pg_textsearch_english_bm25
   USING bm25 (body)
   WITH (text_config = 'pg_catalog.english');
 -- oliphaunt-statement
+-- oliphaunt-verify
 DO $oliphaunt$
 DECLARE
   hit bigint;

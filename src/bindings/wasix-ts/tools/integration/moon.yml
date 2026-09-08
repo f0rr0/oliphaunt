@@ -1,0 +1,76 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "wasix-ts-integration"
+language: "typescript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["javascript-quality", "integration", "wasix", "typescript"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - "liboliphaunt-wasix"
+  - "oliphaunt-wasix-napi"
+  - "oliphaunt-wasix-tools-ts"
+  - "oliphaunt-wasix-ts"
+
+project:
+  title: "WASIX TypeScript Integration"
+  description: "Installed-package runtime checks across the WASIX TypeScript packages and runtime carriers."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+
+tasks:
+  package-conditions:
+    tags: ["integration", "local"]
+    script: |
+      set -e
+      bash src/bindings/wasix-ts/tools/integration/smoke-node.sh --package-only --runtime node
+      bash src/bindings/wasix-ts/tools/integration/smoke-node.sh --package-only --runtime bun
+    deps:
+      - "oliphaunt-wasix-ts:package"
+    inputs:
+      - "**/*"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "/src/runtimes/liboliphaunt/wasix/tools/wasix-runtime-npm-*.mts"
+      - "/src/shared/artifact-packaging/**/*"
+      - "/tools/dev/bun.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  runtime:
+    tags: ["integration", "runtime", "ci-wasix-ts-sdk-package"]
+    script: |
+      set -e
+      bash src/bindings/wasix-ts/tools/integration/smoke-node.sh --runtime node
+      bash src/bindings/wasix-ts/tools/integration/smoke-node.sh --runtime bun
+      bash src/bindings/wasix-ts/tools/integration/smoke-node.sh --runtime deno
+      bash src/bindings/wasix-ts/tools/integration/smoke-node.sh --runtime electron
+      bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --postgis-worker
+      bash src/bindings/wasix-ts/tools/integration/smoke-tools-host.sh --runtime node
+      bash src/bindings/wasix-ts/tools/integration/smoke-tools-host.sh --runtime bun
+      bash src/bindings/wasix-ts/tools/integration/smoke-tools-host.sh --runtime deno
+      bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --package-only
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
+      - "oliphaunt-wasix-tools-ts:package"
+      - "oliphaunt-wasix-ts:package"
+      - "oliphaunt-wasix-napi:build-release-assets"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "/examples/browser-wasix/**/*"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/deno.sh"
+      - "/src/runtimes/liboliphaunt/wasix/tools/wasix-*.mts"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

@@ -17,4 +17,4 @@ ship.
 
 Canonical runtime license snapshots live in
 `src/runtimes/liboliphaunt/licenses/`; their source pins and digests are
-enforced by `tools/release/release-notices.mjs`.
+enforced by `src/shared/artifact-packaging/release-notices.mts`.

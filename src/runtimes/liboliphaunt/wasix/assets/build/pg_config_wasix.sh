@@ -50,14 +50,6 @@ postgres_version() {
       fi
     fi
   done
-  source_toml="$ROOT/postgres/source.toml"
-  if [ -f "$source_toml" ]; then
-    version="$(awk -F'=' '/^[[:space:]]*version[[:space:]]*=/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); gsub(/^"|"$/, "", $2); print $2; exit}' "$source_toml")"
-    if [ -n "$version" ]; then
-      printf '%s-wasix-oliphaunt\n' "$version"
-      return
-    fi
-  fi
   echo "unable to determine pinned PostgreSQL version" >&2
   return 2
 }

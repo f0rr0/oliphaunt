@@ -100,27 +100,19 @@ OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR=/path/to/android-datum64-runtime-closure
 OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO=/path/to/liboliphaunt.so pnpm run smoke:android
 ```
 
-Expo smoke and benchmark tuning uses explicit PostgreSQL startup GUCs through
-`OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS`.
-`tools/perf/matrix/run_mobile_footprint_matrix.sh`
-prints or runs the full Android/iOS device matrix, stores each case in its own
-scratch directory, and writes `summary.json` plus `summary.md` under
-`target/perf/mobile-footprint-<run-id>/`. Matrix cases run the benchmark and,
-by default, process-death recovery lanes under the same explicit GUCs and
-PostgreSQL safe defaults.
-Pass `--quick` to the matrix wrapper, or set
-`OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=quick` directly, when validating harness
-changes; leave the default full preset for reportable performance numbers.
-Use the matrix axis filters for iterative tuning slices, for example:
+Benchmark and crash tuning uses explicit PostgreSQL startup GUCs:
 
 ```sh
-../../../../../tools/perf/matrix/run_mobile_footprint_matrix.sh --quick --platform android \
-  --shared-buffers 8MB,32MB,128MB \
-  --wal-buffers -1 \
-  --min-wal-size 32MB \
-  --max-wal-size 64MB \
-  --crash-recovery off
+export OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS=shared_buffers=32MB,wal_buffers=-1,min_wal_size=32MB,max_wal_size=64MB
+pnpm run bench:android
+pnpm run crash:android
 ```
+
+Use `bench:ios` and `crash:ios` for iOS. Set
+`OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=quick` for harness checks; keep the
+full default for reported performance. For multiple configurations, use a
+Shell loop and distinct `OLIPHAUNT_EXPO_ANDROID_SCRATCH` or
+`OLIPHAUNT_EXPO_IOS_SCRATCH` paths to retain each raw report.
 
 The harness defaults to `--no-configuration-cache` for the Expo app because the
 generated Expo Gradle files currently resolve React Native/Expo paths through

@@ -4,7 +4,7 @@ id: "extensions"
 language: "unknown"
 layer: "configuration"
 stack: "systems"
-tags: ["extensions", "catalog", "assets"]
+tags: ["javascript-quality", "extensions", "catalog", "assets"]
 dependsOn:
   - id: "postgres18"
     scope: "build"
@@ -61,7 +61,7 @@ fileGroups:
 tasks:
   lint:
     tags: ["quality", "static"]
-    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
+    command: "bash src/extensions/tools/check-extension-model.sh --check"
     inputs:
       - "@group(legal-files)"
       - project: "postgres18"
@@ -82,31 +82,54 @@ tasks:
       - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
       - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
       - "/src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
-      - "/tools/dev/capture-command-output.mjs"
-      - "/src/sources/tools/source-fetch-core.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/src/sources/tools/source-fetch-core.mts"
+      - "/src/extensions/tools/extension-upstream-licenses.mts"
       - "@group(release-archive-contract)"
-      - "/tools/release/release_graph_query.mjs"
+      - "/src/shared/product-metadata/query.mts"
       - "@group(release-target-contract)"
-      - "/tools/release/platform-compatibility-policy.test.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/xtask/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
+      - "/src/shared/product-metadata/platform-compatibility-policy.test.mts"
+      - "/src/shared/product-metadata/release-graph.mts"
     options:
       cache: true
       runFromWorkspaceRoot: true
   unit:
     tags: ["quality", "unit"]
-    command: "bash tools/dev/bun.sh test '--path-ignore-patterns=target/**' src/extensions/tools/native-component-contract.test.mjs"
+    command: "bash tools/dev/bun.sh test '--path-ignore-patterns=target/**' src/extensions/tools/native-component-contract.test.mts src/extensions/tools/extension-model.test.mts"
     inputs:
       - "catalog/native-components.toml"
       - "catalog/extensions.source.json"
-      - "tools/native-component-contract.mjs"
-      - "tools/native-component-contract.test.mjs"
+      - "tools/native-component-contract.mts"
+      - "tools/native-component-contract.test.mts"
+      - "tools/extension-model.test.mts"
+      - "tools/extension-evidence.mts"
+      - "tools/extension-projections.mts"
+      - "@group(model)"
+      - "/src/shared/fixtures/extensions/**/*"
+      - "/src/sources/third-party/{shared,native}/**/*.toml"
       - "/src/runtimes/liboliphaunt/native/portable-uuid/**/*"
       - project: "extension-runtime-contract"
         group: "contract"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  packaging-unit:
+    tags: ["quality", "unit"]
+    command: "bash tools/dev/bun.sh test --timeout=30000 src/extensions/tools/extension-upstream-licenses.test.mts src/extensions/tools/android-extension-legal-catalog.test.mts"
+    inputs:
+      - "external/**/upstream-license-data.json"
+      - "external/**/upstream-licenses/**/*"
+      - "generated/sdk/extensions.json"
+      - "/src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
+      - "/src/runtimes/liboliphaunt/licenses/*"
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "/tools/test/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/shared/artifact-packaging/*.{mts,sh}"
+      - "/src/shared/product-metadata/*.{mjs,mts}"
     options:
       cache: true
       runFromWorkspaceRoot: true

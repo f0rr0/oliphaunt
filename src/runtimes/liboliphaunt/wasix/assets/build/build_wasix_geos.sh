@@ -12,7 +12,7 @@ GEOS_BUILD_DIR="${GEOS_BUILD_DIR:-$GENERATED_ROOT/work/geos-wasix-build}"
 JOBS="${JOBS:-4}"
 
 if [ ! -f "$GEOS_SOURCE_DIR/CMakeLists.txt" ]; then
-  echo "missing GEOS source checkout at $GEOS_SOURCE_DIR; run assets fetch/source-spine first" >&2
+  echo "missing GEOS source checkout at $GEOS_SOURCE_DIR; run bash src/sources/tools/fetch-sources.sh wasix-runtime --force first" >&2
   exit 1
 fi
 

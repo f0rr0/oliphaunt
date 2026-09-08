@@ -1,10 +1,10 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "test-tools"
-language: "javascript"
+language: "typescript"
 layer: "tool"
 stack: "infrastructure"
-tags: ["tools", "testing", "repo-hygiene"]
+tags: ["javascript-quality", "tools", "testing", "repo-hygiene"]
 
 project:
   title: "Test Tools"
@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "bun build tools/test/create-liboliphaunt-release-fixture.mjs tools/test/create-broker-release-fixture.mjs --target=bun --outdir target/moon/test-tools/check"
+    command: "bun build tools/test/create-liboliphaunt-release-fixture.mts tools/test/create-broker-release-fixture.mts --target=bun --outdir target"
     inputs:
       - "**/*"
     options:

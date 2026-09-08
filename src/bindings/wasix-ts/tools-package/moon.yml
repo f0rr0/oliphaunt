@@ -4,7 +4,7 @@ id: "oliphaunt-wasix-tools-ts"
 language: "typescript"
 layer: "library"
 stack: "frontend"
-tags: ["binding", "wasix", "typescript", "tools", "package"]
+tags: ["javascript-quality", "binding", "wasix", "typescript", "tools", "package"]
 dependsOn:
   - id: "liboliphaunt-wasix"
     scope: "production"
@@ -53,7 +53,10 @@ tasks:
     script: |
       set -e
       pnpm --dir src/bindings/wasix-ts/tools-package build
-      node src/bindings/wasix-ts/tools-package/tools/package.mjs target/oliphaunt-wasix-tools-ts/package
+      node src/bindings/wasix-ts/tools-package/tools/package.mts target/oliphaunt-wasix-tools-ts/package
+      mkdir -p target/oliphaunt-wasix-tools-ts/package/packages
+      cd target/oliphaunt-wasix-tools-ts/package
+      pnpm --silent pack --pack-destination packages
     inputs:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"
@@ -73,6 +76,25 @@ tasks:
       - "oliphaunt-wasix-tools-ts:unit"
       - "oliphaunt-wasix-tools-ts:package"
     inputs: []
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  packaging-unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -eu
+      for test_file in src/bindings/wasix-ts/tools-package/tools/wasix-tools-typescript-package.test.mts; do
+        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
+      done
+    inputs:
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "/tools/test/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/shared/artifact-packaging/*.{mts,sh}"
+      - "/src/shared/product-metadata/*.{mjs,mts}"
     options:
       cache: true
       runFromWorkspaceRoot: true

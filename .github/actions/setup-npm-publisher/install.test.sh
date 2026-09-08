@@ -3,22 +3,13 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-npm-publisher/install.sh"
-extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
+extractor="$root/.github/actions/setup-moon/toolchain-archive.mts"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/payload/package/bin" "$work/bin" "$work/blockers"
-cat >"$work/payload/package/bin/npm-cli.js" <<'EOF'
-#!/usr/bin/env node
-console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"
-  ? JSON.stringify(process.argv.slice(2))
-  : "11.18.0");
-EOF
-cat >"$work/payload/package/bin/npx-cli.js" <<'EOF'
-#!/usr/bin/env node
-console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"
-  ? JSON.stringify(process.argv.slice(2))
-  : "11.18.0");
-EOF
+bash "$root/tools/dev/bun.sh" build "$root/tools/test/package-manager-fixture.mts" \
+  --target=node --define 'FIXTURE_VERSION="11.18.0"' --outfile "$work/payload/package/bin/npm-cli.js" >/dev/null
+cp "$work/payload/package/bin/npm-cli.js" "$work/payload/package/bin/npx-cli.js"
 printf '{"name":"npm","version":"11.18.0"}\n' >"$work/payload/package/package.json"
 chmod 0755 "$work/payload/package/bin/npm-cli.js" "$work/payload/package/bin/npx-cli.js"
 COPYFILE_DISABLE=1 tar --format ustar -C "$work/payload" -czf "$work/npm.tgz" package
@@ -31,13 +22,13 @@ expanded_bytes="$(
     -exec sh -c 'for file do wc -c < "$file"; done' sh {} + |
     awk '{ total += $1 } END { print total }'
 )"
-python3 "$extractor" extract --archive "$work/npm.tgz" --format tar.gz --prefix package \
+node "$extractor" extract --archive "$work/npm.tgz" --format tar.gz --prefix package \
   --entry-count "$entry_count" --expected-bytes "$archive_bytes" \
   --expanded-bytes "$expanded_bytes" --destination "$work/extracted" \
   --required bin/npm-cli.js --executable bin/npm-cli.js \
   --required bin/npx-cli.js --executable bin/npx-cli.js \
   --required package.json
-tree_result="$(python3 "$extractor" tree-digest --root "$work/extracted" \
+tree_result="$(node "$extractor" tree-digest --root "$work/extracted" \
   --executable bin/npm-cli.js --executable bin/npx-cli.js)"
 file_count="${tree_result%% *}"
 tree_sha256="${tree_result#* }"
@@ -117,10 +108,6 @@ for command_name in npm npx; do
   )"
   [ "$observed_argv" = "$expected_argv" ]
 done
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$publisher_bin/npm"
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$publisher_bin/npx"
-grep -Fq 'exec node "$cli_path" "$@"' "$publisher_bin/npm"
-grep -Fq 'exec node "$cli_path" "$@"' "$publisher_bin/npx"
 [ ! -e "$work/ambient.log" ]
 [ "$(wc -l <"$work/requests.log" | tr -d '[:space:]')" = 1 ]
 

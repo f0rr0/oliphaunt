@@ -1,0 +1,24 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "product-metadata"
+language: "typescript"
+layer: "library"
+tags: ["javascript-quality", "shared"]
+fileGroups:
+  source: ["*.{mts,sh}", "!*.test.{mjs,mts}"]
+tasks:
+
+  packaging-unit:
+    tags: ["quality", "unit"]
+    command: "bun test --timeout=30000 src/shared/product-metadata"
+    inputs:
+      - "/src/runtimes/liboliphaunt/wasix/tools/wasix-*-npm-contract.mts"
+      - "/src/shared/product-metadata/with-product-history.sh"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mts,sh}"
+      - "/tools/test/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/shared/artifact-packaging/*.{mts,sh}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -51,7 +51,7 @@ while IFS= read -r flag; do
 done < <(oliphaunt_wasix_extension_wasix_configure_flags "$REPO_ROOT" postgis)
 
 if [ ! -f "$POSTGIS_SOURCE_DIR/configure.ac" ]; then
-  echo "missing PostGIS source checkout at $POSTGIS_SOURCE_DIR; run assets fetch/source-spine first" >&2
+  echo "missing PostGIS source checkout at $POSTGIS_SOURCE_DIR; run bash src/sources/tools/fetch-sources.sh wasix-runtime --force first" >&2
   exit 1
 fi
 if [ ! -f "$BUILD_DIR/config.status" ]; then

@@ -299,7 +299,7 @@ This track pass addressed concrete gaps:
   longer have to infer helper/server memory solely from `/usr/bin/time` on the
   parent benchmark process.
 - The xtask RSS/process-tree sampler has been extracted to
-  `tools/xtask/src/process_rss.rs` with focused unit coverage for descendant
+  `src/runtimes/liboliphaunt/wasix/tools/xtask/src/process_rss.rs` with focused unit coverage for descendant
   aggregation and cycle/double-count protection. This keeps benchmark resource
   accounting separate from command orchestration.
 - The Swift SDK now includes `OliphauntNativeDirectEngine`, backed by a small
@@ -684,7 +684,7 @@ Required benchmark dimensions:
 The matrix script now measures the three native SDK modes separately:
 
 ```sh
-tools/perf/matrix/run_native_oliphaunt_matrix.sh
+benchmarks/perf/matrix/run_native_oliphaunt_matrix.sh
 ```
 
 For fast local checks, run:
@@ -701,7 +701,7 @@ the run directory and exact binary versions retained. The native matrix writes
 
 ```sh
 OLIPHAUNT_PERF_RUN_DIR="$PWD/target/perf/native-liboliphaunt-<run-id>" \
-tools/perf/check-native-perf-report.sh
+benchmarks/perf/check-native-perf-report.sh
 ```
 
 ## Code Organization Review
@@ -729,7 +729,7 @@ Files to split next:
   separated from tar mechanics. If the archive format grows beyond same-version
   physical tar, introduce a format dispatcher instead of adding branches to
   the tar module.
-- `tools/xtask/src/main.rs`: extension cataloging, process RSS sampling, and
+- `src/runtimes/liboliphaunt/wasix/tools/xtask/src/main.rs`: extension cataloging, process RSS sampling, and
   perf command orchestration now live in dedicated modules. The remaining split
   is asset/release orchestration; benchmark result/report models can move again
   if `perf.rs` keeps growing.

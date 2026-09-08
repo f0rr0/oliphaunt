@@ -35,7 +35,7 @@ should_use_maestro_e2e() {
   [ "$sdk" = "iphonesimulator" ] || return 1
   case "$e2e_assertion_runner" in
     maestro)
-      maestro_binary >/dev/null || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
+      maestro_binary >/dev/null || fail "missing required command: maestro; run src/shared/mobile-tools/setup-maestro.sh"
       return 0
       ;;
     auto)
@@ -53,16 +53,16 @@ run_maestro_installed_smoke() {
   local reports_dir="$scratch_root/reports"
   [ -f "$maestro_flow" ] || fail "missing Maestro installed-app smoke flow: $maestro_flow"
   local maestro
-  maestro="$(maestro_binary)" || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
+  maestro="$(maestro_binary)" || fail "missing required command: maestro; run src/shared/mobile-tools/setup-maestro.sh"
   mkdir -p "$reports_dir"
   echo "==> $maestro --device $device_udid test $maestro_flow"
   MAESTRO_CLI_NO_ANALYTICS=true \
     MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true \
     "$maestro" --device "$device_udid" test \
-      -e APP_ID="$app_id" \
-      -e SMOKE_TIMEOUT_MS="$((timeout_seconds * 1000))" \
-      "$maestro_flow" \
-      >"$reports_dir/maestro.log" 2>&1 &
+    -e APP_ID="$app_id" \
+    -e SMOKE_TIMEOUT_MS="$((timeout_seconds * 1000))" \
+    "$maestro_flow" \
+    >"$reports_dir/maestro.log" 2>&1 &
   local maestro_pid=$!
   local failure_receipt=""
   local capture_failed=0
@@ -136,7 +136,7 @@ resolve_ios_app_process_name() {
     return 1
   }
   case "$process_name" in
-    ''|*[!A-Za-z0-9._-]*)
+    '' | *[!A-Za-z0-9._-]*)
       echo "iOS app has an unsafe CFBundleExecutable for unified-log capture: $process_name" >&2
       return 1
       ;;
@@ -160,7 +160,7 @@ start_ios_simulator_log_capture() {
     return 1
   }
   case "$process_name" in
-    ''|*[!A-Za-z0-9._-]*)
+    '' | *[!A-Za-z0-9._-]*)
       echo "unsafe iOS process name for unified-log predicate: $process_name" >&2
       return 1
       ;;
@@ -225,7 +225,7 @@ latest_ios_simulator_capture_tag() {
 wait_for_ios_simulator_maestro_receipt() {
   local grace_seconds="${OLIPHAUNT_EXPO_IOS_RECEIPT_GRACE_SECONDS:-15}"
   case "$grace_seconds" in
-    ''|*[!0-9]*)
+    '' | *[!0-9]*)
       echo "OLIPHAUNT_EXPO_IOS_RECEIPT_GRACE_SECONDS must be a nonnegative integer, got $grace_seconds" >&2
       return 4
       ;;
@@ -313,34 +313,7 @@ resolve_prebuilt_ios_app() {
 extract_devicectl_pid() {
   local json="$1"
   [ -s "$json" ] || return 1
-  node - "$json" <<'NODE'
-const fs = require('fs');
-const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const seen = new Set();
-function visit(value) {
-  if (value == null || typeof value !== 'object' || seen.has(value)) {
-    return undefined;
-  }
-  seen.add(value);
-  for (const key of ['processIdentifier', 'pid']) {
-    if (Number.isInteger(value[key]) && value[key] > 0) {
-      return value[key];
-    }
-  }
-  for (const child of Object.values(value)) {
-    const found = visit(child);
-    if (found !== undefined) {
-      return found;
-    }
-  }
-  return undefined;
-}
-const pid = visit(data);
-if (!pid) {
-  process.exit(1);
-}
-process.stdout.write(String(pid));
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-ios-device.mts" process-id "$json"
 }
 
 write_ios_device_process_metrics() {
@@ -354,144 +327,7 @@ write_ios_device_process_metrics() {
     --timeout 30 \
     --json-output "$json" >/dev/null 2>&1 || true
   [ -s "$json" ] || return 0
-  node - "$json" "$app_id" <<'NODE' >"$reports_dir/$runner-process.tsv" || true
-const fs = require('node:fs');
-const [file, bundleId] = process.argv.slice(2);
-const processName = bundleId.split('.').slice(-1)[0]?.toLowerCase() ?? '';
-const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-const rows = [];
-const seen = new Set();
-
-function visit(value) {
-  if (value == null || typeof value !== 'object' || seen.has(value)) {
-    return;
-  }
-  seen.add(value);
-  if (!Array.isArray(value)) {
-    const pid = integerFor(value, [
-      'processIdentifier',
-      'processID',
-      'pid',
-      'identifier',
-    ]);
-    if (pid != null && matchesProcess(value)) {
-      rows.push({
-        pid,
-        rssKb: memoryKbFor(value),
-        cpuPercent: numberFor(value, [
-          'cpuPercent',
-          'cpuPercentage',
-          'cpuUsage',
-          'percentCPU',
-        ]),
-        command: commandFor(value),
-      });
-    }
-  }
-  for (const child of Object.values(value)) {
-    visit(child);
-  }
-}
-
-function integerFor(record, names) {
-  for (const name of names) {
-    const value = valueFor(record, name);
-    if (Number.isInteger(value) && value > 0) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function numberFor(record, names) {
-  for (const name of names) {
-    const value = valueFor(record, name);
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function valueFor(record, wanted) {
-  const normalizedWanted = normalizeKey(wanted);
-  for (const [key, value] of Object.entries(record)) {
-    if (normalizeKey(key) === normalizedWanted) {
-      if (typeof value === 'object' && value != null && typeof value.value === 'number') {
-        return value.value;
-      }
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function normalizeKey(key) {
-  return String(key).replace(/[^a-z0-9]/gi, '').toLowerCase();
-}
-
-function matchesProcess(record) {
-  const haystack = Object.values(record)
-    .filter(value => typeof value === 'string')
-    .join('\n')
-    .toLowerCase();
-  return haystack.includes(bundleId.toLowerCase()) ||
-    (processName.length > 0 && haystack.includes(processName)) ||
-    haystack.includes('reactnativeoliphaunt');
-}
-
-function memoryKbFor(record) {
-  for (const [key, value] of Object.entries(record)) {
-    const normalized = normalizeKey(key);
-    if (!/(rss|resident|memory)/.test(normalized)) {
-      continue;
-    }
-    const number = typeof value === 'number'
-      ? value
-      : (typeof value === 'object' && value != null && typeof value.value === 'number'
-        ? value.value
-        : null);
-    if (number == null || !Number.isFinite(number)) {
-      continue;
-    }
-    const unit = typeof value === 'object' && value != null && typeof value.unit === 'string'
-      ? value.unit.toLowerCase()
-      : '';
-    if (unit.includes('byte')) {
-      return Math.round(number / 1024);
-    }
-    if (unit.includes('mb') || unit.includes('mib')) {
-      return Math.round(number * 1024);
-    }
-    return Math.round(number);
-  }
-  return null;
-}
-
-function commandFor(record) {
-  for (const name of ['executableName', 'name', 'command', 'bundleIdentifier', 'bundleID']) {
-    const value = valueFor(record, name);
-    if (typeof value === 'string' && value.length > 0) {
-      return value;
-    }
-  }
-  return bundleId;
-}
-
-visit(data);
-process.stdout.write('pid\trss_kb\tcpu_percent\tcommand\n');
-for (const row of rows.slice(0, 1)) {
-  process.stdout.write([
-    row.pid,
-    row.rssKb ?? '',
-    row.cpuPercent ?? '',
-    String(row.command).replace(/\t/g, ' '),
-  ].join('\t') + '\n');
-}
-NODE
-  if [ -s "$reports_dir/$runner-process.tsv" ]; then
-    cat "$reports_dir/$runner-process.tsv" >&2
-  fi
+  echo "iOS device process report: $json" >&2
 }
 
 logs_have_lifecycle_ready() {
@@ -618,8 +454,7 @@ exercise_ios_crash_recovery() {
 
   if [ -z "$crash_storage_override" ]; then
     case "$crash_storage" in
-      app-data:*)
-        ;;
+      app-data:*) ;;
       /*)
         rm -rf "$crash_storage"
         ;;
@@ -746,8 +581,7 @@ exercise_ios_device_crash_recovery() {
 
   if [ -z "$crash_storage_override" ]; then
     case "$crash_storage" in
-      app-data:*)
-        ;;
+      app-data:*) ;;
       /*)
         rm -rf "$crash_storage"
         ;;

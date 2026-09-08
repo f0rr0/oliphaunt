@@ -4,18 +4,15 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-command -v c++ >/dev/null || { echo "Node Direct compile requires c++" >&2; exit 1; }
-node_include="$(node -e '
-const path = require("node:path");
-const fs = require("node:fs");
-const adjacent = path.resolve(process.execPath, "../../include/node");
-process.stdout.write(fs.existsSync(path.join(adjacent, "node_api.h"))
-  ? adjacent
-  : path.dirname(require.resolve("node-api-headers/include/node_api.h", {
-      paths: [process.cwd(), path.join(process.cwd(), "src/runtimes/node-direct")]
-    })));
-')"
-test -f "$node_include/node_api.h" || { echo "Node-API headers not found" >&2; exit 1; }
+command -v c++ >/dev/null || {
+  echo "Node Direct compile requires c++" >&2
+  exit 1
+}
+node_include="$(node src/runtimes/node-direct/tools/native-build-data.mts headers)"
+test -f "$node_include/node_api.h" || {
+  echo "Node-API headers not found" >&2
+  exit 1
+}
 
 source=src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc
 include=src/runtimes/liboliphaunt/native/include

@@ -8,62 +8,20 @@
 # beneath a concurrently created destination.  There is no race-free POSIX
 # fallback for this operation, so unsupported hosts fail closed instead of
 # weakening publication to a check-then-rename sequence.
-fresh_atomic_publish_directory_noreplace() {
-  local source="$1"
-  local destination="$2"
-
-  python3 - "$source" "$destination" <<'PY'
-import ctypes
-import errno
-import os
-from pathlib import Path
-import stat
-import sys
-
-source = Path(sys.argv[1])
-destination = Path(sys.argv[2])
-source_info = os.lstat(source)
-if not stat.S_ISDIR(source_info.st_mode) or stat.S_ISLNK(source_info.st_mode):
-    raise SystemExit(f"atomic publication source is not a directory: {source}")
-if source.parent.resolve(strict=True) != destination.parent.resolve(strict=True):
-    raise SystemExit("atomic publication requires source and destination siblings")
-
-libc = ctypes.CDLL(None, use_errno=True)
-source_bytes = os.fsencode(source)
-destination_bytes = os.fsencode(destination)
-if sys.platform.startswith("linux"):
-    rename = getattr(libc, "renameat2", None)
-    if rename is None:
-        raise SystemExit("host libc has no atomic no-replace directory rename")
-    rename.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
-    rename.restype = ctypes.c_int
-    result = rename(-100, source_bytes, -100, destination_bytes, 1)
-elif sys.platform == "darwin":
-    rename = getattr(libc, "renamex_np", None)
-    if rename is None:
-        raise SystemExit("host libc has no atomic exclusive directory rename")
-    rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-    rename.restype = ctypes.c_int
-    result = rename(source_bytes, destination_bytes, 0x00000004)
-else:
-    raise SystemExit(
-        f"no audited atomic no-replace directory publication for {sys.platform}"
-    )
-if result != 0:
-    error = ctypes.get_errno()
-    if error in (errno.EEXIST, errno.ENOTEMPTY):
-        raise SystemExit(f"atomic publication destination already exists: {destination}")
-    raise SystemExit(
-        f"atomic no-replace directory publication failed: {os.strerror(error)}"
-    )
-PY
-}
+fresh_atomic_publish_directory_noreplace() (
+  set -e
+  source_parent="$(cd "$(dirname "$1")" && pwd -P)"
+  destination_parent="$(cd "$(dirname "$2")" && pwd -P)"
+  [ "$source_parent" = "$destination_parent" ] || {
+    printf 'atomic publication requires sibling directories\n' >&2
+    exit 2
+  }
+  native="$(mktemp -d)"
+  trap 'rm -rf "$native"' EXIT
+  "${HOST_CC:-cc}" -std=c11 -Wall -Wextra -Werror \
+    "$FRESH_ROOT/lib/publish-directory.c" -o "$native/publish-directory"
+  "$native/publish-directory" "$source_parent" "$(basename "$1")" "$(basename "$2")"
+)
 
 # Identity of the exact AOT production recipe, separate from runtime ABI
 # compatibility. The receipt binds native binaries and their build recipe;
@@ -78,8 +36,10 @@ fresh_aot_producer_recipe_sha256() {
   local precompile_script="$FRESH_ROOT/bin/precompile-wasix-core.sh"
   local carrier_builder="$FRESH_ROOT/bin/build-sealed-headless-carrier.sh"
   local carrier_policy="$FRESH_ROOT/lib/sealed-carrier.sh"
-  local carrier_verifier="$FRESH_ROOT/lib/verify-sealed-carrier.py"
-  local export_chain_verifier="$FRESH_ROOT/lib/sealed_export_chain.py"
+  local carrier_verifier="$FRESH_ROOT/lib/verify-sealed-carrier.mts"
+  local export_chain_verifier="$FRESH_ROOT/lib/sealed-export-chain.mts"
+  local guest_provenance="$FRESH_ROOT/lib/guest-build-provenance.mts"
+  local guest_input
   local capture_stack_size="${WASMER_STACK_SIZE:-33554432}"
   local compiler_sha256
 
@@ -113,6 +73,22 @@ fresh_aot_producer_recipe_sha256() {
       "$export_chain_verifier" >&2
     return 2
   }
+  local verifier_inputs=(
+    "$guest_provenance"
+    "$FRESH_ROOT/lib/build-sealed-carrier.mts"
+    "$FRESH_ROOT/lib/publish-directory.c"
+    "$FRESH_ROOT/lib/linear-memory-profile.mts"
+    "$FRESH_ROOT/lib/linear-memory-transaction.mts"
+    "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts"
+    "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts"
+    "$REPO_ROOT/src/shared/artifact-packaging/strict-json.mts"
+  )
+  for guest_input in "${verifier_inputs[@]}"; do
+    [ -f "$guest_input" ] && [ ! -L "$guest_input" ] || {
+      printf 'missing regular guest provenance input: %s\n' "$guest_input" >&2
+      return 2
+    }
+  done
   [ -n "$compiler_config" ] && [ -n "$target_triple" ] || {
     printf 'AOT producer compiler config and target must be nonempty\n' >&2
     return 2
@@ -176,6 +152,9 @@ fresh_aot_producer_recipe_sha256() {
     printf '%s\0%s\0' carrier-policy-sha256 "$(fresh_wasmer_bin_hash "$carrier_policy")"
     printf '%s\0%s\0' carrier-verifier-sha256 "$(fresh_wasmer_bin_hash "$carrier_verifier")"
     printf '%s\0%s\0' sealed-export-chain-verifier-sha256 "$(fresh_wasmer_bin_hash "$export_chain_verifier")"
+    for guest_input in "${verifier_inputs[@]}"; do
+      printf '%s\0%s\0' verifier-input-sha256 "$(fresh_wasmer_bin_hash "$guest_input")"
+    done
     printf '%s\0%s\0' producer-engine llvm-opta
     printf '%s\0%s\0' compiler-config "$compiler_config"
     printf '%s\0%s\0' target-triple "$target_triple"
@@ -247,10 +226,10 @@ fresh_select_current_sealed_carrier() {
 # Resolve the exact product executor identity from the verified carrier closure.
 fresh_sealed_executor_selection() {
   local carrier_root="$1"
-  local verifier="$FRESH_ROOT/lib/verify-sealed-carrier.py"
+  local verifier="$FRESH_ROOT/lib/verify-sealed-carrier.mts"
   local selection extra
 
-  selection="$(python3 "$verifier" executor-selection "$carrier_root")" || return
+  selection="$(bun "$verifier" executor-selection "$carrier_root")" || return
   IFS=$'\t' read -r \
     FRESH_SEALED_EXECUTOR_ROLE \
     FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE \
@@ -287,7 +266,7 @@ fresh_verify_sealed_headless_carrier() {
   local manifest
   local receipt
   local headless
-  local verifier="$FRESH_ROOT/lib/verify-sealed-carrier.py"
+  local verifier="$FRESH_ROOT/lib/verify-sealed-carrier.mts"
   local manifest_recipe_inputs
   local remaining_recipe_inputs
   local compiler_config
@@ -309,7 +288,7 @@ fresh_verify_sealed_headless_carrier() {
     printf 'missing regular sealed carrier verifier: %s\n' "$verifier" >&2
     return 2
   fi
-  fresh_require_command python3 || return
+  fresh_require_command bun || return
   if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
     printf 'missing regular sealed carrier manifest: %s\n' "$manifest" >&2
     return 2
@@ -336,7 +315,7 @@ fresh_verify_sealed_headless_carrier() {
   }
 
   manifest_recipe_inputs="$(
-    python3 "$verifier" recipe-inputs "$carrier_root"
+    bun "$verifier" recipe-inputs "$carrier_root"
   )" || return
   case "$manifest_recipe_inputs" in
     *$'\n'*) ;;
@@ -366,7 +345,7 @@ fresh_verify_sealed_headless_carrier() {
     "$receipt" "$product_receipt" "$compiler_config" \
     "$target_triple" "$source_fingerprint")" || return
 
-  python3 "$verifier" verify \
+  bun "$verifier" verify \
     "$carrier_root" \
     "$expected_producer_recipe" \
     "$POSTGRES_VERSION" \

@@ -147,7 +147,7 @@ fi
         esac
       done < <(
         /work/tools/dev/bun.sh \
-          /work/src/extensions/tools/native-component-contract.mjs \
+          /work/src/extensions/tools/native-component-contract.mts \
           field "$sql_name" wasix wasix-runtime wasix-portable components
       )
       if [ "${#extra_make_args[@]}" -gt 0 ]; then

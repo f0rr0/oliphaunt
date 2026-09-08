@@ -1,10 +1,10 @@
-import { join } from "node:path";
+import { join } from 'node:path';
 
-import { Kysely, PostgresDialect, sql, type Generated } from "kysely";
-import pg from "pg";
+import { Kysely, PostgresDialect, sql, type Generated } from 'kysely';
+import pg from 'pg';
 
-import { startWasixSidecar, type WasixSidecar } from "./sidecar.js";
-import type { CreateTodoInput, StatusFilter, Todo } from "./types.js";
+import { startWasixSidecar, type WasixSidecar } from './sidecar.js';
+import type { CreateTodoInput, StatusFilter, Todo } from './types.js';
 
 const { Pool } = pg;
 
@@ -36,9 +36,9 @@ type TodoRecord = {
 };
 
 const schemaStatements = [
-  "CREATE EXTENSION IF NOT EXISTS hstore",
-  "CREATE EXTENSION IF NOT EXISTS pg_trgm",
-  "CREATE EXTENSION IF NOT EXISTS unaccent",
+  'CREATE EXTENSION IF NOT EXISTS hstore',
+  'CREATE EXTENSION IF NOT EXISTS pg_trgm',
+  'CREATE EXTENSION IF NOT EXISTS unaccent',
   `CREATE TABLE IF NOT EXISTS todos (
     id bigserial PRIMARY KEY,
     title text NOT NULL,
@@ -49,7 +49,7 @@ const schemaStatements = [
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
-  "CREATE INDEX IF NOT EXISTS todos_title_trgm ON todos USING gin (title gin_trgm_ops)",
+  'CREATE INDEX IF NOT EXISTS todos_title_trgm ON todos USING gin (title gin_trgm_ops)',
 ];
 
 type Store = {
@@ -65,7 +65,7 @@ async function getStore(userData: string) {
 }
 
 async function openStore(userData: string): Promise<Store> {
-  const sidecar = await startWasixSidecar(join(userData, "oliphaunt-wasix-todos"));
+  const sidecar = await startWasixSidecar(join(userData, 'oliphaunt-wasix-todos'));
   const db = new Kysely<TodoDatabase>({
     dialect: new PostgresDialect({
       pool: new Pool({
@@ -86,14 +86,14 @@ export async function listTodos(
 ) {
   const { db } = await getStore(userData);
   const rows = await db
-    .selectFrom("todos")
+    .selectFrom('todos')
     .select(todoColumns)
     .where(searchPredicate(filter.search))
     .where(statusPredicate(filter.status))
-    .orderBy("done", "asc")
-    .orderBy("priority", "asc")
-    .orderBy("updated_at", "desc")
-    .orderBy("id", "desc")
+    .orderBy('done', 'asc')
+    .orderBy('priority', 'asc')
+    .orderBy('updated_at', 'desc')
+    .orderBy('id', 'desc')
     .execute();
   return rows.map(todoFromRow);
 }
@@ -101,7 +101,7 @@ export async function listTodos(
 export async function createTodo(userData: string, input: CreateTodoInput) {
   const { db } = await getStore(userData);
   const row = await db
-    .insertInto("todos")
+    .insertInto('todos')
     .values({
       title: input.title,
       notes: input.notes,
@@ -116,12 +116,12 @@ export async function createTodo(userData: string, input: CreateTodoInput) {
 export async function toggleTodo(userData: string, id: number) {
   const { db } = await getStore(userData);
   const row = await db
-    .updateTable("todos")
+    .updateTable('todos')
     .set({
       done: sql`NOT done`,
       updated_at: sql`now()`,
     })
-    .where("id", "=", String(id))
+    .where('id', '=', String(id))
     .returning(todoColumns)
     .executeTakeFirstOrThrow();
   return todoFromRow(row);
@@ -129,7 +129,7 @@ export async function toggleTodo(userData: string, id: number) {
 
 export async function deleteTodo(userData: string, id: number) {
   const { db } = await getStore(userData);
-  await db.deleteFrom("todos").where("id", "=", String(id)).execute();
+  await db.deleteFrom('todos').where('id', '=', String(id)).execute();
 }
 
 export async function closeStore() {
@@ -142,15 +142,15 @@ export async function closeStore() {
 
 function todoColumns() {
   return [
-    sql<string>`id::text`.as("id"),
-    "title",
-    "notes",
-    sql<string>`COALESCE(tags -> 'area', '')`.as("area"),
-    sql<string>`COALESCE(tags -> 'context', '')`.as("context"),
-    sql<string>`done::text`.as("done"),
-    sql<string>`priority::text`.as("priority"),
-    sql<string>`to_char(created_at, 'YYYY-MM-DD HH24:MI')`.as("created_at"),
-    sql<string>`to_char(updated_at, 'YYYY-MM-DD HH24:MI')`.as("updated_at"),
+    sql<string>`id::text`.as('id'),
+    'title',
+    'notes',
+    sql<string>`COALESCE(tags -> 'area', '')`.as('area'),
+    sql<string>`COALESCE(tags -> 'context', '')`.as('context'),
+    sql<string>`done::text`.as('done'),
+    sql<string>`priority::text`.as('priority'),
+    sql<string>`to_char(created_at, 'YYYY-MM-DD HH24:MI')`.as('created_at'),
+    sql<string>`to_char(updated_at, 'YYYY-MM-DD HH24:MI')`.as('updated_at'),
   ] as const;
 }
 
@@ -180,7 +180,7 @@ function todoFromRow(row: TodoRecord): Todo {
     area: row.area,
     context: row.context,
     priority: Number(row.priority),
-    done: row.done === "true",
+    done: row.done === 'true',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

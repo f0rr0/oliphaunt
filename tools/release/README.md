@@ -1,19 +1,25 @@
 # Release tooling
 
-This directory owns cross-product release planning, immutable candidate
-validation, registry publication, and release-asset assembly. Product build and
-package-shape logic stays with the product that ships it.
+This directory owns cross-product release planning, frozen candidate verification,
+and registry publication. Product builds and package preparation live with their
+products under `src/`.
 
-Primary entrypoints:
+The normal workflow has two operations: prepare the release PR, then publish its
+qualified candidate. Publication freezes package bytes, handles missing registry
+identities when needed, and resumes from verified receipts.
 
-- `release-check.mjs`: exact candidate metadata and mutation checks;
-- `release-publish.mjs`: protected registry publication;
-- `release-verify.mjs`: post-publication verification;
-- `release-graph.mjs`: released-product and carrier relationships; and
-- `sdk-artifacts/`: SDK-specific artifact staging adapters.
+Local entrypoints:
 
-Keep tests beside the module they exercise. Do not add generic helpers here
-when `tools/dev`, `tools/policy`, or `tools/test` already owns the concern.
-Existing underscore-named workflow entrypoints remain stable paths; rename or
-split a domain only when doing so creates an independent ownership, import, or
-task boundary.
+- `bash tools/release/release-check.sh`: release metadata and release/policy tests.
+- `bash tools/release/release-check-registries.sh`: registry preflight.
+- `bash tools/release/verify-product-tags.sh`: exact release-commit tag checks.
+- `bash tools/release/package-release-carriers.sh --products-json '["oliphaunt-broker"]'`:
+  assemble the selected products' registry packages from staged runtime assets.
+- `bash tools/release/release-verify.sh`: post-publication verification.
+- `tools/release/release-publish.mts`: protected publication controller.
+- `bash tools/release/release-dry-run.sh`: local validation or exact qualified-candidate replay.
+
+Product and carrier relationships live in `src/shared/product-metadata/`.
+Each SDK owns its artifact staging under its own `tools/` directory. Keep tests
+beside the implementation they exercise; Shell runs external commands and
+TypeScript reads, transforms, and validates data.

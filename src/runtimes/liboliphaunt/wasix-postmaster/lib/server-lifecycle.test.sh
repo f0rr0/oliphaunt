@@ -30,15 +30,7 @@ if fresh_wait_cgroup_empty "$fixture/empty" wrong-identity 10 >/dev/null 2>&1; t
 fi
 
 port_file="$fixture/listener.port"
-python3 - "$port_file" >"$fixture/listener.log" 2>&1 <<'PY' &
-import http.server
-import pathlib
-import sys
-
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler)
-pathlib.Path(sys.argv[1]).write_text(str(server.server_address[1]), encoding="ascii")
-server.serve_forever()
-PY
+bun "$root/server-lifecycle.mts" listen "$port_file" >"$fixture/listener.log" 2>&1 &
 listener_pid="$!"
 # Release qualification runs this dependency beside the Rust runtime build on
 # three-core macOS runners. Keep fixture startup bounded, but allow for the
@@ -63,6 +55,18 @@ fresh_tcp_port_open 127.0.0.1 "$port"
 if fresh_wait_tcp_port_closed 127.0.0.1 "$port" 10 >/dev/null 2>&1; then
   echo "live TCP listener passed residue gate" >&2
   exit 1
+fi
+if [ "$port" -lt 65535 ]; then
+  available="$(bun "$root/server-lifecycle.mts" available-port "$port")"
+  [ "$available" -gt "$port" ]
+  if fresh_tcp_port_open 127.0.0.1 "$available"; then
+    echo 'port selection left its probe listener running' >&2; exit 1
+  fi
+fi
+[ "$(bun "$root/server-lifecycle.mts" size 8GiB)" = 8589934592 ]
+[ "$(bun "$root/server-lifecycle.mts" size 9223372036854775807)" = 9223372036854775807 ]
+if bun "$root/server-lifecycle.mts" size 8E >/dev/null 2>&1; then
+  echo 'cgroup size overflow was accepted' >&2; exit 1
 fi
 kill "$listener_pid"
 wait "$listener_pid" 2>/dev/null || true

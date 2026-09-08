@@ -42,7 +42,7 @@ Implemented:
   validating and copying the full archive in Rust afterward. The C tar writer
   also uses direct `read(2)` file reads, per-entry buffer reservation, and
   opt-in `OLIPHAUNT_TRACE_BACKUP=1` phase diagnostics.
-- `tools/perf/matrix/run_native_speed_diagnostics.sh` runs repeated
+- `benchmarks/perf/matrix/run_native_speed_diagnostics.sh` runs repeated
   fresh-process native-direct and native-PostgreSQL speed-case diagnostics and
   writes versioned `oliphaunt.native-speed-diagnostics.v1` summaries. The first
   current-source follow-up run for `20260524T090412Z` reproduced speed misses
@@ -89,14 +89,14 @@ Implemented:
   PostgreSQL 18.4 native release matrix with direct, broker, server, native
   PostgreSQL, and SQLite rows for RTT, speed, streaming, prepared updates, and
   backup/restore. Strict
-  `tools/perf/check-native-perf-report.sh` provenance
+  `benchmarks/perf/check-native-perf-report.sh` provenance
   verification passed against that recorded source/artifact set; later backup
   ABI/tar-writer changes require a refreshed full matrix before current-source
   release claims. The report shows
   NativeDirect passing RTT, open, and RSS gates while still missing speed-suite
   p90, speed tail throughput, physical backup/restore p90, and physical backup
   throughput, so those misses remain tracked work instead of parity claims.
-- `tools/xtask` now keeps `wasmer-types` behind the AOT serializer feature.
+- `src/runtimes/liboliphaunt/wasix/tools/xtask` now keeps `wasmer-types` behind the AOT serializer feature.
   Native no-default-feature builds no longer compile that legacy runtime crate,
   and `sdk-contracts:native-boundaries` guards the feature boundary.
 
@@ -1004,7 +1004,7 @@ Latest local release work:
 - Rust product validation runs in product-owned tasks. `pnpm moon run
   liboliphaunt-wasix:smoke` is the hard runtime gate and requires portable
   assets plus the host AOT pack;
-- `.github/scripts/download-wasix-runtime-build-artifacts.mjs` is a thin wrapper
+- `.github/scripts/download-wasix-runtime-build-artifacts.mts` is a thin wrapper
   over `xtask assets download`; exact-SHA, host-target, and all-target WASIX
   runtime artifact downloads share one implementation;
 - AOT serialization is now owned by a maintainer-only `xtask` feature. The
@@ -1070,7 +1070,7 @@ following completed work was removed from `TODO.md`:
 
 The native SDK parity track now has a no-build public surface inventory:
 
-- `tools/policy/generate-sdk-api-surface.mjs --write` regenerates
+- `tools/policy/generate-sdk-api-surface.mts --write` regenerates
   `src/docs/content/reference/sdk-api-surface.md` from the current Rust, Swift, Kotlin, and React
   Native SDK sources;
 - `sdk-contracts:check` runs the generator in `--check` mode so
@@ -1204,7 +1204,7 @@ of the portable Swift/Kotlin/React Native handoff:
 The native PostgreSQL 18 patch stack now has deterministic source-only release
 evidence:
 
-- `src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write` generates
+- `src/runtimes/liboliphaunt/native/tools/check-patch-stack.mts --write` generates
   `docs/internal/OLIPHAUNT_PATCH_STACK.md` from `src/runtimes/liboliphaunt/native/postgres18/source.toml`
   and the maintained patch directory;
 - `src/runtimes/liboliphaunt/native/tools/check-track.sh` runs the same script in `--check`
@@ -1234,7 +1234,7 @@ links against only `src/runtimes/liboliphaunt/native/include/oliphaunt.h`:
 - `oliphaunt/smoke/liboliphaunt_abi_conformance.c` verifies ABI/version constants,
   capability bits, public struct field types, exported function prototypes, and
   safe global/no-handle calls without including PostgreSQL server headers;
-- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --abi-only`
+- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mts --abi-only`
   builds the conformance program with strict C11 warnings and links it to the
   current `liboliphaunt` shared library;
 - `src/runtimes/liboliphaunt/native/tools/check-track.sh quick` now runs that
@@ -1407,7 +1407,7 @@ expensive work:
 
 The native perf report validator now rejects weak evidence by default:
 
-- `tools/perf/check-native-perf-report.sh` passes
+- `benchmarks/perf/check-native-perf-report.sh` passes
   `--require-release-evidence` to the provenance verifier;
 - release verification requires `releaseEvidence=true`, `partialReport=false`,
   `diagnosticRun=false`, all native engines, all benchmark suites, SQLite and
@@ -1716,7 +1716,7 @@ PostgreSQL artifact lane exists:
   no `PG_VERSION`;
 - macOS keeps the direct `initdb` tooling fallback, so desktop smoke and local
   native iteration continue to work from an empty PGDATA root;
-- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --abi-only` now
+- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mts --abi-only` now
   performs a fast iOS simulator syntax check over the liboliphaunt C shim files,
   catching forbidden mobile C APIs without rebuilding PostgreSQL for iOS.
 
@@ -1785,7 +1785,7 @@ The native perf harness now accepts the same tuning shape:
   streaming, and native-PostgreSQL control runs;
 - Expo Android/iOS smoke and benchmark harnesses forward durability, runtime
   footprint, and startup GUCs through Metro env and dev-client links;
-- `tools/perf/matrix/run_mobile_footprint_matrix.sh` enumerates the requested
+- `benchmarks/perf/matrix/run_mobile_footprint_matrix.sh` enumerates the requested
   Android/iOS shared-buffer, WAL-buffer, WAL-minimum, and Safe/Balanced device
   sweep. It skips `min_wal_size=8MB/16MB` by default because the current PG18
   artifact uses 16MB WAL segments and PostgreSQL rejects those GUC-only minima.

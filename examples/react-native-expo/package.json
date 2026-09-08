@@ -1,6 +1,6 @@
 {
   "name": "react-native-oliphaunt-expo",
-  "main": "index.js",
+  "main": "index.ts",
   "version": "0.0.0",
   "dependencies": {
     "@oliphaunt/react-native": "workspace:*",
@@ -54,7 +54,7 @@
     "smoke:ios": "pnpm run mobile-build:ios && pnpm run mobile-e2e:ios",
     "typecheck": "tsc --noEmit",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "eslint --flag unstable_native_nodejs_ts_config ."
   },
   "private": true
 }

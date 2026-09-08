@@ -140,9 +140,7 @@ export async function runExpoSQLiteBenchmark(
   }
 }
 
-function resolveOptions(
-  options: ExpoSQLiteBenchmarkOptions,
-): ResolvedSQLiteBenchmarkOptions {
+function resolveOptions(options: ExpoSQLiteBenchmarkOptions): ResolvedSQLiteBenchmarkOptions {
   return {
     warmupIterations: positiveInteger(
       options.warmupIterations,
@@ -232,7 +230,7 @@ async function runSimpleSelectRtt(
   iterations: number,
 ): Promise<ReactNativeBenchmarkWorkload> {
   let checksum = 0;
-  const latency = await measureLatency(iterations, async index => {
+  const latency = await measureLatency(iterations, async (index) => {
     const row = await db.getFirstAsync<{ value: number }>('SELECT ? AS value', index % 17);
     checksum += row?.value ?? 0;
   });
@@ -249,11 +247,8 @@ async function runParameterizedSelectRtt(
   iterations: number,
 ): Promise<ReactNativeBenchmarkWorkload> {
   let checksum = 0;
-  const latency = await measureLatency(iterations, async index => {
-    const row = await db.getFirstAsync<{ value: string }>(
-      'SELECT ? AS value',
-      `value-${index}`,
-    );
+  const latency = await measureLatency(iterations, async (index) => {
+    const row = await db.getFirstAsync<{ value: string }>('SELECT ? AS value', `value-${index}`);
     checksum += row?.value.length ?? 0;
   });
   return {
@@ -283,7 +278,7 @@ async function prepareDataset(
   `);
 
   const started = monotonicNow();
-  await db.withExclusiveTransactionAsync(async tx => {
+  await db.withExclusiveTransactionAsync(async (tx) => {
     for (let index = 1; index <= rows; index += 1) {
       await tx.runAsync(
         `INSERT INTO rn_bench_events (id, bucket, label, amount, payload)
@@ -312,7 +307,7 @@ async function runIndexedLookup(
   rows: number,
 ): Promise<ReactNativeBenchmarkWorkload> {
   let checksum = 0;
-  const latency = await measureLatency(iterations, async index => {
+  const latency = await measureLatency(iterations, async (index) => {
     const id = (index % rows) + 1;
     const row = await db.getFirstAsync<{ payload: string }>(
       'SELECT payload FROM rn_bench_events WHERE id = ?',
@@ -333,7 +328,7 @@ async function runAggregateScan(
   iterations: number,
 ): Promise<ReactNativeBenchmarkWorkload> {
   let checksum = 0;
-  const latency = await measureLatency(iterations, async index => {
+  const latency = await measureLatency(iterations, async (index) => {
     const row = await db.getFirstAsync<{ rows: number; total: number }>(
       `SELECT count(*) AS rows, coalesce(sum(amount), 0) AS total
        FROM rn_bench_events
@@ -356,7 +351,7 @@ async function runIndexedUpdates(
   iterations: number,
   rows: number,
 ): Promise<ReactNativeBenchmarkWorkload> {
-  const latency = await measureLatency(iterations, async index => {
+  const latency = await measureLatency(iterations, async (index) => {
     const id = ((index * 17) % rows) + 1;
     await db.runAsync(
       `UPDATE rn_bench_events

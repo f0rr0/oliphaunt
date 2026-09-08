@@ -23,7 +23,7 @@ release-bump commit. It is not a routine source-PR check.
 Install local hooks with:
 
 ```sh
-tools/dev/bun.sh tools/dev/install-hooks.mjs
+bash tools/dev/install-hooks.sh
 ```
 
 Hooks stay deliberately smaller than CI: pre-commit handles file hygiene and

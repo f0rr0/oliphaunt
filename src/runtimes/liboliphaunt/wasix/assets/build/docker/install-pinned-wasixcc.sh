@@ -52,7 +52,7 @@ if [ -e "$install_root" ] || [ -L "$install_root" ]; then
   fail "install root already exists; refusing a non-atomic replacement: $install_root"
 fi
 
-for command_name in awk basename cp curl dirname find grep install mktemp mv od python3 readlink sha256sum sort tar wc; do
+for command_name in awk basename cp curl dirname find grep install mktemp mv od readlink sha256sum sort tar wc; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
 done
 
@@ -76,77 +76,57 @@ validate_archive_members() {
   local archive="$1"
   local asset_name="$2"
 
-  if ! python3 - "$archive" "$asset_name" <<'PY'
-import posixpath
-import sys
-import tarfile
-
-archive_path = sys.argv[1]
-asset_name = sys.argv[2]
-max_members = 200_000
-max_member_bytes = 2_000_000_000
-max_expanded_bytes = 4_000_000_000
-
-
-def safe_name(value: str, label: str) -> str:
-    if not value or "\\" in value or "\x00" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise ValueError(f"{label} contains invalid characters: {value!r}")
-    if value.startswith("/"):
-        raise ValueError(f"{label} is absolute: {value!r}")
-    trimmed = value[:-1] if value.endswith("/") else value
-    parts = trimmed.split("/")
-    if not trimmed or any(part in {"", ".", ".."} for part in parts):
-        raise ValueError(f"{label} is unsafe: {value!r}")
-    return trimmed
-
-
-try:
-    with tarfile.open(archive_path, mode="r:gz") as archive:
-        members = archive.getmembers()
-        if not members:
-            raise ValueError("archive is empty")
-        if len(members) > max_members:
-            raise ValueError(f"archive has too many members: {len(members)}")
-
-        seen = {}
-        links = []
-        expanded_bytes = 0
-        for member in members:
-            name = safe_name(member.name, "archive member")
-            if name in seen:
-                raise ValueError(f"duplicate archive member: {name!r}")
-            seen[name] = member
-
-            if member.isdir():
-                continue
-            if member.isreg():
-                if member.size < 0 or member.size > max_member_bytes:
-                    raise ValueError(f"archive member has invalid size: {name!r} ({member.size})")
-                expanded_bytes += member.size
-                if expanded_bytes > max_expanded_bytes:
-                    raise ValueError(f"archive expands beyond {max_expanded_bytes} bytes")
-                continue
-            if member.issym() or member.islnk():
-                safe_name(member.linkname, f"link target for {name}")
-                links.append((name, member.linkname, member.issym()))
-                continue
-            raise ValueError(f"unsupported archive member type for {name!r}")
-
-        for name, linkname, symbolic in links:
-            if symbolic:
-                target = posixpath.normpath(posixpath.join(posixpath.dirname(name), linkname))
-            else:
-                target = posixpath.normpath(linkname)
-            if target == ".." or target.startswith("../") or target.startswith("/"):
-                raise ValueError(f"link escapes archive root: {name!r} -> {linkname!r}")
-            if target not in seen:
-                raise ValueError(f"link target is absent from archive: {name!r} -> {linkname!r}")
-except (OSError, tarfile.TarError, ValueError) as error:
-    raise SystemExit(f"{asset_name} failed safe archive validation: {error}")
-PY
-  then
-    fail "$asset_name failed archive safety validation"
-  fi
+  local listing="$work_root/archive-members.txt"
+  # ponytail: pinned Linux toolchains use ASCII names without spaces; widen only with a fixture for a new pin.
+  LC_ALL=C tar --list --absolute-names --verbose --numeric-owner --full-time --quoting-style=escape \
+    --gzip --file "$archive" >"$listing" || fail "$asset_name failed archive safety validation"
+  LC_ALL=C awk '
+    function fail(message) { print message > "/dev/stderr"; failed = 1; exit 1 }
+    function safe(name, label, parts, count, i) {
+      if (name !~ /^[A-Za-z0-9_+./@=-]+$/ || name ~ /^\//) fail(label " is unsafe")
+      sub(/\/$/, "", name)
+      count = split(name, parts, "/")
+      for (i = 1; i <= count; i++) if (parts[i] == "" || parts[i] == "." || parts[i] == "..") fail(label " is unsafe")
+      return name
+    }
+    {
+      if (NR > 200000) fail("archive has too many members")
+      type = substr($1, 1, 1)
+      if (length($1) != 10 || $1 ~ /[sStT]/ || (type != "-" && type != "d" && type != "l" && type != "h")) fail("unsupported archive member type or mode")
+      if ((type == "l" && (NF != 8 || $7 != "->")) ||
+          (type == "h" && (NF != 9 || $7 != "link" || $8 != "to")) ||
+          ((type == "-" || type == "d") && NF != 6)) fail("ambiguous archive member")
+      name = safe($6, "archive member")
+      if (name in kinds) fail("duplicate archive member")
+      kinds[name] = type
+      if ($3 !~ /^[0-9]+$/ || $3 > 2000000000) fail("invalid archive member size")
+      expanded += $3
+      if (expanded > 4000000000) fail("archive expands beyond its size limit")
+      if (type == "l" || type == "h") {
+        target = safe($NF, "link target")
+        if (type == "l" && name ~ /\//) { parent = name; sub(/[^/]+$/, "", parent); target = parent target }
+        links[name] = target
+      }
+    }
+    END {
+      if (failed) exit 1
+      if (!NR) fail("archive is empty")
+      for (name in kinds) {
+        parent = name
+        while (sub(/\/[^/]+$/, "", parent)) if ((parent in kinds) && kinds[parent] != "d") fail("archive member descends through a non-directory")
+      }
+      for (name in links) {
+        target = links[name]
+        if (!(target in kinds)) fail("archive link target is absent")
+        if (kinds[name] == "h" && kinds[target] != "-") fail("hard link must target a regular file")
+        delete visited
+        while (target in links) {
+          if (target in visited) fail("archive link cycle")
+          visited[target] = 1; target = links[target]
+        }
+      }
+    }
+  ' "$listing" || fail "$asset_name failed archive safety validation"
 }
 
 validate_extracted_links() {

@@ -80,7 +80,7 @@ fresh_signal_owned_pid() {
     return 0
   fi
   if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
-    python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/signal-owned-pid.py" \
+    bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/signal-owned-pid.sh" \
       --signal "$signal" --pid "$pid" --identity "$identity"
     return
   fi

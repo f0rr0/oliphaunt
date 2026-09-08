@@ -3,7 +3,6 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-moon/install-pinned-node.sh"
-extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -71,7 +70,6 @@ common=(
   OLIPHAUNT_NODE_RUNTIME_ROOT="$root"
   OLIPHAUNT_NODE_RUNTIME_MANIFEST="$work/node-runtime.toml"
   OLIPHAUNT_NODE_RUNTIME_PROTO_FILE="$work/.prototools"
-  OLIPHAUNT_NODE_RUNTIME_ARCHIVE_EXTRACTOR="$extractor"
   OLIPHAUNT_NODE_RUNTIME_CACHE_ROOT="$work/cache"
   OLIPHAUNT_NODE_RUNTIME_TARGET=x86_64-unknown-linux-gnu
   OLIPHAUNT_NODE_RUNTIME_TESTING=1

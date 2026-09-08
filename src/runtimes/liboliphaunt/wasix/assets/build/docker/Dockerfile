@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # The base filesystem and Ubuntu package view are immutable inputs. The helper
 # writes a minimal fail-closed snapshot source, retries complete transactions,
 # and verifies every request with the committed snapshot-service trust root.
-# Rotate the trust root before the manifest-declared expiry boundary.
+# Rotate isrg-root-x1.pem before its certificate expires (2035-06-04).
 ARG OLIPHAUNT_UBUNTU_APT_SNAPSHOT=20260715T000000Z
 ARG OLIPHAUNT_UBUNTU_SNAPSHOT_TLS_ROOT_SHA256=22b557a27055b33606b6559f37703928d3e4ad79f110b407d04986e1843543d1
 LABEL dev.oliphaunt.ubuntu-apt-snapshot="${OLIPHAUNT_UBUNTU_APT_SNAPSHOT}" \

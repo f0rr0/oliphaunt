@@ -58,18 +58,10 @@ fi
 }
 carrier_dir="$(cd "$carrier_dir" && pwd -P)"
 "$project_root/bin/verify-sealed-headless-carrier.sh" "$carrier_dir"
-python3 - "$carrier_dir/manifest.json" "$expected_target_triple" <<'PY'
-import json
-import pathlib
-import sys
-
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-if manifest.get("target-triple") != sys.argv[2]:
-    raise SystemExit(
-        "sealed carrier target differs from release target: "
-        f"expected {sys.argv[2]}, got {manifest.get('target-triple')!r}"
-    )
-PY
+[ "$(fresh_manifest_value "$carrier_dir/wasmer-build.receipt" rustc_host)" = "$expected_target_triple" ] || {
+  echo 'sealed carrier target differs from release target' >&2
+  exit 2
+}
 
 version="$(tr -d '\r\n' <"$project_root/VERSION")"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -99,7 +91,7 @@ cp -p "$repo_root/LICENSE" "$package_root/LICENSE"
 cp -p "$repo_root/THIRD_PARTY_NOTICES.md" "$package_root/THIRD_PARTY_NOTICES.md"
 cp -p "$project_root/README.md" "$package_root/README.md"
 
-node "$repo_root/src/shared/artifact-packaging/archive-directory.mjs" \
+node "$repo_root/src/shared/artifact-packaging/archive-directory.mts" \
   --keep-parent "$package_root" "$asset_dir/$asset_name"
 asset_sha256="$(fresh_wasmer_bin_hash "$asset_dir/$asset_name")"
 asset_size="$(wc -c <"$asset_dir/$asset_name" | tr -d '[:space:]')"

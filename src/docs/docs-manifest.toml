@@ -10,7 +10,7 @@ strict_env = "OLIPHAUNT_DOCS_REQUIRE_NATIVE_API"
 
 [api_reference.c]
 header = "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-doxygen_config = "src/docs/reference/doxygen/Doxyfile"
+doxygen_config = "src/runtimes/liboliphaunt/native/tools/Doxyfile"
 
 [api_reference.rust]
 package = "oliphaunt"
@@ -297,7 +297,7 @@ route = "sdk/wasix-typescript"
 source = "src/docs/content/sdk/wasix-typescript"
 version_source = "src/bindings/wasix-ts/release.toml:id"
 reference_kind = "typedoc"
-tested_snippet_path = "tools/integration/wasix-ts/smoke-node.mjs"
+tested_snippet_path = "src/bindings/wasix-ts/tools/integration/verify-host.mts"
 tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart"
 required_pages = [
   "index",

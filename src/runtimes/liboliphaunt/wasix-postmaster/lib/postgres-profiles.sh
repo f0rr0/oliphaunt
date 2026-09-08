@@ -292,7 +292,7 @@ fresh_write_postgres_profile_evidence() {
     return 2
   fi
   [ -d "$(dirname "$inputs")" ] && [ -d "$(dirname "$resolution")" ] || return 2
-  publication_tool="$FRESH_ROOT/lib/durable_publication.py"
+  publication_tool="$FRESH_ROOT/lib/durable-publication.mts"
   [ -f "$publication_tool" ] && [ ! -L "$publication_tool" ] || {
     printf 'missing regular durable-publication helper: %s\n' \
       "$publication_tool" >&2
@@ -304,21 +304,21 @@ fresh_write_postgres_profile_evidence() {
   if ! inputs_identity="$({
     printf 'kind\tid\tpath\tsha256\n'
     for row in "${FRESH_POSTGRES_PROFILE_INPUT_ROWS[@]}"; do printf '%s\n' "$row"; done
-  } | python3 "$publication_tool" write-stdin-identified "$pending_inputs")"; then
-    python3 "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
+  } | bun "$publication_tool" write-stdin-identified "$pending_inputs")"; then
+    bun "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
     return 1
   fi
   if ! resolution_identity="$({
     printf 'name\tvalue\tsource\tprofile_id\tprofile_path\tprofile_sha256\tprecedence\n'
     for row in "${FRESH_POSTGRES_PROFILE_EVIDENCE_ROWS[@]}"; do printf '%s\n' "$row"; done
-  } | python3 "$publication_tool" write-stdin-identified "$pending_resolution")"; then
-    python3 "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
-    python3 "$publication_tool" discard-private "$pending_resolution" >/dev/null 2>&1 || true
+  } | bun "$publication_tool" write-stdin-identified "$pending_resolution")"; then
+    bun "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
+    bun "$publication_tool" discard-private "$pending_resolution" >/dev/null 2>&1 || true
     return 1
   fi
   if ! fresh_assert_postgres_profile_inputs; then
-    python3 "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
-    python3 "$publication_tool" discard-private "$pending_resolution" >/dev/null 2>&1 || true
+    bun "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
+    bun "$publication_tool" discard-private "$pending_resolution" >/dev/null 2>&1 || true
     return 1
   fi
   IFS=$'\t' read -r inputs_dev inputs_ino inputs_size inputs_sha \
@@ -338,9 +338,9 @@ fresh_write_postgres_profile_evidence() {
       "$pending_inputs" "$inputs" "$inputs_dev" "$inputs_ino" "$inputs_size" "$inputs_sha"
     )
   fi
-  if ! python3 "$publication_tool" publish-set-identified "${publication_pairs[@]}"; then
-    python3 "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
-    python3 "$publication_tool" discard-private "$pending_resolution" >/dev/null 2>&1 || true
+  if ! bun "$publication_tool" publish-set-identified "${publication_pairs[@]}"; then
+    bun "$publication_tool" discard-private "$pending_inputs" >/dev/null 2>&1 || true
+    bun "$publication_tool" discard-private "$pending_resolution" >/dev/null 2>&1 || true
     return 1
   fi
 }
@@ -379,7 +379,7 @@ fresh_validate_postgres_profile_settings() {
     printf 'refusing to replace PostgreSQL profile validation: %s\n' "$output" >&2
     return 2
   }
-  publication_tool="$FRESH_ROOT/lib/durable_publication.py"
+  publication_tool="$FRESH_ROOT/lib/durable-publication.mts"
   [ -f "$publication_tool" ] && [ ! -L "$publication_tool" ] || {
     printf 'missing regular durable-publication helper: %s\n' \
       "$publication_tool" >&2
@@ -424,20 +424,20 @@ fresh_validate_postgres_profile_settings() {
       exit failed ? 1 : 0
     }
   ' <(printf '%s\n' "$expected") "$settings" |
-    python3 "$publication_tool" write-stdin-identified "$pending")"; then
+    bun "$publication_tool" write-stdin-identified "$pending")"; then
     status=0
   else
     status=$?
   fi
   if [ "$status" -gt 1 ] || [ ! -f "$pending" ] || [ -L "$pending" ]; then
-    python3 "$publication_tool" discard-private "$pending" >/dev/null 2>&1 || true
+    bun "$publication_tool" discard-private "$pending" >/dev/null 2>&1 || true
     return 2
   fi
   IFS=$'\t' read -r pending_dev pending_ino pending_size pending_sha \
     <<<"$pending_identity"
-  if ! python3 "$publication_tool" publish-identified "$pending" "$output" \
+  if ! bun "$publication_tool" publish-identified "$pending" "$output" \
     "$pending_dev" "$pending_ino" "$pending_size" "$pending_sha"; then
-    python3 "$publication_tool" discard-private "$pending" >/dev/null 2>&1 || true
+    bun "$publication_tool" discard-private "$pending" >/dev/null 2>&1 || true
     return 2
   fi
   return "$status"

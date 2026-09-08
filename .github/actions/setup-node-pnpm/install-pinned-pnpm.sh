@@ -10,7 +10,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
   fail "must run inside the Oliphaunt checkout"
 manifest="${OLIPHAUNT_PNPM_MANIFEST:-$root/src/sources/toolchains/pnpm.toml}"
 proto_file="${OLIPHAUNT_PNPM_PROTO_FILE:-$root/.prototools}"
-extractor="${OLIPHAUNT_PNPM_ARCHIVE_EXTRACTOR:-$root/.github/actions/setup-moon/toolchain-archive.py}"
+extractor="${OLIPHAUNT_PNPM_ARCHIVE_EXTRACTOR:-$root/.github/actions/setup-moon/toolchain-archive.mts}"
 curl_platform_flags="${OLIPHAUNT_PNPM_CURL_PLATFORM_FLAGS:-$root/tools/dev/curl-platform-flags.sh}"
 cache_root="${OLIPHAUNT_PNPM_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-pnpm-runtime}"
 curl_command="${OLIPHAUNT_PNPM_CURL:-curl}"
@@ -45,14 +45,6 @@ done
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
 
-python=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    python="$candidate"
-    break
-  fi
-done
-[ -n "$python" ] || fail "python3 or python is required for safe archive extraction"
 for command_name in "$curl_command" mktemp node; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
 done
@@ -121,17 +113,7 @@ sha256_file() {
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
   else
-    "$python" - "$1" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-digest = hashlib.sha256()
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum/sha512sum or shasum is required"
   fi
 }
 
@@ -141,17 +123,7 @@ sha512_file() {
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 512 "$1" | awk '{print $1}'
   else
-    "$python" - "$1" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-digest = hashlib.sha512()
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum/sha512sum or shasum is required"
   fi
 }
 
@@ -363,7 +335,7 @@ cache_valid() {
   for executable in "${executables[@]}"; do
     tree_args+=(--executable "$executable")
   done
-  tree_result="$("$python" "$extractor" "${tree_args[@]}" 2>/dev/null)" || return 1
+  tree_result="$(node "$extractor" "${tree_args[@]}" 2>/dev/null)" || return 1
   [ "$tree_result" = "$file_count $tree_sha256" ] || return 1
   [ "$(node_script_version "$candidate/pnpm/$binary_path" 2>/dev/null | awk 'NF { print $1; exit }')" = "$version" ] || return 1
   [ "$(cat "$candidate/receipt")" = "$receipt_text" ] || return 1
@@ -415,7 +387,7 @@ extract_args=(
 for executable in "${executables[@]}"; do
   extract_args+=(--required "$executable" --executable "$executable")
 done
-"$python" "$extractor" "${extract_args[@]}"
+node "$extractor" "${extract_args[@]}"
 
 mkdir -p "$stage/bin"
 printf '%s\n' "$pnpm_wrapper_text" >"$stage/bin/pnpm"

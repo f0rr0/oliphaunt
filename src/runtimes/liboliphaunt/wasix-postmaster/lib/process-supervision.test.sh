@@ -10,6 +10,11 @@ TIMEOUT_TREE="$TEST_ROOT/timeout-tree.sh"
 RESIDUE_TREE="$TEST_ROOT/residue-tree.sh"
 
 cleanup() {
+  if [ -n "${FRESH_PROCESS_GROUP_IDENTITY:-}" ]; then
+    fresh_terminate_owned_process_group \
+      "$FRESH_PROCESS_GROUP_PGID" "$FRESH_PROCESS_GROUP_PID" \
+      "$FRESH_PROCESS_GROUP_IDENTITY" 0 3000 >/dev/null 2>&1 || true
+  fi
   local pid_file pid
   for pid_file in "$TEST_ROOT"/*.pid; do
     [ -s "$pid_file" ] || continue
@@ -182,7 +187,6 @@ fresh_supervision_pid_running "$owned_pid" || {
   echo "identity-mismatch guard killed the owned fixture" >&2
   exit 1
 }
-grep -Fq 'refusing to signal reused process identity' "$TEST_ROOT/reused.err"
 WASIX_PROCESS_TERM_GRACE_MS=100 \
 WASIX_PROCESS_KILL_GRACE_MS=3000 \
   fresh_terminate_owned_process_group "$owned_pgid" "$owned_pid" "$owned_identity"

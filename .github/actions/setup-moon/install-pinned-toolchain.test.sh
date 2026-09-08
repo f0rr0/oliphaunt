@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-moon/install-pinned-toolchain.sh"
-extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
+extractor="$root/.github/actions/setup-moon/toolchain-archive.mts"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -12,14 +12,6 @@ fail() {
   exit 1
 }
 
-python=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    python="$candidate"
-    break
-  fi
-done
-[ -n "$python" ] || fail "python3 or python is required"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -60,14 +52,9 @@ printf '%s\n' 'fixture readme' >"$fixture/content/README.md"
 printf '%s\n' 'fixture changelog' >"$fixture/content/CHANGELOG.md"
 printf '%s\n' 'fixture license' >"$fixture/content/LICENSE"
 
-printf '%s\n' \
-  '#!/usr/bin/env node' \
-  "console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' ? JSON.stringify(process.argv.slice(2)) : '$pnpm_version');" \
-  >"$fixture/content/pnpm/bin/pnpm.mjs"
-printf '%s\n' \
-  '#!/usr/bin/env node' \
-  "console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' ? JSON.stringify(process.argv.slice(2)) : '$pnpm_version');" \
-  >"$fixture/content/pnpm/bin/pnpx.mjs"
+bash "$root/tools/dev/bun.sh" build "$root/tools/test/package-manager-fixture.mts" \
+  --target=node --define "FIXTURE_VERSION=\"$pnpm_version\"" --outfile "$fixture/content/pnpm/bin/pnpm.mjs" >/dev/null
+cp "$fixture/content/pnpm/bin/pnpm.mjs" "$fixture/content/pnpm/bin/pnpx.mjs"
 printf '%s\n' 'fixture pnpm payload' >"$fixture/content/pnpm/dist/pnpm.mjs"
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/content/pnpm/dist/node-gyp-bin/node-gyp"
 printf '%s\r\n' '@exit /b 0' >"$fixture/content/pnpm/dist/node-gyp-bin/node-gyp.cmd"
@@ -82,49 +69,29 @@ chmod 0755 \
 
 moon_archive="$fixture/moon.tar.xz"
 pnpm_archive="$fixture/pnpm.tgz"
-"$python" - "$fixture/content" "$moon_archive" "$pnpm_archive" "$moon_target" <<'PY'
-import io
-import pathlib
-import tarfile
-import sys
-
-content = pathlib.Path(sys.argv[1])
-moon_archive = pathlib.Path(sys.argv[2])
-pnpm_archive = pathlib.Path(sys.argv[3])
-target = sys.argv[4]
-
-with tarfile.open(moon_archive, "w:xz", format=tarfile.PAX_FORMAT) as archive:
-    root = tarfile.TarInfo(f"moon_cli-{target}")
-    root.type = tarfile.DIRTYPE
-    root.mode = 0o755
-    archive.addfile(root)
-    for name, mode in [
-        ("moon", 0o755),
-        ("moonx", 0o755),
-        ("README.md", 0o644),
-        ("CHANGELOG.md", 0o644),
-        ("LICENSE", 0o644),
-    ]:
-        payload = (content / name).read_bytes()
-        info = tarfile.TarInfo(f"moon_cli-{target}/{name}")
-        info.mode = mode
-        info.size = len(payload)
-        archive.addfile(info, io.BytesIO(payload))
-
-pnpm = content / "pnpm"
-with tarfile.open(pnpm_archive, "w:gz", format=tarfile.PAX_FORMAT) as archive:
-    root = tarfile.TarInfo("package")
-    root.type = tarfile.DIRTYPE
-    root.mode = 0o755
-    archive.addfile(root)
-    for path in sorted(candidate for candidate in pnpm.rglob("*") if candidate.is_file()):
-        relative = path.relative_to(pnpm).as_posix()
-        payload = path.read_bytes()
-        info = tarfile.TarInfo(f"package/{relative}")
-        info.mode = path.stat().st_mode & 0o777
-        info.size = len(payload)
-        archive.addfile(info, io.BytesIO(payload))
-PY
+bash "$root/tools/dev/bun.sh" - "$fixture/content" "$moon_archive" "$pnpm_archive" "$moon_target" <<'TS'
+import {readFileSync,writeFileSync,readdirSync,lstatSync} from 'node:fs';
+import {tarArchive} from './tools/test/tar-fixture.mts';
+const [content, moonArchive, pnpmArchive, target] = process.argv.slice(2);
+const moonRoot = 'moon_cli-' + target;
+const moon = [{name:moonRoot+'/',type:'5',mode:0o755}];
+for (const name of ['moon','moonx','README.md','CHANGELOG.md','LICENSE']) moon.push({name:moonRoot+'/'+name,data:readFileSync(content+'/'+name),mode:name.startsWith('moon')?0o755:0o644});
+writeFileSync(moonArchive+'.gz',tarArchive(moon));
+const pnpm = [{name:'package/',type:'5',mode:0o755}];
+function walk(relative='') {
+  for (const name of readdirSync(content+'/pnpm/'+relative).sort()) {
+    const member = relative ? relative+'/'+name : name;
+    const file = content+'/pnpm/'+member;
+    const stat = lstatSync(file);
+    if (stat.isDirectory()) walk(member);
+    else pnpm.push({name:'package/'+member,data:readFileSync(file),mode:stat.mode&0o777});
+  }
+}
+walk();
+writeFileSync(pnpmArchive,tarArchive(pnpm));
+TS
+gzip -dc "$moon_archive.gz" | xz -c > "$moon_archive"
+rm "$moon_archive.gz"
 
 moon_archive_sha256="$(sha256_file "$moon_archive")"
 moon_archive_bytes="$(wc -c <"$moon_archive" | tr -d '[:space:]')"
@@ -143,7 +110,7 @@ pnpm_expanded_bytes="$(
     -exec sh -c 'for file do wc -c < "$file"; done' sh {} + |
     awk '{sum += $1} END {print sum}'
 )"
-pnpm_tree_result="$("$python" "$extractor" tree-digest \
+pnpm_tree_result="$(node "$extractor" tree-digest \
   --root "$fixture/content/pnpm" \
   --executable bin/pnpm.mjs \
   --executable bin/pnpx.mjs \
@@ -333,10 +300,6 @@ for command_name in pnpm pnpx; do
   [ "$observed_argv" = "$expected_argv" ] ||
     fail "Moon $command_name wrapper did not preserve structured caller arguments"
 done
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$final/bin/pnpm" ||
-  fail "Moon pnpm wrapper does not explicitly convert its internal Windows script path"
-grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$final/bin/pnpx" ||
-  fail "Moon pnpx wrapper does not explicitly convert its internal Windows script path"
 [ "$(find "$final/plugins" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" = "4" ] || fail "wrong plugin count"
 [ "$(wc -l <"$FAKE_CURL_LOG" | tr -d '[:space:]')" = "14" ] || fail "unexpected first-install request count"
 while IFS= read -r call; do
@@ -388,7 +351,7 @@ OLIPHAUNT_MOON_CURL=false bash "$installer" >/dev/null
 # Executable intent is part of the portable tree fingerprint on POSIX.
 chmod 0644 "$final/pnpm/bin/pnpm.mjs"
 set +e
-"$python" "$extractor" tree-digest \
+node "$extractor" tree-digest \
   --root "$final/pnpm" \
   --executable bin/pnpm.mjs \
   --executable bin/pnpx.mjs \
@@ -401,45 +364,21 @@ set -e
 chmod 0755 "$final/pnpm/bin/pnpm.mjs"
 
 # Reject traversal and non-zero directory payload metadata before extraction.
-"$python" - "$tmp/unsafe.tar.xz" "$tmp/directory-payload.tar.xz" "$tmp/pax-payload.tar.xz" <<'PY'
-import io
-import tarfile
-import sys
+bash "$root/tools/dev/bun.sh" - "$tmp" <<'TS'
+import {writeFileSync} from 'node:fs';
+import {tarArchive} from './tools/test/tar-fixture.mts';
+const root = process.argv[2];
+const directory = {name:'root/',type:'5',mode:0o755};
+writeFileSync(root+'/unsafe.tar.gz',tarArchive([directory,{name:'root/../escape',data:'x'}]));
+writeFileSync(root+'/directory-payload.tar.gz',tarArchive([{...directory,data:'x'},{name:'root/file',data:'x'}]));
+writeFileSync(root+'/pax-payload.tar.gz',tarArchive([{name:'root/metadata',type:'x',data:'x'.repeat(2*1024*1024)},{name:'root/file',data:'x'}]));
+TS
 
-with tarfile.open(sys.argv[1], "w:xz") as archive:
-    root = tarfile.TarInfo("root")
-    root.type = tarfile.DIRTYPE
-    archive.addfile(root)
-    payload = b"x"
-    bad = tarfile.TarInfo("root/../escape")
-    bad.size = len(payload)
-    archive.addfile(bad, io.BytesIO(payload))
-
-with tarfile.open(sys.argv[2], "w:xz") as archive:
-    root = tarfile.TarInfo("root")
-    root.type = tarfile.DIRTYPE
-    root.size = 1
-    archive.addfile(root, io.BytesIO(b"x"))
-    payload = b"x"
-    regular = tarfile.TarInfo("root/file")
-    regular.size = len(payload)
-    archive.addfile(regular, io.BytesIO(payload))
-
-# Extended metadata is rejected from the raw stream before a decompression bomb
-# can be materialized by tarfile's PAX parser.
-with tarfile.open(sys.argv[3], "w:xz", format=tarfile.PAX_FORMAT) as archive:
-    payload = b"x"
-    regular = tarfile.TarInfo("root/file")
-    regular.size = len(payload)
-    regular.pax_headers = {"comment": "x" * (2 * 1024 * 1024)}
-    archive.addfile(regular, io.BytesIO(payload))
-PY
-
-for unsafe in "$tmp/unsafe.tar.xz" "$tmp/directory-payload.tar.xz" "$tmp/pax-payload.tar.xz"; do
+for unsafe in "$tmp/unsafe.tar.gz" "$tmp/directory-payload.tar.gz" "$tmp/pax-payload.tar.gz"; do
   set +e
-  "$python" "$extractor" extract \
+  node "$extractor" extract \
     --archive "$unsafe" \
-    --format tar.xz \
+    --format tar.gz \
     --prefix root \
     --entry-count 2 \
     --expected-bytes "$(wc -c <"$unsafe" | tr -d '[:space:]')" \

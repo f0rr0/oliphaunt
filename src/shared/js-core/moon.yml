@@ -4,7 +4,7 @@ id: "shared-js-core"
 language: "typescript"
 layer: "library"
 stack: "frontend"
-tags: ["shared", "typescript", "sdk"]
+tags: ["javascript-quality", "shared", "typescript", "sdk"]
 dependsOn:
   - id: "shared-test-fixtures"
     scope: "development"

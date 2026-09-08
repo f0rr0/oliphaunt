@@ -566,7 +566,7 @@ build_apk() {
     local gradle_jvmargs gradle_max_workers node_binary
     gradle_jvmargs="$(oliphaunt_android_gradle_jvmargs)"
     gradle_max_workers="$(oliphaunt_android_gradle_max_workers)"
-    node_binary="$(node -p 'process.execPath')"
+    node_binary="$(node "$root/tools/dev/node-info.mts" executable)"
     local selected_extensions extension_archives_root kotlin_sdk_aar android_link_evidence module_stems
     selected_extensions="$(normalize_mobile_extensions)"
     module_stems="$(oliphaunt_dev_mobile_module_stems_for_selection "$selected_extensions")"
@@ -614,7 +614,7 @@ build_apk() {
       fail "Android build did not emit static extension link evidence: $android_link_evidence"
     fi
     if [ -n "$module_stems" ]; then
-      run node "$root/src/sdks/react-native/tools/validate-android-link-evidence.mjs" \
+      run node "$root/src/sdks/react-native/tools/validate-android-link-evidence.mts" \
         --evidence "$android_link_evidence" \
         --abi "$android_abi" \
         --module-stems "$module_stems" \

@@ -24,7 +24,7 @@ moon run :test :unit :tools-unit --affected
 ```
 
 Run `moon run ci-workflows:check` for workflow changes and
-`tools/dev/bun.sh tools/policy/check-supply-chain.mjs` for dependency or
+`cargo deny check` for dependency or
 supply-chain policy changes; neither is an unconditional pre-PR ceremony.
 
 Tool versions for Moon, Node, pnpm, Bun, and Deno are pinned in `.prototools`.
@@ -62,37 +62,32 @@ Moon's own concurrency instead of a forced single-worker debug mode.
 
 The validation entrypoint is split by maintainer workflow:
 
-- `moon run liboliphaunt-native:host-smoke`: no-build host C ABI/runtime smoke for the
-  current native target. It compiles and runs the consumer-style ABI harness and
-  the full C smoke against the release-runtime artifact for macOS, Linux, or
-  Windows. `OLIPHAUNT_TRACK_BUILD=never` makes missing or stale artifacts fail
-  immediately instead of entering any build path;
 - `moon run liboliphaunt-native:host-smoke`: release-shaped, no-build host
   C ABI/runtime smoke. It depends on the native release-runtime producer and
   refuses any implicit rebuild inside the smoke;
-- `moon run repo:check`: file hygiene and formatting;
-- `moon run liboliphaunt-wasix:assets-verify`: source-controlled asset input verification
-  plus AOT crate template checks;
-- `tools/dev/bun.sh tools/policy/check-rust-lint.mjs`: dependency invariants
-  and clippy;
+- `cargo clippy -p <package> --all-targets --locked -- -D warnings`: focused Rust lint;
 - `moon run ci-workflows:check`: workflow syntax and security checks plus the
   behavior tests for helpers invoked by Actions;
 - `moon run liboliphaunt-wasix:smoke`: hard-requires portable assets plus host AOT,
   installs them into ignored paths, and runs the real runtime tests;
+- `moon run wasix-ts-integration:package-conditions`: installed Node/Bun package
+  exports and storage adapters, without compiling or opening a native runtime.
+  The product-owned `bash src/bindings/wasix-ts/tools/integration/smoke-node.sh --package-only --runtime deno|electron`
+  command checks those hosts too;
 - `moon run liboliphaunt-wasix:runtime-portable oliphaunt-wasix-ts:package`, then
-  `node tools/integration/wasix-ts/smoke-browser.mjs`: local browser proof. It serves
+  `bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh`: local browser proof. It serves
   COOP/COEP headers and requires Chrome/Chromium to exercise `pgtap`, recover two
   PostgreSQL error paths, return `42`, and exit cleanly. Add `--pg-uuidv7` for the
   private native-module canary;
 - `moon run integration-examples:check`: Tauri/Rust/frontend example checks;
 - `moon run liboliphaunt-native:lint liboliphaunt-native:unit`: cached native
-  patch-stack and source-level tests without building a runtime;
+  Shell syntax and native unit tests without building a runtime;
 - `moon run oliphaunt-rust:regression`: native direct, broker, and server
   behavior against the current host runtime. Extension behavior remains the
   separate `oliphaunt-rust:extension-regression` lane;
-- `moon run perf-tools:native-plan`: validates the native benchmark plan without
-  building or measuring a runtime;
-- `pnpm --dir tools/perf/wasix-node bench:streaming`: quick local WASIX
+- `moon run perf-tools:native-measure`: optional native RTT measurement, using
+  the same benchmark runner available locally;
+- `pnpm --dir benchmarks/perf/wasix-node bench:streaming`: quick local WASIX
   TypeScript transport benchmark. It reuses staged packages and portable assets,
   compares the root direct and explicit `/worker` contracts, exercises bounded COPY,
   backpressure, event-loop delay, process RSS, the local server, `pg_dump`, and
@@ -109,13 +104,16 @@ The validation entrypoint is split by maintainer workflow:
   library, executable, and integration tests. A focused command such as
   `cargo test -p oliphaunt --lib` is useful while iterating, but excludes the
   executable tests under `src/bin/**` and is not qualification evidence;
-- `moon run oliphaunt-rust:package`: creates and inspects the publishable Rust
-  SDK package only. Run `compile`, `unit`, and `package` together for the compact
-  pre-push gate; none silently owns the others;
-- `moon run sdk-contracts:all`: local aggregate for generated API, SDK registry,
-  C ABI header-copy, fixture, and native-boundary validation. Hosted CI schedules
-  those checks independently from their own inputs. Use
-  product `compile`, `unit`, and `package` targets for behavior and package proof;
+- `moon run oliphaunt-rust:package`: creates the final `oliphaunt` and
+  `oliphaunt-build` crates, inspects their contents, and compiles the packaged
+  tests offline. `oliphaunt-wasix-rust:package` does the same for the WASIX SDK.
+  Both use their product's `release-package` task and the shared Cargo cache;
+  neither needs a preliminary package build. The compile timeout uses GNU
+  `timeout` (`brew install coreutils` on macOS). Run `unit` and `regression`
+  separately to execute source tests and exercise the runtime;
+- `moon run liboliphaunt-native:headers`: checks the three SDK C headers against
+  the canonical native header. Each SDK's tests exercise the shared seed and
+  protocol fixtures through its own implementation;
 - `moon run oliphaunt-swift:compile`: SwiftPM package description and build checks
   for the SDK package and repository root package;
 - `moon run oliphaunt-swift:smoke`: Swift SDK tests against the current native
@@ -155,13 +153,13 @@ The validation entrypoint is split by maintainer workflow:
   generated `ios/` Podfile for local Swift pods, rejects macOS dylibs, and can
   run in `OLIPHAUNT_EXPO_IOS_BUILD_ONLY=1` mode when CoreSimulator is
   unavailable;
-- `tools/policy/check-crate-package.sh`: package all published crates and enforce
-  crates.io size limits;
-- `tools/dev/bun.sh tools/policy/check-feature-powerset.mjs`: cargo-hack
+- `moon run <product>:package`: stage and verify the selected product package;
+- `cargo hack check -p <package> --feature-powerset --no-dev-deps`: cargo-hack
   feature combination checks;
-- `tools/dev/bun.sh tools/policy/check-semver.mjs`: cargo-semver-checks public
-  API compatibility;
-- `tools/dev/bun.sh tools/policy/check-supply-chain.mjs`: cargo-deny dependency
+- `cargo semver-checks check-release -p <package>`: cargo-semver-checks public
+  API compatibility against the published version (use an explicit
+  `--baseline-rev <commit>` before first publication);
+- `cargo deny check`: cargo-deny dependency
   policy checks;
 - `moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :package && moon run :coverage`:
   explicit full local parity lane, including measured coverage;
@@ -170,10 +168,10 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run :regression`: broader SQL, protocol, extension, and runtime regression suites;
 - `moon run release-tools:check`: the canonical full local release-policy gate.
   The direct equivalent is
-  `tools/dev/bun.sh tools/release/release-check.mjs`. This release-owned
+  `bash tools/release/release-check.sh`. This release-owned
   metadata and mutation gate does not replace affected product `compile`, `unit`,
   or `package` tasks;
-- `tools/dev/bun.sh tools/release/release-metadata-check.mjs`: internal
+- `bash tools/release/release-metadata-check.sh`: internal
   protected-workflow replay after a generated release commit has passed its
   structured verifier or after the exact hosted `Qualified` record has been
   reverified against a clean checkout. It is not a replacement for the full
@@ -184,10 +182,8 @@ Moon caches deterministic task results when their declared source inputs and
 task dependencies have not changed. Local `:smoke` targets use `cache: local`,
 so repeated `moon run :smoke` runs can return a cached result for the same source
 graph. Use `moon run <product>:smoke --cache off` when you need a live
-device, simulator, or runtime probe regardless of the cache. Generated report
-aggregates, such as `repo:coverage`, depend on upstream task outputs with Moon
-2.3 `cacheStrategy: outputs`, so downstream cache invalidation follows the
-artifact contract instead of every private upstream source edit.
+device, simulator, or runtime probe regardless of the cache. Product tasks declare their own inputs and outputs; coverage remains an optional
+product-local command.
 
 Kotlin and React Native Android SDK validation uses Gradle's configuration
 cache by default so repeated local runs do not reconfigure the same Android/KMP
@@ -197,8 +193,7 @@ Gradle configuration-cache behavior itself.
 The hook split is intentionally small:
 
 - pre-commit: file hygiene and formatting
-- release readiness: `tools/dev/bun.sh tools/policy/check-rust-lint.mjs` and
-  `moon run liboliphaunt-wasix:assets-verify`
+- release readiness: the affected product lint, compile, unit, and package tasks
 - CI/release: path-aware combinations of the same validation modes, workflow
   linting, feature powerset, public API compatibility, crate packaging,
   native AOT runtime tests, frozen Cargo publication dry-runs, and supply-chain
@@ -222,7 +217,7 @@ together when either maintainer tool is upgraded.
 
 ```sh
 tools/dev/bootstrap-tools.sh
-tools/dev/bun.sh tools/dev/install-hooks.mjs
+bash tools/dev/install-hooks.sh
 ```
 
 `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/runtime_smoke.rs` starts the real WASIX backend and
@@ -241,17 +236,16 @@ The repository includes maintenance commands:
   seeds from the split WASIX `initdb` module. Portable WASIX, cluster seeds,
   and native AOT payloads remain generated-only.
 
-Asset and source checks:
+Asset and source checks (source transport also requires GNU `timeout`; install
+`coreutils` on macOS):
 
 ```sh
-cargo run -p xtask -- assets verify-committed
-cargo run -p xtask -- assets fetch
-cargo run -p xtask -- assets check --strict-local
+bash src/sources/tools/fetch-sources.sh production-all --force
+bash src/sources/tools/fetch-sources.sh wasix-runtime --verify-only
 cargo run -p xtask -- assets check --strict-generated
 cargo run -p xtask --features cluster-seed-runner -- assets cluster-seeds
-cargo run -p xtask -- assets source-spine --check-patch-applies
-cargo run -p xtask -- assets audit-upstream --strict
-moon run repo:package
+bash src/runtimes/liboliphaunt/wasix/assets/build/prepare_postgres_source.sh
+moon run oliphaunt-rust:package
 ```
 
 ## Local Runtime Development
@@ -295,8 +289,9 @@ in ignored paths, and then runs the real runtime tests:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-cargo run -p xtask -- assets fetch
-cargo run -p xtask --features aot-serializer -- assets build-host
+bash src/sources/tools/fetch-sources.sh production-all --force
+bash src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh
+bash src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh
 moon run liboliphaunt-wasix:smoke
 ```
 
@@ -313,7 +308,7 @@ the existing generated portable assets:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-cargo run -p xtask -- assets aot --target-triple "$host"
+bash src/runtimes/liboliphaunt/wasix/tools/serialize-aot.sh --target-triple "$host"
 cargo run -p xtask -- assets package-aot --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
@@ -326,9 +321,9 @@ build path:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-cargo run -p xtask -- assets download --run-id <id> --target-triple "$host"
+bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --run-id <id> --target-triple "$host"
 # Or select the successful CI run for one exact commit:
-cargo run -p xtask -- assets download --sha <full-40-character-sha> --target-triple "$host"
+bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --sha <full-40-character-sha> --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
 
@@ -341,7 +336,7 @@ are public GitHub release assets:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-cargo run -p xtask -- assets download --release <tag> --target-triple "$host"
+bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --release <tag> --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
 
@@ -352,8 +347,8 @@ Release validation can download every supported target from the exact `CI`
 workflow SHA:
 
 ```sh
-cargo run -p xtask -- assets download --sha <full-40-character-sha> --all-targets
-tools/dev/bun.sh tools/release/release-check.mjs
+bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --sha <full-40-character-sha> --all-targets
+bash tools/release/release-check.sh
 ```
 
 Developers should not be expected to build every target locally. Local runtime
@@ -379,3 +374,5 @@ for release artifacts.
 Release process details are tracked in [release.md](release.md). Historical
 progress notes under `docs/internal/` are archived and non-normative; they are
 not the current backlog or release checklist.
+
+Generated Cargo and npm carriers are assembled directly from private staging trees. Payload splitting uses the finished compressed archive size and reuses the fitted bytes. Maintained Rust SDK source packages use `src/shared/artifact-packaging/package-cargo-source.sh`, which lets Cargo select source files and describe compile targets. Product consumer checks compile the unpacked crates; carrier assembly does not rebuild each generated crate.

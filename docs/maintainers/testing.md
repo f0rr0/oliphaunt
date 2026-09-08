@@ -59,7 +59,7 @@ result and therefore remain fail-closed for release evidence.
 Linux producer lanes prove compatibility twice. The format-independent ELF
 inspector rejects any `GLIBC` requirement above 2.38 or `GLIBCXX` requirement
 above 3.4.30, including objects inside static archives. The packaged dynamic
-trees then run through `tools/release/check-linux-consumer-baseline.sh` in an
+trees then run through `src/shared/artifact-packaging/check-linux-consumer-baseline.sh` in an
 immutable Fedora 39/glibc 2.38 container with no network, writable root, or
 Linux capabilities. The fixture is an ABI test appliance, not a supported-OS
 or security-lifecycle assertion. The broker is additionally built and started
@@ -72,7 +72,7 @@ Cargo examples use crates.io dependencies pinned to the current Oliphaunt versio
 They do not commit nested lockfiles. Validate them with:
 
 ```sh
-tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
+tools/dev/bun.sh tools/release/example-cargo-policy.mts --check
 ```
 
 Cross-product behavior belongs in `docs/maintainers/sdk-parity-policy.md` and executable parity
@@ -104,12 +104,11 @@ product-native tests or policy checks:
   inclusive WAL segment-range vectors consumed by native and both WASIX online
   backup implementations, including non-default segment size arithmetic.
 
-`bun tools/policy/check-shared-fixtures.mjs` validates the manifest and rejects
-byte-for-byte source copies outside the canonical fixture root. Published
-source packages receive any required standalone copies only in their generated
-staging directories.
+Product tests consume these shared fixtures through the actual protocol and
+archive implementations. Published source packages receive required standalone
+copies in their staging directories.
 Reusable benchmark datasets, benchmark plans, and published reports belong in
-`benchmarks/`. Executable benchmark harnesses belong in `tools/perf/` unless
+`benchmarks/`. Executable benchmark harnesses belong in `benchmarks/perf/` unless
 the harness is intentionally part of a product's public developer API.
 
 ## Moon Tasks
@@ -124,7 +123,7 @@ Moon task names are intentionally narrow:
   regression suites.
 - `perf-tools:*-plan`: benchmark plan/report validation only.
 - `perf-tools:*-measure`: measured benchmark execution.
-- `coverage-tools:<product>`: runs product-native measured line coverage and writes
+- `<product>:coverage`: runs product-native measured line coverage and writes
   machine-readable reports under `target/coverage/<product>/`.
 
 `check` and `test` must not call the same command for SDK products. `test`
@@ -164,7 +163,7 @@ implementing this plan. Routine maintenance verifies the pinned installer, flow
 files, app artifacts, runner behavior, and CI logs for the selected Maestro
 lanes; it does not revisit provider selection.
 
-`tools/dev/setup-maestro.sh` installs only the exact versioned release asset and
+`src/shared/mobile-tools/setup-maestro.sh` installs only the exact versioned release asset and
 SHA-256 recorded in `src/sources/toolchains/maestro.toml`; that manifest is the
 single release pin. It does not execute the vendor's network installer. Version
 upgrades change the reviewed manifest metadata and must keep the staged
@@ -226,21 +225,13 @@ Native native adapter compile checks, Codegen checks, Expo prebuild/app wiring,
 and installed-device smokes remain separate package or runtime lanes; Vitest
 coverage is only evidence for TypeScript API/config/JSI contract code.
 
-`coverage/baseline.toml` records product-owned `source_globs`, precise
-`exclude_globs`, explicit waivers, the blocking aggregate gate, and a visible
-per-file warning threshold. Every owned source file must be measured or waived with a reason and
-replacement evidence; every waiver also carries an owner and expiry/review
-horizon. Generated code, vendored code, PostgreSQL sources, native build
-outputs, package `lib/` output, Gradle build directories, Xcode DerivedData,
-and Codegen output are excluded from SDK wrapper coverage gates.
-The aggregate floor is 80 percent for SDK wrapper code. A file below 50 percent
-emits a CI warning, including the current `storage.rs` result, without weakening
-the aggregate gate or the requirement for complete, valid coverage evidence.
-Actual measurements are published as CI artifacts rather than committed snapshots.
-Use `moon run repo:coverage-policy` when you only need to validate the
-coverage policy shape.
+Coverage is an optional product-owned diagnostic. Each SDK invokes its native
+coverage tool directly; normal CI runs its unit tasks once. Reports remain under
+`target/coverage/<product>/`. There is no cross-language percentage gate, source
+scanner, waiver ledger, or second test execution layer.
 
-The root coverage commands are:
+Run coverage for one product with `moon run <product>:coverage`. To select all
+product coverage tasks (requiring their respective toolchains):
 
 ```sh
 moon run :coverage
@@ -248,6 +239,14 @@ moon run :coverage --affected
 ```
 
 ## WASIX Runtime Tests
+
+Extension lifecycle qualification tests physical backup/restore, reopening the
+restored database and verifying existing extension state without rerunning setup.
+Logical `pg_dump`/`psql` tests are separate and prove only their tested fixtures.
+In particular, pinned pg_ivm 1.13 does not preserve incremental-view maintenance
+through a plain logical dump/restore: use physical backup/restore for those
+databases. Upstream introduced metadata export and `restore_immv` in pg_ivm 1.15;
+adopting that release requires the normal extension source and platform qualification.
 
 `oliphaunt-wasix` is intended for tests that need real Postgres semantics without
 Docker.

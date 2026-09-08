@@ -23,8 +23,6 @@
   },
   "bundle": {
     "active": false,
-    "icon": [
-      "../../assets/tauri-icon.png"
-    ]
+    "icon": ["../../assets/tauri-icon.png"]
   }
 }

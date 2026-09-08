@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # Requires process-supervision.sh.
+_fresh_server_lifecycle_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fresh_path_identity() {
   local path="$1"
@@ -48,16 +49,7 @@ fresh_wait_cgroup_empty() {
 fresh_tcp_port_open() {
   local host="$1"
   local port="$2"
-  perl -MIO::Socket::INET -e '
-    my ($host, $port) = @ARGV;
-    my $socket = IO::Socket::INET->new(
-      PeerAddr => $host,
-      PeerPort => $port,
-      Proto => "tcp",
-      Timeout => 0.2,
-    );
-    exit($socket ? 0 : 1);
-  ' "$host" "$port"
+  bun "$_fresh_server_lifecycle_root/server-lifecycle.mts" probe "$host" "$port"
 }
 
 fresh_wait_tcp_port_closed() {
@@ -75,4 +67,62 @@ fresh_wait_tcp_port_closed() {
     }
     sleep 0.05
   done
+}
+
+wait_for_unassisted_exit() {
+  local exit_evidence="$1"
+  local deadline wait_status group_deadline cgroup_empty=not-requested
+
+  deadline=$(( $(fresh_supervision_now_ms) + timeout_seconds * 1000 ))
+  while fresh_supervision_pid_running "$active_pid"; do
+    if ! fresh_pid_matches_birth_identity "$active_pid" "$active_identity"; then
+      # The leader can exit between the liveness check above and reading its
+      # immutable birth identity.  Only classify an identity mismatch as PID
+      # reuse when the numeric PID is still live after that failed read.
+      fresh_supervision_pid_running "$active_pid" && return 125
+      break
+    fi
+    [ "$(fresh_supervision_now_ms)" -lt "$deadline" ] || {
+      printf 'server did not exit after bridged signal without escalation\n' >&2
+      return 124
+    }
+    sleep 0.05
+  done
+  fresh_reap_process_group_leader "$active_pid"
+  wait_status="$FRESH_PROCESS_GROUP_WAIT_STATUS"
+  group_deadline=$(( $(fresh_supervision_now_ms) + timeout_seconds * 1000 ))
+  while fresh_process_group_exists "$active_pgid"; do
+    [ "$(fresh_supervision_now_ms)" -lt "$group_deadline" ] || {
+      printf 'server process group remained after leader exit: %s\n' "$active_pgid" >&2
+      return 124
+    }
+    sleep 0.05
+  done
+  if [ -n "$active_cgroup_dir" ] && [ -n "$active_cgroup_identity" ]; then
+    fresh_wait_cgroup_empty "$active_cgroup_dir" "$active_cgroup_identity" \
+      "$((timeout_seconds * 1000))"
+    cgroup_empty=true
+  fi
+  fresh_wait_tcp_port_closed 127.0.0.1 "$port" "$((timeout_seconds * 1000))"
+  [ -z "$(find "$dev_shm" -mindepth 1 -print -quit)" ] || {
+    printf 'shared objects survived normal guest shutdown: %s\n' "$dev_shm" >&2
+    return 1
+  }
+  [ "$wait_status" -eq 0 ] || {
+    printf 'server leader exited nonzero after unassisted guest shutdown: phase=%s status=%s\n' \
+      "$active_phase" "$wait_status" >&2
+    return 1
+  }
+  {
+    printf 'phase\twait_status\tprocess_group_empty\tcgroup_empty\tport_closed\tshared_objects_empty\tescalation_used\n'
+    printf '%s\t%s\ttrue\t%s\ttrue\ttrue\tfalse\n' \
+      "$active_phase" "$wait_status" "$cgroup_empty"
+  } >"$exit_evidence"
+  active_pid=""
+  active_pgid=""
+  active_identity=""
+  active_phase=""
+  active_cgroup_unit=""
+  active_cgroup_dir=""
+  active_cgroup_identity=""
 }

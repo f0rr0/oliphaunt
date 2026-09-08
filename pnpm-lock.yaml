@@ -30,7 +30,17 @@ overrides:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@biomejs/biome':
+        specifier: 2.4.16
+        version: 2.4.16
+
+  benchmarks/perf/wasix-node:
+    dependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.4
+        version: 0.5.4
 
   examples/browser-wasix:
     devDependencies:
@@ -222,9 +232,6 @@ importers:
         specifier: ^3.6.0
         version: 3.6.0
     devDependencies:
-      '@biomejs/biome':
-        specifier: ^2.4.16
-        version: 2.4.16
       '@tailwindcss/postcss':
         specifier: ^4.3.0
         version: 4.3.0
@@ -424,12 +431,6 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
-
-  tools/perf/wasix-node:
-    dependencies:
-      '@electric-sql/pglite':
-        specifier: 0.5.4
-        version: 0.5.4
 
 packages:
 

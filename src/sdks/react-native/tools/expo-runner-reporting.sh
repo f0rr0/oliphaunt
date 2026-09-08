@@ -8,8 +8,11 @@ configure_mobile_catalog_profile_probe() {
   local profile="$1"
   local fixture="$root/src/shared/cluster-seed-contract/profile-probe.json"
   case "$profile" in
-    standard|icu) ;;
-    *) echo "unsupported mobile catalog profile: $profile" >&2; return 1 ;;
+    standard | icu) ;;
+    *)
+      echo "unsupported mobile catalog profile: $profile" >&2
+      return 1
+      ;;
   esac
   [ -s "$fixture" ] || {
     echo "mobile catalog profile probe is missing: $fixture" >&2
@@ -17,10 +20,10 @@ configure_mobile_catalog_profile_probe() {
   }
   export EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE="$profile"
   export EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL="$({
-    node -e 'const fs=require("node:fs"); const [file, profile]=process.argv.slice(1); process.stdout.write(JSON.parse(fs.readFileSync(file, "utf8")).profiles[profile].sql);' "$fixture" "$profile"
+    node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" profile "$fixture" "$profile" sql
   })"
   export EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED="$({
-    node -e 'const fs=require("node:fs"); const [file, profile]=process.argv.slice(1); process.stdout.write(JSON.parse(fs.readFileSync(file, "utf8")).profiles[profile].expected);' "$fixture" "$profile"
+    node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" profile "$fixture" "$profile" expected
   })"
 }
 
@@ -32,14 +35,7 @@ require_nonempty_json_file() {
     return 1
   fi
   local json_status=0
-  node - "$file" <<'NODE' >/dev/null || json_status=$?
-const fs = require('node:fs');
-const file = process.argv[2];
-const value = JSON.parse(fs.readFileSync(file, 'utf8'));
-if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-  throw new Error(`${file} must contain a JSON object`);
-}
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" json-object "$file" >/dev/null || json_status=$?
   if [ "$json_status" -ne 0 ]; then
     echo "$label is not valid JSON: $file" >&2
     return 1
@@ -78,9 +74,9 @@ export_mobile_e2e_icu_expectation_from_manifest() {
   }
   [ "$(grep -c '^catalogProfile=' "$seed_manifest" || true)" = "1" ] &&
     grep -Fxq "catalogProfile=$catalog_profile" "$seed_manifest" || {
-      echo "$label selected cluster seed does not declare catalogProfile=$catalog_profile" >&2
-      return 1
-    }
+    echo "$label selected cluster seed does not declare catalogProfile=$catalog_profile" >&2
+    return 1
+  }
   export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE="$catalog_profile"
 }
 
@@ -151,63 +147,7 @@ write_runner_report() {
   local parse_status=0
   OLIPHAUNT_EXPO_LOG_TAG="$success_tag" \
     OLIPHAUNT_EXPO_LOG_LINE="$line" \
-    node <<'NODE' >"$report_tmp" || parse_status=$?
-const fs = require('fs');
-const input = process.env.OLIPHAUNT_EXPO_LOG_LINE || fs.readFileSync(0, 'utf8').trim();
-const tag = process.env.OLIPHAUNT_EXPO_LOG_TAG;
-let payload;
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-try {
-  const jsonStart = input.indexOf('{');
-  if (jsonStart >= 0) {
-    const event = JSON.parse(input.slice(jsonStart));
-    if (Array.isArray(event.data)) {
-      const index = event.data.indexOf(tag);
-      if (index >= 0) {
-        payload = event.data[index + 1];
-      }
-    }
-  }
-} catch {}
-
-if (payload === undefined) {
-  const tagIndex = input.indexOf(tag);
-  if (tagIndex >= 0) {
-    const rest = input.slice(tagIndex + tag.length);
-    const jsonStart = rest.indexOf('{');
-    if (jsonStart >= 0) {
-      payload = rest.slice(jsonStart).trim();
-    }
-  }
-}
-
-if (payload === undefined) {
-  const reactNativeMatch = input.match(
-    new RegExp(`ReactNativeJS:\\s*'${escapeRegExp(tag)}',\\s*'([\\s\\S]*)'\\s*$`),
-  );
-  if (reactNativeMatch) {
-    payload = reactNativeMatch[1];
-  }
-}
-
-if (typeof payload === 'string') {
-  payload = payload.trim();
-  if (payload.startsWith("'") && payload.endsWith("'")) {
-    payload = payload.slice(1, -1);
-  } else if (payload.endsWith("'")) {
-    payload = payload.slice(0, -1);
-  }
-  payload = JSON.parse(payload);
-}
-if (payload === undefined) {
-  process.exit(1);
-}
-process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-NODE
+    node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" parse-pass >"$report_tmp" || parse_status=$?
   if [ "$parse_status" -ne 0 ]; then
     rm -f "$pass_tmp" "$report_tmp" "$report" "$receipt" || true
     echo "failed to parse the authoritative $runner PASS payload" >&2
@@ -276,83 +216,7 @@ verify_mobile_extension_smoke_receipt() {
     return 1
   fi
   local receipt_status=0
-  node - "$report" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" <<'NODE' >"$receipt_tmp" || receipt_status=$?
-const fs = require('node:fs');
-const crypto = require('node:crypto');
-const [reportFile, metadataFile, platform, candidateSha, candidateTree] = process.argv.slice(2);
-const payload = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
-const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
-if (!/^[0-9a-f]{40}$/.test(candidateSha) || !/^[0-9a-f]{40}$/.test(candidateTree)) {
-  throw new Error(`${platform} installed-app receipt requires full candidate commit and tree IDs`);
-}
-if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
-  throw new Error(`${platform} app PASS receipt must be a JSON object`);
-}
-const expectedKeys = [
-  'allExtensionsActivated',
-  'catalogProfile',
-  'extensionCatalogSha256',
-  'extensionCatalogComplete',
-  'extensionCount',
-  'icuRuntimeProof',
-  'pgTextsearchEnglishBm25',
-  'platform',
-  'runner',
-  'schema',
-].sort();
-const actualKeys = Object.keys(payload).sort();
-if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
-  throw new Error(`${platform} app PASS receipt keys mismatch: expected=${expectedKeys.join(',')}; actual=${actualKeys.join(',')}`);
-}
-if (payload.schema !== 'oliphaunt-expo-smoke-pass-v4' || payload.runner !== 'smoke' || payload.platform !== platform) {
-  throw new Error(`${platform} app PASS receipt schema, runner, or platform identity mismatch`);
-}
-const expectedIcu = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_ICU;
-const expectedCatalogProfile = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE;
-if (expectedIcu !== '0' && expectedIcu !== '1') {
-  throw new Error(`${platform} app PASS receipt requires an exact artifact ICU expectation`);
-}
-if (payload.icuRuntimeProof !== (expectedIcu === '1')) {
-  throw new Error(`${platform} app PASS ICU runtime proof does not match the exact artifact selection`);
-}
-if ((expectedCatalogProfile !== 'standard' && expectedCatalogProfile !== 'icu') || payload.catalogProfile !== expectedCatalogProfile) {
-  throw new Error(`${platform} app PASS catalog profile does not match the selected packaged cluster seed`);
-}
-const passEventBytes = Buffer.byteLength(`OLIPHAUNT_EXPO_SMOKE_PASS ${JSON.stringify(payload)}`);
-if (passEventBytes > 768) {
-  throw new Error(`${platform} app PASS receipt exceeds the 768-byte unified-log-safe event budget: ${passEventBytes}`);
-}
-const expected = (metadata.extensions ?? [])
-  .map(row => row['sql-name'])
-  .sort();
-if (expected.length === 0 || new Set(expected).size !== expected.length) {
-  throw new Error(`${platform} generated mobile catalog must contain a nonempty unique release extension set`);
-}
-if (
-  payload.extensionCount !== expected.length ||
-  payload.allExtensionsActivated !== true ||
-  payload.extensionCatalogComplete !== true ||
-  payload.pgTextsearchEnglishBm25 !== expected.includes('pg_textsearch')
-) {
-  throw new Error(`${platform} app PASS receipt must prove exact activation, catalog completeness, and required functional checks`);
-}
-const catalogSha256 = metadata['extension-catalog-sha256'];
-if (!/^[0-9a-f]{64}$/.test(catalogSha256) || payload.extensionCatalogSha256 !== catalogSha256) {
-  throw new Error(`${platform} app PASS receipt generated-catalog digest mismatch`);
-}
-const receipt = {
-  schema: 'oliphaunt-mobile-installed-extension-proof-v1',
-  platform,
-  catalogProfile: expectedCatalogProfile,
-  candidateSha,
-  candidateTree,
-  extensionCount: expected.length,
-  extensions: expected,
-  extensionCatalogSha256: catalogSha256,
-  appPassPayloadSha256: crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
-};
-process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" extension-receipt "$report" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" >"$receipt_tmp" || receipt_status=$?
   if [ "$receipt_status" -ne 0 ]; then
     rm -f "$receipt_tmp" "$receipt" || true
     echo "$platform installed-app extension receipt verification failed" >&2
@@ -394,95 +258,7 @@ verify_mobile_e2e_smoke_receipt() {
   fi
 
   local verify_status=0
-  node - "$report" "$receipt" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" <<'NODE' >/dev/null || verify_status=$?
-const fs = require('node:fs');
-const crypto = require('node:crypto');
-const [reportFile, receiptFile, metadataFile, platform, candidateSha, candidateTree] = process.argv.slice(2);
-const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
-const receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
-const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
-const expectedReportKeys = [
-  'allExtensionsActivated',
-  'catalogProfile',
-  'extensionCatalogSha256',
-  'extensionCatalogComplete',
-  'extensionCount',
-  'icuRuntimeProof',
-  'pgTextsearchEnglishBm25',
-  'platform',
-  'runner',
-  'schema',
-].sort();
-const actualReportKeys = Object.keys(report).sort();
-if (JSON.stringify(actualReportKeys) !== JSON.stringify(expectedReportKeys)) {
-  throw new Error(`${platform} mobile E2E PASS report keys mismatch`);
-}
-const expectedIcu = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_ICU;
-const expectedCatalogProfile = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE;
-if (expectedIcu !== '0' && expectedIcu !== '1') {
-  throw new Error(`${platform} mobile E2E PASS report requires an exact artifact ICU expectation`);
-}
-if (report.icuRuntimeProof !== (expectedIcu === '1')) {
-  throw new Error(`${platform} mobile E2E ICU runtime proof does not match the exact artifact selection`);
-}
-if ((expectedCatalogProfile !== 'standard' && expectedCatalogProfile !== 'icu') || report.catalogProfile !== expectedCatalogProfile) {
-  throw new Error(`${platform} mobile E2E catalog profile does not match the selected packaged cluster seed`);
-}
-const expectedKeys = [
-  'appPassPayloadSha256',
-  'candidateSha',
-  'candidateTree',
-  'catalogProfile',
-  'extensionCatalogSha256',
-  'extensionCount',
-  'extensions',
-  'platform',
-  'schema',
-].sort();
-const actualKeys = Object.keys(receipt).sort();
-if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
-  throw new Error(`${platform} mobile E2E extension receipt keys mismatch`);
-}
-if (
-  receipt.schema !== 'oliphaunt-mobile-installed-extension-proof-v1' ||
-  receipt.platform !== platform ||
-  receipt.candidateSha !== candidateSha ||
-  receipt.candidateTree !== candidateTree
-) {
-  throw new Error(`${platform} mobile E2E receipt is not bound to the current commit and tree`);
-}
-if (receipt.catalogProfile !== expectedCatalogProfile) {
-  throw new Error(`${platform} mobile E2E receipt catalog profile mismatch`);
-}
-const expected = (metadata.extensions ?? [])
-  .map(row => row['sql-name'])
-  .sort();
-if (
-  expected.length === 0 ||
-  report.schema !== 'oliphaunt-expo-smoke-pass-v4' ||
-  report.runner !== 'smoke' ||
-  report.platform !== platform ||
-  report.extensionCount !== expected.length ||
-  report.allExtensionsActivated !== true ||
-  report.extensionCatalogComplete !== true ||
-  report.pgTextsearchEnglishBm25 !== expected.includes('pg_textsearch') ||
-  report.extensionCatalogSha256 !== metadata['extension-catalog-sha256'] ||
-  Buffer.byteLength(`OLIPHAUNT_EXPO_SMOKE_PASS ${JSON.stringify(report)}`) > 768 ||
-  receipt.extensionCount !== expected.length ||
-  !Array.isArray(receipt.extensions) ||
-  JSON.stringify(receipt.extensions) !== JSON.stringify(expected)
-) {
-  throw new Error(`${platform} mobile E2E receipt does not prove the exact generated extension set`);
-}
-if (
-  !/^[0-9a-f]{64}$/.test(receipt.extensionCatalogSha256) ||
-  receipt.extensionCatalogSha256 !== metadata['extension-catalog-sha256'] ||
-  !/^[0-9a-f]{64}$/.test(receipt.appPassPayloadSha256) ||
-  receipt.appPassPayloadSha256 !== crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex')
-) {
-  throw new Error(`${platform} mobile E2E report/receipt digest mismatch`);
-}
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" verify-receipt "$report" "$receipt" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" >/dev/null || verify_status=$?
   if [ "$verify_status" -ne 0 ]; then
     echo "$platform mobile E2E extension receipt failed its outer postcondition: $receipt" >&2
     return 1
@@ -497,28 +273,11 @@ write_maestro_runner_report() {
   OLIPHAUNT_MAESTRO_PLATFORM="$platform" \
     OLIPHAUNT_MAESTRO_APP_ID="$app_id" \
     OLIPHAUNT_MAESTRO_FLOW="$maestro_flow" \
-    node <<'NODE' >"$reports_dir/$runner-report.json"
-const report = {
-  runner: 'maestro',
-  platform: process.env.OLIPHAUNT_MAESTRO_PLATFORM,
-  appId: process.env.OLIPHAUNT_MAESTRO_APP_ID,
-  flow: process.env.OLIPHAUNT_MAESTRO_FLOW,
-  passedAt: new Date().toISOString(),
-};
-process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-NODE
+    node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" maestro-report >"$reports_dir/$runner-report.json"
   OLIPHAUNT_MAESTRO_PLATFORM="$platform" \
     OLIPHAUNT_MAESTRO_APP_ID="$app_id" \
     OLIPHAUNT_MAESTRO_FLOW="$maestro_flow" \
-    node <<'NODE' >"$reports_dir/$runner-pass.log"
-const report = {
-  runner: 'maestro',
-  platform: process.env.OLIPHAUNT_MAESTRO_PLATFORM,
-  appId: process.env.OLIPHAUNT_MAESTRO_APP_ID,
-  flow: process.env.OLIPHAUNT_MAESTRO_FLOW,
-};
-process.stdout.write(`OLIPHAUNT_EXPO_MAESTRO_PASS ${JSON.stringify(report)}\n`);
-NODE
+    node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" maestro-pass >"$reports_dir/$runner-pass.log"
 }
 
 write_mobile_package_size_report() {
@@ -527,15 +286,7 @@ write_mobile_package_size_report() {
   local rn_package_bytes="$3"
   local reports_dir="$scratch_root/reports"
   mkdir -p "$reports_dir"
-  node - "$reports_dir/$runner-package-sizes.json" "$artifact_size_key" "$artifact_bytes" "$rn_package_bytes" <<'NODE'
-const fs = require('node:fs');
-const [report, artifactSizeKey, artifactBytes, rnPackageBytes] = process.argv.slice(2);
-const payload = {
-  [artifactSizeKey]: Number(artifactBytes),
-  rnPackageBytes: Number(rnPackageBytes),
-};
-fs.writeFileSync(report, `${JSON.stringify(payload, null, 2)}\n`);
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" package-sizes "$reports_dir/$runner-package-sizes.json" "$artifact_size_key" "$artifact_bytes" "$rn_package_bytes"
 }
 
 write_mobile_build_artifact_report_json() {
@@ -548,40 +299,5 @@ write_mobile_build_artifact_report_json() {
   local selected_extensions="$7"
   local report_scratch_root="$8"
   shift 8
-  node - "$report" "$platform" "$artifact" "$artifact_bytes" "$rn_package" "$rn_package_bytes" "$selected_extensions" "$report_scratch_root" "$@" <<'NODE'
-const fs = require('node:fs');
-const [
-  report,
-  platform,
-  appArtifact,
-  appArtifactBytes,
-  rnPackage,
-  rnPackageBytes,
-  extensions,
-  scratchRoot,
-  ...metadataArgs
-] = process.argv.slice(2);
-
-if (metadataArgs.length % 2 !== 0) {
-  throw new Error('metadata arguments must be key/value pairs');
-}
-
-const metadata = {};
-for (let index = 0; index < metadataArgs.length; index += 2) {
-  metadata[metadataArgs[index]] = metadataArgs[index + 1];
-}
-
-const payload = {
-  schema: 'oliphaunt-react-native-mobile-build-v1',
-  platform,
-  ...metadata,
-  appArtifact,
-  appArtifactBytes: Number(appArtifactBytes),
-  reactNativePackage: rnPackage,
-  reactNativePackageBytes: Number(rnPackageBytes),
-  selectedExtensions: extensions ? extensions.split(',').filter(Boolean) : [],
-  scratchRoot,
-};
-fs.writeFileSync(report, `${JSON.stringify(payload, null, 2)}\n`);
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-reporting.mts" build-artifact "$report" "$platform" "$artifact" "$artifact_bytes" "$rn_package" "$rn_package_bytes" "$selected_extensions" "$report_scratch_root" "$@"
 }

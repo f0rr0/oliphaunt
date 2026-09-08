@@ -35,7 +35,9 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
     throw new Error('installed-app receipt requires an ICU runtime proof boolean');
   }
   if (input.catalogProfile !== 'standard' && input.catalogProfile !== 'icu') {
-    throw new Error(`installed-app receipt has unsupported catalog profile: ${String(input.catalogProfile)}`);
+    throw new Error(
+      `installed-app receipt has unsupported catalog profile: ${String(input.catalogProfile)}`,
+    );
   }
   if (input.icuRuntimeProof !== (input.catalogProfile === 'icu')) {
     throw new Error('installed-app receipt ICU proof must match its catalog profile');

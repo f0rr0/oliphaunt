@@ -9,15 +9,7 @@ oliphaunt_runtime_wasm_asset_mode() {
     echo "Bun is required to inspect target/oliphaunt-wasix/assets/manifest.json" >&2
     return 1
   }
-  bun --eval '
-const manifest = await Bun.file("target/oliphaunt-wasix/assets/manifest.json").json();
-const present = (value) => value !== null && value !== undefined && value !== false
-  && (!Array.isArray(value) || value.length > 0)
-  && (typeof value !== "string" || value.length > 0)
-  && (typeof value !== "number" || value !== 0)
-  && (typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 0);
-console.log(present(manifest.extensions) && present(manifest["pg-dump"]) && present(manifest.psql) ? "full" : "core");
-'
+  bun src/runtimes/liboliphaunt/wasix/tools/runtime-asset-mode.mts
 }
 
 oliphaunt_runtime_wasm_require() {
@@ -29,9 +21,9 @@ oliphaunt_runtime_wasm_require() {
   }
   [ -f "target/oliphaunt-wasix/aot/$oliphaunt_runtime_host/manifest.json" ] ||
     [ -f "src/runtimes/liboliphaunt/wasix/crates/aot/$oliphaunt_runtime_host/artifacts/manifest.json" ] || {
-      echo "missing host WASIX AOT artifacts for $oliphaunt_runtime_host" >&2
-      return 1
-    }
+    echo "missing host WASIX AOT artifacts for $oliphaunt_runtime_host" >&2
+    return 1
+  }
   oliphaunt_runtime_asset_mode="$(oliphaunt_runtime_wasm_asset_mode)"
   if [ "$oliphaunt_runtime_asset_mode" = "core" ]; then
     [ "$oliphaunt_runtime_mode" != "regression" ] || {

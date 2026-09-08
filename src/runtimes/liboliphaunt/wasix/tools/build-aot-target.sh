@@ -25,12 +25,12 @@ if [ "$target" != "$host" ]; then
   exit 1
 fi
 
-cargo run -p xtask -- assets aot --target-triple "$target"
+bash src/runtimes/liboliphaunt/wasix/tools/serialize-aot.sh --target-triple "$target"
 cargo run -p xtask -- assets package-aot --target-triple "$target"
 cargo run -p xtask -- assets package-extension-aot --target-triple "$target"
 cargo run -p xtask -- assets check-aot --target-triple "$target"
 cargo check -p "$package" --locked
-cargo run -p xtask -- assets smoke --core-only
+bash src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh core-smoke
 
 # The portable/Linux regression exercises every catalogued extension. Each host
 # must also deserialize and execute machine code produced for that exact host,
@@ -41,7 +41,7 @@ proof_root="$root/target/wasix-target-aot-smoke"
 rm -rf "$proof_root"
 OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$root/target/oliphaunt-wasix/assets" \
 OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$root/target/extensions/wasix/aot-artifacts" \
-  tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs \
+  tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \
     --output-root "$proof_root/extension-artifacts" \
     --family wasix \
     --require-wasix \

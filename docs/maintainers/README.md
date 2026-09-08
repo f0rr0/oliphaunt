@@ -6,10 +6,10 @@ Executable configuration is authoritative. Documentation explains intent and ope
 
 | Topic | Maintainer entry point | Executable source |
 | --- | --- | --- |
-| Release products, versions, tags, and recovery | `release.md` | `release-please-config.json`, `.release-please-manifest.json`, active-product `release.toml`, `tools/release/publication-catalog.mjs`, `.github/scripts/manage-release-drafts.mjs` |
-| Registry and GitHub environment setup | `release-setup.md` | `.github/workflows/release.yml`, `tools/release/check_publish_environment.mjs` |
-| CI gates and test selection | `testing.md`, `tooling.md` | `.github/workflows/ci.yml`, `tools/graph/ci_plan.mjs`, Moon project files |
-| Binary artifacts and WASIX provenance | `assets.md`, `compiler-caching.md` | runtime target metadata, exact producer SHA, runtime/AOT manifests and checksums, `tools/xtask` |
+| Release products, versions, tags, and recovery | `release.md` | `release-please-config.json`, `.release-please-manifest.json`, active-product `release.toml`, `src/shared/product-metadata/publication-catalog.mts`, `.github/scripts/manage-release-drafts.mts` |
+| Registry and GitHub environment setup | `release-setup.md` | `.github/workflows/release.yml`, `tools/release/check_publish_environment.mts` |
+| CI gates and test selection | `testing.md`, `tooling.md` | `.github/workflows/ci.yml`, `tools/graph/ci_plan.mts`, Moon project files |
+| Binary artifacts and WASIX provenance | `assets.md`, `compiler-caching.md` | runtime target metadata, exact producer SHA, runtime/AOT manifests and checksums, `src/runtimes/liboliphaunt/wasix/tools/xtask` |
 | WASIX host APIs and storage | `wasix-usage.md` | WASIX binding source, host pins/patches, and product Moon tasks |
 | WASIX postmaster runtime and carrier | `wasix-postmaster.md` | `src/runtimes/liboliphaunt/wasix-postmaster`, its Moon project, sealed-carrier policy, and release metadata |
 | Extension support and packaging | `extension-packaging-policy.md` | extension catalog, global target profiles, native-component contract, release catalog |

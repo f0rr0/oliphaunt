@@ -25,3 +25,18 @@ oliphaunt_wasix-*.crates.tar.gz
 /examples/tauri-wasix/src-tauri/Cargo.lock
 /examples/electron-wasix/src-wasix/Cargo.lock
 /examples/browser-wasix/dist/
+
+# JavaScript emitted from TypeScript for public package consumers.
+/src/sdks/swift/tools/extension-resource-inventory.mjs
+/src/sdks/swift/tools/render-extension-products.mjs
+/src/sdks/swift/tools/swift-carrier-resolver.mjs
+/src/sdks/react-native/tools/native-resource-closure.mjs
+/src/sdks/react-native/tools/stage-ios-app.mjs
+/src/sdks/react-native/tools/verify-ios-package.mjs
+/src/sdks/react-native/app.plugin.js
+/src/sdks/react-native/react-native.config.js
+/src/sdks/react-native/tools/codegen-check.cjs
+/src/runtimes/liboliphaunt/native/tools-npm/index.js
+/src/runtimes/liboliphaunt/wasix/tools-npm/index.js
+/src/runtimes/liboliphaunt/native/icu-npm/react-native.config.js
+/src/sdks/react-native/.generated-tools/

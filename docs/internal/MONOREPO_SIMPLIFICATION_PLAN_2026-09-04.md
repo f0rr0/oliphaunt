@@ -51,7 +51,7 @@ uncached. Use `moon task-graph --json` for this inventory: `moon query tasks`
 omits internal tasks.
 
 Tracked-file footprint, including comments/tests/data: `tools/` has 517 files /
-176,086 lines; `tools/release/` accounts for 353 / 114,614; `tools/xtask/` for
+176,086 lines; `tools/release/` accounts for 353 / 114,614; `src/runtimes/liboliphaunt/wasix/tools/xtask/` for
 14 / 13,469. The CI workflow alone is 3,290 lines. These identify review areas,
 not safe deletion totals. The open PR already reports 15,104 deleted versus
 5,381 added lines across 314 files; deletion count has not translated into a
@@ -64,7 +64,7 @@ comparable reduction in full-run cost.
 | 1 — native | Make real producer outputs explicit and reusable. Postmaster `runtime-build` / `postgres-build` and native `release-runtime` currently produce files without declaring Moon outputs. Cache their complete, target-specific deliverables; split portable production from host compiler/executor production so independent hosts can start concurrently. | Cold builds work; patch/toolchain/target changes invalidate; missing outputs hydrate or rebuild; restored binaries retain executable modes and provenance. |
 | 2 — shrink | Remove hidden qualification from builders. Postmaster `runtime/bin/build-runtime.sh` contains 86 `cargo test` invocations, including test-list probes, followed by release builds. Group tests by actual crate/feature/platform requirements and run explicit behavioral targets. Its `portable-inputs` depends on regression, and `release-assets` depends on stress/recovery. Put those proof edges on `qualify`; tests depend on prepared sources, not release binaries they do not consume. | All patched Wasmer behavior, memory isolation, concurrent connections, recovery and target-specific tests remain scheduled. Preserve distinct feature sets; do not combine compiler/headless profiles indiscriminately. |
 | 3 — delete/shrink | **Implemented:** hand-written product dependency implications are gone. Directly affected tasks and the resolved Moon DAG now select stable tagged jobs; GitHub retains runner/artifact transport only. | Every selected consumer has all producers, platform artifacts and required proof jobs; no missing-job success. GitHub still needs cross-runner transport and a static job skeleton. |
-| 4 — shrink | Separate package-owned assembly from release control. `tools/release` mixes carrier creation, binary validation, licensing, registry publication and graph loading. `src/sources/tools/fetch-sources.mjs` imports a release-layer license auditor; product packagers import root release helpers. Preserve small pure shared libraries, but product code must not invoke the release planner. | Archive safety, licenses, ABI compatibility, integrity, exact candidate identity and publication recovery remain. Do not replace one large tool with a generic framework in every product. |
+| 4 — shrink | Separate package-owned assembly from release control. `tools/release` mixes carrier creation, binary validation, licensing, registry publication and graph loading. `src/sources/tools/fetch-sources.mts` imports a release-layer license auditor; product packagers import root release helpers. Preserve small pure shared libraries, but product code must not invoke the release planner. | Archive safety, licenses, ABI compatibility, integrity, exact candidate identity and publication recovery remain. Do not replace one large tool with a generic framework in every product. |
 | 5 — native | Complete source-level sharing through existing [PR #166](https://github.com/f0rr0/oliphaunt/pull/166). `src/shared/js-core/moon.yml` still generates six checked-in mirrors into three consumers. Import a workspace module and bundle or publish it using normal package tooling. | Packed SDKs work outside the checkout; no unpublished workspace dependency leaks. Do not maintain a second implementation of that PR here. |
 | 6 — delete/shrink | Remove source-spelling tests after their intended invariant is either executable or explicitly retired. Postmaster's Python ownership verifiers parse Rust implementation text. The current task-model test accepts missing producer outputs as ordering edges and recognizes quality only through selected tags, so it misses real hidden work. | Keep parsed public-manifest checks, negative tamper tests, clean-consumer installation and runtime behavior. A string assertion on an emitted manifest/output is not automatically a bad test. |
 
@@ -112,7 +112,7 @@ dispatch/orchestration as Moon/native commands assume it. Relocating its entire
   the same source-level contract while retaining distinct target outputs.
 - Postmaster now owns only per-target product assembly. Combining independently
   built target assets is a repository release operation named
-  `release-tools:postmaster-release-assets`; its workflow job remains fail-closed
+  `liboliphaunt-wasix-postmaster:finalize-release-assets`; its workflow job remains fail-closed
   unless the exact Linux ARM64, Linux x64, and macOS set is present.
 - Moon project discovery now uses one recursive `src` glob and one recursive
   `tools` glob instead of fourteen overlapping directory inventories. The
@@ -175,7 +175,7 @@ There are three related models, with different responsibilities:
 
 1. **Package/version dependencies:** native ecosystem manifests state what a
    published consumer requires. A new runtime release does not select SDK
-   releases automatically. Existing `release-graph.mjs:buildPlan` already stops
+   releases automatically. Existing `release-graph.mts:buildPlan` already stops
    at the first independently publishable boundary; preserve that behavior.
 2. **Execution/data dependencies:** Moon task edges say which workspace outputs
    a command consumes. Project dependencies alone do not describe these files

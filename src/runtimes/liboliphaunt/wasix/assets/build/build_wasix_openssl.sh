@@ -12,7 +12,7 @@ OPENSSL_BUILD_DIR="${OPENSSL_BUILD_DIR:-$GENERATED_ROOT/work/openssl-wasix-build
 JOBS="${JOBS:-4}"
 
 if [ ! -f "$OPENSSL_SOURCE_DIR/Configure" ]; then
-  echo "missing OpenSSL source checkout at $OPENSSL_SOURCE_DIR; run assets fetch/source-spine first" >&2
+  echo "missing OpenSSL source checkout at $OPENSSL_SOURCE_DIR; run bash src/sources/tools/fetch-sources.sh wasix-runtime --force first" >&2
   exit 1
 fi
 

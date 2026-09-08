@@ -51,7 +51,7 @@ source. Product-native manifests remain beside their source.
   canonical source and toolchain inputs where semantics agree, while owning
   its concurrency-specific patches, carrier, release metadata, and support
   claims.
-- `src/*/moon.yml` is the canonical product graph. `tools/policy/sdk-manifest.toml`
+- `src/*/moon.yml` is the canonical product graph. `src/shared/product-metadata/sdk-manifest.toml`
   is a small SDK parity ownership registry and must agree with Moon metadata.
 - Tooling lives under `tools/`.
 - Benchmarks live under `benchmarks/`.
@@ -98,7 +98,7 @@ synthetic root:
   current shared PostgreSQL backend-response corpus consumed from product-native
   Rust, Swift, Kotlin, TypeScript, React Native, and WASIX query-decoding tests.
 - Benchmark plans, datasets, and published reports live in `benchmarks/`.
-  Executable benchmark harnesses live in `tools/perf/` unless the harness is a
+  Executable benchmark harnesses live in `benchmarks/perf/` unless the harness is a
   deliberate product API.
 
 ## Product Boundaries
@@ -160,43 +160,13 @@ support behavior honestly; gaps must be explicit and justified in
   portable runtime carrier plus separately selected WASIX extension npm leaves;
   `oliphaunt` may load `liboliphaunt`. None should call another public
   product's private modules.
-- `moon run sdk-contracts:native-boundaries` enforces the native/WASIX split:
-  the Rust-native SDK and Swift/Kotlin/React Native package manifests must not
-  depend on `oliphaunt-wasix`, WASIX AOT payload crates, or Wasmer runtime
-  packages.
-- `tools/xtask` is shared repo automation for WASIX assets, release staging,
-  and optional performance diagnostics. Its default feature set is intentionally
-  empty; template running and AOT serializers must be enabled with explicit
-  feature flags.
-- `tools/xtask/src/main.rs` is the command router plus shared helpers. WASIX
-  asset build, packaging, generated manifest, AOT packaging, and staged metadata
-  orchestration lives in `tools/xtask/src/asset_pipeline.rs`. Source-controlled
-  asset verification, canonical generated-asset layout checks, AOT target
-  catalog checks, and upstream-fix audits live in
-  `tools/xtask/src/asset_checks.rs`. Generated asset manifest DTOs, AOT
-  manifest DTOs, asset packaging descriptors, and WASM link-metadata parsing
-  live in
-  `tools/xtask/src/asset_manifest.rs`. Asset download/install code lives in
-  `tools/xtask/src/asset_io.rs`, shared filesystem/archive/hash helpers live in
-  `tools/xtask/src/fs_utils.rs`,
-  release workspace assembly lives in `tools/xtask/src/release_workspace.rs`,
-  source-pin and source-spine handling lives in
-  `tools/xtask/src/source_spine.rs`, PostgreSQL source/patch-surface guards
-  live in `tools/xtask/src/postgres_guard.rs`, cluster-seed execution lives in
-  `tools/xtask/src/cluster_seed_runner.rs`, and AOT serialization lives in
-  `tools/xtask/src/aot_serializer.rs`. Performance benchmark workload/result
-  construction lives in `tools/perf/runner/src/benchmarks.rs`, and report DTOs
-  live in `tools/perf/runner/src/report.rs`. Native liboliphaunt execution,
-  child-process entrypoints, and SDK-backed diagnostics live in
-  `tools/perf/runner/src/native_liboliphaunt.rs`. Native PostgreSQL process,
-  protocol, and backup/restore controls live in
-  `tools/perf/runner/src/native_postgres.rs`. Prepared-update benchmark
-  parsing, transport variants, gates, and native comparison live in
-  `tools/perf/runner/src/prepared_updates.rs`. Indexed-update, speed-hotspot,
-  and buffer-cache diagnostics live in `tools/perf/runner/src/diagnostics.rs`.
-  Benchmark execution should continue to split under `tools/perf/runner/src/`
-  by collection, aggregation, transport family, diagnostics, and report
-  rendering.
+
+- The WASIX runtime owns its native tools under
+  `src/runtimes/liboliphaunt/wasix/tools/xtask`. These inspect WASM, serialize AOT
+  artifacts, run cluster seeds, and package runtime payloads. Download command
+  orchestration lives in the product's `tools/download-assets.sh`.
+- Cross-product performance workloads live in `benchmarks/perf/runner`; use
+  `benchmarks/perf/run-native.sh` to preserve a measurement and its inputs.
 - Native C ABI concerns are split by layer:
   - `src/runtimes/liboliphaunt/native/` for C, PostgreSQL patches, and platform build scripts.
   - `src/sdks/rust/src/liboliphaunt/ffi.rs` for Rust symbol loading and
@@ -209,19 +179,19 @@ support behavior honestly; gaps must be explicit and justified in
     implementation.
 - Native runtime-resource packaging is maintainer-only and split by release
   artifact concern under the unpublished `oliphaunt-native-packaging` tool:
-  - `tools/native-packaging/src/lib.rs` for resource package orchestration and
+  - `src/runtimes/liboliphaunt/native/packaging/src/lib.rs` for resource package orchestration and
     selected extension resolution.
-  - `tools/native-packaging/src/manifest.rs` for portable
+  - `src/runtimes/liboliphaunt/native/packaging/src/manifest.rs` for portable
     manifest parsing, identifier validation, and runtime artifact path rules.
-  - `tools/native-packaging/src/package.rs` for resource-tree
+  - `src/runtimes/liboliphaunt/native/packaging/src/package.rs` for resource-tree
     writing, portable tree copying, package manifests, and size reports.
-  - `tools/native-packaging/src/extension_artifact.rs` for exact
+  - `src/runtimes/liboliphaunt/native/packaging/src/extension_artifact.rs` for exact
     prebuilt extension artifact creation, archive extraction, and artifact
     manifest writing.
-  - `tools/native-packaging/src/extension_index.rs` for external
+  - `src/runtimes/liboliphaunt/native/packaging/src/extension_index.rs` for external
     extension artifact index creation, resolution, signing, download, and
     checksum verification.
-  - `tools/native-packaging/src/static_registry.rs` for iOS and
+  - `src/runtimes/liboliphaunt/native/packaging/src/static_registry.rs` for iOS and
     Android static extension registry metadata, generated C source, and mobile
     static archive staging.
 - WASIX runtime internals should keep VM orchestration separate from
@@ -256,27 +226,23 @@ support behavior honestly; gaps must be explicit and justified in
 - `package.json` owns JavaScript workspace metadata only. Do not add root
   workflow aliases; run product and repo work through Moon targets directly.
 - Release Please owns product versions, changelogs, and the generated release
-  PR. Bun release entrypoints under `tools/release/*.mjs` own the public and
+  PR. Bun release entrypoints under `tools/release/*.mts` own the public and
   protected check, dry-run, publish, exact-SHA tag, and draft-release command
   surface.
 - Cargo publication runs through `tools/dev/bun.sh
-  tools/release/release-publish.mjs publish` in the protected Release workflow.
+  tools/release/release-publish.mts publish` in the protected Release workflow.
   Release packaging freezes each `.crate`, and the exact-byte registry uploader
   sends that lock-matching file through crates.io's Registry Web API. Do not
   replace it with `cargo publish`, which would repackage the source and break
   the frozen-byte contract, or add a Rust-only release orchestrator beside
   Release Please.
-- `tools/xtask` owns Rust-heavy automation and release asset orchestration.
-- `tools/policy`, `tools/dev`, `tools/perf`, and `tools/release` own
-  shell/Python/Node entrypoints by responsibility. CI is thin workflow
+- `src/runtimes/liboliphaunt/wasix/tools/xtask` owns native WASM inspection, AOT serialization, and cluster-seed execution.
+- `tools/policy`, `tools/dev`, `benchmarks/perf`, and `tools/release` own
+  Shell and TypeScript entry points by responsibility. CI is thin workflow
   orchestration over Moon tasks and the release CLI.
-- `sdk-contracts:all` is the local aggregate for generated API, SDK registry,
-  C ABI header-copy, fixtures, cluster seeds, shared Rust, and native-boundary
-  contracts; hosted CI schedules its children independently. Exact extension catalogs belong to
-  `extensions:lint`, while
-  SDK behavior, React Native delegation, package contents, and installed-app
-  evidence belong to product-local Moon tasks. Stable CI does not infer those
-  contracts from prose, test names, or implementation-source spellings.
+- The native runtime owns SDK C-header consistency checks. SDK and runtime tests
+  consume shared protocol and cluster-seed fixtures directly. Product-local tasks
+  prove package contents, extension behavior, and installed-app behavior.
 - `prek` owns Git hooks as a language-neutral runner for whitespace, format,
   and commit-message guards. Heavy asset, lockfile, and workspace checks belong
   in Moon tasks, product-local tools, release CLI subcommands, and CI, not

@@ -1,0 +1,19 @@
+$schema: "https://moonrepo.dev/schemas/tasks.json"
+
+inheritedBy:
+  tags: ["javascript-quality"]
+
+fileGroups:
+  javascript-quality:
+    - "**/*.{js,mjs,cjs,ts,mts,cts,tsx,json,jsonc,css}"
+    - "/biome.json"
+
+tasks:
+  js-format-check:
+    tags: ["quality", "static", "format"]
+    command: "pnpm exec biome format --no-errors-on-unmatched ."
+    inputs: ["@group(javascript-quality)"]
+  js-lint:
+    tags: ["quality", "static"]
+    command: "pnpm exec biome lint --diagnostic-level=error --no-errors-on-unmatched ."
+    inputs: ["@group(javascript-quality)"]

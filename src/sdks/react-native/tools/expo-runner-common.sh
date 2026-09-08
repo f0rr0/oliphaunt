@@ -15,7 +15,7 @@ fail() {
 
 is_truthy() {
   case "${1:-}" in
-    1|true|TRUE|yes|YES|on|ON)
+    1 | true | TRUE | yes | YES | on | ON)
       return 0
       ;;
     *)
@@ -26,7 +26,7 @@ is_truthy() {
 
 is_falsey() {
   case "${1:-}" in
-    0|false|FALSE|no|NO|off|OFF)
+    0 | false | FALSE | no | NO | off | OFF)
       return 0
       ;;
     *)
@@ -117,19 +117,9 @@ file_from_offset() {
 }
 
 urlencode() {
-  node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$1"
+  node "$root/src/sdks/react-native/tools/expo-runner-common.mts" urlencode "$1"
 }
 
 react_native_package_tarball_name() {
-  node - "$1/package.json" <<'NODE'
-const fs = require('node:fs');
-const packageJson = process.argv[2];
-const pkg = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
-const name = String(pkg.name || '').replace(/^@/, '').replace(/\//g, '-');
-const version = String(pkg.version || '');
-if (!name || !version) {
-  throw new Error(`package name/version is missing from ${packageJson}`);
-}
-process.stdout.write(`${name}-${version}.tgz`);
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-common.mts" tarball-name "$1/package.json"
 }

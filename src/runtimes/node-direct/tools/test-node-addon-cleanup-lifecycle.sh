@@ -151,7 +151,7 @@ case "$platform" in
 esac
 
 node \
-  src/runtimes/node-direct/tools/node-addon-cleanup-lifecycle.test.mjs \
+  src/runtimes/node-direct/tools/node-addon-cleanup-lifecycle.test.mts \
   --addon "$addon" \
   --instrumented-addon "$instrumented_addon" \
   --library "$library_path"

@@ -5,6 +5,7 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/lib/common.sh"
 source "$project_root/lib/sealed-carrier.sh"
+source "$project_root/lib/immutable-carrier.sh"
 source "$project_root/lib/qualification-identities.sh"
 
 usage() {
@@ -65,4 +66,4 @@ if [ "$fast" -eq 0 ]; then
     --headless-sha256 "$FRESH_QUALIFICATION_CARRIER_HEADLESS_SHA256"
   )
 fi
-python3 "$project_root/lib/immutable-carrier.py" "${arguments[@]}"
+fresh_immutable_carrier "${arguments[@]}"

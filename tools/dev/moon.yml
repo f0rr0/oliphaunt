@@ -4,7 +4,7 @@ id: "dev-tools"
 language: "bash"
 layer: "tool"
 stack: "infrastructure"
-tags: ["tools", "developer-experience"]
+tags: ["javascript-quality", "tools", "developer-experience"]
 
 project:
   title: "Developer Tools"
@@ -17,6 +17,33 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
+  unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -eu
+      for test in tools/dev/extract-pinned-zip.test.sh tools/dev/install-pinned-js-runtime.test.sh tools/dev/install-pinned-winflexbison.test.sh .github/actions/setup-moon/install-pinned-node.test.sh .github/actions/setup-moon/install-pinned-toolchain.test.sh .github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh .github/actions/setup-npm-publisher/install.test.sh .github/scripts/setup-native-build-tools.test.sh; do
+        bash "$test"
+      done
+    inputs:
+      - "install-pinned*"
+      - "extract-pinned*"
+      - "winflexbison-identity.mts"
+      - "bun.sh"
+      - "node-info.mts"
+      - "curl-platform-flags.sh"
+      - "/.prototools"
+      - "/.moon/toolchains.yml"
+      - "/.github/actions/setup-moon/**"
+      - "/.github/actions/setup-node-pnpm/**"
+      - "/.github/actions/setup-node-runtime/**"
+      - "/.github/actions/setup-npm-publisher/**"
+      - "/.github/scripts/setup-native-build-tools*"
+      - "/src/sources/toolchains/{bun,deno,moon-cli,moon-plugins,node-runtime,npm-publisher,pnpm,proto,winflexbison}.toml"
+      - "/src/shared/artifact-packaging/portable-archive.mts"
+      - "/tools/test/{zip,tar}-fixture.mts"
+      - "/tools/test/package-manager-fixture.mts"
+    options:
+      runFromWorkspaceRoot: true
   doctor:
     tags: ["diagnostics", "developer-experience"]
     command: "bash tools/dev/doctor.sh"

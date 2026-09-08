@@ -240,7 +240,7 @@ The mandatory product boundary is:
 8. freeze it in the publication lock and verify the GitHub release assets.
 
 Generated checkouts, caches, reports, and measurement data remain under
-`target/`. Benchmark harnesses belong under `tools/perf/` and durable benchmark
+`target/`. Benchmark harnesses belong under `benchmarks/perf/` and durable benchmark
 results under `benchmarks/`; neither belongs in the runtime product source.
 
 ## Retired experimental machinery

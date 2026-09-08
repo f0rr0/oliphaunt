@@ -34,19 +34,7 @@ while IFS= read -r script; do
   js_files+=("$script")
 done < <(
   {
-    find .github/scripts examples/tools tools/policy tools/graph -type f -name '*.mjs'
-    printf '%s\n' src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs
+    find .github/scripts examples/tools tools/policy tools/graph -type f \( -name '*.mjs' -o -name '*.mts' \)
   } | LC_ALL=C sort
 )
 run bun build "${js_files[@]}" --target=bun --root "$root" --outdir="$js_check_root/js"
-
-python_files=()
-while IFS= read -r script; do
-  python_files+=("$script")
-done < <(find tools/policy -type f -name '*.py' | LC_ALL=C sort)
-
-if ((${#python_files[@]} > 0)); then
-  run env \
-    PYTHONPYCACHEPREFIX="$js_check_root/python-pycache" \
-    python3 -m py_compile "${python_files[@]}"
-fi

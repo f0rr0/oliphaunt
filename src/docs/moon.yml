@@ -4,7 +4,7 @@ id: "docs"
 language: "typescript"
 layer: "application"
 stack: "frontend"
-tags: ["docs", "fumadocs", "next", "public"]
+tags: ["javascript-quality", "docs", "fumadocs", "next", "public"]
 dependsOn:
   - id: "extensions"
     scope: "build"
@@ -31,6 +31,7 @@ tasks:
       - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/**/release.toml"
+      - "/src/shared/product-metadata/sdk-manifest.toml"
       - "**/*"
       - project: "extensions"
         group: "model"
@@ -66,7 +67,9 @@ tasks:
       - "/src/sdks/react-native/src/**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
+      - "/src/bindings/wasix-ts/tools/integration/verify-host.mts"
       - "/src/**/release.toml"
+      - "/src/shared/product-metadata/sdk-manifest.toml"
       - "**/*"
       - project: "extensions"
         group: "model"
@@ -99,7 +102,9 @@ tasks:
       - "/src/sdks/react-native/src/**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
+      - "/src/bindings/wasix-ts/tools/integration/verify-host.mts"
       - "/src/**/release.toml"
+      - "/src/shared/product-metadata/sdk-manifest.toml"
       - "**/*"
       - project: "extensions"
         group: "model"
@@ -119,7 +124,7 @@ tasks:
     inputs:
       - "/target/docs/build/**/*"
       - "/target/docs/generated/routes.json"
-      - "/src/docs/tools/smoke-built-site.mjs"
+      - "/src/docs/tools/smoke-built-site.mts"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -153,7 +158,9 @@ tasks:
       - "/src/sdks/react-native/src/**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
+      - "/src/bindings/wasix-ts/tools/integration/verify-host.mts"
       - "/src/**/release.toml"
+      - "/src/shared/product-metadata/sdk-manifest.toml"
       - "**/*"
       - project: "extensions"
         group: "model"

@@ -15,11 +15,16 @@ gate_artifacts=()
 required_jobs=()
 required_events=()
 expected_run_id=""
+release_candidate=false
 selected_artifacts_json='[]'
 selected_gate_artifacts_json='[]'
 selected_run_attempt=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --release-candidate)
+      release_candidate=true
+      shift
+      ;;
     --run-id)
       expected_run_id="${2:?--run-id requires a run id}"
       shift 2
@@ -47,6 +52,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$release_candidate" == true ]]; then
+  if [[ "$workflow" != Release || ! "$expected_run_id" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--release-candidate requires Release and an explicit positive --run-id" >&2
+    exit 2
+  fi
+  required_events=(workflow_dispatch)
+fi
+
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${GH_REPO:?GH_REPO is required}"
 if [[ ! "$sha" =~ ^[0-9A-Fa-f]{40}$ ]]; then
@@ -56,15 +69,16 @@ fi
 
 github_read() {
   local label="${1:?GitHub read label is required}"
-  shift
-  node tools/release/github-read.mjs --label "$label" -- "$@"
+  local response
+  response="$(node tools/release/github-read.mts --label "$label" -- "$2")" || return $?
+  bun .github/scripts/workflow-run-metadata.mts "$3" <<<"$response"
 }
 
 github_paginated_json() {
   local label="${1:?GitHub paginated read label is required}"
   local field="${2:?GitHub paginated read field is required}"
   local endpoint="${3:?GitHub paginated read endpoint is required}"
-  node tools/release/github-read.mjs \
+  node tools/release/github-read.mts \
     --label "$label" \
     --paginate-field "$field" \
     -- "$endpoint"
@@ -81,8 +95,11 @@ emit_run_id() {
       echo "run_id=$run_id"
       echo "run_attempt=$selected_run_attempt"
       echo "artifact_metadata_json=$selected_artifacts_json"
+      if [[ "$release_candidate" == true ]]; then
+        ARTIFACTS_JSON="$selected_artifacts_json" bun .github/scripts/workflow-run-metadata.mts artifact-ids
+      fi
       echo "gate_artifact_metadata_json=$selected_gate_artifacts_json"
-    } >> "$GITHUB_OUTPUT"
+    } >>"$GITHUB_OUTPUT"
   fi
   echo "selected $workflow run $run_id"
 }
@@ -92,8 +109,7 @@ run_matches_request() {
   local row status
   row="$(
     github_read "$workflow run $run_id metadata" \
-      api "repos/$GH_REPO/actions/runs/$run_id" \
-      --jq '[.head_sha, .workflow_id, .event, .status, (.conclusion // ""), .run_attempt] | @tsv'
+      "repos/$GH_REPO/actions/runs/$run_id" run-row
   )" || {
     status=$?
     echo "failed to inspect $workflow run $run_id" >&2
@@ -101,14 +117,14 @@ run_matches_request() {
   }
 
   local run_sha workflow_id run_event run_status run_conclusion run_attempt workflow_name
-  IFS=$'\t' read -r run_sha workflow_id run_event run_status run_conclusion run_attempt <<< "$row"
+  IFS=$'\t' read -r run_sha workflow_id run_event run_status run_conclusion run_attempt <<<"$row"
   if [[ "$(printf '%s' "$run_sha" | normalize_sha)" != "$(printf '%s' "$sha" | normalize_sha)" ]]; then
     echo "$workflow run $run_id belongs to $run_sha, not $sha" >&2
     return 1
   fi
   workflow_name="$(
     github_read "workflow $workflow_id metadata" \
-      api "repos/$GH_REPO/actions/workflows/$workflow_id" --jq .name
+      "repos/$GH_REPO/actions/workflows/$workflow_id" workflow-name
   )" || {
     status=$?
     return "$status"
@@ -130,11 +146,11 @@ run_matches_request() {
       return 1
     fi
   fi
-  # A successful named job is not sufficient release evidence while the
-  # enclosing run is still mutable or has an unsuccessful final conclusion.
-  # This also keeps the waiter aligned with the documented non-cancelled,
-  # exact-SHA qualification contract.
-  if [[ "$run_status" != "completed" || "$run_conclusion" != "success" ]]; then
+  # Publication may fail after preparation. Recovery accepts that completed run
+  # only when its frozen candidate producer succeeded; CI still needs success.
+  if [[ "$release_candidate" == true && "$run_status" == completed && "$run_conclusion" == failure ]]; then
+    required_jobs+=("Prepare frozen publication candidate")
+  elif [[ "$run_status" != "completed" || "$run_conclusion" != "success" ]]; then
     echo "$workflow run $run_id is $run_status/${run_conclusion:-<none>}, not completed/success" >&2
     return 1
   fi
@@ -168,88 +184,26 @@ required_artifacts_present() {
   if [[ "${#required_artifacts[@]}" -eq 0 ]]; then
     required_json='[]'
   else
-    required_json="$(printf '%s\n' "${required_artifacts[@]}" | bun -e '
-const names = (await Bun.stdin.text()).split(/\r?\n/u).filter(Boolean);
-process.stdout.write(JSON.stringify(names));
-')"
+    required_json="$(printf '%s\n' "${required_artifacts[@]}" | bun .github/scripts/workflow-run-metadata.mts names)"
   fi
   local gate_json
   if [[ "${#gate_artifacts[@]}" -eq 0 ]]; then
     gate_json='[]'
   else
-    gate_json="$(printf '%s\n' "${gate_artifacts[@]}" | bun -e '
-const names = (await Bun.stdin.text()).split(/\r?\n/u).filter(Boolean);
-process.stdout.write(JSON.stringify(names));
-')"
+    gate_json="$(printf '%s\n' "${gate_artifacts[@]}" | bun .github/scripts/workflow-run-metadata.mts names)"
   fi
   local selection status
   # shellcheck disable=SC2016
   if selection="$(
     REQUIRED_ARTIFACTS_JSON="$required_json" \
-    GATE_ARTIFACTS_JSON="$gate_json" \
-    bun -e '
-const expected = JSON.parse(process.env.REQUIRED_ARTIFACTS_JSON);
-const gates = JSON.parse(process.env.GATE_ARTIFACTS_JSON);
-let records;
-try {
-  records = JSON.parse(await Bun.stdin.text());
-} catch (cause) {
-  console.error(`artifact inventory is not valid JSON: ${cause.message}`);
-  process.exit(64);
-}
-if (
-  !Array.isArray(expected)
-  || !Array.isArray(gates)
-  || expected.length + gates.length === 0
-  || [...expected, ...gates].some((name) => typeof name !== "string" || name.length === 0)
-  || new Set([...expected, ...gates]).size !== expected.length + gates.length
-) {
-  console.error("required artifact identity list is malformed");
-  process.exit(64);
-}
-if (!Array.isArray(records) || records.some((entry) =>
-  entry === null || Array.isArray(entry) || typeof entry !== "object" ||
-  typeof entry.name !== "string" || typeof entry.expired !== "boolean" ||
-  !Number.isSafeInteger(entry.id) || entry.id < 1 ||
-  !Number.isSafeInteger(entry.size_in_bytes) || entry.size_in_bytes < 1 ||
-  typeof entry.digest !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(entry.digest)
-)) {
-  console.error("artifact inventory contains malformed metadata");
-  process.exit(64);
-}
-const selected = [];
-const selectedGates = [];
-for (const name of [...expected, ...gates]) {
-  const matches = records.filter((entry) => entry.name === name && entry.expired === false);
-  if (matches.length !== 1) {
-    console.error(`expected exactly one non-expired artifact named ${name}; found ${matches.length}`);
-    process.exit(1);
-  }
-  const [entry] = matches;
-  const record = {
-      digest: entry.digest,
-      id: entry.id,
-      name: entry.name,
-      size: entry.size_in_bytes,
-  };
-  (expected.includes(name) ? selected : selectedGates).push(record);
-}
-selected.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-selectedGates.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-process.stdout.write(JSON.stringify({ selected, selectedGates }));
-' <<< "$artifacts_json"
+      GATE_ARTIFACTS_JSON="$gate_json" \
+      bun .github/scripts/workflow-run-metadata.mts select-artifacts <<<"$artifacts_json"
   )"; then
     selected_artifacts_json="$(
-      SELECTION_JSON="$selection" bun -e '
-const value = JSON.parse(process.env.SELECTION_JSON);
-process.stdout.write(JSON.stringify(value.selected));
-'
+      SELECTION_JSON="$selection" bun .github/scripts/workflow-run-metadata.mts selected-artifacts
     )"
     selected_gate_artifacts_json="$(
-      SELECTION_JSON="$selection" bun -e '
-const value = JSON.parse(process.env.SELECTION_JSON);
-process.stdout.write(JSON.stringify(value.selectedGates));
-'
+      SELECTION_JSON="$selection" bun .github/scripts/workflow-run-metadata.mts selected-gates
     )"
   else
     status=$?
@@ -268,8 +222,8 @@ required_jobs_success() {
   local jobs_file
   jobs_file="$(mktemp)"
   local status
-  if github_read "$workflow run $run_id jobs" \
-    run view "$run_id" --repo "$GH_REPO" --json jobs > "$jobs_file"; then
+  if github_paginated_json "$workflow run $run_id jobs" jobs \
+    "repos/$GH_REPO/actions/runs/$run_id/jobs?filter=latest" >"$jobs_file"; then
     :
   else
     status=$?
@@ -280,26 +234,7 @@ required_jobs_success() {
   local conclusion
   # shellcheck disable=SC2016
   if ! conclusion="$(
-    bun -e '
-const fs = require("node:fs");
-const data = JSON.parse(fs.readFileSync(Bun.argv[1], "utf8"));
-const required = Bun.argv.slice(2);
-if (!Array.isArray(data.jobs)) {
-  console.error("workflow job inventory must be a list");
-  process.exit(1);
-}
-const failures = required
-  .map((name) => {
-    const matches = data.jobs.filter((job) => job?.name === name);
-    if (matches.length !== 1) return [name, `count-${matches.length}`];
-    return [name, matches[0]?.conclusion ?? "missing"];
-  })
-  .filter(([, conclusion]) => conclusion !== "success");
-if (failures.length > 0) {
-  console.error(failures.map(([name, conclusion]) => `${name}=${conclusion}`).join(", "));
-  process.exit(1);
-}
-' "$jobs_file" "${required_jobs[@]}"
+    bun .github/scripts/workflow-run-metadata.mts jobs "$jobs_file" "${required_jobs[@]}"
   )"; then
     rm -f "$jobs_file"
     return 1
@@ -342,26 +277,7 @@ resolve_workflow_id() {
   # Resolve the immutable workflow id from the exact display name. This avoids
   # gh run list's arbitrary latest-N truncation and refuses ambiguous names.
   # shellcheck disable=SC2016
-  WORKFLOW_NAME="$workflow" bun -e '
-const expected = process.env.WORKFLOW_NAME;
-let rows;
-try {
-  rows = JSON.parse(await Bun.stdin.text());
-} catch (cause) {
-  console.error(`workflow inventory is not valid JSON: ${cause.message}`);
-  process.exit(1);
-}
-if (!Array.isArray(rows)) {
-  console.error("workflow inventory must be a list");
-  process.exit(1);
-}
-const matches = rows.filter((row) => row?.name === expected);
-if (matches.length !== 1 || !Number.isSafeInteger(matches[0]?.id) || matches[0].id < 1) {
-  console.error(`expected exactly one workflow named ${expected}; found ${matches.length}`);
-  process.exit(1);
-}
-process.stdout.write(String(matches[0].id));
-' <<< "$workflows_json" || return 64
+  WORKFLOW_NAME="$workflow" bun .github/scripts/workflow-run-metadata.mts workflow-id <<<"$workflows_json" || return 64
 }
 
 exact_sha_workflow_runs() {
@@ -374,39 +290,7 @@ exact_sha_workflow_runs() {
       "repos/$GH_REPO/actions/workflows/$workflow_id/runs?head_sha=$sha"
   )" || return $?
   # shellcheck disable=SC2016
-  EXPECTED_SHA="$(printf '%s' "$sha" | normalize_sha)" bun -e '
-const expectedSha = process.env.EXPECTED_SHA;
-let rows;
-try {
-  rows = JSON.parse(await Bun.stdin.text());
-} catch (cause) {
-  console.error(`workflow run inventory is not valid JSON: ${cause.message}`);
-  process.exit(1);
-}
-if (!Array.isArray(rows)) {
-  console.error("workflow run inventory must be a list");
-  process.exit(1);
-}
-const ids = new Set();
-const rendered = [];
-for (const row of rows) {
-  const conclusion = row?.conclusion ?? "";
-  if (
-    row === null || Array.isArray(row) || typeof row !== "object" ||
-    !Number.isSafeInteger(row.id) || row.id < 1 || ids.has(row.id) ||
-    typeof row.head_sha !== "string" || row.head_sha.toLowerCase() !== expectedSha ||
-    typeof row.status !== "string" || typeof conclusion !== "string" ||
-    typeof row.html_url !== "string" || /[\t\r\n]/u.test(row.html_url) ||
-    typeof row.event !== "string" || /[\t\r\n]/u.test(row.event)
-  ) {
-    console.error("workflow run inventory contains malformed, duplicate, or non-exact-SHA metadata");
-    process.exit(1);
-  }
-  ids.add(row.id);
-  rendered.push([row.id, row.status, conclusion, row.html_url, row.event].join("\t"));
-}
-process.stdout.write(rendered.join("\n"));
-' <<< "$runs_json" || return 64
+  EXPECTED_SHA="$(printf '%s' "$sha" | normalize_sha)" bun .github/scripts/workflow-run-metadata.mts runs <<<"$runs_json" || return 64
 }
 
 if [[ -n "$expected_run_id" ]]; then

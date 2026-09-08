@@ -4,7 +4,7 @@ id: "oliphaunt-wasix-rust"
 language: "rust"
 layer: "library"
 stack: "systems"
-tags: ["binding", "wasix", "rust", "postgres", "sdk", "release-product"]
+tags: ["javascript-quality", "binding", "wasix", "rust", "postgres", "sdk", "release-product"]
 dependsOn:
   - id: "shared-test-fixtures"
     scope: "development"
@@ -38,7 +38,7 @@ tasks:
     tags: ["quality", "static", "requires-rust"]
     command: "cargo check -p oliphaunt-wasix --locked"
     env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/check"
+      CARGO_TARGET_DIR: "target"
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-rust-query-core"
@@ -59,7 +59,7 @@ tasks:
       cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features extensions,tools,extension-vector --test public_api --no-tests=fail --test-threads=1
       cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions --test runtime_smoke --test client_compat --no-run
     env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
+      CARGO_TARGET_DIR: "target"
     inputs:
       - "@group(cargo-workspace)"
       - "@group(rust-test-config)"
@@ -75,9 +75,10 @@ tasks:
       runFromWorkspaceRoot: true
 
   unit-shared:
+    tags: ["quality", "unit", "requires-rust"]
     command: "cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1"
     env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
+      CARGO_TARGET_DIR: "target"
     inputs:
       - "@group(cargo-workspace)"
       - "@group(rust-test-config)"
@@ -91,7 +92,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-      runInCI: false
 
   unit:
     command: "true"
@@ -106,27 +106,9 @@ tasks:
 
   package:
     tags: ["package"]
-    script: |
-      set -e
-      rm -rf target/oliphaunt-wasix-rust/package
-      node src/bindings/wasix-rust/tools/package-source.mjs target/oliphaunt-wasix-rust/package/source
-      cargo package --manifest-path target/oliphaunt-wasix-rust/package/source/Cargo.toml --allow-dirty --no-verify
-      cargo package --manifest-path target/oliphaunt-wasix-rust/package/source/Cargo.toml --allow-dirty --list > target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/package"
-    inputs:
-      - "@group(cargo-workspace)"
-      - "**/*"
-      - project: "shared-test-fixtures"
-        group: "fixtures"
-      - project: "shared-rust-query-core"
-        group: "sources"
-      - project: "liboliphaunt-wasix"
-        group: "crates"
-      - "/src/sources/toolchains/wasix.toml"
-      - "/src/bindings/wasix-rust/tools/package-source.mjs"
-    outputs:
-      - "/target/oliphaunt-wasix-rust/package/**/*"
+    command: "true"
+    deps: ["oliphaunt-wasix-rust:release-package"]
+    inputs: []
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -142,3 +124,94 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+
+  coverage:
+    tags: ["coverage", "requires-rust"]
+    script: |
+      set -e
+      mkdir -p target/coverage/oliphaunt-wasix-rust
+      cargo llvm-cov nextest -p oliphaunt-wasix --no-default-features --lib --locked --profile ci --no-tests=fail --test-threads=1 --lcov --output-path target/coverage/oliphaunt-wasix-rust/lcov.info
+    env:
+      CARGO_LLVM_COV_TARGET_DIR: "target/coverage-build/oliphaunt-wasix-rust"
+    inputs:
+      - "@group(code)"
+      - "@group(cargo-workspace)"
+      - "@group(rust-test-config)"
+      - project: "shared-rust-query-core"
+        group: "sources"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    outputs: ["/target/coverage/oliphaunt-wasix-rust/**/*"]
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+
+  rust-format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p oliphaunt-wasix --check"
+    inputs: ["/src/bindings/wasix-rust/crates/oliphaunt-wasix/**/*.rs","/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  rust-lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p oliphaunt-wasix --all-targets --locked -- -D warnings"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs: ["/src/bindings/wasix-rust/crates/oliphaunt-wasix/**/*.rs","/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+
+  release-package:
+    tags: ["release", "artifact-package", "ci-wasix-rust-package"]
+    script: |
+      set -eu
+      cargo fetch --locked
+      bash src/bindings/wasix-rust/tools/stage-release-artifacts.sh
+      bash tools/dev/bun.sh src/bindings/wasix-rust/tools/check-package.mts
+      version="$(bash tools/dev/bun.sh src/shared/product-metadata/product-version.mts version oliphaunt-wasix-rust)"
+      bash src/shared/artifact-packaging/check-cargo-package-tests.sh --crate "target/sdk-artifacts/oliphaunt-wasix-rust/oliphaunt-wasix-$version.crate" --no-default-features --features extensions,tools,icu --path-dependencies-from src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs:
+      - "**/*"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "shared-rust-query-core"
+        group: "sources"
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/src/shared/artifact-packaging/*.{mjs,mts}"
+      - "/src/shared/artifact-packaging/cargo-source-package.mts"
+      - "/src/shared/artifact-packaging/package-cargo-source.sh"
+      - "/src/shared/artifact-packaging/check-cargo-package-tests.sh"
+      - "/src/bindings/wasix-rust/tools/check-package.mts"
+      - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
+      - "/src/bindings/wasix-rust/tools/prepare-rust-release-source.mts"
+      - "/src/shared/product-metadata/release-graph.mts"
+      - "/src/shared/artifact-packaging/staging.mts"
+      - "/src/bindings/wasix-rust/tools/stage-release-artifacts.sh"
+      - "/src/shared/product-metadata/wasix-cargo-toolchain-policy.mts"
+      - "/src/runtimes/liboliphaunt/icu/**/*"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  docs-api:
+    tags: ["docs"]
+    script: "cargo doc --no-deps -p oliphaunt-wasix --target-dir target/docs/generated/api/wasix-rust"
+    inputs: ["**/*", "/src/shared/rust-query-core/src/**/*", "/src/shared/js-core/src/**/*", "@group(cargo-workspace)"]
+    outputs: ["/target/docs/generated/api/wasix-rust/doc/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+      runInCI: false

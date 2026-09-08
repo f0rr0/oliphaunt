@@ -1,0 +1,35 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "native-extension-lifecycle"
+language: "rust"
+layer: "tool"
+tags: ["javascript-quality"]
+tasks:
+  unit:
+    tags: ["quality", "unit"]
+    command: "bun test src/extensions/tests/native/tools"
+    inputs:
+      - "tools/**/*.mts"
+      - "/src/shared/product-metadata/**/*.mts"
+      - "/src/extensions/artifacts/native/tools/**/*.mts"
+      - "/src/extensions/artifacts/packages/tools/**/*.mts"
+      - "/src/runtimes/liboliphaunt/native/tools/native-runtime-payload.mts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  lifecycle:
+    tags: ["release", "integration", "ci-native-extension-lifecycle"]
+    command: "src/extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh"
+    deps:
+      - "extension-artifacts-native:build-target"
+      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "oliphaunt-broker:build-release-assets"
+      - "oliphaunt-rust:release-package"
+    inputs:
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/process-supervision.sh"
+      - "/src/extensions/tests/native/**/*"
+      - "/src/extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh"
+      - "/src/runtimes/liboliphaunt/native/tools/smoke-packed-tools-npm.sh"
+      - "/src/runtimes/liboliphaunt/native/tools/smoke-packed-tools-npm.mts"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

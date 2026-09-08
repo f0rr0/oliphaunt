@@ -4,7 +4,7 @@ id: "integration-examples"
 language: "typescript"
 layer: "application"
 stack: "frontend"
-tags: ["examples", "integration"]
+tags: ["javascript-quality", "examples", "integration"]
 dependsOn:
   - id: "extension-packages"
     scope: "build"
@@ -33,11 +33,11 @@ owners:
 tasks:
   js-sdk-smoke:
     tags: ["runtime", "smoke", "node", "bun", "deno"]
-    command: "sh tools/smoke-js-sdk.sh"
+    command: "sh examples/tools/smoke-js-sdk.sh"
     deps:
       - "liboliphaunt-native:build-runtime-desktop-target"
       - "oliphaunt-broker:build"
-      - "release-tools:node-direct-runtime"
+      - "oliphaunt-node-direct:build-release-assets"
     inputs:
       - project: "oliphaunt-js"
         group: "code"
@@ -64,14 +64,16 @@ tasks:
 
   check:
     tags: ["quality", "static"]
-    command: "bun examples/tools/check-examples.mjs"
+    script: |
+      set -e
+      bash examples/tools/stage-tauri-webdriver-app.test.sh
+      bash examples/tools/run-tauri-webdriver-smoke.test.sh
+      bun test examples/react-native-expo/tools/smoke-pass-receipt.test.mts examples/react-native-expo/tools/mobile-extension-proof.test.mts
     inputs:
       - "**/*"
       - "@group(pnpm-workspace)"
       - "!/examples/**/node_modules"
       - "!/examples/**/node_modules/**"
-      - "/src/**/examples/**/*"
-      - "/examples/tools/check-examples.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -83,8 +85,8 @@ tasks:
     deps:
       - "extension-packages:package-mobile"
       - "liboliphaunt-native:package-runtime-android-x86_64"
-      - "release-tools:kotlin-sdk-package"
-      - "release-tools:react-native-sdk-package"
+      - "oliphaunt-kotlin:release-package"
+      - "oliphaunt-react-native:release-package"
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-kotlin"
@@ -96,7 +98,7 @@ tasks:
       - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
-      - "/tools/native-packaging/**/*"
+      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
     outputs:
       - "/target/mobile-build/react-native/android/**/*"
     options:
@@ -115,7 +117,7 @@ tasks:
         group: "code"
       - "/src/sources/toolchains/android-emulator-runner.toml"
       - "/src/sources/toolchains/maestro.toml"
-      - "/tools/dev/setup-maestro.sh"
+      - "/src/shared/mobile-tools/setup-maestro.sh"
       - "/target/mobile-build/react-native/android/**/*"
     options:
       cache: false
@@ -132,7 +134,7 @@ tasks:
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/tools/native-packaging/**/*"
+      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -145,8 +147,8 @@ tasks:
     deps:
       - "extension-packages:package-mobile"
       - "liboliphaunt-native:package-runtime-ios-xcframework"
-      - "release-tools:react-native-sdk-package"
-      - "release-tools:swift-sdk-package"
+      - "oliphaunt-react-native:release-package"
+      - "oliphaunt-swift:release-package"
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-react-native"
@@ -158,7 +160,7 @@ tasks:
       - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"
-      - "/tools/native-packaging/**/*"
+      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
     outputs:
       - "/target/mobile-build/react-native/ios/**/*"
     options:
@@ -176,7 +178,7 @@ tasks:
       - project: "oliphaunt-react-native"
         group: "code"
       - "/src/sources/toolchains/maestro.toml"
-      - "/tools/dev/setup-maestro.sh"
+      - "/src/shared/mobile-tools/setup-maestro.sh"
       - "/target/mobile-build/react-native/ios/**/*"
     options:
       cache: false
@@ -193,7 +195,7 @@ tasks:
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/tools/native-packaging/**/*"
+      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true

@@ -112,7 +112,7 @@ oliphaunt_wasix_extension_wasix_target_values() {
   local key="$3"
   local target="$repo_root/src/extensions/external/$extension/targets/wasix.toml"
   "$repo_root/tools/dev/bun.sh" \
-    "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs" \
+    "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mts" \
     string-list \
     "$target" \
     "$key"
@@ -124,7 +124,7 @@ oliphaunt_wasix_extension_recipe_value() {
   local key="$3"
   local recipe="$repo_root/src/extensions/external/$extension/recipe.toml"
   "$repo_root/tools/dev/bun.sh" \
-    "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs" \
+    "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mts" \
     string \
     "$recipe" \
     "$key"
@@ -148,7 +148,7 @@ oliphaunt_wasix_extension_wasix_dependencies() {
   local repo_root="$1"
   local extension="$2"
   "$repo_root/tools/dev/bun.sh" \
-    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    "$repo_root/src/extensions/tools/native-component-contract.mts" \
     field "$extension" wasix wasix-runtime wasix-portable components
 }
 

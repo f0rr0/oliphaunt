@@ -6,7 +6,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   exit 1
 }
 cd "$root"
-PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+PATH="$PATH:${CARGO_HOME:-$HOME/.cargo}/bin"
 export PATH
 
 require() {
@@ -27,15 +27,19 @@ require zizmor
 # actionlint 1.7.12 predates GitHub's `concurrency.queue: max` schema addition.
 run actionlint -ignore 'unexpected key "queue" for "concurrency" section'
 run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .github/workflows .github/actions
-run tools/dev/bun.sh test tools/policy/assertions/workflow-security.test.mjs
-run tools/dev/bun.sh tools/policy/assertions/workflow-security.mjs
+run tools/dev/bun.sh test tools/policy/assertions/workflow-security.test.mts
+run tools/dev/bun.sh tools/policy/assertions/workflow-security.mts
+run bash .github/scripts/run-moon-targets.test.sh
+graph_file="$(mktemp)"
+trap 'rm -f "$graph_file"' EXIT
+"${MOON_BIN:-moon}" task-graph --json >"$graph_file"
+export OLIPHAUNT_MOON_TASK_GRAPH_FILE="$graph_file"
 run node --test \
-  .github/scripts/configure-macos-release-toolchains.test.mjs \
-  .github/scripts/moon-task-capabilities.test.mjs \
-  .github/scripts/write-affected-moon-target-matrices.test.mjs \
-  .github/scripts/resolve-planned-moon-execution.test.mjs
-run tools/dev/bun.sh test \
-  tools/policy/ci-plan-node-products.test.mjs \
-  tools/policy/ci-plan-wasix-postmaster-release.test.mjs \
-  tools/policy/workflow-moon-transfers.test.mjs
-run tools/dev/bun.sh test tools/release/toolchain-bootstrap.test.mjs
+  .github/scripts/configure-macos-release-toolchains.test.mts \
+  .github/scripts/moon-task-capabilities.test.mts \
+  .github/scripts/write-affected-moon-target-matrices.test.mts \
+  .github/scripts/resolve-planned-moon-execution.test.mts
+run bash tools/graph/with-projects.sh test \
+  tools/policy/ci-plan-node-products.test.mts \
+  tools/policy/ci-plan-wasix-postmaster-release.test.mts \
+  tools/policy/workflow-moon-transfers.test.mts

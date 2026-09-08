@@ -22,7 +22,7 @@ require_command pnpm
 host_system="$(uname -s)"
 host_machine="$(uname -m)"
 if [[ "$host_system" == "Linux" ]]; then
-  linux_libc="$(node src/runtimes/wasix-napi/tools/detect-linux-libc.mjs)"
+  linux_libc="$(node src/runtimes/wasix-napi/tools/detect-linux-libc.mts)"
   case "$linux_libc" in
     glibc) ;;
     musl)
@@ -39,10 +39,10 @@ fi
 target_id="${1:-${OLIPHAUNT_WASIX_NAPI_TARGET:-}}"
 if [[ -z "$target_id" ]]; then
   case "$host_system:$host_machine" in
-    Darwin:arm64|Darwin:aarch64) target_id="macos-arm64" ;;
-    Linux:x86_64|Linux:amd64) target_id="linux-x64-gnu" ;;
-    Linux:arm64|Linux:aarch64) target_id="linux-arm64-gnu" ;;
-    MINGW*:x86_64|MSYS*:x86_64|CYGWIN*:x86_64) target_id="windows-x64-msvc" ;;
+    Darwin:arm64 | Darwin:aarch64) target_id="macos-arm64" ;;
+    Linux:x86_64 | Linux:amd64) target_id="linux-x64-gnu" ;;
+    Linux:arm64 | Linux:aarch64) target_id="linux-arm64-gnu" ;;
+    MINGW*:x86_64 | MSYS*:x86_64 | CYGWIN*:x86_64) target_id="windows-x64-msvc" ;;
     *)
       echo "unsupported WASIX N-API host: $(uname -s)/$(uname -m)" >&2
       exit 2
@@ -82,24 +82,10 @@ fi
 
 manifest="src/runtimes/wasix-napi/Cargo.toml"
 package_manifest="src/runtimes/wasix-napi/package.json"
-metadata_contract="$(node - "$package_manifest" <<'JS'
-const manifest = JSON.parse(require("node:fs").readFileSync(process.argv[2], "utf8"));
-const values = [
-  manifest.oliphaunt?.runtimeVersion,
-  manifest.oliphaunt?.addonAbiVersion,
-  manifest.oliphaunt?.nodeApiVersion,
-];
-if (
-  !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(values[0] ?? "")
-  || !Number.isSafeInteger(values[1])
-  || !Number.isSafeInteger(values[2])
-) {
-  throw new Error("WASIX N-API package metadata has an invalid runtime/ABI contract");
-}
-process.stdout.write(values.join("\t"));
-JS
+metadata_contract="$(
+  node "$workspace_root/src/runtimes/wasix-napi/tools/native-build-data.mts" metadata "$package_manifest"
 )"
-IFS=$'\t' read -r expected_runtime_version expected_addon_abi expected_node_api <<< "$metadata_contract"
+IFS=$'\t' read -r expected_runtime_version expected_addon_abi expected_node_api <<<"$metadata_contract"
 product_target_root="${OLIPHAUNT_WASIX_NAPI_BUILD_ROOT:-$workspace_root/target/oliphaunt-wasix-napi}"
 prebuild_dir="$product_target_root/prebuilds/$target_id"
 cargo_target_dir="$product_target_root/cargo-release"
@@ -125,7 +111,7 @@ build_input_args=(
   --extension-root "$OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT"
   --icu-root "$OLIPHAUNT_ICU_DATA_DIR"
 )
-tools/dev/bun.sh src/runtimes/wasix-napi/tools/check-build-inputs.mjs \
+tools/dev/bun.sh src/runtimes/wasix-napi/tools/check-build-inputs.mts \
   "${build_input_args[@]}" \
   --output "$build_inputs_file"
 
@@ -141,7 +127,7 @@ build_addon() {
 
   echo "building WASIX N-API addon for $target_id ($cargo_target)"
   if [[ "$target_id" == linux-*-gnu ]]; then
-    tools/release/build-linux-wasix-napi-baseline.sh \
+    src/runtimes/wasix-napi/tools/build-linux-wasix-napi-baseline.sh \
       "$cargo_target_dir" \
       "$cargo_target" \
       release
@@ -168,7 +154,7 @@ build_addon "$addon"
 
 # Recompute the complete input inventory after compilation so packaging
 # cannot attest to payloads that changed during compilation.
-tools/dev/bun.sh src/runtimes/wasix-napi/tools/check-build-inputs.mjs \
+tools/dev/bun.sh src/runtimes/wasix-napi/tools/check-build-inputs.mts \
   "${build_input_args[@]}" \
   --check "$build_inputs_file"
 
@@ -176,145 +162,22 @@ tools/dev/bun.sh src/runtimes/wasix-napi/tools/check-build-inputs.mjs \
 # complete stable N-API contract before it can be packaged.
 host_target=""
 case "$host_system:$host_machine" in
-  Darwin:arm64|Darwin:aarch64) host_target="macos-arm64" ;;
-  Linux:x86_64|Linux:amd64) host_target="linux-x64-gnu" ;;
-  Linux:arm64|Linux:aarch64) host_target="linux-arm64-gnu" ;;
-  MINGW*:x86_64|MSYS*:x86_64|CYGWIN*:x86_64) host_target="windows-x64-msvc" ;;
+  Darwin:arm64 | Darwin:aarch64) host_target="macos-arm64" ;;
+  Linux:x86_64 | Linux:amd64) host_target="linux-x64-gnu" ;;
+  Linux:arm64 | Linux:aarch64) host_target="linux-arm64-gnu" ;;
+  MINGW*:x86_64 | MSYS*:x86_64 | CYGWIN*:x86_64) host_target="windows-x64-msvc" ;;
 esac
 if [[ "$target_id" == "$host_target" ]]; then
-  node - \
+  node "$workspace_root/src/runtimes/wasix-napi/tools/native-build-data.mts" check-addon \
     "$addon" \
     "$expected_runtime_version" \
     "$expected_addon_abi" \
     "$expected_node_api" \
-    "$build_inputs_file" <<'JS'
-const { readFileSync, statSync } = require("node:fs");
-const { resolve } = require("node:path");
-
-const [addonPath, expectedRuntime, expectedAbiRaw, expectedNodeApiRaw, buildInputsPath] =
-  process.argv.slice(2);
-const expectedAbi = Number(expectedAbiRaw);
-const expectedNodeApi = Number(expectedNodeApiRaw);
-const buildInputs = JSON.parse(readFileSync(buildInputsPath, "utf8"));
-const expectedFunctions = [
-  "addonAbiVersion",
-  "extensionIdentity",
-  "nodeApiVersion",
-  "payloadIdentity",
-  "restore",
-  "restoreDirect",
-  "runtimeVersion",
-  "supportedProfiles",
-  "toolIdentity",
-];
-const expectedDatabaseMethods = [
-  "backup",
-  "close",
-  "execProtocolRaw",
-  "execProtocolRawStream",
-  "pgDump",
-  "psql",
-];
-const expectedServerMethods = ["close"];
-const addon = require(addonPath);
-for (const name of expectedFunctions) {
-  if (typeof addon[name] !== "function") {
-    throw new Error(`${addonPath} is missing function export ${name}`);
-  }
-}
-if (
-  addon.addonAbiVersion() !== expectedAbi
-  || addon.nodeApiVersion() !== expectedNodeApi
-  || addon.runtimeVersion() !== expectedRuntime
-  || JSON.stringify(addon.supportedProfiles()) !== JSON.stringify(["standard", "icu"])
-) {
-  throw new Error(`${addonPath} reports an incompatible ABI/runtime/profile contract`);
-}
-
-function expectedIdentity(record, kind) {
-  if (
-    typeof record?.path !== "string"
-    || !/^[0-9a-f]{64}$/.test(record?.sha256 ?? "")
-  ) {
-    throw new Error(`${buildInputsPath} has an invalid ${kind} record`);
-  }
-  const size = statSync(resolve(record.path)).size;
-  if (!Number.isSafeInteger(size) || size < 1) {
-    throw new Error(`${record.path} has an invalid ${kind} size: ${size}`);
-  }
-  return `${record.sha256}:${size}`;
-}
-
-const portableTools = buildInputs.inputs?.portableTools;
-if (
-  buildInputs.schema !== "oliphaunt-wasix-napi-build-inputs-v1"
-  || JSON.stringify(portableTools?.map(({ name }) => name)) !== JSON.stringify(["pg_dump", "psql"])
-) {
-  throw new Error(`${buildInputsPath} has an incompatible portable tool inventory`);
-}
-for (const tool of portableTools) {
-  const actual = addon.toolIdentity(tool.name);
-  const expected = expectedIdentity(tool, `${tool.name} tool`);
-  if (actual !== expected) {
-    throw new Error(`${addonPath} reports ${tool.name} tool identity ${actual}; expected ${expected}`);
-  }
-}
-
-const portableExtensions = (buildInputs.inputs?.extensionArtifacts ?? [])
-  .flatMap(({ portableArchives = [] }) => portableArchives);
-const extensionNames = portableExtensions.map(({ sqlName }) => sqlName);
-if (
-  extensionNames.length === 0
-  || extensionNames.some((name) => typeof name !== "string" || name.length === 0)
-  || new Set(extensionNames).size !== extensionNames.length
-) {
-  throw new Error(`${buildInputsPath} has an invalid portable extension inventory`);
-}
-for (const extension of portableExtensions) {
-  const actual = addon.extensionIdentity(extension.sqlName);
-  const expected = expectedIdentity(extension, `${extension.sqlName} extension`);
-  if (actual !== expected) {
-    throw new Error(
-      `${addonPath} reports ${extension.sqlName} extension identity ${actual}; expected ${expected}`,
-    );
-  }
-}
-for (const component of [
-  "runtimeArchive",
-  "standardSeedArchive",
-  "standardSeedManifest",
-  "icuDataArchive",
-  "icuSeedArchive",
-  "icuSeedManifest",
-]) {
-  const identity = addon.payloadIdentity(component);
-  if (!/^[0-9a-f]{64}:[1-9][0-9]*$/.test(identity)) {
-    throw new Error(`${addonPath} reports an invalid ${component} identity: ${identity}`);
-  }
-}
-for (const constructor of ["NativeWasixActorDatabase", "NativeWasixDatabase"]) {
-  if (typeof addon[constructor]?.open !== "function") {
-    throw new Error(`${addonPath} is missing ${constructor}.open`);
-  }
-  for (const name of expectedDatabaseMethods) {
-    if (typeof addon[constructor].prototype[name] !== "function") {
-      throw new Error(`${addonPath} is missing ${constructor}.prototype.${name}`);
-    }
-  }
-}
-if (typeof addon.NativeWasixServer?.open !== "function") {
-  throw new Error(`${addonPath} is missing NativeWasixServer.open`);
-}
-for (const name of expectedServerMethods) {
-  if (typeof addon.NativeWasixServer.prototype[name] !== "function") {
-    throw new Error(`${addonPath} is missing NativeWasixServer.prototype.${name}`);
-  }
-}
-JS
+    "$build_inputs_file"
 fi
 
 OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA="$artifact_source_sha" \
-  node src/runtimes/wasix-napi/tools/package-platform.mjs \
+  bash src/runtimes/wasix-napi/tools/package-platform.sh \
   --target "$target_id" \
   --prebuild-dir "$prebuild_dir" \
   --build-inputs "$build_inputs_file"
@@ -329,8 +192,8 @@ for runtime_and_manager in \
   "bun pnpm" \
   "deno pnpm" \
   "electron pnpm"; do
-  read -r smoke_runtime smoke_package_manager <<< "$runtime_and_manager"
-  node src/runtimes/wasix-napi/tools/smoke-packaged-addon.mjs \
+  read -r smoke_runtime smoke_package_manager <<<"$runtime_and_manager"
+  bash src/runtimes/wasix-napi/tools/smoke-packaged-addon.sh \
     --target "$target_id" \
     --runtime "$smoke_runtime" \
     --package-manager "$smoke_package_manager"

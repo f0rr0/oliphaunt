@@ -1,6 +1,6 @@
 # Native Benchmarks
 
-Native benchmark specs live here. Runner code stays under `tools/perf`.
+Native benchmark specs live here. Runner code stays under `benchmarks/perf`.
 
 - `sql/`: fixed SQL workload files used by native direct, broker, server,
   native PostgreSQL, and SQLite comparison suites.

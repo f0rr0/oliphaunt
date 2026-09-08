@@ -18,7 +18,7 @@ export type CreateTodoInput = {
   priority: number;
 };
 
-export type StatusFilter = "open" | "all" | "done";
+export type StatusFilter = 'open' | 'all' | 'done';
 
 export type TodoApi = {
   listTodos(filter: { search: string; status: StatusFilter }): Promise<Todo[]>;

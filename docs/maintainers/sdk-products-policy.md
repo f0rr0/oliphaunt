@@ -20,10 +20,10 @@ same product concepts where the target platform can do so honestly:
   applications. Browser root is caller-owned; the native-host root uses a Rust actor,
   with explicit `/direct` and package-Worker placements.
 
-`tools/policy/sdk-manifest.toml` is the repo-level SDK registry. The canonical
-product graph lives in `src/*/moon.yml`; `sdk-contracts:manifest` parses both and
-rejects ownership or package-identity drift. Product tests and package checks,
-not source-text assertions, prove runtime delegation and consumer behavior.
+`src/shared/product-metadata/sdk-manifest.toml` supplies SDK descriptions for the
+documentation. Product dependencies and release identities live in each product's
+Moon and package manifests. Product tests and package checks verify runtime
+delegation and consumer behavior.
 
 - `src/sdks/rust/`: canonical native Rust SDK for Tauri and Rust desktop apps.
 - `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: Rust SDK over the portable
@@ -80,7 +80,7 @@ moon run oliphaunt-swift:compile
 moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:compile
 moon run oliphaunt-js:compile
-moon run sdk-contracts:all
+moon run liboliphaunt-native:headers
 moon run extensions:lint
 ```
 

@@ -118,7 +118,7 @@ managers to install only the matching target:
 
 Carrier packages have no install scripts and never download executable code.
 `tools/build-native.sh` creates the single profile-complete addon and
-`tools/package-platform.mjs` stages the matching carrier and portable release
+`tools/package-platform.sh` stages the matching carrier and portable release
 archive with source/artifact provenance before `pnpm pack`. Per-target jobs do
 not write the shared checksum filename; the aggregate release-assets task
 writes one canonical checksum manifest after all four target outputs merge.
@@ -158,3 +158,8 @@ app-local VC runtime, in one loadable directory. Electron can otherwise extract
 native modules to a temporary file, which adds startup work and can interact
 poorly with antivirus scanners. Each carrier job exercises the ASAR-unpacked
 layout and its missing-companion failure mode.
+
+Run the installed-carrier smoke locally with `bash tools/smoke-packaged-addon.sh
+--target linux-x64-gnu --runtime node` from this project. It requires the packed
+carrier and GNU coreutils (`brew install coreutils` on macOS); each command has
+a five-minute deadline. Other runtimes are `bun`, `deno`, and `electron`.

@@ -1,1 +1,1 @@
-import "../../electron/src/renderer.ts";
+import '../../electron/src/renderer.ts';

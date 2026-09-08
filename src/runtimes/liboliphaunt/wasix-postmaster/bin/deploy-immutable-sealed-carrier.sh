@@ -5,6 +5,7 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/lib/common.sh"
 source "$project_root/lib/sealed-carrier.sh"
+source "$project_root/lib/immutable-carrier.sh"
 source "$project_root/lib/qualification-identities.sh"
 
 usage() {
@@ -74,18 +75,18 @@ arguments=(
   --headless-sha256 "$FRESH_QUALIFICATION_CARRIER_HEADLESS_SHA256"
 )
 if [ "$remove" -eq 1 ]; then
-  python3 "$project_root/lib/immutable-carrier.py" --remove "${arguments[@]}"
+  fresh_immutable_carrier --remove "${arguments[@]}"
   fresh_verify_sealed_headless_carrier "$carrier" || {
     echo 'carrier verification failed after immutable deployment removal' >&2
     exit 1
   }
 else
-  python3 "$project_root/lib/immutable-carrier.py" --deploy "${arguments[@]}"
+  fresh_immutable_carrier --deploy "${arguments[@]}"
   # The complete payload is verified again after +i, then the read-only
   # deployment verifier proves the receipt and every live immutable inode.
   fresh_capture_qualification_carrier_identity "$carrier" || {
     echo 'carrier verification failed after immutable deployment' >&2
     exit 1
   }
-  python3 "$project_root/lib/immutable-carrier.py" --verify "${arguments[@]}"
+  fresh_immutable_carrier --verify "${arguments[@]}"
 fi

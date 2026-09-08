@@ -36,7 +36,7 @@ done < <(find "$probes_dir" -maxdepth 1 -type f \
   exit 2
 }
 
-actual_guest_identity="$(python3 "$project_root/lib/guest_build_provenance.py" identity "$guest_dir")"
+actual_guest_identity="$(bun "$project_root/lib/guest-build-provenance.mts" identity "$guest_dir")"
 expected_guest_identity="$(fresh_manifest_value "$guest_dir/guest-build.receipt" installed_closure_sha256)"
 [ "$actual_guest_identity" = "$expected_guest_identity" ] || {
   echo 'portable guest bytes differ from their build receipt' >&2
@@ -55,10 +55,10 @@ mkdir -p "$stage/portable-inputs/install" "$stage/portable-inputs/runtime/build"
 cp -a "$guest_dir" "$stage/portable-inputs/install/wasix-core-release-o3"
 cp -a "$sysroot_dir" "$stage/portable-inputs/runtime/build/patched-wasixcc-sysroot"
 cp -a "$probes_dir" "$stage/portable-inputs/runtime/build/probes"
-node "$repo_root/src/shared/artifact-packaging/materialize-release-symlinks.mjs" \
+node "$repo_root/src/shared/artifact-packaging/materialize-release-symlinks.mts" \
   "$stage/portable-inputs"
 
-node "$repo_root/src/shared/artifact-packaging/archive-directory.mjs" \
+node "$repo_root/src/shared/artifact-packaging/archive-directory.mts" \
   --keep-parent "$stage/portable-inputs" "$archive"
 chmod 0444 "$archive"
 printf 'packaged portable WASIX postmaster build inputs: %s\n' "$archive"

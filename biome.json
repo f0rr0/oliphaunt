@@ -2,55 +2,18 @@
   "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
   "files": {
     "includes": [
-      "package.json",
-      "biome.json",
-      "renovate.json",
-      ".markdownlint-cli2.jsonc",
-      "src/docs/package.json",
-      "src/docs/tsconfig.json",
-      "src/docs/src/**/*.ts",
-      "src/docs/src/**/*.tsx",
-      "src/docs/src/**/*.css",
-      "src/docs/mdx-components.tsx",
-      "src/docs/next.config.mjs",
-      "src/docs/postcss.config.mjs",
-      "src/docs/proxy.ts",
-      "src/docs/source.config.ts",
-      "src/docs/tools/**/*.mjs",
-      "src/sdks/react-native/package.json",
-      "src/sdks/react-native/typedoc.json",
-      "src/sdks/react-native/react-native.config.js",
-      "src/sdks/react-native/src/**/*.ts",
-      "src/sdks/react-native/src/**/*.tsx",
-      "src/sdks/js/package.json",
-      "src/sdks/js/typedoc.json",
-      "src/sdks/js/src/**/*.ts",
-      "src/shared/js-core/src/**/*.ts",
-      "src/bindings/wasix-ts/package.json",
-      "src/bindings/wasix-ts/src/**/*.ts",
-      "src/bindings/wasix-ts/tools-package/**/*.json",
-      "src/bindings/wasix-ts/tools-package/**/*.mjs",
-      "src/bindings/wasix-ts/tools-package/**/*.ts",
-      "examples/browser-wasix/**/*.ts",
-      "src/bindings/wasix-ts/tools/**/*.mjs",
-      "src/runtimes/liboliphaunt/native/tools-npm/package.json",
-      "src/runtimes/liboliphaunt/native/tools-npm/**/*.js",
-      "src/runtimes/liboliphaunt/native/tools-npm/**/*.ts",
-      "src/runtimes/liboliphaunt/native/tools/smoke-packed-tools-npm.mjs",
-      "tools/perf/matrix/**/*.json",
-      "tools/perf/matrix/**/*.ts",
-      "tools/perf/wasix-browser/**/*.mjs",
-      "tools/perf/wasix-browser/**/*.ts",
-      "tools/perf/wasix-node/**/*.mjs",
-      "tools/perf/wasix-node/package.json",
-      "tools/integration/**/*.mjs",
-      "tools/test/**/*.mjs",
+      "**",
+      "!**/generated",
+      "!**/vendor",
       "!**/node_modules",
-      "!**/lib",
+      "!**/target",
       "!**/dist",
-      "!**/.expo",
-      "!**/ios",
-      "!**/android"
+      "!**/.build",
+      "!**/.next",
+      "!**/.source",
+      "!**/Pods",
+      "!**/fixtures",
+      "!**/Fixtures"
     ]
   },
   "formatter": {
@@ -81,8 +44,26 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "off"
+        "noExplicitAny": "off",
+        "noImplicitAnyLet": "off",
+        "noControlCharactersInRegex": "off"
       }
     }
-  }
+  },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/runtimes/broker/dependency-licenses.json",
+        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
+      ],
+      "formatter": {
+        "enabled": false
+      }
+    }
+  ]
 }

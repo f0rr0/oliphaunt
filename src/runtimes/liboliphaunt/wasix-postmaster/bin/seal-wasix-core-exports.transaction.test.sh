@@ -18,7 +18,7 @@ fail() {
   exit 1
 }
 
-for command in bash cmp cp find flock grep mktemp python3 sha256sum sort; do
+for command in bash cmp cp find flock grep mktemp bun sha256sum sort; do
   command -v "$command" >/dev/null 2>&1 || fail "missing test command: $command"
 done
 [ -x "$wrapper" ] || fail "missing executable wrapper: $wrapper"
@@ -28,7 +28,7 @@ done
 real_cp="$(command -v cp)"
 real_mv="$(command -v mv)"
 real_rm="$(command -v rm)"
-real_python3="$(command -v python3)"
+real_bun="$(command -v bun)"
 real_sha256sum="$(command -v sha256sum)"
 tx_docker_recipe_sha256="$(
   bash -c 'source "$1/lib/common.sh"; fresh_wasix_builder_recipe_sha256' \
@@ -62,85 +62,36 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 fake_closure_tool="$test_root/fake-sealed-export-closure"
-fake_closure_attest="$test_root/fake-sealed-export-attest.py"
+fake_closure_attest="$test_root/fake-sealed-export-attest.mts"
 fake_start_proof="$test_root/fake-start-proof"
 executor_receipt="$test_root/postmaster-executor-build.receipt"
 
-cat >"$fake_closure_attest" <<'PY'
-#!/usr/bin/env python3
-import json
-import pathlib
-import runpy
-import sys
-
-(
-    fixture_helper,
-    install_raw,
-    staged_raw,
-    mandatory_raw,
-    dlsym_raw,
-    seed_raw,
-    final_raw,
-    allowlist_raw,
-    structure_raw,
-    dce_sha256,
-    dce_version,
-    side_manifest_sha256,
-    *side_paths,
-) = sys.argv[1:]
-fixture = runpy.run_path(fixture_helper)
-digest = fixture["digest"]
-json_bytes = fixture["json_bytes"]
-module_summary = fixture["module_summary"]
-proof = fixture["proof"]
-snapshot = fixture["snapshot"]
-
-install = pathlib.Path(install_raw)
-staged = pathlib.Path(staged_raw)
-mandatory = digest(pathlib.Path(mandatory_raw).read_bytes())
-dlsym = digest(pathlib.Path(dlsym_raw).read_bytes())
-sides = [
-    module_summary(
-        relative,
-        digest((install / relative).read_bytes()),
-        (install / relative).stat().st_size,
-    )
-    for relative in side_paths
-]
-final_data = staged.read_bytes()
-final_sha256 = digest(final_data)
-final_main = module_summary("bin/postgres", final_sha256, len(final_data))
-seed_sha256 = digest(b"pre-dce-fixture\0" + final_data)
-seed_main = module_summary("bin/postgres", seed_sha256, len(final_data) + 16)
-seed_data = json_bytes(proof(seed_main, sides, mandatory, dlsym))
-final_proof_data = json_bytes(proof(final_main, sides, mandatory, dlsym))
-pathlib.Path(seed_raw).write_bytes(seed_data)
-pathlib.Path(final_raw).write_bytes(final_proof_data)
-allowlist = pathlib.Path(allowlist_raw)
-receipt = {
-    "schema": "oliphaunt.wasix-postmaster.sealed-export-structure.v1",
-    "policy-id": "oliphaunt.wasix-postmaster.sealed-export-closure.v1",
-    "analyzer-version": "fixture",
-    "analyzer-binary-sha256": "0" * 64,
-    "dce-tool-sha256": dce_sha256,
-    "dce-tool-version": dce_version,
-    "dce-passes": ["--remove-unused-module-elements"],
-    "mandatory-policy-sha256": mandatory,
-    "declared-main-dlsym-policy-sha256": dlsym,
-    "side-manifest-sha256": side_manifest_sha256,
-    "allowlist-sha256": digest(allowlist.read_bytes()),
-    "seed-proof-sha256": digest(seed_data),
-    "final-proof-sha256": digest(final_proof_data),
-    "seed": snapshot(seed_sha256, len(final_data) + 16),
-    "final-module": snapshot(final_sha256, len(final_data)),
-    "sides": [
-        {"path": side["path"], "sha256": side["sha256"]} for side in sides
-    ],
-}
-pathlib.Path(structure_raw).write_text(
-    json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-)
-PY
+cat >"$fake_closure_attest" <<'TS'
+import {readFileSync, statSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+const [helper, install, staged, mandatoryPath, dlsymPath, seedPath, finalPath, allowlist, structure, dceHash, dceVersion, sideManifestHash, ...sidePaths] = process.argv.slice(2);
+const {digest, jsonBytes, summary, proof, snapshot} = await import(pathToFileURL(helper).href);
+const mandatory = digest(readFileSync(mandatoryPath)), dlsym = digest(readFileSync(dlsymPath));
+const sides = sidePaths.map(path => summary(path, digest(readFileSync(join(install, path))), statSync(join(install, path)).size));
+const finalData = readFileSync(staged), finalHash = digest(finalData), seedHash = digest(Buffer.concat([Buffer.from('pre-dce-fixture\0'), finalData]));
+const seedData = jsonBytes(proof(summary('bin/postgres', seedHash, finalData.length + 16), sides, mandatory, dlsym));
+const finalProof = jsonBytes(proof(summary('bin/postgres', finalHash, finalData.length), sides, mandatory, dlsym));
+writeFileSync(seedPath, seedData);
+writeFileSync(finalPath, finalProof);
+writeFileSync(structure, jsonBytes({
+  schema: 'oliphaunt.wasix-postmaster.sealed-export-structure.v1',
+  'policy-id': 'oliphaunt.wasix-postmaster.sealed-export-closure.v1',
+  'analyzer-version': 'fixture', 'analyzer-binary-sha256': '0'.repeat(64),
+  'dce-tool-sha256': dceHash, 'dce-tool-version': dceVersion,
+  'dce-passes': ['--remove-unused-module-elements'],
+  'mandatory-policy-sha256': mandatory, 'declared-main-dlsym-policy-sha256': dlsym,
+  'side-manifest-sha256': sideManifestHash, 'allowlist-sha256': digest(readFileSync(allowlist)),
+  'seed-proof-sha256': digest(seedData), 'final-proof-sha256': digest(finalProof),
+  seed: snapshot(seedHash, finalData.length + 16), 'final-module': snapshot(finalHash, finalData.length),
+  sides: sides.map(({path, sha256}) => ({path, sha256})),
+}));
+TS
 chmod 755 "$fake_closure_attest"
 
 cat >"$fake_closure_tool" <<'EOF'
@@ -176,7 +127,7 @@ case "$command" in
     dce_version="${10}"
     side_manifest_sha256="${11}"
     shift 11
-    "$TX_REAL_PYTHON3" "$TX_FAKE_CLOSURE_ATTEST" \
+    bun "$TX_FAKE_CLOSURE_ATTEST" \
       "$TX_EXPORT_FIXTURE_HELPER" \
       "$install" "$staged_module" "$mandatory_policy" "$dlsym_policy" \
       "$seed_proof" "$final_proof" "$allowlist" "$structure_receipt" \
@@ -327,40 +278,35 @@ case "${1:-}" in
         [ -n "$output" ] || exit 2
         "$TX_REAL_CP" -p -- "$input" "$output"
         ;;
-      python3)
-        receipt=""
-        postgres=""
-        while [ "$#" -gt 0 ]; do
-          if [ "$1" = --receipt ]; then
-            shift
-            receipt="$(map_path "$1")"
-          fi
-          postgres="$1"
-          shift
-        done
-        postgres="$(map_path "$postgres")"
-        [ -n "$receipt" ] && [ -f "$postgres" ] || exit 2
-        postgres_sha256="$("$TX_REAL_SHA256SUM" "$postgres")"
-        postgres_sha256="${postgres_sha256%% *}"
-        cat >"$receipt" <<RECEIPT
-schema=oliphaunt.wasix-postmaster.final-wasm-concurrency.v1
-postgres_sha256=$postgres_sha256
-wasm_dis_sha256=2222222222222222222222222222222222222222222222222222222222222222
-wasm_dis_version=fixture-wasm-dis-1
-latch_state_contract=packed-atomic-v1
-atomic_fence_total=7
-atomic_fence_set_latch=2
-atomic_fence_reset_latch=1
-atomic_fence_wait_event_set_wait=1
-i32_atomic_load_total=1
-i32_atomic_load_wait_event_set_wait=1
-i32_atomic_rmw_and_total=3
-i32_atomic_rmw_and_reset_latch=1
-i32_atomic_rmw_and_wait_event_set_wait=2
-i32_atomic_rmw_or_total=2
-i32_atomic_rmw_or_set_latch=1
-i32_atomic_rmw_or_wait_event_set_wait=1
-RECEIPT
+      bash)
+        cat <<'DISASSEMBLY'
+2222222222222222222222222222222222222222222222222222222222222222
+fixture-wasm-dis-1
+ (export "SetLatch" (func $1))
+ (export "ResetLatch" (func $2))
+ (export "WaitEventSetWait" (func $3))
+ (func $1
+  (atomic.fence)
+  (i32.atomic.rmw.or)
+  (atomic.fence)
+ )
+ (func $2
+  (i32.atomic.rmw.and)
+  (atomic.fence)
+ )
+ (func $3
+  (i32.atomic.load)
+  (i32.atomic.rmw.and)
+  (i32.atomic.rmw.and)
+  (i32.atomic.rmw.or)
+  (atomic.fence)
+ )
+ (func $4
+  (atomic.fence)
+  (atomic.fence)
+  (atomic.fence)
+ )
+DISASSEMBLY
         ;;
       *)
         printf 'unexpected fake docker command: %s\n' "$command" >&2
@@ -488,7 +434,7 @@ exec "$TX_REAL_RM" "$@"
 EOF
 chmod 755 "$fake_bin/rm"
 
-cat >"$fake_bin/python3" <<'EOF'
+cat >"$fake_bin/bun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -496,29 +442,29 @@ stage="$WASIX_INSTALL_DIR/.oliphaunt-sealed-export-closure.pending"
 backups_complete="$stage/BACKUPS_COMPLETE"
 partial_backup="$stage/originals/share/postgresql/wasix-postmaster.sealed-export.final-proof.json"
 if [ "${TX_KILL_AT:-}" = backup ] &&
-  [ "${1:-}" = - ] && [ "${2:-}" = "$backups_complete" ]; then
-  "$TX_REAL_PYTHON3" "$@"
+  [ "${2:-}" = fsync-paths ] && [ "${3:-}" = "$backups_complete" ]; then
+  "$TX_REAL_BUN" "$@"
   printf '%s\n' "$TX_KILL_AT" >>"$TX_HOOK_LOG"
   kill -KILL "$PPID"
   exit 137
 fi
 if [ "${TX_KILL_AT:-}" = backup-partial ] &&
-  [ "${1:-}" = - ] && [ "${2:-}" = "$partial_backup" ]; then
-  "$TX_REAL_PYTHON3" "$@"
+  [ "${2:-}" = fsync-paths ] && [ "${3:-}" = "$partial_backup" ]; then
+  "$TX_REAL_BUN" "$@"
   printf '%s\n' "$TX_KILL_AT" >>"$TX_HOOK_LOG"
   kill -KILL "$PPID"
   exit 137
 fi
 if [ "${TX_KILL_AT:-}" = admission ] &&
-  [ "${1:-}" = - ] &&
-  [ "${2:-}" = oliphaunt.wasix-postmaster.sealed-export-completion.v2 ]; then
+  [ "${2:-}" = completion ] &&
+  [ "${3:-}" = oliphaunt.wasix-postmaster.sealed-export-completion.v2 ]; then
   printf '%s\n' "$TX_KILL_AT" >>"$TX_HOOK_LOG"
   kill -KILL "$PPID"
   exit 137
 fi
-exec "$TX_REAL_PYTHON3" "$@"
+exec "$TX_REAL_BUN" "$@"
 EOF
-chmod 755 "$fake_bin/python3"
+chmod 755 "$fake_bin/bun"
 
 publication_relatives=(
   bin/postgres
@@ -531,48 +477,14 @@ publication_relatives=(
 )
 structure_relative=share/postgresql/wasix-postmaster.sealed-export.structure.receipt
 
-write_minimal_postmaster() {
-  "$real_python3" - "$1" <<'PY'
-import pathlib
-import sys
-
-def uleb(value: int) -> bytes:
-    out = bytearray()
-    while True:
-        byte = value & 0x7f
-        value >>= 7
-        out.append(byte | (0x80 if value else 0))
-        if not value:
-            return bytes(out)
-
-def vector(items: list[bytes]) -> bytes:
-    return uleb(len(items)) + b"".join(items)
-
-def name(value: str) -> bytes:
-    raw = value.encode("utf-8")
-    return uleb(len(raw)) + raw
-
-def function_type(parameters: tuple[int, ...]) -> bytes:
-    return b"\x60" + vector([bytes([value]) for value in parameters]) + vector([b"\x7f"])
-
-types = [function_type((0x7f, 0x7e, 0x7e, 0x7f))]
-imports = [name("oliphaunt_postmaster_v1") + name("fd_sync_range") + b"\x00" + uleb(0)]
-
-def section(identifier: int, payload: bytes) -> bytes:
-    return bytes([identifier]) + uleb(len(payload)) + payload
-
-module = b"\x00asm\x01\x00\x00\x00" + section(1, vector(types)) + section(2, vector(imports))
-path = pathlib.Path(sys.argv[1])
-path.write_bytes(module)
-PY
-}
 
 create_fixture() {
   case_root="$1"
   install="$case_root/install"
   mkdir -p "$install/bin" "$install/lib/postgresql" "$install/share/postgresql" "$case_root/work"
-  write_minimal_postmaster "$install/bin/postgres"
+  bun "$project_root/testdata/minimal-postmaster.mts" "$install/bin/postgres"
   chmod 755 "$install/bin/postgres"
+  "$real_cp" "$install/bin/postgres" "$install/bin/initdb"
 
   while IFS=$'\t' read -r canonical aliases _abi extra; do
     case "$canonical" in
@@ -598,86 +510,7 @@ create_fixture() {
 }
 
 make_linear_memory_descendant() {
-  "$real_python3" - "$1/install" "$side_manifest" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
-
-install = pathlib.Path(sys.argv[1])
-side_manifest = pathlib.Path(sys.argv[2])
-side_paths = [
-    line.split("\t", 1)[0]
-    for line in side_manifest.read_text(encoding="utf-8").splitlines()
-    if line and not line.startswith("#")
-]
-paths = sorted(["bin/postgres", *side_paths])
-
-def digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-records = []
-for relative in paths:
-    path = install / relative
-    source = path.read_bytes()
-    sealed = source + b"\x00\x01\x00"
-    path.write_bytes(sealed)
-    records.append(
-        {
-            "path": relative,
-            "source-module-sha256": digest(source),
-            "module-sha256": digest(sealed),
-            "initial-pages": 1,
-            "maximum-pages": 4096,
-            "maximum-bytes": 268435456,
-            "shared": True,
-            "import-module": "env",
-            "import-name": "memory",
-            "transformation": "pinned-wasixcc-65536-to-embedded-4096-reversible-v1",
-        }
-    )
-
-def closure_hash(field: str) -> str:
-    value = hashlib.sha256()
-    for item in (
-        "oliphaunt.wasix-postmaster.linear-memory-install-closure.v1",
-        field,
-    ):
-        encoded = item.encode()
-        value.update(len(encoded).to_bytes(8, "big"))
-        value.update(encoded)
-    for record in records:
-        for item in (record["path"], record[field]):
-            encoded = item.encode()
-            value.update(len(encoded).to_bytes(8, "big"))
-            value.update(encoded)
-    return value.hexdigest()
-
-predecessor_relative = "share/postgresql/wasix-postmaster.sealed-export.structure.receipt"
-predecessor = (install / predecessor_relative).read_bytes()
-receipt = {
-    "schema": "oliphaunt.wasix-postmaster.linear-memory-install.v1",
-    "profile-id": "oliphaunt.wasix-postmaster.linear-memory.wasm32-max256m-u64-static4g-guard2g.v1",
-    "address-width": "wasm32",
-    "supported-host-pointer-width": "u64",
-    "maximum-pages": 4096,
-    "maximum-bytes": 268435456,
-    "static-bound-pages": 65536,
-    "static-offset-guard-bytes": 2147483648,
-    "static-access-lowering": "wasmer-llvm-unchecked-reservation-and-guard-v1",
-    "requires-shared": True,
-    "requires-import": "env.memory",
-    "excludes-wasm32-end-wrap": True,
-    "predecessor-export-closure-receipt": predecessor_relative,
-    "predecessor-export-closure-receipt-sha256": digest(predecessor),
-    "source-module-closure-sha256": closure_hash("source-module-sha256"),
-    "module-closure-sha256": closure_hash("module-sha256"),
-    "module-count": len(records),
-    "modules": records,
-}
-output = install / "share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json"
-output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
+  "$real_bun" "$project_root/testdata/make-sealed-export-fixture.mts" --linear-memory-descendant --install-root "$1/install" --project-root "$project_root"
 }
 
 write_snapshot() {
@@ -769,13 +602,13 @@ invoke_wrapper() {
     TX_GATE_RELEASE="$gate_release" \
     TX_HOOK_LOG="$case_root/hook.log" \
     TX_KILL_AT="$kill_at" \
-    TX_EXPORT_FIXTURE_HELPER="$project_root/testdata/make-sealed-export-fixture.py" \
+    TX_EXPORT_FIXTURE_HELPER="$project_root/testdata/make-sealed-export-fixture.mts" \
     TX_FAKE_CLOSURE_ATTEST="$fake_closure_attest" \
     TX_FAKE_CLOSURE_TOOL="$fake_closure_tool" \
     TX_REAL_CP="$real_cp" \
     TX_REAL_MV="$real_mv" \
     TX_REAL_RM="$real_rm" \
-    TX_REAL_PYTHON3="$real_python3" \
+    TX_REAL_BUN="$real_bun" \
     TX_REAL_SHA256SUM="$real_sha256sum" \
     TX_REPO_ROOT="$repo_root" \
     "$wrapper" --install-dir "$install" --expected-total 7

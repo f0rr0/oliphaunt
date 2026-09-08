@@ -192,21 +192,7 @@ validate_cgroup_size() {
 }
 
 cgroup_size_to_bytes() {
-  python3 - "$1" <<'PY'
-import re
-import sys
-
-match = re.fullmatch(r"([0-9]+)([KMGTPE])?(?:i?B)?", sys.argv[1])
-if match is None:
-    raise SystemExit(2)
-value = int(match.group(1))
-suffix = match.group(2)
-if suffix is not None:
-    value *= 1024 ** ("KMGTPE".index(suffix) + 1)
-if value > 2**63 - 1:
-    raise SystemExit(2)
-print(value)
-PY
+  bun "$FRESH_ROOT/lib/server-lifecycle.mts" size "$1"
 }
 
 [ -n "$sealed_carrier" ] || { echo "--sealed-carrier is required" >&2; exit 2; }
@@ -270,7 +256,7 @@ elif [ "$cgroup_enabled" -eq 1 ] || [ -n "$immutable_carrier_receipt" ]; then
   echo "immutable-carrier receipts and Linux cgroup controls are unsupported on macOS" >&2
   exit 2
 fi
-fresh_require_command python3
+fresh_require_command bun
 if [ "$cgroup_enabled" -eq 1 ]; then
   cgroup_memory_max_bytes="$(cgroup_size_to_bytes "$cgroup_memory_max")" || {
     echo "--cgroup-memory-max exceeds the supported finite range" >&2
@@ -392,7 +378,7 @@ mkdir -p "$pgdata" "$dev_shm"
 profile_inputs="$report_dir/postgres-profile-inputs.tsv"
 profile_resolution="$report_dir/postgres-profile-resolution.tsv"
 fresh_write_postgres_profile_evidence "$profile_inputs" "$profile_resolution"
-loader_validator="$FRESH_ROOT/bin/validate-sealed-loader-audit.py"
+loader_validator="$FRESH_ROOT/bin/validate-sealed-loader-audit.mts"
 loader_validator_sha256="$(fresh_wasmer_bin_hash "$loader_validator")"
 sealed_loader_audit="$report_dir/sealed-loader-audit.jsonl"
 sealed_loader_validation="$report_dir/sealed-loader-audit-validation.tsv"
@@ -940,63 +926,7 @@ signal_active_server() {
   fresh_signal_owned_pid "$signal" "$active_pid" "$active_identity"
 }
 
-wait_for_unassisted_exit() {
-  local exit_evidence="$1"
-  local deadline wait_status group_deadline cgroup_empty=not-requested
 
-  deadline=$(( $(fresh_supervision_now_ms) + timeout_seconds * 1000 ))
-  while fresh_supervision_pid_running "$active_pid"; do
-    if ! fresh_pid_matches_birth_identity "$active_pid" "$active_identity"; then
-      # The leader can exit between the liveness check above and reading its
-      # immutable birth identity.  Only classify an identity mismatch as PID
-      # reuse when the numeric PID is still live after that failed read.
-      fresh_supervision_pid_running "$active_pid" && return 125
-      break
-    fi
-    [ "$(fresh_supervision_now_ms)" -lt "$deadline" ] || {
-      printf 'server did not exit after bridged signal without escalation\n' >&2
-      return 124
-    }
-    sleep 0.05
-  done
-  fresh_reap_process_group_leader "$active_pid"
-  wait_status="$FRESH_PROCESS_GROUP_WAIT_STATUS"
-  group_deadline=$(( $(fresh_supervision_now_ms) + timeout_seconds * 1000 ))
-  while fresh_process_group_exists "$active_pgid"; do
-    [ "$(fresh_supervision_now_ms)" -lt "$group_deadline" ] || {
-      printf 'server process group remained after leader exit: %s\n' "$active_pgid" >&2
-      return 124
-    }
-    sleep 0.05
-  done
-  if [ -n "$active_cgroup_dir" ] && [ -n "$active_cgroup_identity" ]; then
-    fresh_wait_cgroup_empty "$active_cgroup_dir" "$active_cgroup_identity" \
-      "$((timeout_seconds * 1000))"
-    cgroup_empty=true
-  fi
-  fresh_wait_tcp_port_closed 127.0.0.1 "$port" "$((timeout_seconds * 1000))"
-  [ -z "$(find "$dev_shm" -mindepth 1 -print -quit)" ] || {
-    printf 'shared objects survived normal guest shutdown: %s\n' "$dev_shm" >&2
-    return 1
-  }
-  [ "$wait_status" -eq 0 ] || {
-    printf 'server leader exited nonzero after unassisted guest shutdown: phase=%s status=%s\n' \
-      "$active_phase" "$wait_status" >&2
-    return 1
-  }
-  {
-    printf 'phase\twait_status\tprocess_group_empty\tcgroup_empty\tport_closed\tshared_objects_empty\tescalation_used\n'
-    printf '%s\t%s\ttrue\t%s\ttrue\ttrue\tfalse\n' \
-      "$active_phase" "$wait_status" "$cgroup_empty"
-  } >"$exit_evidence"
-  active_pid=""
-  active_pgid=""
-  active_identity=""
-  active_phase=""
-  active_cgroup_unit=""
-  active_cgroup_dir=""
-  active_cgroup_identity=""
-}
 
 snapshot_carrier before-initdb
 current_stage="initdb"
@@ -1146,13 +1076,25 @@ grep -Fq 'received smart shutdown request' "$report_dir/clean-reopen.server.log"
 snapshot_carrier final
 
 current_stage="sealed-loader-validation"
-python3 "$loader_validator" \
+loader_validation_payload="$(bun "$loader_validator" \
   --audit "$sealed_loader_audit" \
   --manifest "$sealed_manifest" \
-  --output "$sealed_loader_validation" \
   --snapshot-policy "$required_snapshot_policy" \
   --expected-initdb-executions 1 \
-  --expected-postgres-executions 3
+  --expected-postgres-executions 3)"
+loader_validation_pending="$report_dir/.loader-validation.pending.$$"
+publication_tool="$FRESH_ROOT/lib/durable-publication.mts"
+loader_validation_identity="$(printf '%s\n' "$loader_validation_payload" |
+  bun "$publication_tool" write-stdin-identified "$loader_validation_pending")"
+read -r validation_dev validation_ino validation_size validation_sha <<<"$loader_validation_identity"
+if ! bun "$publication_tool" publish-identified "$loader_validation_pending" "$sealed_loader_validation" \
+  "$validation_dev" "$validation_ino" "$validation_size" "$validation_sha"; then
+  bun "$publication_tool" remove-private-identified "$loader_validation_pending" \
+    "$validation_dev" "$validation_ino" "$validation_size" "$validation_sha"
+  exit 1
+fi
+bun "$publication_tool" remove-private-identified "$loader_validation_pending" \
+  "$validation_dev" "$validation_ino" "$validation_size" "$validation_sha"
 chmod 0444 "$sealed_loader_audit" "$sealed_loader_validation"
 
 current_stage="campaign-end-verification"

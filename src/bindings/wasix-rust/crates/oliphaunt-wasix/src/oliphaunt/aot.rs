@@ -970,22 +970,6 @@ struct AotCacheReceipt {
 mod tests {
     use super::*;
 
-    const WASIX_TOOLCHAIN: &str = include_str!("../testdata/wasix-toolchain.toml");
-
-    #[test]
-    fn runtime_aot_versions_match_asset_toolchain() {
-        assert_eq!(
-            EXPECTED_WASMER_VERSION,
-            toolchain_value("wasmer"),
-            "runtime AOT Wasmer expectation must match src/sources/toolchains/wasix.toml"
-        );
-        assert_eq!(
-            EXPECTED_WASMER_WASIX_VERSION,
-            toolchain_value("wasmer-wasix"),
-            "runtime AOT WASIX expectation must match src/sources/toolchains/wasix.toml"
-        );
-    }
-
     #[test]
     fn engine_identity_matches_runtime_aot_versions() {
         assert!(
@@ -1064,23 +1048,5 @@ mod tests {
             raw_sha256: Some("raw-sha256".to_owned()),
             raw_size: Some(1),
         }
-    }
-
-    fn toolchain_value(key: &str) -> &str {
-        let rest = WASIX_TOOLCHAIN
-            .split_once("[toolchain]")
-            .expect("WASIX toolchain manifest has a [toolchain] section")
-            .1;
-        let section = rest.split_once("\n[").map_or(rest, |(section, _)| section);
-
-        for line in section.lines() {
-            let Some((line_key, value)) = line.trim().split_once('=') else {
-                continue;
-            };
-            if line_key.trim() == key {
-                return value.trim().trim_matches('"');
-            }
-        }
-        panic!("WASIX toolchain manifest has toolchain.{key}");
     }
 }

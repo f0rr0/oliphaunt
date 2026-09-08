@@ -12,7 +12,7 @@
 
 ```bash
 OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF=1 cargo run -p xtask --features template-runner -- assets release-build --profile release --target-triple x86_64-unknown-linux-gnu --skip-aot --skip-package-size --fetch
-node tools/perf/wasix-node/benchmark.mjs --run --config benchmarks/wasix/node-pglite-memory-v1.json --output target/perf/wasix-node-run-20260814
+node benchmarks/perf/wasix-node/benchmark.mts --run --config benchmarks/wasix/node-pglite-memory-v1.json --output target/perf/wasix-node-run-20260814
 ```
 
 ## Result summary

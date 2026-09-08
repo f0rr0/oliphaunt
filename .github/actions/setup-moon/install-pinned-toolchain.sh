@@ -19,7 +19,7 @@ proto_manifest="${OLIPHAUNT_PROTO_MANIFEST:-$root/src/sources/toolchains/proto.t
 plugin_manifest="${OLIPHAUNT_MOON_PLUGIN_MANIFEST:-$root/src/sources/toolchains/moon-plugins.toml}"
 proto_file="${OLIPHAUNT_MOON_PROTO_FILE:-$root/.prototools}"
 moon_config="${OLIPHAUNT_MOON_TOOLCHAINS_CONFIG:-$root/.moon/toolchains.yml}"
-extractor="${OLIPHAUNT_MOON_ARCHIVE_EXTRACTOR:-$action_dir/toolchain-archive.py}"
+extractor="${OLIPHAUNT_MOON_ARCHIVE_EXTRACTOR:-$action_dir/toolchain-archive.mts}"
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_MOON_TOOLCHAIN_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-moon-toolchain}"
 
@@ -47,14 +47,7 @@ done
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
 
-python=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    python="$candidate"
-    break
-  fi
-done
-[ -n "$python" ] || fail "python3 or python is required for safe archive extraction"
+command -v node >/dev/null 2>&1 || fail "Node.js is required; run install-pinned-node.sh first"
 
 manifest_value() {
   local manifest="$1"
@@ -145,17 +138,7 @@ sha256_file() {
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
   else
-    "$python" - "$1" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-digest = hashlib.sha256()
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum/sha512sum or shasum is required"
   fi
 }
 
@@ -165,17 +148,7 @@ sha512_file() {
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 512 "$1" | awk '{print $1}'
   else
-    "$python" - "$1" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-digest = hashlib.sha512()
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum/sha512sum or shasum is required"
   fi
 }
 
@@ -430,20 +403,7 @@ registry_token() {
     fail "could not obtain a bounded read-only GHCR token for $repository"
   fi
   local token
-  token="$($python - "$response" <<'PY'
-import json
-import pathlib
-import sys
-
-data = pathlib.Path(sys.argv[1]).read_bytes()
-if len(data) > 16384:
-    raise SystemExit(1)
-value = json.loads(data).get("token")
-if not isinstance(value, str):
-    raise SystemExit(1)
-print(value)
-PY
-  )" || {
+  token="$(node "$extractor" oci-token "$response")" || {
     rm -f "$response"
     fail "GHCR returned an invalid token response for $repository"
   }
@@ -503,25 +463,7 @@ validate_oci_manifest() {
   local manifest_path="$1"
   local expected_blob_sha256="$2"
   local expected_blob_bytes="$3"
-  "$python" - "$manifest_path" "$expected_blob_sha256" "$expected_blob_bytes" <<'PY'
-import json
-import pathlib
-import sys
-
-value = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
-expected_digest = f"sha256:{sys.argv[2]}"
-expected_size = int(sys.argv[3])
-if value.get("schemaVersion") != 2:
-    raise SystemExit("OCI manifest schemaVersion must be 2")
-if value.get("mediaType") != "application/vnd.oci.image.manifest.v1+json":
-    raise SystemExit("OCI manifest has the wrong mediaType")
-layers = value.get("layers")
-if not isinstance(layers, list):
-    raise SystemExit("OCI manifest layers must be an array")
-wasm = [layer for layer in layers if isinstance(layer, dict) and layer.get("mediaType") == "application/wasm"]
-if len(wasm) != 1 or wasm[0].get("digest") != expected_digest or wasm[0].get("size") != expected_size:
-    raise SystemExit("OCI manifest does not bind exactly one expected WASM blob")
-PY
+  node "$extractor" oci-manifest "$manifest_path" "$expected_blob_sha256" "$expected_blob_bytes"
 }
 
 identity="moon-$moon_version-pnpm-$pnpm_version"
@@ -624,7 +566,7 @@ cache_valid() {
   for executable in "${pnpm_executables[@]}"; do
     tree_args+=(--executable "$executable")
   done
-  tree_result="$($python "$extractor" "${tree_args[@]}" 2>/dev/null)" || return 1
+  tree_result="$(node "$extractor" "${tree_args[@]}" 2>/dev/null)" || return 1
   [ "$tree_result" = "$pnpm_file_count $pnpm_tree_sha256" ] || return 1
   [ "$(moon_binary_version "$candidate/bin/$moon_exe")" = "$moon_version" ] || return 1
   [ "$(pnpm_binary_version "$candidate/pnpm/$pnpm_binary_path")" = "$pnpm_version" ] || return 1
@@ -699,22 +641,12 @@ trap 'exit 143' TERM
 
 moon_extract="$stage/moon-extract"
 pnpm_extract="$stage/pnpm"
-moon_extract_args=(
-  extract \
-  --archive "$moon_archive" \
-  --format "$moon_format" \
-  --prefix "$moon_prefix" \
-  --entry-count "$moon_entry_count" \
-  --expected-bytes "$moon_archive_bytes" \
-  --expanded-bytes "$moon_expanded_bytes" \
-  --destination "$moon_extract" \
-  --required "$moon_binary_path" \
-  --required "$moon_companion_path"
-)
-for executable in "${moon_archive_executables[@]}"; do
-  moon_extract_args+=(--executable "$executable")
-done
-"$python" "$extractor" "${moon_extract_args[@]}"
+mkdir -p "$moon_extract"
+moon_member_prefix=""
+[ "$moon_prefix" = "." ] || moon_member_prefix="$moon_prefix/"
+binary_extractor="$action_dir/../../../tools/dev/extract-pinned-binary.sh"
+bash "$binary_extractor" "$moon_format" "$moon_archive" "$moon_member_prefix$moon_binary_path" "$moon_extract/$moon_binary_path" "$moon_binary_sha256"
+bash "$binary_extractor" "$moon_format" "$moon_archive" "$moon_member_prefix$moon_companion_path" "$moon_extract/$moon_companion_path" "$moon_companion_sha256"
 pnpm_extract_args=(
   extract
   --archive "$pnpm_archive" \
@@ -732,7 +664,7 @@ pnpm_extract_args=(
 for executable in "${pnpm_executables[@]}"; do
   pnpm_extract_args+=(--required "$executable" --executable "$executable")
 done
-"$python" "$extractor" "${pnpm_extract_args[@]}"
+node "$extractor" "${pnpm_extract_args[@]}"
 
 mkdir -p "$stage/bin" "$stage/plugins"
 mv "$moon_extract/$moon_binary_path" "$stage/bin/$moon_exe"

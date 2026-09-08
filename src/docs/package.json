@@ -3,16 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "node tools/run-docs-task.mjs generate && next dev --hostname 127.0.0.1",
-    "generate": "node tools/run-docs-task.mjs generate",
-    "api-reference": "node tools/generate-api-reference.mjs --mode=release",
-    "api-reference:check": "pnpm run api-reference && node tools/check-docs-product.mjs --api-reference",
-    "check": "node tools/run-docs-task.mjs check",
-    "build": "node tools/run-docs-task.mjs build",
-    "smoke": "node tools/smoke-built-site.mjs",
-    "release-check": "node tools/run-docs-task.mjs release-check",
+    "dev": "bash tools/run-docs-task.sh generate && next dev --hostname 127.0.0.1",
+    "generate": "bash tools/run-docs-task.sh generate",
+    "api-reference": "bash tools/run-docs-task.sh api-reference",
+    "api-reference:check": "pnpm run api-reference && node tools/check-docs-product.mts --api-reference",
+    "check": "bash tools/run-docs-task.sh check",
+    "build": "bash tools/run-docs-task.sh build",
+    "smoke": "node tools/smoke-built-site.mts",
+    "release-check": "bash tools/run-docs-task.sh release-check",
     "start": "next start",
-    "types:check": "node tools/run-docs-task.mjs check",
+    "types:check": "bash tools/run-docs-task.sh check",
     "postinstall": "fumadocs-mdx",
     "lint": "biome check",
     "format": "biome format --write"
@@ -35,7 +35,6 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.16",
     "@tailwindcss/postcss": "^4.3.0",
     "@types/mdx": "^2.0.13",
     "@types/node": "22.19.19",

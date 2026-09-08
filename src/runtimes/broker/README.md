@@ -21,11 +21,11 @@ texts.
 name, version, checksum, declared license, selected redistribution branch,
 target set, and complete LICENSE/UNLICENSE/COPYING/NOTICE/COPYRIGHT plus
 author, credit, patent, and third-party attribution inventory.
-`tools/release/broker-dependency-license-contract.mjs check-contract` verifies
+`src/runtimes/broker/tools/broker-dependency-license-contract.mts check-contract` verifies
 the self-contained contract and committed canonical blobs without consulting
 Cargo or a registry cache. The connected production audit runs
-`tools/release/broker-dependency-license-contract.mjs audit-contract`: it
-creates an empty Cargo home, fetches the exact locked workspace closure for all
-targets, then verifies every target graph and canonical source byte offline in
-that same home. A dependency update is incomplete until that audit passes and
+`bash src/runtimes/broker/tools/audit-dependency-licenses.sh`: Cargo fetches any
+missing locked dependencies, then supplies all four target graphs offline. The
+audit checks every legal file against its committed bytes and SHA-256, including
+files already in the Cargo cache. A dependency update is incomplete until that audit passes and
 all four packed target carriers reopen the exact updated closure.

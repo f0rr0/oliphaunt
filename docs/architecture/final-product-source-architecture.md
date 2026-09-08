@@ -1,7 +1,7 @@
 # Oliphaunt Source Architecture
 
 Status: canonical product, task, qualification, and release-boundary model.
-Last verified: 2026-09-05. Owner: repository maintainers.
+Last reviewed: 2026-09-08. Owner: repository maintainers.
 
 This document describes the active repository model. It is not a migration log.
 
@@ -20,9 +20,12 @@ Oliphaunt uses one source graph and one release identity system:
   does not model: owner, kind, publish targets, registry coordinates, release
   artifacts, and exact published-product compatibility pins.
 - Product-local `targets/*.toml` files own platform artifact metadata.
-- Bun entrypoints under `tools/release/*.mjs` own release checks, dry-runs,
-  publication routing, checksums, attestations, registry checks, and artifact
-  verification.
+- Product-owned tools assemble and validate their packages. Shared archive and
+  metadata contracts live under `src/shared/`.
+- Shell entrypoints under `tools/release/` own release command execution;
+  TypeScript handles metadata, native HTTP, frozen publication identities and
+  receipts. Committed scripting source uses TypeScript or Shell; published
+  JavaScript assets retain their customer-facing entrypoints.
 
 There is no separate release graph, release-input graph, CI jobs graph, or
 consumer lockfile. If a relationship affects source, task execution, or release
@@ -38,6 +41,7 @@ src/sources/                     shared source and toolchain pins
 src/extensions/                  exact SQL extension catalog, recipes, evidence
 src/runtimes/liboliphaunt/native native C ABI runtime
 src/runtimes/liboliphaunt/wasix  WASIX runtime and AOT assets
+src/runtimes/wasix-napi          WASIX Node-API runtime adapter
 src/runtimes/broker              Rust broker helper runtime
 src/runtimes/node-direct         Node direct native runtime
 src/sdks/rust                    Rust SDK
@@ -51,6 +55,8 @@ src/shared/js-core              shared JavaScript query and protocol code
 src/shared/rust-query-core      shared Rust query code
 src/shared/extension-runtime-contract extension/runtime ABI contract
 src/shared/cluster-seed-contract shared cluster-seed format contract
+src/shared/artifact-packaging    shared archive and package contracts
+src/shared/product-metadata      shared product and compatibility readers
 src/shared/fixtures              shared semantic test fixtures
 src/docs                         public docs site
 ```
@@ -135,9 +141,8 @@ The flow is:
    `Tests / <targets>` matrices plus one compact `Policy` batch from
    Moon-selected targets. Each matrix entry groups at most four tasks with the
    same runner capabilities, and its label lists those tasks. `Checks` is for normal
-   static/lint/typecheck-style work. `Policy` is for repository assertions that
-   parse code, workflows, release metadata, or generated graphs and enforce
-   invariants. Check and test matrix jobs delegate one compatible target group
+   static/lint/typecheck-style work. `Policy` checks shared workflow and release
+   contracts. Check and test matrix jobs delegate one compatible target group
    to `moon run --upstream deep`, so task inheritance and target dependencies stay
    in Moon without pulling unrelated affected tests into the checks phase. The
    policy batch runs its exact selected targets with `--upstream none`, because
@@ -169,8 +174,8 @@ The flow is:
    to `.github/scripts/run-planned-moon-job.sh`; it runs remaining local
    prerequisites normally, then runs the consumer roots with upstream traversal
    disabled so transferred producers are not rebuilt.
-   `release-tools:<product>-sdk-package` tasks consume the product `package`
-   outputs instead of hiding release assembly in source projects.
+   Product-owned `release-package` tasks consume their `package` outputs.
+   Root release tooling coordinates publication of those finished artifacts.
 10. Expensive runtime, mobile, benchmark, publish, registry, and provenance jobs
    are selected by affectedness, but they execute live when current runner state
    matters.
@@ -184,7 +189,7 @@ same CI run; it must not rebuild runtimes, SDKs, or extension packages.
 Moon task options must be semantic:
 
 - cache deterministic checks, tests, package-shape checks, generated freshness,
-  docs builds, and measured unit coverage with declared inputs and outputs.
+  and docs builds with declared inputs and outputs.
 - use `runInCI: skip` for expensive dependency tasks that should remain valid
   in CI action graphs but should not run as broad affected work.
 - use `runInCI: false` only for local/manual tasks that CI must never invoke.
@@ -199,7 +204,7 @@ and product-local compatibility pins:
 1. Release Please identifies product components, versions, and changelogs and
    prepares the generated release PR.
 2. Product-local `release.toml` adds publish and artifact metadata.
-3. `tools/dev/bun.sh tools/release/release_plan.mjs` maps changed paths to
+3. `bash tools/release/release-plan.sh` maps changed paths to
    owning Moon projects.
 4. A changed non-publishable source project follows `production` and `peer`
    edges only until the first publishable product boundary.
@@ -293,23 +298,19 @@ checks must prove unselected extension files do not enter app artifacts.
 
 ## Tool Entrypoints
 
-Use Moon directly for repository tasks:
+Use the affected product's local commands. Moon resolves declared prerequisites
+when running a product task, for example:
 
 ```sh
-moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile
-moon run :test :unit :tools-unit
-moon run :coverage
-moon run :package
-moon run :smoke --cache off
+moon run oliphaunt-rust:compile oliphaunt-rust:unit oliphaunt-rust:package
+moon run oliphaunt-swift:packaging-unit
 moon query affected --upstream none --downstream direct
 ```
 
-`moon run :package` is the workspace-wide carrier assembly/inspection lane and
-may require platform artifacts produced earlier. For a fast check, run the
-affected product's exact `package` task. Package tasks must not build platform
-runtimes or mobile apps; publishable artifacts are produced by explicit
-release-tool, runtime, extension, and mobile builder tasks selected by
-the `CI` workflow.
+Package tasks declare the compilation and artifact inputs they consume.
+Runtime, extension and mobile producers have separate tasks; downloaded
+artifacts satisfy those dependencies in CI. Product packaging does not rerun
+source qualification. Coverage and benchmarks are optional local tasks.
 
 Use pnpm only for JavaScript dependency installation and package-manager
 commands. Use Cargo, SwiftPM/Xcode, Gradle, npm, and Expo through

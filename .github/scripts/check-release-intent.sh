@@ -32,7 +32,7 @@ if [[ "${event_name}" == "workflow_dispatch" ]] &&
     exit 1
   fi
   dispatch_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
-  read -r -a dispatch_commit_and_parents <<< "${dispatch_parents}"
+  read -r -a dispatch_commit_and_parents <<<"${dispatch_parents}"
   if [[ "${#dispatch_commit_and_parents[@]}" -ne 2 ]]; then
     echo "manual main qualification requires an exact one-parent commit" >&2
     exit 1
@@ -54,20 +54,7 @@ fi
 
 release_types="$({
   git show "${head_ref}:release-please-config.json" |
-    bun -e '
-const config = JSON.parse(await Bun.stdin.text());
-const sections = config["changelog-sections"];
-if (!Array.isArray(sections) || sections.length === 0) {
-  console.error("release-please-config.json must define changelog-sections");
-  process.exit(1);
-}
-const types = [...new Set(sections.map((section) => section?.type))];
-if (types.some((type) => typeof type !== "string" || !/^[a-z][a-z0-9-]*$/.test(type))) {
-  console.error("release-please changelog section types must be conventional lowercase identifiers");
-  process.exit(1);
-}
-console.log(types.join("|"));
-'
+    bun "$(dirname "${BASH_SOURCE[0]}")/release-intent-data.mts" types
 })"
 if [[ -z "${release_types}" ]]; then
   echo "could not derive release-impact types from release-please-config.json" >&2
@@ -93,7 +80,7 @@ package_versions_from_ref() {
 
   files="$(
     git ls-tree -r --name-only "${ref}" |
-      grep -E '(^Cargo.toml$|^src/.*/Cargo.toml$|^tools/xtask/Cargo.toml$)' || true
+      grep -E '(^Cargo.toml$|^src/.*/Cargo.toml$|^src/runtimes/liboliphaunt/wasix/tools/xtask/Cargo.toml$)' || true
   )"
 
   while IFS= read -r file; do
@@ -122,7 +109,7 @@ package_versions_from_ref() {
       exit
     }
   '
-  done <<< "${files}" | sort
+  done <<<"${files}" | sort
 }
 
 base_versions="$(package_versions_from_ref "${base_ref}")"
@@ -133,20 +120,8 @@ release_manifest_versions_from_ref() {
   if ! manifest="$(git show "${ref}:.release-please-manifest.json" 2>/dev/null)"; then
     return 0
   fi
-  # shellcheck disable=SC2016
   printf '%s\n' "${manifest}" |
-    bun -e '
-let data;
-try {
-  data = JSON.parse(await Bun.stdin.text());
-} catch {
-  process.exit(0);
-}
-for (const [path, version] of Object.entries(data).sort(([left], [right]) =>
-  left < right ? -1 : left > right ? 1 : 0)) {
-  console.log(`${path}=${version}`);
-}
-'
+    bun "$(dirname "${BASH_SOURCE[0]}")/release-intent-data.mts" versions
 }
 
 base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref}")"
@@ -221,18 +196,18 @@ if [[ "${is_release_pr}" == true ]]; then
     exit 1
   fi
   release_products_json="$(
-    tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+    bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
       --derive-products \
       --head-ref "${head_ref}"
   )"
-  tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+  bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
     --products-json "${release_products_json}" \
     --head-ref "${head_ref}"
 fi
 
-release_plan="$(tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
+release_plan="$(bash tools/release/release-plan.sh --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
 release_products="$(
-  bun -e 'const data = JSON.parse(await Bun.stdin.text()); console.log((data.releaseProducts ?? []).join("\n"));' <<< "${release_plan}"
+  bun "$(dirname "${BASH_SOURCE[0]}")/release-intent-data.mts" products <<<"${release_plan}"
 )"
 
 if [[ -z "${release_products}" ]]; then

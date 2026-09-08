@@ -4,8 +4,10 @@ id: "oliphaunt-js"
 language: "typescript"
 layer: "library"
 stack: "backend"
-tags: ["sdk", "typescript", "node", "bun", "deno", "release-product"]
+tags: ["javascript-quality", "sdk", "typescript", "node", "bun", "deno", "release-product"]
 dependsOn:
+  - id: "shared-js-core"
+    scope: "build"
   - id: "cluster-seed-contract"
     scope: "development"
   - id: "shared-test-fixtures"
@@ -78,7 +80,6 @@ tasks:
       - "@group(code)"
     options:
       cache: true
-      runInCI: false
   package:
     tags: ["package"]
     script: |
@@ -87,7 +88,7 @@ tasks:
       mkdir -p target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js
       rsync -a --exclude node_modules src/sdks/js/ target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
       cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
-      node src/shared/js-core/tools/stage-package.mjs target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js src/shared/js-core
+      node src/shared/js-core/tools/stage-package.mts target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js src/shared/js-core
     deps:
       - "oliphaunt-js:compile"
     inputs:
@@ -95,7 +96,7 @@ tasks:
       - project: "shared-js-core"
         group: "sources"
       - "@group(pnpm-workspace)"
-      - "/src/shared/js-core/tools/stage-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mts"
       - "**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/**/*"
@@ -113,5 +114,56 @@ tasks:
     inputs: []
     options:
       cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  coverage:
+    tags: ["coverage"]
+    command: "pnpm run coverage"
+    deps: ["shared-js-core:build"]
+    inputs:
+      - "@group(code)"
+      - "@group(pnpm-workspace)"
+      - project: "shared-js-core"
+        group: "sources"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    outputs: ["/target/coverage/oliphaunt-js/**/*"]
+    options:
+      cache: false
+      runInCI: false
+
+  release-package:
+    tags: ["release", "artifact-package", "ci-js-sdk-package"]
+    script: |
+      set -eu
+      bash src/sdks/js/tools/stage-release-artifacts.sh
+      bash tools/dev/bun.sh src/sdks/js/tools/check-package.mts
+    deps:
+      - "oliphaunt-js:package"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "@group(release-archive-contract)"
+      - "/src/sdks/js/tools/check-package.mts"
+      - "/src/sdks/js/tools/stage-release-artifacts.sh"
+      - "/src/shared/artifact-packaging/npm-package.mts"
+      - "/src/shared/artifact-packaging/staging.mts"
+      - "/src/shared/artifact-packaging/source-only-sdk-package.mts"
+      - "/src/shared/js-core/tools/stage-package.mts"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-js/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  docs-api:
+    tags: ["docs"]
+    script: "pnpm --dir src/sdks/js run docs:api"
+    inputs: ["**/*", "/src/shared/rust-query-core/src/**/*", "/src/shared/js-core/src/**/*", "@group(cargo-workspace)"]
+    outputs: ["/target/docs/generated/api/typescript/html/**/*"]
+    options:
       runFromWorkspaceRoot: true
       runInCI: false

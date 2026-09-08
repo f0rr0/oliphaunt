@@ -25,6 +25,9 @@
     "./package.json": "./package.json"
   },
   "main": "index.js",
+  "scripts": {
+    "build": "bun ../../../../shared/artifact-packaging/emit-javascript.mts index.mts index.js"
+  },
   "types": "index.d.ts",
   "files": [
     "index.d.ts",

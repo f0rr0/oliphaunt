@@ -22,14 +22,7 @@ fileGroups:
     - "query_core.rs"
 
 tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "node src/shared/rust-query-core/tools/check-rust-query-core.mjs"
-    inputs:
-      - "@group(sources)"
-      - "tools/check-rust-query-core.mjs"
-      - "/src/sdks/rust/src/query_core*"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query_core*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
+  rust-format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "rustfmt --edition 2024 --check query_core.rs"
+    inputs: ["query_core.rs"]

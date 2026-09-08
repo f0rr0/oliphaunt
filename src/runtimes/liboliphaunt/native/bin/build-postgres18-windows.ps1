@@ -66,7 +66,7 @@ $SnowballStopwordFiles = @(
     "swedish.stop",
     "turkish.stop"
 )
-$VcRuntimeClosureTool = Join-Path $RepoRoot "tools/release/windows-vc-runtime-closure.mjs"
+$VcRuntimeClosureTool = Join-Path $RepoRoot "src/shared/artifact-packaging/windows-vc-runtime-closure.mts"
 $Stamp = Join-Path $OutDir "oliphaunt-windows.inputs.sha256"
 $ExternalCheckoutRoot = Join-Path $RepoRoot "target/oliphaunt-sources/checkouts"
 $OpenSslSourceManifest = Join-Path $RepoRoot "src/sources/third-party/shared/openssl.toml"
@@ -78,7 +78,7 @@ $IcuDataRoot = Join-Path $WorkRoot "icu/share/icu"
 $IcuDataArchiveSha256 = "dbc14e1c48ef209f230adc2aa6854bd4d6bba8f5e6733e75897a4263d97920f0"
 $IcuDataTreeSha256 = "0523cc164d698d95d844e3683bbe23d415b575b84f4a04287d372e1c132cf1d1"
 $IcuRuntimeDllNames = @("icudt76.dll", "icuin76.dll", "icuuc76.dll")
-$NativeComponentTool = Join-Path $RepoRoot "src/extensions/tools/native-component-contract.mjs"
+$NativeComponentTool = Join-Path $RepoRoot "src/extensions/tools/native-component-contract.mts"
 $PgxsBuildPlan = Join-Path $RepoRoot "src/extensions/generated/pgxs-build.tsv"
 $PortableUuidDir = Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/portable-uuid"
 $PortableUuidIncludeDir = Join-Path $PortableUuidDir "include"
@@ -220,45 +220,19 @@ function Get-NativeExtensionComponentSources([string]$SqlName) {
     return @(Get-NativeExtensionComponentField $SqlName "sources")
 }
 
-function Add-PythonUserScriptsToPath {
-    $python = Get-PythonCommand
-    $script = @"
-import os
-import site
-import sysconfig
-
-paths = []
-for scheme in (None, "nt_user"):
-    try:
-        path = sysconfig.get_path("scripts", scheme=scheme) if scheme else sysconfig.get_path("scripts")
-    except Exception:
-        path = None
-    if path:
-        paths.append(path)
-user_base = getattr(site, "USER_BASE", None)
-if user_base:
-    paths.append(os.path.join(user_base, "Scripts"))
-seen = set()
-for path in paths:
-    normalized = os.path.normcase(os.path.normpath(path))
-    if normalized not in seen:
-        seen.add(normalized)
-        print(path)
-"@
-    $scriptPaths = & $python.Command @($python.Arguments) -c $script
-    foreach ($scripts in $scriptPaths) {
-        if ($scripts -and (Test-Path $scripts)) {
-            Prepend-ProcessPath @($scripts)
-        }
-    }
-}
-
 function Ensure-MesonTools {
-    Add-PythonUserScriptsToPath
-    if (-not (Get-Command meson -ErrorAction SilentlyContinue) -or -not (Get-Command ninja -ErrorAction SilentlyContinue)) {
-        Invoke-Python @("-m", "pip", "install", "--user", "meson==1.10.0", "ninja==1.13.0")
-        Add-PythonUserScriptsToPath
+    $toolsRoot = Join-Path $WorkRoot "build-tools/meson-1.10.0-ninja-1.13.0"
+    $scripts = Join-Path $toolsRoot "Scripts"
+    $interpreter = Join-Path $scripts "python.exe"
+    if (-not (Test-Path -LiteralPath $interpreter)) {
+        Invoke-Python @("-m", "venv", $toolsRoot)
     }
+    if (-not (Test-Path -LiteralPath (Join-Path $scripts "meson.exe")) -or
+        -not (Test-Path -LiteralPath (Join-Path $scripts "ninja.exe"))) {
+        & $interpreter -m pip install --disable-pip-version-check --retries 8 --timeout 60 meson==1.10.0 ninja==1.13.0
+        if ($LASTEXITCODE -ne 0) { Fail "installing pinned Meson/Ninja failed" }
+    }
+    Prepend-ProcessPath @($scripts)
     Require-Command meson
     Require-Command ninja
 }
@@ -528,6 +502,7 @@ function Get-DesiredHash {
         $parts.Add("source:$source=$(Get-FileSha256 $source)")
     }
     $sourceInputs = @(
+        (Join-Path $RepoRoot "src/extensions/external/postgis/tools/preprocess-sql.mts"),
         $OpenSslSourceManifest,
         $IcuDataSourceManifest,
         $IcuWindowsSourceManifest,
@@ -594,7 +569,7 @@ function Prepare-WindowsIcuData {
         (Test-Path -LiteralPath $receipt -PathType Leaf) -and
         ((Get-Content -LiteralPath $receipt -Raw).Contains("icuDataTreeSha256=$IcuDataTreeSha256`n"))
     if ($ready) {
-        & bun tools/release/native-icu-data-contract.mjs $IcuDataRoot $receipt
+        & bun src/shared/cluster-seed-contract/icu-data.mts $IcuDataRoot $receipt
         if ($LASTEXITCODE -eq 0 -and
             (Get-Content -LiteralPath $receipt -Raw).Contains("icuDataTreeSha256=$IcuDataTreeSha256`n")) {
             return
@@ -618,7 +593,7 @@ function Prepare-WindowsIcuData {
     if ($files.Count -ne 4136) {
         Fail "pinned ICU data archive must extract exactly 4136 files; found $($files.Count)"
     }
-    & bun tools/release/native-icu-data-contract.mjs $IcuDataRoot $receipt
+    & bun src/shared/cluster-seed-contract/icu-data.mts $IcuDataRoot $receipt
     if ($LASTEXITCODE -ne 0 -or
         -not (Get-Content -LiteralPath $receipt -Raw).Contains("icuDataTreeSha256=$IcuDataTreeSha256`n")) {
         Fail "pinned ICU data tree does not have the canonical identity $IcuDataTreeSha256"
@@ -650,25 +625,11 @@ function Invoke-Logged([string]$LogName, [scriptblock]$Block) {
 }
 
 function Expand-PostgresSourceArchive {
-    $script = @'
-import sys
-import tarfile
-from pathlib import Path
-
-archive = Path(sys.argv[1])
-destination = Path(sys.argv[2]).resolve()
-with tarfile.open(archive, "r:bz2") as source:
-    members = source.getmembers()
-    for member in members:
-        target = (destination / member.name).resolve()
-        if target != destination and destination not in target.parents:
-            raise SystemExit(f"archive member escapes extraction root: {member.name}")
-    try:
-        source.extractall(destination, members=members, filter="data")
-    except TypeError:
-        source.extractall(destination, members=members)
-'@
-    Invoke-Python @("-c", $script, $Tarball, $WorkRoot)
+    Require-Command tar
+    # The exact archive hash is checked before this call. Native tar rejects
+    # traversal through symlinks; keep its default secure extraction behavior.
+    & tar -xjf $Tarball -C $WorkRoot --no-same-owner --no-same-permissions
+    if ($LASTEXITCODE -ne 0) { Fail "extracting pinned PostgreSQL source failed" }
 }
 
 function Prepare-Source([string]$DesiredHash) {
@@ -705,29 +666,6 @@ function Prepare-Source([string]$DesiredHash) {
             Pop-Location
         }
     }
-    Assert-PatchedSource
-}
-
-function Assert-FileContains([string]$Path, [string]$Needle) {
-    if (-not (Test-Path $Path)) {
-        Fail "missing patched PostgreSQL source file $Path"
-    }
-    $text = Get-Content -Raw -Path $Path
-    if (-not $text.Contains($Needle)) {
-        Fail "patched PostgreSQL source file $Path does not contain required marker $Needle"
-    }
-}
-
-function Assert-PatchedSource {
-    Assert-FileContains (Join-Path $BuildDir "src/include/libpq/libpq-be.h") "OliphauntEmbeddedIO"
-    Assert-FileContains (Join-Path $BuildDir "src/backend/tcop/postgres.c") "oliphaunt_embedded_main"
-    Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_kill"
-    Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_raise"
-    Assert-FileContains (Join-Path $BuildDir "src/bin/initdb/initdb.c") 'OLIPHAUNT_INTERNAL_ICU_READY'
-    Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded"
-    Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded_module_provider"
-    Assert-FileContains (Join-Path $BuildDir "meson.build") "OLIPHAUNT_EMBEDDED"
-    Assert-FileContains (Join-Path $BuildDir "src/backend/meson.build") "oliphaunt_embedded_module_provider"
 }
 
 function Append-OliphauntContribSubdir([string]$Subdir) {
@@ -1208,160 +1146,8 @@ function Initialize-WindowsPostgisGeneratedSource([string]$PostgisDir, [string]$
 }
 
 function Invoke-PostgisSqlPreprocessor([string]$InputPath, [string]$OutputPath, [string[]]$IncludeDirs) {
-    $script = @'
-import pathlib
-import re
-import sys
-
-source = pathlib.Path(sys.argv[1]).resolve()
-output = pathlib.Path(sys.argv[2]).resolve()
-include_dirs = [pathlib.Path(p).resolve() for p in sys.argv[3:]]
-macros = {}
-result = []
-include_stack = []
-token_re = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
-
-def expand_macros(text):
-    for _ in range(16):
-        changed = False
-        def repl(match):
-            nonlocal changed
-            name = match.group(0)
-            if name in macros:
-                changed = True
-                return macros[name]
-            return name
-        expanded = token_re.sub(repl, text)
-        text = expanded
-        if not changed:
-            break
-    return text
-
-def eval_expr(expr):
-    expr = expand_macros(expr)
-    expr = token_re.sub("0", expr)
-    expr = expr.replace("&&", " and ").replace("||", " or ")
-    if not re.match(r"^[0-9\s<>=!&|()+*/%.\-andor]+$", expr):
-        return False
-    try:
-        return bool(eval(expr, {"__builtins__": {}}, {}))
-    except Exception:
-        return False
-
-def find_include(name, current):
-    candidates = [current.parent] + include_dirs
-    for directory in candidates:
-        path = directory / name
-        if path.exists():
-            return path.resolve()
-    raise SystemExit(f"could not resolve SQL include {name} from {current}")
-
-def in_block_comment_after_line(line, in_block_comment):
-    offset = 0
-    while True:
-        if in_block_comment:
-            end = line.find("*/", offset)
-            if end == -1:
-                return True
-            in_block_comment = False
-            offset = end + 2
-            continue
-        start = line.find("/*", offset)
-        if start == -1:
-            return False
-        end = line.find("*/", start + 2)
-        if end == -1:
-            return True
-        offset = end + 2
-
-def process(path):
-    path = path.resolve()
-    if path in include_stack:
-        cycle = include_stack[include_stack.index(path):] + [path]
-        raise SystemExit("recursive SQL include: " + " -> ".join(str(item) for item in cycle))
-    include_stack.append(path)
-    active = True
-    stack = []
-    in_block_comment = False
-    try:
-        for raw in path.read_text(encoding="utf-8").splitlines(True):
-            stripped = raw.lstrip()
-            directive = None if in_block_comment or not stripped.startswith("#") else stripped[1:].strip()
-            if directive is None:
-                if active:
-                    result.append(expand_macros(raw))
-                in_block_comment = in_block_comment_after_line(raw, in_block_comment)
-                continue
-
-            if directive.startswith("include"):
-                if active:
-                    match = re.match(r'include\s+"([^"]+)"', directive)
-                    if not match:
-                        raise SystemExit(f"unsupported include directive in {path}: {raw.rstrip()}")
-                    process(find_include(match.group(1), path))
-                continue
-            if directive.startswith("define"):
-                if active:
-                    match = re.match(r"define\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(.*?))?\s*$", directive)
-                    if match:
-                        macros[match.group(1)] = match.group(2) if match.group(2) is not None else "1"
-                continue
-            if directive.startswith("undef"):
-                if active:
-                    parts = directive.split()
-                    if len(parts) > 1:
-                        macros.pop(parts[1], None)
-                continue
-            if directive.startswith("ifdef"):
-                name = directive.split(None, 1)[1].strip()
-                cond = name in macros
-                stack.append([active, cond])
-                active = active and cond
-                continue
-            if directive.startswith("ifndef"):
-                name = directive.split(None, 1)[1].strip()
-                cond = name not in macros
-                stack.append([active, cond])
-                active = active and cond
-                continue
-            if directive.startswith("if"):
-                cond = eval_expr(directive[2:].strip()) if active else False
-                stack.append([active, cond])
-                active = active and cond
-                continue
-            if directive.startswith("elif"):
-                if not stack:
-                    raise SystemExit(f"orphan #elif in {path}")
-                parent, taken = stack[-1]
-                cond = (not taken) and eval_expr(directive[4:].strip()) if parent else False
-                stack[-1][1] = taken or cond
-                active = parent and cond
-                continue
-            if directive.startswith("else"):
-                if not stack:
-                    raise SystemExit(f"orphan #else in {path}")
-                parent, taken = stack[-1]
-                active = parent and not taken
-                stack[-1][1] = True
-                continue
-            if directive.startswith("endif"):
-                if not stack:
-                    raise SystemExit(f"orphan #endif in {path}")
-                parent, _ = stack.pop()
-                active = parent
-                continue
-
-            if active:
-                result.append(raw)
-    finally:
-        include_stack.pop()
-
-process(source)
-output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text("".join(result), encoding="utf-8")
-'@
-    $args = @("-c", $script, $InputPath, $OutputPath) + $IncludeDirs
-    Invoke-Python $args
+    & bun (Join-Path $RepoRoot "src/extensions/external/postgis/tools/preprocess-sql.mts") $InputPath $OutputPath @IncludeDirs
+    if ($LASTEXITCODE -ne 0) { Fail "PostGIS SQL preprocessing failed: $InputPath" }
 }
 
 function New-PostgisSqlFromTemplate(

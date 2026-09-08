@@ -131,7 +131,7 @@ Maintainer source trees are fetched on demand into ignored
 `target/oliphaunt-sources/checkouts/**` directories:
 
 ```sh
-cargo run -p xtask -- assets fetch
+bash src/sources/tools/fetch-sources.sh production-all --force
 ```
 
 A Git source may declare one manually reviewed `mirror_url` when upstream
@@ -149,17 +149,14 @@ WASIX build and work trees are generated under
 `src/runtimes/liboliphaunt/wasix/assets/build/**` is reserved for scripts, patches,
 Docker inputs, and shims that define the build at the exact producer commit.
 
-Normal development and source-free validation do not clone upstream repositories
-or run Docker. The source-free gate is:
+Local packaging tests do not clone upstream repositories or run Docker:
 
 ```sh
-cargo run -p xtask -- assets verify-committed
+moon run liboliphaunt-wasix:packaging-unit liboliphaunt-wasix:build-orchestration-test
 ```
 
-It verifies source pins, source and toolchain inputs, extension
-metadata/constants when generated manifests are installed, AOT crate
-templates, and the absence of committed cluster-seed, portable WASIX, or
-native AOT blobs.
+The runtime build verifies pinned source checkouts before compilation. Release
+packaging validates the built manifests, artifact bytes, and runtime inventory.
 
 Release assets are built with the `release` profile by default: WASIX C code
 uses `-O2 -g0` with ThinLTO through the final guest link, and Binaryen runs the
@@ -167,15 +164,15 @@ wasixcc default optimization plus `--converge`, `--strip-debug`, and
 `--strip-producers`. The `release-o3` profile remains available for explicit O3
 comparison builds.
 
-Generated runtime hashes in package metadata are refreshed in the release
-staging workspace. CI-produced assets are selected by exact workflow run or
+Release carrier hashes are derived from the packaged bytes. CI-produced
+assets are selected by exact workflow run or
 exact commit, and their manifests and checksums bind the installed runtime and
 AOT bytes. Release versions, changelogs, package descriptions, and smoke
 expectations belong to the publication envelope/lock and do not alter those
 runtime bytes.
 
 The WASIX builder declares its immutable bootstrap inputs in
-`src/sources/toolchains/wasix.toml`: the Ubuntu base image digest, Dockerfile
+`src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile`: the Ubuntu base image digest, Dockerfile
 frontend digest, Ubuntu snapshot timestamp, and the committed TLS root used to
 reach `snapshot.ubuntu.com`. The APT helper writes one isolated deb822 source
 containing only `noble`, `noble-updates`, and `noble-security` with the `main`
@@ -186,19 +183,16 @@ complete update/install transaction with a fixed bound; it never falls back to
 a live mirror or disables TLS verification. `ca-certificates` is installed in
 the same pinned transaction as the builder packages.
 
-The committed `isrg-root-x1.pem` is independently SHA-256 pinned, and
-`builder.snapshot_tls_root_not_after` records its certificate-derived expiry
-boundary. Rotate it before the manifest-declared boundary, or sooner if the
+The committed `isrg-root-x1.pem` is SHA-256 pinned in the Dockerfile and expires
+on 2035-06-04. Rotate it before its certificate expires, or sooner if the
 snapshot service changes its certificate chain:
 
 1. Obtain the replacement trust root from its authoritative CA distribution,
    verify its subject, issuer, fingerprint, and `notAfter` value independently,
    and replace only the committed PEM.
-2. Update `snapshot_tls_root_sha256` and `snapshot_tls_root_not_after` in the
-   WASIX toolchain manifest, then update the Docker SHA-256 build argument to
-   match. If the Dockerfile frontend changes, pin its content digest in the
-   same change.
-3. Run the pinned APT helper fault tests, source-spine verification, and a clean
+2. Update the Dockerfile trust-root SHA-256 build argument and expiry comment.
+   If the Dockerfile frontend changes, pin its content digest in the same change.
+3. Run the pinned APT helper fault tests and a clean
    Docker builder build. The build must reach the snapshot with normal peer
    verification and print the pinned wasixcc, Clang, and Binaryen versions.
 4. Require the complete portable/AOT build and exact-SHA hosted qualification.
@@ -246,13 +240,13 @@ portable and AOT bundles, stages them into a clean release workspace, validates
 package contents, and only then publishes.
 
 Published releases also attach public `.tar.zst` mirrors of the validated
-portable WASIX and target AOT bundles. `xtask assets download --release <tag>`
+portable WASIX and target AOT bundles. the product-local `download-assets.sh --release <tag>` command
 installs those release assets directly and does not require the GitHub CLI.
 For workflow artifacts, select one exact run or full commit SHA; all three modes
 validate checksums and packaged manifests before installation:
 
 ```sh
-cargo run -p xtask -- assets download --run-id <id> --target-triple <triple>
-cargo run -p xtask -- assets download --sha <full-40-character-sha> --target-triple <triple>
-cargo run -p xtask -- assets download --release <tag> --target-triple <triple>
+bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --run-id <id> --target-triple <triple>
+bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --sha <full-40-character-sha> --target-triple <triple>
+bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --release <tag> --target-triple <triple>
 ```

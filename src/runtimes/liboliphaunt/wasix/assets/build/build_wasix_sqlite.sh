@@ -12,7 +12,7 @@ SQLITE_BUILD_DIR="${SQLITE_BUILD_DIR:-$GENERATED_ROOT/work/sqlite-wasix-build}"
 JOBS="${JOBS:-4}"
 
 if [ ! -x "$SQLITE_SOURCE_DIR/configure" ]; then
-  echo "missing SQLite source checkout at $SQLITE_SOURCE_DIR; run assets fetch/source-spine first" >&2
+  echo "missing SQLite source checkout at $SQLITE_SOURCE_DIR; run bash src/sources/tools/fetch-sources.sh wasix-runtime --force first" >&2
   exit 1
 fi
 

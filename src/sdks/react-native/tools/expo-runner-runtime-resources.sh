@@ -159,7 +159,7 @@ prepare_mobile_runtime_resource_package() {
       "$script_path" \
       "$expo_runner_runtime_resources_script" \
       "$root/src/sdks/react-native/tools/mobile-extension-runtime.sh" \
-      "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs"
+      "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mts"
   )"
   if [ "$repackage_assets" != "1" ] &&
     [ -f "$prepared_stamp" ] &&

@@ -23,7 +23,7 @@ oliphaunt_icu_canonical_data_sha256() {
 oliphaunt_icu_require_canonical_data() {
   local archive="${1:?ICU data archive is required}"
   [ -f "$archive" ] || {
-    echo "missing pinned ICU 76.1 data archive at $archive; run \`cargo run -p xtask -- assets fetch\` first" >&2
+    echo "missing pinned ICU 76.1 data archive at $archive; run \`bash src/sources/tools/fetch-sources.sh native-runtime --force\` first" >&2
     return 1
   }
   local actual
@@ -83,7 +83,7 @@ oliphaunt_icu_target_stamp() {
 oliphaunt_icu_require_source() {
   local source_dir="${1:?ICU source dir is required}"
   if [ ! -x "$source_dir/configure" ]; then
-    echo "missing ICU source checkout at $source_dir; run \`cargo run -p xtask -- assets fetch\` first" >&2
+    echo "missing ICU source checkout at $source_dir; run \`bash src/sources/tools/fetch-sources.sh native-runtime --force\` first" >&2
     return 1
   fi
 }

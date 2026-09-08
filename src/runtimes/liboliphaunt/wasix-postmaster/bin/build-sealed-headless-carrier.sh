@@ -77,7 +77,8 @@ done
 
 selected_executor="$postmaster_executor"
 
-fresh_require_command python3
+fresh_require_command bun
+carrier_data="$FRESH_ROOT/lib/build-sealed-carrier.mts"
 fresh_require_command cp
 fresh_require_command find
 fresh_require_command flock
@@ -137,94 +138,8 @@ guest_build_receipt_source="$install_dir/guest-build.receipt"
 [ -f "$guest_build_receipt_source" ] && [ ! -L "$guest_build_receipt_source" ] || {
   fail "missing regular guest build receipt: $guest_build_receipt_source"
 }
-python3 - "$guest_build_receipt_source" "$core_profile" "$POSTGRES_TAG" \
-  "$POSTGRES_VERSION" "$WASIXCC_SYSROOT_VARIANT" <<'PY'
-import re
-import sys
-
-path, expected_profile, postgres_tag, postgres_version, sysroot_variant = sys.argv[1:]
-keys = (
-    "schema",
-    "core_profile",
-    "guest_source_signature_sha256",
-    "docker_image_id",
-    "installed_closure_sha256",
-    "child_backend",
-    "effective_cflags",
-    "effective_ldflags",
-    "effective_wasm_opt",
-    "effective_wasm_opt_flags",
-    "effective_wasm_opt_suppress_default",
-    "atomic_fence_total",
-    "atomic_fence_set_latch",
-    "atomic_fence_reset_latch",
-    "atomic_fence_wait_event_set_wait",
-    "latch_state_contract",
-    "final_wasm_concurrency_receipt_sha256",
-    "linear_memory_profile_id",
-    "linear_memory_install_receipt_sha256",
-    "postgres_tag",
-    "postgres_version",
-    "sysroot_variant",
-)
-with open(path, encoding="utf-8", newline="") as stream:
-    text = stream.read()
-if not text.endswith("\n") or "\r" in text:
-    raise SystemExit("guest build receipt is not canonical newline text")
-lines = text.splitlines()
-if len(lines) != len(keys):
-    raise SystemExit("guest build receipt field count differs")
-values = {}
-for expected, line in zip(keys, lines, strict=True):
-    if "=" not in line:
-        raise SystemExit(f"guest build receipt field has no separator: {expected}")
-    key, value = line.split("=", 1)
-    if key != expected or not value:
-        raise SystemExit(f"guest build receipt field differs: {expected}")
-    values[key] = value
-if values["schema"] != "oliphaunt.wasix-postmaster.guest-build.v5":
-    raise SystemExit("guest build receipt schema differs")
-if values["core_profile"] != expected_profile:
-    raise SystemExit("guest build receipt profile differs from explicit carrier profile")
-if re.fullmatch(r"[0-9a-f]{64}", values["guest_source_signature_sha256"]) is None:
-    raise SystemExit("guest build source signature is not a SHA-256")
-if re.fullmatch(r"sha256:[0-9a-f]{64}", values["docker_image_id"]) is None:
-    raise SystemExit("guest build Docker image ID is not immutable")
-if re.fullmatch(r"[0-9a-f]{64}", values["installed_closure_sha256"]) is None:
-    raise SystemExit("guest build installed closure identity is not a SHA-256")
-if values["child_backend"] != "exec":
-    raise SystemExit("sealed postmaster carrier requires the exec child backend")
-if values["effective_wasm_opt"] not in {"yes", "no"}:
-    raise SystemExit("guest build receipt wasm-opt mode differs")
-if values["effective_wasm_opt_suppress_default"] != "yes":
-    raise SystemExit("guest build receipt must suppress implicit wasm-opt defaults")
-expected_fences = {
-    "atomic_fence_set_latch": "2",
-    "atomic_fence_reset_latch": "1",
-    "atomic_fence_wait_event_set_wait": "1",
-}
-for key, expected in expected_fences.items():
-    if values[key] != expected:
-        raise SystemExit(f"guest build receipt concurrency fence contract differs: {key}")
-if re.fullmatch(r"[1-9][0-9]*", values["atomic_fence_total"]) is None:
-    raise SystemExit("guest build receipt atomic fence total is not canonical")
-if values["latch_state_contract"] != "packed-atomic-v1":
-    raise SystemExit("guest build receipt latch-state contract differs")
-if re.fullmatch(
-    r"[0-9a-f]{64}", values["final_wasm_concurrency_receipt_sha256"]
-) is None:
-    raise SystemExit("guest build final Wasm concurrency receipt identity differs")
-if values["linear_memory_profile_id"] != "oliphaunt.wasix-postmaster.linear-memory.wasm32-max256m-u64-static4g-guard2g.v1":
-    raise SystemExit("guest build linear-memory profile differs")
-if re.fullmatch(
-    r"[0-9a-f]{64}", values["linear_memory_install_receipt_sha256"]
-) is None:
-    raise SystemExit("guest build linear-memory install receipt identity differs")
-if values["postgres_tag"] != postgres_tag or values["postgres_version"] != postgres_version:
-    raise SystemExit("guest build receipt PostgreSQL version differs")
-if values["sysroot_variant"] != sysroot_variant:
-    raise SystemExit("guest build receipt sysroot variant differs")
-PY
+bun "$carrier_data" guest-receipt "$install_dir" "$core_profile" "$POSTGRES_TAG" \
+  "$POSTGRES_VERSION" "$WASIXCC_SYSROOT_VARIANT"
 final_wasm_concurrency_receipt_source="$install_dir/share/postgresql/wasix-postmaster.final-wasm-concurrency.receipt"
 [ -f "$final_wasm_concurrency_receipt_source" ] && \
   [ ! -L "$final_wasm_concurrency_receipt_source" ] || {
@@ -260,7 +175,7 @@ fresh_is_sha256 "$linear_memory_install_receipt_sha256" ||
 expected_atomic_fence_total="$(
   fresh_manifest_value "$guest_build_receipt_source" atomic_fence_total
 )"
-python3 "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.py" \
+bun "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
   --expected-total "$expected_atomic_fence_total" \
   --latch-state-contract packed-atomic-v1 \
   --verified-receipt "$final_wasm_concurrency_receipt_source" \
@@ -277,7 +192,7 @@ fresh_is_sha256 "$guest_installed_closure_sha256" || {
   fail 'invalid guest installed closure identity'
 }
 actual_guest_installed_closure_sha256="$(
-  python3 "$FRESH_ROOT/lib/guest_build_provenance.py" identity "$install_dir"
+  bun "$FRESH_ROOT/lib/guest-build-provenance.mts" identity "$install_dir"
 )" || exit
 [ "$actual_guest_installed_closure_sha256" = \
   "$guest_installed_closure_sha256" ] || {
@@ -486,14 +401,14 @@ chmod 0444 "$guest_build_receipt"
   fail 'guest build receipt changed while packaging the carrier'
 }
 staged_guest_installed_closure_sha256="$(
-  python3 "$FRESH_ROOT/lib/guest_build_provenance.py" identity "$staging"
+  bun "$FRESH_ROOT/lib/guest-build-provenance.mts" identity "$staging"
 )" || exit
 [ "$staged_guest_installed_closure_sha256" = \
   "$guest_installed_closure_sha256" ] || {
   fail 'staged guest bytes differ from their build receipt'
 }
 actual_guest_installed_closure_sha256="$(
-  python3 "$FRESH_ROOT/lib/guest_build_provenance.py" identity "$install_dir"
+  bun "$FRESH_ROOT/lib/guest-build-provenance.mts" identity "$install_dir"
 )" || exit
 [ "$actual_guest_installed_closure_sha256" = \
   "$guest_installed_closure_sha256" ] || {
@@ -518,37 +433,7 @@ snapshot_runtime_abi_id="$(fresh_manifest_value "$sealed_receipt" runtime_abi_id
 }
 receipt="$sealed_receipt"
 
-source_fingerprint="$(python3 - "$staging" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-hasher = hashlib.sha256()
-for subtree in ("bin", "lib", "share"):
-    for current, dirs, files in os.walk(os.path.join(root, subtree), followlinks=False):
-        dirs.sort()
-        files.sort()
-        for name in files:
-            path = os.path.join(current, name)
-            info = os.lstat(path)
-            if not stat.S_ISREG(info.st_mode):
-                raise SystemExit(f"non-regular carrier input: {path}")
-            relative = os.path.relpath(path, root)
-            if relative == "bin/wasmer-headless":
-                continue
-            digest = hashlib.sha256()
-            with open(path, "rb", buffering=0) as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            for value in (relative, str(info.st_size), digest.hexdigest()):
-                encoded = value.encode("utf-8")
-                hasher.update(len(encoded).to_bytes(8, "big"))
-                hasher.update(encoded)
-print(hasher.hexdigest())
-PY
-)"
+source_fingerprint="$(bun "$carrier_data" source-fingerprint "$staging")"
 fresh_is_sha256 "$source_fingerprint" || fail "failed to compute PostgreSQL carrier fingerprint"
 
 executor_sha256="$(fresh_wasmer_bin_hash "$staging/bin/wasmer-headless")"
@@ -566,7 +451,7 @@ fresh_is_sha256 "$producer_recipe_sha256" || fail "failed to compute AOT produce
 write_sealed_manifest() {
   local output_path="$1"
 
-  python3 - \
+  bun "$carrier_data" manifest \
     "$artifact_rows" \
     "$staging" \
     "$output_path" \
@@ -588,140 +473,7 @@ write_sealed_manifest() {
     "$FRESH_WASMER_WASIX_VERSION" \
     "$FRESH_WASMER_ARTIFACT_ABI_VERSION" \
     "$linear_memory_receipt_relative" \
-    "$linear_memory_install_receipt_sha256" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-(
-    rows_path,
-    carrier_root,
-    output_path,
-    source_fingerprint,
-    core_profile,
-    guest_build_recipe_sha256,
-    target_triple,
-    host_abi,
-    compiler_config,
-    wasmer_source_commit,
-    wasmer_patch_sha256,
-    wasmer_cargo_lock_sha256,
-    runtime_abi_id,
-    producer_recipe_sha256,
-    executor_sha256,
-    executor_size,
-    postgres_version,
-    wasmer_version,
-    wasmer_wasix_version,
-    artifact_abi_version,
-    linear_memory_receipt_path,
-    linear_memory_receipt_sha256,
-) = sys.argv[1:]
-
-with open(os.path.join(carrier_root, linear_memory_receipt_path), "r", encoding="utf-8") as stream:
-    linear_memory_receipt = json.load(stream)
-if linear_memory_receipt.get("schema") != "oliphaunt.wasix-postmaster.linear-memory-install.v1":
-    raise SystemExit("linear-memory install receipt schema differs")
-profile_id = linear_memory_receipt.get("profile-id")
-expected_profile = {
-    "profile-id": "oliphaunt.wasix-postmaster.linear-memory.wasm32-max256m-u64-static4g-guard2g.v1",
-    "address-width": "wasm32",
-    "supported-host-pointer-width": "u64",
-    "maximum-pages": 4096,
-    "maximum-bytes": 268435456,
-    "static-bound-pages": 65536,
-    "static-offset-guard-bytes": 2147483648,
-    "static-access-lowering": "wasmer-llvm-unchecked-reservation-and-guard-v1",
-}
-for key, expected in expected_profile.items():
-    if linear_memory_receipt.get(key) != expected:
-        raise SystemExit(f"linear-memory install receipt profile differs: {key}")
-linear_memory_modules = {}
-for record in linear_memory_receipt.get("modules", []):
-    path = record.get("path")
-    if not isinstance(path, str) or path in linear_memory_modules:
-        raise SystemExit("linear-memory install receipt has invalid module paths")
-    linear_memory_modules[path] = record
-
-artifacts = []
-with open(rows_path, "r", encoding="utf-8", newline="") as rows:
-    for line_number, line in enumerate(rows, 1):
-        fields = line.rstrip("\n").split("\t")
-        if len(fields) != 9:
-            raise SystemExit(f"invalid artifact metadata row {line_number}")
-        name, kind, path, module_path, artifact_hash, artifact_size, module_hash, module_size, alias = fields
-        try:
-            linear_memory_record = linear_memory_modules[module_path]
-        except KeyError:
-            raise SystemExit(f"linear-memory receipt has no record for {module_path}")
-        if linear_memory_record.get("module-sha256") != module_hash.lower():
-            raise SystemExit(f"linear-memory receipt module digest differs for {module_path}")
-        artifact = {
-            "name": name,
-            "kind": kind,
-            "path": path,
-            "module-path": module_path,
-            "sha256": artifact_hash,
-            "raw-sha256": artifact_hash,
-            "raw-size": int(artifact_size),
-            "module-sha256": module_hash,
-            "module-size": int(module_size),
-            "linear-memory": {
-                "profile-id": profile_id,
-                "source-module-sha256": linear_memory_record["source-module-sha256"],
-                "install-receipt-sha256": linear_memory_receipt_sha256,
-            },
-            "compressed": False,
-            "exec-aliases": [alias] if alias else [],
-        }
-        artifacts.append(artifact)
-
-manifest = {
-    "format-version": 6,
-    "schema": "oliphaunt.wasix-postmaster.sealed-aot.v5",
-    "source-lane": "wasix-postmaster",
-    "source-fingerprint": source_fingerprint,
-    "core-profile": core_profile,
-    "guest-build-recipe-sha256": guest_build_recipe_sha256,
-    "postgres-version": postgres_version,
-    "target-triple": target_triple,
-    "host-abi": host_abi,
-    "engine": "llvm-opta",
-    "compiler-config": compiler_config,
-    "cpu-policy": "generic-baseline",
-    "cpu-features": [],
-    "wasmer-version": wasmer_version,
-    "wasmer-wasix-version": wasmer_wasix_version,
-    "wasmer-source-commit": wasmer_source_commit,
-    "wasmer-patch-sha256": wasmer_patch_sha256,
-    "wasmer-cargo-lock-sha256": wasmer_cargo_lock_sha256,
-    "artifact-abi-version": int(artifact_abi_version),
-    "runtime-abi-id": runtime_abi_id,
-    "producer-recipe-sha256": producer_recipe_sha256,
-    "executor-engine": "engine-headless",
-    "executor-sha256": executor_sha256,
-    "executor-size": int(executor_size),
-    "linear-memory-profile": {
-        "id": profile_id,
-        "address-width": linear_memory_receipt["address-width"],
-        "supported-host-pointer-width": linear_memory_receipt["supported-host-pointer-width"],
-        "maximum-pages": linear_memory_receipt["maximum-pages"],
-        "maximum-bytes": linear_memory_receipt["maximum-bytes"],
-        "static-bound-pages": linear_memory_receipt["static-bound-pages"],
-        "static-offset-guard-bytes": linear_memory_receipt["static-offset-guard-bytes"],
-        "static-access-lowering": linear_memory_receipt["static-access-lowering"],
-        "install-receipt-path": linear_memory_receipt_path,
-        "install-receipt-sha256": linear_memory_receipt_sha256,
-    },
-    "wasm-features": ["exceptions", "threads"],
-    "entrypoint": "runtime:postgres",
-    "artifacts": artifacts,
-}
-with open(output_path, "x", encoding="utf-8", newline="\n") as output:
-    json.dump(manifest, output, ensure_ascii=False, indent=2)
-    output.write("\n")
-PY
+    "$linear_memory_install_receipt_sha256"
 }
 
 write_sealed_manifest "$staging/manifest.json"
@@ -743,64 +495,9 @@ mkdir -p \
 chmod 0700 "$validation_root/pgdata"
 chmod 1777 "$validation_root/dev-shm"
 
-# HostFS volumes are writable mappings.  Remove write permission from every
-# staged payload before exposing it to the guest, and verify its complete
-# content-and-mode fingerprint afterwards.  Only the disposable PGDATA and
-# /dev/shm mappings are intentionally writable.
-carrier_mode_snapshot="$validation_root/carrier-modes.json"
-python3 - "$staging" "$carrier_mode_snapshot" <<'PY'
-import json
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-modes = {}
-for current, dirs, files in os.walk(root, followlinks=False):
-    dirs.sort()
-    files.sort()
-    for name in [*dirs, *files]:
-        path = os.path.join(current, name)
-        modes[os.path.relpath(path, root)] = stat.S_IMODE(os.lstat(path).st_mode)
-modes["."] = stat.S_IMODE(os.lstat(root).st_mode)
-with open(sys.argv[2], "x", encoding="utf-8", newline="\n") as stream:
-    json.dump(modes, stream, sort_keys=True)
-    stream.write("\n")
-PY
-chmod -R a-w "$staging"
-carrier_validation_fingerprint() {
-  python3 - "$staging" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-digest = hashlib.sha256()
-for current, dirs, files in os.walk(root, followlinks=False):
-    dirs.sort()
-    files.sort()
-    relative_directory = os.path.relpath(current, root)
-    directory_mode = stat.S_IMODE(os.lstat(current).st_mode)
-    digest.update(f"d\0{relative_directory}\0{directory_mode:o}\0".encode())
-    for name in files:
-        path = os.path.join(current, name)
-        info = os.lstat(path)
-        if not stat.S_ISREG(info.st_mode):
-            raise SystemExit(f"carrier validation input is not regular: {path}")
-        relative = os.path.relpath(path, root)
-        file_digest = hashlib.sha256()
-        with open(path, "rb", buffering=0) as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                file_digest.update(chunk)
-        digest.update(
-            f"f\0{relative}\0{stat.S_IMODE(info.st_mode):o}\0{info.st_size}\0{file_digest.hexdigest()}\0".encode()
-        )
-print(digest.hexdigest())
-PY
-}
-validation_fingerprint="$(carrier_validation_fingerprint)"
-fresh_is_sha256 "$validation_fingerprint" || fail "failed to fingerprint carrier before validation"
+# Seal before guest execution. Keep all writable paths in the disposable validation root.
+bun "$carrier_data" seal "$staging"
+validation_inventory_sha256="$(fresh_wasmer_bin_hash "$staging/payload.files")"
 
 validation_common_args=(
   run
@@ -858,89 +555,9 @@ for initialized_path in PG_VERSION global/pg_control; do
   fi
 done
 
-[ "$(carrier_validation_fingerprint)" = "$validation_fingerprint" ] || {
-  fail "sealed validation mutated the staged carrier"
-}
-python3 - "$staging" "$carrier_mode_snapshot" <<'PY'
-import json
-import os
-import sys
-
-root = os.path.realpath(sys.argv[1])
-with open(sys.argv[2], encoding="utf-8") as stream:
-    modes = json.load(stream)
-for relative, mode in modes.items():
-    path = root if relative == "." else os.path.join(root, relative)
-    os.chmod(path, mode, follow_symlinks=False)
-PY
+[ "$(fresh_wasmer_bin_hash "$staging/payload.files")" = "$validation_inventory_sha256" ] ||
+  fail "sealed validation changed the payload inventory"
 cleanup_validation_root
-
-# The payload inventory covers every published regular file except itself.
-# It also provides a portable verification surface for support files that are
-# intentionally outside the strict AOT loader schema.
-python3 - "$staging" "$staging/payload.files" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-inventory = os.path.realpath(sys.argv[2])
-rows = []
-for current, dirs, files in os.walk(root, followlinks=False):
-    dirs.sort()
-    files.sort()
-    for name in files:
-        path = os.path.join(current, name)
-        if os.path.realpath(path) == inventory:
-            continue
-        info = os.lstat(path)
-        if not stat.S_ISREG(info.st_mode):
-            raise SystemExit(f"carrier contains non-regular file: {path}")
-        relative = os.path.relpath(path, root)
-        if any(character in relative for character in ("\n", "\r", "\t")):
-            raise SystemExit(f"carrier path contains a control delimiter: {relative!r}")
-        digest = hashlib.sha256()
-        with open(path, "rb", buffering=0) as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        rows.append((relative, info.st_size, digest.hexdigest()))
-with open(inventory, "x", encoding="utf-8", newline="\n") as output:
-    output.write("schema=oliphaunt.wasix-postmaster.payload-files.v1\n")
-    for relative, size, digest in sorted(rows):
-        output.write(f"{digest}\t{size}\t{relative}\n")
-PY
-chmod 0444 "$staging/payload.files"
-
-# A sealed carrier is an immutable deployment input, not a runtime cache or a
-# scratch directory.  Normalize the published mode surface after the complete
-# payload has been assembled: every directory is traversable/read-only and
-# every regular file is read-only, while preserving whether a file was meant
-# to be directly executable by the host.  The loader must place any ephemeral
-# AOT snapshot in its separate scratch tier.  The cleanup trap deliberately
-# restores owner write permission if a later publication check fails.
-python3 - "$staging" <<'PY'
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-for current, directories, files in os.walk(root, topdown=False, followlinks=False):
-    for name in files:
-        path = os.path.join(current, name)
-        info = os.lstat(path)
-        if not stat.S_ISREG(info.st_mode):
-            raise SystemExit(f"sealed carrier contains a non-regular file: {path}")
-        executable = bool(stat.S_IMODE(info.st_mode) & 0o111)
-        os.chmod(path, 0o555 if executable else 0o444, follow_symlinks=False)
-    for name in directories:
-        path = os.path.join(current, name)
-        info = os.lstat(path)
-        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
-            raise SystemExit(f"sealed carrier contains a non-directory: {path}")
-        os.chmod(path, 0o555, follow_symlinks=False)
-os.chmod(root, 0o555, follow_symlinks=False)
-PY
 
 # Reconsume the finished staging tree through the same verifier used by every
 # sealed runtime entrypoint. This proves that the inventory is exact and that
@@ -965,34 +582,7 @@ fi
 # Durability is scoped to the carrier: flush each regular file, then each
 # directory bottom-up.  This avoids a global sync while ensuring rename never
 # publishes a directory whose verified bytes only lived in page cache.
-python3 - "$staging" <<'PY'
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-directories = []
-for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
-    directories.append(current)
-    for name in files:
-        path = os.path.join(current, name)
-        info = os.lstat(path)
-        if not stat.S_ISREG(info.st_mode):
-            raise SystemExit(f"carrier contains non-regular file: {path}")
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-for directory in reversed(directories):
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(directory, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-PY
+bun "$carrier_data" sync-tree "$staging"
 
 publication_lock_path="$output_parent/.${output_name}.publish.lock"
 exec {publication_lock_fd}>"$publication_lock_path"
@@ -1004,17 +594,6 @@ flock -n "$publication_lock_fd" ||
 fresh_atomic_publish_directory_noreplace "$staging" "$output" ||
   fail "could not atomically publish sealed carrier: $output"
 staging=""
-python3 - "$output_parent" <<'PY'
-import os
-import sys
-
-flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-descriptor = os.open(sys.argv[1], flags)
-try:
-    os.fsync(descriptor)
-finally:
-    os.close(descriptor)
-PY
 trap - EXIT HUP INT TERM
 
 printf 'built sealed headless WASIX PostgreSQL carrier: %s\n' "$output"

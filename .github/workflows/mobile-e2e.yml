@@ -40,7 +40,7 @@ concurrency:
 env:
   NODE_VERSION: 22.22.3
   PNPM_VERSION: 11.5.0
-  BUN_VERSION: 1.3.14
+  BUN_VERSION: 1.4.2
 
 jobs:
   resolve:
@@ -75,7 +75,10 @@ jobs:
           INPUT_PLATFORM: ${{ inputs.platform || 'all' }}
           DEFAULT_SHA: ${{ github.sha }}
           BUILD_GATE_JOB: Builds
-        run: bun .github/scripts/resolve-mobile-e2e.mjs
+        run: |
+          CHECKOUT_SHA="$(git rev-parse --verify 'HEAD^{commit}')"
+          export CHECKOUT_SHA
+          bun .github/scripts/resolve-mobile-e2e.mts
 
   android:
     name: android-installed-app
@@ -100,7 +103,7 @@ jobs:
 
       - name: Reclaim Android emulator disk
         id: reclaim_android_emulator_disk
-        run: node .github/scripts/reclaim-android-mobile-build-disk.mjs
+        run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
 
       - name: Set up Android
         id: setup_android_e2e
@@ -119,7 +122,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$CI_HEAD_SHA" \
             target/mobile-build/react-native/android \
@@ -134,7 +137,7 @@ jobs:
           OLIPHAUNT_ANDROID_EMULATOR_API: "35"
           OLIPHAUNT_ANDROID_EMULATOR_DISK_HEADROOM_MB: "2048"
           OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB: "6144"
-        run: tools/dev/start-android-emulator-ci.sh
+        run: src/shared/mobile-tools/start-android-emulator-ci.sh
 
       - name: Run Android installed-app E2E
         id: android_app_e2e
@@ -192,7 +195,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$CI_HEAD_SHA" \
             target/mobile-build/react-native/ios-transport \
@@ -204,7 +207,7 @@ jobs:
         id: verify_ios_app_transport
         run: |
           rm -rf target/mobile-build/react-native/ios
-          node src/sdks/react-native/tools/ios-app-transport.mjs verify-extract \
+          bash src/sdks/react-native/tools/ios-app-transport.sh verify-extract \
             --transport-dir target/mobile-build/react-native/ios-transport \
             --output-dir target/mobile-build/react-native/ios
           find target/mobile-build/react-native/ios -maxdepth 2 -print
@@ -260,7 +263,7 @@ jobs:
           NEEDS_JSON: ${{ toJson(needs) }}
           REQUIRED_JOBS_JSON: '["resolve"]'
           GATE_LABEL: E2E resolver
-        run: bun .github/scripts/check-ci-gate.mjs required
+        run: bun .github/scripts/check-ci-gate.mts required
 
       - name: Check selected E2E platform jobs
         id: selected_platforms_gate
@@ -268,4 +271,4 @@ jobs:
           NEEDS_JSON: ${{ toJson(needs) }}
           SELECTED_JOBS_JSON: ${{ needs.resolve.outputs.platform_jobs }}
           GATE_LABEL: selected E2E platform jobs
-        run: bun .github/scripts/check-ci-gate.mjs selected
+        run: bun .github/scripts/check-ci-gate.mts selected

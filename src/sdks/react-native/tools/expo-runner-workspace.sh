@@ -8,7 +8,7 @@
 react_native_package_extra_excludes=()
 
 react_native_source_package_fingerprint() {
-  node "$rn_dir/tools/react-native-package-inputs.mjs" \
+  node "$rn_dir/tools/react-native-package-inputs.mts" \
     --root "$root" \
     --rn-dir "$rn_dir" \
     --example-package "$source_example_dir/package.json"
@@ -17,8 +17,8 @@ react_native_source_package_fingerprint() {
 host_runtime_label() {
   case "$(uname -s):$(uname -m)" in
     Darwin:*) printf '%s\n' macos ;;
-    Linux:x86_64|Linux:amd64) printf '%s\n' linux-x64-gnu ;;
-    Linux:aarch64|Linux:arm64) printf '%s\n' linux-arm64-gnu ;;
+    Linux:x86_64 | Linux:amd64) printf '%s\n' linux-x64-gnu ;;
+    Linux:aarch64 | Linux:arm64) printf '%s\n' linux-arm64-gnu ;;
     *) fail "unsupported host runtime build platform for mobile packaging: $(uname -s)/$(uname -m)" ;;
   esac
 }
@@ -39,7 +39,7 @@ host_runtime_install_dir() {
 host_runtime_build_script() {
   case "$(host_runtime_label)" in
     macos) printf '%s\n' "$root/src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh" ;;
-    linux-x64-gnu|linux-arm64-gnu) printf '%s\n' "$root/src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh" ;;
+    linux-x64-gnu | linux-arm64-gnu) printf '%s\n' "$root/src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh" ;;
     *) fail "unsupported host runtime build platform for mobile packaging: $(uname -s)/$(uname -m)" ;;
   esac
 }
@@ -114,7 +114,7 @@ normalize_cluster_seed() {
       next
     }
     { print }
-  ' "$conf" > "$tmp"
+  ' "$conf" >"$tmp"
   mv "$tmp" "$conf"
 }
 
@@ -147,14 +147,7 @@ directory_fingerprint() {
 
 patch_expo_example_react_native_dependency() {
   local dependency_spec="$1"
-  node - "$example_dir/package.json" "$dependency_spec" <<'NODE'
-const fs = require('node:fs');
-const [packageJson, dependencySpec] = process.argv.slice(2);
-const pkg = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
-pkg.dependencies ??= {};
-pkg.dependencies['@oliphaunt/react-native'] = dependencySpec;
-fs.writeFileSync(packageJson, `${JSON.stringify(pkg, null, 2)}\n`);
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-common.mts" patch-dependency "$example_dir/package.json" "$dependency_spec"
 }
 
 write_scratch_pnpm_workspace() {
@@ -166,7 +159,7 @@ write_scratch_pnpm_workspace() {
   "packageManager": "pnpm@11.5.0"
 }
 JSON
-  node "$root/tools/dev/write-scoped-pnpm-workspace.mjs" \
+  node "$root/tools/dev/write-scoped-pnpm-workspace.mts" \
     --source "$root/pnpm-workspace.yaml" \
     --output "$scratch_root/pnpm-workspace.yaml" \
     --package "src/sdks/react-native" \

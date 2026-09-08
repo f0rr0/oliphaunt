@@ -17,11 +17,11 @@ members = [
   "src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu",
   "src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc",
   "src/runtimes/wasix-napi",
-  "tools/perf/runner",
-  "tools/native-extension-proof",
-  "tools/native-packaging",
-  "tools/native-tools-proof",
-  "tools/xtask",
+  "benchmarks/perf/runner",
+  "src/extensions/tests/native",
+  "src/runtimes/liboliphaunt/native/packaging",
+  "src/runtimes/liboliphaunt/native/tests/tools",
+  "src/runtimes/liboliphaunt/wasix/tools/xtask",
 ]
 resolver = "3"
 

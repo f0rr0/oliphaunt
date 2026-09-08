@@ -45,8 +45,7 @@ Keep the SQL extension name distinct from the release product id and upstream pr
 4. Regenerate the shared extension model:
 
 ```sh
-tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --write
-cargo run -p xtask -- assets verify-committed
+bash src/extensions/tools/check-extension-model.sh --write
 ```
 
 Source-pin, patch, recipe, compiler-input, or producer-code changes require the
@@ -56,8 +55,8 @@ target-profile edits are package-envelope changes.
 5. Verify the model and release graph:
 
 ```sh
-tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check
-tools/dev/bun.sh tools/release/release-check.mjs
+bash src/extensions/tools/check-extension-model.sh --check
+bash tools/release/release-check.sh
 ```
 
 When source acquisition or `mirror_url` changes, also run the source-fetch

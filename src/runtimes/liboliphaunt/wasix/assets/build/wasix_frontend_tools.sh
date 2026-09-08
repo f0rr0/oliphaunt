@@ -6,7 +6,6 @@
 
 oliphaunt_wasix_prepare_frontend_tools() {
   local helper_root
-  local icu_native_build_dir
   local icu_build_dir
   local tool_shim
   local tool_stamp
@@ -15,13 +14,11 @@ oliphaunt_wasix_prepare_frontend_tools() {
   helper_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   . "$helper_root/wasix_icu_link.sh"
 
-  icu_native_build_dir="$CONTAINER_GENERATED_ROOT/work/icu-native-tools"
   OLIPHAUNT_WASIX_FRONTEND_ICU_PREFIX="$CONTAINER_GENERATED_ROOT/work/icu-wasix-tools"
   icu_build_dir="$CONTAINER_GENERATED_ROOT/work/icu-wasix-tools-build"
   OLIPHAUNT_WASIX_FRONTEND_ICU_PREFIX="$(
     env -u AR -u RANLIB -u NM -u LLVM_NM \
       ICU_PREFIX="$OLIPHAUNT_WASIX_FRONTEND_ICU_PREFIX" \
-      ICU_NATIVE_BUILD_DIR="$icu_native_build_dir" \
       ICU_BUILD_DIR="$icu_build_dir" \
       OLIPHAUNT_WASM_BUILD_PROFILE=release-os \
       OLIPHAUNT_WASM_WASIX_COPT="-O2 -g0" \

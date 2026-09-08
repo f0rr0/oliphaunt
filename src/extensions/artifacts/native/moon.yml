@@ -4,10 +4,8 @@ id: "extension-artifacts-native"
 language: "unknown"
 layer: "tool"
 stack: "systems"
-tags: ["extensions", "artifacts", "native"]
+tags: ["javascript-quality", "extensions", "artifacts", "native"]
 dependsOn:
-  - id: "artifact-packaging"
-    scope: "build"
   - id: "extension-runtime-contract"
     scope: "build"
   - id: "extensions"
@@ -29,10 +27,18 @@ project:
 tasks:
   unit:
     tags: ["quality", "unit"]
-    command: "bash src/extensions/artifacts/native/tools/run-observed-phase.test.sh"
+    script: |
+      set -e
+      bash src/extensions/artifacts/native/tools/run-observed-phase.test.sh
+      bun test --timeout=30000 src/extensions/artifacts/native/tools
     inputs:
       - "/src/extensions/artifacts/native/tools/run-observed-phase.sh"
       - "/src/extensions/artifacts/native/tools/run-observed-phase.test.sh"
+      - "/src/extensions/artifacts/native/tools/*.mts"
+      - "/src/extensions/artifacts/native/tools/ios-extension-registration.sh"
+      - "/src/shared/artifact-packaging/*.mts"
+      - "/src/extensions/generated/**/*"
+      - "/tools/test/release-fixture-utils.mts"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -44,6 +50,11 @@ tasks:
     deps:
       - "source-inputs:source-fetch-native-runtime"
     inputs:
+      - "/.github/actions/setup-apple/**"
+      - "/.github/actions/setup-android/**"
+      - "/.github/scripts/setup-native-build-tools.sh"
+      - "/.prototools"
+      - "/src/sources/toolchains/**"
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
       - project: "extensions"
@@ -59,25 +70,42 @@ tasks:
       - project: "third-party-native"
         group: "sources"
       - "/src/extensions/artifacts/native/tools/**/*"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/src/sources/tools/source-fetch-core.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/linux-abi-baseline.test.mjs"
-      - project: "artifact-packaging"
-        group: "source"
-      - "/tools/release/extension-artifact-archive-policy.mjs"
-      - "/tools/release/native-extension-asset-index-contract.mjs"
-      - "/tools/release/native-runtime-payload-policy.json"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/platform-compatibility-policy.test.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
-      - "/tools/release/windows-vc-runtime-closure.mjs"
+      - "/src/shared/artifact-packaging/check-linux-consumer-baseline.sh"
+      - "/src/sources/tools/source-fetch-core.mts"
+      - "/src/extensions/tools/extension-upstream-licenses.mts"
+      - "/src/shared/artifact-packaging/linux-abi-baseline.test.mts"
+      - "/src/shared/artifact-packaging/*.{mjs,mts}"
+      - "/src/shared/artifact-packaging/extension-artifact-archive-policy.mts"
+      - "/src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts"
+      - "/src/runtimes/liboliphaunt/native/tools/native-runtime-payload-policy.json"
+      - "/src/shared/product-metadata/platform-compatibility-policy.mts"
+      - "/src/shared/product-metadata/platform-compatibility-policy.test.mts"
+      - "/src/shared/artifact-packaging/platform-binary-contract.mts"
+      - "/src/shared/artifact-packaging/strip-native-binaries.sh"
+      - "/src/shared/artifact-packaging/platform-binary-contract.test.mts"
+      - "/src/shared/artifact-packaging/release-notices.mts"
+      - "/src/shared/artifact-packaging/release-directory-safety.mts"
+      - "/src/shared/artifact-packaging/windows-vc-runtime-closure.mts"
     outputs:
       - "/target/extensions/native/release-assets/**/*"
     options:
+      # Compiler identities and target variants are checked by the native builders.
+      # A workspace-level cache cannot distinguish all of their output overrides.
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
+
+  rust-format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p oliphaunt-native-extension-proof --check"
+    inputs: ["/src/extensions/tests/native/**/*.rs","/src/extensions/tests/native/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  rust-lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p oliphaunt-native-extension-proof --all-targets --locked -- -D warnings"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs: ["/src/extensions/tests/native/**/*.rs","/src/extensions/tests/native/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true

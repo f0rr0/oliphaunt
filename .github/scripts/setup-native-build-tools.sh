@@ -123,13 +123,6 @@ install_choco_package() {
 }
 
 install_windows_tools() {
-  python -m pip install \
-    --disable-pip-version-check \
-    --retries 8 \
-    --timeout 60 \
-    --user \
-    meson==1.10.0 \
-    ninja==1.13.0
   if [ ! -x /c/Strawberry/perl/bin/perl.exe ]; then
     install_choco_package strawberryperl /c/Strawberry/perl/bin/perl.exe
   fi

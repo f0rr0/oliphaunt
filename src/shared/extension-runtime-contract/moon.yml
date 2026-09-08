@@ -1,13 +1,11 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "extension-runtime-contract"
-language: "javascript"
+language: "typescript"
 layer: "configuration"
 stack: "systems"
-tags: ["extensions", "contract", "runtime"]
+tags: ["javascript-quality", "extensions", "contract", "runtime"]
 dependsOn:
-  - id: "artifact-packaging"
-    scope: "build"
 
 project:
   title: "Extension Runtime Contract"
@@ -23,19 +21,18 @@ fileGroups:
   contract:
     - "contract.toml"
     - "extension-artifact-archive-policy.properties"
-    - "extension-target-profiles.mjs"
+    - "extension-target-profiles.mts"
     - "extension-target-profiles.toml"
-    - "wasix-extension-install.mjs"
+    - "wasix-extension-install.mts"
 
 tasks:
   test:
     tags: ["quality", "unit"]
-    command: "bun test src/shared/extension-runtime-contract/*.test.mjs"
+    command: "bun test src/shared/extension-runtime-contract/*.test.mts"
     inputs:
       - "@group(contract)"
-      - "*.test.mjs"
-      - project: "artifact-packaging"
-        group: "source"
+      - "*.test.mts"
+      - "/src/shared/artifact-packaging/*.{mjs,mts}"
     options:
       cache: true
       runFromWorkspaceRoot: true

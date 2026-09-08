@@ -13,7 +13,7 @@ root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
 cd "$root"
 
 asset_profile="${ASSET_PROFILE:-release}"
-image="${IMAGE:-oliphaunt-wasix-wasix-build:ci}"
+image="${IMAGE:-oliphaunt-wasix-wasix-build:local}"
 export IMAGE="$image"
 if [ -z "${DOCKER_CONFIG:-}" ]; then
   docker_config="$root/target/docker/public-config"
@@ -30,9 +30,26 @@ if [ -z "${DOCKER_CONFIG:-}" ]; then
 fi
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 
-cargo run -p xtask --features cluster-seed-runner -- assets release-build \
-  --profile "$asset_profile" \
-  --target-triple x86_64-unknown-linux-gnu \
-  --skip-aot
-
+export OLIPHAUNT_WASM_BUILD_PROFILE="$asset_profile"
+bash src/sources/tools/fetch-sources.sh wasix-runtime --verify-only
+bash src/runtimes/liboliphaunt/wasix/assets/build/prepare_postgres_source.sh >/dev/null
+build=src/runtimes/liboliphaunt/wasix/assets/build
+if [ "${OLIPHAUNT_SKIP_BUILD:-0}" != "1" ]; then
+  for script in docker_oliphaunt docker_runtime_support docker_initdb; do
+    bash "$build/$script.sh"
+  done
+  if [ "${OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF:-0}" != "1" ]; then
+    bash "$build/docker_pgxs_extensions.sh"
+    bash "$build/docker_contrib_extensions.sh"
+    extension_scripts="$(bun src/runtimes/liboliphaunt/wasix/tools/extension-build-scripts.mts)"
+    while IFS= read -r script; do
+      [ -z "$script" ] || bash "$script"
+    done <<<"$extension_scripts"
+    bash "$build/docker_pgdump.sh"
+    bash "$build/docker_psql.sh"
+  fi
+fi
+awk -v profile="$asset_profile" '$0 == "profile=" profile {found=1} END {exit !found}' \
+  target/oliphaunt-wasix/wasix-build/work/docker-oliphaunt/.oliphaunt-wasix-build-profile
+cargo run -p xtask --features cluster-seed-runner -- assets package --skip-aot
 cargo run -p xtask -- assets check --strict-generated

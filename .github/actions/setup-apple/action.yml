@@ -93,21 +93,23 @@ runs:
       shell: bash
       run: |
         .github/scripts/prepare-macos-homebrew.sh
-        if ! brew list bison >/dev/null 2>&1; then
-          installed=0
-          for attempt in 1 2 3; do
-            if HOMEBREW_NO_AUTO_UPDATE=1 brew install bison; then
-              installed=1
-              break
+        for formula in bison coreutils; do
+          if ! brew list "$formula" >/dev/null 2>&1; then
+            installed=0
+            for attempt in 1 2 3; do
+              if HOMEBREW_NO_AUTO_UPDATE=1 brew install "$formula"; then
+                installed=1
+                break
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 15))
+              fi
+            done
+            if [ "$installed" != "1" ]; then
+              echo "setup-apple: Homebrew failed to install $formula after 3 attempts" >&2
+              exit 1
             fi
-            if [ "$attempt" -lt 3 ]; then
-              sleep $((attempt * 15))
-            fi
-          done
-          if [ "$installed" != "1" ]; then
-            echo "setup-apple: Homebrew failed to install bison after 3 attempts" >&2
-            exit 1
           fi
-        fi
+        done
         bison_prefix="$(brew --prefix bison)"
         "$bison_prefix/bin/bison" --version | head -n 1

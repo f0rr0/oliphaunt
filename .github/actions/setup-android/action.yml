@@ -128,7 +128,7 @@ runs:
             export ANDROID_HOME="$HOME/android-sdk"
           fi
         fi
-        tools/dev/setup-android-sdk.sh \
+        src/shared/mobile-tools/setup-android-sdk.sh \
           --sdk-root "$ANDROID_HOME" \
           --ndk-version "$NDK_VERSION" \
           --cmake-version "$CMAKE_VERSION" \

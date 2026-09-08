@@ -3,120 +3,45 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/tools/dev/install-pinned-js-runtime.sh"
-extractor="$root/tools/dev/extract-pinned-zip.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
-# These are literal workflow expressions, not shell expansions.
-# shellcheck disable=SC2016
-for action in .github/actions/setup-bun/action.yml .github/actions/setup-deno/action.yml; do
-  grep -Fq '[[ "${RUNNER_OS:-}" == "Windows" ]]' "$action"
-  grep -Fq 'binary_dir="$(cygpath -w "$binary_dir")"' "$action"
-  grep -Fq 'echo "$binary_dir" >> "$GITHUB_PATH"' "$action"
-done
 
-python_bin=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1 &&
-    "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
-    python_bin="$candidate"
-    break
-  fi
-done
-[ -n "$python_bin" ] || {
-  echo "Python 3.8 or newer is required" >&2
-  exit 1
-}
 
-# macOS still ships Bash 3.2, whose command-substitution parser can terminate
-# early on an inline case pattern. Keep platform selection out of nested case
-# so a Linux Bash 5 syntax check cannot certify a script that macOS rejects.
-"$python_bin" - "$installer" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-source = Path(sys.argv[1]).read_text(encoding="utf-8")
-if re.search(r"\$\(\s*case\b", source):
-    raise SystemExit("pinned JS runtime installer must not nest case inside command substitution")
-PY
 
 mkdir -p "$tmp/fixtures" "$tmp/config" "$tmp/bin"
-"$python_bin" - "$tmp" <<'PY'
-import hashlib
-import stat
-import sys
-import zipfile
-from pathlib import Path
+bash "$root/tools/dev/bun.sh" - "$tmp" <<'TS'
+import {createHash} from 'node:crypto';
+import {writeFileSync} from 'node:fs';
+import {zipArchive} from './tools/test/zip-fixture.mts';
+const root = process.argv[2];
+const sha = data => createHash('sha256').update(data).digest('hex');
+const write = (name, data) => writeFileSync(root + '/' + name, data);
 
-root = Path(sys.argv[1])
-fixtures = root / "fixtures"
-config = root / "config"
+function archive(name, member, data) {
+  const bytes = zipArchive([{name: member, data, method: 8, externalAttributes: 0o100755 << 16}]);
+  write('fixtures/' + name, bytes);
+  return {archive: sha(bytes), binary: sha(data)};
+}
+const bun = archive('bun.zip', 'bun-linux-x64/bun', "#!/bin/sh\nprintf '1.2.3\\n'\n");
+const wrong = archive('bun-wrong-version.zip', 'bun-linux-x64/bun', "#!/bin/sh\nprintf '9.9.9\\n'\n");
+const deno = archive('deno.zip', 'deno', "#!/bin/sh\nprintf 'deno 1.2.3 (stable, release, x86_64-unknown-linux-gnu)\\n'\n");
+function bunManifest(name, pin) {
+  write('config/' + name, "[toolchain]\nversion = \"1.2.3\"\n\n[assets.linux-x64]\nurl = \"https://github.com/oven-sh/bun/releases/download/bun-v1.2.3/bun-linux-x64.zip\"\nsha256 = \"{archive_sha}\"\nbinary_path = \"bun-linux-x64/bun\"\nbinary_sha256 = \"{binary_sha}\"\nentry_count = \"1\"\n".replace('{archive_sha}', pin.archive).replace('{binary_sha}', pin.binary));
+}
+bunManifest('bun.toml', bun);
+bunManifest('bun-bad-sha.toml', {...bun, archive: '0'.repeat(64)});
+bunManifest('bun-wrong-version.toml', wrong);
+write('config/deno.toml', "[toolchain]\nversion = \"1.2.3\"\n\n[assets.x86_64-unknown-linux-gnu]\nurl = \"https://github.com/denoland/deno/releases/download/v1.2.3/deno-x86_64-unknown-linux-gnu.zip\"\nmirror_url = \"https://dl.deno.land/release/v1.2.3/deno-x86_64-unknown-linux-gnu.zip\"\nsha256 = \"{deno_archive_sha}\"\nbinary_path = \"deno\"\nbinary_sha256 = \"{deno_binary_sha}\"\nentry_count = \"1\"\n".replace('{deno_archive_sha}', deno.archive).replace('{deno_binary_sha}', deno.binary));
+for (const [tool, target, pin] of [['bun','linux-x64',bun],['deno','x86_64-unknown-linux-gnu',deno]]) {
+  write('config/' + tool + '-receipt', 'tool=' + tool + '\nversion=1.2.3\ntarget=' + target + '\narchive_sha256=' + pin.archive + '\nbinary_sha256=' + pin.binary + '\n');
+}
+write('config/prototools', 'bun = "1.2.3"\ndeno = "1.2.3"\n');
 
-def archive(name, path, contents):
-    target = fixtures / name
-    info = zipfile.ZipInfo(path)
-    info.external_attr = (stat.S_IFREG | 0o755) << 16
-    info.compress_type = zipfile.ZIP_DEFLATED
-    with zipfile.ZipFile(target, "w") as output:
-        output.writestr(info, contents)
-    return target, hashlib.sha256(contents).hexdigest(), hashlib.sha256(target.read_bytes()).hexdigest()
+TS
 
-bun, bun_binary_sha, bun_archive_sha = archive(
-    "bun.zip", "bun-linux-x64/bun", b"#!/bin/sh\nprintf '1.2.3\\n'\n"
-)
-bad_bun, bad_bun_binary_sha, bad_bun_archive_sha = archive(
-    "bun-wrong-version.zip", "bun-linux-x64/bun", b"#!/bin/sh\nprintf '9.9.9\\n'\n"
-)
-deno, deno_binary_sha, deno_archive_sha = archive(
-    "deno.zip", "deno", b"#!/bin/sh\nprintf 'deno 1.2.3 (stable, release, x86_64-unknown-linux-gnu)\\n'\n"
-)
-
-def bun_manifest(name, archive_sha, binary_sha):
-    (config / name).write_text(f'''[toolchain]
-version = "1.2.3"
-
-[assets.linux-x64]
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.2.3/bun-linux-x64.zip"
-sha256 = "{archive_sha}"
-binary_path = "bun-linux-x64/bun"
-binary_sha256 = "{binary_sha}"
-entry_count = "1"
-''', encoding="utf-8")
-
-bun_manifest("bun.toml", bun_archive_sha, bun_binary_sha)
-bun_manifest("bun-bad-sha.toml", "0" * 64, bun_binary_sha)
-bun_manifest("bun-wrong-version.toml", bad_bun_archive_sha, bad_bun_binary_sha)
-(config / "bun-receipt").write_text(
-    f"tool=bun\nversion=1.2.3\ntarget=linux-x64\narchive_sha256={bun_archive_sha}\nbinary_sha256={bun_binary_sha}\n",
-    encoding="utf-8",
-)
-(config / "deno.toml").write_text(f'''[toolchain]
-version = "1.2.3"
-
-[assets.x86_64-unknown-linux-gnu]
-url = "https://github.com/denoland/deno/releases/download/v1.2.3/deno-x86_64-unknown-linux-gnu.zip"
-mirror_url = "https://dl.deno.land/release/v1.2.3/deno-x86_64-unknown-linux-gnu.zip"
-sha256 = "{deno_archive_sha}"
-binary_path = "deno"
-binary_sha256 = "{deno_binary_sha}"
-entry_count = "1"
-''', encoding="utf-8")
-(config / "deno-receipt").write_text(
-    f"tool=deno\nversion=1.2.3\ntarget=x86_64-unknown-linux-gnu\narchive_sha256={deno_archive_sha}\nbinary_sha256={deno_binary_sha}\n",
-    encoding="utf-8",
-)
-(config / "prototools").write_text('bun = "1.2.3"\ndeno = "1.2.3"\n', encoding="utf-8")
-PY
-
-"$python_bin" - "$tmp/bin/curl" <<'PY'
-import os
-import stat
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-path.write_text(r'''#!/usr/bin/env bash
+cat >"$tmp/bin/curl" <<'SH'
+#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >> "$CURL_ARGS_LOG"
 output=""
@@ -157,14 +82,12 @@ case "$CURL_MODE" in
     exit 2
     ;;
 esac
-''', encoding="utf-8")
-path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-PY
+SH
+chmod 0700 "$tmp/bin/curl"
 
 common_env=(
   "OLIPHAUNT_PINNED_TOOL_ROOT=$tmp"
   "OLIPHAUNT_PINNED_TOOL_PROTO_FILE=$tmp/config/prototools"
-  "OLIPHAUNT_PINNED_ZIP_EXTRACTOR=$extractor"
   "OLIPHAUNT_PINNED_TOOL_CURL=$tmp/bin/curl"
   "OLIPHAUNT_PINNED_TOOL_TARGET=linux-x64"
   "BUN_ARCHIVE=$tmp/fixtures/bun.zip"

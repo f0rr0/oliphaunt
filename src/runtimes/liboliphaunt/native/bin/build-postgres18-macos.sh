@@ -844,7 +844,7 @@ native_extension_component_field() {
   local extension="${1:?missing extension}"
   local field="${2:?missing native component field}"
   "$repo_root/tools/dev/bun.sh" \
-    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    "$repo_root/src/extensions/tools/native-component-contract.mts" \
     field "$extension" native native-dynamic macos-arm64 "$field"
 }
 
@@ -1267,119 +1267,6 @@ if [ "$script_mode" != "build" ] && [ "$script_mode" != "--runtime-only" ]; then
 usage: src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh [--runtime-only|--print-required-extension-artifacts|--check-oliphaunt-current|--check-extension-artifacts-current]
 MSG
   exit 2
-fi
-
-jobs="${OLIPHAUNT_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
-mkdir -p "$source_cache"
-
-macos_generation_roots_coherent() {
-  local root
-  local present=0
-  for root in "$build_dir" "$install_dir" "$out_dir"; do
-    if [ -L "$root" ] || { [ -e "$root" ] && [ ! -d "$root" ]; }; then
-      return 1
-    fi
-    if [ -d "$root" ]; then
-      present=$((present + 1))
-    fi
-  done
-  [ "$present" -eq 0 ] || [ "$present" -eq 3 ]
-}
-
-if [ "$current_generation_hash" != "$desired_build_hash" ] || ! macos_generation_roots_coherent; then
-  echo "invalidating stale macOS native build generation"
-  rm -rf \
-    "$build_dir" \
-    "$install_dir" \
-    "$out_dir" \
-    "$icu_native_build_dir" \
-    "$icu_build_dir" \
-    "$icu_prefix" \
-    "$work_root/icu"
-  generation_stamp_stage="$generation_stamp.tmp.$$"
-  rm -rf "$generation_stamp_stage"
-  printf '%s\n' "$desired_build_hash" > "$generation_stamp_stage"
-  mv -f "$generation_stamp_stage" "$generation_stamp"
-fi
-mkdir -p "$out_dir"
-
-icu_host="$(sh "$icu_source_dir/config.guess")"
-oliphaunt_icu_build_target \
-  "$icu_source_dir" \
-  "$script_dir" \
-  "$icu_native_build_dir" \
-  "$icu_build_dir" \
-  "$icu_prefix" \
-  "$jobs" \
-  "macos" \
-  "$icu_host" \
-  "$CC" \
-  "$CXX" \
-  "ar" \
-  "ranlib" \
-  "$native_cflags" \
-  "$native_cflags -std=c++17" \
-  ""
-
-oliphaunt_fetch_postgresql_source_archive "$tarball" "$pg_version" "$pg_sha256" "$pg_url"
-
-(
-  cd "$source_cache"
-  printf '%s  %s\n' "$pg_sha256" "postgresql-${pg_version}.tar.bz2" | shasum -a 256 -c -
-)
-
-postgres_source_configure_complete() {
-  [ -f "$build_dir/config.status" ] &&
-    [ -f "$build_dir/src/include/pg_config.h" ]
-}
-
-postgres_source_configure_reusable() {
-  if postgres_source_configure_complete; then
-    return 0
-  fi
-  [ ! -f "$build_dir/config.status" ] &&
-    [ ! -f "$build_dir/config.log" ]
-}
-
-if [ -d "$build_dir" ] && ! postgres_source_configure_reusable; then
-  echo "discarding incomplete PostgreSQL configure tree at $build_dir" >&2
-  rm -rf "$build_dir"
-fi
-
-if [ ! -d "$build_dir" ]; then
-  tar -xjf "$tarball" -C "$work_root"
-fi
-
-cd "$build_dir"
-
-if [ ! -f "$build_stamp" ]; then
-  git init -q
-  for patch_file in "$patch_dir"/*.patch; do
-    GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_file"
-  done
-  printf '%s\n' "$desired_build_hash" > "$build_stamp"
-fi
-
-if [ ! -f config.status ]; then
-  echo "Using CC=$CC"
-  CPPFLAGS="$icu_cflags" \
-  LDFLAGS="-L$icu_prefix/lib" \
-  ICU_CFLAGS="$icu_cflags" \
-  ICU_LIBS="$icu_libs" \
-    ./configure \
-    --prefix="$install_dir" \
-    --without-readline \
-    --with-icu \
-    --without-llvm \
-    --without-pam \
-    --with-openssl=no \
-    --without-zlib \
-    --disable-nls
-fi
-
-if ! postgres_source_configure_complete; then
-  echo "PostgreSQL configure did not produce config.status and src/include/pg_config.h" >&2
-  exit 1
 fi
 
 runtime_installed() {
@@ -2385,6 +2272,144 @@ build_native_extension_artifacts() {
   desired_extension_hash="$(extension_build_fingerprint)"
   printf '%s\n' "$desired_extension_hash" > "$extension_build_stamp"
 }
+
+# A finished generation needs no configure, ICU make walk, or object rebuild.
+if [ "$script_mode" = build ] &&
+  [ "$current_generation_hash" = "$desired_build_hash" ] &&
+  [ "${OLIPHAUNT_FORCE_RELINK:-0}" != 1 ] &&
+  [ "${OLIPHAUNT_FORCE_EXTENSION_REBUILD:-0}" != 1 ] &&
+  [ -d "$build_dir" ] && [ ! -L "$build_dir" ] &&
+  [ -d "$install_dir" ] && [ ! -L "$install_dir" ] &&
+  [ -d "$out_dir" ] && [ ! -L "$out_dir" ] &&
+  (cd "$build_dir" && runtime_installed && liboliphaunt_artifacts_current) &&
+  { if [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" = 0 ]; then
+      base_embedded_module_closure_ready
+    else
+      native_extension_artifacts_current
+    fi; }; then
+  embedded_dict_snowball_avoids_provider_collisions
+  embedded_plpgsql_avoids_provider_collisions
+  if [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" != 0 ]; then
+    audit_packaged_extension_modules
+    audit_embedded_extension_modules
+  fi
+  echo "reusing finished macOS native build" >&2
+  echo "$lib_out"
+  exit 0
+fi
+
+jobs="${OLIPHAUNT_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+mkdir -p "$source_cache"
+
+macos_generation_roots_coherent() {
+  local root
+  local present=0
+  for root in "$build_dir" "$install_dir" "$out_dir"; do
+    if [ -L "$root" ] || { [ -e "$root" ] && [ ! -d "$root" ]; }; then
+      return 1
+    fi
+    if [ -d "$root" ]; then
+      present=$((present + 1))
+    fi
+  done
+  [ "$present" -eq 0 ] || [ "$present" -eq 3 ]
+}
+
+if [ "$current_generation_hash" != "$desired_build_hash" ] || ! macos_generation_roots_coherent; then
+  echo "invalidating stale macOS native build generation"
+  rm -rf \
+    "$build_dir" \
+    "$install_dir" \
+    "$out_dir" \
+    "$icu_native_build_dir" \
+    "$icu_build_dir" \
+    "$icu_prefix" \
+    "$work_root/icu"
+  generation_stamp_stage="$generation_stamp.tmp.$$"
+  rm -rf "$generation_stamp_stage"
+  printf '%s\n' "$desired_build_hash" > "$generation_stamp_stage"
+  mv -f "$generation_stamp_stage" "$generation_stamp"
+fi
+mkdir -p "$out_dir"
+
+icu_host="$(sh "$icu_source_dir/config.guess")"
+oliphaunt_icu_build_target \
+  "$icu_source_dir" \
+  "$script_dir" \
+  "$icu_native_build_dir" \
+  "$icu_build_dir" \
+  "$icu_prefix" \
+  "$jobs" \
+  "macos" \
+  "$icu_host" \
+  "$CC" \
+  "$CXX" \
+  "ar" \
+  "ranlib" \
+  "$native_cflags" \
+  "$native_cflags -std=c++17" \
+  ""
+
+oliphaunt_fetch_postgresql_source_archive "$tarball" "$pg_version" "$pg_sha256" "$pg_url"
+
+(
+  cd "$source_cache"
+  printf '%s  %s\n' "$pg_sha256" "postgresql-${pg_version}.tar.bz2" | shasum -a 256 -c -
+)
+
+postgres_source_configure_complete() {
+  [ -f "$build_dir/config.status" ] &&
+    [ -f "$build_dir/src/include/pg_config.h" ]
+}
+
+postgres_source_configure_reusable() {
+  if postgres_source_configure_complete; then
+    return 0
+  fi
+  [ ! -f "$build_dir/config.status" ] &&
+    [ ! -f "$build_dir/config.log" ]
+}
+
+if [ -d "$build_dir" ] && ! postgres_source_configure_reusable; then
+  echo "discarding incomplete PostgreSQL configure tree at $build_dir" >&2
+  rm -rf "$build_dir"
+fi
+
+if [ ! -d "$build_dir" ]; then
+  tar -xjf "$tarball" -C "$work_root"
+fi
+
+cd "$build_dir"
+
+if [ ! -f "$build_stamp" ]; then
+  git init -q
+  for patch_file in "$patch_dir"/*.patch; do
+    GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_file"
+  done
+  printf '%s\n' "$desired_build_hash" > "$build_stamp"
+fi
+
+if [ ! -f config.status ]; then
+  echo "Using CC=$CC"
+  CPPFLAGS="$icu_cflags" \
+  LDFLAGS="-L$icu_prefix/lib" \
+  ICU_CFLAGS="$icu_cflags" \
+  ICU_LIBS="$icu_libs" \
+    ./configure \
+    --prefix="$install_dir" \
+    --without-readline \
+    --with-icu \
+    --without-llvm \
+    --without-pam \
+    --with-openssl=no \
+    --without-zlib \
+    --disable-nls
+fi
+
+if ! postgres_source_configure_complete; then
+  echo "PostgreSQL configure did not produce config.status and src/include/pg_config.h" >&2
+  exit 1
+fi
 
 # Build and install a normal PostgreSQL tree first. initdb needs the matching
 # sibling postgres binary and the installed share/lib tree needs core modules

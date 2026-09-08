@@ -229,6 +229,9 @@ desired_hash() {
     printf 'pg_version=%s\n' "$pg_version"
     printf 'pg_sha256=%s\n' "$pg_sha256"
     printf 'sdk_path=%s\n' "$sdk_path"
+    xcodebuild -version
+    xcrun --sdk iphoneos --show-sdk-version
+    shasum -a 256 "$clang_path" "$clangxx_path" "$ar_path" "$ranlib_path" "$libtool_path"
     printf 'clang_path=%s\n' "$clang_path"
     printf 'clangxx_path=%s\n' "$clangxx_path"
     printf 'min_ios=%s\n' "$min_ios"
@@ -1007,6 +1010,10 @@ fi
 
 case "$script_mode" in
   build)
+    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && oliphaunt_mobile_builtin_snowball_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+      echo "$lib_out"
+      exit 0
+    fi
     failure_phase="prepare source"
     # EXIT is observed by this outer shell even when errexit originates inside
     # a build function or subshell. The handler clears the trap before
@@ -1017,10 +1024,6 @@ case "$script_mode" in
     build_icu
     failure_phase="configure PostgreSQL"
     configure_source
-    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && oliphaunt_mobile_builtin_snowball_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
-      echo "$lib_out"
-      exit 0
-    fi
     : > "$make_log"
     failure_phase="generate PostgreSQL headers"
     build_generated_headers

@@ -83,21 +83,7 @@ sealed_carrier="$(cd "$sealed_carrier" && pwd -P)"
 select_available_port() {
   local candidate="$1"
 
-  python3 - "$candidate" <<'PY'
-import socket
-import sys
-
-candidate = int(sys.argv[1])
-for port in range(candidate, 65536):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        try:
-            listener.bind(("127.0.0.1", port))
-        except OSError:
-            continue
-        print(port)
-        raise SystemExit(0)
-raise SystemExit("no available backend-wave TCP port remains")
-PY
+  bun "$FRESH_ROOT/lib/server-lifecycle.mts" available-port "$candidate"
 }
 
 next_port="$start_port"

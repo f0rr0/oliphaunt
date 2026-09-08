@@ -1,0 +1,179 @@
+#!/usr/bin/env bun
+
+import { appendFileSync } from 'node:fs';
+
+import { ROOT } from '../../src/shared/product-metadata/release-graph.mts';
+import {
+  deriveReleaseProducts,
+  latestVerifiedReleaseCommit,
+  releaseCommit,
+  releaseCommitFile,
+} from './verify-release-commit.mts';
+
+const TOOL = 'verify-publication-candidate.mts';
+
+function error(message) {
+  return new Error(`${TOOL}: ${message}`);
+}
+
+const publicationCommit = releaseCommit;
+
+function sameStrings(left, right) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
+function manifestVersions(repo, commit, products) {
+  const readJson = (file) => {
+    try {
+      return JSON.parse(releaseCommitFile(repo, commit, file));
+    } catch (cause) {
+      throw error(`${file} at publication commit ${commit} is not valid JSON: ${cause.message}`);
+    }
+  };
+  const packages = readJson('release-please-config.json').packages;
+  const manifest = readJson('.release-please-manifest.json');
+  return Object.fromEntries(
+    products.map((product) => {
+      const packagePath = Object.entries(packages ?? {}).find(
+        ([, config]) => config?.component === product,
+      )?.[0];
+      const version = manifest?.[packagePath];
+      if (packagePath === undefined || typeof version !== 'string') {
+        throw error(`${product} has no publication version at ${commit}`);
+      }
+      return [product, version];
+    }),
+  );
+}
+
+export function derivePublicationProducts({ repo = ROOT, headRef = 'HEAD' } = {}) {
+  return deriveReleaseProducts({ repo, headRef: publicationCommit(repo, headRef) }).products;
+}
+
+export function resolvePublicationPlanningSource({ repo = ROOT, headRef = 'HEAD' } = {}) {
+  const commit = publicationCommit(repo, headRef);
+  return {
+    planHeadSha: commit,
+    publicationSha: commit,
+  };
+}
+
+export function verifyPublicationCandidate({ repo = ROOT, headRef = 'HEAD', products } = {}) {
+  if (
+    !Array.isArray(products) ||
+    products.length === 0 ||
+    products.some((product) => typeof product !== 'string' || product.length === 0) ||
+    new Set(products).size !== products.length
+  ) {
+    throw error('products must be a non-empty product string list without duplicates');
+  }
+  const commit = publicationCommit(repo, headRef);
+  const verified = latestVerifiedReleaseCommit({ repo, headRef: commit });
+  if (verified === null) {
+    throw error(`no verified release commit is reachable from publication commit ${commit}`);
+  }
+  if (!sameStrings(products, verified.products)) {
+    throw error(
+      `selected products do not match release commit ${verified.commit}: ` +
+        `selected=${JSON.stringify(products)}, released=${JSON.stringify(verified.products)}`,
+    );
+  }
+  const currentVersions = manifestVersions(repo, commit, verified.products);
+  if (JSON.stringify(currentVersions) !== JSON.stringify(verified.versions)) {
+    throw error(
+      `publication versions at ${commit} do not match release commit ${verified.commit}: ` +
+        `publication=${JSON.stringify(currentVersions)}, released=${JSON.stringify(verified.versions)}`,
+    );
+  }
+  return {
+    mode: 'release-bump',
+    publicationSha: commit,
+    releaseSha: verified.commit,
+    products: verified.products,
+    versions: verified.versions,
+  };
+}
+
+function parseArgs(argv) {
+  let productsJson = '';
+  let headRef = 'HEAD';
+  let githubOutput = '';
+  let deriveProducts = false;
+  let resolvePlanHead = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--products-json') {
+      productsJson = argv[index + 1] ?? '';
+      index += 1;
+    } else if (arg === '--derive-products') {
+      deriveProducts = true;
+    } else if (arg === '--resolve-plan-head') {
+      resolvePlanHead = true;
+    } else if (arg === '--head-ref') {
+      headRef = argv[index + 1] ?? '';
+      index += 1;
+    } else if (arg === '--github-output') {
+      githubOutput = argv[index + 1] ?? '';
+      index += 1;
+    } else {
+      throw error(`unknown argument ${arg}`);
+    }
+  }
+  if (
+    !headRef ||
+    (resolvePlanHead && (deriveProducts || Boolean(productsJson))) ||
+    (!resolvePlanHead && deriveProducts === Boolean(productsJson))
+  ) {
+    throw error(
+      'usage: verify-publication-candidate.mts ' +
+        '((--products-json JSON | --derive-products) | --resolve-plan-head) ' +
+        '[--head-ref REF] [--github-output FILE]',
+    );
+  }
+  if (resolvePlanHead) {
+    return { githubOutput, headRef, resolvePlanHead };
+  }
+  let products;
+  if (deriveProducts) {
+    products = derivePublicationProducts({ headRef });
+  } else {
+    try {
+      products = JSON.parse(productsJson);
+    } catch (cause) {
+      throw error(`--products-json must be valid JSON: ${cause.message}`);
+    }
+  }
+  return { githubOutput, headRef, products, resolvePlanHead };
+}
+
+if (import.meta.main) {
+  try {
+    const args = parseArgs(Bun.argv.slice(2));
+    if (args.resolvePlanHead) {
+      const source = resolvePublicationPlanningSource({ headRef: args.headRef });
+      if (args.githubOutput) {
+        appendFileSync(args.githubOutput, `plan_head_sha=${source.planHeadSha}\n`);
+      }
+      console.log(source.planHeadSha);
+      process.exit(0);
+    }
+    const verified = verifyPublicationCandidate(args);
+    if (args.githubOutput) {
+      appendFileSync(
+        args.githubOutput,
+        [
+          `mode=${verified.mode}`,
+          `publication_sha=${verified.publicationSha}`,
+          `release_sha=${verified.releaseSha}`,
+          '',
+        ].join('\n'),
+      );
+    }
+    console.log(
+      `verified publication commit ${verified.publicationSha} for ${verified.products.length} product(s)`,
+    );
+  } catch (cause) {
+    console.error(cause instanceof Error ? cause.message : String(cause));
+    process.exit(1);
+  }
+}

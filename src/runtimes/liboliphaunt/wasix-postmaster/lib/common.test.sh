@@ -30,6 +30,20 @@ unset WASMER_BIN
 
 source "$project_root/lib/common.sh"
 
+source_pin="$test_root/source.toml"
+printf 'commit = "abc123"\n' > "$source_pin"
+[ "$(fresh_source_scalar "$source_pin" commit)" = abc123 ]
+printf 'commit = "def456"\n' >> "$source_pin"
+if fresh_source_scalar "$source_pin" commit >/dev/null 2>&1; then
+  echo 'source pin accepted duplicate identities' >&2
+  exit 1
+fi
+printf 'commit = "../escape"\n' > "$source_pin"
+if fresh_source_scalar "$source_pin" commit >/dev/null 2>&1; then
+  echo 'source pin accepted a non-scalar identity' >&2
+  exit 1
+fi
+
 original_work_root="$FRESH_WORK_ROOT"
 original_baseline_dir="$BASELINE_DIR"
 mkdir -p "$(fresh_managed_generated_root)"
@@ -100,23 +114,26 @@ FRESH_ROOT="$original_fresh_root"
 live_runtime_recipe="$(fresh_runtime_build_recipe_sha256)"
 for relative in \
   lib/common.sh \
-  sources.lock.toml \
-  runtime/capabilities.tsv \
   runtime/bin/prepare-upstream-checkouts.sh \
   runtime/bin/build-runtime.sh \
   runtime/bin/build-patched-wasix-libc-sysroot.sh \
-  runtime/bin/validate-runtime-capabilities.sh \
-  runtime/bin/verify-source-lock.py; do
+  runtime/bin/validate-runtime-capabilities.sh; do
   mkdir -p "$frozen_root/$(dirname "$relative")"
   cp "$original_fresh_root/$relative" "$frozen_root/$relative"
   chmod u+w "$frozen_root/$relative"
 done
+cp -R "$original_fresh_root/runtime/executor" "$frozen_root/runtime/executor"
 FRESH_ROOT="$frozen_root"
+executor_source="$(fresh_executor_source_sha256)"
+mkdir -p "$frozen_root/runtime/executor/tests"
+printf 'standalone test fixture\n' >"$frozen_root/runtime/executor/tests/fixture.txt"
+[ "$(fresh_executor_source_sha256)" = "$executor_source" ]
 [ "$(fresh_runtime_build_recipe_sha256)" = "$live_runtime_recipe" ] || {
   echo 'runtime build recipe changed under a byte-identical frozen project relocation' >&2
   exit 1
 }
 chmod -x "$frozen_root/runtime/bin/build-runtime.sh"
+[ "$(fresh_executor_source_sha256)" = "$executor_source" ]
 [ "$(fresh_runtime_build_recipe_sha256)" != "$live_runtime_recipe" ] || {
   echo 'runtime build recipe ignored executable-mode drift' >&2
   exit 1
@@ -126,13 +143,13 @@ chmod +x "$frozen_root/runtime/bin/build-runtime.sh"
   echo 'runtime build recipe did not recover after restoring executable mode' >&2
   exit 1
 }
-printf '\n# byte-drift probe\n' >>"$frozen_root/runtime/bin/verify-source-lock.py"
+printf '\n# byte-drift probe\n' >>"$frozen_root/runtime/bin/validate-runtime-capabilities.sh"
 [ "$(fresh_runtime_build_recipe_sha256)" != "$live_runtime_recipe" ] || {
   echo 'runtime build recipe ignored producer validation byte drift' >&2
   exit 1
 }
-cp "$original_fresh_root/runtime/bin/verify-source-lock.py" \
-  "$frozen_root/runtime/bin/verify-source-lock.py"
+cp "$original_fresh_root/runtime/bin/validate-runtime-capabilities.sh" \
+  "$frozen_root/runtime/bin/validate-runtime-capabilities.sh"
 [ "$(fresh_runtime_build_recipe_sha256)" = "$live_runtime_recipe" ] || {
   echo 'runtime build recipe did not recover after restoring producer bytes' >&2
   exit 1
@@ -358,11 +375,11 @@ cp "$true_bin" "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
 chmod u+wx "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
 cp "$true_bin" "$FRESH_POSTMASTER_EXECUTOR_BIN"
 chmod u+wx "$FRESH_POSTMASTER_EXECUTOR_BIN"
-cp "$project_root/testdata/fake-start-proof.py" "$FRESH_START_PROOF_BIN"
+bun build --target=bun "$project_root/testdata/fake-start-proof.mts" --outfile "$FRESH_START_PROOF_BIN" >/dev/null
 chmod +x "$FRESH_START_PROOF_BIN"
 cp "$true_bin" "$FRESH_MEMORY_PROFILE_BIN"
 chmod u+wx "$FRESH_MEMORY_PROFILE_BIN"
-cp "$project_root/testdata/fake-postmaster-compiler.py" "$FRESH_POSTMASTER_COMPILER_BIN"
+bun build --target=bun "$project_root/testdata/fake-postmaster-compiler.mts" --outfile "$FRESH_POSTMASTER_COMPILER_BIN" >/dev/null
 chmod +x "$FRESH_POSTMASTER_COMPILER_BIN"
 
 write_receipt() {

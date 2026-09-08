@@ -4,8 +4,10 @@ id: "oliphaunt-wasix-ts"
 language: "typescript"
 layer: "library"
 stack: "frontend"
-tags: ["binding", "wasix", "wasm", "typescript", "browser", "node", "bun", "deno", "sdk", "release-product"]
+tags: ["javascript-quality", "binding", "wasix", "wasm", "typescript", "browser", "node", "bun", "deno", "sdk", "release-product"]
 dependsOn:
+  - id: "shared-js-core"
+    scope: "build"
   - id: "cluster-seed-contract"
     scope: "development"
   - id: "shared-test-fixtures"
@@ -63,7 +65,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-      runInCI: false
 
   browser-host:
     tags: ["artifact", "build", "requires-rust"]
@@ -72,6 +73,7 @@ tasks:
       WASM_PACK_VERSION: "0.15.0"
     inputs:
       - "host/**/*"
+      - "/tools/dev/node-info.mts"
       - "@group(cargo-workspace)"
     outputs:
       - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"
@@ -84,8 +86,11 @@ tasks:
     script: |
       set -e
       pnpm --dir src/bindings/wasix-ts build
-      node src/bindings/wasix-ts/tools/stage-host.mjs
-      node src/bindings/wasix-ts/tools/package.mjs target/oliphaunt-wasix-ts/package
+      node src/bindings/wasix-ts/tools/stage-host.mts
+      node src/bindings/wasix-ts/tools/package.mts target/oliphaunt-wasix-ts/package
+      mkdir -p target/oliphaunt-wasix-ts/package/packages
+      cd target/oliphaunt-wasix-ts/package
+      PNPM_CONFIG_NODE_LINKER=hoisted pnpm --silent pack --pack-destination packages
     deps:
       - "oliphaunt-wasix-ts:browser-host"
       - "shared-js-core:build"
@@ -112,5 +117,79 @@ tasks:
     inputs: []
     options:
       cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  coverage:
+    tags: ["coverage"]
+    command: "pnpm run coverage"
+    deps: ["shared-js-core:build"]
+    inputs:
+      - "@group(code)"
+      - "@group(pnpm-workspace)"
+      - project: "shared-js-core"
+        group: "sources"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    outputs: ["/target/coverage/oliphaunt-wasix-ts/**/*"]
+    options:
+      cache: false
+      runInCI: false
+
+  release-package:
+    tags: ["release", "artifact-package", "ci-wasix-ts-sdk-package"]
+    script: |
+      set -eu
+      bash tools/dev/bun.sh src/bindings/wasix-ts/tools/stage-release-artifacts.mts
+      bash tools/dev/bun.sh src/bindings/wasix-ts/tools/check-package.mts
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "oliphaunt-wasix-tools-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "@group(release-archive-contract)"
+      - "/src/bindings/wasix-ts/tools/check-package.mts"
+      - "/src/shared/artifact-packaging/npm-trusted-publishing.mts"
+      - "/src/shared/artifact-packaging/staging.mts"
+      - "/src/bindings/wasix-ts/tools-package/tools/stage-release-artifacts.mts"
+      - "/src/bindings/wasix-ts/tools/stage-release-artifacts.mts"
+      - "/src/bindings/wasix-ts/tools-package/tools/wasix-tools-typescript-package.mts"
+      - "/src/bindings/wasix-ts/tools/wasix-typescript-package.mts"
+      - "/src/shared/js-core/tools/stage-package.mts"
+      - "/tools/dev/bun.sh"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  packaging-unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -eu
+      for test_file in src/bindings/wasix-ts/tools/wasix-typescript-package.test.mts; do
+        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
+      done
+    inputs:
+      - "/src/shared/js-core/tools/stage-package.mts"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "/tools/test/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/shared/artifact-packaging/*.{mts,sh}"
+      - "/src/shared/product-metadata/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  docs-api:
+    tags: ["docs"]
+    script: "pnpm --dir src/bindings/wasix-ts run docs:api"
+    inputs: ["**/*", "/src/shared/rust-query-core/src/**/*", "/src/shared/js-core/src/**/*", "@group(cargo-workspace)"]
+    outputs: ["/target/docs/generated/api/wasix-typescript/html/**/*"]
+    options:
       runFromWorkspaceRoot: true
       runInCI: false

@@ -78,9 +78,10 @@ fi
 series_hash="$(
   {
     sha256_text_lf "$PATCH_DIR/series"
-    for patch_file in "$PATCH_DIR"/*.patch; do
-      sha256_text_lf "$patch_file"
-    done
+    while IFS= read -r patch_name; do
+      [[ -z "$patch_name" || "$patch_name" =~ ^# ]] && continue
+      sha256_text_lf "$PATCH_DIR/$patch_name"
+    done < "$PATCH_DIR/series"
   } | sha256_stream
 )"
 new_fingerprint="$PG_VERSION:$PG_SHA256:$series_hash"

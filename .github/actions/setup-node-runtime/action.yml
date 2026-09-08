@@ -20,7 +20,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-node-runtime
-        key: verified-node-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-runtime/action.yml', '.github/actions/setup-moon/install-pinned-node.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/node-runtime.toml', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-node-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-runtime/action.yml', '.github/actions/setup-moon/install-pinned-node.sh', 'src/sources/toolchains/node-runtime.toml', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}
 
     - name: Install verified Node.js runtime
       id: install
@@ -53,4 +53,4 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-node-runtime
-        key: verified-node-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-runtime/action.yml', '.github/actions/setup-moon/install-pinned-node.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/node-runtime.toml', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-node-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-runtime/action.yml', '.github/actions/setup-moon/install-pinned-node.sh', 'src/sources/toolchains/node-runtime.toml', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}

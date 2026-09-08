@@ -23,10 +23,6 @@ include = [
   "THIRD_PARTY_LICENSES/ICU-LICENSE",
 ]
 
-[package.metadata.oliphaunt-wasix-tools.assets]
-pg-dump-wasix-sha256 = "90180532a2d4ccd68405f9ecc3057607e84fb5a033ae51541bc36535a8311909"
-psql-wasix-sha256 = "894aeb0d846c249e4697a4795184b2e6a470ca53daa4819f61c204f05baf9c8d"
-
 [lib]
 path = "src/lib.rs"
 

@@ -13,7 +13,7 @@ const {
   ensureIosConfigDeploymentTarget,
   insertAppGradlePlugin,
   insertIosPodfileBlock,
-  iosStageCommand,
+  iosStageOptions,
   normalizeOptions,
   readCarrierSummary,
   releaseOwnerForSqlName,
@@ -22,7 +22,7 @@ const {
   selectedExtensionClosure,
   serializeExtensionVersions,
   stageIosAppPayload,
-} = require('../../app.plugin.js');
+} = require('../../app.plugin.cts');
 const packageJson = require('../../package.json');
 const sdkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -363,7 +363,7 @@ test('Android package discovery passes exact owner versions and rejects compatib
   }
 });
 
-test('carrier env overrides are exact and stage only into the app ios tree', () => {
+test('carrier env overrides are exact and stage only into the app ios tree', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-stage-'));
   try {
     const projectRoot = path.join(root, 'app');
@@ -389,43 +389,30 @@ test('carrier env overrides are exact and stage only into the app ios tree', () 
       icu: true,
     };
 
-    const command = iosStageCommand(projectRoot, iosRoot, normalized, { env });
-    assert.deepEqual(command.carrierManifests, [baseCarrier, cubeCarrier, earthdistanceCarrier]);
-    assert.equal(command.outputDir, path.join(iosRoot, 'oliphaunt'));
-    assert.equal(command.args.filter((arg: string) => arg === '--carrier').length, 3);
-    assert.deepEqual(command.args.slice(-8), [
-      '--output-dir',
-      path.join(iosRoot, 'oliphaunt'),
-      '--extensions',
-      'earthdistance',
-      '--icu',
-      '--cache-dir',
-      path.join(projectRoot, '.oliphaunt-cache'),
-      '--allow-file-urls',
-    ]);
-    assert.ok(command.args.includes('--allow-file-urls'));
-    assert.ok(!command.outputDir.includes('node_modules'));
-
-    let spawned = false;
-    stageIosAppPayload(projectRoot, iosRoot, normalized, {
+    const staging = iosStageOptions(projectRoot, iosRoot, normalized, { env });
+    assert.deepEqual(staging, {
+      carriers: [baseCarrier, cubeCarrier, earthdistanceCarrier],
+      outputDir: path.join(iosRoot, 'oliphaunt'),
+      extensions: ['earthdistance'],
+      icu: true,
+      cacheDir: path.join(projectRoot, '.oliphaunt-cache'),
+      allowFileUrls: true,
+    });
+    let staged = false;
+    await stageIosAppPayload(projectRoot, iosRoot, normalized, {
       env,
-      spawnSyncImpl: (_executable: string, args: string[], options: { cwd: string }) => {
-        spawned = true;
-        assert.equal(options.cwd, projectRoot);
-        const outputIndex = args.indexOf('--output-dir');
-        const outputDir = args[outputIndex + 1];
-        if (outputIndex < 0 || outputDir === undefined) {
-          throw new Error('stage command omitted --output-dir');
-        }
-        fs.mkdirSync(outputDir, { recursive: true });
+      stageIosAppImpl: async (options: typeof staging) => {
+        assert.deepEqual(options, staging);
+        await Promise.resolve();
+        fs.mkdirSync(options.outputDir, { recursive: true });
         fs.writeFileSync(
-          path.join(outputDir, 'OliphauntReactNativePayload.podspec'),
+          path.join(options.outputDir, 'OliphauntReactNativePayload.podspec'),
           'Pod::Spec.new\n',
         );
-        return { error: undefined, status: 0, stderr: '', stdout: '' };
+        staged = true;
       },
     });
-    assert.equal(spawned, true);
+    assert.equal(staged, true);
     assert.equal(fs.existsSync(path.join(projectRoot, 'node_modules')), false);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
@@ -456,14 +443,13 @@ test('aggregate CI carrier override supplies base and dependency closure exactly
       }),
       [aggregateCarrier],
     );
-    const command = iosStageCommand(
+    const command = iosStageOptions(
       projectRoot,
       path.join(projectRoot, 'ios'),
       { extensions: ['earthdistance'], icu: false },
       { env, packageJsonResolver },
     );
-    assert.equal(command.args.filter((arg: string) => arg === '--carrier').length, 1);
-    assert.deepEqual(command.carrierManifests, [aggregateCarrier]);
+    assert.deepEqual(command.carriers, [aggregateCarrier]);
     assert.throws(
       () =>
         resolveIosCarrierManifests(projectRoot, ['earthdistance'], {
@@ -487,7 +473,7 @@ test('aggregate CI carrier override supplies base and dependency closure exactly
   }
 });
 
-test('carrier discovery and staging fail closed', () => {
+test('carrier discovery and staging fail closed', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-failure-'));
   try {
     const fakeOwner = path.join(root, 'fake-owner.json');
@@ -576,7 +562,7 @@ test('carrier discovery and staging fail closed', () => {
         vector: vectorCarrier,
       }),
     };
-    assert.throws(
+    await assert.rejects(
       () =>
         stageIosAppPayload(
           root,
@@ -584,15 +570,12 @@ test('carrier discovery and staging fail closed', () => {
           { extensions: ['vector'], icu: false },
           {
             env: stageEnv,
-            spawnSyncImpl: () => ({
-              error: undefined,
-              status: 12,
-              stderr: 'checksum mismatch',
-              stdout: '',
-            }),
+            stageIosAppImpl: async () => {
+              throw new Error('checksum mismatch');
+            },
           },
         ),
-      /exit code 12: checksum mismatch/,
+      /checksum mismatch/,
     );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });

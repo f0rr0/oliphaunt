@@ -15,7 +15,7 @@ ICU_BUILD_DIR="${ICU_BUILD_DIR:-$GENERATED_ROOT/work/icu-wasix-build}"
 JOBS="${JOBS:-4}"
 
 if [ ! -x "$ICU_SOURCE_DIR/configure" ]; then
-  echo "missing ICU source checkout at $ICU_SOURCE_DIR; run \`cargo run -p xtask -- assets fetch\` first" >&2
+  echo "missing ICU source checkout at $ICU_SOURCE_DIR; run \`bash src/sources/tools/fetch-sources.sh wasix-runtime --force\` first" >&2
   exit 1
 fi
 

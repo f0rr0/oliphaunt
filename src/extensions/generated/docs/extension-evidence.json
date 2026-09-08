@@ -16,7 +16,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -28,7 +28,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "amcheck"
     },
@@ -48,7 +48,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -60,7 +60,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "auto_explain"
     },
@@ -80,7 +80,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -92,7 +92,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "bloom"
     },
@@ -112,7 +112,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -124,7 +124,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "btree_gin"
     },
@@ -144,7 +144,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -156,7 +156,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "btree_gist"
     },
@@ -176,7 +176,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -188,7 +188,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "citext"
     },
@@ -208,7 +208,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -220,7 +220,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "cube"
     },
@@ -240,7 +240,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -252,7 +252,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "dict_int"
     },
@@ -272,7 +272,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -284,7 +284,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "dict_xsyn"
     },
@@ -304,7 +304,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -316,7 +316,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "earthdistance"
     },
@@ -336,7 +336,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -348,7 +348,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "file_fdw"
     },
@@ -368,7 +368,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -380,7 +380,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "fuzzystrmatch"
     },
@@ -400,7 +400,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -412,7 +412,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "hstore"
     },
@@ -432,7 +432,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -444,7 +444,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "intarray"
     },
@@ -464,7 +464,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -476,7 +476,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "isn"
     },
@@ -496,7 +496,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -508,7 +508,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "lo"
     },
@@ -528,7 +528,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -540,7 +540,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "ltree"
     },
@@ -560,7 +560,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -572,7 +572,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pageinspect"
     },
@@ -592,7 +592,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -604,7 +604,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_buffercache"
     },
@@ -624,7 +624,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -636,7 +636,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_freespacemap"
     },
@@ -656,7 +656,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -668,7 +668,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_hashids"
     },
@@ -688,7 +688,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -700,7 +700,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_ivm"
     },
@@ -720,7 +720,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -732,7 +732,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_surgery"
     },
@@ -752,7 +752,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -764,7 +764,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_textsearch"
     },
@@ -784,7 +784,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -796,7 +796,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_trgm"
     },
@@ -816,7 +816,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -828,7 +828,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_uuidv7"
     },
@@ -848,7 +848,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -860,7 +860,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_visibility"
     },
@@ -880,7 +880,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -892,7 +892,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pg_walinspect"
     },
@@ -912,7 +912,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -924,7 +924,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pgcrypto"
     },
@@ -944,7 +944,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -956,7 +956,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "pgtap"
     },
@@ -976,7 +976,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -988,7 +988,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "postgis"
     },
@@ -1008,7 +1008,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1020,7 +1020,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "seg"
     },
@@ -1040,7 +1040,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1052,7 +1052,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "tablefunc"
     },
@@ -1072,7 +1072,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1084,7 +1084,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "tcn"
     },
@@ -1104,7 +1104,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1116,7 +1116,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "tsm_system_rows"
     },
@@ -1136,7 +1136,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1148,7 +1148,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "tsm_system_time"
     },
@@ -1168,7 +1168,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1180,7 +1180,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "unaccent"
     },
@@ -1200,7 +1200,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1212,7 +1212,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "uuid-ossp"
     },
@@ -1232,7 +1232,7 @@
             "direct",
             "server",
             "restart",
-            "dump-restore"
+            "backup-restore"
           ]
         }
       ],
@@ -1244,7 +1244,7 @@
         "direct",
         "server",
         "restart",
-        "dump-restore"
+        "backup-restore"
       ],
       "sql-name": "vector"
     }
@@ -1268,7 +1268,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:47bc7c405ac17e5ca1d29bff8f4455cf105a457d5c6de300a6392ded5f5891b4",
+  "source-digest": "sha256:c93db3ba5e8993b2d2e61fc7ba27c0525006296c1f1bdfc9f64b003f6be9bf19",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1312,8 +1312,8 @@
     "src/extensions/external/postgis/targets/native-static-registry.toml",
     "src/extensions/external/postgis/targets/native.toml",
     "src/extensions/external/postgis/targets/wasix.toml",
-    "src/extensions/external/postgis/tests/regression.sql",
     "src/extensions/external/postgis/tools/build_wasix.sh",
+    "src/extensions/external/postgis/tools/preprocess-sql.mts",
     "src/extensions/external/postgis/tools/reproducible-bin/date",
     "src/extensions/external/postgis/tools/reproducible-time.sh",
     "src/extensions/external/postgis/upstream-license-data.json",

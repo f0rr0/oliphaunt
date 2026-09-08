@@ -69,11 +69,12 @@
     "!src/__tests__"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "build": "bash -c \"rm -rf lib\" && tsc -p tsconfig.build.json",
     "docs:api": "typedoc --options typedoc.json",
     "test": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__",
     "typecheck": "tsc --noEmit",
-    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
+    "clean": "bash -c \"rm -rf lib\"",
+    "coverage": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__ --coverage --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=lcov --coverage.reportsDirectory=../../../target/coverage/oliphaunt-js"
   },
   "engines": {
     "node": ">=22.13 <25"

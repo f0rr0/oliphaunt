@@ -5,7 +5,7 @@ host_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 binding_dir="$(cd "$host_dir/.." && pwd)"
 repo_root="$(cd "$binding_dir/../../.." && pwd)"
 source_manifest="$host_dir/source.toml"
-provenance_script="$host_dir/build-provenance.mjs"
+provenance_script="$host_dir/build-provenance.mts"
 target_parent="$repo_root/target/oliphaunt-wasix-ts/host"
 target_dir="$target_parent/wasmer-sdk"
 cargo_target_dir="$target_parent/cargo"
@@ -103,7 +103,7 @@ if [[ "$(git -C "$wasmer_js_dir" rev-parse HEAD)" != "$wasmer_js_commit" ]]; the
   echo "wasix-ts host build: Wasmer JS checkout did not resolve the pinned commit" >&2
   exit 1
 fi
-actual_wasmer_js_version="$(node -p "require(process.argv[1]).version" "$wasmer_js_dir/package.json")"
+actual_wasmer_js_version="$(node "$repo_root/tools/dev/node-info.mts" package-version "$wasmer_js_dir/package.json")"
 if [[ "$actual_wasmer_js_version" != "$wasmer_js_version" ]]; then
   echo "wasix-ts host build: pinned Wasmer JS version is $actual_wasmer_js_version, expected $wasmer_js_version" >&2
   exit 1

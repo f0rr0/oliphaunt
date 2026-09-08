@@ -7,7 +7,7 @@ repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
 cd "$repo_root"
 
 if [ "${1:-}" != "" ]; then
-  node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --smoke-only --root "$1"
+  bash src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.sh --smoke-only --root "$1"
 else
-  node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --smoke-only
+  bash src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.sh --smoke-only
 fi

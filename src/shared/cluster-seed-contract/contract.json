@@ -6,10 +6,7 @@
       "schema": "oliphaunt-runtime-resources-v1",
       "layout": "oliphaunt-cluster-seed-v1",
       "cacheKeyPattern": "^[A-Za-z0-9._-]{1,128}$",
-      "cacheKeyDisallowedValues": [
-        ".",
-        ".."
-      ]
+      "cacheKeyDisallowedValues": [".", ".."]
     },
     "wasix": {
       "schema": "oliphaunt-cluster-seed-v1"
@@ -22,9 +19,7 @@
     },
     "icu": {
       "artifactRole": "cluster-seed-icu",
-      "requiredRuntimeFeatures": [
-        "icu"
-      ]
+      "requiredRuntimeFeatures": ["icu"]
     }
   },
   "icu": {

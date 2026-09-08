@@ -4,7 +4,7 @@ id: "oliphaunt-node-direct"
 language: "typescript"
 layer: "library"
 stack: "systems"
-tags: ["runtime", "node", "native", "node-api", "release-product"]
+tags: ["javascript-quality", "runtime", "node", "native", "node-api", "release-product"]
 dependsOn:
   - "liboliphaunt-native"
 
@@ -39,6 +39,7 @@ tasks:
     inputs:
       - "native/**/*"
       - "tools/check-native-source.sh"
+      - "tools/native-build-data.mts"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "@group(pnpm-workspace)"
     options:
@@ -46,9 +47,24 @@ tasks:
 
   unit:
     tags: ["quality", "unit"]
-    command: "bash tools/test-node-addon-cleanup-lifecycle.sh --test-path-classifier"
+    script: |
+      set -e
+      bash tools/test-node-addon-cleanup-lifecycle.sh --test-path-classifier
+      bash tools/install-node-fallback.test.sh
+      bun test tools/check-release-assets.test.mts
     inputs:
       - "tools/test-node-addon-cleanup-lifecycle.sh"
+      - "tools/install-node-fallback*"
+      - "tools/extract-node-headers.mts"
+      - "/src/sources/toolchains/node.toml"
+      - "/tools/test/tar-fixture.mts"
+      - "tools/check-release-assets*.mts"
+      - "packages/**/package.json"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/src/shared/artifact-packaging/**/*"
+      - "/src/shared/product-metadata/**/*"
+      - "/tools/dev/bun.sh"
     options:
       cache: true
 
@@ -61,3 +77,75 @@ tasks:
     inputs: []
     options:
       cache: true
+
+  build-release-assets:
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-node-direct"]
+    command: "bash src/runtimes/node-direct/tools/package-node-direct-runtime.sh"
+    inputs:
+      - "@group(code)"
+      - "/tools/dev/node-info.mts"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sources/toolchains/node.toml"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/src/shared/product-metadata/artifact-target-matrix.mts"
+      - "/src/runtimes/node-direct/tools/check-release-assets.mts"
+      - "/src/shared/artifact-packaging/check-linux-consumer-baseline.sh"
+      - "/src/shared/artifact-packaging/linux-abi-baseline.test.mts"
+      - "/src/shared/product-metadata/platform-compatibility-policy.mts"
+      - "/src/shared/product-metadata/platform-compatibility-policy.test.mts"
+      - "/src/shared/artifact-packaging/platform-binary-contract.mts"
+      - "/src/shared/artifact-packaging/strip-native-binaries.sh"
+      - "/src/shared/artifact-packaging/platform-binary-contract.test.mts"
+      - "/src/runtimes/node-direct/tools/extract-node-headers.mts"
+      - "/src/runtimes/node-direct/tools/install-node-fallback.sh"
+      - "/src/runtimes/node-direct/tools/package-node-direct-runtime.sh"
+      - "/src/shared/artifact-packaging/release-asset-validation.mts"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mts"
+      - "/src/shared/product-metadata/release-artifact-targets.mts"
+      - "/src/shared/product-metadata/query.mts"
+      - "/release-please-config.json"
+    outputs:
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+
+  finalize-release-assets:
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-node-direct-release-assets"]
+    command: "tools/dev/bun.sh src/runtimes/node-direct/tools/check-release-assets.mts --aggregate"
+    deps:
+      - "oliphaunt-node-direct:build-release-assets"
+    inputs:
+      - "@group(legal-files)"
+      - "/pnpm-workspace.yaml"
+      - "@group(code)"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sources/toolchains/node.toml"
+      - "/src/shared/product-metadata/artifact-target-matrix.mts"
+      - "/src/shared/artifact-packaging/check-linux-consumer-baseline.sh"
+      - "/src/shared/artifact-packaging/finalize-helper-assets.mts"
+      - "/src/runtimes/node-direct/tools/check-release-assets.mts"
+      - "/src/shared/artifact-packaging/linux-abi-baseline.test.mts"
+      - "/src/shared/product-metadata/platform-compatibility-policy.mts"
+      - "/src/shared/product-metadata/platform-compatibility-policy.test.mts"
+      - "/src/shared/artifact-packaging/platform-binary-contract.mts"
+      - "/src/shared/artifact-packaging/strip-native-binaries.sh"
+      - "/src/shared/artifact-packaging/platform-binary-contract.test.mts"
+      - "/src/shared/artifact-packaging/release-asset-validation.mts"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mts"
+      - "/src/shared/product-metadata/release-artifact-targets.mts"
+      - "@group(release-archive-contract)"
+      - "/src/shared/product-metadata/query.mts"
+      - "/src/shared/artifact-packaging/write-checksum-manifest.mts"
+      - "/release-please-config.json"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

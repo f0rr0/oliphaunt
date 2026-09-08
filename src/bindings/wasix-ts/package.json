@@ -101,15 +101,16 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "build": "bash -c \"rm -rf lib\" && tsc -p tsconfig.build.json",
     "dev": "pnpm run package:build && vite --config ../../../examples/browser-wasix/vite.config.ts",
     "host:build": "bash host/build-sdk.sh",
-    "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
+    "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mts",
     "package:build:closure": "pnpm run package:build && pnpm --dir tools-package build",
     "docs:api": "typedoc --options typedoc.json",
     "test": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__",
     "typecheck": "tsc --noEmit",
-    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
+    "clean": "bash -c \"rm -rf lib\"",
+    "coverage": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__ --coverage --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=lcov --coverage.reportsDirectory=../../../target/coverage/oliphaunt-wasix-ts"
   },
   "dependencies": {
     "@oliphaunt/js-core": "workspace:*",

@@ -4,7 +4,7 @@ projects:
   globFormat: "source-path"
   globs:
     - "moon.yml"
-    - "benchmarks/moon.yml"
+    - "benchmarks/**/moon.yml"
     - "examples/moon.yml"
     - "src/**/moon.yml"
     - "tools/**/moon.yml"

@@ -16,18 +16,6 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-read_toml_value() {
-  local key="$1"
-  awk -F'=' -v key="$key" '
-    $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
-      gsub(/^"|"$/, "", $2)
-      print $2
-      exit
-    }
-  ' "$POSTGRES_SOURCE_TOML"
-}
-
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
@@ -48,9 +36,9 @@ fresh_require_managed_generated_path "$BASELINE_DIR" BASELINE_DIR
 # baseline, so no process can observe a partially replaced checkout.
 fresh_lock_postgres_baseline exclusive
 
-manifest_version="$(read_toml_value version)"
-manifest_url="$(read_toml_value url)"
-manifest_sha256="$(read_toml_value sha256)"
+manifest_version="$(fresh_source_scalar "$POSTGRES_SOURCE_TOML" version)"
+manifest_url="$(fresh_source_scalar "$POSTGRES_SOURCE_TOML" url)"
+manifest_sha256="$(fresh_source_scalar "$POSTGRES_SOURCE_TOML" sha256)"
 [ "$manifest_version" = "$POSTGRES_VERSION" ] || {
   echo "PostgreSQL version mismatch: common=$POSTGRES_VERSION manifest=$manifest_version" >&2
   exit 1

@@ -42,8 +42,25 @@ func runtimeCacheUsesApplicationDataNamespaceCasing() {
     #expect(cacheRoot.deletingLastPathComponent().lastPathComponent == "Oliphaunt")
 }
 
-// OLIPHAUNT_DOCS_SNIPPET swift-quickstart
 
+@Test(.enabled(if: ProcessInfo.processInfo.environment["OLIPHAUNT_SWIFT_REQUIRE_NATIVE"] == "1"))
+func nativeDatabaseExecutesSQLAndCloses() async throws {
+    let database = try await OliphauntDatabase.open()
+    do {
+        let result = try await database.query("SELECT $1::int4 AS answer", parameters: [.int32(42)])
+        #expect(try result.rows[0].value(named: "answer", as: Int32.self) == 42)
+        await #expect(throws: (any Error).self) {
+            _ = try await database.exec("SELECT 1 / 0")
+        }
+        try await database.close()
+        #expect(await database.isClosed)
+    } catch {
+        try? await database.close()
+        throw error
+    }
+}
+
+// OLIPHAUNT_DOCS_SNIPPET swift-quickstart
 @Test
 func executeReturnsPostgresCommandMetadata() async throws {
     let session = TestSession(response: commandResponse("UPDATE 3"))

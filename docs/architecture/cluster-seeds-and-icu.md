@@ -164,8 +164,9 @@ only its `oliphaunt-icu-data-v1` schema, `icu-data` role, ICU version/form, and
 logical tree SHA-256. A target seed repeats that digest in its own manifest.
 Comparing the two receipts binds the closure without rereading 31.7 MB on every
 open; full tree hashing remains a producer check and an unmanaged-path check.
-Release qualification compares that native receipt with the canonical WASIX
-runtime and ICU seed manifests after both release families have been assembled;
+Each WASIX release verifies its seed identity against the actual ICU archive.
+Cross-family qualification hashes and compares the paths and bytes in both ICU
+data archives after both release families have been assembled;
 single-family focused builds do not manufacture a cross-family proof.
 
 The native ICU release asset records only `icu-data`. Each target runtime report
@@ -256,8 +257,7 @@ The cross-language contract lives in
 `src/shared/cluster-seed-contract/contract.json`. It owns profile names,
 artifact roles, ICU form/version, readiness signal, physical formats,
 compatibility keys, and the logical digest algorithm. The independently
-scheduled `sdk-contracts:cluster-seeds` gate validates canonical fixtures and
-is included in the local `sdk-contracts:all` aggregate. Release tools
+product tests validate canonical fixtures through the real seed readers. Release tools
 reuse one native manifest/digest validator rather than reimplementing it.
 
 Filesystem hot paths deliberately remain provider-local. A universal
@@ -369,7 +369,7 @@ The repository implementation must keep every item below true:
   for data files.
 - [x] Package footprint reports separate runtime, standard seed, ICU seed, and
   ICU data bytes where those products are assembled.
-- [x] The cluster-seed contract is wired into `sdk-contracts:cluster-seeds`; source-free
+- [x] The cluster-seed contract is exercised by SDK and runtime seed-reader tests; source-free
   asset and release checks cover the generated graph.
 - [x] Negative tests cover profile mismatches, missing members, changed data
   digests, unsafe inputs, and fail-closed package resolution.

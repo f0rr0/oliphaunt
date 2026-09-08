@@ -21,7 +21,6 @@ export FRESH_WASMER_BUILD_RECEIPT="$test_root/wasmer-build.receipt"
 export FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT="$test_root/postmaster-executor-build.receipt"
 export WASIX_INSTALL_DIR="$test_root/install"
 export WASIX_CORE_PROFILE=release-o3
-export FAKE_WASMER_CAPTURE_LOG="$test_root/memory-captures.log"
 export FAKE_WASMER_VALIDATION_LOG="$test_root/final-validations.log"
 unset FRESH_PINNED_WASMER_CACHE_DIR FRESH_ALLOW_PINNED_CACHE_WRITE
 
@@ -50,17 +49,28 @@ fresh_atomic_publish_directory_noreplace \
   printf 'atomic carrier publication did not rename the exact source directory\n' >&2
   exit 1
 }
+mkdir "$atomic_parent/empty-competitor"
+touch "$atomic_parent/file-competitor"
+ln -s published "$atomic_parent/link-competitor"
+for competitor in empty-competitor file-competitor link-competitor; do
+  if fresh_atomic_publish_directory_noreplace \
+    "$atomic_parent/source" "$atomic_parent/$competitor" >/dev/null 2>&1; then
+    printf 'atomic publication replaced %s\n' "$competitor" >&2
+    exit 1
+  fi
+  [ -d "$atomic_parent/source" ] || exit 1
+done
 
 mkdir -p \
   "$WASIX_INSTALL_DIR/bin" \
   "$WASIX_INSTALL_DIR/lib/postgresql" \
   "$WASIX_INSTALL_DIR/share/postgresql"
-cp "$project_root/testdata/fake-sealed-wasmer.py" "$FRESH_UPSTREAM_WASMER_BIN"
-cp "$project_root/testdata/fake-sealed-wasmer.py" "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
-cp "$project_root/testdata/fake-sealed-wasmer.py" "$FRESH_POSTMASTER_EXECUTOR_BIN"
-printf '# product-executor-fixture\n' >>"$FRESH_POSTMASTER_EXECUTOR_BIN"
-cp "$project_root/testdata/fake-start-proof.py" "$FRESH_START_PROOF_BIN"
-cp "$project_root/testdata/fake-postmaster-compiler.py" "$FRESH_POSTMASTER_COMPILER_BIN"
+bun build --target=bun "$project_root/testdata/fake-sealed-wasmer.mts" --outfile "$FRESH_UPSTREAM_WASMER_BIN" >/dev/null
+cp "$FRESH_UPSTREAM_WASMER_BIN" "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
+cp "$FRESH_UPSTREAM_WASMER_BIN" "$FRESH_POSTMASTER_EXECUTOR_BIN"
+printf '// product-executor-fixture\n' >>"$FRESH_POSTMASTER_EXECUTOR_BIN"
+bun build --target=bun "$project_root/testdata/fake-start-proof.mts" --outfile "$FRESH_START_PROOF_BIN" >/dev/null
+bun build --target=bun "$project_root/testdata/fake-postmaster-compiler.mts" --outfile "$FRESH_POSTMASTER_COMPILER_BIN" >/dev/null
 chmod +x "$FRESH_UPSTREAM_WASMER_BIN" "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN" \
   "$FRESH_POSTMASTER_EXECUTOR_BIN" "$FRESH_START_PROOF_BIN" \
   "$FRESH_POSTMASTER_COMPILER_BIN"
@@ -70,7 +80,7 @@ printf 'libpq-wasm\n' >"$WASIX_INSTALL_DIR/lib/libpq.so.5.18"
 printf 'snowball-wasm\n' >"$WASIX_INSTALL_DIR/lib/postgresql/dict_snowball.so"
 printf 'plpgsql-wasm\n' >"$WASIX_INSTALL_DIR/lib/postgresql/plpgsql.so"
 printf 'sample-config\n' >"$WASIX_INSTALL_DIR/share/postgresql/postgresql.conf.sample"
-python3 "$project_root/testdata/make-sealed-export-fixture.py" \
+bun "$project_root/testdata/make-sealed-export-fixture.mts" \
   --install-root "$WASIX_INSTALL_DIR" \
   --project-root "$project_root"
 chmod 0644 "$WASIX_INSTALL_DIR/share/postgresql/postgresql.conf.sample"
@@ -102,87 +112,12 @@ final_wasm_concurrency_receipt_sha256="$(
 
 sealed_export_receipt="$WASIX_INSTALL_DIR/share/postgresql/wasix-postmaster.sealed-export.structure.receipt"
 linear_memory_receipt="$WASIX_INSTALL_DIR/share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json"
-python3 - "$WASIX_INSTALL_DIR" "$sealed_export_receipt" "$linear_memory_receipt" "$project_root" <<'PY'
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-predecessor = Path(sys.argv[2])
-output = Path(sys.argv[3])
-project_root = Path(sys.argv[4])
-side_manifest = project_root / "runtime/policies/sealed-side-modules.v1.tsv"
-side_paths = [
-    line.split("\t", 1)[0]
-    for line in side_manifest.read_text(encoding="utf-8").splitlines()
-    if line and not line.startswith("#")
-]
-module_paths = ("bin/initdb", "bin/postgres", *side_paths)
-records = []
-for relative in module_paths:
-    data = (root / relative).read_bytes()
-    records.append(
-        {
-            "path": relative,
-            "source-module-sha256": hashlib.sha256(data).hexdigest(),
-            "module-sha256": hashlib.sha256(data).hexdigest(),
-            "initial-pages": 1,
-            "maximum-pages": 4096,
-            "maximum-bytes": 268435456,
-            "shared": True,
-            "import-module": "env",
-            "import-name": "memory",
-            "transformation": "pinned-wasixcc-65536-to-embedded-4096-reversible-v1",
-        }
-    )
-records.sort(key=lambda record: record["path"])
-
-def closure_hash(field):
-    digest = hashlib.sha256()
-    for value in (
-        "oliphaunt.wasix-postmaster.linear-memory-install-closure.v1",
-        field,
-    ):
-        encoded = value.encode()
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-    for record in records:
-        for value in (record["path"], record[field]):
-            encoded = value.encode()
-            digest.update(len(encoded).to_bytes(8, "big"))
-            digest.update(encoded)
-    return digest.hexdigest()
-
-receipt = {
-    "schema": "oliphaunt.wasix-postmaster.linear-memory-install.v1",
-    "profile-id": "oliphaunt.wasix-postmaster.linear-memory.wasm32-max256m-u64-static4g-guard2g.v1",
-    "address-width": "wasm32",
-    "supported-host-pointer-width": "u64",
-    "maximum-pages": 4096,
-    "maximum-bytes": 268435456,
-    "static-bound-pages": 65536,
-    "static-offset-guard-bytes": 2147483648,
-    "static-access-lowering": "wasmer-llvm-unchecked-reservation-and-guard-v1",
-    "requires-shared": True,
-    "requires-import": "env.memory",
-    "excludes-wasm32-end-wrap": True,
-    "predecessor-export-closure-receipt": predecessor.relative_to(root).as_posix(),
-    "predecessor-export-closure-receipt-sha256": hashlib.sha256(predecessor.read_bytes()).hexdigest(),
-    "source-module-closure-sha256": closure_hash("source-module-sha256"),
-    "module-closure-sha256": closure_hash("module-sha256"),
-    "module-count": len(records),
-    "modules": records,
-}
-with output.open("x", encoding="utf-8", newline="\n") as stream:
-    json.dump(receipt, stream, indent=2, sort_keys=True)
-    stream.write("\n")
-PY
+bun "$project_root/testdata/make-sealed-export-fixture.mts" --linear-memory --install-root "$WASIX_INSTALL_DIR" --project-root "$project_root"
 chmod 0444 "$sealed_export_receipt" "$linear_memory_receipt"
 linear_memory_install_receipt_sha256="$(fresh_wasmer_bin_hash "$linear_memory_receipt")"
 
 installed_closure_sha256="$(
-  python3 "$project_root/lib/guest_build_provenance.py" \
+  bun "$project_root/lib/guest-build-provenance.mts" \
     identity "$WASIX_INSTALL_DIR"
 )"
 {
@@ -357,24 +292,8 @@ then
   printf 'carrier builder left staging or validation state after initdb failure\n' >&2
   exit 1
 fi
-python3 - "$FAKE_WASMER_VALIDATION_LOG" <<'PY'
-import json
-import os
-import sys
+bun "$project_root/testdata/check-carrier-receipts.mts" --validation-log "$FAKE_WASMER_VALIDATION_LOG"
 
-with open(sys.argv[1], encoding="utf-8") as stream:
-    records = [json.loads(line) for line in stream]
-assert [record["program"] for record in records] == ["postgres", "initdb"]
-assert records[0]["arguments"] == ["--version"]
-assert records[1]["arguments"] != ["--version"]
-for record in records:
-    for volume in record["volumes"]:
-        host, guest = volume.rsplit(":", 1)
-        if guest in {"/pgdata", "/dev/shm"}:
-            assert not os.path.exists(host), (guest, host)
-PY
-
-: >"$FAKE_WASMER_CAPTURE_LOG"
 : >"$FAKE_WASMER_VALIDATION_LOG"
 
 if FRESH_PINNED_WASMER_CACHE_DIR="$test_root/foreign-pinned-cache" \
@@ -445,123 +364,9 @@ side_module_count="$(awk -F '\t' '!/^#/ && NF { count += 1 } END { print count +
 [ "$(stat -c %a "$output" 2>/dev/null || stat -f %Lp "$output")" = 555 ]
 [ "$(stat -c %a "$output/share/postgresql/postgresql.conf.sample" 2>/dev/null || stat -f %Lp "$output/share/postgresql/postgresql.conf.sample")" = 444 ]
 
-python3 - "$output" "$project_root/runtime/policies/sealed-side-modules.v1.tsv" <<'PY'
-import hashlib
-import json
-import os
-import sys
 
-root = sys.argv[1]
-side_module_policy = sys.argv[2]
-with open(os.path.join(root, "manifest.json"), encoding="utf-8") as stream:
-    manifest = json.load(stream)
-assert manifest["format-version"] == 6
-assert manifest["schema"] == "oliphaunt.wasix-postmaster.sealed-aot.v5"
-assert manifest["core-profile"] == "release-o3"
-with open(os.path.join(root, "guest-build.receipt"), "rb") as stream:
-    guest_build_receipt = stream.read()
-assert manifest["guest-build-recipe-sha256"] == hashlib.sha256(
-    guest_build_receipt
-).hexdigest()
-assert manifest["entrypoint"] == "runtime:postgres"
-linear_profile = manifest["linear-memory-profile"]
-assert linear_profile == {
-    "id": "oliphaunt.wasix-postmaster.linear-memory.wasm32-max256m-u64-static4g-guard2g.v1",
-    "address-width": "wasm32",
-    "supported-host-pointer-width": "u64",
-    "maximum-pages": 4096,
-    "maximum-bytes": 268435456,
-    "static-bound-pages": 65536,
-    "static-offset-guard-bytes": 2147483648,
-    "static-access-lowering": "wasmer-llvm-unchecked-reservation-and-guard-v1",
-    "install-receipt-path": "share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json",
-    "install-receipt-sha256": hashlib.sha256(
-        open(
-            os.path.join(
-                root,
-                "share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json",
-            ),
-            "rb",
-        ).read()
-    ).hexdigest(),
-}
-with open(os.path.join(root, "postmaster-executor.receipt"), encoding="utf-8") as stream:
-    executor_receipt = dict(line.rstrip("\n").split("=", 1) for line in stream)
-assert executor_receipt["schema"] == "oliphaunt.wasix-postmaster.postmaster-executor-build.v3"
-assert executor_receipt["linear_memory_profile_id"] == linear_profile["id"]
-assert executor_receipt["executor_role"] == "postmaster-product"
-assert executor_receipt["executor_binary_sha256"] == manifest["executor-sha256"]
-with open(side_module_policy, encoding="utf-8") as stream:
-    side_modules = {
-        line.split("\t", 1)[0]
-        for line in stream
-        if line.strip() and not line.startswith("#")
-    }
-assert len(manifest["artifacts"]) == len(side_modules) + 2
-assert {
-    item["module-path"]
-    for item in manifest["artifacts"]
-    if item["kind"] == "side-module"
-} == side_modules
-assert {tuple(item["exec-aliases"]) for item in manifest["artifacts"] if item["kind"] == "executable"} == {
-    ("/bin/initdb",),
-    ("/bin/postgres",),
-}
-for artifact in manifest["artifacts"]:
-    assert "preinitialized-memory" not in artifact
-with open(os.path.join(root, "payload.files"), encoding="utf-8") as stream:
-    assert stream.readline().strip() == "schema=oliphaunt.wasix-postmaster.payload-files.v1"
-    listed_payloads = set()
-    for line in stream:
-        digest, size, relative = line.rstrip("\n").split("\t")
-        assert relative not in listed_payloads
-        listed_payloads.add(relative)
-        path = os.path.join(root, relative)
-        assert os.path.getsize(path) == int(size)
-        with open(path, "rb") as payload:
-            assert hashlib.sha256(payload.read()).hexdigest() == digest
-expected_payloads = set()
-for current, dirs, files in os.walk(root):
-    dirs.sort()
-    files.sort()
-    for name in files:
-        relative = os.path.relpath(os.path.join(current, name), root)
-        if relative != "payload.files":
-            expected_payloads.add(relative)
-assert listed_payloads == expected_payloads
-assert not any(path.startswith(".") for path in listed_payloads)
-PY
 
-python3 - "$FAKE_WASMER_VALIDATION_LOG" <<'PY'
-import json
-import os
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    records = [json.loads(line) for line in stream]
-assert [record["program"] for record in records] == ["postgres", "initdb"]
-assert records[0]["arguments"] == ["--version"]
-assert records[1]["arguments"] == [
-    "-D",
-    "/pgdata",
-    "-A",
-    "trust",
-    "--no-locale",
-    "--encoding=UTF8",
-    "--no-instructions",
-]
-for record in records:
-    guest_volumes = {}
-    for volume in record["volumes"]:
-        host, guest = volume.rsplit(":", 1)
-        assert guest not in guest_volumes
-        guest_volumes[guest] = host
-    carrier_root = next(host for guest, host in guest_volumes.items() if guest == host)
-    assert guest_volumes["/lib"] == os.path.join(carrier_root, "lib")
-    assert guest_volumes["/share"] == os.path.join(carrier_root, "share")
-    for guest in ("/pgdata", "/dev/shm"):
-        assert not os.path.exists(guest_volumes[guest]), (guest, guest_volumes[guest])
-PY
+bun "$project_root/testdata/check-carrier-receipts.mts" --validation-log "$FAKE_WASMER_VALIDATION_LOG"
 
 if find "$test_root" -maxdepth 1 -type d \
   \( -name '.carrier.tmp.*' -o -name '.carrier.validate.*' \) \
@@ -571,19 +376,9 @@ then
   exit 1
 fi
 
-manifest_source_fingerprint="$(python3 - "$output/manifest.json" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as stream:
-    print(json.load(stream)["source-fingerprint"])
-PY
+manifest_source_fingerprint="$(bun "$project_root/testdata/check-carrier-receipts.mts" --field "$output/manifest.json" source-fingerprint
 )"
-manifest_producer_recipe="$(python3 - "$output/manifest.json" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as stream:
-    print(json.load(stream)["producer-recipe-sha256"])
-PY
+manifest_producer_recipe="$(bun "$project_root/testdata/check-carrier-receipts.mts" --field "$output/manifest.json" producer-recipe-sha256
 )"
 compiler_config="$(fresh_wasmer_compiler_cache_bucket \
   llvm aggressive "$FRESH_WASMER_ARTIFACT_ABI_VERSION")"
@@ -597,13 +392,18 @@ expected_producer_recipe="$(fresh_aot_producer_recipe_sha256 \
   printf 'manifest AOT producer recipe is not reproducible from packaged inputs\n' >&2
   exit 1
 }
+bun "$project_root/testdata/check-carrier-receipts.mts" "$output"
 recipe_fixture="$test_root/producer-recipe-fixture"
 mkdir -p "$recipe_fixture/bin" "$recipe_fixture/lib"
 cp "$project_root/bin/precompile-wasix-core.sh" "$recipe_fixture/bin/"
 cp "$project_root/bin/build-sealed-headless-carrier.sh" "$recipe_fixture/bin/"
 cp "$project_root/lib/sealed-carrier.sh" "$recipe_fixture/lib/"
-cp "$project_root/lib/verify-sealed-carrier.py" "$recipe_fixture/lib/"
-cp "$project_root/lib/sealed_export_chain.py" "$recipe_fixture/lib/"
+cp "$project_root/lib/verify-sealed-carrier.mts" "$recipe_fixture/lib/"
+cp "$project_root/lib/sealed-export-chain.mts" "$recipe_fixture/lib/"
+cp "$project_root/lib/publish-directory.c" "$project_root/lib/guest-build-provenance.mts" "$project_root/lib/build-sealed-carrier.mts" "$recipe_fixture/lib/"
+cp "$project_root/lib/linear-memory-profile.mts" "$project_root/lib/linear-memory-transaction.mts" "$recipe_fixture/lib/"
+mkdir -p "$recipe_fixture/runtime/bin"
+cp "$project_root/runtime/bin/verify-postmaster-concurrency-contract.mts" "$project_root/runtime/bin/verify-postmaster-wasm-import.mts" "$recipe_fixture/runtime/bin/"
 fixture_producer_recipe="$(FRESH_ROOT="$recipe_fixture" \
   fresh_aot_producer_recipe_sha256 \
     "$output/wasmer-build.receipt" \
@@ -615,7 +415,7 @@ fixture_producer_recipe="$(FRESH_ROOT="$recipe_fixture" \
   printf 'AOT producer recipe depends on paths outside its declared inputs\n' >&2
   exit 1
 }
-printf '# verifier policy mutation\n' >>"$recipe_fixture/lib/verify-sealed-carrier.py"
+printf '// verifier policy mutation\n' >>"$recipe_fixture/lib/verify-sealed-carrier.mts"
 [ "$manifest_producer_recipe" != "$(FRESH_ROOT="$recipe_fixture" \
   fresh_aot_producer_recipe_sha256 \
     "$output/wasmer-build.receipt" \
@@ -626,8 +426,8 @@ printf '# verifier policy mutation\n' >>"$recipe_fixture/lib/verify-sealed-carri
   printf 'AOT producer recipe does not bind the carrier verifier policy\n' >&2
   exit 1
 }
-cp "$project_root/lib/verify-sealed-carrier.py" "$recipe_fixture/lib/"
-printf '# export chain policy mutation\n' >>"$recipe_fixture/lib/sealed_export_chain.py"
+cp "$project_root/lib/verify-sealed-carrier.mts" "$recipe_fixture/lib/"
+printf '// export chain policy mutation\n' >>"$recipe_fixture/lib/sealed-export-chain.mts"
 [ "$manifest_producer_recipe" != "$(FRESH_ROOT="$recipe_fixture" \
   fresh_aot_producer_recipe_sha256 \
     "$output/wasmer-build.receipt" \
@@ -654,15 +454,15 @@ different_source_fingerprint="$(printf different-source | fresh_sha256_stream)"
 }
 sed 's/^rustc_version=.*/rustc_version=alternate-test-rustc/' \
   "$output/wasmer-build.receipt" >"$test_root/alternate-wasmer-build.receipt"
-[ "$manifest_producer_recipe" != "$(fresh_aot_producer_recipe_sha256 \
+if fresh_aot_producer_recipe_sha256 \
   "$test_root/alternate-wasmer-build.receipt" \
   "$output/postmaster-executor.receipt" \
   "$compiler_config" \
   "$target_triple" \
-  "$manifest_source_fingerprint")" ] || {
-  printf 'AOT producer recipe does not bind the canonical build receipt\n' >&2
+  "$manifest_source_fingerprint" >"$test_root/alternate-receipt.log" 2>&1; then
+  printf 'AOT producer accepted mismatched Wasmer and executor receipts\n' >&2
   exit 1
-}
+fi
 [ "$manifest_producer_recipe" != "$(fresh_aot_producer_recipe_sha256 \
   "$output/wasmer-build.receipt" \
   "$output/postmaster-executor.receipt" \
@@ -702,7 +502,7 @@ then
 fi
 
 "$project_root/bin/verify-sealed-headless-carrier.sh" "$output" >/dev/null
-[ "$(python3 "$project_root/lib/verify-sealed-carrier.py" executor-selection "$output")" = \
+[ "$(bun "$project_root/lib/verify-sealed-carrier.mts" executor-selection "$output")" = \
   $'postmaster-product\tpostmaster-executor.receipt\t'"$(fresh_wasmer_bin_hash "$output/postmaster-executor.receipt")"$'\t'"$(fresh_wasmer_bin_hash "$output/bin/wasmer-headless")" ]
 
 # The implicit publication path is derived from the finished exact payload
@@ -752,54 +552,14 @@ reindex_carrier() {
   local carrier="$1"
 
   chmod u+w "$carrier/payload.files"
-  python3 - "$carrier" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-inventory = os.path.join(root, "payload.files")
-rows = []
-for current, dirs, files in os.walk(root, followlinks=False):
-    dirs.sort()
-    files.sort()
-    for name in files:
-        path = os.path.join(current, name)
-        if os.path.realpath(path) == inventory:
-            continue
-        info = os.lstat(path)
-        if not stat.S_ISREG(info.st_mode):
-            continue
-        digest = hashlib.sha256()
-        with open(path, "rb", buffering=0) as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        rows.append((os.path.relpath(path, root), info.st_size, digest.hexdigest()))
-with open(inventory, "w", encoding="utf-8", newline="\n") as output:
-    output.write("schema=oliphaunt.wasix-postmaster.payload-files.v1\n")
-    for relative, size, digest in sorted(rows):
-        output.write(f"{digest}\t{size}\t{relative}\n")
-PY
+  bun "$project_root/testdata/check-carrier-receipts.mts" --reindex "$carrier"
   chmod 0444 "$carrier/payload.files"
 }
 
 legacy_manifest="$test_root/verifier-legacy-manifest-v4"
 cp -a "$output" "$legacy_manifest"
 chmod u+w "$legacy_manifest/manifest.json"
-python3 - "$legacy_manifest/manifest.json" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as stream:
-    manifest = json.load(stream)
-manifest["schema"] = "oliphaunt.wasix-postmaster.sealed-aot.v4"
-manifest["format-version"] = 5
-with open(path, "w", encoding="utf-8", newline="\n") as stream:
-    json.dump(manifest, stream, ensure_ascii=False, indent=2)
-    stream.write("\n")
-PY
+printf '%s\n' '{"schema":"oliphaunt.wasix-postmaster.sealed-aot.v4","format-version":5}' | bun "$project_root/testdata/check-carrier-receipts.mts" --patch-manifest "$legacy_manifest/manifest.json"
 chmod 0444 "$legacy_manifest/manifest.json"
 reindex_carrier "$legacy_manifest"
 expect_verifier_failure legacy-manifest-v4 "$legacy_manifest"
@@ -809,24 +569,7 @@ cp -a "$output" "$legacy_guest"
 chmod u+w "$legacy_guest/guest-build.receipt" "$legacy_guest/manifest.json"
 sed 's/^schema=oliphaunt.wasix-postmaster.guest-build.v5$/schema=oliphaunt.wasix-postmaster.guest-build.v4/' \
   "$output/guest-build.receipt" >"$legacy_guest/guest-build.receipt"
-python3 - "$legacy_guest" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-root = sys.argv[1]
-guest = os.path.join(root, "guest-build.receipt")
-manifest_path = os.path.join(root, "manifest.json")
-with open(guest, "rb") as stream:
-    digest = hashlib.sha256(stream.read()).hexdigest()
-with open(manifest_path, encoding="utf-8") as stream:
-    manifest = json.load(stream)
-manifest["guest-build-recipe-sha256"] = digest
-with open(manifest_path, "w", encoding="utf-8", newline="\n") as stream:
-    json.dump(manifest, stream, ensure_ascii=False, indent=2)
-    stream.write("\n")
-PY
+printf '{"guest-build-recipe-sha256":"%s"}\n' "$(fresh_wasmer_bin_hash "$legacy_guest/guest-build.receipt")" | bun "$project_root/testdata/check-carrier-receipts.mts" --patch-manifest "$legacy_guest/manifest.json"
 chmod 0444 "$legacy_guest/guest-build.receipt" "$legacy_guest/manifest.json"
 reindex_carrier "$legacy_guest"
 expect_verifier_failure legacy-guest-v4 "$legacy_guest"
@@ -903,18 +646,7 @@ expect_verifier_failure headless-receipt-identity "$wrong_executor"
 wrong_manifest="$test_root/verifier-wrong-manifest"
 cp -a "$output" "$wrong_manifest"
 chmod u+w "$wrong_manifest/manifest.json"
-python3 - "$wrong_manifest/manifest.json" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as stream:
-    manifest = json.load(stream)
-manifest["executor-sha256"] = "0" * 64
-with open(path, "w", encoding="utf-8", newline="\n") as stream:
-    json.dump(manifest, stream, ensure_ascii=False, indent=2)
-    stream.write("\n")
-PY
+printf '{"executor-sha256":"%064d"}\n' 0 | bun "$project_root/testdata/check-carrier-receipts.mts" --patch-manifest "$wrong_manifest/manifest.json"
 chmod 0444 "$wrong_manifest/manifest.json"
 reindex_carrier "$wrong_manifest"
 expect_verifier_failure manifest-executor-identity "$wrong_manifest"

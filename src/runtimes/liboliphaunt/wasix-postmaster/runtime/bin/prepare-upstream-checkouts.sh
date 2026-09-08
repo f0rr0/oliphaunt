@@ -23,8 +23,6 @@ WASMER_ROOT="${WASMER_ROOT:-$UPSTREAM_WORK_ROOT/wasmer}"
 WASIX_LIBC_ROOT="${WASIX_LIBC_ROOT:-$UPSTREAM_WORK_ROOT/wasix-libc}"
 SIGNATURE_ROOT="$UPSTREAM_WORK_ROOT/.prepared"
 
-fresh_require_command python3
-python3 "$UPSTREAM_SOURCE_ROOT/bin/verify-source-lock.py"
 
 FORCE=0
 SKIP_PATCHES=0
@@ -110,18 +108,6 @@ verify_durable_source() {
 	}
 }
 
-worktree_state_hash() {
-	local root="$1"
-	{
-		git -C "$root" diff --binary HEAD
-		git -C "$root" ls-files --others --exclude-standard -z |
-			while IFS= read -r -d '' path; do
-				printf 'untracked:%s\n' "$path"
-				sha256_file "$root/$path"
-			done
-	} | sha256_stream
-}
-
 worktree_is_prepared() {
 	local root="$1"
 	local ref="$2"
@@ -132,7 +118,7 @@ worktree_is_prepared() {
 	[ "$(git -C "$root" rev-parse HEAD)" = "$ref" ] || return 1
 	[ -f "$signature_file" ] || return 1
 	local expected
-	expected="${input_signature}:$(worktree_state_hash "$root")"
+	expected="${input_signature}:$(fresh_runtime_worktree_state_hash "$root")"
 	[ "$(cat "$signature_file")" = "$expected" ]
 }
 
@@ -206,7 +192,10 @@ prepare_patched_worktree() {
 	if [ "$SKIP_PATCHES" -ne 1 ]; then
 		patch_signature="$(sha256_file "$patch")"
 	fi
-	local input_signature="$ref:$patch_signature:$extra_signature"
+	if [ "$name" = "wasmer" ] && [ "$SKIP_PATCHES" -ne 1 ]; then
+    extra_signature="$extra_signature:$(fresh_executor_source_sha256)"
+  fi
+  local input_signature="$ref:$patch_signature:$extra_signature"
 	local signature_file="$SIGNATURE_ROOT/$name.signature"
 
 	if [ "$FORCE" -ne 1 ] && worktree_is_prepared "$root" "$ref" "$input_signature" "$signature_file"; then
@@ -223,9 +212,13 @@ prepare_patched_worktree() {
 	if [ "$SKIP_PATCHES" -ne 1 ]; then
 		git -C "$root" apply --check "$patch"
 		git -C "$root" apply "$patch"
+    if [ "$name" = "wasmer" ]; then
+      cp -R "$FRESH_ROOT/runtime/executor" "$root/lib/oliphaunt-wasix-postmaster-executor"
+      mv "$root/lib/oliphaunt-wasix-postmaster-executor/Cargo.toml.in" "$root/lib/oliphaunt-wasix-postmaster-executor/Cargo.toml"
+    fi
 	fi
 	mkdir -p "$SIGNATURE_ROOT"
-	printf '%s:%s' "$input_signature" "$(worktree_state_hash "$root")" >"$signature_file"
+	printf '%s:%s' "$input_signature" "$(fresh_runtime_worktree_state_hash "$root")" >"$signature_file"
 }
 
 verify_durable_source "Wasmer" "$WASMER_SOURCE_ROOT" "$WASMER_REF"

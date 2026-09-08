@@ -9,10 +9,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "amcheck",
       "package-export": "./contrib/amcheck",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 18815,
       "control-file": "src/postgres/versions/18/contrib/amcheck/amcheck.control",
       "control": {
@@ -32,9 +29,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/amcheck.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/amcheck.test.js"],
       "native-module-file": "amcheck.so",
       "notes": []
     },
@@ -46,10 +41,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "auto_explain",
       "package-export": "./contrib/auto_explain",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 3125,
       "dependencies": [],
       "load-order": [],
@@ -81,10 +73,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "bloom",
       "package-export": "./contrib/bloom",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 6197,
       "control-file": "src/postgres/versions/18/contrib/bloom/bloom.control",
       "control": {
@@ -104,9 +93,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/bloom.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/bloom.test.js"],
       "native-module-file": "bloom.so",
       "notes": []
     },
@@ -118,10 +105,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "btree_gin",
       "package-export": "./contrib/btree_gin",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 6347,
       "control-file": "src/postgres/versions/18/contrib/btree_gin/btree_gin.control",
       "control": {
@@ -155,10 +139,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "btree_gist",
       "package-export": "./contrib/btree_gist",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 24181,
       "control-file": "src/postgres/versions/18/contrib/btree_gist/btree_gist.control",
       "control": {
@@ -192,10 +173,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "citext",
       "package-export": "./contrib/citext",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 4983,
       "control-file": "src/postgres/versions/18/contrib/citext/citext.control",
       "control": {
@@ -215,9 +193,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/citext.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/citext.test.js"],
       "native-module-file": "citext.so",
       "notes": []
     },
@@ -229,10 +205,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "cube",
       "package-export": "./contrib/cube",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 15104,
       "control-file": "src/postgres/versions/18/contrib/cube/cube.control",
       "control": {
@@ -252,9 +225,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/cube.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/cube.test.js"],
       "native-module-file": "cube.so",
       "notes": []
     },
@@ -266,10 +237,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "dict_int",
       "package-export": "./contrib/dict_int",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 1361,
       "control-file": "src/postgres/versions/18/contrib/dict_int/dict_int.control",
       "control": {
@@ -289,9 +257,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/dict_int.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/dict_int.test.js"],
       "native-module-file": "dict_int.so",
       "notes": []
     },
@@ -303,10 +269,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "dict_xsyn",
       "package-export": "./contrib/dict_xsyn",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 1948,
       "control-file": "src/postgres/versions/18/contrib/dict_xsyn/dict_xsyn.control",
       "control": {
@@ -340,22 +303,15 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "earthdistance",
       "package-export": "./contrib/earthdistance",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 2220,
       "control-file": "src/postgres/versions/18/contrib/earthdistance/earthdistance.control",
       "control": {
         "module-pathname": "$libdir/earthdistance",
-        "requires": [
-          "cube"
-        ],
+        "requires": ["cube"],
         "relocatable": "true"
       },
-      "dependencies": [
-        "cube"
-      ],
+      "dependencies": ["cube"],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -381,10 +337,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "file_fdw",
       "package-export": "./contrib/file_fdw",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 4467,
       "control-file": "src/postgres/versions/18/contrib/file_fdw/file_fdw.control",
       "control": {
@@ -404,9 +357,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/file_fdw.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/file_fdw.test.js"],
       "native-module-file": "file_fdw.so",
       "notes": []
     },
@@ -418,10 +369,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "fuzzystrmatch",
       "package-export": "./contrib/fuzzystrmatch",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 12026,
       "control-file": "src/postgres/versions/18/contrib/fuzzystrmatch/fuzzystrmatch.control",
       "control": {
@@ -455,10 +403,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "hstore",
       "package-export": "./contrib/hstore",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 21380,
       "control-file": "src/postgres/versions/18/contrib/hstore/hstore.control",
       "control": {
@@ -478,9 +423,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/hstore.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/hstore.test.js"],
       "native-module-file": "hstore.so",
       "notes": []
     },
@@ -492,10 +435,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "intarray",
       "package-export": "./contrib/intarray",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 14712,
       "control-file": "src/postgres/versions/18/contrib/intarray/intarray.control",
       "control": {
@@ -515,9 +455,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/intarray.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/intarray.test.js"],
       "native-module-file": "_int.so",
       "notes": []
     },
@@ -529,10 +467,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "isn",
       "package-export": "./contrib/isn",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 31417,
       "control-file": "src/postgres/versions/18/contrib/isn/isn.control",
       "control": {
@@ -552,9 +487,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/isn.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/isn.test.js"],
       "native-module-file": "isn.so",
       "notes": []
     },
@@ -566,10 +499,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "lo",
       "package-export": "./contrib/lo",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 1822,
       "control-file": "src/postgres/versions/18/contrib/lo/lo.control",
       "control": {
@@ -589,9 +519,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/lo.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/lo.test.js"],
       "native-module-file": "lo.so",
       "notes": []
     },
@@ -603,10 +531,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "ltree",
       "package-export": "./contrib/ltree",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 19553,
       "control-file": "src/postgres/versions/18/contrib/ltree/ltree.control",
       "control": {
@@ -626,9 +551,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/ltree.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/ltree.test.js"],
       "native-module-file": "ltree.so",
       "notes": []
     },
@@ -640,10 +563,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pageinspect",
       "package-export": "./contrib/pageinspect",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 15923,
       "control-file": "src/postgres/versions/18/contrib/pageinspect/pageinspect.control",
       "control": {
@@ -677,10 +597,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pg_buffercache",
       "package-export": "./contrib/pg_buffercache",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 3133,
       "control-file": "src/postgres/versions/18/contrib/pg_buffercache/pg_buffercache.control",
       "control": {
@@ -714,10 +631,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pg_freespacemap",
       "package-export": "./contrib/pg_freespacemap",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 1485,
       "control-file": "src/postgres/versions/18/contrib/pg_freespacemap/pg_freespacemap.control",
       "control": {
@@ -751,9 +665,7 @@
       "source-kind": "oliphaunt-other-extension",
       "upstream-import-name": "pg_hashids",
       "package-export": "./pg_hashids",
-      "tags": [
-        "postgres extension"
-      ],
+      "tags": ["postgres extension"],
       "bundle-size": 4212,
       "control-file": "target/oliphaunt-sources/checkouts/pg_hashids/pg_hashids.control",
       "control": {
@@ -773,9 +685,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_hashids.test.ts"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/pg_hashids.test.ts"],
       "native-module-file": "pg_hashids.so",
       "notes": []
     },
@@ -787,9 +697,7 @@
       "source-kind": "oliphaunt-other-extension",
       "upstream-import-name": "pg_ivm",
       "package-export": "./pg_ivm",
-      "tags": [
-        "postgres extension"
-      ],
+      "tags": ["postgres extension"],
       "bundle-size": 24865,
       "control-file": "target/oliphaunt-sources/checkouts/pg_ivm/pg_ivm.control",
       "control": {
@@ -810,9 +718,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_ivm.test.ts"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/pg_ivm.test.ts"],
       "native-module-file": "pg_ivm.so",
       "notes": []
     },
@@ -824,10 +730,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pg_surgery",
       "package-export": "./contrib/pg_surgery",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 2635,
       "control-file": "src/postgres/versions/18/contrib/pg_surgery/pg_surgery.control",
       "control": {
@@ -861,9 +764,7 @@
       "source-kind": "oliphaunt-other-extension",
       "upstream-import-name": "pg_textsearch",
       "package-export": "./pg_textsearch",
-      "tags": [
-        "postgres extension"
-      ],
+      "tags": ["postgres extension"],
       "bundle-size": 55062,
       "control-file": "target/oliphaunt-sources/checkouts/pg_textsearch/pg_textsearch.control",
       "control": {
@@ -878,16 +779,12 @@
         "create-schema": "pg_catalog",
         "load-sql": [],
         "post-create-sql": [],
-        "startup-config": [
-          "shared_preload_libraries=pg_textsearch"
-        ],
+        "startup-config": ["shared_preload_libraries=pg_textsearch"],
         "preload-required": true,
         "restart-required": true,
         "shared-memory-required": true
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_textsearch.test.ts"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/pg_textsearch.test.ts"],
       "native-module-file": "pg_textsearch.so",
       "notes": []
     },
@@ -899,10 +796,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pg_trgm",
       "package-export": "./contrib/pg_trgm",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 16208,
       "control-file": "src/postgres/versions/18/contrib/pg_trgm/pg_trgm.control",
       "control": {
@@ -922,9 +816,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_trgm.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_trgm.test.js"],
       "native-module-file": "pg_trgm.so",
       "notes": []
     },
@@ -936,9 +828,7 @@
       "source-kind": "oliphaunt-other-extension",
       "upstream-import-name": "pg_uuidv7",
       "package-export": "./pg_uuidv7",
-      "tags": [
-        "postgres extension"
-      ],
+      "tags": ["postgres extension"],
       "bundle-size": 1522,
       "control-file": "target/oliphaunt-sources/checkouts/pg_uuidv7/pg_uuidv7.control",
       "control": {
@@ -958,9 +848,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_uuidv7.test.ts"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/pg_uuidv7.test.ts"],
       "native-module-file": "pg_uuidv7.so",
       "notes": []
     },
@@ -972,10 +860,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pg_visibility",
       "package-export": "./contrib/pg_visibility",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 4159,
       "control-file": "src/postgres/versions/18/contrib/pg_visibility/pg_visibility.control",
       "control": {
@@ -1009,10 +894,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pg_walinspect",
       "package-export": "./contrib/pg_walinspect",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 4689,
       "control-file": "src/postgres/versions/18/contrib/pg_walinspect/pg_walinspect.control",
       "control": {
@@ -1046,10 +928,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "pgcrypto",
       "package-export": "./contrib/pgcrypto",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 1148162,
       "control-file": "src/postgres/versions/18/contrib/pgcrypto/pgcrypto.control",
       "control": {
@@ -1068,9 +947,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pgcrypto.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pgcrypto.test.js"],
       "native-module-file": "pgcrypto.so",
       "notes": []
     },
@@ -1082,20 +959,14 @@
       "source-kind": "oliphaunt-other-extension",
       "upstream-import-name": "pgtap",
       "package-export": "./pgtap",
-      "tags": [
-        "postgres extension"
-      ],
+      "tags": ["postgres extension"],
       "bundle-size": 239428,
       "control-file": "target/oliphaunt-sources/checkouts/pgtap/pgtap.control",
       "control": {
-        "requires": [
-          "plpgsql"
-        ],
+        "requires": ["plpgsql"],
         "relocatable": "true"
       },
-      "dependencies": [
-        "plpgsql"
-      ],
+      "dependencies": ["plpgsql"],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1107,9 +978,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/pgtap.test.ts"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/pgtap.test.ts"],
       "notes": []
     },
     {
@@ -1119,9 +988,7 @@
       "display-name": "PostGIS",
       "source-kind": "postgis",
       "upstream-import-name": "postgis",
-      "tags": [
-        "postgres extension"
-      ],
+      "tags": ["postgres extension"],
       "bundle-size": 8551161,
       "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
       "control": {
@@ -1130,9 +997,7 @@
         "relocatable": "false"
       },
       "dependencies": [],
-      "load-order": [
-        "lib/postgresql/postgis-3.so"
-      ],
+      "load-order": ["lib/postgresql/postgis-3.so"],
       "lifecycle": {
         "create-extension": true,
         "load-sql": [],
@@ -1142,9 +1007,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/postgis/postgis.test.ts"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/postgis/postgis.test.ts"],
       "native-module-file": "postgis-3.so",
       "notes": []
     },
@@ -1156,10 +1019,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "seg",
       "package-export": "./contrib/seg",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 10426,
       "control-file": "src/postgres/versions/18/contrib/seg/seg.control",
       "control": {
@@ -1179,9 +1039,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/seg.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/seg.test.js"],
       "native-module-file": "seg.so",
       "notes": []
     },
@@ -1193,10 +1051,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "tablefunc",
       "package-export": "./contrib/tablefunc",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 5824,
       "control-file": "src/postgres/versions/18/contrib/tablefunc/tablefunc.control",
       "control": {
@@ -1230,10 +1085,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "tcn",
       "package-export": "./contrib/tcn",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 1914,
       "control-file": "src/postgres/versions/18/contrib/tcn/tcn.control",
       "control": {
@@ -1253,9 +1105,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tcn.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tcn.test.js"],
       "native-module-file": "tcn.so",
       "notes": []
     },
@@ -1267,10 +1117,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "tsm_system_rows",
       "package-export": "./contrib/tsm_system_rows",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 2048,
       "control-file": "src/postgres/versions/18/contrib/tsm_system_rows/tsm_system_rows.control",
       "control": {
@@ -1304,10 +1151,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "tsm_system_time",
       "package-export": "./contrib/tsm_system_time",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 2099,
       "control-file": "src/postgres/versions/18/contrib/tsm_system_time/tsm_system_time.control",
       "control": {
@@ -1341,10 +1185,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "unaccent",
       "package-export": "./contrib/unaccent",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 9323,
       "control-file": "src/postgres/versions/18/contrib/unaccent/unaccent.control",
       "control": {
@@ -1364,9 +1205,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/unaccent.test.js"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/unaccent.test.js"],
       "native-module-file": "unaccent.so",
       "notes": []
     },
@@ -1378,10 +1217,7 @@
       "source-kind": "postgres-contrib",
       "upstream-import-name": "uuid_ossp",
       "package-export": "./contrib/uuid_ossp",
-      "tags": [
-        "postgres extension",
-        "postgres/contrib"
-      ],
+      "tags": ["postgres extension", "postgres/contrib"],
       "bundle-size": 17936,
       "control-file": "src/postgres/versions/18/contrib/uuid-ossp/uuid-ossp.control",
       "control": {
@@ -1415,9 +1251,7 @@
       "source-kind": "oliphaunt-other-extension",
       "upstream-import-name": "vector",
       "package-export": "./vector",
-      "tags": [
-        "postgres extension"
-      ],
+      "tags": ["postgres extension"],
       "bundle-size": 43953,
       "control-file": "target/oliphaunt-sources/checkouts/pgvector/vector.control",
       "control": {
@@ -1437,9 +1271,7 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/pgvector.test.ts"
-      ],
+      "tests": ["target/oliphaunt-sources/checkouts/src/extensions/tests/pgvector.test.ts"],
       "native-module-file": "vector.so",
       "notes": []
     }

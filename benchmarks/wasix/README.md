@@ -1,7 +1,7 @@
 # WASIX Benchmarks
 
 WASIX benchmark specs and baselines live here. Runner implementations and
-runtime orchestration stay under `tools/perf` and the WASIX product source tree.
+runtime orchestration stay under `benchmarks/perf` and the WASIX product source tree.
 
 ## Browser comparison
 
@@ -17,7 +17,7 @@ main-thread safety.
 
 ```sh
 pnpm --dir src/bindings/wasix-ts package:build
-node tools/integration/wasix-ts/smoke-browser.mjs --benchmark
+bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --benchmark
 # or: moon run perf-tools:wasix-browser-measure
 ```
 
@@ -36,8 +36,7 @@ versa. First cold open remains
 descriptive because the implementations use different compilation caches;
 close is descriptive because the public APIs make different worker-reclamation
 guarantees; insert decomposition remains diagnostic so it cannot overweight the
-primary insert workload. Machine-readable JSON and a compact Markdown report
-are written under `target/perf`. Benchmark runs require a clean worktree and
+primary insert workload. Machine-readable JSON is written under `target/perf`. Benchmark runs require a clean worktree and
 record the exact Git commit and tree, runtime and staged host build identities,
 the built SDK tree, every harness source, and the installed PGlite closure.
 
@@ -45,7 +44,7 @@ For a harness smoke check without a full sample set, run:
 
 ```sh
 pnpm --dir src/bindings/wasix-ts package:build
-node tools/integration/wasix-ts/smoke-browser.mjs --benchmark --quick
+bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --benchmark --quick
 ```
 
 Quick mode still requires every workload assertion and durability/WAL parity,
@@ -55,7 +54,7 @@ The explicit `/worker` OPFS path has a separate advisory comparison against
 PGlite's OPFS access-handle-pool Worker path:
 
 ```sh
-node tools/integration/wasix-ts/smoke-browser.mjs --diagnostic-opfs --quick
+bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --diagnostic-opfs --quick
 ```
 
 It uses durable PostgreSQL settings on both Worker engines and prints the raw
@@ -67,7 +66,7 @@ memory while the Worker comparison uses OPFS.
 
 `node-pglite-memory-v2.json` is the deterministic Node comparison plan for the
 public `@oliphaunt/wasix-ts` package and the exact PGlite control named in the
-plan. The executable harness lives in `tools/perf/wasix-node`. It compares the
+plan. The executable harness lives in `benchmarks/perf/wasix-node`. It compares the
 real `@oliphaunt/wasix-ts/worker` entrypoint with a harness-owned PGlite Worker,
 and the blocking `@oliphaunt/wasix-ts/direct` entrypoint with PGlite's
 caller-realm API. Both use memory storage. The harness
@@ -110,10 +109,11 @@ current host before running it:
 ```sh
 bash src/runtimes/wasix-napi/tools/build-native.sh
 moon run perf-tools:wasix-node-measure
+# Or, after building the TypeScript SDK:
+bash benchmarks/perf/wasix-node/benchmark.sh --run
 ```
 
-Each run writes machine-readable JSON
-and a compact Markdown table under `target/perf`; it passes only when canonical
+Each run writes machine-readable JSON under `target/perf`; it passes only when canonical
 timed-response/result hashes and PostgreSQL settings agree and the geometric
 mean of median paired Oliphaunt/PGlite ratios is at most `0.80`. Reports pin the
 comparator tarball integrity and installed tree hash, and record the complete
@@ -122,24 +122,10 @@ requires its native carrier binary to match its recorded artifact provenance and
 its embedded runtime module to match the canonical asset manifest and build
 outputs. Reports record the carrier target, binary digest, artifact source,
 payload build inputs, native Cargo profile, and full guest build-profile
-signature. The checked-in plan rejects anything other than a non-incremental
-one-codegen-unit native `release` build with thin LTO and the qualified guest
-`release` profile with `-O2 -g0 -flto=thin`.
+signature. Execution verifies those inputs against the checked-in plan, which
+specifies a non-incremental one-codegen-unit native `release` build with thin
+LTO and the guest `release` profile with `-O2 -g0 -flto=thin`.
 
-For an advisory placement, raw-streaming, server, tool, event-loop, and RSS
-comparison, build the staged SDK and runtime assets plus that optimized native
-carrier, then run:
-
-```sh
-pnpm --dir tools/perf/wasix-node bench:streaming
-# exhaustive 1 KiB / 1 MiB / 64 MiB and 1 / 4 / 16 database profile
-node tools/perf/wasix-node/streaming-quick.mjs --full --json
-```
-
-Its v3 report measures the default Rust actor, blocking `/direct`, and real
-`/worker` placements separately. It reports p50/p95/p99 latency, actor and
-Worker overhead relative to direct, streaming throughput and backpressure, and
-representative event-loop and RSS observations. It is descriptive rather than
-a qualification gate. This is also the canonical actor-versus-direct overhead
-measurement; the PGlite gate above deliberately compares execution placements
-with matched caller/Worker ownership.
+The local runners require GNU coreutils (`timeout`, or `gtimeout` on macOS)
+and `jq`. Shell owns package installation, process deadlines and cleanup;
+benchmark source/build provenance is required only for measurements.

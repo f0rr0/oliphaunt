@@ -17,7 +17,7 @@ packages:
   - "src/bindings/wasix-ts"
   - "src/bindings/wasix-ts/tools-package"
   - "src/runtimes/liboliphaunt/wasix/tools-npm"
-  - "tools/perf/wasix-node"
+  - "benchmarks/perf/wasix-node"
 
 catalog:
   "@vitest/coverage-v8": ^4.1.8

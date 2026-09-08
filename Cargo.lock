@@ -2521,7 +2521,6 @@ dependencies = [
  "anyhow",
  "futures-util",
  "oliphaunt",
- "oliphaunt-wasix",
  "rusqlite",
  "serde",
  "serde_json",

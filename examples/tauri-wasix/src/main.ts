@@ -1,1 +1,1 @@
-import "../../tauri/src/main.ts";
+import '../../tauri/src/main.ts';

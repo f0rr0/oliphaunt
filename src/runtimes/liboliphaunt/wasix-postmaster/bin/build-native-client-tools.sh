@@ -63,7 +63,8 @@ configure_args=(
 
 source_signature="$(
   {
-    printf 'build_signature_version=3\n'
+    printf 'build_signature_version=4\n'
+    shasum -a 256 "$0"
     printf 'baseline_fingerprint=%s\n' "$baseline_fingerprint"
     printf 'baseline=%s\n' "$baseline_head"
     printf 'baseline_tree=%s\n' "$baseline_tree"
@@ -105,8 +106,12 @@ fresh_require_managed_generated_path "$CLIENT_TOOLS_INSTALL_DIR" CLIENT_TOOLS_IN
   if [ ! -f config.status ]; then
     "$BASELINE_DIR/configure" "${configure_args[@]}"
   fi
-  make -j "$jobs"
-  make install
+  # Only psql and pg_regress are consumed by Postmaster qualification.
+  make -C src/backend generated-headers
+  make -C src/bin/psql -j "$jobs"
+  make -C src/interfaces/libpq install
+  make -C src/bin/psql install
+  make -C src/test/regress -j "$jobs" pg_regress
 ) >"$log" 2>&1
 
 {

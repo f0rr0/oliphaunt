@@ -11,17 +11,7 @@ select_ios_simulator_udid() {
   local booted
   booted="$(
     xcrun simctl list devices booted -j |
-      node -e '
-const fs = require("fs");
-const data = JSON.parse(fs.readFileSync(0, "utf8"));
-for (const devices of Object.values(data.devices || {})) {
-  const found = devices.find(device => device.isAvailable && device.state === "Booted");
-  if (found) {
-    process.stdout.write(found.udid);
-    process.exit(0);
-  }
-}
-'
+      node "$root/src/sdks/react-native/tools/expo-runner-ios-device.mts" booted-simulator
   )"
   if [ -n "$booted" ]; then
     printf '%s\n' "$booted"
@@ -29,42 +19,7 @@ for (const devices of Object.values(data.devices || {})) {
   fi
 
   xcrun simctl list devices available -j |
-    OLIPHAUNT_EXPO_IOS_DEVICE_NAME="$simulator_name" node -e '
-const fs = require("fs");
-const preferredName = process.env.OLIPHAUNT_EXPO_IOS_DEVICE_NAME || "iPhone 15 Pro";
-const preferredRuntime = process.env.OLIPHAUNT_EXPO_IOS_RUNTIME || "";
-const data = JSON.parse(fs.readFileSync(0, "utf8"));
-const candidates = [];
-for (const [runtime, devices] of Object.entries(data.devices || {})) {
-  if (!runtime.includes("iOS")) {
-    continue;
-  }
-  const versionMatch = runtime.match(/iOS-(\d+)-(\d+)/);
-  const major = versionMatch ? Number(versionMatch[1]) : 0;
-  const minor = versionMatch ? Number(versionMatch[2]) : 0;
-  for (const device of devices) {
-    if (!device.isAvailable) {
-      continue;
-    }
-    const exactName = device.name === preferredName ? 1 : 0;
-    const iphone = device.name.startsWith("iPhone") ? 1 : 0;
-    const runtimeMatch = preferredRuntime && runtime.includes(preferredRuntime) ? 1 : 0;
-    candidates.push({device, exactName, iphone, runtimeMatch, major, minor});
-  }
-}
-candidates.sort((left, right) =>
-  right.runtimeMatch - left.runtimeMatch ||
-  right.exactName - left.exactName ||
-  right.iphone - left.iphone ||
-  right.major - left.major ||
-  right.minor - left.minor ||
-  (left.device.name < right.device.name ? -1 : left.device.name > right.device.name ? 1 : 0)
-);
-if (!candidates.length) {
-  process.exit(1);
-}
-process.stdout.write(candidates[0].device.udid);
-'
+    OLIPHAUNT_EXPO_IOS_DEVICE_NAME="$simulator_name" node "$root/src/sdks/react-native/tools/expo-runner-ios-device.mts" available-simulator
 }
 
 select_ios_physical_device_id() {
@@ -77,31 +32,7 @@ select_ios_physical_device_id() {
   local json="$scratch_root/devicectl-devices.json"
   xcrun devicectl list devices --timeout 10 --json-output "$json" >/dev/null 2>&1 ||
     return 1
-  node - "$json" <<'NODE'
-const fs = require('fs');
-const file = process.argv[2];
-const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-const devices = data?.result?.devices ?? [];
-const candidates = devices.filter(device => {
-  const hardware = device.hardwareProperties ?? {};
-  const connection = device.connectionProperties ?? {};
-  return hardware.platform === 'iOS' &&
-    hardware.reality === 'physical' &&
-    connection.pairingState === 'paired';
-});
-candidates.sort((left, right) => {
-  const leftLocal = left.connectionProperties?.transportType === 'localNetwork' ? 1 : 0;
-  const rightLocal = right.connectionProperties?.transportType === 'localNetwork' ? 1 : 0;
-  const leftName = String(left.deviceProperties?.name ?? '');
-  const rightName = String(right.deviceProperties?.name ?? '');
-  return rightLocal - leftLocal ||
-    (leftName < rightName ? -1 : leftName > rightName ? 1 : 0);
-});
-if (!candidates.length) {
-  process.exit(1);
-}
-process.stdout.write(candidates[0].identifier || candidates[0].hardwareProperties?.udid);
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-ios-device.mts" physical-device "$json"
 }
 
 select_xcode_development_team() {
@@ -174,26 +105,7 @@ preflight_physical_ios_device() {
     --json-output "$json" >/dev/null 2>&1 ||
     fail "failed to inspect physical iOS device with devicectl; device may be locked, untrusted, or unavailable"
 
-  node - "$json" <<'NODE' || exit $?
-const fs = require('fs');
-const file = process.argv[2];
-const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-const result = data.result ?? {};
-const props = result.deviceProperties ?? {};
-const hardware = result.hardwareProperties ?? {};
-const name = props.name ?? 'physical iOS device';
-const os = props.osVersionNumber ?? 'unknown iOS';
-const devMode = props.developerModeStatus ?? 'unknown';
-if (devMode !== 'enabled') {
-  console.error(`error: physical iOS runs require Developer Mode enabled on ${name}; current developerModeStatus=${devMode}, os=${os}`);
-  process.exit(1);
-}
-if (props.ddiServicesAvailable === false) {
-  const product = hardware.productType ?? 'unknown product';
-  console.error(`error: physical iOS runs require Developer Disk Image services on ${name}; ddiServicesAvailable=false, product=${product}, os=${os}`);
-  process.exit(1);
-}
-NODE
+  node "$root/src/sdks/react-native/tools/expo-runner-ios-device.mts" preflight "$json" || exit $?
 }
 
 resolve_xcode_destination() {

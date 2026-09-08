@@ -1,8 +1,4 @@
-import {
-  PostgresError,
-  type OliphauntDatabase,
-  type QueryResult,
-} from '@oliphaunt/react-native';
+import { PostgresError, type OliphauntDatabase, type QueryResult } from '@oliphaunt/react-native';
 
 export type MobileReleaseExtensionProof = {
   readonly sqlName: string;
@@ -42,7 +38,9 @@ export async function runMobileBindingProof(
     checks,
     'raw protocol response',
     async () => {
-      const raw = await db.execProtocolRaw(simpleQuery('SELECT 1 AS raw_value; SELECT 2 AS raw_value'));
+      const raw = await db.execProtocolRaw(
+        simpleQuery('SELECT 1 AS raw_value; SELECT 2 AS raw_value'),
+      );
       assertPositiveInteger(raw.byteLength, 'raw protocol byte length');
       return `${raw.byteLength} raw bytes`;
     },
@@ -64,21 +62,18 @@ export async function runMobileBindingProof(
         let chunkCount = 0;
         let callbackActive = false;
         const chunks: Uint8Array[] = [];
-        await db.execProtocolRawStream(
-          request,
-          chunk => {
-            if (callbackActive) {
-              throw new Error('protocol stream callback was re-entered');
-            }
-            callbackActive = true;
-            try {
-              chunkCount += 1;
-              chunks.push(chunk.slice());
-            } finally {
-              callbackActive = false;
-            }
-          },
-        );
+        await db.execProtocolRawStream(request, (chunk) => {
+          if (callbackActive) {
+            throw new Error('protocol stream callback was re-entered');
+          }
+          callbackActive = true;
+          try {
+            chunkCount += 1;
+            chunks.push(chunk.slice());
+          } finally {
+            callbackActive = false;
+          }
+        });
         if (chunkCount < 2) {
           throw new Error(`protocol stream expected multiple chunks, got ${chunkCount}`);
         }
@@ -109,11 +104,7 @@ export async function runMobileBindingProof(
             );
           }
         }
-        assertEqual(
-          failureCallbackCount,
-          1,
-          'stream callback invocation count after failure',
-        );
+        assertEqual(failureCallbackCount, 1, 'stream callback invocation count after failure');
         assertEqual(
           await scalar(db, "SELECT 'after-stream-error'::text AS value"),
           'after-stream-error',
@@ -121,10 +112,9 @@ export async function runMobileBindingProof(
         );
         return `${chunkCount} acknowledged chunks, ${streamed.byteLength} complete raw bytes, callback exception preserved`;
       } finally {
-        await db.query(
-          "SELECT set_config('auto_explain.log_min_duration', $1, false) AS value",
-          [autoExplainLogMinDuration],
-        );
+        await db.query("SELECT set_config('auto_explain.log_min_duration', $1, false) AS value", [
+          autoExplainLogMinDuration,
+        ]);
       }
     },
     onCheckStage,
@@ -180,7 +170,9 @@ function assertBytesEqual(actual: Uint8Array, expected: Uint8Array, label: strin
       const start = Math.max(0, index - 8);
       const end = Math.min(actual.byteLength, index + 9);
       const hex = (bytes: Uint8Array) =>
-        Array.from(bytes.subarray(start, end), byte => byte.toString(16).padStart(2, '0')).join(' ');
+        Array.from(bytes.subarray(start, end), (byte) => byte.toString(16).padStart(2, '0')).join(
+          ' ',
+        );
       throw new Error(
         `${label}: byte ${index} differs (actual ${actual[index]}, expected ${expected[index]}; actual ${hex(actual)}; expected ${hex(expected)})`,
       );
@@ -266,7 +258,11 @@ export async function runMobileReleaseExtensionProof(
              WHERE extname = $1`,
             [extension.sqlName],
           );
-          assertEqual(requiredText(result, 0, 'name'), extension.sqlName, `${extension.sqlName} catalog identity`);
+          assertEqual(
+            requiredText(result, 0, 'name'),
+            extension.sqlName,
+            `${extension.sqlName} catalog identity`,
+          );
           const version = requiredText(result, 0, 'version');
           if (version.trim().length === 0) {
             throw new Error(`${extension.sqlName} catalog version is empty`);
@@ -300,8 +296,8 @@ export async function runMobileReleaseExtensionProof(
     'extension activation catalog completeness',
     async () => {
       const expected = plan
-        .filter(extension => extension.createsExtension)
-        .map(extension => extension.sqlName)
+        .filter((extension) => extension.createsExtension)
+        .map((extension) => extension.sqlName)
         .sort()
         .join(',');
       const actual = await scalar(
@@ -331,7 +327,9 @@ export async function runPostgresLifecycleResumeCheck(
   const select = await scalar(db, 'SELECT 1::text AS value');
   assertEqual(select, '1', 'resume SELECT 1');
   await db.execute('DROP TABLE IF EXISTS oliphaunt_mobile_resume_probe');
-  await db.execute('CREATE TABLE oliphaunt_mobile_resume_probe(id integer PRIMARY KEY, value text NOT NULL)');
+  await db.execute(
+    'CREATE TABLE oliphaunt_mobile_resume_probe(id integer PRIMARY KEY, value text NOT NULL)',
+  );
   await db.execute("INSERT INTO oliphaunt_mobile_resume_probe VALUES (1, 'resumed')");
   const value = await scalar(
     db,
@@ -374,10 +372,7 @@ async function record(
   checks.push({ name, detail, elapsedMs });
 }
 
-async function expectPostgresError(
-  promise: Promise<unknown>,
-  sqlstate: string,
-): Promise<string> {
+async function expectPostgresError(promise: Promise<unknown>, sqlstate: string): Promise<string> {
   try {
     await promise;
   } catch (error) {
@@ -411,7 +406,7 @@ function assertPositiveInteger(value: number, label: string): void {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function now(): number {

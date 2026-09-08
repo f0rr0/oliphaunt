@@ -1,0 +1,12 @@
+[package]
+name = "oliphaunt-native-tools-proof"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+oliphaunt = { path = "../../../../../sdks/rust" }
+oliphaunt-tools = { path = "../../crates/tools" }
+serde_json = "1"

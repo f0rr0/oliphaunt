@@ -1,10 +1,10 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "cluster-seed-contract"
-language: "javascript"
+language: "typescript"
 layer: "configuration"
 stack: "systems"
-tags: ["postgres", "contract", "runtime"]
+tags: ["javascript-quality", "postgres", "contract", "runtime"]
 
 project:
   title: "Cluster Seed Contract"
@@ -20,3 +20,12 @@ fileGroups:
   contract:
     - "**/*"
     - "!moon.yml"
+    - "!*.test.mts"
+
+tasks:
+  unit:
+    tags: ["quality", "unit"]
+    command: "bun test src/shared/cluster-seed-contract"
+    inputs: ["**/*"]
+    options:
+      runFromWorkspaceRoot: true

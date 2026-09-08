@@ -14,12 +14,12 @@ if ((${#products[@]} > 0)); then
   for product in "${products[@]}"; do
     product="$(printf '%s' "$product" | xargs)"
     [ -n "$product" ] || continue
-    validation_args+=(--require-extension-product "$product")
+    validation_args+=("$product")
   done
 fi
 if [ "${#validation_args[@]}" -eq 1 ]; then
-  validation_args+=(--require-extension-product all)
+  validation_args+=(all)
 fi
 
-tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --require-native --require-wasix
-tools/dev/bun.sh tools/release/check-staged-artifacts.mjs "${validation_args[@]}"
+tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts --all --require-native --require-wasix
+tools/dev/bun.sh src/extensions/artifacts/packages/tools/check-carriers.mts "${validation_args[@]}"

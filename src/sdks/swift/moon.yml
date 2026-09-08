@@ -4,7 +4,7 @@ id: "oliphaunt-swift"
 language: "swift"
 layer: "library"
 stack: "systems"
-tags: ["sdk", "swift", "ios", "macos", "native", "release-product"]
+tags: ["javascript-quality", "sdk", "swift", "ios", "macos", "native", "release-product"]
 dependsOn:
   - "liboliphaunt-native"
 
@@ -34,7 +34,7 @@ fileGroups:
 tasks:
   compile:
     tags: ["quality", "static"]
-    command: "swift build --scratch-path ../../../target/moon/oliphaunt-swift/compile"
+    command: "swift build --scratch-path ../../../target"
     inputs:
       - "@group(code)"
     options:
@@ -104,3 +104,80 @@ tasks:
     inputs: []
     options:
       cache: true
+
+  coverage:
+    tags: ["coverage", "requires-apple"]
+    command: "swift test --enable-code-coverage --scratch-path ../../../target/coverage/oliphaunt-swift"
+    inputs: ["@group(code)"]
+    outputs: ["/target/coverage/oliphaunt-swift/**/*"]
+    options:
+      cache: false
+      runInCI: false
+
+  release-package:
+    tags: ["release", "artifact-package", "ci-swift-sdk-package"]
+    script: |
+      set -eu
+      bash tools/dev/bun.sh src/sdks/swift/tools/stage-release-artifacts.mts
+      bash tools/dev/bun.sh src/sdks/swift/tools/check-package.mts
+    env:
+      OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: "target/liboliphaunt/abi-compatible-release-assets/ios-datum64"
+    deps:
+      - "oliphaunt-swift:package"
+      - "liboliphaunt-native:finalize-runtime-ios-abi"
+    inputs:
+      - "/src/shared/artifact-packaging/portable-archive.mts"
+      - "/src/shared/cluster-seed-contract/*.mts"
+      - "/src/shared/artifact-packaging/emit-javascript.mts"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/src/sdks/swift/tools/check-package.mts"
+      - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
+      - "/src/shared/artifact-packaging/ios-carrier-manifest.mts"
+      - "/src/sdks/swift/tools/prepare-swift-release-consumer.mts"
+      - "/src/shared/product-metadata/release-graph.mts"
+      - "/src/shared/artifact-packaging/staging.mts"
+      - "/src/sdks/swift/tools/stage-release-artifacts.mts"
+      - "/src/sdks/swift/tools/swift-source-carrier-contract.mts"
+      - "/Package.swift"
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-swift/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+
+  packaging-unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -eu
+      node src/sdks/swift/tools/swift-carrier-resolver.test.mts
+      node src/sdks/swift/tools/extension-resource-inventory.test.mts
+      bash tools/dev/bun.sh test --timeout=30000 src/sdks/swift/tools/render_swiftpm_release_package.test.mts src/sdks/swift/tools/check-package.test.mts src/sdks/swift/tools/prepare-swift-release-consumer.test.mts src/sdks/swift/tools/swift-extension-release-consumer-inputs.test.mts
+    inputs:
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "Tests/Fixtures/**/*"
+      - "@group(legal-files)"
+      - "/tools/test/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/shared/artifact-packaging/*.{mts,sh}"
+      - "/src/shared/cluster-seed-contract/*.mts"
+      - "/src/shared/product-metadata/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  docs-api:
+    tags: ["docs"]
+    script: "swift package --package-path src/sdks/swift --allow-writing-to-directory target/docs/generated/api/swift generate-documentation --target Oliphaunt --output-path target/docs/generated/api/swift/Oliphaunt.doccarchive --disable-indexing"
+    inputs: ["**/*", "/src/shared/rust-query-core/src/**/*", "/src/shared/js-core/src/**/*", "@group(cargo-workspace)"]
+    outputs: ["/target/docs/generated/api/swift/Oliphaunt.doccarchive/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+      runInCI: false
