@@ -26,13 +26,13 @@ for subject in "$scratch"/*.subject; do
   { IFS= read -r -d '' file; IFS= read -r -d '' bundle; IFS= read -r -d '' head; IFS= read -r -d '' repo; } < "$subject"
   rm -f "${subject%.subject}.json"
   (
-    ulimit -f 65536
+    ulimit -f 65536 || exit $?
     "$bounded" --kill-after=5s 300s gh attestation verify "$file" --repo "$repo" --bundle "$bundle" \
       --format json --predicate-type https://slsa.dev/provenance/v1 \
       --signer-workflow "$repo/.github/workflows/release.yml" --signer-digest "$head" \
       --source-ref refs/heads/main --source-digest "$head" --deny-self-hosted-runners \
       > "${subject%.subject}.tmp"
-  )
+  ) || exit $?
   mv "${subject%.subject}.tmp" "${subject%.subject}.json"
 done
 for record in "$scratch"/*/*.public; do
