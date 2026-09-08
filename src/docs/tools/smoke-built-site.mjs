@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { oramaStaticClient } from 'fumadocs-core/search/client/orama-static';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '../../..');
@@ -32,7 +33,7 @@ function findFiles(root, predicate) {
 }
 
 if (!fs.existsSync(buildRoot)) {
-  fail('docs build output is missing; run pnpm docs:build first');
+  fail('docs build output is missing; run pnpm --dir src/docs build first');
 }
 
 if (!fs.existsSync(routesPath)) {
@@ -45,7 +46,8 @@ if (htmlFiles.length === 0) {
 }
 
 function routeHtmlPath(route) {
-  const normalized = route === '/' ? 'index' : route.replace(/^\/+/u, '').replace(/\/$/u, '');
+  if (route === '/') return path.join(buildRoot, 'index.html');
+  const normalized = route.replace(/^\/+/u, '').replace(/\/$/u, '');
   return path.join(buildRoot, normalized, 'index.html');
 }
 
@@ -60,8 +62,38 @@ for (const record of routeMetadata.routes ?? []) {
   }
 }
 
+// Check rendered links: MDX source checks cannot see component-generated anchors.
+const htmlByPath = new Map(htmlFiles.map((file) => [file, fs.readFileSync(file, 'utf8')]));
+const idsByPath = new Map(
+  [...htmlByPath].map(([file, html]) => [
+    file,
+    new Set([...html.matchAll(/\bid="([^"]+)"/gu)].map((match) => match[1])),
+  ]),
+);
+const basePath = process.env.OLIPHAUNT_DOCS_BASE_PATH || '';
+for (const [file, html] of htmlByPath) {
+  const pagePath = `/${path.relative(buildRoot, file).split(path.sep).join('/')}`;
+  for (const match of html.matchAll(/<a\b[^>]*\bhref="([^"]+)"/gu)) {
+    const href = match[1].replaceAll('&amp;', '&');
+    const url = new URL(href, `https://docs.local${basePath}${pagePath}`);
+    if (url.origin !== 'https://docs.local') continue;
+    let pathname = decodeURIComponent(url.pathname);
+    if (basePath && (pathname === basePath || pathname.startsWith(`${basePath}/`))) {
+      pathname = pathname.slice(basePath.length) || '/';
+    }
+    let target = path.join(buildRoot, pathname);
+    if (fs.existsSync(target) && fs.statSync(target).isDirectory())
+      target = path.join(target, 'index.html');
+    if (!fs.existsSync(target)) fail(`${pagePath}: broken link ${href}`);
+    const anchor = decodeURIComponent(url.hash.slice(1));
+    if (anchor && idsByPath.has(target) && !idsByPath.get(target).has(anchor)) {
+      fail(`${pagePath}: missing anchor ${href}`);
+    }
+  }
+}
+
 const combined = htmlFiles.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-for (const phrase of ['Oliphaunt', 'Rust SDK', 'Extension Catalog', 'SQLite']) {
+for (const phrase of ['Oliphaunt', 'Rust SDK', 'Extension catalog', 'SQLite']) {
   if (!combined.includes(phrase)) {
     fail(`docs build output missing phrase: ${phrase}`);
   }
@@ -86,11 +118,34 @@ for (const file of htmlFiles) {
   }
 }
 
-for (const staticFile of ['llms.txt', 'llms-full.txt']) {
+for (const staticFile of ['llms.txt', 'llms-full.txt', 'docs-version.json']) {
   const fullPath = path.join(buildRoot, staticFile);
   if (!fs.existsSync(fullPath)) {
     fail(`docs build did not publish ${staticFile}`);
   }
+}
+
+const llmText = fs.readFileSync(path.join(buildRoot, 'llms-full.txt'), 'utf8');
+const llmIndex = fs.readFileSync(path.join(buildRoot, 'llms.txt'), 'utf8');
+for (const record of routeMetadata.routes ?? []) {
+  const route = `/docs${record.route}`;
+  if (!llmIndex.includes(`](${route})`) || !llmText.includes(`(${route})`)) {
+    fail(`Markdown exports are missing ${route}`);
+  }
+}
+if (llmText.includes('<SdkChooser') || llmText.includes('@VERSION(')) {
+  fail('Markdown export contains an unresolved SDK chooser or version');
+}
+
+const searchFile = path.join(buildRoot, 'api/search');
+if (!fs.existsSync(searchFile) || !fs.statSync(searchFile).isFile())
+  fail('static search index is missing');
+const searchData = fs.readFileSync(searchFile).toString('base64');
+const searchResults = await oramaStaticClient({
+  from: `data:application/json;base64,${searchData}`,
+}).search('backup');
+if (!searchResults.some((result) => result.url.includes('/docs/sdk/'))) {
+  fail('exported search index returns no SDK results for backup');
 }
 
 const faviconPath = path.join(buildRoot, 'img', 'favicon.svg');

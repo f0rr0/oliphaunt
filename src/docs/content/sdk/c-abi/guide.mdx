@@ -1,143 +1,70 @@
 ---
-title: Build A Binding
-description: Build a language binding over opaque C handles, raw protocol bytes, explicit response ownership, lifecycle, extensions, and backup APIs.
+title: Build a binding
+description: Prepare storage and manage scheduling, errors, buffers, streaming, and native lifecycle.
 ---
 
-# Build A Binding
+A binding translates its language's database API into the C ABI and owns the scheduling around that boundary. Begin with the [C example](/docs/sdk/c-abi).
 
-Use the C ABI when building language bindings or platform SDKs. App developers
-usually choose a native SDK, Rust WASIX, or WASIX TypeScript instead.
+## Prepare a managed root
 
-<Callout type="info" title="The C ABI is a binding boundary">
-Use this surface when you need opaque handles, explicit response ownership, and
-the native runtime boundary. App-facing SDKs own typed queries and platform
-lifecycle integration.
-</Callout>
+Create persistent storage with a native SDK before calling `oliphaunt_init`. For example, run this separate Rust program using the [Rust SDK](/docs/sdk/rust):
 
-<SdkGuideSummary id="c-abi" />
+```rust
+use oliphaunt::{DatabaseStorage, Oliphaunt};
 
-<Steps>
-<Step>
-
-### Install
-
-Consume the released headers, libraries, and runtime assets for your target.
-Language bindings package those artifacts through the target ecosystem so app
-developers install one SDK surface.
-
-</Step>
-<Step>
-
-### Open and query
-
-Prepare a managed root, open its `pgdata` directory, send raw protocol bytes,
-read backend messages, and close the handle. The C runtime validates an exact
-`.oliphaunt.json`, PostgreSQL 18 `PG_VERSION`, a real `global` directory with
-nonempty `pg_control`, and a real `pg_wal`; it does not initialize an empty root.
-
-<!-- oliphaunt-snippet: liboliphaunt-native -->
-
-```c
-#include <oliphaunt.h>
-#include <string.h>
-
-OliphauntConfig config = {
-    .abi_version = OLIPHAUNT_ABI_VERSION,
-    .pgdata = "/app/data/main.oliphaunt/pgdata",
-    .username = "app",
-    .database = "app",
-};
-
-OliphauntHandle *db = NULL;
-int rc = oliphaunt_init(&config, &db);
-if (rc != 0) {
-    return rc;
+fn main() -> oliphaunt::Result<()> {
+    let mut db = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory("./data/example".into()))
+        .direct()
+        .open()?;
+    db.close()
 }
-
-OliphauntResponse response = {0};
-const char *sql = "SELECT 1::text AS value";
-rc = oliphaunt_exec_simple_query(db, sql, strlen(sql), &response);
-oliphaunt_free_response(&response);
-oliphaunt_close(db);
 ```
 
-Higher-level SDKs own SQL builders, typed parsing, async scheduling, resource
-selection, and lifecycle integration.
+After that process exits, pass `./data/example/pgdata` to the C example. The surrounding root also contains `.oliphaunt.json`; retain it. Pointing the ABI at an ordinary empty directory or an arbitrary `initdb` directory does not establish the managed-root contract.
 
-</Step>
-<Step>
+## Serialize database operations
 
-### Configure
+One direct backend resides in the process. Serialize ordinary calls on the handle, including queries, backups, detach, and close. Use an owner thread or queue if your language's callers are concurrent. `oliphaunt_cancel` is the explicit cross-thread exception for interrupting an active operation.
 
-`OliphauntConfig` contains the PGDATA path, optional runtime and module
-directories, username, database, and PostgreSQL startup arguments.
-Set `flags` to zero for normal ownership, or to
-`OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK` when the host already owns the managed
-root lock for the lifetime of the handle. A detached resident runtime accepts a
-new logical lease only when the reopen uses the same lock-ownership mode. Other
-flag bits are rejected.
-Higher-level SDKs prepare storage and translate direct-runtime settings into
-this record.
+Do not run PostgreSQL work on a UI thread. Keep request buffers and configuration strings alive for the duration of their native call. The high-level SDKs provide broker/server modes when process isolation or multiple sessions are needed.
 
-</Step>
-<Step>
+## Own response buffers
 
-### Choose a mode
+Zero-initialize `OliphauntResponse`. After a buffered query or backup, consume or copy its bytes, then call `oliphaunt_free_response` exactly once. Do not free the data with your language's allocator or read it after release.
 
-The C ABI is the native-direct boundary and owns one serialized embedded
-session. Choose broker or server through a language SDK when process isolation
-or independent client sessions are required.
+Decode PostgreSQL fields and error messages before releasing the response. Use protocol parameter binding for untrusted values; the simple-query helper accepts SQL text and does not interpolate values safely for you.
 
-</Step>
-<Step>
+## Capture errors before switching threads
 
-### Handle lifecycle
+Use the `_with_error` variants for async FFI schedulers. They write an `OliphauntErrorCapture` into caller-owned memory before the native operation returns. The capture remains available after your language resumes on another thread.
 
-Each binding runs calls through a single owner queue or equivalent serial
-executor. A host with exactly one serialized lifetime owner can terminate the
-resident runtime with `oliphaunt_close`. A binding with independent environment,
-worker, or finalizer cleanup owners must instead capture
-`oliphaunt_logical_generation(db)` immediately after a successful init and pass
-only that token to `oliphaunt_close_if_generation` during teardown. A stale
-owner receives a positive non-error result while a newer logical lease remains
-active, instead of closing that lease. If terminal close already completed, the
-same cleanup is satisfied with zero. Close rejects queued work and waits for
-active work according to the SDK's platform contract.
+For synchronous callers, `oliphaunt_copy_last_error` can copy the failing operation's error on the same thread. Read it before beginning another fallible operation. Do not retain a borrowed pointer to shared error storage.
 
-</Step>
-<Step>
+## Stream protocol responses
 
-### Select extensions
+`oliphaunt_exec_protocol_raw_stream` calls your callback with borrowed bytes valid only for that invocation. Copy them if the receiving language needs them later.
 
-Place dynamic extension files under the configured runtime/module directories,
-or call `oliphaunt_register_static_extensions` before `oliphaunt_init` for
-statically linked modules. The application still enables an installed
-extension with PostgreSQL SQL such as `CREATE EXTENSION`.
+Return zero to continue. Returning nonzero stops further callback delivery and asks the runtime to recover the protocol boundary. `OLIPHAUNT_STREAM_CALLBACK_ABORTED` indicates the callback-stop outcome; a negative result signals a validation, transport, backend, or recovery failure.
 
-</Step>
-<Step>
+Do not query, back up, detach, close, or start another stream from the callback. Out-of-band cancellation is allowed. Reuse the database only when recovery is confirmed.
 
-### Back up and restore
+## Back up and restore
 
-Use `oliphaunt_backup` and `oliphaunt_restore` for the one native PostgreSQL 18
-physical archive. Restore accepts a new or existing-empty managed-root
-destination and does not replace nonempty data.
+`oliphaunt_backup` returns the native physical archive through an owned response buffer. Copy or save the archive before freeing the response.
 
-</Step>
-</Steps>
+Pass `OliphauntRestoreOptions` to `oliphaunt_restore`. Its `destination` names a new or empty managed root, not its `pgdata` child. Supply the ABI version and archive bytes. Restore rejects a nonempty destination.
 
-<SdkGuideProof id="c-abi" />
+If backup reports that exiting backup mode is unconfirmed, do not run another query. Close or detach the handle and restart the process before reopening PostgreSQL.
 
-## Troubleshooting
+## Register extensions
 
-Inspect return codes and call `oliphaunt_copy_last_error` on that same thread
-immediately after a failure. Its operation-local snapshot is stable across the
-usual size-probe and copy calls even when another thread is cancelling or
-running work on the handle. Then check missing runtime resources, PGDATA locks,
-and PostgreSQL errors. Language bindings may parse protocol errors into richer
-ecosystem-native types.
+Link the required native extension code and runtime resources. For static linking, call `oliphaunt_register_static_extensions` before init with the matching descriptors. The registry becomes immutable once startup begins. Enable database-local extension objects through SQL after open.
 
-If the host's FFI scheduler resumes on a different thread, call the matching
-`_with_error` operation and keep one `OliphauntErrorCapture` with that call.
-Reading `oliphaunt_copy_last_error` later on the resumed thread cannot recover
-worker-local attribution. A null capture is rejected before the operation runs.
+## End ownership safely
+
+`oliphaunt_detach` ends the logical lease while retaining the resident backend. `oliphaunt_close` is terminal for that backend's process lifetime; after success, never dereference the handle again.
+
+When independent host environments or finalizers can own cleanup, capture the nonzero value from `oliphaunt_logical_generation` immediately after init. Retain that token for cleanup and call `oliphaunt_close_if_generation`. A stale generation cannot close a newer lease.
+
+Keep explicit close as the observable cleanup path. A finalizer can provide a fallback, but it cannot replace reporting teardown errors to the caller.

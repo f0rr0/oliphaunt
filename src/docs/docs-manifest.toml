@@ -45,7 +45,7 @@ docs_entry = "target/docs/generated/api/wasix-rust/doc/oliphaunt_wasix/index.htm
 
 [[routes]]
 id = "start"
-title = "Start"
+title = "Get started"
 kind = "public"
 route = "start"
 source = "src/docs/content/start"
@@ -69,7 +69,7 @@ page_order = ["index"]
 
 [[routes]]
 id = "learn"
-title = "Learn"
+title = "Guides"
 kind = "public"
 route = "learn"
 source = "src/docs/content/learn"
@@ -109,9 +109,14 @@ page_order = [
 ]
 sidebar_pages = [
   "index",
+  "sdk-products",
   "capabilities",
   "extensions",
   "performance",
+  "releases",
+  "version-matrix",
+  "extension-catalog",
+  "api-reference",
 ]
 
 [[routes]]
@@ -138,9 +143,39 @@ page_order = [
 sidebar_pages = [
   "index",
   "guide",
+  "api-reference",
 ]
 reference_artifact = "target/docs/generated/api/rust/doc/oliphaunt/index.html"
 snippet_language = "rust"
+
+[[routes]]
+id = "oliphaunt-js"
+product_id = "oliphaunt-js"
+title = "TypeScript SDK"
+kind = "sdk"
+route = "sdk/typescript"
+source = "src/docs/content/sdk/typescript"
+version_source = "src/sdks/js/release.toml:id"
+reference_kind = "typedoc"
+tested_snippet_path = "src/sdks/js/src/__tests__/client.test.ts"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET typescript-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+reference_artifact = "target/docs/generated/api/typescript/html/index.html"
+snippet_language = "typescript"
 
 [[routes]]
 id = "oliphaunt-swift"
@@ -166,6 +201,7 @@ page_order = [
 sidebar_pages = [
   "index",
   "guide",
+  "api-reference",
 ]
 reference_artifact = "target/docs/generated/api/swift/Oliphaunt.doccarchive"
 snippet_language = "swift"
@@ -194,6 +230,7 @@ page_order = [
 sidebar_pages = [
   "index",
   "guide",
+  "api-reference",
 ]
 reference_artifact = "target/docs/generated/api/kotlin/html/index.html"
 snippet_language = "kotlin"
@@ -224,21 +261,22 @@ sidebar_pages = [
   "index",
   "guide",
   "architecture",
+  "api-reference",
 ]
 reference_artifact = "target/docs/generated/api/react-native/html/index.html"
 snippet_language = "typescript"
 
 [[routes]]
-id = "oliphaunt-js"
-product_id = "oliphaunt-js"
-title = "TypeScript SDK"
+id = "oliphaunt-wasix-typescript"
+product_id = "oliphaunt-wasix-ts"
+title = "WASIX TypeScript SDK"
 kind = "sdk"
-route = "sdk/typescript"
-source = "src/docs/content/sdk/typescript"
-version_source = "src/sdks/js/release.toml:id"
+route = "sdk/wasix-typescript"
+source = "src/docs/content/sdk/wasix-typescript"
+version_source = "src/bindings/wasix-ts/release.toml:id"
 reference_kind = "typedoc"
-tested_snippet_path = "src/sdks/js/src/__tests__/client.test.ts"
-tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET typescript-quickstart"
+tested_snippet_path = "tools/integration/wasix-ts/smoke-node.mjs"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart"
 required_pages = [
   "index",
   "guide",
@@ -252,8 +290,9 @@ page_order = [
 sidebar_pages = [
   "index",
   "guide",
+  "api-reference",
 ]
-reference_artifact = "target/docs/generated/api/typescript/html/index.html"
+reference_artifact = "target/docs/generated/api/wasix-typescript/html/index.html"
 snippet_language = "typescript"
 
 [[routes]]
@@ -284,37 +323,10 @@ sidebar_pages = [
   "guide",
   "runtime",
   "dump-restore",
+  "api-reference",
 ]
 reference_artifact = "target/docs/generated/api/wasix-rust/doc/oliphaunt_wasix/index.html"
 snippet_language = "rust"
-
-[[routes]]
-id = "oliphaunt-wasix-typescript"
-product_id = "oliphaunt-wasix-ts"
-title = "WASIX TypeScript SDK"
-kind = "sdk"
-route = "sdk/wasix-typescript"
-source = "src/docs/content/sdk/wasix-typescript"
-version_source = "src/bindings/wasix-ts/release.toml:id"
-reference_kind = "typedoc"
-tested_snippet_path = "tools/integration/wasix-ts/smoke-node.mjs"
-tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart"
-required_pages = [
-  "index",
-  "guide",
-  "api-reference",
-]
-page_order = [
-  "index",
-  "guide",
-  "api-reference",
-]
-sidebar_pages = [
-  "index",
-  "guide",
-]
-reference_artifact = "target/docs/generated/api/wasix-typescript/html/index.html"
-snippet_language = "typescript"
 
 [[routes]]
 id = "liboliphaunt-native"
@@ -340,6 +352,7 @@ page_order = [
 sidebar_pages = [
   "index",
   "guide",
+  "api-reference",
 ]
 reference_artifact = "target/docs/generated/api/c/xml"
 snippet_language = "c"

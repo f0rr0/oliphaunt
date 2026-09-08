@@ -1,79 +1,44 @@
 ---
-sidebar_position: 1
 title: Embedded PostgreSQL
-description: Learn how PostgreSQL storage, WAL, lifecycle, extensions, backup, and restore fit inside an app.
+description: Understand database lifetime, persistence, and backup in an embedded PostgreSQL app.
 ---
 
-# Embedded PostgreSQL
+Oliphaunt runs PostgreSQL inside your application or a local process it owns. Your app chooses when the database opens, where its data lives, and when it closes. PostgreSQL supplies SQL execution, transactions, indexes, and recovery.
 
-Oliphaunt embeds PostgreSQL behind SDK-native APIs while keeping PostgreSQL's
-storage, WAL, SQL, protocol, and extension model recognizable. The SDK boundary
-owns lifecycle, packaged runtime assets, exact extension selection, and app-safe
-defaults.
+## Choose the data lifetime
 
-<EmbeddedPostgresModel />
+| Storage | Use it for | What happens after close |
+| --- | --- | --- |
+| Native default: temporary directory | Tests, previews, disposable work | The SDK removes its temporary storage |
+| WASIX default: memory filesystem | Tests and disposable browser or host sessions | The data is discarded |
+| Persistent directory or browser provider | Application data | Reopen the same storage to use the data again |
 
-The product line has distinct native and WASIX hosts.
+Choose persistent storage explicitly before saving user data. Native mobile apps normally use an app-private directory. WASIX browser apps choose IndexedDB or OPFS; desktop WASIX apps can use a directory.
 
-| Product | Use it for |
-| --- | --- |
-| Native `liboliphaunt` SDKs | Rust, Swift, Kotlin, React Native, TypeScript, and C ABI consumers |
-| Rust WASIX `oliphaunt-wasix` | Rust applications hosting the portable runtime |
-| WASIX TypeScript `@oliphaunt/wasix-ts` | Browser caller-realm root; native-host actor root, explicit `/direct`, or `/worker` on Node, Bun, Deno, and Electron; browsers may opt into IndexedDB or OPFS persistence and native hosts may opt into directory persistence |
+A native persistent database is a managed directory, not a single file. The root contains `.oliphaunt.json` and a `pgdata` directory. Let the SDK manage both. Do not edit the descriptor, delete WAL files, or point unrelated database instances at the same root.
 
-The products share storage, exact extension selection, structured errors, and
-lifecycle concepts. Backup/restore, server access, and persistence mechanisms
-remain product-specific and are recorded in the static runtime-support matrix.
+## One handle, one session
 
-## Database storage
+Embedded query handles use one PostgreSQL session. Async calls let the application stay responsive, but queries still execute in order on that session. A transaction holds the session until it commits or rolls back.
 
-A managed persistent root contains `.oliphaunt.json` and `pgdata`. PostgreSQL
-owns the data, WAL, catalog state for installed extensions, and recovery state
-inside `pgdata`. Binding-local locks or leases are host coordination state, not
-database contents. Native temporary storage is SDK-owned. WASIX uses a true
-memory filesystem by default and offers host-specific persistent storage
-explicitly.
+Use the transaction object supplied to a callback for every operation inside it. Calling the outer database handle from the callback can wait on the transaction that is already using the session.
 
-That storage model is deliberate: app developers get PostgreSQL's recovery and SQL
-behavior, while the SDK owns the app-facing safety rails around paths, locking,
-backup, restore, and selected runtime assets.
+For independent client sessions and a connection pool, use a [native server](/docs/learn/native-runtime#server). WASIX local endpoints accept one connected client at a time.
 
-## Lifecycle Contract
+## Store changes safely
 
-Every SDK exposes open, query, and close with ecosystem-native names. Other
-lifecycle phases are present only where the host supports them:
+PostgreSQL uses write-ahead logging, or WAL, to recover committed changes after an interruption. Native SDKs use PostgreSQL's files directly. Persistent WASIX providers also need to publish changes to their host storage; follow the SDK's persistence contract.
 
-| Phase | What the SDK owns |
-| --- | --- |
-| Open | Create or attach to storage, validate ownership, and materialize selected runtime resources |
-| Query | Route work through the selected engine and preserve mode-specific concurrency rules |
-| SQL maintenance | Applications may issue PostgreSQL `CHECKPOINT` through ordinary `execute`; WASIX TypeScript then publishes through its selected provider. There is no SDK checkpoint method |
-| Close | Reject new work, wait for active work, and detach cleanly from the selected runtime |
-| Backup/restore | Use each binding's physical data-movement API where exposed |
+Await operations and close the database explicitly. Mobile operating systems may terminate an app without calling shutdown code, so closing must not be your only persistence mechanism. Keep transactions short and treat an interrupted operation with an unknown result as uncertain; check application state before retrying it.
 
-Applications decide when platform lifecycle events require SQL maintenance,
-cancellation, or close. Desktop SDKs add broker and server modes where a helper
-process or local server is the better runtime shape.
+## Back up a database
 
-## Extension Selection
+Use the SDK's `backup` and `restore` APIs. A live directory copy can miss files or WAL needed for a consistent database. Restore into a new or empty destination, then open that destination with the required extensions available.
 
-Extensions are selected exactly before packaging or opening the database.
-Native SDKs use SQL-name selectors, Rust WASIX uses exact Cargo features and
-typed values, and WASIX TypeScript imports exact `-wasix` descriptors. App
-artifacts include only the selected carrier closure.
+Physical archives belong to their runtime family and require a compatible runtime version. Use a logical SQL dump when moving between native and WASIX runtimes. Backups contain database state; ship extension binaries and resources with the destination application separately.
 
-`CREATE EXTENSION` succeeds only when the selected runtime resources include
-that extension for the target platform. See the
-[extension reference](/docs/reference/extensions) for the distribution contract.
+## Use PostgreSQL features
 
-## What is different from SQLite?
+Parameters use PostgreSQL's `$1`, `$2` syntax. Types, casts, constraints, and query planning follow PostgreSQL behavior. [Extensions](/docs/reference/extensions) add features such as vector search; select and package an extension before enabling it with SQL.
 
-Oliphaunt stores live data as PostgreSQL storage with PostgreSQL recovery
-behavior. On native targets this is a directory rather than a single database
-file; WASIX hosts provide their own storage policy. That is a larger runtime model,
-but it enables PostgreSQL SQL, types, wire-protocol behavior, and extensions
-inside apps that need those features.
-
-Use SQLite when a small single-file database is the better product fit. Use
-Oliphaunt when PostgreSQL compatibility, extensions, or server-compatible
-workflows are worth the extra runtime footprint.
+Use the [SDK guides](/docs/sdk) for concrete storage, transaction, and backup examples.

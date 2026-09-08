@@ -1,85 +1,82 @@
 ---
 title: TypeScript SDK
-description: Native desktop JavaScript SDK for Node.js, Bun, and Deno.
+description: Install the native SDK for Node.js, Bun, Deno, or Electron and run your first query.
 ---
 
-<SdkLanding id="typescript" />
-
-The TypeScript SDK targets Node.js, Bun, and Deno. It is the desktop
-JavaScript SDK for the native runtime, native helpers, broker/server flows, and
-runtime asset resolution.
-
-It is separate from [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript), whose
-browser root uses Wasmer and whose Node-compatible root, `/direct`, and
-`/worker` entrypoints use its own WASIX Rust Node-API carrier. Neither package
-selects or falls back to the other.
-
-Use this SDK for supported desktop JavaScript runtimes. Tauri apps currently
-keep the database in Rust state and expose narrow app-owned commands to the
-webview. React Native apps use the React Native SDK because mobile execution
-delegates through Swift and Kotlin.
+Use `@oliphaunt/ts` to run native PostgreSQL in a desktop JavaScript application. For a browser app, use [WASIX TypeScript](/docs/sdk/wasix-typescript); for a mobile app, use [React Native](/docs/sdk/react-native).
 
 ## Install
 
-Install the package from npm:
+The package supports Node.js 22.13 through 24.x. Bun and Deno use their native runtime adapters.
+
+<Tabs items={["npm", "Bun", "Deno"]}>
+<Tab value="npm">
 
 ```sh
-npm install @oliphaunt/ts
+npm install @oliphaunt/ts@@VERSION(oliphaunt-js)@
 ```
 
-npm is the native-runtime distribution for Node.js, Bun, and Deno. Deno imports
-the same package through `npm:@oliphaunt/ts`.
+</Tab>
+<Tab value="Bun">
 
-Use this SDK for Node.js, Bun, and Deno. Tauri frontends currently call narrow
-app-owned Rust commands. React Native apps use `@oliphaunt/react-native` because mobile execution
-delegates through Swift and Kotlin.
+```sh
+bun add @oliphaunt/ts@@VERSION(oliphaunt-js)@
+```
 
-## Open And Query
+</Tab>
+<Tab value="Deno">
 
-Open a database from TypeScript:
+Import the npm package with `import { Oliphaunt } from 'npm:@oliphaunt/ts@@VERSION(oliphaunt-js)@';`. Enable local npm dependencies so Deno can load the native module:
+
+```json title="deno.json"
+{ "nodeModulesDir": "auto" }
+```
+
+Run with the permissions needed to load native libraries and read/write database resources:
+
+```sh
+deno run --allow-ffi --allow-env --allow-read --allow-write main.ts
+```
+
+</Tab>
+</Tabs>
+
+The package supplies native runtime assets for supported desktop targets. Keep native files available when bundling your application.
+
+## Run your first query
+
+This example opens disposable storage, binds a parameter, reads the result, and closes the database. Run it in your application's JavaScript runtime.
+
+<!-- oliphaunt-snippet: oliphaunt-js -->
 
 ```ts
 import { Oliphaunt } from '@oliphaunt/ts';
 
-const db = await Oliphaunt.open({
-  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
-  extensions: ['vector'],
-});
-
-const rows = await db.query('SELECT 1::text AS value');
-await db.close();
+const db = await Oliphaunt.open();
+try {
+  const result = await db.query('SELECT $1::int4 AS answer', [42]);
+  console.log(result.rows[0]?.answer); // 42
+} finally {
+  await db.close();
+}
 ```
 
-## Runtime Shape
+An open handle owns one PostgreSQL session. Queries return promises and execute in order on that session.
 
-The SDK detects Node.js, Bun, or Deno and selects its native direct adapter by
-default. Broker mode adds process isolation. If its helper fails, close that
-database object and open a new one on the same persistent storage; PostgreSQL
-then performs WAL recovery. Oliphaunt never substitutes a new session under the
-same object. Server mode is for PostgreSQL-compatible tools and independent
-clients.
+## Keep data between runs
 
-The SDK resolves local helper binaries and runtime assets for the selected
-platform. App code keeps using TypeScript promises and typed result helpers while
-the runtime mode determines whether calls use direct, broker, or server
-semantics.
+Use this storage configuration instead of the disposable example above. Direct mode stays bound to its first root for the lifetime of the process; closing does not let the same process switch roots.
 
-## App Responsibilities
+Choose a persistent directory instead of the default temporary storage:
 
-- Install the package-managed runtime and selected exact extension artifacts.
-- Pick broker mode when a helper process owns the database runtime.
-- Use server mode when existing PostgreSQL clients, pools, or ORMs need
-  independent sessions.
-- Use SDK backup and restore APIs for export/import flows.
-- Choose direct, broker, or server from the documented runtime support matrix.
-- Await `close()` (or use `await using`) instead of relying on nondeterministic
-  garbage-collection cleanup. Direct, broker, and server finalizers are
-  generation/exact-handle leak guards only; their asynchronous outcome is not
-  observable.
+```ts
+const db = await Oliphaunt.open({
+  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
+});
+```
 
-## First Query
+Reopen the same path to use the data again. Keep the handle in application state and close it when the application finishes using it.
 
-Use [Build With TypeScript](/docs/sdk/typescript/guide) for open/query,
-configuration, helper resolution, lifecycle, exact extensions, backup, restore,
-and troubleshooting. Use the [API reference](/docs/sdk/typescript/api-reference)
-for the public API map.
+## Next steps
+
+[Query, transact, and back up data](/docs/sdk/typescript/guide), or look up methods and configuration in the [API reference](/docs/sdk/typescript/api-reference).

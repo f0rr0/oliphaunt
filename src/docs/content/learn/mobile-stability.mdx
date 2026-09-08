@@ -1,56 +1,38 @@
 ---
-title: Mobile Stability
-description: Understand native direct mode, relaunch, persistence, and crash consistency on iOS, Android, and React Native.
+title: Ship a mobile database
+description: Manage persistent storage, transactions, and application lifecycle on iOS and Android.
 ---
 
-# Mobile Stability
+Mobile apps need a database that survives normal process termination. Start with the [Swift](/docs/sdk/swift), [Kotlin](/docs/sdk/kotlin), or [React Native](/docs/sdk/react-native) quickstart, then apply these practices before shipping.
 
-Oliphaunt mobile SDKs use native direct mode: one embedded PostgreSQL backend
-lives inside the app process and SDK calls are serialized through the platform
-SDK.
+## Keep data in app-private storage
 
-<MobileStabilityContract />
+Choose a stable application-data directory. Temporary storage is useful for tests but does not retain user data. On React Native, `applicationData` storage resolves a name through the platform SDK.
 
-## What developers can rely on
+Use the platform's file-protection and backup settings for your app's data. Do not move, rename, or copy a live PostgreSQL root. Export a database through the SDK backup API when a user needs to move it.
 
-- PostgreSQL storage and WAL provide crash recovery.
-- Reopening the same persistent storage after app relaunch recovers the
-  database.
-- Concurrent app tasks share one serialized physical database session.
-- React Native delegates execution to Swift on Apple platforms and Kotlin on
-  Android.
+## Own the database at application scope
 
-Direct mode shares the app process. It does not promise process isolation,
-independent PostgreSQL sessions, or multiple resident database instances.
+Open the database in an application service or state owner. Avoid opening a new database for each screen render or query. Share the handle through Swift concurrency, Kotlin coroutines, or the React Native client.
 
-## Close and reopen
+Direct mode binds the process to one root and configuration. Closing the database does not unload the backend. If you restore into a new root, switch to it on a subsequent application launch.
 
-`close()` logically detaches the SDK handle. The same database instance can be
-reopened while the process remains resident; switching to another persistent
-root requires a fresh process.
+Run schema setup before screens depend on it. Use parameterized queries, keep transactions short, and keep network requests and user interaction outside transaction callbacks.
 
-Use an app-owned persistent storage location for user data. Temporary storage
-is appropriate for tests and short-lived work.
+## Handle suspension and termination
 
-## Background and foreground
+Finish important writes while the app has execution time. An operating system can terminate a background app without waiting for a close callback. Persist throughout the session and use explicit close for orderly teardown.
 
-The SDK exposes normal database operations, not an app-background mode. The app
-decides whether a platform lifecycle event cancels bounded work or closes the
-database. Committed work relies on PostgreSQL WAL and crash recovery; routine
-app lifecycle handling does not require an SDK checkpoint method. A maintenance
-workflow that explicitly needs `CHECKPOINT` can issue that PostgreSQL statement
-through the ordinary execution API, but it does not make the in-process runtime
-crash-isolated.
+Cancel long-running work when the user leaves the operation that requested it. Cancellation can interrupt a statement; it does not replace rollback or close. Await transaction settlement before reporting that a write was cancelled.
 
-React Native uses TurboModule calls for lifecycle and configuration and JSI
-`ArrayBuffer` transport for buffered raw protocol bytes. Its host functions
-return promises and delegate runtime work to the same native owner used by the
-Swift or Kotlin SDK. Invalidation schedules close asynchronously instead of
-blocking the JavaScript, iOS main, or Android UI thread.
+If an operation fails after the connection or process is lost, its outcome can be unknown. Use application-level identifiers and check whether the write already happened before retrying it.
 
-## Choosing the mode
+## Package extensions before building
 
-Mobile packages expose native direct mode. Broker and server are desktop
-runtime choices and are not advertised as mobile capability flags. Applications
-that require independent clients or database-process isolation use a supported
-desktop host or a remote PostgreSQL server.
+Selecting an extension changes native resources in your app. Configure the platform package or React Native plugin, rebuild the application, and then request the extension when opening the database. A JavaScript-only update cannot add a missing native extension.
+
+Use the [extension catalog](/docs/reference/extension-catalog) to check availability. Test the installed app on each target architecture with the selected extensions.
+
+## Exercise recovery
+
+Before release, test a persistent database across app restarts, an interrupted write, a failed transaction, a backup restored to a fresh destination, and an application upgrade. Confirm that the restored app ships the extensions its database needs.

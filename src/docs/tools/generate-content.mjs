@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parse as parseToml } from 'smol-toml';
 
+import { renderPublicPlatformCompatibilityTable } from '../../../tools/release/platform-compatibility-policy.mjs';
+
 import { generateApiReferenceArtifacts } from './generate-api-reference.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -179,6 +181,10 @@ function assertInsideRepo(relativePath, label) {
 }
 
 function replaceSnippetDirectives(markdown, context) {
+  markdown = markdown.replace(
+    /<!--\s*oliphaunt-platforms\s*-->/gu,
+    renderPublicPlatformCompatibilityTable,
+  );
   return markdown.replace(
     /<!--\s*oliphaunt-snippet:\s*([a-z0-9_-]+)\s*-->/giu,
     (_match, routeId) => {
@@ -188,6 +194,16 @@ function replaceSnippetDirectives(markdown, context) {
       return '';
     },
   );
+}
+
+export function replaceVersionVariables(markdown, products) {
+  return markdown.replace(/@VERSION\(([^)]+)\)@/gu, (_match, id) => {
+    const version = products[id]?.current_version;
+    if (!version || !/^\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/u.test(version)) {
+      throw new Error(`unknown or invalid docs version: ${id}`);
+    }
+    return version;
+  });
 }
 
 function normalizeMdxComments(markdown) {
@@ -243,33 +259,6 @@ function normalizeCodeFenceInfoStrings(markdown) {
   );
 }
 
-function copyDir(source, destination, context) {
-  if (!fs.existsSync(source)) {
-    throw new Error(`docs source does not exist: ${path.relative(repoRoot, source)}`);
-  }
-  ensureDir(destination);
-  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    if (SKIP_DIRS.has(entry.name)) {
-      continue;
-    }
-    const from = path.join(source, entry.name);
-    const to = path.join(destination, entry.name);
-    if (entry.isDirectory()) {
-      copyDir(from, to, context);
-    } else if (entry.isFile()) {
-      if (/\.mdx?$/u.test(entry.name)) {
-        const markdown = normalizeCodeFenceInfoStrings(
-          normalizeMdxComments(replaceSnippetDirectives(readText(from), context)),
-        );
-        const fallbackTitle = path.basename(entry.name, path.extname(entry.name));
-        fs.writeFileSync(to, normalizePageMarkdown(markdown, fallbackTitle));
-      } else {
-        fs.copyFileSync(from, to);
-      }
-    }
-  }
-}
-
 function routeSourcePagePath(source, page) {
   for (const extension of ['.md', '.mdx']) {
     const candidate = path.join(source, `${page}${extension}`);
@@ -282,7 +271,9 @@ function routeSourcePagePath(source, page) {
 
 function copyMarkdownPage(from, to, context) {
   const markdown = normalizeCodeFenceInfoStrings(
-    normalizeMdxComments(replaceSnippetDirectives(readText(from), context)),
+    normalizeMdxComments(
+      replaceSnippetDirectives(replaceVersionVariables(readText(from), context.products), context),
+    ),
   );
   const fallbackTitle = path.basename(from, path.extname(from));
   ensureDir(path.dirname(to));
@@ -451,14 +442,17 @@ function generateExtensionCatalog() {
       return `| ${escapeMarkdown(extension['sql-name'] ?? extension.id)} | ${escapeMarkdown(extension['display-name'] ?? extension.id)} | ${escapeMarkdown(extensionVersion(control['default-version']))} | ${escapeMarkdown(extensionFamily(extension['source-kind']))} | ${escapeMarkdown(extensionActivation(extension))} |`;
     });
   return `---
-title: Extension Catalog
+title: Extension catalog
+description: Find PostgreSQL extension names, upstream versions, and activation requirements.
 ---
 
-# Extension Catalog
+Find the exact SQL name to select in your SDK. The version column describes the
+upstream extension, not its Oliphaunt package version. Follow the
+[extension setup guide](/docs/reference/extensions) before enabling an extension.
 
-Use this table to find exact SQL extension names. SDK and app packaging
-selection uses the SQL extension name. Every listed extension is supported
-extensions only.
+The catalog covers the supported native and WASIX target profile. Check your
+[SDK's runtime requirements](/docs/reference/capabilities) and package the
+resources for the platform you ship.
 
 | SQL extension | Display name | Version | Family | Activation |
 | --- | --- | --- | --- | --- |
@@ -641,39 +635,23 @@ function cReferenceBody(record) {
 function generateApiReference(manifest) {
   const rows = manifest.routes
     .filter((route) => route.kind === 'sdk')
-    .map((route) => {
-      const reference = referenceLabel(route.reference_kind);
-      return `| ${escapeMarkdown(route.title)} | [Open](/docs/${route.route}/api-reference) | ${escapeMarkdown(reference)} |`;
-    });
+    .map(
+      (route) =>
+        `| [${escapeMarkdown(route.title)}](/docs/${route.route}/api-reference) | [Quickstart](/docs/${route.route}) | [Guide](/docs/${route.route}/guide) |`,
+    );
   return `---
-title: API Reference
+title: API reference
+description: Find configuration, query methods, results, errors, and lifecycle for each SDK.
 ---
 
-# API Reference
+Choose your SDK to look up its API. Each reference covers entry points,
+configuration, query results, transactions, and lifecycle constraints.
 
-Use this page when you know the SDK and need the API surface by task. SDK guides
-show the first integration path. These maps point to the language reference for
-configuration, query results, lifecycle, extension selection, data movement
-where exposed, and error handling. Shared concepts do not imply API parity.
-
-## Choose By Task
-
-| Task | Look for |
-| --- | --- |
-| Open a database | builder or open configuration, storage, runtime host or mode, durability |
-| Run SQL | query, execute, parameters, row access, result typing |
-| Use raw protocol | owned buffered bytes and response ownership |
-| Manage lifecycle | closed state, close, and cancellation where exposed |
-| Run maintenance SQL | issue PostgreSQL statements such as \`CHECKPOINT\` through execute when required |
-| Move data | backup, restore, dump, or archive APIs where exposed |
-| Ship extensions | exact ecosystem-native selectors, dependency files, artifact reports |
-| Handle errors | SDK errors, PostgreSQL SQLSTATE data, and runtime errors |
-
-## Language References
-
-| Surface | Reference page | Native reference format |
+| API reference | Get started | Application recipes |
 | --- | --- | --- |
 ${rows.join('\n')}
+
+For differences between SDKs, see [Runtime support](/docs/reference/capabilities).
 `;
 }
 
@@ -754,38 +732,28 @@ ${rows.join('\n')}
 
 function generateVersionMatrix(releaseGraph) {
   const rows = releaseProducts(releaseGraph).map(([id, product]) => {
-    const currentVersion =
-      product.current_version === '0.0.0'
-        ? `${product.current_version} (unreleased)`
-        : product.current_version;
-    return `| ${escapeMarkdown(id)} | ${escapeMarkdown(currentVersion)} | ${escapeMarkdown(product.initial_version)} | ${escapeMarkdown(product.version_relationship)} | ${escapeMarkdown((product.publish_targets ?? []).join(', ') || 'none')} | ${escapeMarkdown(product.tag_prefix)} |`;
+    const version = product.current_version;
+    const notes = `https://github.com/f0rr0/oliphaunt/releases/tag/${product.tag_prefix}${version}`;
+    return `| ${escapeMarkdown(id)} | ${escapeMarkdown(version)} | [Release notes](${notes}) |`;
   });
   return `---
-title: Version Matrix
+title: Versions
+description: The SDK, runtime, and extension versions described by this documentation build.
 ---
 
-# Version Matrix
+These are the versions documented by this site. Install examples and this table
+use the same version source. SDKs and runtimes are versioned independently.
 
-Products are versioned independently.
-
-The source version \`0.0.0\` is the unreleased sentinel, not a public registry
-version. The first-public-version column is derived from Release Please's
-global or per-product initial version.
-
-Use this matrix before upgrading an app dependency. Start with the package your
-app installs, then read the products it depends on for runtime artifact,
-extension, and compatibility notes. A compatibility relationship does not turn
-the repository into one version.
-
-Release Please selects changed product paths. Derived selection then follows
-Moon production/peer edges and exact compatibility fields from dependency to
-consumer. Shared PostgreSQL contrib carrier inputs select both runtime owners;
-their native and WASIX carriers use the corresponding runtime version.
-Native and WASIX are independent products; neither selects the other.
-
-| Product | Current source version | First public version | Version relationship | Publish targets | Tag prefix |
-| --- | --- | --- | --- | --- | --- |
+| Package or runtime | Version | Changes |
+| --- | --- | --- |
 ${rows.join('\n')}
+
+A matching version number does not establish compatibility between different
+products. Keep each SDK's resolved runtime dependencies together and read
+[Releases and upgrades](/docs/reference/releases) before moving application data.
+
+The [documentation version record](/docs-version.json) identifies the source
+revision and exact versions behind this build.
 `;
 }
 
@@ -875,18 +843,18 @@ const routePresentation = {
   sdk: {
     description: 'Choose a native SDK, Rust WASIX, WASIX TypeScript, or the C ABI.',
     icon: 'PackageCheck',
-    defaultOpen: false,
+    defaultOpen: true,
   },
   learn: {
     description:
       'Understand embedded PostgreSQL storage, lifecycle, runtime modes, and migrations.',
     icon: 'BookOpen',
-    defaultOpen: false,
+    defaultOpen: true,
   },
   reference: {
     description: 'Look up capabilities, extensions, releases, performance results, and API links.',
     icon: 'SearchCheck',
-    defaultOpen: false,
+    defaultOpen: true,
   },
   'liboliphaunt-native': {
     description: 'Stable C ABI, opaque handles, raw protocol bytes, and binding rules.',
@@ -1003,7 +971,7 @@ function writeRouteMeta(route) {
     metadata.pages = metadata.pages.filter((page) => page !== 'index');
   }
   if (route.kind === 'public') {
-    metadata.root = true;
+    metadata.root = false;
     metadata.description ??= `${route.title} documentation`;
   }
   writeJson(path.join(routeRoot, 'meta.json'), metadata);
@@ -1045,8 +1013,8 @@ function writeFumadocsMeta(manifest) {
     title: 'SDKs',
     description: routePresentation.sdk.description,
     icon: routePresentation.sdk.icon,
-    root: true,
-    defaultOpen: routePresentation.sdk.defaultOpen,
+    root: false,
+    defaultOpen: true,
     pagesIndex: 'index',
     pages: sdkRoutes.map((route) => route.route.replace(/^sdk\//u, '')),
   });
@@ -1064,38 +1032,12 @@ function writeNavigationMetadata(manifest, routeRecords) {
           category(route.title, orderedItemsForRoute(route, routeRecords)),
         ),
       ]),
-      category('Learn', orderedItemsForRoute(byId.get('learn'), routeRecords)),
+      category('Guides', orderedItemsForRoute(byId.get('learn'), routeRecords)),
       category('Reference', orderedItemsForRoute(byId.get('reference'), routeRecords)),
     ],
   };
   writeJson(path.join(generatedMetaRoot, 'navigation.json'), navigation);
   writeFumadocsMeta(manifest);
-}
-
-function stripFrontmatter(markdown) {
-  return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/u, '');
-}
-
-function writeLlmFiles(routeRecords) {
-  ensureDir(staticRoot);
-  const summary = [
-    '# Oliphaunt Docs',
-    '',
-    'Oliphaunt is embedded PostgreSQL for native, Rust WASIX, and WASIX TypeScript apps.',
-    '',
-    '## Public routes',
-    ...routeRecords.map((record) => `- ${record.title}: ${record.route}`),
-    '',
-  ].join('\n');
-  fs.writeFileSync(path.join(staticRoot, 'llms.txt'), summary);
-
-  const full = routeRecords
-    .map((record) => {
-      const markdown = stripFrontmatter(readText(record.file));
-      return `# ${record.title}\n\nRoute: ${record.route}\n\n${markdown}`;
-    })
-    .join('\n\n---\n\n');
-  fs.writeFileSync(path.join(staticRoot, 'llms-full.txt'), full);
 }
 
 function appliesToForRoute(route) {
@@ -1149,7 +1091,7 @@ function stampApplicabilityMetadata(manifest) {
 
 function currentGitSha() {
   try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repoRoot,
       encoding: 'utf8',
     }).trim();
@@ -1175,6 +1117,7 @@ function generateDocsUnlocked(options = {}) {
     : new Map();
 
   const context = {
+    products: releaseGraph.products,
     sdkRoutesById: new Map(
       (manifest.routes ?? [])
         .filter((route) => route.kind === 'sdk')
@@ -1211,7 +1154,23 @@ function generateDocsUnlocked(options = {}) {
 
   writeMetadata(routeRecords);
   writeNavigationMetadata(manifest, routeRecords);
-  writeLlmFiles(routeRecords);
+  fs.writeFileSync(
+    path.join(staticRoot, 'docs-version.json'),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        sourceRevision: currentGitSha(),
+        sourceDirty:
+          execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim()
+            .length > 0,
+        products: Object.fromEntries(
+          releaseProducts(releaseGraph).map(([id, product]) => [id, product.current_version]),
+        ),
+      },
+      null,
+      2,
+    )}\n`,
+  );
   fs.writeFileSync(
     path.join(generatedMetaRoot, 'build-metadata.json'),
     `${JSON.stringify(

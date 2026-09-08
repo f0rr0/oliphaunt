@@ -1,72 +1,64 @@
 ---
 title: WASIX TypeScript SDK
-description: Run portable PostgreSQL in browsers, Node.js, Bun, Deno, and Electron with one small asynchronous API.
+description: Run PostgreSQL as WebAssembly in browsers and desktop JavaScript runtimes.
 ---
 
-# WASIX TypeScript SDK
-
-<SdkLanding id="wasix-typescript" />
-
-`@oliphaunt/wasix-ts` hosts the portable `liboliphaunt-wasix` runtime in a
-browser, Node.js, Bun, Deno, or Electron. It is a separate product from native
-`@oliphaunt/ts`: neither package selects or falls back to the other.
+Use `@oliphaunt/wasix-ts` in browsers, Node.js, Bun, Deno, or Electron. It runs the WASIX PostgreSQL runtime. For native desktop PostgreSQL, use the separate [TypeScript SDK](/docs/sdk/typescript).
 
 ## Install
 
+Desktop requirements are Node.js 22.13 through 24.x, Bun 1.3.14+, or Deno 2.8.1+.
+
 ```sh
-pnpm add @oliphaunt/wasix-ts
+npm install @oliphaunt/wasix-ts@@VERSION(oliphaunt-wasix-ts)@
 ```
 
-Deno uses the same npm package through an `npm:` import.
+Deno imports the same package with `npm:@oliphaunt/wasix-ts@@VERSION(oliphaunt-wasix-ts)@`; see [host setup](/docs/sdk/wasix-typescript/guide#desktop-host-setup).
 
-## Open And Query
+## Prepare a browser app
+
+Serve the application with these HTTP response headers:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Check that `window.crossOriginIsolated` is `true`. Serve all runtime and Worker assets with compatible cross-origin policies. Configure your bundler to preserve the package's module Worker asset when using `/worker`.
+
+Desktop runtimes do not need these browser headers.
+
+## Run your first query
+
+The root import works across hosts. In a browser it runs in the importing realm; use the Worker import shown below when database execution must stay off the UI thread.
+
+<!-- oliphaunt-snippet: oliphaunt-wasix-typescript -->
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 
-await using database = await Oliphaunt.open();
-const result = await database.query('select $1::int + 1 as answer', [41]);
-console.log(result.rows[0]?.answer);
+const db = await Oliphaunt.open();
+try {
+  const result = await db.query('SELECT $1::int4 AS answer', [42]);
+  console.log(result.rows[0]?.answer); // 42
+} finally {
+  await db.close();
+}
 ```
 
-Omitted storage creates a fresh in-memory database. Browser pages must be
-cross-origin isolated with COOP `same-origin` and COEP `require-corp`.
+The default database lives in memory and is discarded on close.
 
-## Runtime Shape
+## Keep browser data between sessions
 
-In browsers the root runs the database in the importing JavaScript realm. On
-Node-compatible hosts the root uses a dedicated Rust owner and keeps the event
-loop responsive. `@oliphaunt/wasix-ts/direct` opts into the lowest-overhead
-blocking native placement, while `@oliphaunt/wasix-ts/worker` uses a
-package-owned JavaScript Worker on every runtime. There is no `execution`
-option or silent placement fallback.
+Use IndexedDB and run the database in a Worker:
 
-The core package provides queries, commands, callback transactions, buffered
-and callback-streamed raw PostgreSQL protocol bytes, one physical backup,
-restore into persistent storage, and close. Optional
-`@oliphaunt/wasix-tools` adds `pgDump` for root, direct, or Worker handles.
-Non-interactive `psql` works with all three placements on Node, Bun, Deno, and Electron; browsers
-require a Worker handle. The host-only `/server` subpath adds a local endpoint
-on Node, Bun, Deno, and Electron. Cancellation and a dedicated typed COPY API remain
-absent.
+```ts
+import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
-## App Responsibilities
+const db = await OliphauntWorker.open({ storage: indexedDB('notes') });
+```
 
-- Import only the persistent-storage adapter and exact WASIX extension packages
-  the application uses.
-- Keep the same extension selection when reopening a persistent database.
-- Call `close()` or use `await using`. If an operational workflow explicitly
-  requires PostgreSQL `CHECKPOINT`, issue it through `execute('CHECKPOINT')`.
-- Treat physical archives as same-format recovery artifacts. Use logical SQL
-  dumps for version upgrades or transfers outside the WASIX physical format.
-- Use root, direct, or Worker handles for `pgDump`. On Node, Bun, Deno, and Electron,
-  all three placements also support `psql`; browsers require a Worker handle.
-  Use the lightweight local endpoint for one compatibility client, or the
-  separate postmaster product for concurrency.
+Reopen the same name from the same origin to access saved data. Browser storage remains subject to browser quotas and user data-clearing policies. Keep the handle in application state and close it when finished.
 
-## First Query
-
-Use the [guide](/docs/sdk/wasix-typescript/guide) for storage, transactions,
-backup, restore, tools, and local endpoints. Use the [API reference](/docs/sdk/wasix-typescript/api-reference)
-for the exact exported declarations. Rust hosts use the separate
-[Rust WASIX SDK](/docs/sdk/wasix-rust).
+For OPFS, desktop directories, transactions, and data export, continue with the [WASIX TypeScript guide](/docs/sdk/wasix-typescript/guide). Use the [API reference](/docs/sdk/wasix-typescript/api-reference) for import paths and methods.

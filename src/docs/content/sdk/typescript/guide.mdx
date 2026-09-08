@@ -1,223 +1,124 @@
 ---
-title: Build With TypeScript
-description: Use the native desktop JavaScript SDK in Node.js, Bun, or Deno with native engines and selected extensions.
+title: TypeScript guide
+description: Use parameters, transactions, persistent storage, extensions, and backups in native JavaScript apps.
 ---
 
-# Build With TypeScript
+These recipes use an open `db` from the [TypeScript quickstart](/docs/sdk/typescript). Keep one handle in your application service and close it during shutdown.
 
-Use `@oliphaunt/ts` in Node.js, Bun, and Deno. It provides a JavaScript API over
-native Oliphaunt runtime assets and native engines where supported.
+## Query application data
 
-<Callout type="info" title="Desktop JavaScript uses native helpers">
-Use this package for Node.js, Bun, and Deno. Tauri apps currently keep the
-database in Rust state behind narrow app-owned commands. React Native apps use
-the React Native SDK because
-mobile runtime work flows through Swift and Kotlin.
-
-Browser applications use the separate
-[`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript) package. This native
-package does not fall back to WASIX, and the WASIX package does not fall back to
-native execution.
-</Callout>
-
-Database methods are promise-based on all three runtimes. PostgreSQL open,
-query, backup, restore, and close work uses addon jobs on Node/Bun or Deno
-nonblocking FFI, so it does not execute on the JavaScript event loop. Native
-module loading itself remains a synchronous one-time platform step
-(`require()` on Node/Bun and `dlopen()` on Deno); it is not a separate blocking
-database API.
-
-Deno's nonblocking calls carry a native error-capture buffer with each Promise.
-The worker fills that buffer before returning, so concurrent failures cannot be
-misreported through a later thread-local or shared-handle error lookup.
-
-<SdkGuideSummary id="typescript" />
-
-<Steps>
-<Step>
-
-### Install
-
-Install the npm package. Runtime assets and helper executables resolve through
-package configuration.
-
-```sh
-npm install @oliphaunt/ts
-```
-
-</Step>
-<Step>
-
-### Open and query
-
-Open the package client, choose persistent storage, run SQL, and close the
-database.
-
-<!-- oliphaunt-snippet: oliphaunt-js -->
-
-```ts
-import { Oliphaunt } from '@oliphaunt/ts';
-
-const db = await Oliphaunt.open({
-  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
-  extensions: ['vector'],
-});
-
-const rows = await db.query('SELECT 1::text AS value');
-const value = rows.rows[0]?.value;
-
-await db.close();
-```
-
-Keep one client per database instance unless you intentionally use a mode that
-supports independent sessions.
-
-</Step>
-<Step>
-
-### Create app data
-
-Use the TypeScript query helpers for app code and keep the client in a service
-or framework-owned dependency container:
+Create the table before running the insert and read:
 
 ```ts
 await db.execute(`
   CREATE TABLE IF NOT EXISTS notes (
-    id bigserial PRIMARY KEY,
-    title text NOT NULL,
-    body text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    body text NOT NULL
   )
 `);
 
-await db.query(
-  'INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id',
-  ['First note', 'Stored by embedded PostgreSQL'],
+const inserted = await db.query(
+  'INSERT INTO notes (body) VALUES ($1) RETURNING id',
+  ['First note'],
 );
-
-const notes = await db.query(
-  'SELECT id, title FROM notes ORDER BY id DESC LIMIT 20',
-);
-const firstTitle = notes.rows[0]?.title;
+const notes = await db.query('SELECT id, body FROM notes ORDER BY id');
+console.log(notes.rows);
 ```
 
-For callback transactions, a callback failure is rethrown unchanged after
-automatic rollback succeeds. If rollback also fails, `AggregateError.errors`
-contains the callback failure followed by the rollback failure. If the callback
-throws a different value after an earlier independent database or protocol
-failure poisoned or expired transaction ownership, the aggregate instead
-contains the callback failure followed by that database failure and the database
-is close-only. This independent-failure case does not include an ordinary
-PostgreSQL statement error that remains safely rollbackable.
+Use parameters for values; do not interpolate user input into SQL. Use `query` when you need rows, `execute` when you need command metadata, and `exec` for a trusted SQL script containing multiple statements.
 
-Tauri apps keep the database in Rust state and expose narrow app-owned commands
-to the webview.
+## Run a transaction
 
-</Step>
-<Step>
-
-### Configure
-
-Configure storage, mode, selected exact extensions, startup identity,
-PostgreSQL startup GUCs, and advanced runtime overrides through the JS
-configuration object.
-Omit `storage` for an SDK-owned temporary directory; pass
-`{ kind: 'directory', path }` for persistence.
-
-</Step>
-<Step>
-
-### Choose a mode
-
-Omit `topology` for the direct topology. Select `topology: 'broker'` when process
-isolation matters. If the helper fails, the existing database object rejects all
-later work; close it and explicitly open a new object on the same persistent
-storage for PostgreSQL WAL recovery. The SDK does not replace a session or
-replay uncertain work invisibly. Use `Oliphaunt.openServer()` when
-PostgreSQL-compatible tools and independent clients are required.
-
-</Step>
-<Step>
-
-### Handle lifecycle
-
-The client queues work through the selected runtime boundary. Close waits for
-work admitted before the close call and rejects later ordinary submissions.
-`cancel()` remains out of band while that work drains, including after the
-close admission cutoff; teardown starts only after admitted cancellation calls
-settle. Use explicit cancellation for long SQL. Call `await db.close()` or use
-`await using`; explicit close is the only deterministic way to finish session
-reset, release persistent storage ownership, and observe cleanup errors.
-
-If direct logical detachment fails before deactivation, `closed` stays false and
-the same handle may retry `close()`. Broker/server cleanup failures after their
-destructive cutoff retire the handle: `closed` becomes true, later work fails,
-and repeated `close()` calls replay the original result. A raw-protocol stream
-callback cannot reenter database/transaction work, backup, close, or another
-stream on the same handle; `cancel()` is the out-of-band exception.
-A callback error is rethrown unchanged only after the runtime confirms protocol
-recovery and leaves the session reusable. A buffered raw rejection or streamed
-execution, transport, or recovery failure is authoritative instead and poisons
-the session.
-
-Garbage-collection cleanup is a last-resort leak guard, not a lifecycle API.
-On Node/Bun, `FinalizationRegistry` passes an opaque exact-generation token to
-the addon; it releases only the matching JavaScript admission lease after the
-addon marks that generation for recovery on the next asynchronous open. Deno
-uses `FinalizationRegistry` only to enqueue nonblocking FFI
-cleanup. The Deno cleanup carries the logical generation acquired at open, so a
-late finalizer becomes a no-op instead of closing a newer lease. It performs a
-terminal native close for that process lifetime; finalizer timing is
-nondeterministic and failures cannot be reported to application code. Broker
-and server leak guards retain only the exact private runtime handle and an
-private lease generation, never the public facade. They schedule asynchronous
-teardown; an explicitly unregistered or superseded generation is a no-op. If
-leak-guard registration itself prevents facade publication, `open()` cleans up
-the opened runtime owner and releases its exact JavaScript lease before
-rejecting.
-
-</Step>
-<Step>
-
-### Select extensions
-
-Select exact SQL extension names before open. Generated resources include only
-selected extensions and mandatory dependencies.
-
-</Step>
-<Step>
-
-### Back up and restore
-
-Use `backup()` and static restore for the native physical archive. Keep live
-PostgreSQL directories behind these APIs. Restore accepts a new or
-existing-empty destination and rejects nonempty data without mutation. Native
-server applications use normal PostgreSQL tools.
-
-</Step>
-<Step>
-
-### Use logical tools
-
-Install the separate `@oliphaunt/tools` package when a server application needs
-plain `pg_dump` or non-interactive `psql`. Pass `server.connectionString` to the
-tool; the core `@oliphaunt/ts` package does not install client programs.
+Use the callback's `tx` object for every statement in the transaction:
 
 ```ts
-import { pgDump } from '@oliphaunt/tools';
-
-const sql = await pgDump(server.connectionString, {
-  args: ['--schema-only'],
+await db.transaction(async (tx) => {
+  await tx.execute('INSERT INTO notes (body) VALUES ($1)', ['First']);
+  await tx.execute('INSERT INTO notes (body) VALUES ($1)', ['Second']);
 });
 ```
 
-</Step>
-</Steps>
+Returning commits; throwing rolls back. The callback's return value becomes the transaction result. Do not call the outer `db` or send manual `BEGIN`, `COMMIT`, or full `ROLLBACK` commands inside the callback. Use `tx.rollback()` for an explicit rollback. Savepoints are supported.
 
-<SdkGuideProof id="typescript" />
+## Select extensions
+
+Install the native extension package and select its SQL name when opening:
+
+```sh
+npm install @oliphaunt/extension-vector@@VERSION(oliphaunt-extension-vector)@
+```
+
+```ts
+const db = await Oliphaunt.open({ extensions: ['vector'] });
+await db.execute('CREATE EXTENSION IF NOT EXISTS vector');
+```
+
+The extension must match the native runtime and target platform. See [Extensions](/docs/reference/extensions) for the selection rules and catalog.
+
+## Back up and restore
+
+`backup()` returns a physical archive as a `Uint8Array`. Save or transfer those bytes using your host's file APIs. Restore to a new or empty directory:
+
+```ts
+const archive = await db.backup();
+await db.close();
+await Oliphaunt.restore('./app-data/restored.oliphaunt', archive);
+
+const restored = await Oliphaunt.open({
+  topology: 'broker',
+  storage: { kind: 'directory', path: './app-data/restored.oliphaunt' },
+});
+try {
+  console.log((await restored.query('SELECT count(*) FROM notes')).rows);
+} finally {
+  await restored.close();
+}
+```
+
+The restored handle uses broker mode because direct mode remains bound to its original root for the lifetime of the process, even after close. Restore does not replace a nonempty database. Open with the same required extension selection. Use logical tools to move between native and WASIX.
+
+## Choose a runtime mode
+
+Direct mode is the default. Select broker mode for a separate helper process:
+
+```ts
+const db = await Oliphaunt.open({
+  topology: 'broker',
+  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
+});
+```
+
+Use a server when a driver or ORM needs independent PostgreSQL sessions:
+
+```ts
+const server = await Oliphaunt.openServer({
+  storage: { kind: 'directory', path: './app-data/server.oliphaunt' },
+});
+console.log(server.connectionString);
+// Keep server in application state while clients are connected.
+// Close clients and pools before awaiting server.close().
+```
+
+The server handle owns the process; a copied connection string does not keep it alive. The separate `@oliphaunt/tools` package provides endpoint-oriented PostgreSQL tools. See [runtime modes](/docs/learn/native-runtime).
+
+## Handle errors and shutdown
+
+PostgreSQL errors expose SQLSTATE through `PostgresError`. Use the code to distinguish expected database failures such as a constraint violation from runtime or storage failures. A transaction callback that throws is rolled back; if rollback also fails, the SDK retains both errors in an `AggregateError`.
+
+Call `db.cancel()` to interrupt active database work. Then await the operation and handle its result. Close rejects new work and drains work already accepted. Always await `close()`; garbage collection does not provide observable cleanup.
+
+After a broker crash or an unrecoverable protocol failure, close the handle and reopen persistent storage. Do not automatically replay an operation whose commit outcome is unknown.
+
+## Package an Electron app
+
+Keep `.node` modules, helper executables, and their runtime resources outside the ASAR archive. Preserve their package-relative layout so the resolver can find them. Test a packaged application on each target architecture; a development-server run does not exercise packaging.
 
 ## Troubleshooting
 
-Check runtime asset resolution, helper executable availability, storage ownership,
-unsupported-mode errors, extension selection, and SQLSTATE-bearing PostgreSQL
-errors.
+| Symptom | Check |
+| --- | --- |
+| Native module fails to load | Runtime, operating system, architecture, and extracted package files |
+| Storage is locked | Another live handle or process owns the same root |
+| Extension is unavailable | The extension package is installed and selected before open |
+| A transaction waits indefinitely | All callback SQL uses `tx`, not the outer `db` |
+| Queries serialize | One embedded handle has one session; choose server mode for a pool |

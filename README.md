@@ -1,144 +1,44 @@
 <p align="center">
-  <img src="docs/assets/oliphaunt.png" alt="Oliphaunt" width="360">
+  <img src="docs/assets/oliphaunt.png" alt="Oliphaunt" width="240">
 </p>
 
-<p align="center">
-  <strong>Native-first embedded PostgreSQL 18 for desktop, mobile, and WASIX applications.</strong><br>Same engine, new name: <strong>pglite&#8209;oxide</strong> is now <strong>Oliphaunt</strong>.
-</p>
+# PostgreSQL inside your application
 
-<p align="center">
-    <strong></strong>
-</p>
+Oliphaunt embeds PostgreSQL 18 in desktop, mobile, and browser applications. Use PostgreSQL SQL, types, transactions, and extensions through an SDK for your language, without setting up a separate database service.
 
-Oliphaunt is a family of peer SDKs and runtime products over the same embedded
-PostgreSQL model. Applications own their database roots, choose an honest
-runtime mode for their platform, and package only the exact PostgreSQL
-extensions they select.
+## Get started
 
-## Product model
+Choose the SDK for your application. Each quickstart covers installation, a complete query, and persistent storage.
 
-Oliphaunt is a multi-product monorepo, not one repository-wide version:
+| Application | SDK | Package |
+| --- | --- | --- |
+| Rust and Tauri | [Rust](https://oliphaunt.dev/docs/sdk/rust) | `oliphaunt` |
+| Node.js, Bun, Deno, Electron | [TypeScript](https://oliphaunt.dev/docs/sdk/typescript) | `@oliphaunt/ts` |
+| iOS and macOS | [Swift](https://oliphaunt.dev/docs/sdk/swift) | `Oliphaunt` |
+| Android | [Kotlin](https://oliphaunt.dev/docs/sdk/kotlin) | `dev.oliphaunt:oliphaunt-android` |
+| React Native and Expo native builds | [React Native](https://oliphaunt.dev/docs/sdk/react-native) | `@oliphaunt/react-native` |
+| Browsers and JavaScript runtimes using WebAssembly | [WASIX TypeScript](https://oliphaunt.dev/docs/sdk/wasix-typescript) | `@oliphaunt/wasix-ts` |
+| Rust using WebAssembly | [WASIX Rust](https://oliphaunt.dev/docs/sdk/wasix-rust) | `oliphaunt-wasix` |
+| C, C++, and language bindings | [C ABI](https://oliphaunt.dev/docs/sdk/c-abi) | `liboliphaunt` |
 
-- `liboliphaunt-native` owns the PostgreSQL 18 C ABI runtime and native target
-  carriers.
-- `liboliphaunt-wasix` owns portable WASIX runtime assets and host AOT
-  carriers.
-- `liboliphaunt-wasix-postmaster` owns the concurrent Linux x64 GNU and macOS arm64 WASIX
-  postmaster carrier with isolated PostgreSQL backends.
-- Native and WASIX own independent versions. A change to one does not select
-  the other unless a declared directed compatibility dependency requires it.
-- Rust, Swift, Kotlin/Android, React Native, TypeScript, Rust WASIX, and WASIX
-  TypeScript are separately versioned SDK products.
-- Broker and Node-direct helpers are separately versioned runtime products.
-- Every SQL extension in the catalog remains exactly selectable. PostgreSQL 18
-  contrib members share one logical artifact bundle whose native and WASIX
-  carriers belong to their respective runtime releases; each external extension
-  is a separately tagged, independently versioned product.
+## How it works
 
-A product owns its SemVer, changelog, source identity, product tag, and GitHub
-release. Platform packages, ABI payloads, and size-split crates are carriers of
-that product; they use the product version and are not extra products.
+An embedded handle owns one PostgreSQL session. Bind parameters, query rows, and use callback transactions through the SDK. Choose persistent storage to keep data between application runs.
 
-## First-release target envelope
+Native Rust and desktop TypeScript also offer a broker process and a local PostgreSQL server. Server mode supports standard drivers, ORMs, and independent client sessions. Browser applications use the WASIX TypeScript Worker integration.
 
-The release target manifests currently declare:
-
-| Surface          | Declared release targets                                                                                                   |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Desktop native   | Linux x64 GNU, Linux arm64 GNU, macOS arm64, Windows x64 MSVC                                                              |
-| Android          | `arm64-v8a`, `x86_64`                                                                                                      |
-| Apple            | iOS XCFramework carrier plus the declared macOS arm64 runtime carrier, delivered through SwiftPM and GitHub release assets |
-| WASIX            | portable runtime plus AOT carriers for Linux x64/arm64 GNU, macOS arm64, and Windows x64 MSVC                              |
-| WASIX postmaster | sealed concurrent runtime carriers for Linux x64 GNU and macOS arm64                                                      |
-
-The first release intentionally does **not** claim macOS x64, Windows ARM64,
-Linux musl, Android 32-bit, or undeclared Apple architectures. A compiler,
-language, or runtime working on a broader platform is not a support promise;
-the explicit target manifest, publication catalog, and frozen release lock are
-the boundary.
-
-Exact-extension support is target-specific too. An extension is publishable
-for a target only when its own target manifest and evidence declare that row.
-The public [release reference](src/docs/content/reference/releases.mdx)
-publishes the enforced OS/API/ABI floors and distinguishes built package
-coverage from installed-app execution evidence, including the Android arm64
-and physical-iOS boundaries.
-
-## SDK entry points
-
-The declared public entry points are:
-
-| App surface                            | Package entry point                                           | Distribution boundary                                                    |
-| -------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Rust/Tauri desktop                     | `oliphaunt`                                                   | Cargo and target-specific native artifact crates                         |
-| Rust WASIX                             | `oliphaunt-wasix`                                             | Cargo portable/AOT artifact crates                                       |
-| WASIX postmaster server                | `oliphaunt-wasix-postmaster` release launcher                 | GitHub `linux-x64-gnu` or `macos-arm64` sealed carrier archive           |
-| Swift                                  | `Oliphaunt`                                                   | SwiftPM source tag and checksum-pinned release assets                    |
-| Android                                | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers       |
-| React Native                           | `@oliphaunt/react-native`                                     | npm package delegating runtime work to Swift and Kotlin                  |
-| Node.js, Bun, and Deno                 | `@oliphaunt/ts`                                               | npm                                                                      |
-| Browser, Node.js, Bun, and Deno WASIX  | `@oliphaunt/wasix-ts`                                         | npm                                                                      |
-| Native bindings                        | `liboliphaunt` C ABI                                          | declared native runtime carriers                                         |
-
-Kotlin common sources are compiled and tested on the JVM as development
-evidence, but only the Android facade is supported and published. The first Swift release starts at
-`0.6.0` because legacy unscoped SwiftPM tags already occupy `0.1.0` through
-`0.5.1`; other new products start at `0.1.0`.
-
-## Exact extensions
-
-Extension selection uses exact PostgreSQL SQL names. There are no selection
-packs, aliases, or implicit groups; the contrib distribution bundle is only a
-carrier envelope. Selecting `earthdistance` may include its declared `cube`
-dependency; selecting `vector` does not pull unrelated extensions into the
-application.
-
-The logical `oliphaunt-extension-contrib-pg18` bundle has no independent
-version or release. Its native carriers follow `liboliphaunt-native`; its WASIX
-carriers follow `liboliphaunt-wasix`. Each carrier contains an exact,
-checksummed member inventory, but consumers stage only requested SQL members.
-External extension products own independent packaging SemVer. Their immutable
-upstream version/commit and compatible Oliphaunt runtime versions are recorded
-separately, so consumers must not infer compatibility from matching version
-numbers.
-
-## Development
-
-Install the pinned toolchain once, then use Moon as the repository task
-surface:
-
-```sh
-proto upgrade 0.61.3
-proto install
-tools/dev/bootstrap-tools.sh
-moon run dev-tools:doctor
-moon run policy-tools:js-format-check policy-tools:rust-format-check
-moon run :check :compile :format-check :lint :tools-compile --affected
-moon run :test :unit :tools-unit --affected
-```
-
-For a product metadata change, also run the metadata gate:
-
-```sh
-moon run release-tools:metadata
-```
-
-Use `release-tools:unit`, `policy-tools:unit`, or `ci-workflows:check` when its
-corresponding machinery changes. Reserve `release-tools:check` for an exact
-release candidate.
-
-The protected GitHub `Release` workflow owns candidate dry-runs and all public
-mutation. Local development commands do not publish packages, create tags, or
-promote releases.
+Select extensions before opening a database, then enable them with SQL such as `CREATE EXTENSION vector`. Package only the native resources your application needs. Runtime and extension versions have their own compatibility requirements.
 
 ## Documentation
 
-- [Public SDK documentation](src/docs/content/sdk/index.mdx)
-- [Runtime support](src/docs/content/reference/capabilities.mdx)
-- [Exact extension model](src/docs/content/reference/extensions.mdx)
-- [Source architecture](docs/architecture/final-product-source-architecture.md)
-- [Maintainer documentation index](docs/maintainers/README.md)
-- [Release process](docs/maintainers/release.md)
-- [Contributing](CONTRIBUTING.md)
+- [Get started](https://oliphaunt.dev/docs/start)
+- [Runtime and platform support](https://oliphaunt.dev/docs/reference/capabilities)
+- [Extensions](https://oliphaunt.dev/docs/reference/extensions)
+- [Moving from SQLite](https://oliphaunt.dev/docs/learn/sqlite-upgrade)
+- [Releases and upgrades](https://oliphaunt.dev/docs/reference/releases)
 
-Oliphaunt is licensed under the terms recorded in [LICENSE](LICENSE).
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and the [maintainer index](docs/maintainers/README.md) for architecture, testing, and release procedures.
+
+Oliphaunt is licensed under [MIT](LICENSE).
