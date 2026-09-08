@@ -203,7 +203,7 @@ test('WASIX test helpers invalidate only tasks that execute them', () => {
     assert.equal(result.directTasks.includes(target), true, `${target} executes the helper`);
   }
   for (const target of [
-    'oliphaunt-wasix-rust:unit-shared',
+    'oliphaunt-wasix-rust:unit',
     'extension-artifacts-wasix:build-target',
     'liboliphaunt-wasix:assets-verify',
     'liboliphaunt-wasix:release-assets',
@@ -293,14 +293,8 @@ test('executable packagers and Rust test configuration select their real owners'
   );
 
   const nextest = effects('.config/nextest.toml');
-  assert.equal(nextest.directTasks.includes('oliphaunt-rust:unit-shared'), true);
-  assert.equal(nextest.directTasks.includes('oliphaunt-rust:unit-distinct'), true);
-  assert.equal(nextest.directTasks.includes('oliphaunt-rust:unit-shared'), true);
-  assert.equal(taskRecord('oliphaunt-rust:unit-shared').options.runInCI, true);
-  assert.equal(nextest.directTasks.includes('oliphaunt-wasix-rust:unit-shared'), true);
-  assert.equal(nextest.directTasks.includes('oliphaunt-wasix-rust:unit-distinct'), true);
-  assert.equal(nextest.directTasks.includes('oliphaunt-wasix-rust:unit-shared'), true);
-  assert.equal(taskRecord('oliphaunt-wasix-rust:unit-shared').options.runInCI, true);
+  assert.equal(nextest.directTasks.includes('oliphaunt-rust:unit'), true);
+  assert.equal(nextest.directTasks.includes('oliphaunt-wasix-rust:unit'), true);
 });
 
 test('product unit suites remain selected without central coverage', () => {
@@ -314,10 +308,7 @@ test('product unit suites remain selected without central coverage', () => {
   assert.equal(taskRecord('oliphaunt-react-native:unit-shared').options.runInCI, true);
 
   const wasixRust = effects('src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs');
-  for (const target of ['oliphaunt-wasix-rust:unit-shared', 'oliphaunt-wasix-rust:unit-distinct']) {
-    assert.equal(wasixRust.directTasks.includes(target), true, target);
-  }
-  assert.equal(taskRecord('oliphaunt-wasix-rust:unit-shared').options.runInCI, true);
+  assert.equal(wasixRust.directTasks.includes('oliphaunt-wasix-rust:unit'), true);
 });
 
 test('source acquisition and WASIX browser-host ownership stay narrow', () => {

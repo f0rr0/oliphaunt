@@ -590,11 +590,11 @@ tasks:
       runFromWorkspaceRoot: true
 
   packaging-unit:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "requires-rust"]
     script: |
       set -eu
       for test_file in src/runtimes/liboliphaunt/native/tools/finalize-native-mobile-abi-proofs.test.mts src/runtimes/liboliphaunt/native/tools/check-release-assets.test.mts src/runtimes/liboliphaunt/native/tools/icu-npm-carrier-contract.test.mts src/runtimes/liboliphaunt/native/tools/liboliphaunt-extension-guard.test.mts src/runtimes/liboliphaunt/native/tools/native-runtime-carrier-contract.test.mts src/runtimes/liboliphaunt/native/tools/package-liboliphaunt-cargo-artifacts.test.mts src/runtimes/liboliphaunt/native/tools/package-liboliphaunt-icu-data.test.mts; do
-        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
+        bash tools/dev/bun.sh test --timeout=30000 "./$test_file"
       done
     inputs:
       - "crates/tools/**/*"

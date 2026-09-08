@@ -72,7 +72,7 @@ preservation of an existing checkout when every endpoint fails.
    changes hosted-only job topology, permissions, protected environments, or
    dispatch inputs. The local gate cannot prove hosted environment-secret
    resolution or dispatch-time graph compilation.
-   When a changed release shell block is expected to run on macOS, run its
+   When a changed shell block is expected to run on macOS, run its
    focused behavioral test with GNU Bash 3.2. Run the complete release-policy
    gate under Bash 3.2 only for a release candidate. On macOS, omit the override;
    elsewhere, point `OLIPHAUNT_BASH3` at a maintained local Bash 3.2 build:

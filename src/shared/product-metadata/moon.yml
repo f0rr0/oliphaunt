@@ -9,7 +9,7 @@ tasks:
 
   packaging-unit:
     tags: ["quality", "unit"]
-    command: "bun test --timeout=30000 src/shared/product-metadata"
+    command: "bun test --timeout=30000 ./src/shared/product-metadata"
     inputs:
       - "/src/runtimes/liboliphaunt/wasix/tools/wasix-*-npm-contract.mts"
       - "/src/shared/product-metadata/with-product-history.sh"

@@ -22,7 +22,7 @@ tasks:
     script: |
       set -e
       bash src/sources/tools/fetch-sources.sh production-all --validate-only
-      bun test src/sources/tools/source-fetch-core.test.mts src/sources/tools/source-fetch-scopes.test.mts
+      bun test ./src/sources/tools/source-fetch-core.test.mts ./src/sources/tools/source-fetch-scopes.test.mts
       bash src/postgres/versions/18/fetch-source.test.sh
     inputs:
       - "/src/postgres/versions/18/**/*"

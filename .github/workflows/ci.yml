@@ -382,7 +382,7 @@ jobs:
         if: ${{ matrix.requires_rust }}
         uses: ./.github/actions/setup-rust
         with:
-          tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
+          tools: cargo-nextest@0.9.137
 
       - name: Set up Apple
         if: ${{ matrix.requires_apple }}
@@ -999,9 +999,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          components: clippy,llvm-tools-preview
-          tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
 
       - name: Build Rust SDK package artifacts
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh rust-sdk-package
@@ -1583,23 +1580,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          components: llvm-tools-preview
-          tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
-
-      - name: Install Tauri Linux dependencies
-        run: |
-          .github/scripts/prepare-linux-apt.sh
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libayatana-appindicator3-dev \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            pkg-config
 
       - name: Build Rust WASIX binding package artifacts
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh wasix-rust-package

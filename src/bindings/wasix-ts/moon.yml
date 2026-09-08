@@ -167,11 +167,7 @@ tasks:
 
   packaging-unit:
     tags: ["quality", "unit"]
-    script: |
-      set -eu
-      for test_file in src/bindings/wasix-ts/tools/wasix-typescript-package.test.mts; do
-        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
-      done
+    command: "bash tools/dev/bun.sh test --timeout=30000 ./src/bindings/wasix-ts/tools/wasix-typescript-package.test.mts"
     inputs:
       - "/src/shared/js-core/tools/stage-package.mts"
       - "@group(release-target-contract)"

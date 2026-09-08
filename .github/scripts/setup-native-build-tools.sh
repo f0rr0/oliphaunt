@@ -22,6 +22,7 @@ install_macos_tools() {
   require_brew_tool autoconf autoconf
   require_brew_tool aclocal automake
   require_brew_tool glibtoolize libtool
+  require_brew_tool gtimeout coreutils
 
   if ((${#missing_packages[@]} > 0)); then
     local attempt

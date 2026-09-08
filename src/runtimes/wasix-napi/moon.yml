@@ -79,7 +79,7 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
-      bun test tools/detect-linux-libc.test.mts tools/package-contract.test.mts
+      bun test ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts
       bash tools/package-platform.test.sh
       cargo test --manifest-path Cargo.toml --locked --no-default-features --features test-noop --lib
     env:

@@ -130,11 +130,11 @@ tasks:
       runInCI: true
 
   packaging-unit:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "requires-rust"]
     script: |
       set -eu
       for test_file in src/extensions/artifacts/packages/tools/extension-artifact-inventory.test.mts src/extensions/artifacts/packages/tools/package-extension-cargo-facades.test.mts src/extensions/artifacts/packages/tools/extension-wasix-npm-packages.test.mts src/extensions/artifacts/packages/tools/native-extension-cargo-parts.test.mts; do
-        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
+        bash tools/dev/bun.sh test --timeout=30000 "./$test_file"
       done
     inputs:
       - "/src/extensions/tools/extension-upstream-licenses.mts"

@@ -201,11 +201,7 @@ tasks:
 
   packaging-unit:
     tags: ["quality", "unit", "requires-rust"]
-    script: |
-      set -eu
-      for test_file in src/runtimes/broker/tools/broker-dependency-license-contract.test.mts; do
-        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
-      done
+    command: "bash tools/dev/bun.sh test --timeout=30000 ./src/runtimes/broker/tools/broker-dependency-license-contract.test.mts"
     inputs:
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"

@@ -157,7 +157,7 @@ tasks:
       set -eu
       node src/sdks/swift/tools/swift-carrier-resolver.test.mts
       node src/sdks/swift/tools/extension-resource-inventory.test.mts
-      bash tools/dev/bun.sh test --timeout=30000 src/sdks/swift/tools/render_swiftpm_release_package.test.mts src/sdks/swift/tools/check-package.test.mts src/sdks/swift/tools/prepare-swift-release-consumer.test.mts src/sdks/swift/tools/swift-extension-release-consumer-inputs.test.mts
+      bash tools/dev/bun.sh test --timeout=30000 ./src/sdks/swift/tools/render_swiftpm_release_package.test.mts ./src/sdks/swift/tools/check-package.test.mts ./src/sdks/swift/tools/prepare-swift-release-consumer.test.mts ./src/sdks/swift/tools/swift-extension-release-consumer-inputs.test.mts
     inputs:
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"

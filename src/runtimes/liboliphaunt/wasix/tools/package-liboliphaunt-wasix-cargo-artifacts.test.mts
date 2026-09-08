@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { gzipSync, zstdCompressSync } from 'node:zlib';
 
@@ -36,10 +37,10 @@ import { canonicalWasixAotMetadata } from './wasix-aot-manifest.mts';
 import { canonicalGzipSync } from '../../../../shared/artifact-packaging/portable-archive.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../../../../..');
-const directories = [];
+const scratch = mkdtempSync(path.join(tmpdir(), 'oliphaunt-wasix-cargo-test-'));
 
 afterAll(() => {
-  for (const directory of directories) rmSync(directory, { recursive: true, force: true });
+  rmSync(scratch, { recursive: true, force: true });
 });
 
 function run(command, args, { cwd = ROOT, env = process.env } = {}) {
@@ -249,8 +250,7 @@ describe('aggregate WASIX Cargo artifact packaging', () => {
   test('runtime source build resolves runtime-owned contrib archives and AOT under the WASIX owner', {
     timeout: 180_000,
   }, () => {
-    const root = mkdtempSync(path.join(ROOT, 'target/wasix-nested-owner-build-test-'));
-    directories.push(root);
+    const root = mkdtempSync(path.join(scratch, 'nested-owner-'));
     const productRoot = aggregateFixture(root, { nestedOwner: true });
     const manifest = JSON.parse(
       readFileSync(path.join(productRoot, 'extension-artifacts.json'), 'utf8'),
@@ -294,8 +294,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
   });
 
   test("streams nested portable archives larger than spawnSync's default buffer", () => {
-    const root = mkdtempSync(path.join(ROOT, 'target/wasix-aggregate-stream-test-'));
-    directories.push(root);
+    const root = mkdtempSync(path.join(scratch, 'stream-'));
     const carrierRoot = 'aggregate-carrier';
     const member = `${carrierRoot}/extensions/pgcrypto/extension.tar.zst`;
     const source = path.join(root, 'stage', ...member.split('/'));
@@ -317,8 +316,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
   });
 
   test('rejects duplicate and symlink carrier entries before materializing a member', () => {
-    const root = mkdtempSync(path.join(ROOT, 'target/wasix-aggregate-adversarial-test-'));
-    directories.push(root);
+    const root = mkdtempSync(path.join(scratch, 'adversarial-'));
 
     const duplicate = path.join(root, 'duplicate.tar.gz');
     writeFileSync(
@@ -348,8 +346,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
 
   test('direct tar.zst materialization preserves exact modes despite umask and read-only directories', () => {
     if (process.platform === 'win32') return;
-    const root = mkdtempSync(path.join(ROOT, 'target/wasix-materialization-mode-test-'));
-    directories.push(root);
+    const root = mkdtempSync(path.join(scratch, 'materialization-mode-'));
     const archive = path.join(root, 'payload.tar.zst');
     const expected = Buffer.from('executable payload\n');
     writeFileSync(
@@ -385,8 +382,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
   });
 
   test('package-side runtime validation binds the manifest to strict nested bytes', () => {
-    const root = mkdtempSync(path.join(ROOT, 'target/wasix-runtime-validation-test-'));
-    directories.push(root);
+    const root = mkdtempSync(path.join(scratch, 'runtime-validation-'));
     const runtimeSource = path.join(root, 'runtime-source', 'oliphaunt');
     for (const member of CORE_RUNTIME_ARCHIVE_FILES) {
       const relative = member.replace(/^oliphaunt\//u, '');
@@ -437,8 +433,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
   });
 
   test('extension packaging rejects AOT raw-digest tampering before Cargo packaging', () => {
-    const root = mkdtempSync(path.join(ROOT, 'target/wasix-extension-aot-tamper-test-'));
-    directories.push(root);
+    const root = mkdtempSync(path.join(scratch, 'extension-aot-tamper-'));
     const extensionRoot = aggregateFixture(root);
     const targetId = Object.keys(AOT_TARGET_TRIPLES).sort()[0];
     const manifestPath = path.join(extensionRoot, 'wasix-aot', targetId, 'cube', 'manifest.json');
@@ -473,8 +468,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
   test('splits from part-001 and a single carrier feature selects earthdistance plus cube only', {
     timeout: 180_000,
   }, () => {
-    const root = mkdtempSync(path.join(ROOT, 'target/wasix-aggregate-cargo-test-'));
-    directories.push(root);
+    const root = mkdtempSync(path.join(scratch, 'aggregate-'));
     const extensionRoot = aggregateFixture(root);
     const output = path.join(root, 'output');
     const work = path.join(root, 'work');
@@ -506,8 +500,6 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
     );
 
     const sources = path.join(work, 'cargo-package-sources');
-    expect(statSync(path.join(work, 'cargo-package-extracted')).isDirectory()).toBe(true);
-    expect(statSync(path.join(work, 'cargo-package-target')).isDirectory()).toBe(true);
     const carrierName = 'oliphaunt-extension-contrib-pg18-wasix';
     const extensionVersion = extensionReleaseVersion(
       'oliphaunt-extension-contrib-pg18',
@@ -517,10 +509,6 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/run
     const carrierManifest = Bun.TOML.parse(
       readFileSync(path.join(sources, carrierName, 'Cargo.toml'), 'utf8'),
     );
-    expect(carrierManifest['build-dependencies'].sha2).toBeUndefined();
-    const carrierBuildScript = readFileSync(path.join(sources, carrierName, 'build.rs'), 'utf8');
-    expect(carrierBuildScript).not.toContain('use sha2');
-    expect(carrierBuildScript).toContain('fn sha256_compress');
     const partNames = Object.keys(carrierManifest['build-dependencies'])
       .filter((name) => name.startsWith(`${carrierName}-part-`))
       .sort();

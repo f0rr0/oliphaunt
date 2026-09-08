@@ -25,7 +25,7 @@ fileGroups:
 tasks:
   unit:
     tags: ["quality", "unit"]
-    command: "bun test src/shared/cluster-seed-contract"
+    command: "bun test ./src/shared/cluster-seed-contract"
     inputs: ["**/*"]
     options:
       runFromWorkspaceRoot: true

@@ -86,10 +86,10 @@ tasks:
       bash tools/expo-runner-android-device.test.sh
       bash tools/expo-runner-ios-installed-app.test.sh
       bash tools/expo-runner-workspace.test.sh
-      bun test tools/validate-android-link-evidence.test.mts tools/expo-ios-runner.test.mts
+      bun test ./tools/validate-android-link-evidence.test.mts ./tools/expo-ios-runner.test.mts
       node tools/stage-ios-app.test.mts
       node --test tools/ios-app-transport.test.mts
-      bun test --timeout=30000 tools/mobile-extension-artifact-paths.test.mts
+      bun test --timeout=30000 ./tools/mobile-extension-artifact-paths.test.mts
     deps:
       - "shared-js-core:build"
     inputs:

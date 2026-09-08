@@ -51,7 +51,7 @@ tasks:
       set -e
       bash tools/test-node-addon-cleanup-lifecycle.sh --test-path-classifier
       bash tools/install-node-fallback.test.sh
-      bun test tools/check-release-assets.test.mts
+      bun test ./tools/check-release-assets.test.mts
     inputs:
       - "tools/test-node-addon-cleanup-lifecycle.sh"
       - "tools/install-node-fallback*"

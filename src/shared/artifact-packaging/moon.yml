@@ -23,11 +23,11 @@ fileGroups:
 
 tasks:
   test:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
       node --test src/shared/artifact-packaging/archive-directory.test.mts src/shared/artifact-packaging/portable-archive.test.mts
-      bun test --timeout=30000 src/shared/artifact-packaging
+      bun test --timeout=30000 ./src/shared/artifact-packaging
       bash src/shared/artifact-packaging/strip-native-binaries.test.sh
     inputs:
       - "@group(release-target-contract)"

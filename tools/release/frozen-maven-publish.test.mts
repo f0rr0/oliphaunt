@@ -14,6 +14,7 @@ import { publicKeyFingerprints } from './verify-maven-signing-readiness.mts';
 
 const temporaryDirectories = [];
 const root = path.join(import.meta.dir, '../..');
+mkdirSync(path.join(root, 'target'), { recursive: true });
 const testDeadlineEpochSeconds = 2_000;
 const testNow = () => 1_000_000;
 

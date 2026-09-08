@@ -70,7 +70,7 @@ tasks:
     inputs: []
   test:
     tags: ["quality", "unit"]
-    command: "tools/dev/bun.sh test src/shared/js-core/test/query.test.ts"
+    command: "tools/dev/bun.sh test ./src/shared/js-core/test/query.test.ts"
     inputs:
       - "/src/shared/js-core/src/**/*.ts"
       - "test/**/*"

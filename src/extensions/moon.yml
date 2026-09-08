@@ -94,7 +94,7 @@ tasks:
       runFromWorkspaceRoot: true
   unit:
     tags: ["quality", "unit"]
-    command: "bash tools/dev/bun.sh test '--path-ignore-patterns=target/**' src/extensions/tools/native-component-contract.test.mts src/extensions/tools/extension-model.test.mts"
+    command: "bash tools/dev/bun.sh test ./src/extensions/tools/native-component-contract.test.mts ./src/extensions/tools/extension-model.test.mts"
     inputs:
       - "catalog/native-components.toml"
       - "catalog/extensions.source.json"
@@ -115,7 +115,7 @@ tasks:
 
   packaging-unit:
     tags: ["quality", "unit"]
-    command: "bash tools/dev/bun.sh test --timeout=30000 src/extensions/tools/extension-upstream-licenses.test.mts src/extensions/tools/android-extension-legal-catalog.test.mts"
+    command: "bash tools/dev/bun.sh test --timeout=30000 ./src/extensions/tools/extension-upstream-licenses.test.mts ./src/extensions/tools/android-extension-legal-catalog.test.mts"
     inputs:
       - "external/**/upstream-license-data.json"
       - "external/**/upstream-licenses/**/*"

@@ -171,7 +171,7 @@ tasks:
     script: |
       set -eu
       for test_file in src/sdks/kotlin/tools/maven-artifact-staging.test.mts src/sdks/kotlin/tools/kotlin-maven-staging.test.mts; do
-        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
+        bash tools/dev/bun.sh test --timeout=30000 "./$test_file"
       done
     inputs:
       - "@group(legal-files)"

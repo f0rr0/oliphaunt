@@ -52,7 +52,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  unit-distinct:
+  unit:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
@@ -65,8 +65,10 @@ tasks:
       "$CARGO_TARGET_DIR/build-script-tests"
       cargo test -p oliphaunt --doc --locked
       cargo test -p oliphaunt-build --locked
+      cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --test-threads=1
     env:
-      CARGO_TARGET_DIR: "target"
+      # Cargo releases its build lock before rustdoc consumes the compiled libraries.
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/unit"
     inputs:
       - "@group(cargo-workspace)"
       - "@group(rust-test-config)"
@@ -78,32 +80,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  unit-shared:
-    tags: ["quality", "unit", "requires-rust"]
-    command: "cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --test-threads=1"
-    env:
-      CARGO_TARGET_DIR: "target"
-    inputs:
-      - "@group(cargo-workspace)"
-      - "@group(rust-test-config)"
-      - project: "shared-test-fixtures"
-        group: "fixtures"
-      - project: "shared-rust-query-core"
-        group: "sources"
-      - "@group(code)"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  unit:
-    command: "true"
-    deps:
-      - "oliphaunt-rust:unit-distinct"
-      - "oliphaunt-rust:unit-shared"
-    inputs: []
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: false
   package:
     tags: ["package"]
     command: "true"
@@ -118,7 +94,7 @@ tasks:
     command: "true"
     deps:
       - "oliphaunt-rust:compile"
-      - "oliphaunt-rust:unit-distinct"
+      - "oliphaunt-rust:unit"
       - "oliphaunt-rust:package"
       - "oliphaunt-rust:regression"
     inputs: []
@@ -275,12 +251,8 @@ tasks:
       runFromWorkspaceRoot: true
 
   packaging-unit:
-    tags: ["quality", "unit"]
-    script: |
-      set -eu
-      for test_file in src/sdks/rust/tools/prepare-rust-release-source.test.mts; do
-        bash tools/dev/bun.sh test --timeout=30000 "$test_file"
-      done
+    tags: ["quality", "unit", "requires-rust"]
+    command: "bash tools/dev/bun.sh test --timeout=30000 ./src/sdks/rust/tools/prepare-rust-release-source.test.mts"
     inputs:
       - "**/*"
       - "/src/shared/rust-query-core/query_core.rs"

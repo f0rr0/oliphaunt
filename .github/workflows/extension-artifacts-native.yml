@@ -60,7 +60,7 @@ jobs:
 
       - name: Verify Windows VC runtime atomic staging
         if: ${{ runner.os == 'Windows' }}
-        run: tools/dev/bun.sh test src/shared/artifact-packaging/windows-vc-runtime-closure.test.mts
+        run: tools/dev/bun.sh test ./src/shared/artifact-packaging/windows-vc-runtime-closure.test.mts
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust

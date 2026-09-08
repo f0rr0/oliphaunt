@@ -76,7 +76,7 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
-      bun test src/runtimes/liboliphaunt/wasix-postmaster
+      bun test ./src/runtimes/liboliphaunt/wasix-postmaster
       cargo test --locked --manifest-path src/runtimes/liboliphaunt/wasix-postmaster/tools/sealed-export-closure/Cargo.toml --target-dir target/oliphaunt-wasix-postmaster/runtime/sealed-export-closure-target
       while IFS= read -r test_file; do bash "$test_file"; done < <(find src/runtimes/liboliphaunt/wasix-postmaster -type f -name '*.test.sh' ! -name 'seal-wasix-linear-memory.test.sh' | LC_ALL=C sort)
     inputs:

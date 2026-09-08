@@ -313,8 +313,8 @@ tasks:
       runFromWorkspaceRoot: true
 
   packaging-unit:
-    tags: ["quality", "unit"]
-    command: "bun test --timeout=30000 src/runtimes/liboliphaunt/wasix/tools"
+    tags: ["quality", "unit", "requires-rust"]
+    command: "bun test --timeout=30000 ./src/runtimes/liboliphaunt/wasix/tools"
     inputs:
       - "tools/*.sh"
       - "/src/extensions/tools/extension-upstream-licenses.mts"

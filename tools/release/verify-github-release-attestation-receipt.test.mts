@@ -26,6 +26,7 @@ const ASSET_SHA = createHash('sha256').update('asset bytes\n').digest('hex');
 const REPO = 'f0rr0/oliphaunt';
 const TOKEN = 'github-test-token';
 const fixtureRoots = [];
+await fs.mkdir(path.join(process.cwd(), 'target'), { recursive: true });
 
 function lockFixture({ withAsset = true } = {}) {
   return {

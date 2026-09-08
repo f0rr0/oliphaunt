@@ -104,25 +104,24 @@ fetch_source() (
   else
     local archive="$archive_root/$archive_name" download="$source_stage/$archive_name"
     if [[ "$(bun "$source_core" archive-valid "$pin" "$archive")" != valid ]]; then
-      local urls=() tls=() endpoint success=false
+      local urls=() endpoint success=false
       if [[ -n "$canonical" ]]; then urls+=("$canonical"); fi
       urls+=("$url")
       local tls_flag
       tls_flag=$(oliphaunt_curl_platform_tls_flag)
-      if [[ -n "$tls_flag" ]]; then tls+=("$tls_flag"); fi
       for endpoint in "${urls[@]}"; do
         if "$source_timeout" --kill-after=5 620 curl --disable --fail --location --silent --show-error \
           --retry 8 --retry-all-errors --retry-connrefused --retry-delay 5 --retry-max-time 600 \
           --connect-timeout 20 --max-time 600 --speed-limit 1024 --speed-time 120 \
           --max-filesize 1073741824 --max-redirs 5 --proto-default https \
-          --proto '=https' --proto-redir '=https' --tlsv1.2 "${tls[@]}" \
+          --proto '=https' --proto-redir '=https' --tlsv1.2 ${tls_flag:+"$tls_flag"} \
           --remove-on-error --url "$endpoint" --output "$download"; then success=true; break; fi
         echo "download $name from $endpoint failed" >&2
         rm -f "$download"
       done
       "$success" || exit 1
       # An invalid candidate never replaces even a corrupt existing cache.
-      [[ "$(bun "$source_core" archive-valid "$pin" "$download")" == valid ]]
+      [[ "$(bun "$source_core" archive-valid "$pin" "$download")" == valid ]] || exit 1
       bun "$source_core" promote "$download" "$archive"
     fi
     bun "$source_core" unpack "$pin" "$archive" "$candidate"
@@ -144,6 +143,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   if [[ "$mode" != skip ]]; then
     while IFS= read -r -d '' pin; do
       fetch_source "$pin" "$PWD/target/oliphaunt-sources/checkouts" "$PWD/target/oliphaunt-sources/archives" "$mode"
+      # Bash 3.2 does not propagate a failed subshell function through this loop.
+      status=$?
+      [[ "$status" == 0 ]] || exit "$status"
     done < "$source_work/pins"
     bun "$source_tools/fetch-sources.mts" audit "$(cat "$source_work/extension-count")"
   fi

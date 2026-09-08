@@ -6,7 +6,7 @@ tags: ["javascript-quality"]
 tasks:
   unit:
     tags: ["quality", "unit"]
-    command: "bun test src/extensions/tests/native/tools"
+    command: "bun test ./src/extensions/tests/native/tools"
     inputs:
       - "tools/**/*.mts"
       - "/src/shared/product-metadata/**/*.mts"

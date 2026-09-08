@@ -30,7 +30,7 @@ tasks:
     script: |
       set -e
       bash src/extensions/artifacts/native/tools/run-observed-phase.test.sh
-      bun test --timeout=30000 src/extensions/artifacts/native/tools
+      bun test --timeout=30000 ./src/extensions/artifacts/native/tools
     inputs:
       - "/src/extensions/artifacts/native/tools/run-observed-phase.sh"
       - "/src/extensions/artifacts/native/tools/run-observed-phase.test.sh"
