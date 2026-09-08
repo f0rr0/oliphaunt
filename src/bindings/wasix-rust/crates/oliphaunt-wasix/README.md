@@ -113,6 +113,11 @@ close-only, and a retained callback panic is not resumed into an unknown session
 state. WASIX query cancellation is intentionally absent
 until the guest runtime can interrupt execution and prove protocol recovery.
 
+SQL `statement_timeout` is not a reliable execution deadline in the current
+WASIX runtime: accepting the setting does not ensure that a CPU-bound guest
+query is interrupted. Timing out the caller's future does not stop guest work.
+Do not use either mechanism as an execution-resource boundary.
+
 The builder also supports `username`, `database`, `startup_gucs`, and bundled
 `extension`/`extensions` when the corresponding crate features are enabled.
 The host-selected username initializes PostgreSQL's real session principal:

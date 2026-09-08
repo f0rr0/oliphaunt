@@ -243,5 +243,23 @@ A libc-only variable would not prevent Wasmer from delivering blocked signals.
 The small macro fix and host-mask adapter tests must not be advertised as that
 larger fix. See the runtime patch README and issue #201 for the concrete scope.
 
+## Newly established embedded Rust WASIX timeout limitation
+
+A long CPU-bound repeat accepted `statement_timeout=2ms` but returned normally
+on both the retained baseline and the repeat experiment. Native PostgreSQL's
+equivalent probe returned SQLSTATE `57014` and reused the connection. The
+public Rust SDK and usage documentation now distinguish accepting a GUC from
+enforcing its deadline; timing out a caller future does not stop guest work.
+
+The exact consumed EH libc object reads `it_interval`, whereas PostgreSQL
+sets the one-shot `it_value` and leaves the interval zero. The consumed Rust
+runtime additionally interprets the nanosecond argument as milliseconds, does
+not honor the stored one-shot flag at dispatch, and only dispatches intervals
+at syscall pending-operation boundaries. A libc-only fix cannot interrupt pure
+guest CPU work. Issue #201 records the separate setup, one-shot and owned
+cooperative-interruption work and actual-guest acceptance criteria. This is
+inherited behavior, not a regression introduced by the repeat experiment or
+evidence that the retired patches should return.
+
 Broad platform, extension, crash-durability and release qualification remain
 separate gates. No PostgreSQL performance-parity claim is made.
