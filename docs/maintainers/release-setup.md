@@ -54,6 +54,13 @@ It revokes each installation token during job cleanup. Ordinary publication,
 attestations, and registry authentication keep their existing credentials.
 A missing App installation or permission fails before release mutations.
 
+The App's bot account is `oliphaunt-release-bot[bot]` (GitHub user ID
+`326451763`). `tools/release/release-bot.json` owns its commit name and linked
+noreply address for generated release helper commits. SwiftPM commit authorship
+is read from the candidate's copy of that file so newer publisher code cannot
+change an older approved synthetic commit; candidates predating the file retain
+the legacy identity. Do not rewrite existing release history to change avatars.
+
 After a publication-only fix is merged and its `Required` check passes, dispatch
 normal `publish` from current `main` with the original `release_commit` and
 `approval_run_id`. The completed bootstrap is found by its approved lock;

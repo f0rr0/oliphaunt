@@ -203,8 +203,8 @@ jobs:
               git status --short >&2
               exit 1
             fi
-            git config user.name "oliphaunt-release-bot"
-            git config user.email "oliphaunt-release-bot@users.noreply.github.com"
+            git config user.name "$(bun -p 'require("./tools/release/release-bot.json").name')"
+            git config user.email "$(bun -p 'require("./tools/release/release-bot.json").email')"
             git add -u
             if git diff --cached --quiet --exit-code; then
               echo "Shared contrib release bootstrap produced no release candidate." >&2
@@ -268,8 +268,8 @@ jobs:
             exit 1
           fi
 
-          git config user.name "oliphaunt-release-bot"
-          git config user.email "oliphaunt-release-bot@users.noreply.github.com"
+          git config user.name "$(bun -p 'require("./tools/release/release-bot.json").name')"
+          git config user.email "$(bun -p 'require("./tools/release/release-bot.json").email')"
           if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
             git add -u
             git commit --amend --no-edit

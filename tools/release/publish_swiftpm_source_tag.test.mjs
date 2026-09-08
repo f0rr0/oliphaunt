@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import releaseBot from "./release-bot.json" with { type: "json" };
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 import {
@@ -160,6 +161,21 @@ test("SwiftPM source tag is deterministic, resumable, and exact-release-tree bou
       { root },
     );
     expect(changedTree).not.toBe(tree);
+
+    expect(git(root, ["show", "-s", "--format=%an <%ae>", firstSyntheticCommit])).toBe(
+      "oliphaunt-release-bot <oliphaunt-release-bot@users.noreply.github.com>",
+    );
+    mkdirSync(path.join(root, "tools/release"), { recursive: true });
+    writeFileSync(path.join(root, "tools/release/release-bot.json"), JSON.stringify(releaseBot));
+    git(root, ["add", "tools/release/release-bot.json"]);
+    git(root, ["commit", "-qm", "configure App identity"]);
+    const newSource = git(root, ["rev-parse", "HEAD"]);
+    const newCommit = createSwiftpmManifestCommit(newSource, tree, "0.7.0", { root });
+    expect(git(root, ["show", "-s", "--format=%an <%ae>", newCommit])).toBe(`${releaseBot.name} <${releaseBot.email}>`);
+    // A publisher/working-tree identity change cannot alter an approved candidate.
+    writeFileSync(path.join(root, "tools/release/release-bot.json"), "invalid ambient identity");
+    expect(createSwiftpmManifestCommit(newSource, tree, "0.7.0", { root })).toBe(newCommit);
+    expect(createSwiftpmManifestCommit(releaseCommit, tree, "0.6.0", { root })).toBe(firstSyntheticCommit);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
