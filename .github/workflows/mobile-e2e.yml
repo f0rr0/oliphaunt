@@ -237,7 +237,7 @@ jobs:
 
   required:
     name: E2E
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs:
       - resolve
       - android

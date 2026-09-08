@@ -327,7 +327,7 @@ jobs:
 
   checks:
     name: Checks
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - check-targets
@@ -412,7 +412,7 @@ jobs:
 
   tests:
     name: Tests
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - test-targets
@@ -2685,7 +2685,7 @@ jobs:
 
   builds:
     name: Builds
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - extension-artifacts-native
@@ -2910,7 +2910,7 @@ jobs:
 
   e2e:
     name: E2E
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - native-extension-lifecycle-aggregate
@@ -2941,7 +2941,7 @@ jobs:
 
   required:
     name: Required
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - release-intent
@@ -2974,7 +2974,7 @@ jobs:
 
   qualified:
     name: Qualified
-    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
     needs:
       - affected
       - required
