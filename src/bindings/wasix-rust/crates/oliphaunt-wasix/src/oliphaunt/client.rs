@@ -47,7 +47,11 @@ use crate::oliphaunt::tools::{
 #[cfg(feature = "tools")]
 use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 
-const PROTOCOL_CALLBACK_CHUNK_BYTES: usize = 64 * 1024;
+// Host callback maximum from postgres-protocol-transport-contract/contract.json.
+// A callback borrows its slice synchronously; this is not a response-size limit.
+use super::protocol_limits_generated::PROTOCOL_CALLBACK_CHUNK_BYTES;
+// Tool socket read batching, independent of the callback ABI above. A large
+// frontend frame spans reads; increasing this also increases local stack use.
 #[cfg(feature = "tools")]
 const DIRECT_TOOL_READ_BUFFER_BYTES: usize = 64 * 1024;
 

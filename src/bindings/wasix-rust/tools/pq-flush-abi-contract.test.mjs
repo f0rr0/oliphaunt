@@ -85,8 +85,8 @@ test('WASIX Rust and PostgreSQL agree on the fallible pq_flush ABI', async () =>
 
   assert.match(
     rustConsumer,
-    /const BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES: usize = 64 \* 1024 \* 1024/u,
-    'the Rust consumer must independently cap buffered protocol output at 64 MiB',
+    /use super::protocol_limits_generated::BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES/u,
+    'the Rust consumer must enforce the generated buffered-output contract limit',
   );
   assert.match(
     rustConsumer,

@@ -11,6 +11,7 @@ pub(crate) mod database_root_descriptor;
 pub(crate) mod extensions;
 pub(crate) mod lifecycle;
 pub(crate) mod postgres_mod;
+pub(crate) mod protocol_limits_generated;
 pub(crate) mod proxy;
 pub(crate) mod query;
 pub(crate) mod query_core {

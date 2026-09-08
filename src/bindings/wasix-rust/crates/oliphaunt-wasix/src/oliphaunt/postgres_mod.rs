@@ -36,6 +36,7 @@ mod stdio;
 mod task_policy;
 mod wasix_fs;
 
+use super::protocol_limits_generated::BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES;
 pub(crate) use stdio::ProtocolStream;
 use stdio::{ProtocolStdioAttachment, ProtocolStdioFile, TailCaptureFile, TailCaptureHandle};
 use task_policy::{GuestWasmTasks, constrain_single_backend_tasks};
@@ -54,10 +55,14 @@ const OLIPHAUNT_EXIT_STARTUP_REJECTED: i32 = 98;
 const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
 const STARTUP_OUTCOME_ABI_VERSION: u32 = 1;
 const STARTUP_OUTCOME_DESCRIPTOR_SIZE: usize = 32;
+// Reject corrupt startup descriptors before reading guest memory. This bounds
+// diagnostic output only, not query results; match the startup ABI in bridge.c.
 const STARTUP_OUTCOME_MAX_PROTOCOL_BYTES: u64 = 1024 * 1024;
 const STARTUP_OUTCOME_PENDING: u32 = 0;
 const STARTUP_OUTCOME_REJECTED: u32 = 1;
-const BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+// Retain only the latest startup/tool diagnostics per stream. Larger tails help
+// debugging but increase per-instance retention; they never limit SQL output.
+const DIAGNOSTIC_TAIL_BYTES: usize = 8 * 1024;
 
 static WASIX_PROCESS_RUNTIME: OnceLock<std::result::Result<Arc<WasixProcessRuntime>, String>> =
     OnceLock::new();
@@ -1245,8 +1250,8 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
         .read_dir(Path::new(PGDATA_DIR))
         .with_context(|| format!("verify split initdb {PGDATA_DIR} mount"))?;
 
-    let (stdout_file, stdout_capture) = TailCaptureFile::new(8 * 1024);
-    let (stderr_file, stderr_capture) = TailCaptureFile::new(8 * 1024);
+    let (stdout_file, stdout_capture) = TailCaptureFile::new(DIAGNOSTIC_TAIL_BYTES);
+    let (stderr_file, stderr_capture) = TailCaptureFile::new(DIAGNOSTIC_TAIL_BYTES);
 
     let mut runner = WasiRunner::new();
     runner

@@ -11,6 +11,7 @@ Executable configuration is authoritative. Documentation explains intent and ope
 | CI gates and test selection | `testing.md`, `tooling.md` | `.github/workflows/ci.yml`, `tools/graph/ci_plan.mjs`, Moon project files |
 | Binary artifacts and WASIX provenance | `assets.md`, `compiler-caching.md` | runtime target metadata, exact producer SHA, runtime/AOT manifests and checksums, `tools/xtask` |
 | WASIX host APIs and storage | `wasix-usage.md` | WASIX binding source, host pins/patches, and product Moon tasks |
+| Runtime stacks, buffers, and streaming budgets | `runtime-resource-budgets.md` | Owning runtime constants and `src/shared/postgres-protocol-transport-contract/contract.json` |
 | WASIX postmaster runtime and carrier | `wasix-postmaster.md` | `src/runtimes/liboliphaunt/wasix-postmaster`, its Moon project, sealed-carrier policy, and release metadata |
 | Extension support and packaging | `extension-packaging-policy.md` | extension catalog, global target profiles, native-component contract, release catalog |
 | SDK contracts | `sdk-products-policy.md`, `sdk-parity-policy.md`, `sdk-api-surface.md` | SDK manifests, package manifests, generated extension metadata, clean-consumer tests |

@@ -25,6 +25,9 @@
 #define O_BINARY 0
 #endif
 
+/* File-read scratch space; the complete returned archive still grows in memory. */
+#define ARCHIVE_FILE_READ_CHUNK_BYTES (64 * 1024)
+
 static int buffer_reserve(OliphauntByteBuffer *buffer, size_t additional) {
     if (additional > SIZE_MAX - buffer->len) {
         return -1;
@@ -543,7 +546,7 @@ static int tar_append_file_contents(OliphauntByteBuffer *archive, OliphauntHandl
         set_error(handle, message);
         return -1;
     }
-    uint8_t chunk[64 * 1024];
+    uint8_t chunk[ARCHIVE_FILE_READ_CHUNK_BYTES];
     size_t remaining = size;
     while (remaining > 0) {
         size_t take = remaining < sizeof(chunk) ? remaining : sizeof(chunk);

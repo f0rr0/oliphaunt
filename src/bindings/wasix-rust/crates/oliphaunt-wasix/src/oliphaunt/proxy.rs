@@ -26,6 +26,8 @@ use crate::oliphaunt::wire::{
     response_contains_error, startup_config_for_message,
 };
 
+// Per-connection socket read batching, not a PostgreSQL frame/response limit.
+// Frames can span reads. Larger batches trade local stack space for fewer reads.
 const PROXY_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Blocking PostgreSQL socket proxy for the embedded Oliphaunt runtime.

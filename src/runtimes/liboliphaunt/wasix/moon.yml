@@ -58,12 +58,14 @@ tasks:
     tags: ["quality", "unit"]
     script: |
       set -e
+      bash src/runtimes/liboliphaunt/wasix/assets/build/profile_flags.test.sh
       bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh
       bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh
       bash src/runtimes/liboliphaunt/wasix/assets/build/verify_wasix_sjlj_artifact.test.sh
       node --test src/runtimes/liboliphaunt/wasix/tools/*contract.test.mjs
     inputs:
       - "assets/build/docker/**/*"
+      - "assets/build/profile_flags*"
       - "assets/build/postgres/**/*"
       - "assets/build/verify_wasix_sjlj_artifact*"
       - "assets/generated/wasix-dl.exports"

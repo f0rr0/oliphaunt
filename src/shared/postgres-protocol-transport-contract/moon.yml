@@ -38,6 +38,8 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/client.rs"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/backend.rs"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/protocol_limits_generated.rs"
+      - "/src/bindings/wasix-ts/src/protocol-limits.generated.ts"
       - "/tools/policy/check-postgres-protocol-transport-abi.sh"
       - "/tools/policy/check-postgres-protocol-transport-contract.mjs"
     options:

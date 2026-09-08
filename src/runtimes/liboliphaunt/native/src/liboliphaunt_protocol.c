@@ -18,7 +18,11 @@
 #endif
 
 #define DEFAULT_STARTUP_TIMEOUT_MS 60000
+/* Backpressure watermark, not preallocation or a total-response limit. One
+ * oversized chunk may enter an empty queue so the producer can make progress. */
 #define DEFAULT_STREAM_QUEUE_MAX_BYTES (4 * 1024 * 1024)
+/* First buffered response allocation; grows on demand, unlike the watermark. */
+#define INITIAL_BUFFERED_OUTPUT_BYTES (8 * 1024)
 
 extern void RequestTrustedEmbeddedTimeoutCheck(void);
 extern bool TrustedEmbeddedInterruptPending(void);
@@ -62,7 +66,7 @@ static int append_output_locked(OliphauntHandle *handle, const void *buf, size_t
     }
     size_t required = handle->output_len + len;
     if (required > handle->output_cap) {
-        size_t next = handle->output_cap ? handle->output_cap : 8192;
+        size_t next = handle->output_cap ? handle->output_cap : INITIAL_BUFFERED_OUTPUT_BYTES;
         while (next < required) {
             next *= 2;
         }

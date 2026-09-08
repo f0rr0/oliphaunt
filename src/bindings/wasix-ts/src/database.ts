@@ -1,4 +1,5 @@
 import { composeWasixStorageFailure, WasixStorageError } from './errors.js';
+import { PROTOCOL_CALLBACK_CHUNK_BYTES } from './protocol-limits.generated.js';
 import {
   assertNoTransactionChain,
   decodeQueryResult,
@@ -44,8 +45,11 @@ import type {
 const transactionPinnedMessage =
   'Oliphaunt WASIX database is pinned to an active transaction; use the callback transaction handle';
 const CLOSE_DEADLINE_MS = 120_000;
-/** @internal Buffered protocol fallbacks use the same observable callback granularity. */
-export const WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES = 64 * 1024;
+/**
+ * @internal Host callback maximum owned by postgres-protocol-transport-contract.
+ * Buffered fallbacks preserve this granularity; it does not cap total output.
+ */
+export const WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES = PROTOCOL_CALLBACK_CHUNK_BYTES;
 const pgDumpTargets = new WeakSet<OliphauntDatabase>();
 const nativeToolTargets = new WeakSet<OliphauntDatabase>();
 const protocolConnectionTargets = new WeakSet<OliphauntDatabase>();
