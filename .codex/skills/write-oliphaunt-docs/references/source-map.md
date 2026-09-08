@@ -41,6 +41,7 @@ Follow types into implementations for error recovery, transaction ownership, per
 These were concrete accuracy problems found during the September 2026 rewrite. Verify the implementation again before using them as current facts.
 
 - Native direct mode stays bound to one root/configuration for the process lifetime. Closing does not permit opening restored data at another root; use broker mode on desktop or a subsequent process launch on mobile.
+- A fresh registry install can fail even when the checkout example compiles. Verify resource discovery, Cargo macro expansion in a consumer crate, and preservation of empty cluster-seed directories. Test packages before stating that runtime setup is automatic.
 - Kotlin `DatabaseStorage.Directory` receives `java.io.File`; mechanically reusing a JavaScript path string breaks the quickstart.
 - A PostgreSQL connection URL does not own the Rust server. A Tauri example must retain the server handle as long as its pool needs it.
 - Native and WASIX SDKs differ in defaults, storage adapters, concurrency, cancellation, and optional tools. A method present in one binding is not evidence for another.

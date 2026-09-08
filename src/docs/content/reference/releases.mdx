@@ -13,6 +13,12 @@ The SDK package selects compatible runtime dependencies. Keep those dependencies
 
 Extension packages have their own versions and runtime compatibility. A matching numeric version across unrelated products is not a compatibility guarantee.
 
+## Current integration limitations
+
+The 0.2.0 native Rust quickstart requires the complete runtime archive and explicit environment setup; see [native runtime configuration](/docs/sdk/rust#configure-the-native-runtime). Build-helper registration alone is insufficient in this release.
+
+Native TypeScript 0.2.0 fails fresh-database initialization on Linux x64 under Node.js and Bun with a data-directory permission error. See the [TypeScript quickstart](/docs/sdk/typescript) for the current limitation. The [WASIX TypeScript](/docs/sdk/wasix-typescript) and [WASIX Rust](/docs/sdk/wasix-rust) quickstarts have been verified against their published packages on Linux x64.
+
 ## Upgrade an application
 
 1. Read release notes for your SDK, its runtime changes, and selected extensions.
