@@ -14,7 +14,7 @@ const CACHE_KEY = new RegExp(CONTRACT.manifests.native.cacheKeyPattern, "u");
 const DISALLOWED_CACHE_KEYS = new Set(CONTRACT.manifests.native.cacheKeyDisallowedValues);
 
 // PostgreSQL 18 initdb.c: subdirs[], plus its separately created pg_wal.
-export const NATIVE_PGDATA_DIRECTORIES = Object.freeze(CONTRACT.nativeDirectories);
+export const NATIVE_PGDATA_DIRECTORIES = Object.freeze(CONTRACT.pgdataDirectories);
 
 // A regular file preserves directory metadata through Cargo and npm file inventories.
 function nativeSeedDirectoryInventory(seed) {

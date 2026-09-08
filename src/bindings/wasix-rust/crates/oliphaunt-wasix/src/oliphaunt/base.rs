@@ -915,6 +915,7 @@ fn publish_cluster_seed_clone(source: &Path, pgdata: &Path) -> Result<()> {
     let result = (|| -> Result<()> {
         clone_cluster_seed_dir(source, &staging)?;
         remove_cluster_seed_runtime_state(&staging)?;
+        super::data_dir::apply_private_permissions(&staging, 0o700)?;
         promote_synced_directory(&staging, pgdata, root, "cluster seed")?;
         Ok(())
     })();
@@ -2705,6 +2706,11 @@ mod tests {
         fs::write(source.path().join("PG_VERSION"), b"18\n")?;
         fs::write(source.path().join("global/pg_control"), b"control")?;
         fs::write(source.path().join("postmaster.pid"), b"stale")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(source.path(), fs::Permissions::from_mode(0o755))?;
+        }
 
         let parent = TempDir::new()?;
         let root = parent.path().join("database");
@@ -2718,6 +2724,12 @@ mod tests {
 
         assert!(pgdata.join("PG_VERSION").is_file());
         assert!(pgdata.join("global/pg_control").is_file());
+        assert!(pgdata.join("pg_wal").is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&pgdata)?.permissions().mode() & 0o777, 0o700);
+        }
         assert!(!pgdata.join("postmaster.pid").exists());
         assert!(!staging.exists());
         Ok(())
