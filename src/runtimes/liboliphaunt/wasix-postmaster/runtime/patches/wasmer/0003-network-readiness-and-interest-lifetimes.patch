@@ -1,0 +1,1597 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 3/8] virtual-io/net: preserve readiness and interest ownership
+
+Keep selector interest registration and host socket readiness/lifetime changes
+together. PostgreSQL's listener and accepted sockets cross fork/exec and epoll
+boundaries; readiness must not disappear when a temporary registration is
+dropped. The WASIX epoll adapter consumes these lower-level changes.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/lib/virtual-io/src/guard.rs b/lib/virtual-io/src/guard.rs
+index 60d5596..f062bd9 100644
+--- a/lib/virtual-io/src/guard.rs
++++ b/lib/virtual-io/src/guard.rs
+@@ -5,7 +5,9 @@ use std::{
+ 
+ use mio::Token;
+ 
+-use crate::{InterestHandler, InterestType, InterestWakerMap, Selector};
++use crate::{
++    InterestHandler, InterestType, InterestWakerMap, MultiplexedInterestHandler, Selector,
++};
+ 
+ #[derive(Debug)]
+ #[must_use = "Leaking token guards will break the IO subsystem"]
+@@ -58,6 +60,12 @@ impl InterestGuard {
+         }
+     }
+ 
++    pub fn attach_waker_map(&mut self, waker_map: InterestWakerMap) {
++        if let Some(selector) = self.selector.upgrade() {
++            selector.attach_waker_map(self.token, waker_map);
++        }
++    }
++
+     fn drop_internal(&mut self) {
+         if let Some(selector) = self.selector.upgrade() {
+             selector.remove(self.token, None).ok();
+@@ -70,6 +78,125 @@ pub enum HandlerGuardState {
+     None,
+     ExternalHandler(InterestGuard),
+     WakerMap(InterestGuard, InterestWakerMap),
++    ExternalHandlerWithWakerMap(InterestGuard, InterestWakerMap),
++}
++
++impl HandlerGuardState {
++    pub fn set_external_handler(
++        &mut self,
++        selector: &Arc<Selector>,
++        source: &mut dyn mio::event::Source,
++        interest: mio::Interest,
++        handler: Box<dyn InterestHandler + Send + Sync>,
++    ) -> io::Result<()> {
++        let mut current = HandlerGuardState::None;
++        std::mem::swap(self, &mut current);
++
++        match current {
++            HandlerGuardState::None => {
++                *self = HandlerGuardState::ExternalHandler(InterestGuard::new(
++                    selector, handler, source, interest,
++                )?);
++                Ok(())
++            }
++            HandlerGuardState::ExternalHandler(mut guard) => match guard.replace_handler(handler) {
++                Ok(()) => {
++                    *self = HandlerGuardState::ExternalHandler(guard);
++                    Ok(())
++                }
++                Err(handler) => {
++                    guard.unregister(source).ok();
++                    *self = HandlerGuardState::ExternalHandler(InterestGuard::new(
++                        selector, handler, source, interest,
++                    )?);
++                    Ok(())
++                }
++            },
++            HandlerGuardState::WakerMap(mut guard, waker_map)
++            | HandlerGuardState::ExternalHandlerWithWakerMap(mut guard, waker_map) => {
++                let handler = MultiplexedInterestHandler::new(handler, waker_map.clone());
++                match guard.replace_handler(handler) {
++                    Ok(()) => {
++                        *self = HandlerGuardState::ExternalHandlerWithWakerMap(guard, waker_map);
++                        Ok(())
++                    }
++                    Err(handler) => {
++                        guard.unregister(source).ok();
++                        *self = HandlerGuardState::ExternalHandlerWithWakerMap(
++                            InterestGuard::new(selector, handler, source, interest)?,
++                            waker_map,
++                        );
++                        Ok(())
++                    }
++                }
++            }
++        }
++    }
++
++    pub fn remove_external_handler(
++        &mut self,
++        source: &mut dyn mio::event::Source,
++    ) -> io::Result<()> {
++        let mut current = HandlerGuardState::None;
++        std::mem::swap(self, &mut current);
++        match current {
++            HandlerGuardState::None => Ok(()),
++            HandlerGuardState::ExternalHandler(mut guard) => guard.unregister(source),
++            HandlerGuardState::WakerMap(guard, waker_map) => {
++                *self = HandlerGuardState::WakerMap(guard, waker_map);
++                Ok(())
++            }
++            HandlerGuardState::ExternalHandlerWithWakerMap(mut guard, waker_map) => {
++                let res = guard.replace_handler(Box::new(waker_map.clone()));
++                match res {
++                    Ok(()) => {
++                        *self = HandlerGuardState::WakerMap(guard, waker_map);
++                        Ok(())
++                    }
++                    Err(_) => {
++                        guard.unregister(source).ok();
++                        Ok(())
++                    }
++                }
++            }
++        }
++    }
++
++    pub fn remove_all_handlers(&mut self, source: &mut dyn mio::event::Source) -> io::Result<()> {
++        let mut current = HandlerGuardState::None;
++        std::mem::swap(self, &mut current);
++        match current {
++            HandlerGuardState::None => Ok(()),
++            HandlerGuardState::ExternalHandler(mut guard)
++            | HandlerGuardState::WakerMap(mut guard, _)
++            | HandlerGuardState::ExternalHandlerWithWakerMap(mut guard, _) => {
++                guard.unregister(source)
++            }
++        }
++    }
++
++    pub fn push_interest(&mut self, interest: InterestType) {
++        match self {
++            HandlerGuardState::ExternalHandler(guard)
++            | HandlerGuardState::ExternalHandlerWithWakerMap(guard, _) => {
++                guard.interest(interest);
++            }
++            HandlerGuardState::WakerMap(_, waker_map) => {
++                waker_map.push_interest(interest);
++            }
++            HandlerGuardState::None => {}
++        }
++    }
++
++    pub fn pop_waker_interest(&mut self, interest: InterestType) -> bool {
++        match self {
++            HandlerGuardState::WakerMap(_, waker_map)
++            | HandlerGuardState::ExternalHandlerWithWakerMap(_, waker_map) => {
++                waker_map.pop(interest)
++            }
++            HandlerGuardState::ExternalHandler(_) | HandlerGuardState::None => false,
++        }
++    }
+ }
+ 
+ pub fn state_as_waker_map<'a>(
+@@ -77,20 +204,35 @@ pub fn state_as_waker_map<'a>(
+     selector: &'_ Arc<Selector>,
+     source: &'_ mut dyn mio::event::Source,
+ ) -> io::Result<&'a mut InterestWakerMap> {
+-    if !matches!(state, HandlerGuardState::WakerMap(_, _)) {
+-        let waker_map = InterestWakerMap::default();
+-        *state = HandlerGuardState::WakerMap(
+-            InterestGuard::new(
+-                selector,
+-                Box::new(waker_map.clone()),
+-                source,
+-                mio::Interest::READABLE | mio::Interest::WRITABLE,
+-            )?,
+-            waker_map,
+-        );
++    match state {
++        HandlerGuardState::None => {
++            let waker_map = InterestWakerMap::default();
++            *state = HandlerGuardState::WakerMap(
++                InterestGuard::new(
++                    selector,
++                    Box::new(waker_map.clone()),
++                    source,
++                    mio::Interest::READABLE | mio::Interest::WRITABLE,
++                )?,
++                waker_map,
++            );
++        }
++        HandlerGuardState::ExternalHandler(guard) => {
++            let waker_map = InterestWakerMap::default();
++            guard.attach_waker_map(waker_map.clone());
++
++            let mut current = HandlerGuardState::None;
++            std::mem::swap(state, &mut current);
++            if let HandlerGuardState::ExternalHandler(guard) = current {
++                *state = HandlerGuardState::ExternalHandlerWithWakerMap(guard, waker_map);
++            }
++        }
++        HandlerGuardState::WakerMap(_, _)
++        | HandlerGuardState::ExternalHandlerWithWakerMap(_, _) => {}
+     }
+     Ok(match state {
+-        HandlerGuardState::WakerMap(_, map) => map,
++        HandlerGuardState::WakerMap(_, map)
++        | HandlerGuardState::ExternalHandlerWithWakerMap(_, map) => map,
+         _ => unreachable!(),
+     })
+ }
+diff --git a/lib/virtual-io/src/interest.rs b/lib/virtual-io/src/interest.rs
+index 7cf0529..24ad072 100644
+--- a/lib/virtual-io/src/interest.rs
++++ b/lib/virtual-io/src/interest.rs
+@@ -1,7 +1,10 @@
+ use serde::{Deserialize, Serialize};
+ use std::{
+     collections::{HashMap, HashSet},
+-    sync::{Arc, Mutex},
++    sync::{
++        Arc, Mutex, Weak,
++        atomic::{AtomicU64, Ordering},
++    },
+     task::{Context, RawWaker, RawWakerVTable, Waker},
+ };
+ 
+@@ -77,6 +80,151 @@ pub trait InterestHandler: Send + Sync + std::fmt::Debug {
+     fn has_interest(&self, interest: InterestType) -> bool;
+ }
+ 
++type SharedInterestHandler = Arc<Mutex<Box<dyn InterestHandler + Send + Sync>>>;
++
++#[derive(Debug, Default)]
++struct InterestHandlerFanoutInner {
++    next_id: AtomicU64,
++    handlers: Mutex<HashMap<u64, SharedInterestHandler>>,
++}
++
++/// A cloneable interest handler that fans each callback out to independently
++/// registered consumers. The handler map is only held while taking a snapshot;
++/// callbacks execute outside it so consumers may safely unregister themselves.
++#[derive(Debug, Clone, Default)]
++pub struct InterestHandlerFanout {
++    inner: Arc<InterestHandlerFanoutInner>,
++}
++
++impl InterestHandlerFanout {
++    pub fn register(
++        &self,
++        handler: Box<dyn InterestHandler + Send + Sync>,
++    ) -> InterestHandlerRegistration {
++        let id = self
++            .inner
++            .next_id
++            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
++                current.checked_add(1)
++            })
++            .expect("interest-handler fanout identity space exhausted");
++        self.inner
++            .handlers
++            .lock()
++            .unwrap()
++            .insert(id, Arc::new(Mutex::new(handler)));
++        InterestHandlerRegistration {
++            inner: Arc::downgrade(&self.inner),
++            id,
++        }
++    }
++
++    pub fn handler_count(&self) -> usize {
++        self.inner.handlers.lock().unwrap().len()
++    }
++
++    fn snapshot(&self) -> InterestHandlerSnapshot {
++        let handlers = self.inner.handlers.lock().unwrap();
++        match handlers.len() {
++            0 => InterestHandlerSnapshot::Empty,
++            1 => InterestHandlerSnapshot::One(handlers.values().next().unwrap().clone()),
++            _ => InterestHandlerSnapshot::Many(handlers.values().cloned().collect()),
++        }
++    }
++}
++
++enum InterestHandlerSnapshot {
++    Empty,
++    One(SharedInterestHandler),
++    Many(Vec<SharedInterestHandler>),
++}
++
++impl InterestHandler for InterestHandlerFanout {
++    fn push_interest(&mut self, interest: InterestType) {
++        match self.snapshot() {
++            InterestHandlerSnapshot::Empty => {}
++            InterestHandlerSnapshot::One(handler) => {
++                handler.lock().unwrap().push_interest(interest);
++            }
++            InterestHandlerSnapshot::Many(handlers) => {
++                for handler in handlers {
++                    handler.lock().unwrap().push_interest(interest);
++                }
++            }
++        }
++    }
++
++    fn pop_interest(&mut self, interest: InterestType) -> bool {
++        match self.snapshot() {
++            InterestHandlerSnapshot::Empty => false,
++            InterestHandlerSnapshot::One(handler) => handler.lock().unwrap().pop_interest(interest),
++            InterestHandlerSnapshot::Many(handlers) => {
++                handlers.into_iter().fold(false, |seen, handler| {
++                    handler.lock().unwrap().pop_interest(interest) || seen
++                })
++            }
++        }
++    }
++
++    fn has_interest(&self, interest: InterestType) -> bool {
++        match self.snapshot() {
++            InterestHandlerSnapshot::Empty => false,
++            InterestHandlerSnapshot::One(handler) => handler.lock().unwrap().has_interest(interest),
++            InterestHandlerSnapshot::Many(handlers) => handlers
++                .into_iter()
++                .any(|handler| handler.lock().unwrap().has_interest(interest)),
++        }
++    }
++}
++
++#[derive(Debug)]
++pub struct InterestHandlerRegistration {
++    inner: Weak<InterestHandlerFanoutInner>,
++    id: u64,
++}
++
++impl Drop for InterestHandlerRegistration {
++    fn drop(&mut self) {
++        let Some(inner) = self.inner.upgrade() else {
++            return;
++        };
++        let removed = inner.handlers.lock().unwrap().remove(&self.id);
++        drop(removed);
++    }
++}
++
++#[derive(Debug)]
++pub struct MultiplexedInterestHandler {
++    primary: Box<dyn InterestHandler + Send + Sync>,
++    waker_map: InterestWakerMap,
++}
++
++impl MultiplexedInterestHandler {
++    pub fn new(
++        primary: Box<dyn InterestHandler + Send + Sync>,
++        waker_map: InterestWakerMap,
++    ) -> Box<Self> {
++        Box::new(Self { primary, waker_map })
++    }
++}
++
++impl InterestHandler for MultiplexedInterestHandler {
++    fn push_interest(&mut self, interest: InterestType) {
++        self.primary.push_interest(interest);
++        self.waker_map.push_interest(interest);
++    }
++
++    fn pop_interest(&mut self, interest: InterestType) -> bool {
++        let primary = self.primary.pop_interest(interest);
++        let waker_map = self.waker_map.pop_interest(interest);
++        primary || waker_map
++    }
++
++    fn has_interest(&self, interest: InterestType) -> bool {
++        self.primary.has_interest(interest) || self.waker_map.has_interest(interest)
++    }
++}
++
+ impl From<&Waker> for Box<dyn InterestHandler + Send + Sync> {
+     fn from(waker: &Waker) -> Self {
+         WakerInterestHandler::new(waker)
+@@ -194,3 +342,99 @@ impl InterestHandler for InterestWakerMap {
+         state.triggered.contains(&interest)
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    use std::sync::mpsc;
++    use std::time::Duration;
++
++    #[derive(Debug)]
++    struct CountingHandler(Arc<AtomicUsize>);
++
++    impl InterestHandler for CountingHandler {
++        fn push_interest(&mut self, _interest: InterestType) {
++            self.0.fetch_add(1, Ordering::SeqCst);
++        }
++
++        fn pop_interest(&mut self, _interest: InterestType) -> bool {
++            false
++        }
++
++        fn has_interest(&self, _interest: InterestType) -> bool {
++            false
++        }
++    }
++
++    #[test]
++    fn fanout_removes_only_the_dropped_registration() {
++        let mut fanout = InterestHandlerFanout::default();
++        let first = Arc::new(AtomicUsize::new(0));
++        let second = Arc::new(AtomicUsize::new(0));
++        let first_registration = fanout.register(Box::new(CountingHandler(first.clone())));
++        let _second_registration = fanout.register(Box::new(CountingHandler(second.clone())));
++
++        fanout.push_interest(InterestType::Readable);
++        assert_eq!(first.load(Ordering::SeqCst), 1);
++        assert_eq!(second.load(Ordering::SeqCst), 1);
++
++        drop(first_registration);
++        fanout.push_interest(InterestType::Readable);
++        assert_eq!(first.load(Ordering::SeqCst), 1);
++        assert_eq!(second.load(Ordering::SeqCst), 2);
++        assert_eq!(fanout.handler_count(), 1);
++    }
++
++    #[test]
++    fn singleton_fanout_uses_allocation_free_snapshot_shape() {
++        let fanout = InterestHandlerFanout::default();
++        let _registration =
++            fanout.register(Box::new(CountingHandler(Arc::new(AtomicUsize::new(0)))));
++        assert!(matches!(fanout.snapshot(), InterestHandlerSnapshot::One(_)));
++    }
++
++    #[derive(Debug)]
++    struct ReentrantDropHandler {
++        fanout: InterestHandlerFanout,
++        dropped: mpsc::Sender<()>,
++    }
++
++    impl InterestHandler for ReentrantDropHandler {
++        fn push_interest(&mut self, _interest: InterestType) {}
++
++        fn pop_interest(&mut self, _interest: InterestType) -> bool {
++            false
++        }
++
++        fn has_interest(&self, _interest: InterestType) -> bool {
++            false
++        }
++    }
++
++    impl Drop for ReentrantDropHandler {
++        fn drop(&mut self) {
++            let transient = self
++                .fanout
++                .register(Box::new(CountingHandler(Arc::new(AtomicUsize::new(0)))));
++            drop(transient);
++            self.dropped.send(()).unwrap();
++        }
++    }
++
++    #[test]
++    fn registration_drop_releases_map_lock_before_handler_drop() {
++        let fanout = InterestHandlerFanout::default();
++        let (dropped_tx, dropped_rx) = mpsc::channel();
++        let registration = fanout.register(Box::new(ReentrantDropHandler {
++            fanout: fanout.clone(),
++            dropped: dropped_tx,
++        }));
++
++        std::thread::spawn(move || drop(registration));
++        dropped_rx
++            .recv_timeout(Duration::from_secs(1))
++            .expect("handler drop should re-enter the fanout without deadlocking");
++        assert_eq!(fanout.handler_count(), 0);
++    }
++}
+diff --git a/lib/virtual-io/src/selector.rs b/lib/virtual-io/src/selector.rs
+index b53e018..21399a8 100644
+--- a/lib/virtual-io/src/selector.rs
++++ b/lib/virtual-io/src/selector.rs
+@@ -8,7 +8,7 @@ use std::{
+     },
+ };
+ 
+-use crate::{InterestHandler, InterestType};
++use crate::{InterestHandler, InterestType, InterestWakerMap, MultiplexedInterestHandler};
+ 
+ pub enum SelectorModification {
+     Add {
+@@ -22,6 +22,10 @@ pub enum SelectorModification {
+         token: Token,
+         handler: Box<dyn InterestHandler + Send + Sync>,
+     },
++    AttachWakerMap {
++        token: Token,
++        waker_map: InterestWakerMap,
++    },
+     PushInterest {
+         token: Token,
+         interest: InterestType,
+@@ -60,6 +64,13 @@ impl SelectorModification {
+ 
+                 lookup.insert(token, handler);
+             }
++            SelectorModification::AttachWakerMap { token, waker_map } => {
++                if let Some(last) = lookup.remove(&token) {
++                    lookup.insert(token, MultiplexedInterestHandler::new(last, waker_map));
++                } else {
++                    lookup.insert(token, Box::new(waker_map));
++                }
++            }
+             SelectorModification::PushInterest { token, interest } => {
+                 if let Some(handler) = lookup.get_mut(&token) {
+                     handler.push_interest(interest);
+@@ -80,6 +91,10 @@ impl std::fmt::Debug for SelectorModification {
+             SelectorModification::Replace { token, .. } => {
+                 f.debug_struct("Replace").field("token", token).finish()
+             }
++            SelectorModification::AttachWakerMap { token, .. } => f
++                .debug_struct("AttachWakerMap")
++                .field("token", token)
++                .finish(),
+             SelectorModification::PushInterest { token, interest } => f
+                 .debug_struct("PushInterest")
+                 .field("token", token)
+@@ -151,14 +166,21 @@ impl Selector {
+ 
+         // CONCURRENCY: This should never result in a deadlock, as long as source.deregister does not call remove or add again.
+         let inner_registry = self.registry.lock().unwrap();
+-        match source.register(&inner_registry, token, interests) {
+-            Ok(()) => {}
++        let registration = match source.register(&inner_registry, token, interests) {
++            Ok(()) => Ok(()),
+             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                 source.deregister(&inner_registry).ok();
+-                source.register(&inner_registry, token, interests)?;
++                source.register(&inner_registry, token, interests)
+             }
+-            Err(err) => return Err(err),
++            Err(err) => Err(err),
+         };
++        drop(inner_registry);
++        if let Err(err) = registration {
++            // Balance the already queued Add. Remove wakes the idle poll loop,
++            // so the rejected handler is not retained waiting for another edge.
++            self.queue_modification(SelectorModification::Remove { token });
++            return Err(err);
++        }
+ 
+         Ok(token)
+     }
+@@ -185,6 +207,10 @@ impl Selector {
+         self.queue_modification(SelectorModification::Replace { token, handler });
+     }
+ 
++    pub fn attach_waker_map(&self, token: Token, waker_map: InterestWakerMap) {
++        self.queue_modification(SelectorModification::AttachWakerMap { token, waker_map });
++    }
++
+     /// Generate a new unique token
+     #[must_use = "the token must be consumed"]
+     fn new_token(&self) -> Token {
+@@ -193,10 +219,16 @@ impl Selector {
+ 
+     /// Try to process a modification immediately, otherwise queue it up
+     fn queue_modification(&self, modification: SelectorModification) {
+-        // Replace and PushInterest can cause external code to be called so it is a good idea to process them asap so they don't get delayed too long
++        // Process selector modifications promptly.  Add must wake the poll loop
++        // so the handler is installed even if the registered source is already
++        // ready and no later edge arrives.
+         let needs_wakeup = matches!(
+             &modification,
+-            SelectorModification::PushInterest { .. } | SelectorModification::Replace { .. }
++            SelectorModification::Add { .. }
++                | SelectorModification::Remove { .. }
++                | SelectorModification::PushInterest { .. }
++                | SelectorModification::AttachWakerMap { .. }
++                | SelectorModification::Replace { .. }
+         );
+ 
+         // CONCURRENCY: This will never deadlock as queued_modifications is always the innermost lock and we don't call any potentially blocking functions while holding the lock.
+@@ -286,7 +318,10 @@ impl Selector {
+ #[cfg(all(unix, test))]
+ mod tests {
+     use super::*;
++    use crate::{HandlerGuardState, InterestGuard, state_as_waker_map};
++    use futures::task::{ArcWake, waker};
+     use std::io::Write;
++    use std::sync::Arc;
+     use std::sync::mpsc;
+     use std::thread;
+     use std::time::Duration;
+@@ -316,6 +351,55 @@ mod tests {
+         token: Arc<Mutex<Option<Token>>>,
+         success_sender: mpsc::Sender<()>,
+     }
++
++    #[derive(Debug)]
++    struct DropSignalHandler {
++        dropped: mpsc::Sender<()>,
++    }
++
++    impl Drop for DropSignalHandler {
++        fn drop(&mut self) {
++            self.dropped.send(()).unwrap();
++        }
++    }
++
++    impl InterestHandler for DropSignalHandler {
++        fn push_interest(&mut self, _interest: InterestType) {}
++
++        fn pop_interest(&mut self, _interest: InterestType) -> bool {
++            false
++        }
++
++        fn has_interest(&self, _interest: InterestType) -> bool {
++            false
++        }
++    }
++
++    struct FailingSource;
++
++    impl mio::event::Source for FailingSource {
++        fn register(
++            &mut self,
++            _registry: &mio::Registry,
++            _token: Token,
++            _interests: mio::Interest,
++        ) -> io::Result<()> {
++            Err(io::Error::other("injected registration failure"))
++        }
++
++        fn reregister(
++            &mut self,
++            _registry: &mio::Registry,
++            _token: Token,
++            _interests: mio::Interest,
++        ) -> io::Result<()> {
++            Err(io::Error::other("injected registration failure"))
++        }
++
++        fn deregister(&mut self, _registry: &mio::Registry) -> io::Result<()> {
++            Ok(())
++        }
++    }
+     impl InterestHandler for DeadlockingHandler {
+         fn push_interest(&mut self, _interest: InterestType) {
+             // This would deadlock without a queue
+@@ -334,6 +418,16 @@ mod tests {
+         }
+     }
+ 
++    struct ChannelWake {
++        sender: mpsc::Sender<()>,
++    }
++
++    impl ArcWake for ChannelWake {
++        fn wake_by_ref(arc_self: &Arc<Self>) {
++            arc_self.sender.send(()).unwrap();
++        }
++    }
++
+     #[test]
+     fn test_push_interest() {
+         let (mut sender, mut receiver) = mio::unix::pipe::new().unwrap();
+@@ -396,6 +490,87 @@ mod tests {
+         selector.shutdown();
+     }
+ 
++    #[test]
++    fn selector_remove_wakes_idle_poll_and_drops_handler_promptly() {
++        let (_sender, mut receiver) = mio::unix::pipe::new().unwrap();
++        let (dropped_tx, dropped_rx) = mpsc::channel();
++        let selector = Selector::new();
++        let token = selector
++            .add(
++                Box::new(DropSignalHandler {
++                    dropped: dropped_tx,
++                }),
++                &mut receiver,
++                mio::Interest::READABLE,
++            )
++            .unwrap();
++
++        selector.remove(token, Some(&mut receiver)).unwrap();
++
++        dropped_rx
++            .recv_timeout(Duration::from_secs(1))
++            .expect("Remove must wake an idle selector and promptly drop its handler");
++        selector.shutdown();
++    }
++
++    #[test]
++    fn selector_add_failure_balances_queued_handler_promptly() {
++        let (dropped_tx, dropped_rx) = mpsc::channel();
++        let selector = Selector::new();
++        let mut source = FailingSource;
++
++        let result = selector.add(
++            Box::new(DropSignalHandler {
++                dropped: dropped_tx,
++            }),
++            &mut source,
++            mio::Interest::READABLE,
++        );
++        assert!(result.is_err());
++        dropped_rx
++            .recv_timeout(Duration::from_secs(1))
++            .expect("failed Add must be balanced by a prompt queued Remove");
++        selector.shutdown();
++    }
++
++    #[test]
++    fn external_handler_and_waker_map_both_receive_interest() {
++        let (mut sender, mut receiver) = mio::unix::pipe::new().unwrap();
++        let (handler_sender, handler_receiver) = mpsc::channel();
++        let (wake_sender, wake_receiver) = mpsc::channel();
++
++        let selector = Selector::new();
++        let guard = InterestGuard::new(
++            &selector,
++            Box::new(TestHandler {
++                success_sender: handler_sender,
++            }),
++            &mut receiver,
++            mio::Interest::READABLE,
++        )
++        .unwrap();
++        let mut state = HandlerGuardState::ExternalHandler(guard);
++        let wake = waker(Arc::new(ChannelWake {
++            sender: wake_sender,
++        }));
++
++        state_as_waker_map(&mut state, &selector, &mut receiver)
++            .unwrap()
++            .add(InterestType::Readable, &wake);
++
++        thread::sleep(Duration::from_millis(10));
++        sender.write_all(&[1]).unwrap();
++
++        handler_receiver
++            .recv_timeout(Duration::from_secs(1))
++            .expect("external handler should receive readiness");
++        wake_receiver
++            .recv_timeout(Duration::from_secs(1))
++            .expect("waker map waiter should receive readiness");
++
++        state.remove_all_handlers(&mut receiver).unwrap();
++    }
++
+     #[test]
+     fn test_selector_no_deadlock_when_modifying_the_selector_from_push_interest() {
+         let (mut sender, mut receiver) = mio::unix::pipe::new().unwrap();
+diff --git a/lib/virtual-net/src/host.rs b/lib/virtual-net/src/host.rs
+index 3f1af0f..90a1818 100644
+--- a/lib/virtual-net/src/host.rs
++++ b/lib/virtual-net/src/host.rs
+@@ -25,9 +25,13 @@ use std::time::Duration;
+ use tokio::runtime::Handle;
+ #[allow(unused_imports, dead_code)]
+ use tracing::{debug, error, info, trace, warn};
+-use virtual_mio::{
+-    HandlerGuardState, InterestGuard, InterestHandler, InterestType, Selector, state_as_waker_map,
+-};
++use virtual_mio::{HandlerGuardState, InterestHandler, InterestType, Selector, state_as_waker_map};
++
++const TCP_ACCEPT_BACKLOG_DRAIN_HARD_LIMIT: usize = 128;
++
++fn normalize_accept_backlog_limit(backlog: usize) -> usize {
++    backlog.clamp(1, TCP_ACCEPT_BACKLOG_DRAIN_HARD_LIMIT)
++}
+ 
+ #[derive(Debug)]
+ pub struct LocalNetworking {
+@@ -75,6 +79,24 @@ impl VirtualNetworking for LocalNetworking {
+         only_v6: bool,
+         reuse_port: bool,
+         reuse_addr: bool,
++    ) -> Result<Box<dyn VirtualTcpListener + Sync>> {
++        self.listen_tcp_with_backlog(
++            addr,
++            only_v6,
++            reuse_port,
++            reuse_addr,
++            TCP_ACCEPT_BACKLOG_DRAIN_HARD_LIMIT,
++        )
++        .await
++    }
++
++    async fn listen_tcp_with_backlog(
++        &self,
++        addr: SocketAddr,
++        only_v6: bool,
++        reuse_port: bool,
++        reuse_addr: bool,
++        backlog: usize,
+     ) -> Result<Box<dyn VirtualTcpListener + Sync>> {
+         if let Some(ruleset) = self.ruleset.as_ref()
+             && !ruleset.allows_socket(addr, Direction::Inbound)
+@@ -93,6 +115,7 @@ impl VirtualNetworking for LocalNetworking {
+                     no_delay: None,
+                     keep_alive: None,
+                     backlog: Default::default(),
++                    accept_backlog_limit: normalize_accept_backlog_limit(backlog),
+                     ruleset: self.ruleset.clone(),
+                 })
+             })
+@@ -230,10 +253,30 @@ pub struct LocalTcpListener {
+     no_delay: Option<bool>,
+     keep_alive: Option<bool>,
+     backlog: VecDeque<(Box<dyn VirtualTcpSocket + Sync>, SocketAddr)>,
++    accept_backlog_limit: usize,
+     ruleset: Option<Ruleset>,
+ }
+ 
+ impl LocalTcpListener {
++    fn prime_accept_backlog(&mut self) {
++        // Preserve level-triggered listener readiness for guests even when the
++        // host selector only delivered one edge for a burst of queued accepts.
++        while self.backlog.len() < self.accept_backlog_limit {
++            match self.try_accept_internal() {
++                Ok(child) => self.backlog.push_back(child),
++                Err(NetworkError::WouldBlock) => break,
++                Err(err) => {
++                    tracing::debug!(error = ?err, "failed to prime TCP listener accept backlog");
++                    break;
++                }
++            }
++        }
++
++        if !self.backlog.is_empty() {
++            self.handler_guard.push_interest(InterestType::Readable);
++        }
++    }
++
+     fn try_accept_internal(&mut self) -> Result<(Box<dyn VirtualTcpSocket + Sync>, SocketAddr)> {
+         match self.stream.accept().map_err(io_err_into_net_error) {
+             Ok((stream, addr)) => {
+@@ -254,10 +297,10 @@ impl LocalTcpListener {
+                 Ok((Box::new(socket), addr))
+             }
+             Err(NetworkError::WouldBlock) => {
+-                if let HandlerGuardState::WakerMap(_, map) = &mut self.handler_guard {
+-                    map.pop(InterestType::Readable);
+-                    map.pop(InterestType::Writable);
+-                }
++                self.handler_guard
++                    .pop_waker_interest(InterestType::Readable);
++                self.handler_guard
++                    .pop_waker_interest(InterestType::Writable);
+                 Err(NetworkError::WouldBlock)
+             }
+             Err(err) => Err(err),
+@@ -267,34 +310,27 @@ impl LocalTcpListener {
+ 
+ impl VirtualTcpListener for LocalTcpListener {
+     fn try_accept(&mut self) -> Result<(Box<dyn VirtualTcpSocket + Sync>, SocketAddr)> {
+-        if let Some(child) = self.backlog.pop_front() {
+-            return Ok(child);
+-        }
+-        self.try_accept_internal()
+-    }
++        let child = match self.backlog.pop_front() {
++            Some(child) => child,
++            None => self.try_accept_internal()?,
++        };
+ 
+-    fn set_handler(&mut self, mut handler: Box<dyn InterestHandler + Send + Sync>) -> Result<()> {
+-        if let HandlerGuardState::ExternalHandler(guard) = &mut self.handler_guard {
+-            match guard.replace_handler(handler) {
+-                Ok(()) => return Ok(()),
+-                Err(h) => handler = h,
+-            }
++        self.prime_accept_backlog();
+ 
+-            // the handler could not be replaced so we need to build a new handler instead
+-            if let Err(err) = guard.unregister(&mut self.stream) {
+-                tracing::debug!("failed to unregister previous token - {}", err);
+-            }
+-        }
++        Ok(child)
++    }
+ 
+-        let guard = InterestGuard::new(
+-            &self.selector,
+-            handler,
+-            &mut self.stream,
+-            mio::Interest::READABLE.add(mio::Interest::WRITABLE),
+-        )
+-        .map_err(io_err_into_net_error)?;
++    fn set_handler(&mut self, handler: Box<dyn InterestHandler + Send + Sync>) -> Result<()> {
++        self.handler_guard
++            .set_external_handler(
++                &self.selector,
++                &mut self.stream,
++                mio::Interest::READABLE.add(mio::Interest::WRITABLE),
++                handler,
++            )
++            .map_err(io_err_into_net_error)?;
+ 
+-        self.handler_guard = HandlerGuardState::ExternalHandler(guard);
++        self.prime_accept_backlog();
+ 
+         Ok(())
+     }
+@@ -331,17 +367,9 @@ impl LocalTcpListener {
+ 
+ impl VirtualIoSource for LocalTcpListener {
+     fn remove_handler(&mut self) {
+-        let mut guard = HandlerGuardState::None;
+-        std::mem::swap(&mut guard, &mut self.handler_guard);
+-        match guard {
+-            HandlerGuardState::ExternalHandler(mut guard) => {
+-                guard.unregister(&mut self.stream).ok();
+-            }
+-            HandlerGuardState::WakerMap(mut guard, _) => {
+-                guard.unregister(&mut self.stream).ok();
+-            }
+-            HandlerGuardState::None => {}
+-        }
++        self.handler_guard
++            .remove_external_handler(&mut self.stream)
++            .ok();
+     }
+ 
+     fn poll_read_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
+@@ -353,9 +381,14 @@ impl VirtualIoSource for LocalTcpListener {
+         let map = state_as_waker_map(state, selector, source).map_err(io_err_into_net_error)?;
+         map.add(InterestType::Readable, cx.waker());
+ 
+-        if let Ok(child) = self.try_accept_internal() {
+-            self.backlog.push_back(child);
+-            return Poll::Ready(Ok(1));
++        match self.try_accept_internal() {
++            Ok(child) => {
++                self.backlog.push_back(child);
++                self.prime_accept_backlog();
++                return Poll::Ready(Ok(self.backlog.len()));
++            }
++            Err(NetworkError::WouldBlock) => {}
++            Err(err) => return Poll::Ready(Err(err)),
+         }
+         Poll::Pending
+     }
+@@ -369,9 +402,14 @@ impl VirtualIoSource for LocalTcpListener {
+         let map = state_as_waker_map(state, selector, source).map_err(io_err_into_net_error)?;
+         map.add(InterestType::Writable, cx.waker());
+ 
+-        if let Ok(child) = self.try_accept_internal() {
+-            self.backlog.push_back(child);
+-            return Poll::Ready(Ok(1));
++        match self.try_accept_internal() {
++            Ok(child) => {
++                self.backlog.push_back(child);
++                self.prime_accept_backlog();
++                return Poll::Ready(Ok(self.backlog.len()));
++            }
++            Err(NetworkError::WouldBlock) => {}
++            Err(err) => return Poll::Ready(Err(err)),
+         }
+         Poll::Pending
+     }
+@@ -563,9 +601,8 @@ impl VirtualConnectedSocket for LocalTcpStream {
+         let ret = self.stream.write(data).map_err(io_err_into_net_error);
+         match &ret {
+             Ok(0) | Err(NetworkError::WouldBlock) => {
+-                if let HandlerGuardState::WakerMap(_, map) = &mut self.handler_guard {
+-                    map.pop(InterestType::Writable);
+-                }
++                self.handler_guard
++                    .pop_waker_interest(InterestType::Writable);
+             }
+             _ => {}
+         }
+@@ -588,15 +625,37 @@ impl VirtualConnectedSocket for LocalTcpStream {
+             if !peek {
+                 self.buffer.advance(amt);
+             }
++            if peek || !self.buffer.is_empty() {
++                self.handler_guard.push_interest(InterestType::Readable);
++            }
+             return Ok(amt);
+         }
+ 
+-        if peek {
++        let ret = if peek {
+             self.stream.peek(buf)
+         } else {
+             self.stream.read(buf)
+         }
+-        .map_err(io_err_into_net_error)
++        .map_err(io_err_into_net_error);
++
++        match &ret {
++            Ok(0) => self.handler_guard.push_interest(InterestType::Closed),
++            Ok(_) if peek => self.handler_guard.push_interest(InterestType::Readable),
++            Ok(_) => {
++                #[cfg(not(target_os = "windows"))]
++                prime_socket_read_readiness(&mut self.handler_guard, self.stream.as_raw_fd());
++            }
++            Err(NetworkError::WouldBlock) => {
++                self.handler_guard
++                    .pop_waker_interest(InterestType::Readable);
++            }
++            Err(NetworkError::ConnectionAborted) | Err(NetworkError::ConnectionReset) => {
++                self.handler_guard.push_interest(InterestType::Closed);
++            }
++            Err(_) => self.handler_guard.push_interest(InterestType::Error),
++        }
++
++        ret
+     }
+ }
+ 
+@@ -651,29 +710,17 @@ impl VirtualSocket for LocalTcpStream {
+         }
+     }
+ 
+-    fn set_handler(&mut self, mut handler: Box<dyn InterestHandler + Send + Sync>) -> Result<()> {
+-        if let HandlerGuardState::ExternalHandler(guard) = &mut self.handler_guard {
+-            match guard.replace_handler(handler) {
+-                Ok(()) => return Ok(()),
+-                Err(h) => handler = h,
+-            }
+-
+-            // the handler could not be replaced so we need to build a new handler instead
+-            if let Err(err) = guard.unregister(&mut self.stream) {
+-                tracing::debug!("failed to unregister previous token - {}", err);
+-            }
+-        }
+-
+-        let guard = InterestGuard::new(
+-            &self.selector,
+-            handler,
+-            &mut self.stream,
+-            mio::Interest::READABLE.add(mio::Interest::WRITABLE),
+-        )
+-        .map_err(io_err_into_net_error)?;
+-
+-        self.handler_guard = HandlerGuardState::ExternalHandler(guard);
+-
++    fn set_handler(&mut self, handler: Box<dyn InterestHandler + Send + Sync>) -> Result<()> {
++        self.handler_guard
++            .set_external_handler(
++                &self.selector,
++                &mut self.stream,
++                mio::Interest::READABLE.add(mio::Interest::WRITABLE),
++                handler,
++            )
++            .map_err(io_err_into_net_error)?;
++        #[cfg(not(target_os = "windows"))]
++        prime_socket_readiness(&mut self.handler_guard, self.stream.as_raw_fd());
+         Ok(())
+     }
+ }
+@@ -698,17 +745,9 @@ impl LocalTcpStream {
+ 
+ impl VirtualIoSource for LocalTcpStream {
+     fn remove_handler(&mut self) {
+-        let mut guard = HandlerGuardState::None;
+-        std::mem::swap(&mut guard, &mut self.handler_guard);
+-        match guard {
+-            HandlerGuardState::ExternalHandler(mut guard) => {
+-                guard.unregister(&mut self.stream).ok();
+-            }
+-            HandlerGuardState::WakerMap(mut guard, _) => {
+-                guard.unregister(&mut self.stream).ok();
+-            }
+-            HandlerGuardState::None => {}
+-        }
++        self.handler_guard
++            .remove_external_handler(&mut self.stream)
++            .ok();
+     }
+ 
+     fn poll_read_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
+@@ -740,6 +779,39 @@ impl VirtualIoSource for LocalTcpStream {
+         }
+     }
+ 
++    fn poll_read_ready_direct(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
++        #[cfg(target_os = "windows")]
++        {
++            return self.poll_read_ready(cx);
++        }
++
++        if !self.buffer.is_empty() {
++            return Poll::Ready(Ok(self.buffer.len()));
++        }
++
++        let (state, selector, stream, _) = self.split_borrow();
++        let map = state_as_waker_map(state, selector, stream).map_err(io_err_into_net_error)?;
++        map.pop(InterestType::Readable);
++        map.add(InterestType::Readable, cx.waker());
++        map.add(InterestType::Closed, cx.waker());
++
++        if map.has_interest(InterestType::Closed) {
++            return Poll::Ready(Ok(0));
++        }
++
++        #[cfg(not(target_os = "windows"))]
++        if let Some(revents) = libc_poll(
++            stream.as_raw_fd(),
++            libc::POLLIN | libc::POLLHUP | libc::POLLERR,
++        ) {
++            if (revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
++                return Poll::Ready(Ok(1));
++            }
++        }
++
++        Poll::Pending
++    }
++
+     fn poll_write_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
+         let (state, selector, stream, _) = self.split_borrow();
+         let map = state_as_waker_map(state, selector, stream).map_err(io_err_into_net_error)?;
+@@ -788,6 +860,46 @@ fn libc_poll(fd: RawFd, events: libc::c_short) -> Option<libc::c_short> {
+     }
+ }
+ 
++#[cfg(not(target_os = "windows"))]
++fn prime_socket_readiness(handler_guard: &mut HandlerGuardState, fd: RawFd) {
++    let Some(revents) = libc_poll(
++        fd,
++        libc::POLLIN | libc::POLLOUT | libc::POLLHUP | libc::POLLERR,
++    ) else {
++        return;
++    };
++
++    if (revents & libc::POLLIN) != 0 {
++        handler_guard.push_interest(InterestType::Readable);
++    }
++    if (revents & libc::POLLOUT) != 0 {
++        handler_guard.push_interest(InterestType::Writable);
++    }
++    if (revents & libc::POLLHUP) != 0 {
++        handler_guard.push_interest(InterestType::Closed);
++    }
++    if (revents & libc::POLLERR) != 0 {
++        handler_guard.push_interest(InterestType::Error);
++    }
++}
++
++#[cfg(not(target_os = "windows"))]
++fn prime_socket_read_readiness(handler_guard: &mut HandlerGuardState, fd: RawFd) {
++    let Some(revents) = libc_poll(fd, libc::POLLIN | libc::POLLHUP | libc::POLLERR) else {
++        return;
++    };
++
++    if (revents & libc::POLLIN) != 0 {
++        handler_guard.push_interest(InterestType::Readable);
++    }
++    if (revents & libc::POLLHUP) != 0 {
++        handler_guard.push_interest(InterestType::Closed);
++    }
++    if (revents & libc::POLLERR) != 0 {
++        handler_guard.push_interest(InterestType::Error);
++    }
++}
++
+ #[derive(Debug)]
+ pub struct LocalUdpSocket {
+     socket: mio::net::UdpSocket,
+@@ -910,9 +1022,8 @@ impl VirtualConnectionlessSocket for LocalUdpSocket {
+             .map_err(io_err_into_net_error);
+         match &ret {
+             Ok(0) | Err(NetworkError::WouldBlock) => {
+-                if let HandlerGuardState::WakerMap(_, map) = &mut self.handler_guard {
+-                    map.pop(InterestType::Writable);
+-                }
++                self.handler_guard
++                    .pop_waker_interest(InterestType::Writable);
+             }
+             _ => {}
+         }
+@@ -925,12 +1036,30 @@ impl VirtualConnectionlessSocket for LocalUdpSocket {
+         peek: bool,
+     ) -> Result<(usize, SocketAddr)> {
+         let buf: &mut [u8] = unsafe { std::mem::transmute(buf) };
+-        if peek {
++        let ret = if peek {
+             self.socket.peek_from(buf)
+         } else {
+             self.socket.recv_from(buf)
+         }
+-        .map_err(io_err_into_net_error)
++        .map_err(io_err_into_net_error);
++
++        match &ret {
++            Ok(_) if peek => self.handler_guard.push_interest(InterestType::Readable),
++            Ok(_) => {
++                #[cfg(not(target_os = "windows"))]
++                prime_socket_read_readiness(&mut self.handler_guard, self.socket.as_raw_fd());
++            }
++            Err(NetworkError::WouldBlock) => {
++                self.handler_guard
++                    .pop_waker_interest(InterestType::Readable);
++            }
++            Err(NetworkError::ConnectionAborted) | Err(NetworkError::ConnectionReset) => {
++                self.handler_guard.push_interest(InterestType::Closed);
++            }
++            Err(_) => self.handler_guard.push_interest(InterestType::Error),
++        }
++
++        ret
+     }
+ }
+ 
+@@ -951,31 +1080,17 @@ impl VirtualSocket for LocalUdpSocket {
+         Ok(SocketStatus::Opened)
+     }
+ 
+-    fn set_handler(&mut self, mut handler: Box<dyn InterestHandler + Send + Sync>) -> Result<()> {
+-        if let HandlerGuardState::ExternalHandler(guard) = &mut self.handler_guard {
+-            match guard.replace_handler(handler) {
+-                Ok(()) => {
+-                    return Ok(());
+-                }
+-                Err(h) => handler = h,
+-            }
+-
+-            // the handler could not be replaced so we need to build a new handler instead
+-            if let Err(err) = guard.unregister(&mut self.socket) {
+-                tracing::debug!("failed to unregister previous token - {}", err);
+-            }
+-        }
+-
+-        let guard = InterestGuard::new(
+-            &self.selector,
+-            handler,
+-            &mut self.socket,
+-            mio::Interest::READABLE.add(mio::Interest::WRITABLE),
+-        )
+-        .map_err(io_err_into_net_error)?;
+-
+-        self.handler_guard = HandlerGuardState::ExternalHandler(guard);
+-
++    fn set_handler(&mut self, handler: Box<dyn InterestHandler + Send + Sync>) -> Result<()> {
++        self.handler_guard
++            .set_external_handler(
++                &self.selector,
++                &mut self.socket,
++                mio::Interest::READABLE.add(mio::Interest::WRITABLE),
++                handler,
++            )
++            .map_err(io_err_into_net_error)?;
++        #[cfg(not(target_os = "windows"))]
++        prime_socket_readiness(&mut self.handler_guard, self.socket.as_raw_fd());
+         Ok(())
+     }
+ }
+@@ -994,17 +1109,9 @@ impl LocalUdpSocket {
+ 
+ impl VirtualIoSource for LocalUdpSocket {
+     fn remove_handler(&mut self) {
+-        let mut guard = HandlerGuardState::None;
+-        std::mem::swap(&mut guard, &mut self.handler_guard);
+-        match guard {
+-            HandlerGuardState::ExternalHandler(mut guard) => {
+-                guard.unregister(&mut self.socket).ok();
+-            }
+-            HandlerGuardState::WakerMap(mut guard, _) => {
+-                guard.unregister(&mut self.socket).ok();
+-            }
+-            HandlerGuardState::None => {}
+-        }
++        self.handler_guard
++            .remove_external_handler(&mut self.socket)
++            .ok();
+     }
+ 
+     fn poll_read_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
+diff --git a/lib/virtual-net/src/lib.rs b/lib/virtual-net/src/lib.rs
+index 22ae000..58cbbf4 100644
+--- a/lib/virtual-net/src/lib.rs
++++ b/lib/virtual-net/src/lib.rs
+@@ -79,6 +79,11 @@ pub trait VirtualIoSource: fmt::Debug + Send + Sync + 'static {
+     /// Polls the source to see if there is data waiting
+     fn poll_read_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<usize>>;
+ 
++    /// Polls read readiness without eagerly buffering data when a backend can support it.
++    fn poll_read_ready_direct(&mut self, cx: &mut Context<'_>) -> Poll<Result<usize>> {
++        self.poll_read_ready(cx)
++    }
++
+     /// Polls the source to see if data can be sent
+     fn poll_write_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<usize>>;
+ }
+@@ -183,6 +188,19 @@ pub trait VirtualNetworking: fmt::Debug + Send + Sync + 'static {
+         Err(NetworkError::Unsupported)
+     }
+ 
++    /// Listens for TCP connections and preserves the guest-requested accept
++    /// backlog when the backend can apply it.
++    async fn listen_tcp_with_backlog(
++        &self,
++        addr: SocketAddr,
++        only_v6: bool,
++        reuse_port: bool,
++        reuse_addr: bool,
++        backlog: usize,
++    ) -> Result<Box<dyn VirtualTcpListener + Sync>> {
++        self.listen_tcp(addr, only_v6, reuse_port, reuse_addr).await
++    }
++
+     /// Opens a UDP socket that listens on a specific IP and Port combination
+     /// Multiple servers (processes or threads) can bind to the same port if they each set
+     /// the reuse-port and-or reuse-addr flags
+diff --git a/lib/virtual-net/src/tests.rs b/lib/virtual-net/src/tests.rs
+index 9ed1a46..f1ce408 100644
+--- a/lib/virtual-net/src/tests.rs
++++ b/lib/virtual-net/src/tests.rs
+@@ -1,7 +1,10 @@
+ #![allow(unused)]
+ use std::{
+     net::{Ipv4Addr, SocketAddrV4},
+-    sync::atomic::{AtomicU16, Ordering},
++    sync::{
++        atomic::{AtomicU16, Ordering},
++        mpsc,
++    },
+ };
+ 
+ use tracing_test::traced_test;
+@@ -13,6 +16,7 @@ use crate::{
+     meta::FrameSerializationFormat,
+ };
+ use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use virtual_mio::{InterestHandler, InterestType};
+ 
+ use super::*;
+ 
+@@ -513,6 +517,257 @@ async fn test_connect_tcp_returns_immediately_for_in_progress_connect() {
+     }
+ }
+ 
++#[cfg(not(target_os = "windows"))]
++#[traced_test]
++#[tokio::test]
++#[serial_test::serial]
++async fn test_local_tcp_listener_reports_readable_while_accept_backlog_remains() {
++    use std::net::TcpStream;
++    use std::time::Duration;
++
++    #[derive(Debug)]
++    struct ReadableHandler {
++        sender: mpsc::Sender<InterestType>,
++    }
++
++    impl InterestHandler for ReadableHandler {
++        fn push_interest(&mut self, interest: InterestType) {
++            self.sender.send(interest).ok();
++        }
++
++        fn pop_interest(&mut self, _interest: InterestType) -> bool {
++            false
++        }
++
++        fn has_interest(&self, _interest: InterestType) -> bool {
++            false
++        }
++    }
++
++    let networking = LocalNetworking::new();
++    let mut listener = networking
++        .listen_tcp(
++            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
++            false,
++            false,
++            false,
++        )
++        .await
++        .unwrap();
++    let addr = listener.addr_local().unwrap();
++
++    let (sender, receiver) = mpsc::channel();
++    listener
++        .set_handler(Box::new(ReadableHandler { sender }))
++        .unwrap();
++
++    let clients: Vec<_> = (0..20).map(|_| TcpStream::connect(addr).unwrap()).collect();
++    receiver
++        .recv_timeout(Duration::from_secs(1))
++        .expect("listener should report first readable accept");
++
++    let mut accepted = Vec::new();
++    for idx in 0..clients.len() {
++        accepted.push(listener.try_accept().unwrap());
++        if idx + 1 < clients.len() {
++            receiver
++                .recv_timeout(Duration::from_secs(1))
++                .expect("listener should keep reporting readable across a queued burst");
++        }
++    }
++    drop(accepted);
++    drop(clients);
++}
++
++#[cfg(not(target_os = "windows"))]
++#[traced_test]
++#[tokio::test]
++#[serial_test::serial]
++async fn test_local_tcp_listener_reports_existing_accept_readiness_on_handler_attach() {
++    use std::net::TcpStream;
++    use std::time::Duration;
++
++    #[derive(Debug)]
++    struct ReadableHandler {
++        sender: mpsc::Sender<InterestType>,
++    }
++
++    impl InterestHandler for ReadableHandler {
++        fn push_interest(&mut self, interest: InterestType) {
++            self.sender.send(interest).ok();
++        }
++
++        fn pop_interest(&mut self, _interest: InterestType) -> bool {
++            false
++        }
++
++        fn has_interest(&self, _interest: InterestType) -> bool {
++            false
++        }
++    }
++
++    let networking = LocalNetworking::new();
++    let mut listener = networking
++        .listen_tcp(
++            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
++            false,
++            false,
++            false,
++        )
++        .await
++        .unwrap();
++    let addr = listener.addr_local().unwrap();
++    let client = TcpStream::connect(addr).unwrap();
++
++    let (sender, receiver) = mpsc::channel();
++    listener
++        .set_handler(Box::new(ReadableHandler { sender }))
++        .unwrap();
++    assert_eq!(
++        receiver
++            .recv_timeout(Duration::from_secs(1))
++            .expect("listener should report queued accept readiness"),
++        InterestType::Readable
++    );
++    drop(client);
++}
++
++#[cfg(not(target_os = "windows"))]
++#[traced_test]
++#[tokio::test]
++#[serial_test::serial]
++async fn test_local_tcp_stream_reports_existing_readiness_on_handler_attach() {
++    use std::io::Write;
++    use std::net::TcpStream;
++    use std::time::Duration;
++
++    #[derive(Debug)]
++    struct ReadableHandler {
++        sender: mpsc::Sender<InterestType>,
++    }
++
++    impl InterestHandler for ReadableHandler {
++        fn push_interest(&mut self, interest: InterestType) {
++            self.sender.send(interest).ok();
++        }
++
++        fn pop_interest(&mut self, _interest: InterestType) -> bool {
++            false
++        }
++
++        fn has_interest(&self, _interest: InterestType) -> bool {
++            false
++        }
++    }
++
++    let networking = LocalNetworking::new();
++    let mut listener = networking
++        .listen_tcp(
++            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
++            false,
++            false,
++            false,
++        )
++        .await
++        .unwrap();
++    let addr = listener.addr_local().unwrap();
++    let mut client = TcpStream::connect(addr).unwrap();
++    let (mut server, _) = listener.accept().await.unwrap();
++
++    client.write_all(b"ready-before-handler").unwrap();
++    std::thread::sleep(Duration::from_millis(50));
++
++    let (sender, receiver) = mpsc::channel();
++    server
++        .set_handler(Box::new(ReadableHandler { sender }))
++        .unwrap();
++    let mut saw_readable = false;
++    for _ in 0..2 {
++        if receiver
++            .recv_timeout(Duration::from_secs(1))
++            .expect("stream should report buffered host readiness")
++            == InterestType::Readable
++        {
++            saw_readable = true;
++            break;
++        }
++    }
++    assert!(
++        saw_readable,
++        "stream did not report pre-existing readable data"
++    );
++}
++
++#[cfg(not(target_os = "windows"))]
++#[traced_test]
++#[tokio::test]
++#[serial_test::serial]
++async fn test_local_tcp_stream_reissues_readable_after_partial_recv() {
++    use std::io::Write;
++    use std::net::TcpStream;
++    use std::time::Duration;
++
++    #[derive(Debug)]
++    struct ReadableHandler {
++        sender: mpsc::Sender<InterestType>,
++    }
++
++    impl InterestHandler for ReadableHandler {
++        fn push_interest(&mut self, interest: InterestType) {
++            self.sender.send(interest).ok();
++        }
++
++        fn pop_interest(&mut self, _interest: InterestType) -> bool {
++            false
++        }
++
++        fn has_interest(&self, _interest: InterestType) -> bool {
++            false
++        }
++    }
++
++    let networking = LocalNetworking::new();
++    let mut listener = networking
++        .listen_tcp(
++            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
++            false,
++            false,
++            false,
++        )
++        .await
++        .unwrap();
++    let addr = listener.addr_local().unwrap();
++    let mut client = TcpStream::connect(addr).unwrap();
++    let (mut server, _) = listener.accept().await.unwrap();
++
++    let (sender, receiver) = mpsc::channel();
++    server
++        .set_handler(Box::new(ReadableHandler { sender }))
++        .unwrap();
++
++    client.write_all(&vec![7_u8; 64 * 1024]).unwrap();
++    loop {
++        if receiver
++            .recv_timeout(Duration::from_secs(1))
++            .expect("stream should report readable data")
++            == InterestType::Readable
++        {
++            break;
++        }
++    }
++    std::thread::sleep(Duration::from_millis(50));
++    while receiver.try_recv().is_ok() {}
++
++    let mut buf = [MaybeUninit::<u8>::uninit(); 8];
++    assert_eq!(server.try_recv(&mut buf, false).unwrap(), 8);
++    assert_eq!(
++        receiver
++            .recv_timeout(Duration::from_secs(1))
++            .expect("partial recv should leave the stream readable"),
++        InterestType::Readable
++    );
++}
++
+ #[cfg(not(target_os = "windows"))]
+ #[traced_test]
+ #[tokio::test]
+

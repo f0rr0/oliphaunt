@@ -1,0 +1,47 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "postgres-protocol-transport-contract"
+language: "javascript"
+layer: "configuration"
+stack: "systems"
+tags: ["postgres", "contract", "runtime", "wasix", "protocol"]
+
+project:
+  title: "PostgreSQL Protocol Transport Contract"
+  description: "Shared WASIX protocol modes, bounds, ownership, and failure semantics."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static", "contract"]
+    script: |
+      node tools/policy/check-postgres-protocol-transport-contract.mjs
+      bash tools/policy/check-postgres-protocol-transport-abi.sh
+    inputs:
+      - "/src/shared/postgres-protocol-transport-contract/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_bridge.c"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_bridge_abi_test.c"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0004-oliphaunt-wasix-add-host-lifecycle-exports.patch"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0034-oliphaunt-wasix-declare-hybrid-protocol-transport.patch"
+      - "/src/bindings/wasix-ts/host/patches/0021-wasmer-js-stream-direct-pgwire.patch"
+      - "/src/bindings/wasix-ts/host/patches/0025-wasmer-js-fail-closed-direct-guest-phases.patch"
+      - "/src/bindings/wasix-ts/host/build-provenance.mjs"
+      - "/src/bindings/wasix-ts/host/build-sdk.sh"
+      - "/src/bindings/wasix-ts/src/database.ts"
+      - "/src/bindings/wasix-ts/src/worker-dispatch.ts"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/client.rs"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/backend.rs"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/protocol_limits_generated.rs"
+      - "/src/bindings/wasix-ts/src/protocol-limits.generated.ts"
+      - "/tools/policy/check-postgres-protocol-transport-abi.sh"
+      - "/tools/policy/check-postgres-protocol-transport-contract.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

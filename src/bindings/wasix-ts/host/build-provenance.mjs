@@ -8,10 +8,24 @@ const repositoryRoot = resolve(hostDirectory, '../../../..');
 const sourceManifestPath = 'src/bindings/wasix-ts/host/source.toml';
 const buildScriptPath = 'src/bindings/wasix-ts/host/build-sdk.sh';
 const provenanceScriptPath = 'src/bindings/wasix-ts/host/build-provenance.mjs';
-const safePatchName = /^\d{4}-wasmer-(?:(?:js|wasix)-)?[a-z0-9-]+\.patch$/u;
+const protocolTransportContractPath =
+  'src/shared/postgres-protocol-transport-contract/contract.json';
+const toolOutputContractPath = 'src/shared/postgres-tool-output-contract/contract.json';
+const safePatchName = /^\d{4}-(?:wasmer(?:(?:-js|-wasix))?|virtual-fs)-[a-z0-9-]+\.patch$/u;
 
 export async function loadHostBuildContract() {
   const source = await readFile(resolve(repositoryRoot, sourceManifestPath), 'utf8');
+  const protocolTransportContractBytes = await readFile(
+    resolve(repositoryRoot, protocolTransportContractPath),
+  );
+  const protocolTransportContract = JSON.parse(
+    protocolTransportContractBytes.toString('utf8'),
+  );
+  validateProtocolTransportContract(protocolTransportContract);
+  const toolOutputContract = JSON.parse(
+    await readFile(resolve(repositoryRoot, toolOutputContractPath), 'utf8'),
+  );
+  validateToolOutputContract(toolOutputContract);
   const patchSeries = tomlStringArray(source, 'patches', 'series');
   if (patchSeries.length === 0 || new Set(patchSeries).size !== patchSeries.length) {
     throw new Error('WASIX host patch series must be non-empty and unique');
@@ -27,6 +41,8 @@ export async function loadHostBuildContract() {
     ...patchSeries.map((patch) => `src/bindings/wasix-ts/host/patches/${patch}`),
     buildScriptPath,
     provenanceScriptPath,
+    protocolTransportContractPath,
+    toolOutputContractPath,
   ]);
   const digests = [];
   for (const input of inputs) {
@@ -37,8 +53,32 @@ export async function loadHostBuildContract() {
   const provenance = deepFreeze({
     wasmerJsCommit: tomlString(source, 'wasmer-js', 'commit'),
     wasmerWasixVersion: tomlString(source, 'wasmer-wasix', 'version'),
+    virtualFsVersion: tomlString(source, 'virtual-fs', 'version'),
     inputsSha256: sha256(digests.join('')),
-    guestConcurrency: 'denied-for-oliphaunt-single-backend',
+    guestConcurrency: 'typed-single-program-host-policy',
+    clockDispatch: 'server-direct-js-canonical-fallback-16ms-or-1024-reads-tools-canonical',
+    fdClose: 'typed-filesystem-durability-policy',
+    syncFilesystemBridge: 'realm-local-fresh-owned-js-transfer',
+    toolProtocolWrite: 'owned-js-copy-before-callback',
+    protocolTransport: {
+      schema: protocolTransportContract.schema,
+      contractSha256: sha256(protocolTransportContractBytes),
+      modes: Object.fromEntries(
+        protocolTransportContract.modes.map(({ name, value }) => [name, value]),
+      ),
+      bufferedOutputLimitBytes: protocolTransportContract.bufferedOutput.limitBytes,
+      callbackChunkMaxBytes: protocolTransportContract.streamedOutput.callbackChunkMaxBytes,
+      flushWasmResult: protocolTransportContract.flush.wasmResult,
+    },
+    toolOutputCapture: {
+      schema: toolOutputContract.schema,
+      limitBytes: toolOutputContract.capturedOutputLimitBytes,
+      scope: toolOutputContract.scope,
+      belowLimit: toolOutputContract.belowLimit,
+      overflow: toolOutputContract.overflow,
+      streamingEscapeHatch: toolOutputContract.streamingEscapeHatch,
+    },
+    randomDevice: 'virtual-fs-checked-getrandom',
     optimization: {
       cargoProfile: 'release',
       rustOptLevel: 3,
@@ -47,6 +87,46 @@ export async function loadHostBuildContract() {
     },
   });
   return Object.freeze({ inputs, patchSeries: Object.freeze(patchSeries), provenance });
+}
+
+function validateProtocolTransportContract(contract) {
+  const modes = contract?.modes;
+  if (
+    contract?.schema !== 'oliphaunt-wasix-postgres-protocol-transport-contract-v1' ||
+    !Array.isArray(modes) ||
+    modes.length !== 4 ||
+    modes.some(
+      (mode) =>
+        typeof mode?.name !== 'string' ||
+        !Number.isSafeInteger(mode.value) ||
+        mode.value < 0,
+    ) ||
+    new Set(modes.map(({ name }) => name)).size !== modes.length ||
+    new Set(modes.map(({ value }) => value)).size !== modes.length ||
+    !Number.isSafeInteger(contract.bufferedOutput?.limitBytes) ||
+    contract.bufferedOutput.limitBytes <= 0 ||
+    !Number.isSafeInteger(contract.streamedOutput?.callbackChunkMaxBytes) ||
+    contract.streamedOutput.callbackChunkMaxBytes <= 0 ||
+    contract.flush?.wasmResult !== 'i32'
+  ) {
+    throw new Error(
+      `invalid PostgreSQL protocol transport contract: ${protocolTransportContractPath}`,
+    );
+  }
+}
+
+function validateToolOutputContract(contract) {
+  if (
+    contract?.schema !== 'oliphaunt-postgres-tool-output-contract-v1' ||
+    !Number.isSafeInteger(contract.capturedOutputLimitBytes) ||
+    contract.capturedOutputLimitBytes <= 0 ||
+    contract.scope !== 'stdout-and-stderr-aggregate-per-process' ||
+    contract.belowLimit !== 'preserve-exact-bytes' ||
+    contract.overflow !== 'fail-closed-without-returning-partial-output' ||
+    contract.streamingEscapeHatch !== 'required-for-larger-valid-output'
+  ) {
+    throw new Error(`invalid PostgreSQL tool output contract: ${toolOutputContractPath}`);
+  }
 }
 
 function tomlString(source, section, key) {
@@ -107,9 +187,13 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
     console.log(contract.provenance.inputsSha256);
   } else if (process.argv[2] === '--patch-series') {
     console.log(contract.patchSeries.join('\n'));
+  } else if (process.argv[2] === '--tool-output-limit-bytes') {
+    console.log(contract.provenance.toolOutputCapture.limitBytes);
   } else if (process.argv[2] === '--json') {
     console.log(JSON.stringify(contract.provenance, null, 2));
   } else {
-    throw new Error('usage: build-provenance.mjs --inputs-sha256|--patch-series|--json');
+    throw new Error(
+      'usage: build-provenance.mjs --inputs-sha256|--patch-series|--tool-output-limit-bytes|--json',
+    );
   }
 }

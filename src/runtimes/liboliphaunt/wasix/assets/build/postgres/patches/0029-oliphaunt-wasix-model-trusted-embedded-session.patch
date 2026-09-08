@@ -1,0 +1,486 @@
+From 0000000000000000000000000000000000000029 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Wed, 26 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: model trusted embedded session
+
+Keep IsPostmasterEnvironment and IsUnderPostmaster truthful for the
+single-process WASIX backend. A host-only preparation export selects a
+private one-way UNSELECTED -> PREPARED -> ATTACHED lifecycle. Preparation is
+inactive, and protocol attach consumes it exactly once after _start.
+
+Before shared-memory sizing, the guest pins synchronous I/O and zero worker,
+parallel, and WAL-sender settings. Live GUC changes cannot restore parallel
+worker counts. Validation of settings stored for a future process remains
+available. Worker planning and signaling continue to fail closed through
+upstream standalone gates, while async Append planning is explicitly disabled.
+
+Use one positive normal-user-session capability only for DDL event triggers,
+text-search option validation, catalog-backed superuser checks, normal OID
+allocation, and XID/MultiXact wraparound stops. Autovacuum signals remain
+postmaster-only. Reject reload and promotion before direct PID signaling, and
+make log rotation report false.
+
+The old late flag assignment never enabled login triggers, startup settings,
+or authentication, and this patch deliberately does not add them. Statistics
+never depended on those flags. Native builds inline the new predicate to the
+original IsUnderPostmaster checks. Embedded branches are limited to cold DDL,
+catalog-cache-miss, wraparound, and plan-construction paths, so the change is
+performance-neutral for query execution.
+---
+ src/backend/access/transam/multixact.c  |  5 +-
+ src/backend/access/transam/varsup.c     |  6 +-
+ src/backend/access/transam/xlogfuncs.c  |  5 ++
+ src/backend/commands/event_trigger.c    |  8 +-
+ src/backend/commands/tsearchcmds.c      |  2 +-
+ src/backend/main/main.c                 | 99 +++++++++++++++++++++++++
+ src/backend/optimizer/plan/createplan.c |  3 +-
+ src/backend/storage/ipc/signalfuncs.c   | 12 +++
+ src/backend/tcop/postgres.c             |  9 +++
+ src/backend/utils/misc/guc_tables.c     | 35 +++++++++-
+ src/backend/utils/misc/superuser.c      |  2 +-
+ src/include/miscadmin.h                 | 23 ++++++
+ 12 files changed, 194 insertions(+), 15 deletions(-)
+
+diff --git a/src/backend/access/transam/multixact.c b/src/backend/access/transam/multixact.c
+index da2a174..6d83697 100644
+--- a/src/backend/access/transam/multixact.c
++++ b/src/backend/access/transam/multixact.c
+@@ -1248,7 +1248,7 @@ GetNewMultiXactId(int nmembers, MultiXactOffset *offset)
+ 
+ 		LWLockRelease(MultiXactGenLock);
+ 
+-		if (IsUnderPostmaster &&
++		if (IsNormalUserSession() &&
+ 			!MultiXactIdPrecedes(result, multiStopLimit))
+ 		{
+ 			char	   *oldest_datname = get_database_name(oldest_datoid);
+@@ -1257,7 +1257,8 @@ GetNewMultiXactId(int nmembers, MultiXactOffset *offset)
+ 			 * Immediately kick autovacuum into action as we're already in
+ 			 * ERROR territory.
+ 			 */
+-			SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_LAUNCHER);
++			if (IsUnderPostmaster)
++				SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_LAUNCHER);
+ 
+ 			/* complain even if that DB has disappeared */
+ 			if (oldest_datname)
+diff --git a/src/backend/access/transam/varsup.c b/src/backend/access/transam/varsup.c
+index fe89578..1cb34ad 100644
+--- a/src/backend/access/transam/varsup.c
++++ b/src/backend/access/transam/varsup.c
+@@ -144,7 +144,7 @@ GetNewTransactionId(bool isSubXact)
+ 		if (IsUnderPostmaster && (xid % 65536) == 0)
+ 			SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_LAUNCHER);
+ 
+-		if (IsUnderPostmaster &&
++		if (IsNormalUserSession() &&
+ 			TransactionIdFollowsOrEquals(xid, xidStopLimit))
+ 		{
+ 			char	   *oldest_datname = get_database_name(oldest_datoid);
+@@ -578,7 +578,7 @@ GetNewObjectId(void)
+ 	 */
+ 	if (TransamVariables->nextOid < ((Oid) FirstNormalObjectId))
+ 	{
+-		if (IsPostmasterEnvironment)
++		if (IsNormalUserSession())
+ 		{
+ 			/* wraparound, or first post-initdb assignment, in normal mode */
+ 			TransamVariables->nextOid = FirstNormalObjectId;
+@@ -623,7 +623,7 @@ static void
+ SetNextObjectId(Oid nextOid)
+ {
+ 	/* Safety check, this is only allowable during initdb */
+-	if (IsPostmasterEnvironment)
++	if (IsNormalUserSession())
+ 		elog(ERROR, "cannot advance OID counter anymore");
+ 
+ 	/* Taking the lock is, therefore, just pro forma; but do it anyway */
+diff --git a/src/backend/access/transam/xlogfuncs.c b/src/backend/access/transam/xlogfuncs.c
+index 8c30901..95bc950 100644
+--- a/src/backend/access/transam/xlogfuncs.c
++++ b/src/backend/access/transam/xlogfuncs.c
+@@ -674,6 +674,11 @@ pg_promote(PG_FUNCTION_ARGS)
+ 	FILE	   *promote_file;
+ 	int			i;
+ 
++	if (IsTrustedEmbeddedSession())
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("standby promotion is not supported in a trusted embedded session")));
++
+ 	if (!RecoveryInProgress())
+ 		ereport(ERROR,
+ 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+diff --git a/src/backend/commands/event_trigger.c b/src/backend/commands/event_trigger.c
+index 074c476..13e5f1e 100644
+--- a/src/backend/commands/event_trigger.c
++++ b/src/backend/commands/event_trigger.c
+@@ -746,7 +746,7 @@ EventTriggerDDLCommandStart(Node *parsetree)
+ 	 * Additionally, event triggers can be disabled with a superuser-only GUC
+ 	 * to make fixing database easier as per 1 above.
+ 	 */
+-	if (!IsUnderPostmaster || !event_triggers)
++	if (!IsNormalUserSession() || !event_triggers)
+ 		return;
+ 
+ 	runlist = EventTriggerCommonSetup(parsetree,
+@@ -782,7 +782,7 @@ EventTriggerDDLCommandEnd(Node *parsetree)
+ 	 * See EventTriggerDDLCommandStart for a discussion about why event
+ 	 * triggers are disabled in single user mode or via GUC.
+ 	 */
+-	if (!IsUnderPostmaster || !event_triggers)
++	if (!IsNormalUserSession() || !event_triggers)
+ 		return;
+ 
+ 	/*
+@@ -830,7 +830,7 @@ EventTriggerSQLDrop(Node *parsetree)
+ 	 * See EventTriggerDDLCommandStart for a discussion about why event
+ 	 * triggers are disabled in single user mode or via a GUC.
+ 	 */
+-	if (!IsUnderPostmaster || !event_triggers)
++	if (!IsNormalUserSession() || !event_triggers)
+ 		return;
+ 
+ 	/*
+@@ -1009,7 +1009,7 @@ EventTriggerTableRewrite(Node *parsetree, Oid tableOid, int reason)
+ 	 * See EventTriggerDDLCommandStart for a discussion about why event
+ 	 * triggers are disabled in single user mode or via a GUC.
+ 	 */
+-	if (!IsUnderPostmaster || !event_triggers)
++	if (!IsNormalUserSession() || !event_triggers)
+ 		return;
+ 
+ 	/*
+diff --git a/src/backend/commands/tsearchcmds.c b/src/backend/commands/tsearchcmds.c
+index ab16d42..97a3ec6 100644
+--- a/src/backend/commands/tsearchcmds.c
++++ b/src/backend/commands/tsearchcmds.c
+@@ -352,7 +352,7 @@ verify_dictoptions(Oid tmplId, List *dictoptions)
+ 	 * that can't be translated into template1's encoding).  We want to create
+ 	 * them anyway, since they might be usable later in other databases.
+ 	 */
+-	if (!IsUnderPostmaster)
++	if (!IsNormalUserSession())
+ 		return;
+ 
+ 	tup = SearchSysCache1(TSTEMPLATEOID, ObjectIdGetDatum(tmplId));
+diff --git a/src/backend/main/main.c b/src/backend/main/main.c
+index 32e0e97..a3513ec 100644
+--- a/src/backend/main/main.c
++++ b/src/backend/main/main.c
+@@ -33,8 +33,16 @@
+ #include "bootstrap/bootstrap.h"
+ #include "common/username.h"
+ #include "miscadmin.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "optimizer/cost.h"
++#include "replication/walsender.h"
++#include "storage/aio.h"
++#endif
+ #include "postmaster/postmaster.h"
+ #include "tcop/tcopprot.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "utils/guc.h"
++#endif
+ #include "utils/help_config.h"
+ #include "utils/memutils.h"
+ #include "utils/pg_locale.h"
+@@ -44,6 +52,97 @@
+ const char *progname;
+ static bool reached_main = false;
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#define OLIPHAUNT_WASM_HOST_EXPORT(name) __attribute__((export_name(name)))
++
++typedef enum OliphauntTrustedEmbeddedLifecycle
++{
++	OLIPHAUNT_TRUSTED_EMBEDDED_UNSELECTED = 0,
++	OLIPHAUNT_TRUSTED_EMBEDDED_PREPARED,
++	OLIPHAUNT_TRUSTED_EMBEDDED_ATTACHED
++} OliphauntTrustedEmbeddedLifecycle;
++
++static OliphauntTrustedEmbeddedLifecycle trusted_embedded_lifecycle =
++	OLIPHAUNT_TRUSTED_EMBEDDED_UNSELECTED;
++
++static bool
++trusted_embedded_settings_are_safe(void)
++{
++	return io_method == IOMETHOD_SYNC &&
++		max_worker_processes == 0 &&
++		max_parallel_workers == 0 &&
++		max_parallel_workers_per_gather == 0 &&
++		max_parallel_maintenance_workers == 0 &&
++		max_wal_senders == 0;
++}
++
++bool
++IsTrustedEmbeddedSession(void)
++{
++	return trusted_embedded_lifecycle ==
++		OLIPHAUNT_TRUSTED_EMBEDDED_ATTACHED;
++}
++
++/*
++ * Select the embedded topology exactly once and before main().  PREPARED is
++ * intentionally not an active session: PostgreSQL remains a truthful
++ * standalone backend until the host attaches after _start.
++ */
++OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_prepare_trusted_embedded_session")
++int
++oliphaunt_wasix_prepare_trusted_embedded_session(void)
++{
++	if (reached_main ||
++		trusted_embedded_lifecycle !=
++		OLIPHAUNT_TRUSTED_EMBEDDED_UNSELECTED)
++		return -1;
++
++	trusted_embedded_lifecycle = OLIPHAUNT_TRUSTED_EMBEDDED_PREPARED;
++	return 0;
++}
++
++/*
++ * Apply non-negotiable single-backend limits after reading configuration and
++ * before sizing shared memory.  PGC_S_OVERRIDE also prevents database and
++ * role defaults from restoring worker-capable settings later in startup.
++ */
++void
++ConfigurePreparedTrustedEmbeddedSession(void)
++{
++	if (trusted_embedded_lifecycle != OLIPHAUNT_TRUSTED_EMBEDDED_PREPARED)
++		return;
++
++	Assert(reached_main);
++	SetConfigOption("io_method", "sync", PGC_POSTMASTER, PGC_S_OVERRIDE);
++	SetConfigOption("max_worker_processes", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_parallel_workers", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_parallel_workers_per_gather", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_parallel_maintenance_workers", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_wal_senders", "0", PGC_POSTMASTER, PGC_S_OVERRIDE);
++
++	if (!trusted_embedded_settings_are_safe())
++		ereport(FATAL,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("trusted embedded sessions require synchronous I/O and zero PostgreSQL workers")));
++}
++
++bool
++AttachPreparedTrustedEmbeddedSession(void)
++{
++	if (!reached_main ||
++		trusted_embedded_lifecycle != OLIPHAUNT_TRUSTED_EMBEDDED_PREPARED ||
++		!trusted_embedded_settings_are_safe())
++		return false;
++
++	trusted_embedded_lifecycle = OLIPHAUNT_TRUSTED_EMBEDDED_ATTACHED;
++	return true;
++}
++#endif
++
+ /* names of special must-be-first options for dispatching to subprograms */
+ static const char *const DispatchOptionNames[] =
+ {
+diff --git a/src/backend/optimizer/plan/createplan.c b/src/backend/optimizer/plan/createplan.c
+index 10b7358..716082f 100644
+--- a/src/backend/optimizer/plan/createplan.c
++++ b/src/backend/optimizer/plan/createplan.c
+@@ -1294,7 +1294,8 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path, int flags)
+ 	}
+ 
+ 	/* If appropriate, consider async append */
+-	consider_async = (enable_async_append && pathkeys == NIL &&
++	consider_async = (enable_async_append &&
++					  !IsTrustedEmbeddedSession() && pathkeys == NIL &&
+ 					  !best_path->path.parallel_safe &&
+ 					  list_length(best_path->subpaths) > 1);
+ 
+diff --git a/src/backend/storage/ipc/signalfuncs.c b/src/backend/storage/ipc/signalfuncs.c
+index a3a670b..563bc04 100644
+--- a/src/backend/storage/ipc/signalfuncs.c
++++ b/src/backend/storage/ipc/signalfuncs.c
+@@ -287,6 +287,11 @@ pg_terminate_backend(PG_FUNCTION_ARGS)
+ Datum
+ pg_reload_conf(PG_FUNCTION_ARGS)
+ {
++	if (IsTrustedEmbeddedSession())
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("configuration reload is not supported in a trusted embedded session")));
++
+ 	if (kill(PostmasterPid, SIGHUP))
+ 	{
+ 		ereport(WARNING,
+@@ -307,6 +312,13 @@ pg_reload_conf(PG_FUNCTION_ARGS)
+ Datum
+ pg_rotate_logfile(PG_FUNCTION_ARGS)
+ {
++	if (IsTrustedEmbeddedSession())
++	{
++		ereport(WARNING,
++				(errmsg("log rotation is not supported in a trusted embedded session")));
++		PG_RETURN_BOOL(false);
++	}
++
+ 	if (!Logging_collector)
+ 	{
+ 		ereport(WARNING,
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index dc8bf8d..298918f 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -239,6 +239,10 @@ oliphaunt_wasix_init_protocol_port(void)
+ OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_start") void
+ oliphaunt_wasix_start(void)
+ {
++	if (!AttachPreparedTrustedEmbeddedSession())
++		elog(FATAL,
++			 "trusted embedded session attach requires exactly one pre-start preparation and safe single-backend settings");
++
+ 	oliphaunt_wasix_init_protocol_port();
+ 	whereToSendOutput = DestRemote;
+ 	ExitOnAnyError = false;
+@@ -2986,6 +2990,7 @@ start_xact_command(void)
+ 	enable_statement_timeout();
+ 
+ 	/* Start timeout for checking if the client has gone away if necessary. */
++	/* IsUnderPostmaster excludes the trusted embedded session's synthetic fd. */
+ 	if (client_connection_check_interval > 0 &&
+ 		IsUnderPostmaster &&
+ 		MyProcPort &&
+@@ -4263,6 +4268,10 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	if (!SelectConfigFiles(userDoption, progname))
+ 		proc_exit(1);
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	ConfigurePreparedTrustedEmbeddedSession();
++#endif
++
+ 	/*
+ 	 * Validate we have been given a reasonable-looking DataDir and change
+ 	 * into it.
+diff --git a/src/backend/utils/misc/guc_tables.c b/src/backend/utils/misc/guc_tables.c
+index 6b82a23..4e99dc7 100644
+--- a/src/backend/utils/misc/guc_tables.c
++++ b/src/backend/utils/misc/guc_tables.c
+@@ -55,6 +55,7 @@
+ #include "libpq/libpq.h"
+ #include "libpq/oauth.h"
+ #include "libpq/scram.h"
++#include "miscadmin.h"
+ #include "nodes/queryjumble.h"
+ #include "optimizer/cost.h"
+ #include "optimizer/geqo.h"
+@@ -112,6 +113,34 @@
+ #define PG_KRB_SRVTAB ""
+ #endif
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++static bool
++check_oliphaunt_single_backend_worker_limit(int *newval, void **extra,
++											 GucSource source)
++{
++	(void) extra;
++
++	/*
++	 * PGC_S_OVERRIDE pins current and reset values.  Lower-priority sources
++	 * cannot displace it, and PGC_S_TEST validates without assigning.
++	 */
++	if (IsTrustedEmbeddedSession() &&
++		source != PGC_S_TEST &&
++		source >= PGC_S_OVERRIDE &&
++		*newval != 0)
++	{
++		GUC_check_errdetail("Trusted embedded sessions cannot launch PostgreSQL workers.");
++		return false;
++	}
++
++	return true;
++}
++#define CHECK_OLIPHAUNT_SINGLE_BACKEND_WORKER_LIMIT \
++	check_oliphaunt_single_backend_worker_limit
++#else
++#define CHECK_OLIPHAUNT_SINGLE_BACKEND_WORKER_LIMIT NULL
++#endif
++
+ /*
+  * Options for enum values defined in this module.
+  *
+@@ -3620,7 +3643,7 @@ struct config_int ConfigureNamesInt[] =
+ 		},
+ 		&max_parallel_maintenance_workers,
+ 		2, 0, MAX_PARALLEL_WORKER_LIMIT,
+-		NULL, NULL, NULL
++		CHECK_OLIPHAUNT_SINGLE_BACKEND_WORKER_LIMIT, NULL, NULL
+ 	},
+ 
+ 	{
+@@ -3631,7 +3654,7 @@ struct config_int ConfigureNamesInt[] =
+ 		},
+ 		&max_parallel_workers_per_gather,
+ 		2, 0, MAX_PARALLEL_WORKER_LIMIT,
+-		NULL, NULL, NULL
++		CHECK_OLIPHAUNT_SINGLE_BACKEND_WORKER_LIMIT, NULL, NULL
+ 	},
+ 
+ 	{
+@@ -3642,7 +3665,7 @@ struct config_int ConfigureNamesInt[] =
+ 		},
+ 		&max_parallel_workers,
+ 		8, 0, MAX_PARALLEL_WORKER_LIMIT,
+-		NULL, NULL, NULL
++		CHECK_OLIPHAUNT_SINGLE_BACKEND_WORKER_LIMIT, NULL, NULL
+ 	},
+ 
+ 	{
+diff --git a/src/backend/utils/misc/superuser.c b/src/backend/utils/misc/superuser.c
+index 5858b0a..eb896e2 100644
+--- a/src/backend/utils/misc/superuser.c
++++ b/src/backend/utils/misc/superuser.c
+@@ -63,7 +63,7 @@ superuser_arg(Oid roleid)
+ 		return last_roleid_is_super;
+ 
+ 	/* Special escape path in case you deleted all your users. */
+-	if (!IsUnderPostmaster && roleid == BOOTSTRAP_SUPERUSERID)
++	if (!IsNormalUserSession() && roleid == BOOTSTRAP_SUPERUSERID)
+ 		return true;
+ 
+ 	/* OK, look up the information in pg_authid */
+diff --git a/src/include/miscadmin.h b/src/include/miscadmin.h
+index 9a7d733..b8ce6be 100644
+--- a/src/include/miscadmin.h
++++ b/src/include/miscadmin.h
+@@ -168,6 +168,29 @@ extern PGDLLIMPORT bool IsPostmasterEnvironment;
+ extern PGDLLIMPORT bool IsUnderPostmaster;
+ extern PGDLLIMPORT bool IsBinaryUpgrade;
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++extern bool IsTrustedEmbeddedSession(void);
++extern void ConfigurePreparedTrustedEmbeddedSession(void);
++extern bool AttachPreparedTrustedEmbeddedSession(void);
++#else
++static inline bool
++IsTrustedEmbeddedSession(void)
++{
++	return false;
++}
++#endif
++
++/*
++ * A normal user session is either a real postmaster child or the explicitly
++ * attached single-backend session.  This is a positive semantic capability,
++ * not a claim that the embedded backend has a postmaster supervisor.
++ */
++static inline bool
++IsNormalUserSession(void)
++{
++	return IsUnderPostmaster || IsTrustedEmbeddedSession();
++}
++
+ extern PGDLLIMPORT bool ExitOnAnyError;
+ 
+ extern PGDLLIMPORT char *DataDir;
+-- 
+2.43.0

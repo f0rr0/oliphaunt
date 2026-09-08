@@ -1,0 +1,49 @@
+Subject: [PATCH] fix(postgres): check the runtime execution stack before SQL recovery
+
+Base: PostgreSQL 18.4 after the Oliphaunt WASIX series at 3ed64471.
+The same file matches PostgreSQL 18.4's original recursion check. This guest
+requires the experimental fixed import; do not add it to the production
+series without the matching runtime, browser contract and reserve qualification.
+
+diff --git a/src/backend/utils/misc/stack_depth.c b/src/backend/utils/misc/stack_depth.c
+index 8f7cf531..81252f42 100644
+--- a/src/backend/utils/misc/stack_depth.c
++++ b/src/backend/utils/misc/stack_depth.c
+@@ -21,6 +21,13 @@
+ #include "miscadmin.h"
+ #include "utils/guc_hooks.h"
+ 
++/* Experimental Sys-engine guard: this import is not a published guest ABI. */
++extern unsigned long long oliphaunt_execution_stack_remaining(void)
++	__attribute__((import_module("oliphaunt_stack_probe"),
++				   import_name("execution_stack_remaining")));
++
++/* Screening reserve only; real SQL recovery must establish its adequacy. */
++#define OLIPHAUNT_EXECUTION_STACK_RESERVE (512ULL * 1024)
+ 
+ /* GUC variable for maximum stack depth (measured in kilobytes) */
+ int			max_stack_depth = 100;
+@@ -99,9 +106,8 @@ check_stack_depth(void)
+ 		ereport(ERROR,
+ 				(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
+ 				 errmsg("stack depth limit exceeded"),
+-				 errhint("Increase the configuration parameter \"max_stack_depth\" (currently %dkB), "
+-						 "after ensuring the platform's stack depth limit is adequate.",
+-						 max_stack_depth)));
++				 errhint("Reduce query recursion. The limit may be PostgreSQL's "
++						 "max_stack_depth or the runtime execution stack.")));
+ 	}
+ }
+ 
+@@ -133,6 +139,11 @@ stack_is_too_deep(void)
+ 		stack_base_ptr != NULL)
+ 		return true;
+ 
++	/* Return from the host before PostgreSQL raises its own guest-local error. */
++	if (stack_base_ptr != NULL &&
++		oliphaunt_execution_stack_remaining() <= OLIPHAUNT_EXECUTION_STACK_RESERVE)
++		return true;
++
+ 	return false;
+ }
+ 

@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# Link-time guest budgets, not environment overrides. The C stack occupies
+# linear memory; it does NOT size Wasmer's native execution/coroutine stack.
+# More stack reduces heap headroom; more initial memory increases instance
+# footprint, not query throughput. See docs/maintainers/runtime-resource-budgets.md.
+OLIPHAUNT_WASM_GUEST_STACK_SIZE=8MB
+OLIPHAUNT_WASM_INITIAL_MEMORY_SIZE=128MB
+
 oliphaunt_wasix_wasix_profile="${OLIPHAUNT_WASM_BUILD_PROFILE:-release}"
 
 case "$oliphaunt_wasix_wasix_profile" in
@@ -96,6 +103,8 @@ oliphaunt_wasix_wasix_profile_signature() {
   printf 'profile=%s\n' "$oliphaunt_wasix_wasix_profile"
   printf 'cflags=%s\n' "$OLIPHAUNT_WASM_PROFILE_CFLAGS"
   printf 'ldflags=%s\n' "$OLIPHAUNT_WASM_PROFILE_LDFLAGS"
+  printf 'guest_stack_size=%s\n' "$OLIPHAUNT_WASM_GUEST_STACK_SIZE"
+  printf 'initial_memory_size=%s\n' "$OLIPHAUNT_WASM_INITIAL_MEMORY_SIZE"
   printf 'configure_wasm_opt=%s\n' "$OLIPHAUNT_WASM_WASIX_CONFIGURE_WASM_OPT"
   printf 'build_wasm_opt=%s\n' "$OLIPHAUNT_WASM_WASIX_BUILD_WASM_OPT"
   printf 'wasm_opt_flags=%s\n' "$OLIPHAUNT_WASM_WASM_OPT_FLAGS"

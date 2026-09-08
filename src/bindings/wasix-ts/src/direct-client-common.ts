@@ -51,8 +51,6 @@ import { normalizeWasixStartupGUCs } from './startup-config.js';
 import {
   compileWasixModule,
   composeLifecycleFailure,
-  configureWasixDatabase,
-  configureWasixRole,
   describeError,
   materializeWasixMounts,
   wasixPostgresArgs,
@@ -73,7 +71,7 @@ export type DirectWasixHost = Readonly<{
     prepared: OliphauntPreparedTool,
     options: RunWasixOptions,
     protocolRead: (maximumBytes: number) => Uint8Array,
-    /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
+    /** Owned bytes: the receiver may retain or mutate this callback-local copy. */
     protocolWrite: (chunk: Uint8Array) => void,
   ): Promise<OliphauntToolOutput>;
 }>;
@@ -90,6 +88,13 @@ export type DirectWasixDependencies = Readonly<{
 }>;
 
 export type DirectWasixEnvironment = 'browser-main' | 'browser-worker' | 'node';
+
+class DirectGuestReentryError extends Error {
+  constructor() {
+    super('Oliphaunt WASIX direct guest execution cannot be reentered synchronously');
+    this.name = 'DirectGuestReentryError';
+  }
+}
 
 type DirectInstanceFactory = () => Promise<OliphauntDirectInstance>;
 type DirectInstanceInitializer = (
@@ -147,7 +152,6 @@ export class DirectWasixSession implements WasixDatabaseSession {
   readonly #baseDirectory: Directory;
   readonly #instantiate: DirectInstanceFactory;
   readonly #initialize: DirectInstanceInitializer;
-  readonly #username: string;
   readonly #host: DirectWasixHost;
   #pgDump: Promise<CachedPgDump> | undefined;
   #pgDumpIdentity: string | undefined;
@@ -155,6 +159,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
   #failed = false;
   #closeAttempt: Promise<void> | undefined;
   #startupResponse: Uint8Array<ArrayBuffer> = new Uint8Array();
+  #guestCallActive = false;
 
   private constructor(
     instance: OliphauntDirectInstance,
@@ -171,7 +176,6 @@ export class DirectWasixSession implements WasixDatabaseSession {
     this.#baseDirectory = baseDirectory;
     this.#instantiate = instantiate;
     this.#initialize = initialize;
-    this.#username = username;
     this.#host = host;
     this.identity = normalizeWasixDatabaseIdentity(username, database);
   }
@@ -233,7 +237,6 @@ export class DirectWasixSession implements WasixDatabaseSession {
       const initialize: DirectInstanceInitializer = async (candidate, _storageState) => {
         const response = candidate.startup(startupPacket(options.username, options.database));
         assertSuccessfulStartupResponse(response);
-        await configureWasixDatabase(options, async (input) => candidate.execProtocolRaw(input));
         return new Uint8Array(response);
       };
       instance = await instantiate();
@@ -290,9 +293,10 @@ export class DirectWasixSession implements WasixDatabaseSession {
   }
 
   async exec(input: Uint8Array, persistence: WasixPersistenceMode = 'sync'): Promise<Uint8Array> {
+    this.#assertGuestEntryAllowed();
     this.#assertHealthy();
     try {
-      const response = this.#currentInstance().execProtocolRaw(input);
+      const response = this.#callGuest((instance) => instance.execProtocolRaw(input));
       if (persistence === 'sync') {
         await this.#storage.sync(this.#baseDirectory, 'operation');
       }
@@ -314,16 +318,31 @@ export class DirectWasixSession implements WasixDatabaseSession {
     onChunk: (chunk: Uint8Array) => void,
     persistence: WasixPersistenceMode = 'sync',
   ): Promise<WasixProtocolStreamOutcome> {
+    this.#assertGuestEntryAllowed();
     this.#assertHealthy();
     try {
-      const status = this.#currentInstance().execProtocolStream(input, onChunk);
+      let callbackAborted = false;
+      const status = this.#callGuest((instance) =>
+        instance.execProtocolStream(input, (chunk) => {
+          if (callbackAborted) return;
+          try {
+            onChunk(chunk);
+          } catch {
+            // Finish the guest exchange without invoking the failed consumer
+            // again. Only a successful host flush/restore may confirm this abort.
+            callbackAborted = true;
+          }
+        }),
+      );
       if (status !== PROTOCOL_STREAM_COMPLETE && status !== PROTOCOL_STREAM_CALLBACK_ABORTED) {
         throw new Error(`WASIX host returned unknown protocol stream status ${status}`);
       }
       if (persistence === 'sync') {
         await this.#storage.sync(this.#baseDirectory, 'operation');
       }
-      return status === PROTOCOL_STREAM_CALLBACK_ABORTED ? 'callbackAborted' : 'complete';
+      return callbackAborted || status === PROTOCOL_STREAM_CALLBACK_ABORTED
+        ? 'callbackAborted'
+        : 'complete';
     } catch (error) {
       this.#failed = true;
       if (error instanceof WasixStorageError) throw error;
@@ -335,6 +354,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
   }
 
   async runPgDump(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult> {
+    this.#assertGuestEntryAllowed();
     this.#assertHealthy();
     if (options.tool.name !== 'pg_dump') {
       throw new TypeError('the same-realm tool path supports only pg_dump');
@@ -355,7 +375,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
             startupResponse: this.#startupResponse,
             startupIdentity: this.identity,
             exec: (input, onChunk) => {
-              this.#currentInstance().execProtocolStream(input, onChunk);
+              this.#callGuest((instance) => instance.execProtocolStream(input, onChunk));
             },
           });
           connection = activeConnection;
@@ -387,6 +407,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     connection: WasixProtocolConnection,
     mode: WasixProtocolConnectionMode,
   ): Promise<void> {
+    this.#assertGuestEntryAllowed();
     this.#assertHealthy();
     if (mode === 'tool') {
       await this.#runToolSession(() =>
@@ -394,11 +415,13 @@ export class DirectWasixSession implements WasixDatabaseSession {
           startupResponse: this.#startupResponse,
           startupIdentity: this.identity,
           execDuplex: (input, onRead, onWrite) => {
-            this.#currentInstance().execProtocolDuplex(input, onRead, onWrite);
+            this.#callGuest((instance) => instance.execProtocolDuplex(input, onRead, onWrite));
           },
           publishIdle: async () => undefined,
           rollback: async () => {
-            const response = this.#currentInstance().execProtocolRaw(simpleQuery('ROLLBACK'));
+            const response = this.#callGuest((instance) =>
+              instance.execProtocolRaw(simpleQuery('ROLLBACK')),
+            );
             assertSuccessfulQueryResponse(response);
           },
         }),
@@ -417,11 +440,13 @@ export class DirectWasixSession implements WasixDatabaseSession {
         startupResponse: this.#startupResponse,
         startupIdentity: this.identity,
         execDuplex: (input, onRead, onWrite) => {
-          this.#currentInstance().execProtocolDuplex(input, onRead, onWrite);
+          this.#callGuest((instance) => instance.execProtocolDuplex(input, onRead, onWrite));
         },
         publishIdle: () => this.#storage.sync(this.#baseDirectory, 'operation'),
         rollback: async () => {
-          const response = this.#currentInstance().execProtocolRaw(simpleQuery('ROLLBACK'));
+          const response = this.#callGuest((instance) =>
+            instance.execProtocolRaw(simpleQuery('ROLLBACK')),
+          );
           assertSuccessfulQueryResponse(response);
           await this.#storage.sync(this.#baseDirectory, 'operation');
         },
@@ -520,20 +545,20 @@ export class DirectWasixSession implements WasixDatabaseSession {
 
   async #resetProtocolSession(): Promise<void> {
     for (const statement of ['ROLLBACK', 'DISCARD ALL']) {
-      const response = this.#currentInstance().execProtocolRaw(simpleQuery(statement));
+      const response = this.#callGuest((instance) =>
+        instance.execProtocolRaw(simpleQuery(statement)),
+      );
       assertSuccessfulQueryResponse(response);
     }
-    await configureWasixRole(this.#username, async (input) =>
-      this.#currentInstance().execProtocolRaw(input),
-    );
   }
 
   async #restartProtocolBackend(): Promise<void> {
+    this.#assertGuestEntryAllowed();
     const previous = this.#currentInstance();
     this.#instance = undefined;
     let failure: Error | undefined;
     try {
-      previous.close();
+      this.#withGuestCall(() => previous.close());
     } catch (error) {
       failure = new Error(
         `WASIX PostgreSQL backend restart close failed: ${describeError(error)}`,
@@ -543,7 +568,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
       );
     }
     try {
-      previous.free();
+      this.#withGuestCall(() => previous.free());
     } catch (error) {
       failure =
         failure === undefined
@@ -556,15 +581,19 @@ export class DirectWasixSession implements WasixDatabaseSession {
 
     let replacement: OliphauntDirectInstance | undefined;
     try {
-      replacement = await this.#instantiate();
-      const startupResponse = await this.#initialize(replacement, 'existing');
-      this.#instance = replacement;
-      this.#startupResponse = startupResponse;
+      await this.#withGuestCallAsync(async () => {
+        const candidate = await this.#instantiate();
+        replacement = candidate;
+        const startupResponse = await this.#initialize(candidate, 'existing');
+        this.#instance = candidate;
+        this.#startupResponse = startupResponse;
+      });
     } catch (error) {
       failure = directStartupFailure(error);
-      if (replacement !== undefined) {
+      const failedReplacement = replacement;
+      if (failedReplacement !== undefined) {
         try {
-          replacement.close();
+          this.#withGuestCall(() => failedReplacement.close());
         } catch (closeError) {
           failure = composeLifecycleFailure(
             failure,
@@ -573,7 +602,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
           );
         }
         try {
-          replacement.free();
+          this.#withGuestCall(() => failedReplacement.free());
         } catch (freeError) {
           failure = composeLifecycleFailure(
             failure,
@@ -587,6 +616,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
   }
 
   async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
+    this.#assertGuestEntryAllowed();
     this.#assertHealthy();
     try {
       await this.#storage.sync(this.#baseDirectory, boundary);
@@ -604,6 +634,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
   }
 
   async backup(): Promise<Uint8Array> {
+    this.#assertGuestEntryAllowed();
     this.#assertHealthy();
     try {
       return await createPhysicalArchive(
@@ -617,10 +648,15 @@ export class DirectWasixSession implements WasixDatabaseSession {
   }
 
   async #execBackupProtocol(input: Uint8Array): Promise<Uint8Array> {
-    return this.#currentInstance().execProtocolRaw(input);
+    return this.#callGuest((instance) => instance.execProtocolRaw(input));
   }
 
   close(): Promise<void> {
+    try {
+      this.#assertGuestEntryAllowed();
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (this.#closeAttempt !== undefined) return this.#closeAttempt;
     // Establish the admission cutoff before any guest/provider teardown can
     // invoke userland code or yield.
@@ -641,7 +677,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     this.#instance = undefined;
     if (instance !== undefined) {
       try {
-        instance.close();
+        this.#withGuestCall(() => instance.close());
       } catch (error) {
         failure = new Error(`WASIX PostgreSQL direct close failed: ${describeError(error)}`, {
           cause: error,
@@ -663,7 +699,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
 
     if (instance !== undefined) {
       try {
-        instance.free();
+        this.#withGuestCall(() => instance.free());
       } catch (error) {
         failure =
           failure === undefined
@@ -677,7 +713,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     const pgDump = await pendingPgDump?.catch(() => undefined);
     if (pgDump !== undefined) {
       try {
-        pgDump.prepared.free();
+        this.#withGuestCall(() => pgDump.prepared.free());
       } catch (error) {
         failure =
           failure === undefined
@@ -709,6 +745,36 @@ export class DirectWasixSession implements WasixDatabaseSession {
     return instance;
   }
 
+  #callGuest<Result>(operation: (instance: OliphauntDirectInstance) => Result): Result {
+    return this.#withGuestCall(() => operation(this.#currentInstance()));
+  }
+
+  #withGuestCall<Result>(operation: () => Result): Result {
+    // Reject callback recursion before wasm-bindgen can borrow or free the
+    // same allocation. Destructors belong inside this boundary too.
+    this.#assertGuestEntryAllowed();
+    this.#guestCallActive = true;
+    try {
+      return operation();
+    } finally {
+      this.#guestCallActive = false;
+    }
+  }
+
+  async #withGuestCallAsync<Result>(operation: () => Promise<Result>): Promise<Result> {
+    this.#assertGuestEntryAllowed();
+    this.#guestCallActive = true;
+    try {
+      return await operation();
+    } finally {
+      this.#guestCallActive = false;
+    }
+  }
+
+  #assertGuestEntryAllowed(): void {
+    if (this.#guestCallActive) throw new DirectGuestReentryError();
+  }
+
   async #closeAfterOpenFailure(failure: Error): Promise<Error> {
     this.#closed = true;
     this.#failed = true;
@@ -716,7 +782,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     this.#instance = undefined;
     if (instance !== undefined) {
       try {
-        instance.close();
+        this.#withGuestCall(() => instance.close());
       } catch (closeError) {
         failure = composeLifecycleFailure(
           failure,
@@ -732,7 +798,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     }
     if (instance !== undefined) {
       try {
-        instance.free();
+        this.#withGuestCall(() => instance.free());
       } catch (freeError) {
         failure = composeLifecycleFailure(
           failure,

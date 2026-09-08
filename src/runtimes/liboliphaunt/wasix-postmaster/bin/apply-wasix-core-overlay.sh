@@ -57,36 +57,9 @@ fresh_unlock_postgres_baseline
 
 cp -R "$FRESH_ROOT/postgres/overlays/wasix-core/." "$WASIX_SRC_DIR/"
 
-apply_patch_series() {
-  local patches_dir="$1"
-  local series_file="$2"
-  local patch
-  local patch_name
-
-  [ -f "$series_file" ] && [ ! -L "$series_file" ] || {
-    echo "missing regular PostgreSQL patch series: $series_file" >&2
-    exit 2
-  }
-  while IFS= read -r patch_name || [ -n "$patch_name" ]; do
-    case "$patch_name" in
-      ''|'#'*) continue ;;
-      */*)
-        echo "unsafe PostgreSQL patch entry: $patch_name" >&2
-        exit 2
-        ;;
-    esac
-    patch="$patches_dir/$patch_name"
-    [ -f "$patch" ] && [ ! -L "$patch" ] || {
-      echo "missing regular PostgreSQL patch from series: $patch" >&2
-      exit 2
-    }
-    git -C "$WASIX_SRC_DIR" apply --whitespace=nowarn "$patch"
-  done <"$series_file"
-}
-
-apply_patch_series "$FRESH_ROOT/postgres/patches" \
+fresh_apply_patch_series "$WASIX_SRC_DIR" "$FRESH_ROOT/postgres/patches" \
   "$FRESH_ROOT/postgres/patches/series"
-apply_patch_series \
+fresh_apply_patch_series "$WASIX_SRC_DIR" \
   "$REPO_ROOT/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches" \
   "$FRESH_ROOT/postgres/main-optimizations.series"
 
@@ -116,7 +89,7 @@ fresh_write_report_header "$report" "WASIX Core Overlay"
   printf -- '- Baseline tree: `%s`\n' "$baseline_tree"
   printf -- '- Overlay digest: `%s`\n\n' "$overlay_digest"
   printf '## Patch Discipline\n\n'
-  printf -- '- Production patch source is clean PostgreSQL `%s`, this overlay, and the compatible optimization subset owned by the main WASIX runtime.\n' "$POSTGRES_TAG"
+  printf -- '- Production patch source is clean PostgreSQL `%s`, this overlay, and the shared port/linkage adaptations owned by the main WASIX runtime.\n' "$POSTGRES_TAG"
   printf -- '- The overlay adds a WASIX configure template/header, narrow process/shared-memory port files, and small patch files for DSM, dynamic loading, and static libpq encoding linkage.\n'
   printf -- '- Single-user shims, loop rewrites, fake sockets, fake longjmp, fake poll, fake shared memory, disabled largefile, and disabled spinlocks are intentionally absent.\n'
 } >>"$report"

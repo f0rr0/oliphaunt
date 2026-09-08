@@ -40,36 +40,65 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | 18 | `0018-liboliphaunt-contain-embedded-proc-signals.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: contain embedded process signals |
 | 19 | `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: link Windows embedded modules to host |
 | 20 | `0020-liboliphaunt-enforce-embedded-signal-boundary.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: enforce embedded signal boundary |
+| 21 | `0021-liboliphaunt-model-trusted-embedded-sessions.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: model trusted embedded sessions |
+| 22 | `0022-liboliphaunt-preserve-host-process-boundaries.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: preserve host process boundaries |
 
 ## Changed Upstream Files
 
 - `meson.build` (`0015-liboliphaunt-add-embedded-meson-option.patch`)
 - `meson_options.txt` (`0015-liboliphaunt-add-embedded-meson-option.patch`, `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch`)
+- `src/backend/access/transam/multixact.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/access/transam/varsup.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/access/transam/xact.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/backend/access/transam/xlogarchive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
+- `src/backend/access/transam/xlogfuncs.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
 - `src/backend/archive/shell_archive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
-- `src/backend/commands/collationcmds.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`)
-- `src/backend/commands/event_trigger.c` (`0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`)
-- `src/backend/libpq/be-secure.c` (`0001-liboliphaunt-add-backend-host-io.patch`)
-- `src/backend/libpq/pqcomm.c` (`0001-liboliphaunt-add-backend-host-io.patch`)
+- `src/backend/commands/collationcmds.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/commands/copyfromparse.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/commands/event_trigger.c` (`0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`, `0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/commands/tsearchcmds.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/libpq/be-secure.c` (`0001-liboliphaunt-add-backend-host-io.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/libpq/pqcomm.c` (`0001-liboliphaunt-add-backend-host-io.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/backend/meson.build` (`0019-liboliphaunt-link-windows-embedded-modules-to-host.patch`)
 - `src/backend/port/Makefile` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
 - `src/backend/port/meson.build` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
 - `src/backend/port/oliphaunt_embedded_sema.c` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
 - `src/backend/port/oliphaunt_embedded_shmem.c` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
-- `src/backend/storage/ipc/ipc.c` (`0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`)
-- `src/backend/storage/ipc/procsignal.c` (`0018-liboliphaunt-contain-embedded-proc-signals.patch`)
-- `src/backend/tcop/postgres.c` (`0002-liboliphaunt-add-embedded-entrypoint.patch`, `0003-liboliphaunt-return-from-embedded-frontend-terminate.patch`, `0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0005-liboliphaunt-restore-host-cwd.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`, `0010-liboliphaunt-use-host-runtime-paths.patch`, `0014-liboliphaunt-use-portable-embedded-socketpair.patch`, `0018-liboliphaunt-contain-embedded-proc-signals.patch`)
+- `src/backend/port/win32/signal.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/storage/file/fd.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/storage/ipc/ipc.c` (`0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/storage/ipc/latch.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/storage/ipc/procsignal.c` (`0018-liboliphaunt-contain-embedded-proc-signals.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/storage/ipc/signalfuncs.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/storage/ipc/waiteventset.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/tcop/backend_startup.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/tcop/postgres.c` (`0002-liboliphaunt-add-embedded-entrypoint.patch`, `0003-liboliphaunt-return-from-embedded-frontend-terminate.patch`, `0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0005-liboliphaunt-restore-host-cwd.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`, `0010-liboliphaunt-use-host-runtime-paths.patch`, `0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`, `0014-liboliphaunt-use-portable-embedded-socketpair.patch`, `0018-liboliphaunt-contain-embedded-proc-signals.patch`, `0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/backend/utils/fmgr/dfmgr.c` (`0006-liboliphaunt-add-static-extension-loader.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch`)
+- `src/backend/utils/init/Makefile` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/utils/init/embedded_session.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/utils/init/meson.build` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/utils/init/miscinit.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/utils/init/postinit.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/backend/utils/misc/guc_tables.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/utils/misc/superuser.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
+- `src/backend/utils/misc/timeout.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/bin/initdb/initdb.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`)
-- `src/include/libpq/libpq-be.h` (`0001-liboliphaunt-add-backend-host-io.patch`)
+- `src/include/libpq/libpq-be.h` (`0001-liboliphaunt-add-backend-host-io.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/include/libpq/libpq.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/include/libpq/pqsignal.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/include/miscadmin.h` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/include/port.h` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`, `0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
+- `src/include/port/win32_port.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/include/storage/dsm_impl.h` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
-- `src/include/storage/ipc.h` (`0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`)
+- `src/include/storage/ipc.h` (`0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/include/storage/latch.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/include/storage/waiteventset.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/include/tcop/backend_startup.h` (`0013-liboliphaunt-fix-embedded-backend-main-return-contract.patch`)
-- `src/include/tcop/tcopprot.h` (`0003-liboliphaunt-return-from-embedded-frontend-terminate.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch`)
+- `src/include/tcop/tcopprot.h` (`0003-liboliphaunt-return-from-embedded-frontend-terminate.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch`, `0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/include/utils/hsearch.h` (`0017-liboliphaunt-namespace-dynahash-host-collisions.patch`)
+- `src/include/utils/timeout.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/port/chklocale.c` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
-- `src/port/pqsignal.c` (`0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
+- `src/port/pqsignal.c` (`0020-liboliphaunt-enforce-embedded-signal-boundary.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 
 ## Expected Upstream Touchpoints
 
@@ -77,40 +106,68 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | --- | --- |
 | `meson.build` | Meson-hosted embedded builds enable OLIPHAUNT_EMBEDDED through an explicit opt-in build option. |
 | `meson_options.txt` | Meson-hosted embedded builds declare opt-in backend and Windows module-provider options without changing default PostgreSQL builds. |
+| `src/backend/access/transam/multixact.c` | Trusted user sessions retain MultiXact wraparound stop protection without signalling an absent autovacuum launcher. |
+| `src/backend/access/transam/varsup.c` | Trusted user sessions retain XID wraparound stops and normal user-object OID allocation while recovery standalone mode keeps its bootstrap range. |
+| `src/backend/access/transam/xact.c` | Direct transaction and subtransaction abort restore the embedding thread inherited signal mask with the thread-safe provider while ordinary PostgreSQL keeps its process-oriented sigprocmask path. |
 | `src/backend/access/transam/xlogarchive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
+| `src/backend/access/transam/xlogfuncs.c` | Trusted embedded sessions reject standby promotion before creating files, signalling, or waiting on an absent postmaster. |
 | `src/backend/archive/shell_archive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
-| `src/backend/commands/collationcmds.c` | System-collation import preserves host providers except during deliberate deterministic distributed-seed production; verified ICU readiness independently gates only the ICU provider. |
-| `src/backend/commands/event_trigger.c` | Embedded FE/BE protocol sessions can run event triggers without changing standalone recovery behavior. |
-| `src/backend/libpq/be-secure.c` | Backend secure read/write path delegates to a host I/O vtable only when OLIPHAUNT_EMBEDDED is set. |
+| `src/backend/commands/collationcmds.c` | Seed production controls provider discovery; trusted sessions skip subprocess-only libc enumeration while preserving in-process ICU import and ordinary server behavior. |
+| `src/backend/commands/copyfromparse.c` | Direct COPY FROM accepts cancellation only between complete frontend frames, after the Native ABI has rejected truncated headers and bodies before publication. |
+| `src/backend/commands/event_trigger.c` | Real server children and attached trusted Native sessions can run event and login triggers without changing recovery standalone behavior. |
+| `src/backend/commands/tsearchcmds.c` | Trusted user sessions validate text-search dictionary options while initdb retains its standalone compatibility exception. |
+| `src/backend/libpq/be-secure.c` | Embedded secure reads pass the nearest cooperative PostgreSQL deadline to the private host I/O provider. |
 | `src/backend/libpq/pqcomm.c` | Standalone embedded sessions avoid waiting on a non-existent postmaster death latch. |
 | `src/backend/meson.build` | Embedded MSVC extension modules link to the oliphaunt host import library instead of the standalone postgres executable. |
 | `src/backend/port/Makefile` | Embedded mobile builds swap unavailable SysV shared memory and semaphores for process-local implementations. |
 | `src/backend/port/meson.build` | Android embedded builds swap unavailable SysV shared memory and semaphores for process-local implementations. |
 | `src/backend/port/oliphaunt_embedded_sema.c` | Embedded mobile semaphore implementation for one backend in one process. |
 | `src/backend/port/oliphaunt_embedded_shmem.c` | Embedded mobile shared memory implementation for one backend in one process. |
+| `src/backend/port/win32/signal.c` | Trusted Windows Direct sessions initialize only thread-local signal emulation and their private wake event, without claiming the host console handler or process signal listener. |
+| `src/backend/storage/file/fd.c` | Trusted embedded backends reject pipe programs before popen can spawn or alter process signal state. |
 | `src/backend/storage/ipc/ipc.c` | Embedded backend cleanup and proc_exit unwinding stay at PostgreSQL lifecycle boundaries. |
+| `src/backend/storage/ipc/latch.c` | Direct explicitly frees the session-lifetime latch wait set before closing its provider-private wake endpoint because the host process remains alive. |
 | `src/backend/storage/ipc/procsignal.c` | The one-backend embedded runtime dispatches ProcSignal flags without sending process-directed host signals. |
-| `src/backend/tcop/postgres.c` | Embedded backend entrypoint, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition. |
+| `src/backend/storage/ipc/signalfuncs.c` | Trusted embedded sessions reject PID cancellation, termination, reload, and rotation operations that require process signalling or absent supervisors. |
+| `src/backend/storage/ipc/waiteventset.c` | Trusted POSIX sessions use a signal-free self-pipe wake and bound latch waits by cooperative PostgreSQL deadlines. |
+| `src/backend/tcop/backend_startup.c` | PostgresMain carries explicit InitPostgres startup policy from each owning entrypoint. |
+| `src/backend/tcop/postgres.c` | Embedded backend entrypoint, atomic one-shot admission, typed trusted startup, regular-backend identity, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition. |
 | `src/backend/utils/fmgr/dfmgr.c` | Static extension lookup reuses PostgreSQL dynamic function manager semantics. |
+| `src/backend/utils/init/Makefile` | Builds the isolated trusted embedded-session lifecycle and topology policy module. |
+| `src/backend/utils/init/embedded_session.c` | Owns one-way trusted-session state, atomic host-cancel ingress, shell-command exclusions, and non-negotiable single-backend worker/AIO topology. |
+| `src/backend/utils/init/meson.build` | Builds the isolated trusted embedded-session module for Meson-hosted targets. |
+| `src/backend/utils/init/miscinit.c` | Normal role LOGIN and connection-limit policy applies to attached trusted sessions while recovery standalone keeps its escape hatch. |
+| `src/backend/utils/init/postinit.c` | Attaches host-trusted identity and routes statement and lock timeouts directly to backend-thread interrupt flags without self-signalling. |
+| `src/backend/utils/misc/guc_tables.c` | Attached trusted sessions reject live attempts to restore nonzero parallel worker settings while allowing stored-setting validation. |
+| `src/backend/utils/misc/superuser.c` | The bootstrap-superuser escape hatch remains limited to genuine non-user standalone startup. |
+| `src/backend/utils/misc/timeout.c` | Trusted embedded deadlines preserve PostgreSQL ordering and indicators while running cooperatively without SIGALRM or ITIMER_REAL. |
 | `src/bin/initdb/initdb.c` | Controlled seed production selects standard or verified ICU collation discovery without changing ordinary initdb semantics. |
-| `src/include/libpq/libpq-be.h` | Host I/O vtable is attached to PostgreSQL Port state under OLIPHAUNT_EMBEDDED. |
+| `src/include/libpq/libpq-be.h` | Private embedded host reads accept a nearest-deadline timeout without changing PostgreSQL client ABI. |
+| `src/include/libpq/libpq.h` | The backend-private protocol reader exposes an embedded-only interrupted sentinel used to stop Direct COPY only at a validated message boundary. |
+| `src/include/libpq/pqsignal.h` | Declares the embedded thread-mask helper beside PostgreSQL sigset_t, including its Windows emulation, without imposing backend include order on common support objects. |
+| `src/include/miscadmin.h` | Declares trusted-session lifecycle and makes interrupt checks consume the host atomic mailbox and cooperative deadlines. |
 | `src/include/port.h` | Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary. |
+| `src/include/port/win32_port.h` | Declares the trusted Windows signal-emulation lifecycle that omits host process listeners and releases its local event explicitly. |
 | `src/include/storage/dsm_impl.h` | Embedded mobile builds keep DSM on mmap instead of POSIX or SysV shared memory. |
 | `src/include/storage/ipc.h` | Embedded cleanup and proc_exit guard declarations. |
+| `src/include/storage/latch.h` | Declares explicit Direct latch wait-set teardown for a retained embedding process. |
+| `src/include/storage/waiteventset.h` | Declares the host-thread-safe signal-free backend wake provider. |
 | `src/include/tcop/backend_startup.h` | Embedded BackendMain may return after its returning PostgresMain call without retaining an invalid pg_noreturn declaration. |
 | `src/include/tcop/tcopprot.h` | Embedded entrypoint and returning PostgresMain declarations. |
 | `src/include/utils/hsearch.h` | Apple builds namespace PostgreSQL dynahash symbols that otherwise bind to unrelated libSystem exports. |
+| `src/include/utils/timeout.h` | Declares private cooperative timeout processing and nearest-deadline accessors for embedded builds. |
 | `src/port/chklocale.c` | Android embedded builds avoid unsupported locale-environment mutation. |
-| `src/port/pqsignal.c` | Embedded backend signal registration and emission preserve the host-owned SIGUSR1 disposition while delegating other signals. |
+| `src/port/pqsignal.c` | Embedded backends leave every host signal disposition untouched, permit only signal-zero liveness probes, and reject delivery or raise. |
 
 ## PostgreSQL Patch Symbols
 
+- `oliphaunt_embedded_clear_proc_exit_handler` (`0009-liboliphaunt-guard-embedded-proc-exit.patch`)
+- `oliphaunt_embedded_install_proc_exit_handler` (`0009-liboliphaunt-guard-embedded-proc-exit.patch`)
 - `oliphaunt_embedded_kill` (`0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
 - `oliphaunt_embedded_main` (`0002-liboliphaunt-add-embedded-entrypoint.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch`)
 - `oliphaunt_embedded_proc_exit` (`0004-liboliphaunt-run-embedded-exit-cleanup.patch`)
 - `oliphaunt_embedded_proc_exit_handler` (`0009-liboliphaunt-guard-embedded-proc-exit.patch`)
 - `oliphaunt_embedded_raise` (`0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
-- `oliphaunt_embedded_set_proc_exit_handler` (`0009-liboliphaunt-guard-embedded-proc-exit.patch`)
 - `oliphaunt_static_extension_init` (`0006-liboliphaunt-add-static-extension-loader.patch`)
 - `oliphaunt_static_extension_lookup` (`0006-liboliphaunt-add-static-extension-loader.patch`)
 - `oliphaunt_static_extension_magic` (`0006-liboliphaunt-add-static-extension-loader.patch`)
@@ -126,23 +183,27 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | Embedded BackendMain may return without violating its declaration | `0013-liboliphaunt-fix-embedded-backend-main-return-contract.patch` | `#ifdef OLIPHAUNT_EMBEDDED`, `extern void BackendMain`, `pg_noreturn extern void BackendMain` | Only embedded builds drop pg_noreturn; normal PostgreSQL server builds retain the upstream non-returning contract. |
 | Frontend Terminate returns to host owner | `0003-liboliphaunt-return-from-embedded-frontend-terminate.patch` | `frontend sends Terminate`, `return;`, `proc_exit(0)` | Only OLIPHAUNT_EMBEDDED changes backend termination into a returning thread lifecycle. |
 | PostgreSQL exit callbacks still run | `0004-liboliphaunt-run-embedded-exit-cleanup.patch` | `oliphaunt_embedded_proc_exit`, `proc_exit_prepare(code)` | Keeps upstream cleanup ordering for shmem, locks, callbacks, and backend-local state. |
-| Startup FATAL does not exit the host process | `0009-liboliphaunt-guard-embedded-proc-exit.patch` | `oliphaunt_embedded_set_proc_exit_handler`, `siglongjmp`, `proc_exit_handler` | Embedded startup failures unwind to liboliphaunt after PostgreSQL cleanup callbacks run. |
-| Embedded proc_exit guard is cleared before returning to host | `0009-liboliphaunt-guard-embedded-proc-exit.patch` | `embedded_cleanup:`, `oliphaunt_embedded_set_proc_exit_handler(NULL, NULL)`, `chdir(original_cwd)` | Normal and FATAL startup paths share one cleanup label so thread-local exit guards and host cwd are restored before returning. |
-| Host working directory is restored | `0005-liboliphaunt-restore-host-cwd.patch` | `original_cwd`, `getcwd(original_cwd`, `chdir(original_cwd)` | Contains PostgreSQL standalone ChangeToDataDir side effects inside the backend lifetime. |
+| Startup FATAL does not exit the host process | `0009-liboliphaunt-guard-embedded-proc-exit.patch` | `oliphaunt_embedded_install_proc_exit_handler`, `siglongjmp`, `proc_exit_handler`, `proc_exit_inprogress = false` | A one-shot handler unwinds embedded startup failures only after PostgreSQL cleanup callbacks run, then disarms PostgreSQL exit state before returning to the host. |
+| Non-local exit cleanup reads stable lifecycle state | `0009-liboliphaunt-guard-embedded-proc-exit.patch` | `OliphauntEmbeddedLifecycle`, `objects modified after sigsetjmp() would be indeterminate`, `lifecycle = calloc(1, sizeof(*lifecycle))`, `free(lifecycle)` | Every mutable value read after siglongjmp is heap-owned behind an unchanged pointer, avoiding C setjmp indeterminacy. |
+| Embedded proc_exit guard is cleared before returning to host | `0009-liboliphaunt-guard-embedded-proc-exit.patch` | `embedded_cleanup:`, `oliphaunt_embedded_clear_proc_exit_handler`, `chdir(lifecycle->original_cwd)` | Normal, ordinary startup-failure, and FATAL paths share one cleanup label that clears only the owned thread-local handler before cwd and socket cleanup. |
+| Host working directory is restored | `0005-liboliphaunt-restore-host-cwd.patch` | `original_cwd`, `getcwd(original_cwd`, `cwd_restore_required`, `ChangeToDataDir()`, `chdir(original_cwd)` | Rejects an unresolvable starting cwd and restores terminally owned ChangeToDataDir mutation. Active and logically detached Direct backends still hold the process-wide cwd at PGDATA. |
 | Static extension registry uses PostgreSQL dfmgr path | `0006-liboliphaunt-add-static-extension-loader.patch` | `oliphaunt_static_extension_lookup`, `lookup_library_symbol`, `oliphaunt_static_extension_symbol` | CREATE EXTENSION/LOAD semantics stay in PostgreSQL; hosts only provide module symbols. |
 | MSVC PostgreSQL tools link without static extension providers | `0006-liboliphaunt-add-static-extension-loader.patch` | `defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))`, `/alternatename:oliphaunt_static_extension_lookup=oliphaunt_static_extension_lookup_default`, `oliphaunt_static_extension_symbol_default` | Meson-built PostgreSQL tools get no-op static extension hooks on MSVC; liboliphaunt still overrides them by linking the real registry provider. |
 | Portable PostgreSQL tools link without static extension providers | `0006-liboliphaunt-add-static-extension-loader.patch` | `#define OLIPHAUNT_OPTIONAL_HOOK __attribute__((weak))`, `oliphaunt_static_extension_lookup(const char *filename)`, `oliphaunt_static_extension_init(const OliphauntStaticExtension *extension)` | Non-MSVC embedded PostgreSQL tool links get weak no-op static extension hooks; liboliphaunt overrides them by linking the real registry provider. |
 | Static extension ABI magic is validated | `0006-liboliphaunt-add-static-extension-loader.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch` | `oliphaunt_static_extension_magic`, `Pg_magic_struct`, `memcmp(&magic_data_ptr->abi_fields` | Static modules still pass PostgreSQL ABI checks before symbols are used. |
-| Runtime paths come from host-packaged resources | `0010-liboliphaunt-use-host-runtime-paths.patch` | `oliphaunt_embedded_set_runtime_paths`, `OLIPHAUNT_EMBEDDED_MODULE_DIR`, `my_exec_path`, `PGSYSCONFDIR` | Avoids executable-bit assumptions for mobile resources while preserving runtime path derivation and using host-packaged embedded modules for pkglib_path. |
+| Runtime paths come from host-packaged resources | `0010-liboliphaunt-use-host-runtime-paths.patch` | `oliphaunt_embedded_set_runtime_paths`, `OLIPHAUNT_EMBEDDED_MODULE_DIR`, `strlcpy(my_exec_path, argv0, MAXPGPATH) >= MAXPGPATH`, `embedded PostgreSQL runtime anchor is too long`, `embedded PostgreSQL module directory must be absolute`, `strlcpy(pkglib_path, module_dir, MAXPGPATH) >= MAXPGPATH`, `PGSYSCONFDIR` | Avoids executable-bit assumptions for mobile resources, rejects relative or truncated host paths, preserves PostgreSQL path derivation, and uses host-packaged embedded modules for pkglib_path. Process environment, gettext, and PostgreSQL path caches remain one-lifetime Direct state. |
 | Apple mobile builds do not call system(3) | `0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch` | `OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS`, `TARGET_OS_IPHONE`, `archive_command cannot be executed` | Mobile direct mode fails optional shell archive/restore hooks explicitly instead of compiling unavailable APIs. |
 | Embedded mobile shared memory and semaphores are process-local | `0011-liboliphaunt-add-android-embedded-shared-memory.patch` | `oliphaunt_embedded_shmem.c`, `oliphaunt_embedded_sema.c`, `OLIPHAUNT_EMBEDDED_MOBILE_SHMEM` | Android and Apple mobile builds avoid unavailable SysV shared memory and semaphores while direct mode remains one backend per process. |
-| Event triggers run in embedded protocol sessions | `0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch` | `EventTriggersHaveRunnableBackend`, `OLIPHAUNT_EMBEDDED`, `event_triggers` | Keeps upstream single-user escape hatch outside OLIPHAUNT_EMBEDDED but treats embedded protocol sessions as runnable backends. |
+| Event triggers use an attached normal-user session, not admission state | `0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`, `0021-liboliphaunt-model-trusted-embedded-sessions.patch` | `EventTriggersHaveRunnableBackend`, `return IsNormalUserSession();`, `return IsUnderPostmaster;`, `pg_atomic_compare_exchange_u32`, `if (!AdmitEmbeddedEntrypoint())`, `Admission is not a session capability`, `AttachPreparedTrustedEmbeddedSession` | A private atomic admits one Native physical backend, but only the catalog-safe trusted-session attachment enables Direct and Broker event triggers. Ordinary postmaster children retain upstream behavior, and bootstrap or genuine standalone recovery sessions retain the escape hatch. |
+| Rejected embedded entrypoints cannot release the admitted backend's global resources | `0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`, `0014-liboliphaunt-use-portable-embedded-socketpair.patch` | `bool		entrypoint_admitted;`, `lifecycle->entrypoint_admitted = true;`, `if (lifecycle->entrypoint_admitted && FeBeWaitSet != NULL)` | The one-shot CAS winner publishes heap-owned admission before FATAL-capable initialization. A rejected contender may unwind only invocation-owned state and cannot free the active backend wait set. |
 | Meson builds expose an explicit embedded backend option | `0015-liboliphaunt-add-embedded-meson-option.patch` | `oliphaunt_embedded`, `add_project_arguments`, `-DOLIPHAUNT_EMBEDDED` | Windows and other Meson-hosted embedded builds enable the backend entrypoint through PostgreSQL build configuration while default server builds remain unchanged. |
 | Optional ICU data stays optional during initdb | `0016-liboliphaunt-control-initdb-collation-discovery.patch` | `OLIPHAUNT_INTERNAL_ICU_READY`, `OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY`, `OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY`, `strcmp`, `pg_collation_actual_version`, `pg_import_system_collations` | Ordinary initdb and public collation import retain PostgreSQL host discovery. Distributed standard seeds suppress OS and ICU discovery; ICU seeds suppress only OS discovery and verify ICU readiness for initdb's unicode-version probe. |
 | Apple builds namespace PostgreSQL dynahash symbols that collide with libSystem | `0017-liboliphaunt-namespace-dynahash-host-collisions.patch` | `#ifdef __APPLE__`, `oliphaunt_pg_hash_create`, `oliphaunt_pg_hash_destroy`, `oliphaunt_pg_hash_search` | Apple backend and extension objects share collision-free dynahash names; non-Apple PostgreSQL binary names remain unchanged. |
 | Embedded ProcSignal delivery cannot escape into the host process | `0018-liboliphaunt-contain-embedded-proc-signals.patch` | `oliphaunt_send_proc_signal`, `pid != MyProcPid`, `procsignal_sigusr1_handler(SIGUSR1)`, `host owns SIGUSR1` | The one-backend embedded runtime dispatches ProcSignal flags synchronously, rejects foreign PIDs, and leaves the host SIGUSR1 disposition untouched; normal PostgreSQL server builds retain upstream signal delivery. |
 | Windows embedded extension modules link to the host DLL provider | `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch` | `oliphaunt_embedded_module_provider`, `requires an embedded MSVC Windows build`, `pg_mod_link_args += oliphaunt_embedded_module_provider`, `oliphaunt_embedded_module_provider == ''` | Embedded MSVC extension modules resolve PostgreSQL backend symbols from the oliphaunt host import library; ordinary PostgreSQL modules retain the upstream postgres executable link contract. |
-| Embedded backend and extension signal calls preserve host SIGUSR1 ownership | `0020-liboliphaunt-enforce-embedded-signal-boundary.patch` | `oliphaunt_embedded_kill`, `oliphaunt_embedded_raise`, `!defined(FRONTEND)`, `if (signo == SIGUSR1)` | Embedded backend and extension calls cannot replace or emit host-owned SIGUSR1; other signals delegate to the platform implementation, while frontend tools and normal PostgreSQL builds retain upstream behavior. |
+| The historical narrow signal wrapper preserves host SIGUSR1 ownership | `0020-liboliphaunt-enforce-embedded-signal-boundary.patch` | `oliphaunt_embedded_kill`, `oliphaunt_embedded_raise`, `!defined(FRONTEND)`, `if (signo == SIGUSR1)` | This intermediate layer reserved SIGUSR1. Patch 0022 completes the process boundary by denying all process-directed delivery and replacing signal-backed timers and latches. |
+| Configured Native identity has a typed trusted startup lifecycle and normal catalog policy | `0021-liboliphaunt-model-trusted-embedded-sessions.patch` | `INIT_PG_TRUSTED_CLIENT`, `TRUSTED_EMBEDDED_SESSION_PREPARED`, `AttachPreparedTrustedEmbeddedSession`, `IsNormalUserSession`, `MyProc->isRegularBackend`, `InitializeSessionUserId(username, useroid, false)`, `if (!IsNormalUserSession())`, `check_trusted_embedded_worker_limit`, `configuration reload is not supported in a trusted embedded session` | A one-way PREPARED-to-ATTACHED capability bypasses HBA only for the in-process trusted host, while preserving role/database policy, settings, login triggers, wraparound/OID safety, and truthful standalone supervisor topology. |
+| Direct sessions preserve host signal, timer, latch, and subprocess ownership while active | `0022-liboliphaunt-preserve-host-process-boundaries.patch` | `RequestTrustedEmbeddedQueryCancel`, `ProcessTrustedEmbeddedInterrupts`, `PublishTrustedEmbeddedWakeup`, `UnpublishTrustedEmbeddedWakeup`, `GetEmbeddedTimeoutDelayMilliseconds`, `ProcessEmbeddedTimeouts`, `#define WAIT_USE_SELF_PIPE`, `IsTrustedEmbeddedProcess() && signo != 0`, `pgwin32_signal_initialize_embedded`, `ShutdownTrustedEmbeddedLatchWaitSet`, `pq_getbyte_interruptible`, `backend cancellation by process ID is not supported`, `external programs are not supported in a trusted embedded backend` | Host-thread cancellation crosses an atomic mailbox and signal-free wake. PostgreSQL deadlines run cooperatively without SIGALRM or ITIMER_REAL, POSIX latches use a self-pipe without SIGURG, and unsupported process capabilities fail before delivery or spawn. Normal server and frontend behavior is unchanged. |
 
 ## Guardrails
 

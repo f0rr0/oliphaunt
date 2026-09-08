@@ -1,3 +1,13 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: drive the embedded PostgreSQL guest directly
+
+Add a same-realm synchronous driver for the explicit embedded guest exports.
+It preserves typed startup/recovery outcomes and owns the guest lifecycle,
+removing worker message transport from browser-main execution. This is an
+Oliphaunt-specific ABI adapter, not a generic PostgreSQL or WASIX interface;
+the series adds bounded transport and fail-closed phases on top.
+
 diff --git a/src/lib.rs b/src/lib.rs
 index 7b22da5..6803f8e 100644
 --- a/src/lib.rs
@@ -19,12 +29,12 @@ index 7b22da5..6803f8e 100644
      run::run_wasix,
      utils::StringOrBytes,
 diff --git a/src/options.rs b/src/options.rs
-index 967ac16..7b93ca4 100644
+index 967ac16..d56c81d 100644
 --- a/src/options.rs
 +++ b/src/options.rs
 @@ -186,6 +186,19 @@ extern "C" {
  }
-
+ 
  impl RunOptions {
 +    pub(crate) fn configure_direct_builder(
 +        &self,
@@ -54,13 +64,13 @@ index 967ac16..7b93ca4 100644
 -            builder.add_env(key, value);
 -        }
 +        self.configure_common_builder(builder)?;
-
+ 
          let stdin = match self.read_stdin() {
              Some(stdin) => {
 @@ -226,11 +233,29 @@ impl RunOptions {
          let (stderr_file, stderr) = crate::streams::output_pipe();
          builder.set_stderr(Box::new(stderr_file));
-
+ 
 +        Ok((stdin, stdout, stderr))
 +    }
 +
@@ -82,18 +92,18 @@ index 967ac16..7b93ca4 100644
          let fs = self.filesystem()?;
          builder.set_fs(Box::new(fs));
          builder.add_preopen_dir("/")?;
-
+ 
 -        Ok((stdin, stdout, stderr))
 +        Ok(())
      }
-
+ 
      pub(crate) fn filesystem(&self) -> Result<TmpFileSystem, Error> {
 diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
 new file mode 100644
-index 0000000..e0f5463
+index 0000000..c45000a
 --- /dev/null
 +++ b/src/postgres_direct.rs
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,565 @@
 +use std::sync::Arc;
 +
 +use anyhow::{ensure, Context};
@@ -106,6 +116,24 @@ index 0000000..e0f5463
 +
 +const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
 +const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++enum MainLoopOutcome {
++    Processed,
++    Recovered,
++    InputEnded,
++}
++
++impl MainLoopOutcome {
++    fn from_i32(value: i32) -> Option<Self> {
++        match value {
++            0 => Some(Self::Processed),
++            1 => Some(Self::Recovered),
++            2 => Some(Self::InputEnded),
++            _ => None,
++        }
++    }
++}
 +
 +/// Instantiate the integrated Oliphaunt/PostgreSQL guest in this JS realm.
 +///
@@ -135,7 +163,6 @@ index 0000000..e0f5463
 +    output_reset: TypedFunction<(), i32>,
 +    output_len: TypedFunction<(), i32>,
 +    output_read: TypedFunction<(i32, i32), i32>,
-+    set_force_host_error_recovery: Option<TypedFunction<i32, i32>>,
 +    set_active: TypedFunction<i32, i32>,
 +    wasi_start: TypedFunction<(), ()>,
 +    start_oliphaunt: TypedFunction<(), ()>,
@@ -145,9 +172,8 @@ index 0000000..e0f5463
 +    send_conn_data: TypedFunction<(), ()>,
 +    pq_flush: TypedFunction<(), ()>,
 +    pq_buffer_remaining_data: TypedFunction<(), i32>,
-+    main_loop: TypedFunction<(), ()>,
++    main_loop: TypedFunction<(), i32>,
 +    send_ready: TypedFunction<(), ()>,
-+    recover_error: TypedFunction<(), ()>,
 +    backend_started: bool,
 +    protocol_started: bool,
 +    closed: bool,
@@ -225,32 +251,24 @@ index 0000000..e0f5463
 +        self.push_input(&payload)?;
 +        let max_attempts = (payload.len() / 5).saturating_add(2).max(1);
 +        let mut attempts = 0usize;
-+        let mut recovered_protocol_error = false;
 +        while self.protocol_input_remaining()? > 0 {
 +            attempts += 1;
 +            ensure!(
 +                attempts <= max_attempts,
 +                "PostgreSQL direct protocol pump did not drain input"
 +            );
-+            if self.main_loop.call(&mut self.store).is_err() {
-+                // Match the native host: the exported recovery boundary is
-+                // authoritative even when a JS engine reports an unfamiliar
-+                // trap spelling.
-+                self.recover_protocol_error(payload.len())?;
-+                recovered_protocol_error = true;
++            match self.call_main_loop()? {
++                MainLoopOutcome::Processed | MainLoopOutcome::Recovered => {}
++                MainLoopOutcome::InputEnded => {
++                    return Err(self.terminal_main_loop_outcome(
++                        "PostgresMainLoopOnce reported input end while dispatching buffered protocol input",
++                    ));
++                }
 +            }
 +        }
-+        self.send_ready
-+            .call(&mut self.store)
-+            .context("PostgresSendReadyForQueryIfNecessary")?;
-+        self.pq_flush
-+            .call(&mut self.store)
-+            .context("oliphaunt_wasix_pq_flush after protocol input")?;
-+        let output = self.take_output()?;
-+        if !recovered_protocol_error && protocol_response_contains_error(&output) {
-+            self.recover_non_trapping_protocol_error()?;
-+        }
-+        Ok(output)
++        self.send_ready_after_main_loop()?;
++        self.flush_after_main_loop()?;
++        self.take_output()
 +    }
 +
 +    fn close_inner(&mut self) -> anyhow::Result<()> {
@@ -310,11 +328,6 @@ index 0000000..e0f5463
 +        let output_reset = typed_export(&mut store, &instance, "oliphaunt_wasix_output_reset")?;
 +        let output_len = typed_export(&mut store, &instance, "oliphaunt_wasix_output_len")?;
 +        let output_read = typed_export(&mut store, &instance, "oliphaunt_wasix_output_read")?;
-+        let set_force_host_error_recovery = optional_typed_export(
-+            &mut store,
-+            &instance,
-+            "oliphaunt_wasix_set_force_host_error_recovery",
-+        )?;
 +        let set_active = typed_export(&mut store, &instance, "oliphaunt_wasix_set_active")?;
 +        let wasi_start = typed_export(&mut store, &instance, "_start")?;
 +        let start_oliphaunt = typed_export(&mut store, &instance, "oliphaunt_wasix_start")?;
@@ -332,7 +345,6 @@ index 0000000..e0f5463
 +            &instance,
 +            "PostgresSendReadyForQueryIfNecessary",
 +        )?;
-+        let recover_error = typed_export(&mut store, &instance, "PostgresMainLongJmp")?;
 +
 +        let mut direct = Self {
 +            _runtime: runtime,
@@ -347,7 +359,6 @@ index 0000000..e0f5463
 +            output_reset,
 +            output_len,
 +            output_read,
-+            set_force_host_error_recovery,
 +            set_active,
 +            wasi_start,
 +            start_oliphaunt,
@@ -359,7 +370,6 @@ index 0000000..e0f5463
 +            pq_buffer_remaining_data,
 +            main_loop,
 +            send_ready,
-+            recover_error,
 +            backend_started: false,
 +            protocol_started: false,
 +            closed: false,
@@ -373,17 +383,70 @@ index 0000000..e0f5463
 +        Ok(())
 +    }
 +
++    fn poison_main_loop(&mut self) {
++        // A trap, invalid typed outcome, or failed post-step export can leave
++        // arbitrary guest state behind. Do not call another guest export,
++        // including the ordinary close sequence.
++        self.closed = true;
++        self.backend_started = false;
++        self.protocol_started = false;
++    }
++
++    fn terminal_main_loop_outcome(&mut self, failure: impl Into<String>) -> anyhow::Error {
++        let failure = failure.into();
++        self.poison_main_loop();
++        anyhow::anyhow!("{failure}; the direct instance is closed")
++    }
++
++    fn terminal_main_loop_error(&mut self, error: wasmer::RuntimeError) -> anyhow::Error {
++        self.poison_main_loop();
++        anyhow::Error::from(error).context(
++            "PostgresMainLoopOnce trapped instead of returning a typed outcome; \
++             the direct instance is closed",
++        )
++    }
++
++    fn call_main_loop(&mut self) -> anyhow::Result<MainLoopOutcome> {
++        let status = match self.main_loop.call(&mut self.store) {
++            Ok(status) => status,
++            Err(error) => return Err(self.terminal_main_loop_error(error)),
++        };
++        MainLoopOutcome::from_i32(status).ok_or_else(|| {
++            self.terminal_main_loop_outcome(format!(
++                "PostgresMainLoopOnce returned invalid typed outcome {status}"
++            ))
++        })
++    }
++
++    fn send_ready_after_main_loop(&mut self) -> anyhow::Result<()> {
++        match self.send_ready.call(&mut self.store) {
++            Ok(()) => Ok(()),
++            Err(error) => {
++                self.poison_main_loop();
++                Err(anyhow::Error::from(error).context(
++                    "PostgresSendReadyForQueryIfNecessary trapped after a typed main-loop outcome; \
++                     the direct instance is closed",
++                ))
++            }
++        }
++    }
++
++    fn flush_after_main_loop(&mut self) -> anyhow::Result<()> {
++        match self.pq_flush.call(&mut self.store) {
++            Ok(()) => Ok(()),
++            Err(error) => {
++                self.poison_main_loop();
++                Err(anyhow::Error::from(error).context(
++                    "oliphaunt_wasix_pq_flush trapped after a typed main-loop outcome; \
++                     the direct instance is closed",
++                ))
++            }
++        }
++    }
++
 +    fn start_backend(&mut self) -> anyhow::Result<()> {
 +        if self.backend_started {
 +            return Ok(());
-+        }
-+        if let Some(set_force) = &self.set_force_host_error_recovery {
-+            // Wasmer JS surfaces PostgreSQL's wasm EH at the export boundary;
-+            // retain nested guest unwinding and recover the top-level jump via
-+            // its dedicated exit(100) path.
-+            set_force
-+                .call(&mut self.store, 0)
-+                .context("oliphaunt_wasix_set_force_host_error_recovery(0)")?;
 +        }
 +        self.set_active
 +            .call(&mut self.store, 1)
@@ -513,41 +576,6 @@ index 0000000..e0f5463
 +            .context("pq_buffer_remaining_data")
 +    }
 +
-+    fn recover_protocol_error(&mut self, payload_len: usize) -> anyhow::Result<()> {
-+        self.recover_error
-+            .call(&mut self.store)
-+            .context("PostgresMainLongJmp after protocol trap")?;
-+        let max_attempts = (payload_len / 5).saturating_add(2).max(1);
-+        let mut attempts = 0usize;
-+        while self.protocol_input_remaining()? > 0 {
-+            attempts += 1;
-+            ensure!(
-+                attempts <= max_attempts,
-+                "protocol recovery did not drain input"
-+            );
-+            if self.main_loop.call(&mut self.store).is_err() {
-+                self.recover_error
-+                    .call(&mut self.store)
-+                    .context("PostgresMainLongJmp while draining protocol error")?;
-+            }
-+        }
-+        Ok(())
-+    }
-+
-+    fn recover_non_trapping_protocol_error(&mut self) -> anyhow::Result<()> {
-+        self.recover_error
-+            .call(&mut self.store)
-+            .context("PostgresMainLongJmp after backend ErrorResponse")?;
-+        self.send_ready
-+            .call(&mut self.store)
-+            .context("PostgresSendReadyForQueryIfNecessary after backend ErrorResponse")?;
-+        self.pq_flush
-+            .call(&mut self.store)
-+            .context("oliphaunt_wasix_pq_flush after backend ErrorResponse")?;
-+        let _ = self.take_output()?;
-+        Ok(())
-+    }
-+
 +    fn startup_error(&mut self, error: anyhow::Error) -> Error {
 +        let _ = self.pq_flush.call(&mut self.store);
 +        let protocol = self.take_output().unwrap_or_default();
@@ -641,26 +669,6 @@ index 0000000..e0f5463
 +            _ => None,
 +        })
 +}
-+
-+fn protocol_response_contains_error(response: &[u8]) -> bool {
-+    let mut cursor = 0usize;
-+    while cursor + 5 <= response.len() {
-+        let tag = response[cursor];
-+        let len = i32::from_be_bytes(response[cursor + 1..cursor + 5].try_into().unwrap());
-+        if len < 4 {
-+            return false;
-+        }
-+        let total = 1usize.saturating_add(len as usize);
-+        if cursor + total > response.len() {
-+            return false;
-+        }
-+        if tag == b'E' {
-+            return true;
-+        }
-+        cursor += total;
-+    }
-+    false
-+}
 diff --git a/src/runtime.rs b/src/runtime.rs
 index d71638f..cb106d7 100644
 --- a/src/runtime.rs
@@ -668,7 +676,7 @@ index d71638f..cb106d7 100644
 @@ -83,7 +83,7 @@ impl Runtime {
          Ok(rt)
      }
-
+ 
 -    pub(crate) fn with_task_manager(&self, task_manager: Arc<ThreadPool>) -> Self {
 +    pub(crate) fn with_task_manager(&self, task_manager: Arc<dyn VirtualTaskManager>) -> Self {
          let mut runtime = self.clone();
@@ -737,14 +745,14 @@ index 2e9b0ee..76f8695 100644
 @@ -31,6 +31,7 @@
  //! [`Worker`]: thread_pool_worker::ThreadPoolWorker
  //! [`Scheduler`]: scheduler::Scheduler
-
+ 
 +mod caller_realm;
  mod interop;
  mod post_message_payload;
  mod scheduler;
 @@ -42,6 +43,7 @@ mod worker_handle;
  mod worker_message;
-
+ 
  pub(crate) use self::{
 +    caller_realm::CallerRealmTaskManager,
      post_message_payload::{AsyncJob, BlockingJob, Notification, PostMessagePayload},

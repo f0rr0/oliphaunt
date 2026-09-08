@@ -1,3 +1,13 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: reuse compiled modules and finish after pool idle
+
+Accept an already compiled WebAssembly module alongside original bytes so
+repeated process launches do not compile identical code again. Wait for the
+worker pool to become idle before publishing process completion, including
+nested tasks. Reuse and scheduler lifecycle changes should be reviewed as
+separate general-purpose upstream changes.
+
 diff --git a/src/options.rs b/src/options.rs
 index d074351f..967ac166 100644
 --- a/src/options.rs

@@ -1,3 +1,13 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: poll ready work before asyncify suspension
+
+Complete immediately ready work without unnecessary asyncify setup while
+retaining exit checks, signal handling and the pending-work continuation. The
+seek path uses this only where its future and shared offset survive suspension.
+This general runtime optimization must retain pending/error/signal tests;
+ready-only benchmark wins do not justify weakening those paths.
+
 diff --git a/src/syscalls/mod.rs b/src/syscalls/mod.rs
 index 03e09d75..9decf21b 100644
 --- a/src/syscalls/mod.rs

@@ -103,7 +103,7 @@ fi
     COMMON_CPPFLAGS="-I$PGSRC/src/include/port/wasix-dl $ICU_CFLAGS"
     COMMON_CFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -sWASM_EXCEPTIONS=yes -sPIC=yes -Wno-unused-command-line-argument"
     COMMON_LDFLAGS="$OLIPHAUNT_WASM_PROFILE_LDFLAGS -sWASM_EXCEPTIONS=yes -sPIC=yes -L$ICU_PREFIX/lib"
-    MAIN_LDFLAGS="-sMODULE_KIND=dynamic-main -sSTACK_SIZE=8MB -sINITIAL_MEMORY=128MB -Wl,--wrap=system -Wl,--wrap=popen -Wl,--wrap=pclose"
+    MAIN_LDFLAGS="-sMODULE_KIND=dynamic-main -sSTACK_SIZE=$OLIPHAUNT_WASM_GUEST_STACK_SIZE -sINITIAL_MEMORY=$OLIPHAUNT_WASM_INITIAL_MEMORY_SIZE -Wl,--wrap=system -Wl,--wrap=popen -Wl,--wrap=pclose"
 
     INITDB_BUILD_DIR="$(oliphaunt_wasix_scratch_build_dir "${OLIPHAUNT_WASM_SOURCE_LANE:-stable}" wasix-initdb)"
     mkdir -p "$INITDB_BUILD_DIR"

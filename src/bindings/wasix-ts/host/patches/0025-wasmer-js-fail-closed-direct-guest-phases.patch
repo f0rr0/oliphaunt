@@ -1,0 +1,1045 @@
+From 0000000000000000000000000000000000000025 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 27 Aug 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: fail closed across direct guest phases
+
+Treat every error after entering a direct protocol guest phase as terminal.
+Centralize the lifecycle transition so transport selection, input bridging,
+the protocol pump, post-step exports, output extraction, and transport restore
+all poison before returning. Cleanup errors are terminal too, while repeated
+close remains idempotent and never re-enters a poisoned guest.
+
+Validate bridge return values and preserve ProcessStartupPacket rejection as a
+cleanup-capable terminal-for-work state. Handle _start rejection atomically:
+cache and validate the pending v1 outcome descriptor before _start, classify
+only Exit98 as rejection, then copy a complete ErrorResponse-bearing protocol
+stream directly from guest memory without invoking another guest export.
+Malformed outcomes and every other _start failure poison generically.
+
+Keep buffered-input streaming (mode 3) distinct from full duplex (mode 2),
+require an empty guest output buffer after streamed execution, and validate
+every flush status before output extraction. Bound defensive buffered-output
+copies to 64 MiB and make callback failure sticky so a guest retry cannot call
+JavaScript again after the first callback exception. Treat a poisoned callback
+state lock as an equally sticky terminal failure without panicking. Preserve
+that causal callback failure ahead of the derived guest flush failure so the
+public error retains the JavaScript callback diagnostic.
+
+At the exported buffered-exchange boundary, disclose the fixed output limit as
+neutral contract context on every error while retaining the original cause.
+---
+
+--- a/src/postgres_direct.rs
++++ b/src/postgres_direct.rs
+@@ -20,11 +20,20 @@
+ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOptions};
+ 
+ const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
++const OLIPHAUNT_EXIT_STARTUP_REJECTED: i32 = 98;
+ const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
+ const STDERR_LIMIT_BYTES: usize = 16 * 1024;
+ const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
+ const PROTOCOL_BUFFERED: i32 = 0;
+ const PROTOCOL_HYBRID: i32 = 2;
++const PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT: i32 = 3;
++const PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES: i32 = 64 * 1024 * 1024;
++const PROCESS_STARTUP_OK: i32 = 0;
++const PROCESS_STARTUP_ERROR: i32 = -1;
++const STARTUP_OUTCOME_VERSION: u32 = 1;
++const STARTUP_OUTCOME_DESCRIPTOR_BYTES: u32 = 32;
++const STARTUP_OUTCOME_PENDING: u32 = 0;
++const STARTUP_OUTCOME_REJECTED: u32 = 1;
+ 
+ thread_local! {
+     static PROTOCOL_CALLBACK: RefCell<Option<Function>> = const { RefCell::new(None) };
+@@ -167,40 +176,105 @@
+     }
+ }
+ 
++#[derive(Clone, Debug)]
++enum ProtocolStdoutFailure {
++    Callback(String),
++    LockPoisoned,
++}
++
++impl ProtocolStdoutFailure {
++    fn message(&self) -> String {
++        match self {
++            Self::Callback(failure) => format!("protocol stream callback failed: {failure}"),
++            Self::LockPoisoned => "protocol stream state lock was poisoned".to_string(),
++        }
++    }
++
++    fn into_anyhow(self) -> anyhow::Error {
++        anyhow::anyhow!(self.message())
++    }
++
++    fn into_io(self) -> io::Error {
++        io::Error::other(self.message())
++    }
++}
++
++#[derive(Debug, Default)]
++struct ProtocolStdoutState {
++    failure: Option<ProtocolStdoutFailure>,
++}
++
++impl ProtocolStdoutState {
++    fn poison_lock(&mut self) -> ProtocolStdoutFailure {
++        self.failure = Some(ProtocolStdoutFailure::LockPoisoned);
++        ProtocolStdoutFailure::LockPoisoned
++    }
++
++    fn record_callback_failure(&mut self, failure: String) -> ProtocolStdoutFailure {
++        match &self.failure {
++            Some(failure) => failure.clone(),
++            None => {
++                let failure = ProtocolStdoutFailure::Callback(failure);
++                self.failure = Some(failure.clone());
++                failure
++            }
++        }
++    }
++}
++
+ #[derive(Clone, Debug, Default)]
+ struct ProtocolStdout {
+-    failure: Arc<Mutex<Option<String>>>,
++    state: Arc<Mutex<ProtocolStdoutState>>,
+ }
+ 
+ impl ProtocolStdout {
+     fn begin(&self, callback: Function) -> anyhow::Result<()> {
+         PROTOCOL_CALLBACK.with(|active| {
+-            let mut active = active.borrow_mut();
+             ensure!(
+-                active.is_none(),
++                active.borrow().is_none(),
+                 "protocol stream callback is already active"
+             );
+-            *active = Some(callback);
+             Ok(())
+         })?;
+-        *self.failure.lock().expect("protocol stdout lock poisoned") = None;
++        self.with_state(|state| state.failure = None)
++            .map_err(ProtocolStdoutFailure::into_anyhow)?;
++        PROTOCOL_CALLBACK.with(|active| *active.borrow_mut() = Some(callback));
+         Ok(())
+     }
+ 
+     fn finish(&self) -> anyhow::Result<()> {
+         PROTOCOL_CALLBACK.with(|active| *active.borrow_mut() = None);
+-        match self
+-            .failure
+-            .lock()
+-            .expect("protocol stdout lock poisoned")
+-            .take()
+-        {
+-            Some(failure) => anyhow::bail!("protocol stream callback failed: {failure}"),
++        let failure = match self.with_state(|state| state.failure.clone()) {
++            Ok(failure) => failure,
++            Err(failure) => Some(failure),
++        };
++        match failure {
++            Some(failure) => Err(failure.into_anyhow()),
+             None => Ok(()),
+         }
+     }
+ 
++    fn with_state<T>(
++        &self,
++        operation: impl FnOnce(&mut ProtocolStdoutState) -> T,
++    ) -> Result<T, ProtocolStdoutFailure> {
++        match self.state.lock() {
++            Ok(mut state) => Ok(operation(&mut state)),
++            Err(poisoned) => {
++                let mut state = poisoned.into_inner();
++                Err(state.poison_lock())
++            }
++        }
++    }
++
+     fn deliver(&self, input: &[u8]) -> io::Result<()> {
++        let failure = match self.with_state(|state| state.failure.clone()) {
++            Ok(failure) => failure,
++            Err(failure) => Some(failure),
++        };
++        if let Some(failure) = failure {
++            return Err(failure.into_io());
++        }
+         let callback = PROTOCOL_CALLBACK
+             .with(|active| active.borrow().clone())
+             .ok_or_else(|| {
+@@ -209,10 +283,12 @@
+         for input in input.chunks(PROTOCOL_CHUNK_BYTES) {
+             let chunk = Uint8Array::from(input);
+             if let Err(error) = callback.call1(&JsValue::UNDEFINED, &chunk) {
+-                let failure = format!("{error:?}");
+-                *self.failure.lock().expect("protocol stdout lock poisoned") =
+-                    Some(failure.clone());
+-                return Err(io::Error::other(failure));
++                let failure = match self
++                    .with_state(|state| state.record_callback_failure(format!("{error:?}")))
++                {
++                    Ok(failure) | Err(failure) => failure,
++                };
++                return Err(failure.into_io());
+             }
+         }
+         Ok(())
+@@ -426,6 +502,34 @@
+     InputEnded,
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++enum DirectInstanceState {
++    Open,
++    StartupPhase,
++    GuestPhase,
++    StartupRejected,
++    Closing,
++    Poisoned,
++    Closed,
++}
++
++enum BackendStartOutcome {
++    Alive,
++    Rejected(Vec<u8>),
++}
++
++enum DirectStartupOutcome {
++    Processed { output: Uint8Array, status: i32 },
++    Rejected(Vec<u8>),
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++struct StartupOutcomeDescriptor {
++    kind: u32,
++    data_pointer: u64,
++    data_length: u64,
++}
++
+ impl MainLoopOutcome {
+     fn from_i32(value: i32) -> Option<Self> {
+         match value {
+@@ -509,19 +613,20 @@
+     set_protocol_transport: TypedFunction<i32, i32>,
+     set_active: TypedFunction<i32, i32>,
+     prepare_trusted_embedded_session: TypedFunction<(), i32>,
++    startup_outcome: TypedFunction<(), i32>,
+     wasi_start: TypedFunction<(), ()>,
+     start_oliphaunt: TypedFunction<(), ()>,
+     run_atexit_funcs: Option<TypedFunction<(), ()>>,
+     get_port: TypedFunction<(), i32>,
+     process_startup: TypedFunction<(i32, i32, i32), i32>,
+     send_conn_data: TypedFunction<(), ()>,
+-    pq_flush: TypedFunction<(), ()>,
++    pq_flush: TypedFunction<(), i32>,
+     pq_buffer_remaining_data: TypedFunction<(), i32>,
+     main_loop: TypedFunction<(), i32>,
+     send_ready: TypedFunction<(), ()>,
+     backend_started: bool,
+     protocol_started: bool,
+-    closed: bool,
++    state: DirectInstanceState,
+ }
+ 
+ #[wasm_bindgen]
+@@ -530,26 +635,39 @@
+     #[wasm_bindgen(js_name = startup)]
+     pub fn startup(&mut self, packet: Uint8Array) -> Result<Uint8Array, Error> {
+         match self.startup_inner(&packet) {
+-            Ok(output) => Ok(output),
+-            Err(error) => Err(self.startup_error(error)),
++            Ok(DirectStartupOutcome::Processed { output, .. }) => Ok(output),
++            Ok(DirectStartupOutcome::Rejected(protocol)) => Err(self.startup_rejection_error(
++                anyhow::anyhow!("_start rejected Oliphaunt single-user backend"),
++                protocol,
++            )),
++            Err(error) if self.state == DirectInstanceState::StartupPhase => {
++                self.poison_guest_phase();
++                Err(Error::from(self.stderr.attach(error)))
++            }
++            Err(error) => Err(Error::from(self.stderr.attach(error))),
+         }
+     }
+ 
+     /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
+     #[wasm_bindgen(js_name = execProtocolRaw)]
+     pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
+-        if let Err(error) = self.ensure_open() {
+-            return Err(Error::from(self.stderr.attach(error)));
++        if let Err(error) = self.ensure_protocol_started() {
++            return Err(self.buffered_protocol_error(error));
+         }
+-        if let Err(error) = self
+-            .set_protocol_transport
+-            .call(&mut self.store, PROTOCOL_BUFFERED)
+-        {
+-            return Err(Error::from(self.stderr.attach(error.into())));
+-        }
+-        match self.exec_protocol_raw_inner(&input, false) {
++        let result = self.run_guest_phase("buffered protocol exchange", |direct| {
++            let previous = direct
++                .set_protocol_transport
++                .call(&mut direct.store, PROTOCOL_BUFFERED)
++                .context("enable buffered protocol transport")?;
++            ensure!(
++                previous == PROTOCOL_BUFFERED,
++                "enable buffered protocol transport returned previous mode {previous}, expected {PROTOCOL_BUFFERED}"
++            );
++            direct.exec_protocol_raw_inner(&input, false)
++        });
++        match result {
+             Ok(output) => Ok(output),
+-            Err(error) => Err(Error::from(self.stderr.attach(error))),
++            Err(error) => Err(self.buffered_protocol_error(error)),
+         }
+     }
+ 
+@@ -560,7 +678,13 @@
+         input: Uint8Array,
+         on_chunk: Function,
+-    ) -> Result<(), Error> {
++    ) -> Result<u32, Error> {
+-        match self.exec_protocol_stream_inner(&input, on_chunk) {
++        if let Err(error) = self.ensure_protocol_started() {
++            return Err(Error::from(self.stderr.attach(error)));
++        }
++        let result = self.run_guest_phase("streaming protocol exchange", |direct| {
++            direct.exec_protocol_stream_inner(&input, on_chunk)
++        });
++        match result {
+-            Ok(()) => Ok(()),
++            Ok(()) => Ok(0),
+             Err(error) => Err(Error::from(self.stderr.attach(error))),
+         }
+@@ -574,7 +698,13 @@
+         on_read: Function,
+         on_chunk: Function,
+     ) -> Result<(), Error> {
+-        match self.exec_protocol_duplex_inner(&input, on_read, on_chunk) {
++        if let Err(error) = self.ensure_protocol_started() {
++            return Err(Error::from(self.stderr.attach(error)));
++        }
++        let result = self.run_guest_phase("duplex protocol exchange", |direct| {
++            direct.exec_protocol_duplex_inner(&input, on_read, on_chunk)
++        });
++        match result {
+             Ok(()) => Ok(()),
+             Err(error) => Err(Error::from(self.stderr.attach(error))),
+         }
+@@ -590,17 +720,33 @@
+ }
+ 
+ impl OliphauntDirectInstance {
++    fn buffered_protocol_error(&self, error: anyhow::Error) -> Error {
++        let error = error.context(format!(
++            "buffered protocol exchange contract: buffered protocol output has a {PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES}-byte limit"
++        ));
++        Error::from(self.stderr.attach(error))
++    }
++
+     fn exec_protocol_duplex_inner(
+         &mut self,
+         payload: &Uint8Array,
+         on_read: Function,
+         on_chunk: Function,
+     ) -> anyhow::Result<()> {
+-        self.ensure_open()?;
+         self.protocol_stdin.begin(on_read)?;
+-        let result = self.exec_protocol_stream_inner(payload, on_chunk);
++        let result =
++            self.exec_protocol_callback_inner(payload, on_chunk.clone(), PROTOCOL_HYBRID, true);
+         self.protocol_stdin.finish();
+-        result
++        let output = result?;
++        let length = output.length() as usize;
++        for start in (0..length).step_by(PROTOCOL_CHUNK_BYTES) {
++            let end = start.saturating_add(PROTOCOL_CHUNK_BYTES).min(length);
++            let chunk = output.slice(start as u32, end as u32);
++            on_chunk
++                .call1(&JsValue::UNDEFINED, &chunk)
++                .map_err(|error| anyhow::anyhow!("protocol stream callback failed: {error:?}"))?;
++        }
++        Ok(())
+     }
+ 
+     fn exec_protocol_stream_inner(
+@@ -608,53 +754,107 @@
+         payload: &Uint8Array,
+         on_chunk: Function,
+     ) -> anyhow::Result<()> {
+-        self.ensure_open()?;
++        let output = self.exec_protocol_callback_inner(
++            payload,
++            on_chunk,
++            PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT,
++            false,
++        )?;
++        ensure!(
++            output.length() == 0,
++            "buffered-input/streamed-output transport left {} buffered protocol bytes",
++            output.length()
++        );
++        Ok(())
++    }
++
++    fn exec_protocol_callback_inner(
++        &mut self,
++        payload: &Uint8Array,
++        on_chunk: Function,
++        transport: i32,
++        streaming_input: bool,
++    ) -> anyhow::Result<Uint8Array> {
+         self.protocol_stdout.begin(on_chunk.clone())?;
+         let previous = match self
+             .set_protocol_transport
+-            .call(&mut self.store, PROTOCOL_HYBRID)
+-            .context("enable hybrid protocol transport")
++            .call(&mut self.store, transport)
++            .with_context(|| format!("enable protocol transport mode {transport}"))
+         {
+-            Ok(previous) => previous,
++            Ok(previous) if previous == PROTOCOL_BUFFERED => previous,
++            Ok(previous) => {
++                let _ = self.protocol_stdout.finish();
++                anyhow::bail!(
++                    "enable protocol transport mode {transport} returned previous mode {previous}, expected {PROTOCOL_BUFFERED}"
++                );
++            }
+             Err(error) => {
+                 let _ = self.protocol_stdout.finish();
+                 return Err(error);
+             }
+         };
+-        let execution = self.exec_protocol_raw_inner(payload, true);
+-        let restore = if self.closed {
+-            // A terminal main-loop outcome poisons guest state. Never invoke
+-            // another guest export merely to restore the transport selector.
++        let execution = self.exec_protocol_raw_inner(payload, streaming_input);
++        let restore = if execution.is_err() {
++            // Once any guest-facing step fails, guest state is unknown. The
++            // outer phase boundary will poison the instance; do not re-enter
++            // the guest merely to restore the transport selector.
+             Ok(())
+         } else {
+             self.set_protocol_transport
+                 .call(&mut self.store, previous)
+-                .context("restore protocol transport")
+-                .map(|_| ())
++                .with_context(|| format!("restore protocol transport from mode {transport}"))
++                .and_then(|replaced| {
++                    ensure!(
++                        replaced == transport,
++                        "restore protocol transport replaced mode {replaced}, expected {transport}"
++                    );
++                    Ok(())
++                })
+         };
+         let callback = self.protocol_stdout.finish();
+ 
+-        let output = execution?;
+-        restore?;
+         callback?;
++        let output = execution?;
++        restore?;
+-        let length = output.length() as usize;
+-        for start in (0..length).step_by(PROTOCOL_CHUNK_BYTES) {
+-            let end = start.saturating_add(PROTOCOL_CHUNK_BYTES).min(length);
+-            let chunk = output.slice(start as u32, end as u32);
+-            on_chunk
+-                .call1(&JsValue::UNDEFINED, &chunk)
+-                .map_err(|error| anyhow::anyhow!("protocol stream callback failed: {error:?}"))?;
+-        }
+-        Ok(())
++        Ok(output)
+     }
+ 
+-    fn startup_inner(&mut self, packet: &Uint8Array) -> anyhow::Result<Uint8Array> {
+-        self.ensure_open()?;
++    fn startup_inner(&mut self, packet: &Uint8Array) -> anyhow::Result<DirectStartupOutcome> {
++        match self.state {
++            DirectInstanceState::Open => {}
++            DirectInstanceState::StartupRejected => {
++                anyhow::bail!(
++                    "Oliphaunt direct startup was already rejected; the direct instance cannot be reused"
++                )
++            }
++            _ => self.ensure_open()?,
++        }
+         ensure!(
+             !self.protocol_started,
+             "Oliphaunt direct startup already completed"
+         );
+-        self.start_backend()?;
++        self.state = DirectInstanceState::StartupPhase;
++        let outcome = self.startup_guest_inner(packet)?;
++        match outcome {
++            DirectStartupOutcome::Processed { status, .. } => {
++                self.state = if status == PROCESS_STARTUP_ERROR {
++                    DirectInstanceState::StartupRejected
++                } else {
++                    DirectInstanceState::Open
++                };
++            }
++            DirectStartupOutcome::Rejected(_) => self.poison_guest_phase(),
++        }
++        Ok(outcome)
++    }
++
++    fn startup_guest_inner(&mut self, packet: &Uint8Array) -> anyhow::Result<DirectStartupOutcome> {
++        match self.start_backend()? {
++            BackendStartOutcome::Alive => {}
++            BackendStartOutcome::Rejected(protocol) => {
++                return Ok(DirectStartupOutcome::Rejected(protocol));
++            }
++        }
+         self.reset_io()?;
+         self.push_input_js(packet)?;
+ 
+@@ -667,17 +867,28 @@
+             .process_startup
+             .call(&mut self.store, port, 1, 1)
+             .context("ProcessStartupPacket")?;
+-        self.pq_flush.call(&mut self.store).ok();
+-        if status == 0 {
++        ensure!(
++            status == PROCESS_STARTUP_OK || status == PROCESS_STARTUP_ERROR,
++            "ProcessStartupPacket returned invalid status {status}"
++        );
++        if status == PROCESS_STARTUP_OK {
+             self.send_conn_data
+                 .call(&mut self.store)
+                 .context("oliphaunt_wasix_send_conn_data")?;
+-            self.pq_flush
+-                .call(&mut self.store)
+-                .context("oliphaunt_wasix_pq_flush after startup")?;
+             self.protocol_started = true;
+         }
+-        self.take_output_js()
++        let flush_status = self
++            .pq_flush
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_pq_flush after startup")?;
++        ensure!(
++            flush_status == 0,
++            "oliphaunt_wasix_pq_flush after startup returned {flush_status}"
++        );
++        Ok(DirectStartupOutcome::Processed {
++            output: self.take_output_js()?,
++            status,
++        })
+     }
+ 
+     fn exec_protocol_raw_inner(
+@@ -685,7 +896,10 @@
+         payload: &Uint8Array,
+         streaming: bool,
+     ) -> anyhow::Result<Uint8Array> {
+-        self.ensure_open()?;
++        ensure!(
++            self.state == DirectInstanceState::GuestPhase,
++            "direct protocol exchange did not enter its guest phase"
++        );
+         ensure!(
+             self.protocol_started,
+             "Oliphaunt direct startup has not completed"
+@@ -727,21 +941,48 @@
+     }
+ 
+     fn close_inner(&mut self) -> anyhow::Result<()> {
+-        if self.closed {
+-            return Ok(());
+-        }
+-        self.set_active
+-            .call(&mut self.store, 0)
+-            .context("oliphaunt_wasix_set_active(0)")?;
+-        if let Some(run_atexit_funcs) = &self.run_atexit_funcs {
+-            run_atexit_funcs
+-                .call(&mut self.store)
+-                .context("oliphaunt_wasix_run_atexit_funcs")?;
++        match self.state {
++            DirectInstanceState::Poisoned | DirectInstanceState::Closed => return Ok(()),
++            DirectInstanceState::StartupPhase
++            | DirectInstanceState::GuestPhase
++            | DirectInstanceState::Closing => {
++                self.poison_guest_phase();
++                anyhow::bail!(
++                    "Oliphaunt direct instance cannot close during an active guest phase; the direct instance is closed"
++                );
++            }
++            DirectInstanceState::Open | DirectInstanceState::StartupRejected => {}
+         }
+-        self.closed = true;
++        self.state = DirectInstanceState::Closing;
++        let result = (|| {
++            let expected_active = i32::from(self.backend_started);
++            let previous_active = self
++                .set_active
++                .call(&mut self.store, 0)
++                .context("oliphaunt_wasix_set_active(0)")?;
++            ensure!(
++                previous_active == expected_active,
++                "oliphaunt_wasix_set_active(0) returned previous state {previous_active}, expected {expected_active}"
++            );
++            if let Some(run_atexit_funcs) = &self.run_atexit_funcs {
++                run_atexit_funcs
++                    .call(&mut self.store)
++                    .context("oliphaunt_wasix_run_atexit_funcs")?;
++            }
++            Ok(())
++        })();
+         self.backend_started = false;
+         self.protocol_started = false;
+-        Ok(())
++        match result {
++            Ok(()) => {
++                self.state = DirectInstanceState::Closed;
++                Ok(())
++            }
++            Err(error) => {
++                self.state = DirectInstanceState::Poisoned;
++                Err(error.context("direct instance cleanup failed; the direct instance is closed"))
++            }
++        }
+     }
+     async fn instantiate(
+         module: WebAssembly::Module,
+@@ -802,6 +1043,8 @@
+             &instance,
+             "oliphaunt_wasix_prepare_trusted_embedded_session",
+         )?;
++        let startup_outcome =
++            typed_export(&mut store, &instance, "oliphaunt_wasix_startup_outcome_v1")?;
+         let wasi_start = typed_export(&mut store, &instance, "_start")?;
+         let start_oliphaunt = typed_export(&mut store, &instance, "oliphaunt_wasix_start")?;
+         let run_atexit_funcs =
+@@ -838,6 +1081,7 @@
+             set_protocol_transport,
+             set_active,
+             prepare_trusted_embedded_session,
++            startup_outcome,
+             wasi_start,
+             start_oliphaunt,
+             run_atexit_funcs,
+@@ -850,38 +1094,79 @@
+             send_ready,
+             backend_started: false,
+             protocol_started: false,
+-            closed: false,
++            state: DirectInstanceState::Open,
+         };
+         direct.reset_io()?;
+         Ok(direct)
+     }
+ 
+     fn ensure_open(&self) -> anyhow::Result<()> {
+-        ensure!(!self.closed, "Oliphaunt direct instance is closed");
++        ensure!(
++            self.state == DirectInstanceState::Open,
++            "Oliphaunt direct instance is closed"
++        );
+         Ok(())
+     }
+ 
+-    fn poison_main_loop(&mut self) {
+-        // A trap, invalid typed outcome, or failed post-step export can leave
+-        // arbitrary guest state behind. Do not call another guest export,
+-        // including the ordinary close sequence.
+-        self.closed = true;
++    fn ensure_protocol_started(&self) -> anyhow::Result<()> {
++        match self.state {
++            DirectInstanceState::Open => {}
++            DirectInstanceState::StartupRejected => {
++                anyhow::bail!(
++                    "Oliphaunt direct startup was rejected; the direct instance cannot be reused"
++                )
++            }
++            _ => self.ensure_open()?,
++        }
++        ensure!(
++            self.protocol_started,
++            "Oliphaunt direct startup has not completed"
++        );
++        Ok(())
++    }
++
++    fn run_guest_phase<T>(
++        &mut self,
++        phase: &'static str,
++        operation: impl FnOnce(&mut Self) -> anyhow::Result<T>,
++    ) -> anyhow::Result<T> {
++        self.ensure_open()?;
++        self.state = DirectInstanceState::GuestPhase;
++        match operation(self) {
++            Ok(value) if self.state == DirectInstanceState::GuestPhase => {
++                self.state = DirectInstanceState::Open;
++                Ok(value)
++            }
++            Ok(_) => anyhow::bail!(
++                "{phase} reached a terminal lifecycle state; the direct instance is closed"
++            ),
++            Err(error) => {
++                if self.state == DirectInstanceState::GuestPhase {
++                    self.poison_guest_phase();
++                }
++                Err(error.context(format!(
++                    "{phase} failed after entering the guest; the direct instance is closed"
++                )))
++            }
++        }
++    }
++
++    fn poison_guest_phase(&mut self) {
++        // Any failure after a guest phase starts can leave arbitrary guest
++        // state behind. No later operation, including close, may call another
++        // guest export.
++        self.state = DirectInstanceState::Poisoned;
+         self.backend_started = false;
+         self.protocol_started = false;
+     }
+ 
+-    fn terminal_main_loop_outcome(&mut self, failure: impl Into<String>) -> anyhow::Error {
+-        let failure = failure.into();
+-        self.poison_main_loop();
+-        anyhow::anyhow!("{failure}; the direct instance is closed")
++    fn terminal_main_loop_outcome(&self, failure: impl Into<String>) -> anyhow::Error {
++        anyhow::anyhow!(failure.into())
+     }
+ 
+-    fn terminal_main_loop_error(&mut self, error: wasmer::RuntimeError) -> anyhow::Error {
+-        self.poison_main_loop();
+-        anyhow::Error::from(error).context(
+-            "PostgresMainLoopOnce trapped instead of returning a typed outcome; \
+-             the direct instance is closed",
+-        )
++    fn terminal_main_loop_error(&self, error: wasmer::RuntimeError) -> anyhow::Error {
++        anyhow::Error::from(error)
++            .context("PostgresMainLoopOnce trapped instead of returning a typed outcome")
+     }
+ 
+     fn call_main_loop(&mut self) -> anyhow::Result<MainLoopOutcome> {
+@@ -897,38 +1182,35 @@
+     }
+ 
+     fn send_ready_after_main_loop(&mut self) -> anyhow::Result<()> {
+-        match self.send_ready.call(&mut self.store) {
+-            Ok(()) => Ok(()),
+-            Err(error) => {
+-                self.poison_main_loop();
+-                Err(anyhow::Error::from(error).context(
+-                    "PostgresSendReadyForQueryIfNecessary trapped after a typed main-loop outcome; \
+-                     the direct instance is closed",
+-                ))
+-            }
+-        }
++        self.send_ready
++            .call(&mut self.store)
++            .context("PostgresSendReadyForQueryIfNecessary trapped after a typed main-loop outcome")
+     }
+ 
+     fn flush_after_main_loop(&mut self) -> anyhow::Result<()> {
+-        match self.pq_flush.call(&mut self.store) {
+-            Ok(()) => Ok(()),
+-            Err(error) => {
+-                self.poison_main_loop();
+-                Err(anyhow::Error::from(error).context(
+-                    "oliphaunt_wasix_pq_flush trapped after a typed main-loop outcome; \
+-                     the direct instance is closed",
+-                ))
+-            }
+-        }
++        let status = self
++            .pq_flush
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_pq_flush trapped after a typed main-loop outcome")?;
++        ensure!(
++            status == 0,
++            "protocol output flush returned {status} after a typed main-loop outcome; buffered protocol output has a {PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES}-byte limit"
++        );
++        Ok(())
+     }
+ 
+-    fn start_backend(&mut self) -> anyhow::Result<()> {
++    fn start_backend(&mut self) -> anyhow::Result<BackendStartOutcome> {
+         if self.backend_started {
+-            return Ok(());
++            return Ok(BackendStartOutcome::Alive);
+         }
+-        self.set_active
++        let previous_active = self
++            .set_active
+             .call(&mut self.store, 1)
+             .context("oliphaunt_wasix_set_active(1)")?;
++        ensure!(
++            previous_active == 0,
++            "oliphaunt_wasix_set_active(1) returned previous state {previous_active}, expected 0"
++        );
+         let prepare_status = self
+             .prepare_trusted_embedded_session
+             .call(&mut self.store)
+@@ -937,16 +1219,107 @@
+             prepare_status == 0,
+             "oliphaunt_wasix_prepare_trusted_embedded_session rejected after PostgreSQL startup began"
+         );
++        let startup_outcome_pointer = self
++            .startup_outcome
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_startup_outcome_v1 before _start")?;
++        let pending = self.read_startup_outcome_descriptor(startup_outcome_pointer)?;
++        ensure!(
++            pending.kind == STARTUP_OUTCOME_PENDING,
++            "startup outcome was not pending before _start"
++        );
++        ensure!(
++            pending.data_pointer == 0 && pending.data_length == 0,
++            "pending startup outcome carried protocol data"
++        );
+         match self.wasi_start.call(&mut self.store) {
+-            Ok(()) => {}
+             Err(error) if runtime_exit_code(&error) == Some(OLIPHAUNT_EXIT_ALIVE) => {}
++            Err(error) if runtime_exit_code(&error) == Some(OLIPHAUNT_EXIT_STARTUP_REJECTED) => {
++                let protocol = self
++                    .read_startup_rejection(startup_outcome_pointer)
++                    .context("read rejected _start outcome")?;
++                return Ok(BackendStartOutcome::Rejected(protocol));
++            }
++            Ok(()) => anyhow::bail!("_start returned without an Oliphaunt lifecycle exit"),
+             Err(error) => return Err(error).context("_start Oliphaunt single-user backend"),
+         }
+         self.start_oliphaunt
+             .call(&mut self.store)
+             .context("oliphaunt_wasix_start")?;
+         self.backend_started = true;
+-        Ok(())
++        Ok(BackendStartOutcome::Alive)
++    }
++
++    fn read_startup_outcome_descriptor(
++        &self,
++        descriptor_pointer: i32,
++    ) -> anyhow::Result<StartupOutcomeDescriptor> {
++        ensure!(
++            descriptor_pointer != 0,
++            "oliphaunt_wasix_startup_outcome_v1 returned null"
++        );
++        let bytes = oliphaunt_copy_from_guest(
++            &self.guest_memory,
++            descriptor_pointer as u32,
++            STARTUP_OUTCOME_DESCRIPTOR_BYTES,
++        )
++        .map_err(|error| anyhow::anyhow!("copy startup outcome descriptor: {error:?}"))?
++        .to_vec();
++        ensure!(
++            bytes.len() == STARTUP_OUTCOME_DESCRIPTOR_BYTES as usize,
++            "short startup outcome descriptor"
++        );
++        let version = read_u32_le(&bytes, 0);
++        let size = read_u32_le(&bytes, 4);
++        let kind = read_u32_le(&bytes, 8);
++        let reserved = read_u32_le(&bytes, 12);
++        ensure!(
++            version == STARTUP_OUTCOME_VERSION,
++            "unsupported startup outcome version {version}"
++        );
++        ensure!(
++            size == STARTUP_OUTCOME_DESCRIPTOR_BYTES,
++            "invalid startup outcome descriptor size {size}"
++        );
++        ensure!(reserved == 0, "startup outcome reserved field was nonzero");
++        Ok(StartupOutcomeDescriptor {
++            kind,
++            data_pointer: read_u64_le(&bytes, 16),
++            data_length: read_u64_le(&bytes, 24),
++        })
++    }
++
++    fn read_startup_rejection(&self, descriptor_pointer: i32) -> anyhow::Result<Vec<u8>> {
++        let descriptor = self.read_startup_outcome_descriptor(descriptor_pointer)?;
++        ensure!(
++            descriptor.kind == STARTUP_OUTCOME_REJECTED,
++            "_start Exit98 did not publish a rejected startup outcome"
++        );
++        ensure!(
++            (1..=1_048_576).contains(&descriptor.data_length) && descriptor.data_pointer > 0,
++            "rejected startup outcome carried empty or oversized protocol data"
++        );
++        let end = descriptor
++            .data_pointer
++            .checked_add(descriptor.data_length)
++            .context("startup rejection protocol bounds overflow")?;
++        ensure!(
++            end <= u32::MAX as u64 + 1,
++            "startup rejection protocol exceeds Wasm32 memory bounds"
++        );
++        let pointer = u32::try_from(descriptor.data_pointer)
++            .context("startup rejection protocol pointer exceeds u32")?;
++        let length = u32::try_from(descriptor.data_length)
++            .context("startup rejection protocol length exceeds u32")?;
++        let protocol = oliphaunt_copy_from_guest(&self.guest_memory, pointer, length)
++            .map_err(|error| anyhow::anyhow!("copy startup rejection protocol: {error:?}"))?
++            .to_vec();
++        ensure!(
++            protocol.len() == length as usize,
++            "short startup rejection protocol copy"
++        );
++        validate_startup_rejection_protocol(&protocol)?;
++        Ok(protocol)
+     }
+ 
+     fn reset_io(&mut self) -> anyhow::Result<()> {
+@@ -993,6 +1366,10 @@
+             .call(&mut self.store)
+             .context("oliphaunt_wasix_output_len")?;
+         ensure!(len >= 0, "negative direct protocol output length");
++        ensure!(
++            len <= PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES,
++            "direct protocol output length {len} exceeds the {PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES}-byte limit"
++        );
+         if len == 0 {
+             return Ok(Uint8Array::new_with_length(0));
+         }
+@@ -1002,7 +1379,9 @@
+             .context("oliphaunt_wasix_output_data")?;
+         ensure!(ptr > 0, "oliphaunt_wasix_output_data returned null");
+         let output = oliphaunt_copy_from_guest(&self.guest_memory, ptr as u32, len as u32)
+-            .map_err(|error| anyhow::anyhow!("copy direct protocol output from guest: {error:?}"));
++            .map_err(|error| {
++                anyhow::anyhow!("copy direct protocol output from guest: {error:?}")
++            })?;
+         ensure!(
+             self.output_reset
+                 .call(&mut self.store)
+@@ -1010,7 +1389,7 @@
+                 == 0,
+             "oliphaunt_wasix_output_reset after read failed"
+         );
+-        output
++        Ok(output)
+     }
+ 
+     fn protocol_input_remaining(&mut self) -> anyhow::Result<i32> {
+@@ -1022,26 +1401,21 @@
+         if available > 0 {
+             return Ok(available);
+         }
+-        self.pq_buffer_remaining_data
++        let buffered = self
++            .pq_buffer_remaining_data
+             .call(&mut self.store)
+-            .context("pq_buffer_remaining_data")
++            .context("pq_buffer_remaining_data")?;
++        ensure!(buffered >= 0, "negative buffered protocol input length");
++        Ok(buffered)
+     }
+ 
+-    fn startup_error(&mut self, error: anyhow::Error) -> Error {
++    fn startup_rejection_error(&self, error: anyhow::Error, protocol: Vec<u8>) -> Error {
+         let error = self.stderr.attach(error);
+-        let _ = self.pq_flush.call(&mut self.store);
+-        let protocol = self
+-            .take_output_js()
+-            .unwrap_or_else(|_| Uint8Array::new_with_length(0));
+-        if protocol.length() == 0 {
+-            return Error::from(error);
+-        }
+-
+         let js_error = js_sys::Error::new(&error.to_string());
+         let _ = js_sys::Reflect::set(
+             &js_error,
+             &wasm_bindgen::JsValue::from_str("protocolResponse"),
+-            &protocol,
++            &Uint8Array::from(protocol.as_slice()),
+         );
+         let _ = js_sys::Reflect::set(
+             &js_error,
+@@ -1052,6 +1426,88 @@
+     }
+ }
+ 
++fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
++    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
++}
++
++fn read_u64_le(bytes: &[u8], offset: usize) -> u64 {
++    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
++}
++
++fn validate_startup_rejection_protocol(protocol: &[u8]) -> anyhow::Result<()> {
++    let mut offset = 0usize;
++    let mut found_error_response = false;
++    while offset < protocol.len() {
++        ensure!(
++            protocol.len() - offset >= 5,
++            "truncated startup rejection protocol frame"
++        );
++        let tag = protocol[offset];
++        let frame_length =
++            u32::from_be_bytes(protocol[offset + 1..offset + 5].try_into().unwrap()) as usize;
++        ensure!(
++            frame_length >= 4,
++            "invalid startup rejection protocol frame length {frame_length}"
++        );
++        let frame_end = offset
++            .checked_add(1)
++            .and_then(|value| value.checked_add(frame_length))
++            .context("startup rejection protocol frame bounds overflow")?;
++        ensure!(
++            frame_end <= protocol.len(),
++            "truncated startup rejection protocol frame"
++        );
++        if tag == b'E' {
++            validate_error_response_fields(&protocol[offset + 5..frame_end])?;
++            found_error_response = true;
++        }
++        offset = frame_end;
++    }
++    ensure!(
++        found_error_response,
++        "startup rejection protocol did not contain an ErrorResponse"
++    );
++    Ok(())
++}
++
++fn validate_error_response_fields(fields: &[u8]) -> anyhow::Result<()> {
++    ensure!(
++        fields.last() == Some(&0),
++        "startup ErrorResponse was not terminated"
++    );
++    let mut offset = 0usize;
++    let mut found_sqlstate = false;
++    while offset < fields.len() - 1 {
++        ensure!(
++            fields[offset] != 0,
++            "startup ErrorResponse terminated before the end of its frame"
++        );
++        let field_type = fields[offset];
++        offset += 1;
++        let terminator = fields[offset..]
++            .iter()
++            .position(|byte| *byte == 0)
++            .context("startup ErrorResponse contained an unterminated field")?;
++        if field_type == b'C' {
++            ensure!(
++                terminator == 5,
++                "startup ErrorResponse carried an invalid SQLSTATE"
++            );
++            found_sqlstate = true;
++        }
++        offset += terminator + 1;
++    }
++    ensure!(
++        offset == fields.len() - 1,
++        "startup ErrorResponse contained trailing bytes"
++    );
++    ensure!(
++        found_sqlstate,
++        "startup ErrorResponse did not contain a SQLSTATE"
++    );
++    Ok(())
++}
++
+ fn typed_export<Args, Rets>(
+     store: &mut Store,
+     instance: &WasmerInstance,

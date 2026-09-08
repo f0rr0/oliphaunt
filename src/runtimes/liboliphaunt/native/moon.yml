@@ -71,6 +71,9 @@ tasks:
       - "liboliphaunt-native:external-source-fetch-test"
       - "liboliphaunt-native:error-attribution-test"
       - "liboliphaunt-native:generation-lifecycle-test"
+      - "liboliphaunt-native:embedded-contract-test"
+      - "liboliphaunt-native:session-reset-test"
+      - "liboliphaunt-native:tools-output-capture-test"
       - "liboliphaunt-native:ios-extension-packager-test"
       - "liboliphaunt-native:module-dir-resolver-test"
       - "liboliphaunt-native:postgis-reproducible-time-test"
@@ -86,6 +89,37 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  embedded-contract-test:
+    command: "node --test src/runtimes/liboliphaunt/native/tools/cwd-boundary-contract.test.mjs src/runtimes/liboliphaunt/native/tools/event-trigger-runtime-mode.test.mjs src/runtimes/liboliphaunt/native/tools/trusted-embedded-session.test.mjs src/runtimes/liboliphaunt/native/tools/trusted-host-process-boundary.test.mjs"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/patches/**/*"
+      - "/src/runtimes/liboliphaunt/native/postgres18/source.toml"
+      - "/src/runtimes/liboliphaunt/native/src/**/*"
+      - "/src/runtimes/liboliphaunt/native/smoke/liboliphaunt_smoke.c"
+      - "/src/runtimes/liboliphaunt/native/tools/*.test.mjs"
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  session-reset-test:
+    command: "node src/runtimes/liboliphaunt/native/tools/test-session-reset.mjs"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/src/**/*"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/runtimes/liboliphaunt/native/tools/test-session-reset.mjs"
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  tools-output-capture-test:
+    command: "node --test src/runtimes/liboliphaunt/native/tools-npm/output-capture.test.mjs"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/tools-npm/index.js"
+      - "/src/runtimes/liboliphaunt/native/tools-npm/output-capture.test.mjs"
     options:
       cache: true
       internal: true
@@ -119,7 +153,9 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_internal.h"
       - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_platform.h"
       - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_backup_state.c"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c"
       - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c"
       - "/src/runtimes/liboliphaunt/native/smoke/liboliphaunt_generation_lifecycle.c"
       - "/src/runtimes/liboliphaunt/native/tools/test-generation-lifecycle.sh"
     options:

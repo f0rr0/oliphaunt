@@ -1,0 +1,108 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 5/7] libc: establish EH signal jump context in the caller
+
+Capture signal jump state in the calling frame for the Wasm EH configuration;
+install mask preparation/restoration hooks around longjmp. The pinned WASIX
+pthread_sigmask backend is a success-returning stub: these hooks do not provide
+actual guest signal masking. Header and implementation guards match,
+including unmodified-upstream and libc-internal builds. The sigsetjmp macro
+still evaluates its buffer more than once: that inherited API limitation must
+be resolved before claiming generic upstream quality, not hidden by a wrapper
+that captures the wrong stack frame.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/libc-top-half/musl/include/setjmp.h b/libc-top-half/musl/include/setjmp.h
+index 3961c02..f92f9f0 100644
+--- a/libc-top-half/musl/include/setjmp.h
++++ b/libc-top-half/musl/include/setjmp.h
+@@ -48,7 +48,15 @@ _Noreturn void _longjmp (jmp_buf, int);
+ #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
+ 	defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+ 	typedef jmp_buf sigjmp_buf;
++#if !defined(__wasilibc_unmodified_upstream) && \
++    defined(__wasm_exception_handling__) && \
++    !defined(__WASIX_LIBC_BUILDING_SETJMP)
++	int __wasilibc_sigsetjmp_save(sigjmp_buf, int);
++#define sigsetjmp(buf, savesigs) \
++	(__wasilibc_sigsetjmp_save((buf), (savesigs)), setjmp((buf)))
++#else
+ 	int sigsetjmp(sigjmp_buf, int) __setjmp_attr;
++#endif
+ 	_Noreturn void siglongjmp(sigjmp_buf, int);
+ #endif
+ 
+diff --git a/libc-top-half/musl/src/setjmp/setjmplongjmp.c b/libc-top-half/musl/src/setjmp/setjmplongjmp.c
+index 05ebc4a..a1fab64 100644
+--- a/libc-top-half/musl/src/setjmp/setjmplongjmp.c
++++ b/libc-top-half/musl/src/setjmp/setjmplongjmp.c
+@@ -1,4 +1,5 @@
+ #ifndef __wasilibc_unmodified_upstream
++#define __WASIX_LIBC_BUILDING_SETJMP
+ #include <setjmp.h>
+ 
+ #  ifdef __wasm_exception_handling__
+@@ -93,9 +94,11 @@ int setjmp (jmp_buf buf) {
+ 
+ #  endif
+ 
++#  ifndef __wasm_exception_handling__
+ // TODO: ignoring signal masking for now
+ int sigsetjmp(jmp_buf  buf, int savesigs) {
+     return setjmp(buf);
+ }
++#  endif
+ 
+ #endif
+diff --git a/libc-top-half/musl/src/signal/siglongjmp.c b/libc-top-half/musl/src/signal/siglongjmp.c
+index 577ecb5..4ceea6a 100644
+--- a/libc-top-half/musl/src/signal/siglongjmp.c
++++ b/libc-top-half/musl/src/signal/siglongjmp.c
+@@ -8,5 +8,10 @@
+ 
+ _Noreturn void siglongjmp(sigjmp_buf buf, int ret)
+ {
++#if !defined(__wasilibc_unmodified_upstream) && defined(__wasm_exception_handling__)
++	if (buf->__fl) {
++		pthread_sigmask(SIG_SETMASK, (sigset_t *)buf->__ss, 0);
++	}
++#endif
+ 	longjmp(buf, ret);
+-}
+\ No newline at end of file
++}
+diff --git a/libc-top-half/musl/src/signal/sigsetjmp_tail.c b/libc-top-half/musl/src/signal/sigsetjmp_tail.c
+index 57b00c5..f35da65 100644
+--- a/libc-top-half/musl/src/signal/sigsetjmp_tail.c
++++ b/libc-top-half/musl/src/signal/sigsetjmp_tail.c
+@@ -1,6 +1,7 @@
+ #include <setjmp.h>
+ #include <signal.h>
+ #include <errno.h>
++#include <string.h>
+ #ifdef __wasilibc_unmodified_upstream
+ #include "syscall.h"
+ #endif
+@@ -14,4 +15,18 @@ hidden int __sigsetjmp_tail(sigjmp_buf jb, int ret)
+ #else
+ 	return EINVAL;
+ #endif
+-}
+\ No newline at end of file
++}
++
++#if !defined(__wasilibc_unmodified_upstream) && defined(__wasm_exception_handling__)
++int __wasilibc_sigsetjmp_save(sigjmp_buf jb, int savesigs)
++{
++	jb->__fl = savesigs ? 1 : 0;
++	if (!savesigs) {
++		return 0;
++	}
++
++	memset(jb->__ss, 0, sizeof jb->__ss);
++	pthread_sigmask(SIG_SETMASK, NULL, (sigset_t *)jb->__ss);
++	return 0;
++}
++#endif

@@ -511,6 +511,16 @@ function runClusterSeedSmoke(paths, smokeBin) {
     ];
     run(smokeBin, importArgs, { env: importEnv });
     run(smokeBin, importArgs, { env: importEnv });
+    for (const fsync of ['on', 'off']) {
+      const durabilityArgs = [
+        normalizeForC(importPgdata),
+        normalizeForC(paths.installDir),
+        "SELECT 'native-fsync-' || current_setting('fsync')",
+        `native-fsync-${fsync}`,
+        ...(fsync === 'off' ? ['fsync=off'] : []),
+      ];
+      run(smokeBin, durabilityArgs, { env: importEnv });
+    }
   } finally {
     if (removeRuntimeIcuData) {
       fs.rmSync(runtimeIcuData, { recursive: true, force: true });

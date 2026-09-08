@@ -8,7 +8,10 @@ const PROTOCOL_IDLE = 0;
 const PROTOCOL_ACTIVE = 1;
 const PROTOCOL_COMPLETE = 2;
 
+// Read batching only; independent of the public protocol callback maximum.
 const WASIX_BYTE_CHANNEL_CHUNK_BYTES = 64 * 1024;
+// Fixed shared-memory allocation. One sentinel byte distinguishes full/empty,
+// leaving 256 KiB usable; writers wait for space rather than buffering the stream.
 const WASIX_CHANNEL_BYTES = 256 * 1024 + 1;
 
 /** @internal One bounded single-producer/single-consumer byte channel. */

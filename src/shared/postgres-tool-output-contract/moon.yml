@@ -1,0 +1,32 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "postgres-tool-output-contract"
+language: "javascript"
+layer: "configuration"
+stack: "systems"
+tags: ["postgres", "contract", "runtime", "tools"]
+
+project:
+  title: "PostgreSQL Tool Output Contract"
+  description: "Shared bounded-output policy for in-memory pg_dump and psql convenience APIs."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static", "contract"]
+    command: "node tools/policy/check-postgres-tool-output-contract.mjs"
+    inputs:
+      - "/src/shared/postgres-tool-output-contract/**/*"
+      - "/src/bindings/wasix-ts/host/patches/0021-wasmer-js-stream-direct-pgwire.patch"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs"
+      - "/src/runtimes/liboliphaunt/native/crates/tools/src/lib.rs"
+      - "/src/runtimes/liboliphaunt/native/tools-npm/index.js"
+      - "/tools/policy/check-postgres-tool-output-contract.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

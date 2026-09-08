@@ -1,3 +1,12 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: provide explicit compatibility imports
+
+Resolve newer WASIX guest imports against the pinned host ABI. Unsupported
+fork/context operations return explicit failures rather than pretending that
+this older host implements them. This compatibility bridge is version-specific;
+upstream should adopt the actual ABI implementations rather than these stubs.
+
 diff --git a/src/lib.rs b/src/lib.rs
 index 00615d4..5f50af3 100644
 --- a/src/lib.rs

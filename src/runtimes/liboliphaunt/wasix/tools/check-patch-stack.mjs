@@ -26,61 +26,92 @@ function compareText(left, right) {
 }
 
 const EXPECTED_TOUCHPOINTS = new Map([
+  ['src/test/regress/sql/jsonb.sql', 'Covers fixed, VARIADIC, Param, null, error, and mutable user-cast JSONB constructor semantics.'],
+  ['src/test/regress/expected/jsonb.out', 'Records fixed, VARIADIC, Param, null, error, and mutable user-cast JSONB constructor semantics.'],
+  ['src/backend/utils/adt/jsonb.c', 'Caches immutable jsonb_build_object expression metadata while preserving PostgreSQL cast and VARIADIC semantics.'],
   ['src/Makefile.shlib', 'Defines the WASIX dynamic-link shared-library shape.'],
   ['src/backend/Makefile', 'Builds the dynamic-main backend module without changing other ports.'],
-  ['src/backend/common.mk', 'Scopes scalar atomics to PostgreSQL backend objects instead of PGXS side modules.'],
-  ['src/backend/access/nbtree/nbtdedup.c', 'Keeps btree delete scratch storage on stack under embedded WASIX.'],
-  ['src/backend/access/nbtree/nbtinsert.c', 'Adds the guarded int4 insert fast path.'],
-  ['src/backend/access/nbtree/nbtsearch.c', 'Adds guarded int4 leaf fast paths.'],
-  ['src/backend/access/transam/xact.c', 'Adds top-level current-transaction shortcut for embedded WASIX.'],
-  ['src/backend/access/transam/xlog.c', 'Keeps checkpoint work local, avoids expensive segment division, and exposes only explicit WAL sync operations under embedded WASIX.'],
+  ['src/backend/access/transam/multixact.c', 'Retains normal-session MultiXact wraparound stops without signaling an absent postmaster.'],
+  ['src/backend/access/transam/varsup.c', 'Retains normal-session XID stops and OID allocation semantics.'],
+  ['src/backend/access/transam/xlog.c', 'Defers XLog-size checkpoint requests to an embedded idle boundary.'],
+  ['src/backend/access/transam/xlogfuncs.c', 'Rejects standby promotion before signaling an absent postmaster.'],
+  ['src/backend/commands/event_trigger.c', 'Runs DDL and login event triggers for an explicitly initialized normal user session.'],
   ['src/backend/commands/copyfromparse.c', 'Reports COPY protocol state to the host.'],
   ['src/backend/commands/copyto.c', 'Reports COPY protocol state to the host.'],
-  ['src/backend/commands/collationcmds.c', 'System-collation import preserves PostgreSQL semantics unless a controlled seed producer suppresses discovery.'],
+  ['src/backend/commands/collationcmds.c', 'Controls deterministic collation discovery for the existing seed producer.'],
+  ['src/backend/commands/tsearchcmds.c', 'Validates text-search dictionary options outside bootstrap and recovery modes.'],
   ['src/backend/libpq/be-secure.c', 'Routes embedded protocol reads and writes through host-owned callbacks.'],
   ['src/backend/libpq/pqcomm.c', 'Skips unavailable postmaster-death wait handles in embedded WASIX.'],
-  ['src/backend/main/main.c', 'Rejects concurrent postmaster and fork-child dispatch in the scalar-atomic runtime.'],
-  ['src/backend/optimizer/plan/planner.c', 'Suppresses activity identifier reporting in embedded WASIX.'],
-  ['src/backend/port/posix_sema.c', 'Uses POSIX semaphore behavior selected by the WASIX template.'],
-  ['src/backend/postmaster/checkpointer.c', 'Keeps checkpoint requests local to embedded WASIX.'],
+  ['src/backend/main/main.c', 'Exposes the one-way pre-start embedded-session selection.'],
+  ['src/backend/optimizer/plan/createplan.c', 'Prevents async Append execution in the host-pumped session.'],
   ['src/backend/postmaster/fork_process.c', 'Declares the WASIX fork boundary without enabling postmaster concurrency.'],
   ['src/backend/replication/walsender.c', 'Suppresses activity identifier reporting in embedded WASIX.'],
   ['src/backend/storage/file/fd.c', 'Keeps real fsync while narrowing unsupported WASIX directory and writeback-hint behavior.'],
+  ['src/backend/storage/ipc/signalfuncs.c', 'Rejects unsupported postmaster signals and reports unavailable log rotation truthfully.'],
   ['src/backend/tcop/backend_startup.c', 'Exports the startup packet parser for host-driven startup.'],
-  ['src/backend/tcop/postgres.c', 'Owns embedded lifecycle, protocol loop, and error recovery.'],
-  ['src/backend/utils/adt/like.c', 'Adds guarded LIKE literal fast path for embedded WASIX.'],
-  ['src/backend/utils/adt/like_match.c', 'Adds guarded LIKE literal fast path for embedded WASIX.'],
-  ['src/backend/utils/adt/jsonb.c', 'Caches immutable jsonb_build_object expression metadata while preserving PostgreSQL cast and VARIADIC semantics.'],
-  ['src/backend/utils/init/miscinit.c', 'Routes process identity through the WASIX port layer.'],
-  ['src/backend/utils/init/postinit.c', 'Skips data-directory ownership checks under embedded WASIX.'],
-  ['src/backend/utils/misc/guc.c', 'Uses the embedded WASIX postmaster-style environment.'],
-  ['src/backend/utils/mmgr/portalmem.c', 'Fails active portals on host-forced recovery.'],
-  ['src/bin/initdb/initdb.c', 'Controlled seed producers may suppress host discovery while verified ICU readiness gates the unicode-version probe.'],
+  ['src/backend/tcop/postgres.c', 'Owns embedded lifecycle, protocol loop, error recovery, and the prepared-session attach check.'],
+  ['src/backend/utils/init/miscinit.c', 'Routes OS identity through the port and enforces catalog login and role connection limits for trusted sessions.'],
+  ['src/backend/utils/init/postinit.c', 'Initializes the host-selected catalog principal, database admission and role defaults without pretending HBA authentication ran; checks startup options against actual privileges.'],
+  ['src/backend/utils/misc/guc_tables.c', 'Keeps attached parallel-worker limits observably pinned to zero.'],
+  ['src/backend/utils/misc/superuser.c', 'Uses catalog-backed superuser semantics in the attached user session.'],
+  ['src/bin/initdb/initdb.c', 'Keeps the existing standard/ICU initdb discovery contract.'],
   ['src/bin/pg_dump/connectdb.c', 'Avoids pg_dump LTO symbol collisions.'],
   ['src/bin/pg_dump/connectdb.h', 'Avoids pg_dump LTO symbol collisions.'],
   ['src/bin/pg_dump/parallel.c', 'Stubs unavailable pg_dump parallel fork behavior under WASIX.'],
   ['src/bin/pg_dump/pg_dumpall.c', 'Avoids pg_dump LTO symbol collisions.'],
   ['src/common/file_utils.c', 'Keeps real fsync while narrowing unsupported WASIX directory and writeback-hint behavior.'],
-  ['src/common/hashfn.c', 'Uses defined unaligned load fast path under WASIX.'],
-  ['src/port/pg_strong_random.c', 'Uses checked direct WASI entropy reads and batches them only for the single-backend runtime.'],
+  ['src/port/pg_strong_random.c', 'Uses checked direct WASI entropy reads without guest-side buffered state.'],
   ['src/include/libpq/libpq-be.h', 'Adds the host I/O callback table to Port only for embedded WASIX.'],
+  ['src/include/miscadmin.h', 'Defines a positive normal-user-session capability without falsifying process topology.'],
   ['src/include/access/xlog.h', 'Exposes the embedded idle-boundary checkpoint handoff within PostgreSQL.'],
-  ['src/include/port/atomics.h', 'Selects scalar atomics only for the explicitly single-backend WASIX build.'],
-  ['src/include/port/atomics/arch-wasix-single.h', 'Preserves PostgreSQL atomic layouts and contracts without guest atomic instructions.'],
-  ['src/include/port/wasix-dl.h', 'Defines the embedded WASIX port header, durability default, ABI redirects, and call-site SJLJ contract.'],
+  ['src/include/port/wasix-dl.h', 'Defines the embedded WASIX port header, ABI redirects, and call-site SJLJ contract.'],
   ['src/include/port/wasix-dl/sys/ipc.h', 'Provides the WASIX SysV IPC shim surface.'],
   ['src/include/port/wasix-dl/sys/shm.h', 'Provides the WASIX SysV shared-memory shim surface.'],
-  ['src/include/storage/s_lock.h', 'Specializes spinlocks only for the enforced single-backend WASIX runtime.'],
   ['src/bin/psql/startup.c', 'Keeps captured Oliphaunt psql invocations noninteractive despite WASIX virtual descriptor types.'],
   ['src/interfaces/libpq/fe-connect.c', 'Makes libpq socket nonblocking state explicit where WASIX socket creation ignores type flags.'],
   ['src/makefiles/Makefile.wasix-dl', 'Builds side modules and PGXS artifacts for WASIX dynamic linking.'],
   ['src/makefiles/pgxs.mk', 'Installs PGXS extension artifacts for WASIX packaging.'],
   ['src/template/wasix-dl', 'Keeps the WASIX template and atomics invariants source-controlled.'],
-  ['src/test/regress/expected/jsonb.out', 'Records fixed, VARIADIC, Param, null, error, and mutable user-cast JSONB constructor semantics.'],
-  ['src/test/regress/sql/jsonb.sql', 'Covers fixed, VARIADIC, Param, null, error, and mutable user-cast JSONB constructor semantics.'],
 ]);
 
 const REQUIRED_AUDIT_CHECKS = [
+  {
+    requirement: 'Prepared host identity is initialized before normal-session admission',
+    patches: ['0044-oliphaunt-wasix-initialize-trusted-session-identity.patch'],
+    evidence: [
+      'INIT_PG_TRUSTED_CLIENT',
+      'InitializeSessionUserId(username, useroid, false)',
+      'MyBackendType = B_BACKEND',
+      'MyProcPort->user_name = MemoryContextStrdup',
+      'IsNormalUserSession()',
+      'EventTriggerOnLogin();',
+    ],
+    posture: 'Consume the prepared capability in InitPostgres, not after bootstrap-superuser initialization. Enforce catalog login/database policy, role defaults and login triggers without pretending HBA authentication occurred; unprepared recovery remains standalone.',
+  },
+  {
+    requirement: 'Fixed JSONB constructor metadata preserves PostgreSQL semantics',
+    patches: ['0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch'],
+    evidence: [
+      'JsonbBuildObjectState',
+      'get_fn_expr_variadic',
+      'FirstNormalObjectId',
+      'jsonb_build_object_cache_drop_cast',
+    ],
+    posture: 'Ordinary calls reuse immutable expression metadata; explicit VARIADIC arrays keep the generic path and user-defined types are recategorized so cast DDL remains visible.',
+  },
+
+  {
+    requirement: 'WASIX WAL durability exposes only explicit sync operations',
+    patches: ['0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch'],
+    evidence: [
+      'PLATFORM_DEFAULT_WAL_SYNC_METHOD',
+      'WAL_SYNC_METHOD_FDATASYNC',
+      'OLIPHAUNT_WASM_EXPLICIT_WAL_SYNC_ONLY',
+      'explicit fd_datasync operation',
+    ],
+    posture: 'The shared PostgreSQL port selects fdatasync and removes open_sync/open_datasync from the WASIX GUC choices because Wasmer does not honor their open flags.',
+  },
+
   {
     requirement: 'WASIX dynamic-main build spine is isolated',
     patches: ['0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch'],
@@ -106,14 +137,19 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'Host-visible entry points are named exports instead of broad syscall remaps.',
   },
   {
-    requirement: 'Protocol loop recovery remains at the PostgresMain boundary',
+    requirement: 'Protocol loop recovery remains inside a live PostgreSQL boundary',
     patches: [
       '0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch',
-      '0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch',
-      '0020-oliphaunt-wasix-rearm-exception-stack-after-host-recovery.patch',
+      '0019-oliphaunt-wasix-schedule-ready-after-loop-step-recovery.patch',
     ],
-    evidence: ['PostgresMainLoopOnce', 'PostgresMainLongJmp', 'send_ready_for_query = true'],
-    posture: 'The host pumps PostgreSQL one loop at a time and recovery re-enters the upstream exception stack.',
+    evidence: [
+      'PostgresMainLoopOnce',
+      'OLIPHAUNT_WASM_MAIN_LOOP_RECOVERED',
+      'OLIPHAUNT_WASM_MAIN_LOOP_INPUT_ENDED',
+      'PG_exception_stack = NULL',
+      'send_ready_for_query = true',
+    ],
+    posture: 'Each host-pumped step owns a live call-site exception boundary, returns a typed outcome, and clears the boundary before returning.',
   },
   {
     requirement: 'COPY protocol state is host-observable',
@@ -125,13 +161,21 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'COPY state is reported and cleared around PostgreSQL error recovery.',
   },
   {
-    requirement: 'PGXS side modules use the WASIX dynamic-link contract',
+    requirement: 'PGXS side modules and backend ThinLTO use the WASIX dynamic-link contract',
     patches: [
       '0007-oliphaunt-wasix-add-wasix-pgxs-side-module-support.patch',
       '0022-oliphaunt-wasix-use-wasm-ld-for-backend-core.patch',
     ],
-    evidence: ['PGXS', 'WASM_LD ?= $(shell $(CC) -print-prog-name=wasm-ld)'],
-    posture: 'Extension and backend side-module behavior is source-reviewed with the linker path.',
+    evidence: [
+      'PGXS',
+      'WASM_LD ?= $(shell $(CC) -print-prog-name=wasm-ld)',
+      'WASM_LTO_SJLJ_FLAGS',
+      '-mllvm --wasm-enable-eh',
+      '-mllvm --wasm-enable-sjlj',
+      '-mllvm --wasm-use-legacy-eh=false',
+      '-mllvm --exception-model=wasm',
+    ],
+    posture: 'Extension modules use the dynamic-link contract, and the backend relocatable ThinLTO boundary performs the same complete EH/SJLJ lowering as the sealed final link.',
   },
   {
     requirement: 'Process identity and shared memory stay behind the port header',
@@ -154,56 +198,46 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'Unavailable WASIX behavior is explicit and narrow instead of silently emulated.',
   },
   {
+    requirement: 'XLog-size checkpoint pressure is deferred to a transaction-free safe point',
+    patches: ['0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch'],
+    evidence: [
+      'oliphaunt_wasix_checkpoint_deferred = true;',
+      'OliphauntWasixPerformDeferredCheckpoint(void)',
+      'RequestCheckpoint(CHECKPOINT_CAUSE_XLOG);',
+      'oliphaunt_wasix_checkpoint_deferred = false;',
+      'upstream\nRequestCheckpoint already performs the requested checkpoint locally',
+    ],
+    forbidden: ['diff --git a/src/backend/postmaster/checkpointer.c'],
+    posture: 'XLogWrite records pressure but cannot recurse into checkpointing. ReadyForQuery services it after the transaction boundary, failures retain the pending flag, and truthful standalone topology selects PostgreSQL\'s local RequestCheckpoint path.',
+  },
+  {
     requirement: 'Controlled initdb collation discovery',
     patches: ['0033-oliphaunt-wasix-control-initdb-collation-discovery.patch'],
     evidence: ['OLIPHAUNT_INTERNAL_ICU_READY', 'OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY', 'OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY', 'strcmp', 'pg_collation_actual_version', 'pg_import_system_collations'],
     posture: 'Public collation import retains PostgreSQL semantics. Distributed standard seeds suppress OS and ICU discovery; ICU seeds suppress only OS discovery and verify ICU readiness for initdb\'s unicode-version probe.',
   },
   {
-    requirement: 'COPY streaming keeps an explicit hybrid transport ABI',
+    requirement: 'Ordinary and COPY streaming keep explicit mode-separated transport ABI',
     patches: ['0034-oliphaunt-wasix-declare-hybrid-protocol-transport.patch'],
     evidence: [
       'oliphaunt_wasix_set_protocol_transport(int mode)',
       'oliphaunt_wasix_protocol_stream_active(void)',
     ],
-    posture: 'Only COPY switches an embedded host from buffered protocol I/O to its attached stream; Rust and TypeScript provide language-native bounded stream adapters over the same guest ABI.',
+    posture: 'Finite ordinary requests use buffered input with streamed output, while interactive COPY keeps a separate hybrid duplex transition; Rust and TypeScript provide bounded adapters over the same guest ABI.',
   },
   {
-    requirement: 'Single-backend WASIX spinlocks preserve their ABI and scope',
-    patches: ['0035-oliphaunt-wasix-use-single-backend-spinlocks.patch'],
-    evidence: [
-      'defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)',
-      'OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS',
-      'typedef int slock_t;',
-      'oliphaunt_wasix_single_user_tas',
-    ],
-    posture: 'The shared guest lets Rust AOT and every TypeScript placement replace atomic exchange; all concurrent PostgreSQL builds retain upstream spinlocks.',
-  },
-  {
-    requirement: 'Single-backend WASIX atomics preserve ABI and operation contracts',
-    patches: ['0036-oliphaunt-wasix-specialize-single-backend-atomics.patch'],
-    evidence: [
-      'override CPPFLAGS += -DOLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS',
-      'postmaster mode is unavailable in the single-backend WASIX runtime',
-      'PG_HAVE_8BYTE_SINGLE_COPY_ATOMICITY',
-      'volatile uint64 value pg_attribute_aligned(8)',
-      '*expected = current',
-    ],
-    posture: 'Shared guest backend objects use scalar operations for Rust and TypeScript hosts; frontends, extensions, and every concurrent PostgreSQL build retain normal atomics.',
-  },
-  {
-    requirement: 'WASIX strong randomness avoids descriptor pressure and forked state',
-    patches: ['0037-oliphaunt-wasix-buffer-strong-random.patch'],
+    requirement: 'WASIX strong randomness fails closed without descriptor or buffered-state pressure',
+    patches: ['0037-oliphaunt-wasix-use-checked-getrandom.patch'],
     evidence: [
       '#elif defined(__wasi__)',
-      'wasix_strong_random_fill(void *buf, size_t len)',
-      '#if defined(OLIPHAUNT_WASM_SINGLE_USER)',
-      'wasix_strong_random_fill(wasix_strong_random_pool',
+      '#include <sys/random.h>',
+      'res = getrandom(p, len, 0);',
       'if (errno == EINTR)',
-      'wasix_strong_random_used += copy_len',
-      'No guest-side state in a process that may fork.',
+      'if (res == 0)',
+      'No guest-side state to initialize or duplicate.',
     ],
-    posture: 'Every WASIX backend bypasses the virtual random device. The embedded backend amortizes host calls, while fork-capable backends keep no duplicable random state.',
+    forbidden: ['WASIX_STRONG_RANDOM_POOL_SIZE', 'wasix_strong_random_pool'],
+    posture: 'Every no-OpenSSL WASIX backend bypasses the virtual random device, preserves entropy failures, and keeps no lifecycle-sensitive entropy reservoir.',
   },
   {
     requirement: 'Unsupported writeback hints stay separate from real durability',
@@ -216,38 +250,16 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'The single-backend guest omits only pg_flush_data hints that WASIX rejects on read-only descriptors; PostgreSQL fsync and fdatasync remain active.',
   },
   {
-    requirement: 'WASIX WAL durability exposes only explicit sync operations',
-    patches: ['0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch'],
-    evidence: [
-      'PLATFORM_DEFAULT_WAL_SYNC_METHOD',
-      'WAL_SYNC_METHOD_FDATASYNC',
-      'OLIPHAUNT_WASM_EXPLICIT_WAL_SYNC_ONLY',
-      'explicit fd_datasync operation',
-    ],
-    posture: 'The shared PostgreSQL port selects fdatasync and removes open_sync/open_datasync from the WASIX GUC choices because Wasmer does not honor their open flags.',
-  },
-  {
-    requirement: 'Fixed JSONB constructor metadata preserves PostgreSQL semantics',
-    patches: ['0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch'],
-    evidence: [
-      'JsonbBuildObjectState',
-      'get_fn_expr_variadic',
-      'FirstNormalObjectId',
-      'jsonb_build_object_cache_drop_cast',
-    ],
-    posture: 'Ordinary calls reuse immutable expression metadata; explicit VARIADIC arrays keep the generic path and user-defined types are recategorized so cast DDL remains visible.',
-  },
-  {
-    requirement: 'PostgreSQL side modules own their SJLJ catch frames',
+    requirement: 'PostgreSQL modules own their SJLJ catch frames',
     patches: ['0039-oliphaunt-wasix-inline-sigsetjmp.patch'],
     evidence: [
       '-DOLIPHAUNT_WASM_SIDE_MODULE',
       'WebAssembly SJLJ requires setjmp to be visible at the protected call site.',
-      'defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)',
+      'defined(OLIPHAUNT_WASM_SINGLE_USER) || defined(OLIPHAUNT_WASM_SIDE_MODULE)',
       '#undef sigsetjmp',
       '#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))',
     ],
-    posture: 'PG_TRY expands to a compiler-recognized setjmp in every PostgreSQL side module, so nested errors unwind to the live module-local handler.',
+    posture: 'PG_TRY expands to a compiler-recognized setjmp in the main executable and every PostgreSQL side module, so nested errors unwind to the live module-local handler.',
   },
   {
     requirement: 'Standalone WASIX libpq sockets are actually nonblocking',
@@ -268,6 +280,111 @@ const REQUIRED_AUDIT_CHECKS = [
       '!isatty(fileno(stdin)) || !isatty(fileno(stdout))',
     ],
     posture: 'Only the private exact-value marker overrides virtual terminal detection; ordinary WASIX psql retains upstream isatty semantics.',
+  },
+  {
+    requirement: 'Trusted embedded lifecycle preserves truthful standalone topology',
+    patches: ['0029-oliphaunt-wasix-model-trusted-embedded-session.patch'],
+    evidence: [
+      'OLIPHAUNT_TRUSTED_EMBEDDED_UNSELECTED',
+      'OLIPHAUNT_TRUSTED_EMBEDDED_PREPARED',
+      'OLIPHAUNT_TRUSTED_EMBEDDED_ATTACHED',
+      'return trusted_embedded_lifecycle ==',
+      'reached_main ||',
+      'ConfigurePreparedTrustedEmbeddedSession(void)',
+      'SetConfigOption("io_method", "sync", PGC_POSTMASTER, PGC_S_OVERRIDE)',
+      'SetConfigOption("max_worker_processes", "0", PGC_POSTMASTER,',
+      'AttachPreparedTrustedEmbeddedSession(void)',
+      'if (!AttachPreparedTrustedEmbeddedSession())',
+      'IsNormalUserSession(void)',
+      'if (IsUnderPostmaster)',
+      '!IsTrustedEmbeddedSession() && pathkeys == NIL',
+      'ERRCODE_FEATURE_NOT_SUPPORTED',
+      'IsUnderPostmaster excludes the trusted embedded session\'s synthetic fd.',
+    ],
+    forbidden: [
+      'IsPostmasterEnvironment = true;',
+      'IsUnderPostmaster = true;',
+      'HasPostmasterSupervisor',
+      'CanLaunchWorkers',
+    ],
+    posture: 'Preparation is inactive, attach is one-shot, guest GUC limits apply before shared-memory sizing, positive catalog and DDL semantics are explicit, and worker or postmaster-only paths retain upstream standalone fail-closed behavior.',
+  },
+];
+
+const REQUIRED_EXPERIMENT_DISPOSITIONS = [
+  {
+    experiment: 'runtime-0013-fail-active-portals-on-host-recovery.patch',
+    status: 'removed-after-architecture-review',
+    decisionEvidence: ['patch number 0013 remains reserved'],
+    rationaleEvidence: [
+      'skipped arbitrary nested PG_TRY/PG_CATCH cleanup',
+      'observed symptom',
+      "PortalRun's own live PG_CATCH",
+    ],
+  },
+  {
+    experiment: 'runtime-0020-rearm-exception-stack-after-host-recovery.patch',
+    status: 'removed-after-correctness-review',
+    decisionEvidence: ['patch number 0020 remains reserved'],
+    rationaleEvidence: [
+      'pointer to a returned WebAssembly frame',
+      'live call-site boundary',
+      'clears PG_exception_stack before every return',
+    ],
+  },
+  {
+    experiment: '0007-top-xid-current-transaction-fast-path.patch',
+    status: 'removed-after-evidence-review',
+    decisionEvidence: ['patch number 0015 remains reserved'],
+    rationaleEvidence: [
+      'semantically plausible',
+      'factor-isolated profile or A/B',
+      'current-transaction tuple visibility',
+      'aborted, nested, parallel, and prepared-transaction tests',
+    ],
+  },
+  {
+    experiment: '0012-hash-bytes-unaligned-load-fast-path.patch',
+    status: 'removed-after-toolchain-review',
+    decisionEvidence: ['patch number 0014 remains reserved'],
+    rationaleEvidence: [
+      'WASIX clang 21.1.2',
+      'i32.load 0:p2align=0',
+      'without isolated A/B evidence',
+      'complete switch',
+    ],
+  },
+  {
+    experiment: '0035-oliphaunt-wasix-use-single-backend-spinlocks.patch',
+    status: 'removed-after-evidence-review',
+    decisionEvidence: ['patch number 0035 remains reserved'],
+    rationaleEvidence: [
+      'PR #133',
+      'no factor-isolated A/B',
+      'normal PostgreSQL spinlock path',
+      'coupled experiment',
+    ],
+  },
+  {
+    experiment: '0036-oliphaunt-wasix-specialize-single-backend-atomics.patch',
+    status: 'removed-after-evidence-review',
+    decisionEvidence: ['patch number 0036 remains reserved'],
+    rationaleEvidence: [
+      'PR #133',
+      'no factor-isolated A/B',
+      'normal PostgreSQL atomic path',
+      'coupled experiment',
+    ],
+  },
+  {
+    experiment: 'historical-0035-oliphaunt-wasix-avoid-xlogwrite-prevseg-division.patch',
+    status: 'removed-after-evidence-review',
+    decisionEvidence: ['patch number 0030 remains reserved'],
+    rationaleEvidence: [
+      'final uint64 WAL segment',
+      '13.993 ms to 15.603 ms',
+      'factor-isolated, repeatable COMMIT screen',
+    ],
   },
 ];
 
@@ -356,7 +473,7 @@ function parsePatch(fileName) {
     if (/^\+ \t/u.test(line)) {
       whitespaceProblems.push(`${index + 1}: ${line}`);
     }
-    for (const symbol of line.matchAll(/\b(oliphaunt_wasix_[A-Za-z0-9_]+|OLIPHAUNT_WASM_[A-Za-z0-9_]+|PostgresMainLoopOnce|PostgresMainLongJmp|ProcessStartupPacket)\b/gu)) {
+    for (const symbol of line.matchAll(/\b(oliphaunt_wasix_[A-Za-z0-9_]+|OLIPHAUNT_WASM_[A-Za-z0-9_]+|PostgresMainLoop(?:DrainBufferedV1|Once)|PostgresMainLongJmp|ProcessStartupPacket)\b/gu)) {
       symbols.add(symbol[1]);
     }
   }
@@ -418,6 +535,28 @@ function parseDisposition() {
       }
     }
   }
+  const byExperiment = new Map(entries.map(entry => [entry.experiment, entry]));
+  for (const required of REQUIRED_EXPERIMENT_DISPOSITIONS) {
+    const entry = byExperiment.get(required.experiment);
+    if (!entry) {
+      throw new Error(`missing required experiment disposition ${required.experiment}`);
+    }
+    if (entry.status !== required.status) {
+      throw new Error(
+        `experiment ${required.experiment} must have status ${required.status}, got ${entry.status}`,
+      );
+    }
+    for (const evidence of required.decisionEvidence) {
+      if (!entry.decision.includes(evidence)) {
+        throw new Error(`experiment ${required.experiment} decision is missing ${evidence}`);
+      }
+    }
+    for (const evidence of required.rationaleEvidence) {
+      if (!entry.rationale.includes(evidence)) {
+        throw new Error(`experiment ${required.experiment} rationale is missing ${evidence}`);
+      }
+    }
+  }
   return {policy, entries};
 }
 
@@ -427,12 +566,12 @@ function validateSeries(manifest, actualFiles) {
       `WASIX source.toml patch series must exactly match patch directory files\nexpected:\n${manifest.series.join('\n')}\nactual:\n${actualFiles.join('\n')}`,
     );
   }
-  manifest.series.forEach((fileName, index) => {
-    const expectedPrefix = `${String(index + 1).padStart(4, '0')}-oliphaunt-wasix-`;
-    if (!fileName.startsWith(expectedPrefix)) {
-      throw new Error(`${fileName} must use sequential prefix ${expectedPrefix}`);
+  const patchNumbers = manifest.series.map(fileName => Number(fileName.slice(0, 4)));
+  for (let index = 1; index < patchNumbers.length; index += 1) {
+    if (patchNumbers[index] <= patchNumbers[index - 1]) {
+      throw new Error('WASIX source.toml patch numbers must be unique and strictly increasing');
     }
-  });
+  }
 }
 
 function validateTouchpoints(patches) {
@@ -462,6 +601,11 @@ function validateAuditChecks(patches) {
     for (const evidence of check.evidence) {
       if (!text.includes(evidence)) {
         throw new Error(`audit check "${check.requirement}" is missing evidence ${evidence}`);
+      }
+    }
+    for (const forbidden of check.forbidden ?? []) {
+      if (text.includes(forbidden)) {
+        throw new Error(`audit check "${check.requirement}" contains forbidden ambient selector ${forbidden}`);
       }
     }
   }

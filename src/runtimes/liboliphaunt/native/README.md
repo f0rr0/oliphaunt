@@ -116,6 +116,35 @@ execution do not impose a synthetic query timeout; callers should use
 `oliphaunt_cancel` to interrupt long-running SQL. Ordinary SDK close is a
 lifecycle detach/wait boundary, not an implicit query cancellation primitive.
 
+Direct mode is a trusted configured session, not a standalone maintenance
+backend: the selected role and database must permit login and connection, role
+and database settings apply, and login event triggers run. It does not perform
+network authentication; hosts authorize the configured identity. It remains a
+single-backend process-lifetime runtime, with synchronous I/O and no parallel
+workers or WAL senders.
+
+`pg_import_system_collations` can import ICU collations in process. On POSIX,
+trusted sessions emit a notice and skip libc locale enumeration, which requires
+the external `locale -a` program; ordinary server and initdb discovery are
+unchanged. Subprocess execution remains unavailable in the embedded backend.
+
+The embedded path leaves host signal handlers, signal masks, process timers,
+and process-exit cleanup registration alone. Cancellation crosses an atomic
+mailbox and a raw wake endpoint; PostgreSQL consumes it on its owning backend
+thread. SQL deadlines are checked cooperatively, including protocol waits and
+streaming backpressure. They cannot preempt host callbacks or extension code
+that does not reach PostgreSQL interrupt checks. On POSIX, startup retains a
+directory descriptor and restores the original working-directory identity even
+if its path is renamed; startup still changes the process-wide working
+directory temporarily. Use broker/server isolation when other host threads
+must be insulated from that or from the documented PGDATA environment change.
+
+The source-only contract checks and optimized session-reset regression run
+through `moon run liboliphaunt-native:embedded-contract-test` and
+`moon run liboliphaunt-native:session-reset-test`. The Linux C probes in `smoke/`
+exercise configured identities, process signals/timers, COPY backpressure, and
+working-directory failure boundaries against an actual rebuilt library.
+
 Hosts serialize ordinary non-cancel calls on one logical C handle;
 `oliphaunt_cancel` is the cross-thread exception. Streaming callbacks borrow
 each byte chunk only for the callback invocation. They may copy it, inspect an
@@ -136,6 +165,11 @@ need different PostgreSQL settings do not need a new C ABI; they pass validated
 `-c name=value` startup arguments through `OliphauntConfig.startup_args`. Later
 arguments win, so SDKs and benchmark harnesses can apply concrete PostgreSQL
 GUC overrides above the stable C boundary without inventing tuning profiles.
+Direct startup preserves PostgreSQL's `fsync=on` default. This corrects the
+previous unconditional `-F` override and can increase durable-write latency.
+Callers may explicitly pass `-c fsync=off` for disposable data, accepting the
+risk of corruption after an operating-system crash. Successful functional
+reopen tests alone are not crash-durability proof.
 
 SDKs must hydrate PGDATA from a packaged cluster seed before calling
 `oliphaunt_init`; the C boundary never runs `initdb` or initializes an empty

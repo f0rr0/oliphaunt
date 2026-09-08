@@ -149,6 +149,12 @@ TypeScript still has no cancellation or dedicated typed COPY API. Those
 absences are recorded in the SDK parity policy rather than represented as
 capability flags.
 
+In the current Rust WASIX runtime, accepting SQL `statement_timeout` does not
+guarantee interruption of CPU-bound guest queries. A caller-side future timeout
+also does not stop guest execution. Neither is an execution-resource boundary;
+the missing timer/interrupt delivery semantics are separate from SQL error
+recovery and from Native PostgreSQL's timeout behavior.
+
 Across both bindings, selecting extensions supplies exact runtime artifacts,
 dependencies, and required pre-start preload/GUC configuration only. Open and
 server start never execute database-local `CREATE EXTENSION`, `ALTER

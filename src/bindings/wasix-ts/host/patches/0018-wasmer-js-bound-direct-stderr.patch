@@ -1,6 +1,17 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: bound direct guest stderr diagnostics
+
+Retain a bounded tail of guest stderr and attach it to direct execution errors.
+This preserves useful startup/trap diagnostics without an unbounded output
+buffer or asynchronous stream. Truncation here affects diagnostic stderr only,
+not PostgreSQL protocol or captured frontend-tool output.
+
+diff --git a/src/options.rs b/src/options.rs
+index d56c81d..d2f8d00 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -189,12 +189,13 @@
+@@ -189,12 +189,13 @@ impl RunOptions {
      pub(crate) fn configure_direct_builder(
          &self,
          builder: &mut WasiEnvBuilder,
@@ -15,6 +26,8 @@
  
          Ok(())
      }
+diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
+index 67a600f..2e090d3 100644
 --- a/src/postgres_direct.rs
 +++ b/src/postgres_direct.rs
 @@ -1,7 +1,15 @@
@@ -34,7 +47,7 @@
  use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
  use wasmer::{Instance as WasmerInstance, Store, TypedFunction, Value, WasmTypeList};
  use wasmer_wasix::{
-@@ -12,6 +20,133 @@
+@@ -12,6 +20,133 @@ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOp
  
  const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
  const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
@@ -166,9 +179,9 @@
 +    }
 +}
  
- #[wasm_bindgen(inline_js = r#"
- export function oliphauntCopyToGuest(memory, pointer, input) {
-@@ -50,7 +185,10 @@
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ enum MainLoopOutcome {
+@@ -67,7 +202,10 @@ pub async fn instantiate_oliphaunt_direct(
      module_bytes: Uint8Array,
      options: RunOptions,
  ) -> Result<OliphauntDirectInstance, Error> {
@@ -180,7 +193,7 @@
  }
  
  #[wasm_bindgen]
-@@ -60,6 +198,7 @@
+@@ -77,6 +215,7 @@ pub struct OliphauntDirectInstance {
      store: Store,
      _instance: WasmerInstance,
      _env: WasiFunctionEnv,
@@ -188,7 +201,7 @@
      guest_memory: JsValue,
      input_reset: TypedFunction<(), i32>,
      input_reserve: TypedFunction<i32, i32>,
-@@ -101,12 +240,18 @@
+@@ -115,12 +254,18 @@ impl OliphauntDirectInstance {
      /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
      #[wasm_bindgen(js_name = execProtocolRaw)]
      pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
@@ -209,7 +222,7 @@
      }
  }
  
-@@ -212,6 +357,7 @@
+@@ -213,6 +358,7 @@ impl OliphauntDirectInstance {
          module: WebAssembly::Module,
          module_bytes: Uint8Array,
          options: RunOptions,
@@ -217,7 +230,7 @@
      ) -> Result<Self, Error> {
          // Direct execution intentionally has no configurable networking or
          // worker-backed runtime. RunOptions is reused for args/env/fs mounts.
-@@ -222,7 +368,7 @@
+@@ -223,7 +369,7 @@ impl OliphauntDirectInstance {
              .as_string()
              .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
          let mut builder = WasiEnvBuilder::new(program_name).runtime(runtime.clone());
@@ -226,7 +239,7 @@
  
          let module = wasmer::Module::from((module, module_bytes.to_vec()));
          let mut store = Store::new(runtime.engine());
-@@ -282,6 +428,7 @@
+@@ -272,6 +418,7 @@ impl OliphauntDirectInstance {
              store,
              _instance: instance,
              _env: env,
@@ -234,7 +247,7 @@
              guest_memory,
              input_reset,
              input_reserve,
-@@ -458,6 +605,7 @@
+@@ -463,6 +610,7 @@ impl OliphauntDirectInstance {
      }
  
      fn startup_error(&mut self, error: anyhow::Error) -> Error {

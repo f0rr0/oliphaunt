@@ -24,6 +24,11 @@ Direct mode is the default. It runs the embedded backend in the application
 process. Broker mode uses the same database API while placing that backend in a
 helper process.
 
+Both preserve PostgreSQL's `fsync=on` default. This corrects the earlier native
+`-F` default and can increase write latency. An explicit PostgreSQL startup GUC
+`fsync=off` remains available for disposable data, with the usual crash-corruption
+risk; it is not a durable-storage performance optimization.
+
 The root API is synchronous and caller owned. `open`, SQL, backup, restore, and
 close block the calling thread until their result is available. They do not
 cross an SDK owner queue, but that is not a promise that PostgreSQL itself runs

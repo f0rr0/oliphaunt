@@ -6,6 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["binding", "wasix", "rust", "postgres", "sdk", "release-product"]
 dependsOn:
+  - "postgres-protocol-transport-contract"
+  - "postgres-tool-output-contract"
   - id: "shared-test-fixtures"
     scope: "development"
   - "liboliphaunt-wasix"
@@ -54,6 +56,7 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
+      node --test src/bindings/wasix-rust/tools/pq-flush-abi-contract.test.mjs
       cargo test -p oliphaunt-wasix --doc --locked
       cargo test -p oliphaunt-wasix --doc --locked --features tools
       cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features extensions,tools,extension-vector --test public_api --no-tests=fail --test-threads=1

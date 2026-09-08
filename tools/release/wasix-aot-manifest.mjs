@@ -6,7 +6,7 @@ import {
 
 export { WASIX_TOOLCHAIN_PATH };
 export const STABLE_WASIX_SOURCE_LANE = "stable";
-export const WASIX_AOT_ENGINE = "llvm-opta";
+export const WASIX_AOT_ENGINE = "llvm-opta-ro_ftable";
 
 function requiredString(value, context) {
   if (typeof value !== "string" || value.length === 0) {

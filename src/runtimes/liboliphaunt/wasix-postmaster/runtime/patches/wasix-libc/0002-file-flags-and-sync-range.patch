@@ -1,0 +1,260 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 2/7] libc: preserve file flags and expose sync_file_range
+
+Carry descriptor/open flags and the WASIX sync_file_range import with its
+public constants/prototype and executable/import-signature tests. PostgreSQL
+needs explicit writeback semantics without silently pretending a missing
+syscall succeeded. Pair this with the host fd_sync_range implementation.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c
+index 06b7288..0526fce 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c
++++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c
+@@ -24,7 +24,8 @@ int fcntl(int fildes, int cmd, ...) {
+       int flags = va_arg(ap, int);
+       va_end(ap);
+ 
+-      __wasi_fdflagsext_t fd_flags = flags | FD_CLOEXEC ? __WASI_FDFLAGSEXT_CLOEXEC : 0;
++      __wasi_fdflagsext_t fd_flags =
++          (flags & FD_CLOEXEC) ? __WASI_FDFLAGSEXT_CLOEXEC : 0;
+       __wasi_errno_t error =
+           __wasi_fd_fdflags_set(fildes, fd_flags);
+       if (error != 0) {
+diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
+index 8e469c6..f7d8034 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
++++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
+@@ -52,6 +52,14 @@ int __wasilibc_nocwd_openat_nomode(int fd, const char *path, int oflag) {
+       return -1;
+   }
+ 
++  // A directory descriptor is opened read-only, but its contents are
++  // metadata and POSIX permits both fsync() and fdatasync() to establish the
++  // same directory durability barrier.  Request both capabilities explicitly;
++  // otherwise fdatasync() is rejected by the WASI rights check before the
++  // runtime can synchronize the retained open directory description.
++  if ((oflag & O_DIRECTORY) != 0)
++    max |= __WASI_RIGHTS_FD_DATASYNC | __WASI_RIGHTS_FD_SYNC;
++
+   // Ensure that we can actually obtain the minimal rights needed.
+   __wasi_fdstat_t fsb_cur;
+   __wasi_errno_t error = __wasi_fd_fdstat_get(fd, &fsb_cur);
+diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/sync_file_range.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/sync_file_range.c
+new file mode 100644
+index 0000000..47cdad7
+--- /dev/null
++++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/sync_file_range.c
+@@ -0,0 +1,33 @@
++#define _GNU_SOURCE
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdint.h>
++
++int32_t __imported_oliphaunt_postmaster_v1_fd_sync_range(
++    int32_t fd, int64_t offset, int64_t nbytes, int32_t flags) __attribute__((
++    __import_module__("oliphaunt_postmaster_v1"),
++    __import_name__("fd_sync_range")));
++
++int sync_file_range(int fd, off_t offset, off_t nbytes, unsigned flags)
++{
++    const unsigned valid_flags = SYNC_FILE_RANGE_WAIT_BEFORE |
++                                 SYNC_FILE_RANGE_WRITE |
++                                 SYNC_FILE_RANGE_WAIT_AFTER;
++    int32_t error;
++
++    /* Linux requires a representable exclusive end; nbytes=0 means EOF. */
++    if (offset < 0 || nbytes < 0 || (flags & ~valid_flags) != 0 ||
++        (nbytes > 0 && offset > INT64_MAX - nbytes)) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    error = __imported_oliphaunt_postmaster_v1_fd_sync_range(
++        (int32_t)fd, (int64_t)offset, (int64_t)nbytes, (int32_t)flags);
++    if (error != 0) {
++        errno = error;
++        return -1;
++    }
++    return 0;
++}
+diff --git a/libc-top-half/musl/include/fcntl.h b/libc-top-half/musl/include/fcntl.h
+index 15bef28..1332569 100644
+--- a/libc-top-half/musl/include/fcntl.h
++++ b/libc-top-half/musl/include/fcntl.h
+@@ -190,11 +190,9 @@ struct f_owner_ex {
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no name_to_handle_at */
+ #define MAX_HANDLE_SZ 128
+ #endif
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no syc_file_range */
+ #define SYNC_FILE_RANGE_WAIT_BEFORE 1
+ #define SYNC_FILE_RANGE_WRITE 2
+ #define SYNC_FILE_RANGE_WAIT_AFTER 4
+-#endif
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no splice */
+ #define SPLICE_F_MOVE 1
+ #define SPLICE_F_NONBLOCK 2
+@@ -212,8 +210,8 @@ int open_by_handle_at(int, struct file_handle *, int);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no readahead */
+ ssize_t readahead(int, off_t, size_t);
+ #endif
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no splice, syc_file_range, or tee */
+ int sync_file_range(int, off_t, off_t, unsigned);
++#ifdef __wasilibc_unmodified_upstream /* WASI has no splice or tee */
+ ssize_t vmsplice(int, const struct iovec *, size_t, unsigned);
+ ssize_t splice(int, off_t *, int, off_t *, size_t, unsigned);
+ ssize_t tee(int, int, size_t, unsigned);
+diff --git a/test/wasix/c_sync_file_range/CMakeLists.txt b/test/wasix/c_sync_file_range/CMakeLists.txt
+new file mode 100644
+index 0000000..c3e1c79
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/CMakeLists.txt
+@@ -0,0 +1,4 @@
++cmake_minimum_required(VERSION 3.5.0)
++project(c_sync_file_range C)
++
++add_executable(main main.c)
+diff --git a/test/wasix/c_sync_file_range/check-import-signature.sh b/test/wasix/c_sync_file_range/check-import-signature.sh
+new file mode 100755
+index 0000000..523b83b
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/check-import-signature.sh
+@@ -0,0 +1,29 @@
++#!/bin/bash
++
++set -euo pipefail
++
++module="${1:-./main}"
++wasm_dis="${WASM_DIS:-wasm-dis}"
++expected='(import "oliphaunt_postmaster_v1" "fd_sync_range" (func $__imported_oliphaunt_postmaster_v1_fd_sync_range (param i32 i64 i64 i32) (result i32)))'
++
++command -v "$wasm_dis" >/dev/null 2>&1 || {
++    echo "missing wasm disassembler: $wasm_dis" >&2
++    exit 2
++}
++[ -f "$module" ] || {
++    echo "missing Wasm module: $module" >&2
++    exit 2
++}
++
++"$wasm_dis" "$module" -o - | grep -F "$expected" >/dev/null || {
++    echo "fd_sync_range import does not match the versioned ABI" >&2
++    exit 1
++}
++
++if "$wasm_dis" "$module" -o - |
++    grep -F '(import "wasix_32v1" "fd_sync_range"' >/dev/null; then
++    echo "fd_sync_range must not be aliased into wasix_32v1" >&2
++    exit 1
++fi
++
++echo "c_sync_file_range import signature passed"
+diff --git a/test/wasix/c_sync_file_range/main.c b/test/wasix/c_sync_file_range/main.c
+new file mode 100644
+index 0000000..90fdc92
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/main.c
+@@ -0,0 +1,82 @@
++#define _GNU_SOURCE
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <unistd.h>
++
++_Static_assert(SYNC_FILE_RANGE_WAIT_BEFORE == 1, "WAIT_BEFORE ABI bit changed");
++_Static_assert(SYNC_FILE_RANGE_WRITE == 2, "WRITE ABI bit changed");
++_Static_assert(SYNC_FILE_RANGE_WAIT_AFTER == 4, "WAIT_AFTER ABI bit changed");
++
++static int expect_einval(int fd, off_t offset, off_t len, unsigned flags,
++                         const char *label)
++{
++    errno = 0;
++    if (sync_file_range(fd, offset, len, flags) != -1 || errno != EINVAL) {
++        fprintf(stderr, "%s: expected EINVAL, got errno=%d\n", label, errno);
++        return -1;
++    }
++    return 0;
++}
++
++int main(void)
++{
++    static const char path[] = "wasix-libc-sync-file-range-test.dat";
++    char page[4096] = {1};
++    int fd;
++
++    unlink(path);
++    fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
++    if (fd < 0) {
++        perror("open");
++        return 1;
++    }
++    if (write(fd, page, sizeof(page)) != (ssize_t)sizeof(page)) {
++        perror("write");
++        return 2;
++    }
++
++    if (sync_file_range(fd, 0, sizeof(page), SYNC_FILE_RANGE_WRITE) < 0) {
++        perror("sync_file_range WRITE");
++        return 3;
++    }
++    if (sync_file_range(fd, 0, sizeof(page),
++                        SYNC_FILE_RANGE_WAIT_BEFORE |
++                            SYNC_FILE_RANGE_WRITE |
++                            SYNC_FILE_RANGE_WAIT_AFTER) < 0) {
++        perror("sync_file_range full combination");
++        return 4;
++    }
++    if (sync_file_range(fd, 0, 0, 0) < 0) {
++        perror("sync_file_range through EOF no-op");
++        return 5;
++    }
++    if (sync_file_range(fd, INT64_MAX - 1, 1, 0) < 0) {
++        perror("sync_file_range maximum finite range");
++        return 6;
++    }
++
++    if (expect_einval(-1, 0, 0, 8, "unknown flags before import") < 0 ||
++        expect_einval(fd, -1, 0, 0, "negative offset before import") < 0 ||
++        expect_einval(fd, 0, -1, 0, "negative length before import") < 0 ||
++        expect_einval(fd, INT64_MAX, 1, 0, "overflow before import") < 0 ||
++        expect_einval(fd, INT64_MAX - 1, 2, 0, "overflow before import") < 0) {
++        return 7;
++    }
++
++    /* flags=0 is legal but must still validate the descriptor in the host. */
++    errno = 0;
++    if (sync_file_range(-1, 0, 0, 0) != -1 || errno != EBADF) {
++        fprintf(stderr, "flags=0 did not delegate: errno=%d\n", errno);
++        return 8;
++    }
++
++    if (close(fd) < 0) {
++        perror("close");
++        return 9;
++    }
++    unlink(path);
++    return 0;
++}
+diff --git a/test/wasix/c_sync_file_range/test.sh b/test/wasix/c_sync_file_range/test.sh
+new file mode 100755
+index 0000000..036c772
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/test.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++
++wasmer run --verbose --enable-all ./main
++RESULT=$?
++if [ "$RESULT" != "0" ]; then
++    echo "Test failed: different exit code ($RESULT vs. 0)" > /dev/stderr
++    exit 1
++fi
++
++echo "c_sync_file_range test passed"
+

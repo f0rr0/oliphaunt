@@ -1,3 +1,22 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] postgres: select POSIX dynamic shared memory for WASIX
+
+Base: PostgreSQL REL_18_4; apply in postgres/patches/series order.
+
+The WASIX postmaster starts separately instantiated backends that must reopen
+named shared-memory objects. WASIX provides POSIX shared memory but not the
+SysV IPC headers required by the default non-Windows implementation.
+
+Exclude unavailable SysV and mmap-file DSM implementations on WASIX while
+retaining the existing POSIX DSM implementation and native behavior. This is
+a platform-correctness adaptation, not a single-backend optimization. It is
+an upstream WASIX-port candidate once that port's runtime contract is accepted.
+Validate with ordered application, shared-memory probes and concurrent
+backend lifecycle tests; application alone does not establish shared coherence.
+---
+
 diff --git a/src/backend/storage/ipc/dsm_impl.c b/src/backend/storage/ipc/dsm_impl.c
 index 2f6557adf8..81bd637f3d 100644
 --- a/src/backend/storage/ipc/dsm_impl.c

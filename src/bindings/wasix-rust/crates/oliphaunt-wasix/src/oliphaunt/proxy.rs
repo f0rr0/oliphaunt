@@ -23,9 +23,11 @@ use crate::oliphaunt::postgres_mod::{
 use crate::oliphaunt::query::simple_query;
 use crate::oliphaunt::wire::{
     FrontendFrameKind, FrontendFrameReader, classify_frontend_message, error_response,
-    response_contains_error, startup_config_for_message, startup_parameter,
+    response_contains_error, startup_config_for_message,
 };
 
+// Per-connection socket read batching, not a PostgreSQL frame/response limit.
+// Frames can span reads. Larger batches trade local stack space for fewer reads.
 const PROXY_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Blocking PostgreSQL socket proxy for the embedded Oliphaunt runtime.
@@ -317,22 +319,6 @@ impl OliphauntProxy {
                         let response = opened.startup(message)?;
                         let response_accepted =
                             response.accepted && !response_contains_error(&response.output);
-                        if response_accepted
-                            && let Some(user) = startup_parameter(message, "user")?
-                            && user != "postgres"
-                        {
-                            let role_response = opened.set_role(user)?;
-                            if response_contains_error(&role_response) {
-                                let _ = write_frontend(
-                                    &mut stream,
-                                    &role_response,
-                                    "write startup role rejection",
-                                )?;
-                                let _ = opened.close();
-                                close_after_flush = true;
-                                break;
-                            }
-                        }
                         {
                             if !write_frontend(
                                 &mut stream,
@@ -679,11 +665,6 @@ impl WireBackend {
     ) -> Result<ProtocolPumpOutcome> {
         self.session
             .send_with_connection_protocol_pump(message, || continuation_prefix.into_vec())
-    }
-
-    fn set_role(&mut self, user: &str) -> Result<Vec<u8>> {
-        let sql = format!("SET ROLE {}", crate::oliphaunt::sql::quote_identifier(user));
-        self.send(&simple_query(&sql)?)
     }
 
     fn reset_session_state(&mut self) -> Result<()> {

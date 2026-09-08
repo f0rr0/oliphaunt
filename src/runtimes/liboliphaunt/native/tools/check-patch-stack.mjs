@@ -66,22 +66,40 @@ const REQUIRED_AUDIT_CHECKS = [
     id: 'fatal-startup-guard',
     requirement: 'Startup FATAL does not exit the host process',
     patches: ['0009-liboliphaunt-guard-embedded-proc-exit.patch'],
-    evidence: ['oliphaunt_embedded_set_proc_exit_handler', 'siglongjmp', 'proc_exit_handler'],
-    posture: 'Embedded startup failures unwind to liboliphaunt after PostgreSQL cleanup callbacks run.',
+    evidence: [
+      'oliphaunt_embedded_install_proc_exit_handler',
+      'siglongjmp',
+      'proc_exit_handler',
+      'proc_exit_inprogress = false',
+    ],
+    posture: 'A one-shot handler unwinds embedded startup failures only after PostgreSQL cleanup callbacks run, then disarms PostgreSQL exit state before returning to the host.',
+  },
+  {
+    id: 'nonlocal-exit-lifecycle-state',
+    requirement: 'Non-local exit cleanup reads stable lifecycle state',
+    patches: ['0009-liboliphaunt-guard-embedded-proc-exit.patch'],
+    evidence: [
+      'OliphauntEmbeddedLifecycle',
+      'objects modified after sigsetjmp() would be indeterminate',
+      'lifecycle = calloc(1, sizeof(*lifecycle))',
+      'free(lifecycle)',
+    ],
+    forbidden: ['OliphauntEmbeddedProcExitGuard', 'have_original_cwd'],
+    posture: 'Every mutable value read after siglongjmp is heap-owned behind an unchanged pointer, avoiding C setjmp indeterminacy.',
   },
   {
     id: 'fatal-startup-cleanup-label',
     requirement: 'Embedded proc_exit guard is cleared before returning to host',
     patches: ['0009-liboliphaunt-guard-embedded-proc-exit.patch'],
-    evidence: ['embedded_cleanup:', 'oliphaunt_embedded_set_proc_exit_handler(NULL, NULL)', 'chdir(original_cwd)'],
-    posture: 'Normal and FATAL startup paths share one cleanup label so thread-local exit guards and host cwd are restored before returning.',
+    evidence: ['embedded_cleanup:', 'oliphaunt_embedded_clear_proc_exit_handler', 'chdir(lifecycle->original_cwd)'],
+    posture: 'Normal, ordinary startup-failure, and FATAL paths share one cleanup label that clears only the owned thread-local handler before cwd and socket cleanup.',
   },
   {
     id: 'cwd-restore',
     requirement: 'Host working directory is restored',
     patches: ['0005-liboliphaunt-restore-host-cwd.patch'],
-    evidence: ['original_cwd', 'getcwd(original_cwd', 'chdir(original_cwd)'],
-    posture: 'Contains PostgreSQL standalone ChangeToDataDir side effects inside the backend lifetime.',
+    evidence: ['original_cwd', 'getcwd(original_cwd', 'cwd_restore_required', 'ChangeToDataDir()', 'chdir(original_cwd)'],
+    posture: 'Rejects an unresolvable starting cwd and restores terminally owned ChangeToDataDir mutation. Active and logically detached Direct backends still hold the process-wide cwd at PGDATA.',
   },
   {
     id: 'static-extension-loader',
@@ -126,8 +144,16 @@ const REQUIRED_AUDIT_CHECKS = [
     id: 'host-runtime-paths',
     requirement: 'Runtime paths come from host-packaged resources',
     patches: ['0010-liboliphaunt-use-host-runtime-paths.patch'],
-    evidence: ['oliphaunt_embedded_set_runtime_paths', 'OLIPHAUNT_EMBEDDED_MODULE_DIR', 'my_exec_path', 'PGSYSCONFDIR'],
-    posture: 'Avoids executable-bit assumptions for mobile resources while preserving runtime path derivation and using host-packaged embedded modules for pkglib_path.',
+    evidence: [
+      'oliphaunt_embedded_set_runtime_paths',
+      'OLIPHAUNT_EMBEDDED_MODULE_DIR',
+      'strlcpy(my_exec_path, argv0, MAXPGPATH) >= MAXPGPATH',
+      'embedded PostgreSQL runtime anchor is too long',
+      'embedded PostgreSQL module directory must be absolute',
+      'strlcpy(pkglib_path, module_dir, MAXPGPATH) >= MAXPGPATH',
+      'PGSYSCONFDIR',
+    ],
+    posture: 'Avoids executable-bit assumptions for mobile resources, rejects relative or truncated host paths, preserves PostgreSQL path derivation, and uses host-packaged embedded modules for pkglib_path. Process environment, gettext, and PostgreSQL path caches remain one-lifetime Direct state.',
   },
   {
     id: 'apple-mobile-shell-exclusion',
@@ -145,10 +171,39 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     id: 'event-trigger-policy',
-    requirement: 'Event triggers run in embedded protocol sessions',
-    patches: ['0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch'],
-    evidence: ['EventTriggersHaveRunnableBackend', 'OLIPHAUNT_EMBEDDED', 'event_triggers'],
-    posture: 'Keeps upstream single-user escape hatch outside OLIPHAUNT_EMBEDDED but treats embedded protocol sessions as runnable backends.',
+    requirement: 'Event triggers use an attached normal-user session, not admission state',
+    patches: [
+      '0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch',
+      '0021-liboliphaunt-model-trusted-embedded-sessions.patch',
+    ],
+    evidence: [
+      'EventTriggersHaveRunnableBackend',
+      'return IsNormalUserSession();',
+      'return IsUnderPostmaster;',
+      'pg_atomic_compare_exchange_u32',
+      'if (!AdmitEmbeddedEntrypoint())',
+      'Admission is not a session capability',
+      'AttachPreparedTrustedEmbeddedSession',
+    ],
+    forbidden: [
+      'IsPostmasterEnvironment = true;',
+      'IsUnderPostmaster = true;',
+    ],
+    posture: 'A private atomic admits one Native physical backend, but only the catalog-safe trusted-session attachment enables Direct and Broker event triggers. Ordinary postmaster children retain upstream behavior, and bootstrap or genuine standalone recovery sessions retain the escape hatch.',
+  },
+  {
+    id: 'embedded-entrypoint-cleanup-ownership',
+    requirement: 'Rejected embedded entrypoints cannot release the admitted backend\'s global resources',
+    patches: [
+      '0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch',
+      '0014-liboliphaunt-use-portable-embedded-socketpair.patch',
+    ],
+    evidence: [
+      'bool\t\tentrypoint_admitted;',
+      'lifecycle->entrypoint_admitted = true;',
+      'if (lifecycle->entrypoint_admitted && FeBeWaitSet != NULL)',
+    ],
+    posture: 'The one-shot CAS winner publishes heap-owned admission before FATAL-capable initialization. A rejected contender may unwind only invocation-owned state and cannot free the active backend wait set.',
   },
   {
     id: 'embedded-meson-option',
@@ -192,7 +247,7 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     id: 'embedded-host-signal-boundary',
-    requirement: 'Embedded backend and extension signal calls preserve host SIGUSR1 ownership',
+    requirement: 'The historical narrow signal wrapper preserves host SIGUSR1 ownership',
     patches: ['0020-liboliphaunt-enforce-embedded-signal-boundary.patch'],
     evidence: [
       'oliphaunt_embedded_kill',
@@ -200,41 +255,110 @@ const REQUIRED_AUDIT_CHECKS = [
       '!defined(FRONTEND)',
       'if (signo == SIGUSR1)',
     ],
-    posture: 'Embedded backend and extension calls cannot replace or emit host-owned SIGUSR1; other signals delegate to the platform implementation, while frontend tools and normal PostgreSQL builds retain upstream behavior.',
+    posture: 'This intermediate layer reserved SIGUSR1. Patch 0022 completes the process boundary by denying all process-directed delivery and replacing signal-backed timers and latches.',
+  },
+  {
+    id: 'trusted-embedded-session',
+    requirement: 'Configured Native identity has a typed trusted startup lifecycle and normal catalog policy',
+    patches: ['0021-liboliphaunt-model-trusted-embedded-sessions.patch'],
+    evidence: [
+      'INIT_PG_TRUSTED_CLIENT',
+      'TRUSTED_EMBEDDED_SESSION_PREPARED',
+      'AttachPreparedTrustedEmbeddedSession',
+      'IsNormalUserSession',
+      'MyProc->isRegularBackend',
+      'InitializeSessionUserId(username, useroid, false)',
+      'if (!IsNormalUserSession())',
+      'check_trusted_embedded_worker_limit',
+      'configuration reload is not supported in a trusted embedded session',
+    ],
+    forbidden: [
+      'IsPostmasterEnvironment = true;',
+      'IsUnderPostmaster = true;',
+    ],
+    posture: 'A one-way PREPARED-to-ATTACHED capability bypasses HBA only for the in-process trusted host, while preserving role/database policy, settings, login triggers, wraparound/OID safety, and truthful standalone supervisor topology.',
+  },
+  {
+    id: 'trusted-host-process-boundary',
+    requirement: 'Direct sessions preserve host signal, timer, latch, and subprocess ownership while active',
+    patches: ['0022-liboliphaunt-preserve-host-process-boundaries.patch'],
+    evidence: [
+      'RequestTrustedEmbeddedQueryCancel',
+      'ProcessTrustedEmbeddedInterrupts',
+      'PublishTrustedEmbeddedWakeup',
+      'UnpublishTrustedEmbeddedWakeup',
+      'GetEmbeddedTimeoutDelayMilliseconds',
+      'ProcessEmbeddedTimeouts',
+      '#define WAIT_USE_SELF_PIPE',
+      'IsTrustedEmbeddedProcess() && signo != 0',
+      'pgwin32_signal_initialize_embedded',
+      'ShutdownTrustedEmbeddedLatchWaitSet',
+      'pq_getbyte_interruptible',
+      'backend cancellation by process ID is not supported',
+      'external programs are not supported in a trusted embedded backend',
+    ],
+    posture: 'Host-thread cancellation crosses an atomic mailbox and signal-free wake. PostgreSQL deadlines run cooperatively without SIGALRM or ITIMER_REAL, POSIX latches use a self-pipe without SIGURG, and unsupported process capabilities fail before delivery or spawn. Normal server and frontend behavior is unchanged.',
   },
 ];
 
 const EXPECTED_UPSTREAM_TOUCHPOINTS = new Map([
   ['meson.build', 'Meson-hosted embedded builds enable OLIPHAUNT_EMBEDDED through an explicit opt-in build option.'],
   ['meson_options.txt', 'Meson-hosted embedded builds declare opt-in backend and Windows module-provider options without changing default PostgreSQL builds.'],
+  ['src/backend/access/transam/xact.c', 'Direct transaction and subtransaction abort restore the embedding thread inherited signal mask with the thread-safe provider while ordinary PostgreSQL keeps its process-oriented sigprocmask path.'],
+  ['src/backend/access/transam/multixact.c', 'Trusted user sessions retain MultiXact wraparound stop protection without signalling an absent autovacuum launcher.'],
+  ['src/backend/access/transam/varsup.c', 'Trusted user sessions retain XID wraparound stops and normal user-object OID allocation while recovery standalone mode keeps its bootstrap range.'],
+  ['src/backend/access/transam/xlogfuncs.c', 'Trusted embedded sessions reject standby promotion before creating files, signalling, or waiting on an absent postmaster.'],
   ['src/backend/access/transam/xlogarchive.c', 'Apple mobile embedded builds compile out optional archive shell commands.'],
   ['src/backend/archive/shell_archive.c', 'Apple mobile embedded builds compile out optional archive shell commands.'],
-  ['src/backend/commands/event_trigger.c', 'Embedded FE/BE protocol sessions can run event triggers without changing standalone recovery behavior.'],
-  ['src/backend/commands/collationcmds.c', 'System-collation import preserves host providers except during deliberate deterministic distributed-seed production; verified ICU readiness independently gates only the ICU provider.'],
-  ['src/backend/libpq/be-secure.c', 'Backend secure read/write path delegates to a host I/O vtable only when OLIPHAUNT_EMBEDDED is set.'],
+  ['src/backend/commands/copyfromparse.c', 'Direct COPY FROM accepts cancellation only between complete frontend frames, after the Native ABI has rejected truncated headers and bodies before publication.'],
+  ['src/backend/commands/event_trigger.c', 'Real server children and attached trusted Native sessions can run event and login triggers without changing recovery standalone behavior.'],
+  ['src/backend/commands/collationcmds.c', 'Seed production controls provider discovery; trusted sessions skip subprocess-only libc enumeration while preserving in-process ICU import and ordinary server behavior.'],
+  ['src/backend/commands/tsearchcmds.c', 'Trusted user sessions validate text-search dictionary options while initdb retains its standalone compatibility exception.'],
+  ['src/backend/libpq/be-secure.c', 'Embedded secure reads pass the nearest cooperative PostgreSQL deadline to the private host I/O provider.'],
   ['src/backend/libpq/pqcomm.c', 'Standalone embedded sessions avoid waiting on a non-existent postmaster death latch.'],
   ['src/backend/port/Makefile', 'Embedded mobile builds swap unavailable SysV shared memory and semaphores for process-local implementations.'],
   ['src/backend/port/meson.build', 'Android embedded builds swap unavailable SysV shared memory and semaphores for process-local implementations.'],
   ['src/backend/port/oliphaunt_embedded_sema.c', 'Embedded mobile semaphore implementation for one backend in one process.'],
   ['src/backend/port/oliphaunt_embedded_shmem.c', 'Embedded mobile shared memory implementation for one backend in one process.'],
+  ['src/backend/port/win32/signal.c', 'Trusted Windows Direct sessions initialize only thread-local signal emulation and their private wake event, without claiming the host console handler or process signal listener.'],
   ['src/backend/meson.build', 'Embedded MSVC extension modules link to the oliphaunt host import library instead of the standalone postgres executable.'],
   ['src/backend/storage/ipc/ipc.c', 'Embedded backend cleanup and proc_exit unwinding stay at PostgreSQL lifecycle boundaries.'],
+  ['src/backend/storage/ipc/latch.c', 'Direct explicitly frees the session-lifetime latch wait set before closing its provider-private wake endpoint because the host process remains alive.'],
   ['src/backend/storage/ipc/procsignal.c', 'The one-backend embedded runtime dispatches ProcSignal flags without sending process-directed host signals.'],
-  ['src/backend/tcop/postgres.c', 'Embedded backend entrypoint, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition.'],
+  ['src/backend/storage/file/fd.c', 'Trusted embedded backends reject pipe programs before popen can spawn or alter process signal state.'],
+  ['src/backend/storage/ipc/signalfuncs.c', 'Trusted embedded sessions reject PID cancellation, termination, reload, and rotation operations that require process signalling or absent supervisors.'],
+  ['src/backend/storage/ipc/waiteventset.c', 'Trusted POSIX sessions use a signal-free self-pipe wake and bound latch waits by cooperative PostgreSQL deadlines.'],
+  ['src/backend/tcop/backend_startup.c', 'PostgresMain carries explicit InitPostgres startup policy from each owning entrypoint.'],
+  ['src/backend/tcop/postgres.c', 'Embedded backend entrypoint, atomic one-shot admission, typed trusted startup, regular-backend identity, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition.'],
+  ['src/backend/utils/init/Makefile', 'Builds the isolated trusted embedded-session lifecycle and topology policy module.'],
+  ['src/backend/utils/init/embedded_session.c', 'Owns one-way trusted-session state, atomic host-cancel ingress, shell-command exclusions, and non-negotiable single-backend worker/AIO topology.'],
+  ['src/backend/utils/init/meson.build', 'Builds the isolated trusted embedded-session module for Meson-hosted targets.'],
+  ['src/backend/utils/init/miscinit.c', 'Normal role LOGIN and connection-limit policy applies to attached trusted sessions while recovery standalone keeps its escape hatch.'],
+  ['src/backend/utils/init/postinit.c', 'Attaches host-trusted identity and routes statement and lock timeouts directly to backend-thread interrupt flags without self-signalling.'],
   ['src/backend/utils/fmgr/dfmgr.c', 'Static extension lookup reuses PostgreSQL dynamic function manager semantics.'],
+  ['src/backend/utils/misc/guc_tables.c', 'Attached trusted sessions reject live attempts to restore nonzero parallel worker settings while allowing stored-setting validation.'],
+  ['src/backend/utils/misc/timeout.c', 'Trusted embedded deadlines preserve PostgreSQL ordering and indicators while running cooperatively without SIGALRM or ITIMER_REAL.'],
+  ['src/backend/utils/misc/superuser.c', 'The bootstrap-superuser escape hatch remains limited to genuine non-user standalone startup.'],
   [
     'src/bin/initdb/initdb.c',
     'Controlled seed production selects standard or verified ICU collation discovery without changing ordinary initdb semantics.',
   ],
-  ['src/include/libpq/libpq-be.h', 'Host I/O vtable is attached to PostgreSQL Port state under OLIPHAUNT_EMBEDDED.'],
+  ['src/include/libpq/libpq-be.h', 'Private embedded host reads accept a nearest-deadline timeout without changing PostgreSQL client ABI.'],
+  ['src/include/libpq/libpq.h', 'The backend-private protocol reader exposes an embedded-only interrupted sentinel used to stop Direct COPY only at a validated message boundary.'],
+  ['src/include/miscadmin.h', 'Declares trusted-session lifecycle and makes interrupt checks consume the host atomic mailbox and cooperative deadlines.'],
+  ['src/include/libpq/pqsignal.h', 'Declares the embedded thread-mask helper beside PostgreSQL sigset_t, including its Windows emulation, without imposing backend include order on common support objects.'],
   ['src/include/tcop/backend_startup.h', 'Embedded BackendMain may return after its returning PostgresMain call without retaining an invalid pg_noreturn declaration.'],
   ['src/include/port.h', 'Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary.'],
+  ['src/include/port/win32_port.h', 'Declares the trusted Windows signal-emulation lifecycle that omits host process listeners and releases its local event explicitly.'],
   ['src/include/storage/dsm_impl.h', 'Embedded mobile builds keep DSM on mmap instead of POSIX or SysV shared memory.'],
   ['src/include/storage/ipc.h', 'Embedded cleanup and proc_exit guard declarations.'],
+  ['src/include/storage/latch.h', 'Declares explicit Direct latch wait-set teardown for a retained embedding process.'],
+  ['src/include/storage/waiteventset.h', 'Declares the host-thread-safe signal-free backend wake provider.'],
   ['src/include/tcop/tcopprot.h', 'Embedded entrypoint and returning PostgresMain declarations.'],
   ['src/include/utils/hsearch.h', 'Apple builds namespace PostgreSQL dynahash symbols that otherwise bind to unrelated libSystem exports.'],
+  ['src/include/utils/timeout.h', 'Declares private cooperative timeout processing and nearest-deadline accessors for embedded builds.'],
   ['src/port/chklocale.c', 'Android embedded builds avoid unsupported locale-environment mutation.'],
-  ['src/port/pqsignal.c', 'Embedded backend signal registration and emission preserve the host-owned SIGUSR1 disposition while delegating other signals.'],
+  ['src/port/pqsignal.c', 'Embedded backends leave every host signal disposition untouched, permit only signal-zero liveness probes, and reject delivery or raise.'],
 ]);
 
 if (!['--check', '--write'].includes(mode)) {
@@ -280,7 +404,7 @@ function parsePatch(fileName, patchDir) {
   const text = read(relativePath);
   const trailingWhitespaceLine = text
     .split(/\r?\n/u)
-    .findIndex(line => /[\t ]+$/u.test(line));
+    .findIndex(line => line !== ' ' && /[\t ]+$/u.test(line));
   if (trailingWhitespaceLine !== -1) {
     throw new Error(
       `${relativePath}:${trailingWhitespaceLine + 1} contains trailing whitespace`,
@@ -441,6 +565,12 @@ function render() {
     if (missing.length > 0) {
       throw new Error(
         `patch-stack audit check ${check.id} is missing evidence in ${check.patches.join(', ')}: ${missing.join(', ')}`,
+      );
+    }
+    const forbidden = (check.forbidden ?? []).filter(fragment => checkText.includes(fragment));
+    if (forbidden.length > 0) {
+      throw new Error(
+        `patch-stack audit check ${check.id} contains forbidden ambient selectors: ${forbidden.join(', ')}`,
       );
     }
   }

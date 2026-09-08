@@ -25,7 +25,7 @@ static bool config_string_matches(
     const char *actual,
     const char *requested,
     const char *fallback) {
-    const char *expected = requested != NULL ? requested : fallback;
+    const char *expected = requested != NULL && requested[0] != '\0' ? requested : fallback;
     return strcmp(actual != NULL ? actual : "", expected != NULL ? expected : "") == 0;
 }
 

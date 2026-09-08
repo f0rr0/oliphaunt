@@ -1,3 +1,13 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: expose directory mutation tracking
+
+Track changed filesystem paths so persistent stores publish mutations instead
+of rescanning an entire database after every operation. Keep untracked mounts
+available for immutable runtime data. This interface is downstream storage
+integration; upstream value depends on a general dirty-path API and ownership
+contract, not the PostgreSQL benchmark alone.
+
 diff --git a/src/fs/directory.rs b/src/fs/directory.rs
 index 34af7da..51fafa5 100644
 --- a/src/fs/directory.rs

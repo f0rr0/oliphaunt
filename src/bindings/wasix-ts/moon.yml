@@ -6,6 +6,10 @@ layer: "library"
 stack: "frontend"
 tags: ["binding", "wasix", "wasm", "typescript", "browser", "node", "bun", "deno", "sdk", "release-product"]
 dependsOn:
+  - id: "postgres-protocol-transport-contract"
+    scope: "development"
+  - id: "postgres-tool-output-contract"
+    scope: "development"
   - id: "cluster-seed-contract"
     scope: "development"
   - id: "shared-test-fixtures"
@@ -73,8 +77,25 @@ tasks:
     inputs:
       - "host/**/*"
       - "@group(cargo-workspace)"
+      - "/src/shared/postgres-protocol-transport-contract/contract.json"
+      - "/src/shared/postgres-tool-output-contract/contract.json"
     outputs:
       - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  host-contract:
+    tags: ["quality", "static", "contract"]
+    command: "node --test src/bindings/wasix-ts/host/*.test.mjs"
+    inputs:
+      - "host/**/*"
+      - "src/direct-client-common.ts"
+      - "/src/shared/postgres-protocol-transport-contract/**/*"
+      - "/src/shared/postgres-tool-output-contract/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

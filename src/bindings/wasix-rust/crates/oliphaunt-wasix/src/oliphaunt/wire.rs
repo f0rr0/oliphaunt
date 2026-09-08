@@ -6,6 +6,8 @@ pub(crate) const SSL_REQUEST_CODE: i32 = 80_877_103;
 pub(crate) const GSSENC_REQUEST_CODE: i32 = 80_877_104;
 pub(crate) const CANCEL_REQUEST_CODE: i32 = 80_877_102;
 pub(crate) const PROTOCOL_3: i32 = 196_608;
+// Admission limit for one complete frontend frame, including its header; no
+// up-front allocation. Separate from read batches and the buffered-output cap.
 pub(crate) const MAX_FRONTEND_MESSAGE: usize = 128 * 1024 * 1024;
 
 #[derive(Default)]

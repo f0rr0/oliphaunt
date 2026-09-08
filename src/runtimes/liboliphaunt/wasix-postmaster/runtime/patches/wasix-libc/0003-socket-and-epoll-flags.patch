@@ -1,0 +1,95 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 3/7] libc: preserve socket and epoll descriptor flags
+
+Preserve nonblocking and close-on-exec behavior when libc constructs sockets
+and epoll descriptors. PostgreSQL's listener and child event loop require
+those flags to survive the libc-to-WASIX boundary. The matching host readiness
+and descriptor-lifetime patches are required.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c b/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c
+index 74caf2e..2ab7514 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c
++++ b/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c
+@@ -4,10 +4,20 @@
+ #include <assert.h>
+ #include <wasi/api.h>
+ #include <errno.h>
++#include <fcntl.h>
+ #include <string.h>
++#include <unistd.h>
+ 
+ int socket(int domain, int ty, int protocol) {
+   int fd;
++  int flags = ty & (SOCK_NONBLOCK | SOCK_CLOEXEC);
++  ty &= ~(SOCK_NONBLOCK | SOCK_CLOEXEC);
++
++  if (ty != SOCK_STREAM && ty != SOCK_DGRAM) {
++    errno = EPROTONOSUPPORT;
++    return -1;
++  }
++
+   if(!protocol) {
+     switch (ty)
+     {
+@@ -25,5 +35,14 @@ int socket(int domain, int ty, int protocol) {
+     return -1;
+   }
+ 
++  if ((flags & SOCK_CLOEXEC) != 0 && fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
++    close(fd);
++    return -1;
++  }
++  if ((flags & SOCK_NONBLOCK) != 0 && fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
++    close(fd);
++    return -1;
++  }
++
+   return fd;
+ }
+diff --git a/libc-top-half/musl/src/linux/epoll.c b/libc-top-half/musl/src/linux/epoll.c
+index 4780ce2..b3ac891 100644
+--- a/libc-top-half/musl/src/linux/epoll.c
++++ b/libc-top-half/musl/src/linux/epoll.c
+@@ -2,6 +2,8 @@
+ #include <sys/epoll.h>
+ #include <signal.h>
+ #include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
+ 
+ int epoll_create(int size)
+ {
+@@ -17,7 +19,27 @@ int epoll_create(int size)
+ 
+ int epoll_create1(int flags)
+ {
+-    return epoll_create(0);
++    int fd;
++
++    if (flags & ~EPOLL_CLOEXEC) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    fd = epoll_create(0);
++    if (fd < 0) {
++        return -1;
++    }
++
++    if ((flags & EPOLL_CLOEXEC) && fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
++        int saved_errno = errno;
++
++        close(fd);
++        errno = saved_errno;
++        return -1;
++    }
++
++    return fd;
+ }
+ 
+ int epoll_ctl(int fd, int op, int fd2, struct epoll_event *ev)
+

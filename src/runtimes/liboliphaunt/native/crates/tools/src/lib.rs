@@ -5,10 +5,11 @@ mod arguments;
 use std::error::Error as StdError;
 use std::ffi::OsString;
 use std::fmt;
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::thread;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 
 use arguments::{validate_pg_dump_arguments, validate_psql_arguments};
 
@@ -18,7 +19,14 @@ pub const PRODUCT: &str = "oliphaunt-tools";
 /// Artifact kind relayed by this facade crate.
 pub const KIND: &str = "native-tools";
 
-/// Options for a plain-text `pg_dump`.
+// Keep this in sync with src/shared/postgres-tool-output-contract/contract.json.
+const CAPTURED_OUTPUT_LIMIT_BYTES: usize = 67_108_864;
+
+/// Options for the in-memory, plain-text `pg_dump` convenience API.
+///
+/// Standard output and standard error share an inclusive 64 MiB aggregate
+/// capture limit per process. Exceeding it fails without returning partial
+/// output. A streaming or sink API is not currently available.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PgDumpOptions {
     args: Vec<String>,
@@ -43,7 +51,11 @@ impl PgDumpOptions {
     }
 }
 
-/// Options for a non-interactive `psql` invocation.
+/// Options for an in-memory, non-interactive `psql` invocation.
+///
+/// Standard output and standard error share an inclusive 64 MiB aggregate
+/// capture limit per process. Exceeding it fails without returning partial
+/// output. A streaming or sink API is not currently available.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PsqlOptions {
     args: Vec<String>,
@@ -95,14 +107,29 @@ pub struct PostgresToolError {
     /// Process exit status when the program started.
     pub exit_code: Option<i32>,
     /// UTF-8 standard output captured before failure.
+    ///
+    /// This is empty after output-capture overflow so no partial prefix is
+    /// exposed.
     pub stdout: String,
     /// UTF-8 standard error captured before failure.
+    ///
+    /// This is empty after output-capture overflow so no partial prefix is
+    /// exposed.
     pub stderr: String,
     source: Option<std::io::Error>,
+    output_capture_failure: Option<OutputCaptureFailure>,
 }
 
 impl fmt::Display for PostgresToolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(failure) = self.output_capture_failure {
+            return match failure {
+                OutputCaptureFailure::LimitExceeded => {
+                    write!(formatter, "{} {failure}", self.tool)
+                }
+                _ => write!(formatter, "{} output capture failed: {failure}", self.tool),
+            };
+        }
         if let Some(source) = &self.source {
             return write!(formatter, "could not run {}: {source}", self.tool);
         }
@@ -130,6 +157,11 @@ impl StdError for PostgresToolError {
 }
 
 /// Run packaged `pg_dump` against a PostgreSQL connection string.
+///
+/// Returns unchanged PostgreSQL UTF-8 output through the inclusive 64 MiB
+/// combined stdout/stderr capture limit. Exceeding the limit returns
+/// [`PostgresToolError`] without partial output. Streaming larger dumps is not
+/// currently supported.
 pub fn pg_dump(
     connection_string: &str,
     options: PgDumpOptions,
@@ -149,6 +181,11 @@ pub fn pg_dump(
 }
 
 /// Run packaged non-interactive `psql` against a PostgreSQL connection string.
+///
+/// Returns unchanged PostgreSQL UTF-8 output through the inclusive 64 MiB
+/// combined stdout/stderr capture limit. Exceeding the limit returns
+/// [`PostgresToolError`] without partial output. Streaming larger results is
+/// not currently supported.
 pub fn psql(connection_string: &str, options: PsqlOptions) -> Result<String, PostgresToolError> {
     validate_connection_string("psql", connection_string)?;
     validate_psql_arguments(&options.args)
@@ -222,7 +259,25 @@ fn run_tool(
         stdout: String::new(),
         stderr: String::new(),
         source: Some(source),
+        output_capture_failure: None,
     })?;
+    let captured = Arc::new(Mutex::new(CapturedOutput::new(CAPTURED_OUTPUT_LIMIT_BYTES)));
+    let stdout_reader = spawn_output_reader(
+        child
+            .stdout
+            .take()
+            .expect("stdout is piped for PostgreSQL tools"),
+        Arc::clone(&captured),
+        OutputChannel::Stdout,
+    );
+    let stderr_reader = spawn_output_reader(
+        child
+            .stderr
+            .take()
+            .expect("stderr is piped for PostgreSQL tools"),
+        Arc::clone(&captured),
+        OutputChannel::Stderr,
+    );
     // Drain stdout/stderr while a potentially large psql script is written.
     // Writing all stdin first can deadlock when the child fills an output pipe.
     let input_writer = stdin.and_then(|input| {
@@ -231,49 +286,232 @@ fn run_tool(
             .take()
             .map(|mut writer| thread::spawn(move || writer.write_all(&input)))
     });
-    let output = child
-        .wait_with_output()
-        .map_err(|source| PostgresToolError {
-            tool,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-            source: Some(source),
-        })?;
+    let status = child.wait();
+    if status.is_err() {
+        // A failed wait can leave the process and its pipe readers alive.
+        // Terminate it before joining the readers so this error path cannot
+        // strand background threads.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let stdout_failure = join_output_reader(stdout_reader, "stdout");
+    let stderr_failure = join_output_reader(stderr_reader, "stderr");
     let input_failure = input_writer.and_then(|writer| match writer.join() {
         Ok(Ok(())) => None,
         Ok(Err(error)) => Some(error),
         Err(_) => Some(std::io::Error::other("psql stdin writer panicked")),
     });
-    if !output.status.success() {
+    let captured = take_captured_output(&captured);
+    let exit_code = status
+        .as_ref()
+        .ok()
+        .and_then(std::process::ExitStatus::code);
+    if let Some(failure) = captured.failure {
         return Err(PostgresToolError {
             tool,
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code,
+            stdout: String::new(),
+            stderr: String::new(),
             source: None,
+            output_capture_failure: Some(failure),
+        });
+    }
+    let status = match status {
+        Ok(status) => status,
+        Err(source) => return Err(io_failure(tool, exit_code, captured, source)),
+    };
+    if let Some(source) = stdout_failure.or(stderr_failure) {
+        return Err(io_failure(tool, status.code(), captured, source));
+    }
+    let CapturedOutput { stdout, stderr, .. } = captured;
+    if !status.success() {
+        return Err(PostgresToolError {
+            tool,
+            exit_code: status.code(),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            source: None,
+            output_capture_failure: None,
         });
     }
     if let Some(source) = input_failure {
         return Err(PostgresToolError {
             tool,
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: status.code(),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
             source: Some(source),
+            output_capture_failure: None,
         });
     }
-    String::from_utf8(output.stdout).map_err(|error| PostgresToolError {
+    String::from_utf8(stdout).map_err(|error| PostgresToolError {
         tool,
-        exit_code: output.status.code(),
+        exit_code: status.code(),
         stdout: String::from_utf8_lossy(error.as_bytes()).into_owned(),
         stderr: format!(
             "{}{} produced non-UTF-8 output: {error}",
-            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&stderr),
             tool
         ),
         source: None,
+        output_capture_failure: None,
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OutputChannel {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputCaptureFailure {
+    LimitExceeded,
+    AllocationFailed,
+    LockPoisoned,
+}
+
+impl fmt::Display for OutputCaptureFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LimitExceeded => write!(
+                formatter,
+                "combined stdout and stderr exceeded the {CAPTURED_OUTPUT_LIMIT_BYTES}-byte capture limit; larger valid output requires a streaming or sink API, which is not currently available"
+            ),
+            Self::AllocationFailed => write!(
+                formatter,
+                "could not reserve memory for stdout and stderr within the {CAPTURED_OUTPUT_LIMIT_BYTES}-byte capture limit"
+            ),
+            Self::LockPoisoned => {
+                formatter.write_str("stdout and stderr capture lock was poisoned")
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CapturedOutput {
+    limit: usize,
+    retained_bytes: usize,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    failure: Option<OutputCaptureFailure>,
+}
+
+impl CapturedOutput {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            retained_bytes: 0,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            failure: None,
+        }
+    }
+
+    fn retain(&mut self, channel: OutputChannel, bytes: &[u8]) {
+        if self.failure.is_some() {
+            return;
+        }
+        let Some(next_size) = self.retained_bytes.checked_add(bytes.len()) else {
+            self.fail(OutputCaptureFailure::LimitExceeded);
+            return;
+        };
+        if next_size > self.limit {
+            self.fail(OutputCaptureFailure::LimitExceeded);
+            return;
+        }
+        let destination = match channel {
+            OutputChannel::Stdout => &mut self.stdout,
+            OutputChannel::Stderr => &mut self.stderr,
+        };
+        if destination.try_reserve_exact(bytes.len()).is_err() {
+            self.fail(OutputCaptureFailure::AllocationFailed);
+            return;
+        }
+        destination.extend_from_slice(bytes);
+        self.retained_bytes = next_size;
+    }
+
+    fn fail(&mut self, failure: OutputCaptureFailure) {
+        self.failure.get_or_insert(failure);
+        self.retained_bytes = 0;
+        self.stdout = Vec::new();
+        self.stderr = Vec::new();
+    }
+}
+
+fn spawn_output_reader<R>(
+    reader: R,
+    captured: Arc<Mutex<CapturedOutput>>,
+    channel: OutputChannel,
+) -> JoinHandle<io::Result<usize>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || drain_output(reader, &captured, channel))
+}
+
+fn drain_output(
+    mut reader: impl Read,
+    captured: &Mutex<CapturedOutput>,
+    channel: OutputChannel,
+) -> io::Result<usize> {
+    let mut buffer = [0_u8; 32 * 1024];
+    let mut observed_bytes = 0_usize;
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(observed_bytes);
+        }
+        observed_bytes = observed_bytes.saturating_add(count);
+        match captured.lock() {
+            Ok(mut captured) => captured.retain(channel, &buffer[..count]),
+            Err(poisoned) => {
+                let mut captured = poisoned.into_inner();
+                captured.fail(OutputCaptureFailure::LockPoisoned);
+            }
+        }
+    }
+}
+
+fn join_output_reader(reader: JoinHandle<io::Result<usize>>, channel: &str) -> Option<io::Error> {
+    match reader.join() {
+        Ok(Ok(_)) => None,
+        Ok(Err(error)) => Some(error),
+        Err(_) => Some(io::Error::other(format!(
+            "PostgreSQL tool {channel} reader panicked"
+        ))),
+    }
+}
+
+fn take_captured_output(captured: &Mutex<CapturedOutput>) -> CapturedOutput {
+    let mut captured = match captured.lock() {
+        Ok(captured) => captured,
+        Err(poisoned) => {
+            let mut captured = poisoned.into_inner();
+            captured.fail(OutputCaptureFailure::LockPoisoned);
+            captured
+        }
+    };
+    let limit = captured.limit;
+    std::mem::replace(&mut *captured, CapturedOutput::new(limit))
+}
+
+fn io_failure(
+    tool: &'static str,
+    exit_code: Option<i32>,
+    captured: CapturedOutput,
+    source: io::Error,
+) -> PostgresToolError {
+    PostgresToolError {
+        tool,
+        exit_code,
+        stdout: String::from_utf8_lossy(&captured.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&captured.stderr).into_owned(),
+        source: Some(source),
+        output_capture_failure: None,
+    }
 }
 
 fn resolve_tool(tool: &'static str) -> Result<PathBuf, PostgresToolError> {
@@ -366,12 +604,14 @@ fn configuration_error(tool: &'static str, message: &str) -> PostgresToolError {
         stdout: String::new(),
         stderr: message.to_owned(),
         source: None,
+        output_capture_failure: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn psql_scripts_explicitly_read_standard_input() {
@@ -393,5 +633,90 @@ mod tests {
                 .any(|arguments| arguments == ["--command", "SELECT 1"])
         );
         assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn captured_output_preserves_both_streams_at_the_aggregate_limit() {
+        let mut captured = CapturedOutput::new(7);
+        captured.retain(OutputChannel::Stdout, b"out");
+        captured.retain(OutputChannel::Stderr, b"err!");
+
+        assert_eq!(captured.failure, None);
+        assert_eq!(captured.retained_bytes, 7);
+        assert_eq!(captured.stdout, b"out");
+        assert_eq!(captured.stderr, b"err!");
+    }
+
+    #[test]
+    fn captured_output_discards_everything_after_aggregate_overflow() {
+        let mut captured = CapturedOutput::new(5);
+        captured.retain(OutputChannel::Stdout, b"abc");
+        captured.retain(OutputChannel::Stderr, b"def");
+        captured.retain(OutputChannel::Stdout, b"later output");
+
+        assert_eq!(captured.failure, Some(OutputCaptureFailure::LimitExceeded));
+        assert_eq!(captured.retained_bytes, 0);
+        assert!(captured.stdout.is_empty());
+        assert!(captured.stderr.is_empty());
+    }
+
+    #[test]
+    fn output_reader_continues_draining_after_capture_overflow() {
+        let bytes = vec![b'x'; 32 * 1024 + 17];
+        let captured = Mutex::new(CapturedOutput::new(1));
+
+        let observed = drain_output(Cursor::new(&bytes), &captured, OutputChannel::Stdout)
+            .expect("reader should drain all input");
+        let captured = captured
+            .into_inner()
+            .expect("capture lock should remain usable");
+
+        assert_eq!(observed, bytes.len());
+        assert_eq!(captured.failure, Some(OutputCaptureFailure::LimitExceeded));
+        assert!(captured.stdout.is_empty());
+        assert!(captured.stderr.is_empty());
+    }
+
+    #[test]
+    fn output_limit_error_is_stable_and_contains_no_partial_output() {
+        let error = PostgresToolError {
+            tool: "pg_dump",
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            source: None,
+            output_capture_failure: Some(OutputCaptureFailure::LimitExceeded),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "pg_dump combined stdout and stderr exceeded the 67108864-byte capture limit; larger valid output requires a streaming or sink API, which is not currently available"
+        );
+        assert!(error.stdout.is_empty());
+        assert!(error.stderr.is_empty());
+    }
+
+    #[test]
+    fn poisoned_capture_is_fail_closed_and_does_not_stop_draining() {
+        let captured = Arc::new(Mutex::new(CapturedOutput::new(32)));
+        let poison_target = Arc::clone(&captured);
+        let _ = std::thread::spawn(move || {
+            let _guard = poison_target.lock().unwrap();
+            panic!("poison the capture lock");
+        })
+        .join();
+
+        let observed = drain_output(
+            Cursor::new(b"all bytes still drained"),
+            &captured,
+            OutputChannel::Stdout,
+        )
+        .expect("poisoning must not stop pipe draining");
+        let captured = take_captured_output(&captured);
+
+        assert_eq!(observed, b"all bytes still drained".len());
+        assert_eq!(captured.failure, Some(OutputCaptureFailure::LockPoisoned));
+        assert!(captured.stdout.is_empty());
+        assert!(captured.stderr.is_empty());
     }
 }

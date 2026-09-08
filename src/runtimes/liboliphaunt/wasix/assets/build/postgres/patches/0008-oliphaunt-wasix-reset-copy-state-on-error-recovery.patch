@@ -16,13 +16,13 @@ reports that its COPY state is no longer active.
  1 file changed, 8 insertions(+)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 8017e5e97e..bb7f33f100 100644
+index fa6e9cfaf7..dc749b799e 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -4478,6 +4478,14 @@ PostgresMainLongJmp(void)
+@@ -4494,6 +4494,14 @@ PostgresMainLongJmp(void)
  	/* Make sure libpq is in a good state */
  	pq_comm_reset();
-
+ 
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	/*
 +	 * A top-level ERROR aborts COPY.  Keep the host-side protocol handoff
@@ -33,6 +33,6 @@ index 8017e5e97e..bb7f33f100 100644
 +
  	/* Report the error to the client and/or server log */
  	EmitErrorReport();
-
+ 
 --
 2.49.0

@@ -228,7 +228,7 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
   });
 
-  it('keeps an existing configured role across a tool session without loading a seed', async () => {
+  it('keeps startup identity across a tool session without post-startup role or extension SQL', async () => {
     const queries: string[] = [];
     const options = openOptions();
     options.username = 'app"role';
@@ -263,15 +263,7 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
 
     expect(seedLoads).toBe(0);
-    expect(queries).toEqual([
-      'SET ROLE "app""role"',
-      'ROLLBACK',
-      'DISCARD ALL',
-      'SET ROLE "app""role"',
-      'ROLLBACK',
-      'DISCARD ALL',
-      'SET ROLE "app""role"',
-    ]);
+    expect(queries).toEqual(['ROLLBACK', 'DISCARD ALL', 'ROLLBACK', 'DISCARD ALL']);
   });
 
   it('reuses prepared pg_dump but creates fresh processes and publishes once per run', async () => {
@@ -566,7 +558,7 @@ describe('direct WASIX session lifecycle', () => {
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
   });
 
-  it('keeps a direct session usable after the host confirms stream callback recovery', async () => {
+  it('drains after a callback abort and keeps the successfully completed session usable', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
@@ -579,23 +571,23 @@ describe('direct WASIX session lifecycle', () => {
       fakeHost({
         events,
         execProtocolStream(onChunk) {
-          try {
-            onChunk(Uint8Array.of(1));
-            return 0;
-          } catch {
-            return 1;
-          }
+          onChunk(Uint8Array.of(1));
+          onChunk(Uint8Array.of(2));
+          return 0;
         },
       }),
       fakeDependencies(storage),
     );
     const callbackFailure = new Error('consumer stopped');
+    let callbackCount = 0;
 
     await expect(
       session.execStream(Uint8Array.of(1), () => {
+        callbackCount += 1;
         throw callbackFailure;
       }),
     ).resolves.toBe('callbackAborted');
+    expect(callbackCount).toBe(1);
     await expect(session.exec(Uint8Array.of(2))).resolves.toEqual(querySuccess());
     await session.close();
 
@@ -611,18 +603,307 @@ describe('direct WASIX session lifecycle', () => {
     ]);
   });
 
+  it('keeps callback reentry blocked while the guest allocation is freed', async () => {
+    let session!: DirectWasixSession;
+    let nestedClose: Promise<void> | undefined;
+    let nestedServe: Promise<void> | undefined;
+    session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        free() {
+          nestedClose = session.close();
+          nestedServe = session.serve(
+            { frontend: createWasixByteChannel(), backend: createWasixByteChannel() },
+            'server',
+          );
+          void nestedClose.catch(() => undefined);
+          void nestedServe.catch(() => undefined);
+        },
+      }),
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+
+    await expect(session.close()).resolves.toBeUndefined();
+    await expect(nestedClose).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedServe).rejects.toThrow('cannot be reentered synchronously');
+  });
+
+  it('guards replacement startup callbacks until backend ownership is published', async () => {
+    let session!: DirectWasixSession;
+    let instantiations = 0;
+    let initialCloseCalls = 0;
+    let initialFreeCalls = 0;
+    let replacementCloseCalls = 0;
+    let replacementFreeCalls = 0;
+    let storageCloseCalls = 0;
+    let nestedClose: Promise<void> | undefined;
+    let nestedServe: Promise<void> | undefined;
+    let callbackState:
+      | {
+          instantiations: number;
+          replacementCloseCalls: number;
+          replacementFreeCalls: number;
+          storageCloseCalls: number;
+        }
+      | undefined;
+    const initialHost = fakeHost({
+      close() {
+        initialCloseCalls += 1;
+      },
+      free() {
+        initialFreeCalls += 1;
+      },
+    });
+    const replacementHost = fakeHost({
+      startup() {
+        nestedClose = session.close();
+        nestedServe = session.serve(
+          { frontend: createWasixByteChannel(), backend: createWasixByteChannel() },
+          'server',
+        );
+        void nestedClose.catch(() => undefined);
+        void nestedServe.catch(() => undefined);
+        callbackState = {
+          instantiations,
+          replacementCloseCalls,
+          replacementFreeCalls,
+          storageCloseCalls,
+        };
+        return startupSuccess();
+      },
+      close() {
+        replacementCloseCalls += 1;
+      },
+      free() {
+        replacementFreeCalls += 1;
+      },
+    });
+    const host: DirectWasixHost = {
+      ...initialHost,
+      async instantiateOliphauntDirect(module, moduleBytes, options) {
+        instantiations += 1;
+        const owner = instantiations === 1 ? initialHost : replacementHost;
+        return owner.instantiateOliphauntDirect(module, moduleBytes, options);
+      },
+    };
+    const storage = fakeLease(async () => {
+      storageCloseCalls += 1;
+    });
+    session = await DirectWasixSession.open(openOptions(), host, fakeDependencies(storage));
+    const frontend = createWasixByteChannel();
+    closeWasixByteChannel(frontend);
+
+    await expect(
+      session.serve({ frontend, backend: createWasixByteChannel() }, 'server'),
+    ).resolves.toBeUndefined();
+
+    await expect(nestedClose).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedServe).rejects.toThrow('cannot be reentered synchronously');
+    expect(callbackState).toEqual({
+      instantiations: 2,
+      replacementCloseCalls: 0,
+      replacementFreeCalls: 0,
+      storageCloseCalls: 0,
+    });
+    expect(initialCloseCalls).toBe(1);
+    expect(initialFreeCalls).toBe(1);
+    expect(replacementCloseCalls).toBe(0);
+    expect(replacementFreeCalls).toBe(0);
+    expect(storageCloseCalls).toBe(0);
+    await expect(session.exec(Uint8Array.of(1), 'defer')).resolves.toEqual(querySuccess());
+    await session.close();
+    expect(replacementCloseCalls).toBe(1);
+    expect(replacementFreeCalls).toBe(1);
+    expect(storageCloseCalls).toBe(1);
+  });
+
+  it('blocks lifecycle reentry while replacement instantiation is pending', async () => {
+    let session!: DirectWasixSession;
+    let instantiations = 0;
+    let nestedClose: Promise<void> | undefined;
+    const baseHost = fakeHost({});
+    const host: DirectWasixHost = {
+      ...baseHost,
+      async instantiateOliphauntDirect(module, moduleBytes, options) {
+        instantiations += 1;
+        if (instantiations === 2) {
+          await Promise.resolve();
+          nestedClose = session.close();
+          void nestedClose.catch(() => undefined);
+        }
+        return baseHost.instantiateOliphauntDirect(module, moduleBytes, options);
+      },
+    };
+    let storageCloseCalls = 0;
+    const storage = fakeLease(async () => {
+      storageCloseCalls += 1;
+    });
+    session = await DirectWasixSession.open(openOptions(), host, fakeDependencies(storage));
+    const frontend = createWasixByteChannel();
+    closeWasixByteChannel(frontend);
+
+    await session.serve({ frontend, backend: createWasixByteChannel() }, 'server');
+    await expect(nestedClose).rejects.toThrow('cannot be reentered synchronously');
+    expect(storageCloseCalls).toBe(0);
+    await expect(session.exec(Uint8Array.of(1), 'defer')).resolves.toEqual(querySuccess());
+    await session.close();
+    expect(storageCloseCalls).toBe(1);
+  });
+
+  it('guards replacement cleanup callbacks after startup fails', async () => {
+    let session!: DirectWasixSession;
+    let instantiations = 0;
+    let replacementCloseCalls = 0;
+    let replacementFreeCalls = 0;
+    let storageCloseCalls = 0;
+    let nestedClose: Promise<void> | undefined;
+    let nestedServe: Promise<void> | undefined;
+    let cleanupState:
+      | {
+          instantiations: number;
+          replacementFreeCalls: number;
+          storageCloseCalls: number;
+        }
+      | undefined;
+    const initialHost = fakeHost({});
+    const replacementHost = fakeHost({
+      startup() {
+        throw new Error('injected replacement startup failure');
+      },
+      close() {
+        replacementCloseCalls += 1;
+        nestedClose = session.close();
+        nestedServe = session.serve(
+          { frontend: createWasixByteChannel(), backend: createWasixByteChannel() },
+          'server',
+        );
+        void nestedClose.catch(() => undefined);
+        void nestedServe.catch(() => undefined);
+        cleanupState = { instantiations, replacementFreeCalls, storageCloseCalls };
+      },
+      free() {
+        replacementFreeCalls += 1;
+      },
+    });
+    const host: DirectWasixHost = {
+      ...initialHost,
+      async instantiateOliphauntDirect(module, moduleBytes, options) {
+        instantiations += 1;
+        const owner = instantiations === 1 ? initialHost : replacementHost;
+        return owner.instantiateOliphauntDirect(module, moduleBytes, options);
+      },
+    };
+    const storage = fakeLease(async () => {
+      storageCloseCalls += 1;
+    });
+    session = await DirectWasixSession.open(openOptions(), host, fakeDependencies(storage));
+    const frontend = createWasixByteChannel();
+    closeWasixByteChannel(frontend);
+
+    await expect(
+      session.serve({ frontend, backend: createWasixByteChannel() }, 'server'),
+    ).rejects.toThrow('injected replacement startup failure');
+
+    await expect(nestedClose).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedServe).rejects.toThrow('cannot be reentered synchronously');
+    expect(cleanupState).toEqual({
+      instantiations: 2,
+      replacementFreeCalls: 0,
+      storageCloseCalls: 0,
+    });
+    expect(replacementCloseCalls).toBe(1);
+    expect(replacementFreeCalls).toBe(1);
+    expect(storageCloseCalls).toBe(0);
+    await expect(session.exec(Uint8Array.of(1), 'defer')).rejects.toThrow('database failed');
+    await session.close();
+    expect(storageCloseCalls).toBe(1);
+  });
+
+  it('rejects every guest-owning callback reentry before lifecycle state changes', async () => {
+    let guestCloseCalls = 0;
+    let guestFreeCalls = 0;
+    let storageSyncCalls = 0;
+    const storage = fakeLease(async () => undefined);
+    storage.sync = async () => {
+      storageSyncCalls += 1;
+    };
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        execProtocolStream(onChunk) {
+          onChunk(querySuccess());
+        },
+        close() {
+          guestCloseCalls += 1;
+        },
+        free() {
+          guestFreeCalls += 1;
+        },
+      }),
+      fakeDependencies(storage),
+    );
+    let nestedExec: Promise<Uint8Array> | undefined;
+    let nestedExecStream: Promise<unknown> | undefined;
+    let nestedServe: Promise<void> | undefined;
+    let nestedPgDump: Promise<unknown> | undefined;
+    let nestedBackup: Promise<Uint8Array> | undefined;
+    let nestedSync: Promise<void> | undefined;
+    let nestedClose: Promise<void> | undefined;
+
+    await session.execStream(
+      Uint8Array.of(1),
+      () => {
+        nestedExec = session.exec(Uint8Array.of(2), 'defer');
+        nestedExecStream = session.execStream(Uint8Array.of(2), () => undefined, 'defer');
+        nestedServe = session.serve(
+          { frontend: createWasixByteChannel(), backend: createWasixByteChannel() },
+          'server',
+        );
+        nestedPgDump = session.runPgDump({ tool: pgDumpDescriptor, args: [] });
+        nestedBackup = session.backup();
+        nestedSync = session.sync('operation');
+        nestedClose = session.close();
+        for (const pending of [
+          nestedExec,
+          nestedExecStream,
+          nestedServe,
+          nestedPgDump,
+          nestedBackup,
+          nestedSync,
+          nestedClose,
+        ]) {
+          void pending.catch(() => undefined);
+        }
+      },
+      'defer',
+    );
+
+    await expect(nestedExec).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedExecStream).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedServe).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedPgDump).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedBackup).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedSync).rejects.toThrow('cannot be reentered synchronously');
+    await expect(nestedClose).rejects.toThrow('cannot be reentered synchronously');
+    expect(guestCloseCalls).toBe(0);
+    expect(guestFreeCalls).toBe(0);
+    expect(storageSyncCalls).toBe(0);
+    await expect(session.exec(Uint8Array.of(3), 'defer')).resolves.toEqual(querySuccess());
+    await session.close();
+    expect(guestCloseCalls).toBe(1);
+    expect(guestFreeCalls).toBe(1);
+  });
+
   it('makes a failed stream recovery authoritative and poisons the direct session', async () => {
     const recoveryFailure = new Error('ReadyForQuery recovery failed');
     const session = await DirectWasixSession.open(
       openOptions(),
       fakeHost({
         execProtocolStream(onChunk) {
-          try {
-            onChunk(Uint8Array.of(1));
-          } catch {
-            throw recoveryFailure;
-          }
-          return 0;
+          onChunk(Uint8Array.of(1));
+          // Even after the consumer abort is contained, a later guest/flush
+          // failure must win over a seemingly recoverable callback error.
+          throw recoveryFailure;
         },
       }),
       fakeDependencies(fakeLease(async () => undefined)),

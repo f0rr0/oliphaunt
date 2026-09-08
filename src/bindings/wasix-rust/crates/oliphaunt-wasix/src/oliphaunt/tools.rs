@@ -61,14 +61,22 @@ const PSQL_VALUE_OPTIONS: &[&str] = &[
     "--set",
     "--variable",
 ];
+const POSTGRES_TOOL_OUTPUT_CAPTURE_LIMIT_BYTES: usize = 67_108_864;
 
-/// Options for the bundled WASIX `pg_dump` runner.
+/// Options for the bundled, in-memory WASIX `pg_dump` runner.
+///
+/// Standard output and standard error share an inclusive 64 MiB aggregate
+/// capture limit per tool invocation. Exceeding it fails without returning
+/// partial output. A streaming or sink API is not currently available.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PgDumpOptions {
     args: Vec<String>,
 }
 
 /// Structured failure from a packaged PostgreSQL frontend program.
+///
+/// On output-capture overflow, [`Self::stdout`] and [`Self::stderr`] are empty
+/// so neither stream exposes an incomplete prefix.
 #[derive(Debug)]
 pub struct PostgresToolError {
     tool: &'static str,
@@ -79,6 +87,62 @@ pub struct PostgresToolError {
     stderr_bytes: Vec<u8>,
     cause: anyhow::Error,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolOutputCaptureFailure {
+    LimitExceeded { limit: usize },
+    AllocationFailed { limit: usize },
+    LockPoisoned,
+}
+
+impl ToolOutputCaptureFailure {
+    fn io_error(self) -> std::io::Error {
+        let kind = match self {
+            Self::LimitExceeded { .. } => std::io::ErrorKind::FileTooLarge,
+            Self::AllocationFailed { .. } => std::io::ErrorKind::OutOfMemory,
+            Self::LockPoisoned => std::io::ErrorKind::Other,
+        };
+        std::io::Error::new(kind, self)
+    }
+}
+
+impl fmt::Display for ToolOutputCaptureFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LimitExceeded { limit } => write!(
+                formatter,
+                "stdout and stderr exceeded the aggregate {limit}-byte capture limit"
+            ),
+            Self::AllocationFailed { limit } => write!(
+                formatter,
+                "could not reserve memory for stdout and stderr within the aggregate {limit}-byte capture limit"
+            ),
+            Self::LockPoisoned => {
+                formatter.write_str("stdout and stderr capture lock was poisoned")
+            }
+        }
+    }
+}
+
+impl StdError for ToolOutputCaptureFailure {}
+
+#[derive(Debug)]
+struct ToolOutputCaptureError {
+    failure: ToolOutputCaptureFailure,
+    runner_failure: Option<String>,
+}
+
+impl fmt::Display for ToolOutputCaptureError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.failure)?;
+        if let Some(runner_failure) = &self.runner_failure {
+            write!(formatter, "; WASIX tool also failed: {runner_failure}")?;
+        }
+        Ok(())
+    }
+}
+
+impl StdError for ToolOutputCaptureError {}
 
 /// Internal marker for a broken virtual connection after a tool may have sent work.
 #[derive(Debug)]
@@ -119,14 +183,21 @@ impl PostgresToolError {
         self.tool
     }
 
+    /// Return the frontend program's exit code when one is available.
     pub fn exit_code(&self) -> Option<i32> {
         self.exit_code
     }
 
+    /// Return captured standard output.
+    ///
+    /// This is empty after output-capture overflow.
     pub fn stdout(&self) -> &str {
         &self.stdout
     }
 
+    /// Return captured standard error.
+    ///
+    /// This is empty after output-capture overflow.
     pub fn stderr(&self) -> &str {
         &self.stderr
     }
@@ -144,6 +215,9 @@ impl PostgresToolError {
 
 impl fmt::Display for PostgresToolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(cause) = self.cause.downcast_ref::<ToolOutputCaptureError>() {
+            return write!(formatter, "{} output capture failed: {cause}", self.tool);
+        }
         if self
             .cause
             .downcast_ref::<std::string::FromUtf8Error>()
@@ -200,7 +274,11 @@ impl PgDumpOptions {
     }
 }
 
-/// Options for the bundled WASIX `psql` runner.
+/// Options for the bundled, in-memory WASIX `psql` runner.
+///
+/// Standard output and standard error share an inclusive 64 MiB aggregate
+/// capture limit per tool invocation. Exceeding it fails without returning
+/// partial output. A streaming or sink API is not currently available.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PsqlOptions {
     args: Vec<String>,
@@ -467,6 +545,8 @@ impl PostgresToolOutput {
     }
 }
 
+type SharedToolOutputCapture = Arc<Mutex<ToolOutputCapture>>;
+
 struct ToolInvocation<'a, N> {
     name: &'static str,
     wasm: &'static [u8],
@@ -525,8 +605,9 @@ where
         (host_fs, wasix_runtime)
     };
 
-    let stdout = Arc::new(Mutex::new(Vec::new()));
-    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let capture = Arc::new(Mutex::new(ToolOutputCapture::new(
+        POSTGRES_TOOL_OUTPUT_CAPTURE_LIMIT_BYTES,
+    )));
     let mut runner = WasiRunner::new();
     runner
         .with_mount("/".to_owned(), Arc::clone(&host_fs))
@@ -538,8 +619,14 @@ where
             ("PGSSLMODE", "disable"),
             ("PGCLIENTENCODING", "UTF8"),
         ])
-        .with_stdout(Box::new(CaptureFile::new(Arc::clone(&stdout))))
-        .with_stderr(Box::new(CaptureFile::new(Arc::clone(&stderr))));
+        .with_stdout(Box::new(CaptureFile::new(
+            Arc::clone(&capture),
+            ToolOutputStream::Stdout,
+        )))
+        .with_stderr(Box::new(CaptureFile::new(
+            Arc::clone(&capture),
+            ToolOutputStream::Stderr,
+        )));
     if name == "psql" {
         runner.with_envs([("OLIPHAUNT_PSQL_NONINTERACTIVE", "1")]);
     }
@@ -547,27 +634,67 @@ where
         Some(input) => runner.with_stdin(Box::new(virtual_fs::StaticFile::new(input))),
         None => runner.with_stdin(Box::<virtual_fs::null_file::NullFile>::default()),
     };
-    if let Err(cause) = runner.run_wasm(
+    let run_result = runner.run_wasm(
         RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
         name,
         module,
         ModuleHash::sha256(wasm),
-    ) {
-        let exit_code = cause
+    );
+    finish_wasix_client_tool_run(name, run_result, capture)
+}
+
+fn finish_wasix_client_tool_run(
+    tool: &'static str,
+    run_result: Result<()>,
+    capture: SharedToolOutputCapture,
+) -> Result<PostgresToolOutput> {
+    let exit_code = match &run_result {
+        Ok(()) => Some(0),
+        Err(cause) => cause
             .chain()
             .find_map(|error| error.downcast_ref::<WasiRuntimeError>())
             .and_then(WasiRuntimeError::as_exit_code)
-            .map(|code| code.raw());
-        let stdout = stdout.lock().expect("stdout capture poisoned").clone();
-        let stderr = stderr.lock().expect("stderr capture poisoned").clone();
-        return Err(anyhow::Error::new(PostgresToolError::from_output(
-            name, exit_code, stdout, stderr, cause,
-        )));
-    }
+            .map(|code| code.raw()),
+    };
 
-    let stdout = std::mem::take(&mut *stdout.lock().expect("stdout capture poisoned"));
-    let stderr = std::mem::take(&mut *stderr.lock().expect("stderr capture poisoned"));
-    Ok(PostgresToolOutput { stdout, stderr })
+    let output = take_tool_output(&capture);
+    match (run_result, output) {
+        (Ok(()), Ok(output)) => Ok(output),
+        (Err(cause), Ok(PostgresToolOutput { stdout, stderr })) => Err(anyhow::Error::new(
+            PostgresToolError::from_output(tool, exit_code, stdout, stderr, cause),
+        )),
+        (run_result, Err(failure)) => {
+            let runner_failure = run_result.err().map(|cause| format!("{cause:#}"));
+            Err(anyhow::Error::new(PostgresToolError::from_output(
+                tool,
+                exit_code,
+                Vec::new(),
+                Vec::new(),
+                anyhow::Error::new(ToolOutputCaptureError {
+                    failure,
+                    runner_failure,
+                }),
+            )))
+        }
+    }
+}
+
+fn take_tool_output(
+    capture: &SharedToolOutputCapture,
+) -> std::result::Result<PostgresToolOutput, ToolOutputCaptureFailure> {
+    let mut capture = capture
+        .lock()
+        .map_err(|_| ToolOutputCaptureFailure::LockPoisoned)?;
+    if let Some(failure) = capture.failure {
+        capture.clear_buffers();
+        return Err(failure);
+    }
+    let output = PostgresToolOutput {
+        stdout: std::mem::take(&mut capture.stdout),
+        stderr: std::mem::take(&mut capture.stderr),
+    };
+    capture.captured_bytes = 0;
+    Ok(output)
 }
 
 fn pg_dump_with_networking<N>(
@@ -965,14 +1092,125 @@ fn receive_direct_tool_socket<T>(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolOutputStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug)]
+struct ToolOutputCapture {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    captured_bytes: usize,
+    limit: usize,
+    failure: Option<ToolOutputCaptureFailure>,
+}
+
+impl ToolOutputCapture {
+    fn new(limit: usize) -> Self {
+        Self {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            captured_bytes: 0,
+            limit,
+            failure: None,
+        }
+    }
+
+    fn stream_len(&self, stream: ToolOutputStream) -> usize {
+        match stream {
+            ToolOutputStream::Stdout => self.stdout.len(),
+            ToolOutputStream::Stderr => self.stderr.len(),
+        }
+    }
+
+    fn stream_mut(&mut self, stream: ToolOutputStream) -> &mut Vec<u8> {
+        match stream {
+            ToolOutputStream::Stdout => &mut self.stdout,
+            ToolOutputStream::Stderr => &mut self.stderr,
+        }
+    }
+
+    fn clear_buffers(&mut self) {
+        self.stdout.clear();
+        self.stderr.clear();
+        self.captured_bytes = 0;
+    }
+
+    fn fail(&mut self, failure: ToolOutputCaptureFailure) -> std::io::Error {
+        self.clear_buffers();
+        let failure = *self.failure.get_or_insert(failure);
+        failure.io_error()
+    }
+
+    fn reserve_for(
+        &mut self,
+        stream: ToolOutputStream,
+        additional: usize,
+    ) -> std::io::Result<usize> {
+        if let Some(failure) = self.failure {
+            return Err(failure.io_error());
+        }
+        let Some(new_total) = self.captured_bytes.checked_add(additional) else {
+            return Err(self.fail(ToolOutputCaptureFailure::LimitExceeded { limit: self.limit }));
+        };
+        if new_total > self.limit {
+            return Err(self.fail(ToolOutputCaptureFailure::LimitExceeded { limit: self.limit }));
+        }
+        if self
+            .stream_mut(stream)
+            .try_reserve_exact(additional)
+            .is_err()
+        {
+            return Err(self.fail(ToolOutputCaptureFailure::AllocationFailed { limit: self.limit }));
+        }
+        Ok(new_total)
+    }
+
+    fn write(&mut self, stream: ToolOutputStream, bytes: &[u8]) -> std::io::Result<usize> {
+        let new_total = self.reserve_for(stream, bytes.len())?;
+        self.stream_mut(stream).extend_from_slice(bytes);
+        self.captured_bytes = new_total;
+        Ok(bytes.len())
+    }
+
+    fn write_vectored(
+        &mut self,
+        stream: ToolOutputStream,
+        buffers: &[std::io::IoSlice<'_>],
+    ) -> std::io::Result<usize> {
+        let Some(additional) = buffers
+            .iter()
+            .try_fold(0usize, |total, buffer| total.checked_add(buffer.len()))
+        else {
+            return Err(self.fail(ToolOutputCaptureFailure::LimitExceeded { limit: self.limit }));
+        };
+        let new_total = self.reserve_for(stream, additional)?;
+        let output = self.stream_mut(stream);
+        for buffer in buffers {
+            output.extend_from_slice(buffer);
+        }
+        self.captured_bytes = new_total;
+        Ok(additional)
+    }
+}
+
 #[derive(Debug)]
 struct CaptureFile {
-    buffer: Arc<Mutex<Vec<u8>>>,
+    capture: SharedToolOutputCapture,
+    stream: ToolOutputStream,
 }
 
 impl CaptureFile {
-    fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-        Self { buffer }
+    fn new(capture: SharedToolOutputCapture, stream: ToolOutputStream) -> Self {
+        Self { capture, stream }
+    }
+
+    fn capture_lock(&self) -> std::io::Result<std::sync::MutexGuard<'_, ToolOutputCapture>> {
+        self.capture
+            .lock()
+            .map_err(|_| ToolOutputCaptureFailure::LockPoisoned.io_error())
     }
 }
 
@@ -990,7 +1228,10 @@ impl VirtualFile for CaptureFile {
     }
 
     fn size(&self) -> u64 {
-        self.buffer.lock().expect("capture lock poisoned").len() as u64
+        self.capture
+            .lock()
+            .map(|capture| capture.stream_len(self.stream) as u64)
+            .unwrap_or(0)
     }
 
     fn set_len(&mut self, _new_size: u64) -> Result<(), wasmer_wasix::FsError> {
@@ -1012,7 +1253,13 @@ impl VirtualFile for CaptureFile {
         self: Pin<&mut Self>,
         _cx: &mut TaskContext<'_>,
     ) -> Poll<std::io::Result<usize>> {
-        Poll::Ready(Ok(8192))
+        let ready = self
+            .capture_lock()
+            .and_then(|capture| match capture.failure {
+                Some(failure) => Err(failure.io_error()),
+                None => Ok(8192),
+            });
+        Poll::Ready(ready)
     }
 }
 
@@ -1032,7 +1279,7 @@ impl AsyncWrite for CaptureFile {
         _cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Poll::Ready(self.write(buf))
+        Poll::Ready(Write::write(self.as_mut().get_mut(), buf))
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
@@ -1041,6 +1288,18 @@ impl AsyncWrite for CaptureFile {
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
         Poll::Ready(Ok(()))
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+        buffers: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(Write::write_vectored(self.as_mut().get_mut(), buffers))
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        true
     }
 }
 
@@ -1065,11 +1324,13 @@ impl Read for CaptureFile {
 
 impl Write for CaptureFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buffer
-            .lock()
-            .expect("capture lock poisoned")
-            .extend_from_slice(buf);
-        Ok(buf.len())
+        let stream = self.stream;
+        self.capture_lock()?.write(stream, buf)
+    }
+
+    fn write_vectored(&mut self, buffers: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let stream = self.stream;
+        self.capture_lock()?.write_vectored(stream, buffers)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -1086,6 +1347,133 @@ impl Seek for CaptureFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capture_files(limit: usize) -> (SharedToolOutputCapture, CaptureFile, CaptureFile) {
+        let capture = Arc::new(Mutex::new(ToolOutputCapture::new(limit)));
+        let stdout = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stdout);
+        let stderr = CaptureFile::new(Arc::clone(&capture), ToolOutputStream::Stderr);
+        (capture, stdout, stderr)
+    }
+
+    #[test]
+    fn tool_output_capture_preserves_exact_bytes_at_aggregate_limit() {
+        let (capture, mut stdout, mut stderr) = capture_files(10);
+        Write::write_all(&mut stdout, b"dump\0").unwrap();
+        Write::write_all(&mut stderr, b"warn\n").unwrap();
+
+        let output = finish_wasix_client_tool_run("pg_dump", Ok(()), capture).unwrap();
+        assert_eq!(output.stdout, b"dump\0");
+        assert_eq!(output.stderr, b"warn\n");
+    }
+
+    #[test]
+    fn tool_output_overflow_is_aggregate_sticky_and_fail_closed() {
+        let (capture, mut stdout, mut stderr) = capture_files(10);
+        Write::write_all(&mut stdout, b"12345").unwrap();
+        Write::write_all(&mut stderr, b"67890").unwrap();
+
+        let overflow = Write::write(&mut stdout, b"!").unwrap_err();
+        assert!(
+            overflow
+                .to_string()
+                .contains("aggregate 10-byte capture limit")
+        );
+        let sticky = Write::write(&mut stderr, b"still rejected").unwrap_err();
+        assert!(
+            sticky
+                .to_string()
+                .contains("aggregate 10-byte capture limit")
+        );
+
+        let error = finish_wasix_client_tool_run("pg_dump", Ok(()), capture)
+            .expect_err("a sticky capture overflow must override guest exit 0");
+        let structured = error
+            .downcast_ref::<PostgresToolError>()
+            .expect("capture overflow must remain a structured tool failure");
+        assert_eq!(structured.exit_code(), Some(0));
+        assert_eq!(structured.stdout(), "");
+        assert_eq!(structured.stderr(), "");
+        assert!(
+            structured
+                .to_string()
+                .contains("output capture failed: stdout and stderr exceeded")
+        );
+
+        let direct_error = finish_direct_tool::<()>(true, Ok(()), Err(error))
+            .expect_err("capture overflow must remain an ordinary completed tool failure");
+        assert!(!is_direct_tool_outcome_unknown(&direct_error));
+    }
+
+    #[test]
+    fn tool_output_capture_rejects_set_len_without_changing_output() {
+        let (capture, mut stdout, _stderr) = capture_files(4);
+        Write::write_all(&mut stdout, b"data").unwrap();
+        assert!(matches!(
+            VirtualFile::set_len(&mut stdout, u64::MAX),
+            Err(wasmer_wasix::FsError::PermissionDenied)
+        ));
+        assert_eq!(VirtualFile::size(&stdout), 4);
+
+        let output = finish_wasix_client_tool_run("pg_dump", Ok(()), capture).unwrap();
+        assert_eq!(output.stdout, b"data");
+        assert!(output.stderr.is_empty());
+    }
+
+    #[test]
+    fn tool_output_capture_uses_checked_reservation_and_sticky_allocation_failure() {
+        let mut checked = ToolOutputCapture::new(usize::MAX);
+        checked.captured_bytes = usize::MAX;
+        let checked_error = checked
+            .reserve_for(ToolOutputStream::Stdout, 1)
+            .unwrap_err();
+        assert!(checked_error.to_string().contains("capture limit"));
+
+        let mut allocation = ToolOutputCapture::new(usize::MAX);
+        let allocation_error = allocation
+            .reserve_for(ToolOutputStream::Stdout, usize::MAX)
+            .unwrap_err();
+        assert!(
+            allocation_error
+                .to_string()
+                .contains("could not reserve memory")
+        );
+        assert!(
+            allocation
+                .reserve_for(ToolOutputStream::Stderr, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("could not reserve memory")
+        );
+    }
+
+    #[test]
+    fn poisoned_tool_output_lock_returns_errors_instead_of_panicking() {
+        let (capture, mut stdout, _stderr) = capture_files(4);
+        let poisoned = Arc::clone(&capture);
+        assert!(
+            thread::spawn(move || {
+                let _guard = poisoned.lock().unwrap();
+                panic!("intentionally poison tool output capture");
+            })
+            .join()
+            .is_err()
+        );
+
+        assert_eq!(VirtualFile::size(&stdout), 0);
+        assert!(
+            Write::write(&mut stdout, b"data")
+                .unwrap_err()
+                .to_string()
+                .contains("lock was poisoned")
+        );
+        let error = finish_wasix_client_tool_run("psql", Ok(()), capture)
+            .expect_err("a poisoned capture lock must fail the invocation");
+        let structured = error.downcast_ref::<PostgresToolError>().unwrap();
+        assert_eq!(structured.exit_code(), Some(0));
+        assert_eq!(structured.stdout(), "");
+        assert_eq!(structured.stderr(), "");
+        assert!(structured.to_string().contains("capture lock was poisoned"));
+    }
 
     #[test]
     fn shared_option_fixture_matches_wasix_validation() {

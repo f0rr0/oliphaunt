@@ -128,6 +128,38 @@ def verify_patch(
         f"{label}.sha256", record.get("sha256"), hashlib.sha256(contents).hexdigest()
     )
 
+    names = [
+        line for line in contents.decode("utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    if (
+        not names
+        or len(names) != len(set(names))
+        or any(not re.fullmatch(r"[0-9]{4}-[a-z0-9-]+\.patch", name) for name in names)
+    ):
+        raise VerificationError(f"{label} has an invalid ordered patch series")
+    files = record.get("file")
+    if not isinstance(files, list) or not all(isinstance(item, dict) for item in files):
+        raise VerificationError(f"{label}.file must be an array of tables")
+    expected_files = [str(Path(expected_path).parent / name) for name in names]
+    require_equal(
+        f"{label}.file order", [item.get("path") for item in files], expected_files
+    )
+    require_equal(
+        f"{label}.unlisted patches",
+        {item.name for item in path.parent.glob("*.patch")},
+        set(names),
+    )
+    for index, item in enumerate(files):
+        item_label = f"{label}.file[{index}]"
+        member = regular_project_file(
+            project_root, expected_files[index], item_label
+        ).read_bytes()
+        require_equal(f"{item_label}.bytes", item.get("bytes"), len(member))
+        require_equal(
+            f"{item_label}.sha256", item.get("sha256"), hashlib.sha256(member).hexdigest()
+        )
+
 
 def verify_postgresql_product_inputs(
     project_root: Path, record: dict[str, Any]
@@ -269,14 +301,14 @@ def verify(project_root: Path, repo_root: Path) -> None:
         project_root,
         require_table(runtime_patches, "wasmer", str(lock_path)),
         label="current_runtime_patches.wasmer",
-        expected_path="runtime/patches/wasmer/0001-postgres-wasix-blockers.patch",
+        expected_path="runtime/patches/wasmer/series",
         expected_base=wasmer["commit"],
     )
     verify_patch(
         project_root,
         require_table(runtime_patches, "wasix_libc", str(lock_path)),
         label="current_runtime_patches.wasix_libc",
-        expected_path="runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch",
+        expected_path="runtime/patches/wasix-libc/series",
         expected_base=wasix_libc["commit"],
     )
 

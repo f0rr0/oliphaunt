@@ -148,7 +148,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = \"llvm-opta-ro_ftable\";\n\
          pub const HAS_EMBEDDED_AOT: bool = true;\n\
          pub const MANIFEST_JSON: &str = include_str!({});\n\
          #[rustfmt::skip]\n\
@@ -174,11 +174,11 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
 fn write_source_only_aot(out: &Path, target: &str) {
     let manifest = format!(
-        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.2.1\",\"wasmer-wasix-version\":\"0.702.1\",\"artifacts\":[]}}"
+        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta-ro_ftable\",\"wasmer-version\":\"7.2.1\",\"wasmer-wasix-version\":\"0.702.1\",\"artifacts\":[]}}"
     );
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {target:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = \"llvm-opta-ro_ftable\";\n\
          pub const HAS_EMBEDDED_AOT: bool = false;\n\
          pub const MANIFEST_JSON: &str = r#\"{manifest}\"#;\n\
          pub fn artifact_bytes(_name: &str) -> Option<&'static [u8]> {{ None }}\n"

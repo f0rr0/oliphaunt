@@ -47,9 +47,17 @@ use crate::oliphaunt::tools::{
 #[cfg(feature = "tools")]
 use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 
-const PROTOCOL_CALLBACK_CHUNK_BYTES: usize = 64 * 1024;
+// Host callback maximum from postgres-protocol-transport-contract/contract.json.
+// A callback borrows its slice synchronously; this is not a response-size limit.
+use super::protocol_limits_generated::PROTOCOL_CALLBACK_CHUNK_BYTES;
+// Tool socket read batching, independent of the callback ABI above. A large
+// frontend frame spans reads; increasing this also increases local stack use.
 #[cfg(feature = "tools")]
 const DIRECT_TOOL_READ_BUFFER_BYTES: usize = 64 * 1024;
+
+fn protocol_callback_chunks(bytes: &[u8]) -> std::slice::Chunks<'_, u8> {
+    bytes.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES)
+}
 
 /// Direct, single-session Oliphaunt WASIX database.
 pub struct Oliphaunt {
@@ -423,7 +431,7 @@ impl Write for CallbackProtocolStream {
         if state.error.is_some() || state.panic.is_some() {
             return Ok(buffer.len());
         }
-        for chunk in buffer.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
+        for chunk in protocol_callback_chunks(buffer) {
             let result = {
                 let callback = state.callback.as_mut().ok_or_else(|| {
                     io::Error::new(
@@ -508,16 +516,16 @@ impl Oliphaunt {
         extensions: &[Extension],
     ) -> Result<Self> {
         let backend = if extensions.is_empty() {
-            BackendSession::open(outcome, postgres_config, startup_config.clone())?
+            BackendSession::open(outcome, postgres_config, startup_config)?
         } else {
             BackendSession::open_with_extension_preload(
                 outcome,
                 postgres_config,
-                startup_config.clone(),
+                startup_config,
                 extensions,
             )?
         };
-        Self::finish_open(backend, startup_config)
+        Ok(Self::finish_open(backend))
     }
 
     #[cfg(not(feature = "extensions"))]
@@ -526,12 +534,12 @@ impl Oliphaunt {
         postgres_config: PostgresConfig,
         startup_config: StartupConfig,
     ) -> Result<Self> {
-        let backend = BackendSession::open(outcome, postgres_config, startup_config.clone())?;
-        Self::finish_open(backend, startup_config)
+        let backend = BackendSession::open(outcome, postgres_config, startup_config)?;
+        Ok(Self::finish_open(backend))
     }
 
-    fn finish_open(backend: BackendSession, startup_config: StartupConfig) -> Result<Self> {
-        let mut instance = Self {
+    fn finish_open(backend: BackendSession) -> Self {
+        Self {
             backend: TeardownOwnership::new(backend),
             _workspace: TeardownOwnership::new(None),
             _directory_lock: TeardownOwnership::new(None),
@@ -543,15 +551,7 @@ impl Oliphaunt {
             close_result: None,
             protocol_stream: Arc::new(Mutex::new(CallbackProtocolState::default())),
             protocol_stream_attached: false,
-        };
-        if startup_config.username != "postgres" {
-            let sql = format!(
-                "SET ROLE {}",
-                crate::oliphaunt::sql::quote_identifier(&startup_config.username)
-            );
-            instance.execute_inner(&sql)?;
         }
-        Ok(instance)
     }
 
     /// Restore a validated physical backup into an absent or empty managed directory root.
@@ -964,7 +964,7 @@ impl Oliphaunt {
             state.error = None;
             state.panic = None;
         }
-        let outcome = self.backend.send_with_protocol_pump(request);
+        let outcome = self.backend.send_with_output_stream(request);
         let (callback_error, callback_panic, callback, outcome) =
             match (self.protocol_stream.lock(), outcome) {
                 (Ok(mut state), outcome) => (
@@ -994,7 +994,7 @@ impl Oliphaunt {
         })?;
         match outcome {
             ProtocolPumpOutcome::Buffered(response) => {
-                for chunk in response.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
+                for chunk in protocol_callback_chunks(&response) {
                     match invoke_protocol_callback(&mut callback, chunk) {
                         Ok(()) => {}
                         Err(ProtocolCallbackFailure::Error(error)) => {
@@ -1108,14 +1108,6 @@ impl Oliphaunt {
             .context("roll back embedded session")?;
         self.execute_inner("DISCARD ALL")
             .context("discard embedded session state")?;
-        let username = self.backend.startup_config().username.clone();
-        if username != "postgres" {
-            self.execute_inner(&format!(
-                "SET ROLE {}",
-                crate::oliphaunt::sql::quote_identifier(&username)
-            ))
-            .context("restore embedded session role")?;
-        }
         Ok(())
     }
 
@@ -2122,7 +2114,7 @@ mod transaction_state_tests {
 }
 
 #[cfg(test)]
-mod protocol_callback_tests {
+mod protocol_callback_outcome_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -2237,6 +2229,40 @@ fn materialize_storage(storage: &PgDataStorage) -> Result<tempfile::TempDir> {
     match storage {
         PgDataStorage::HostDirectory(pgdata) => materialize_pgdata(pgdata),
         PgDataStorage::Memory(filesystem) => materialize_virtual_pgdata_view(filesystem.as_ref()),
+    }
+}
+
+#[cfg(test)]
+mod protocol_callback_tests {
+    use super::*;
+
+    #[test]
+    fn callback_chunks_are_bounded_and_preserve_exact_bytes() {
+        for (length, expected_lengths) in [
+            (0, vec![]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES, vec![65_536]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES + 1, vec![65_536, 1]),
+            (PROTOCOL_CALLBACK_CHUNK_BYTES * 2, vec![65_536, 65_536]),
+            (
+                PROTOCOL_CALLBACK_CHUNK_BYTES * 2 + 1,
+                vec![65_536, 65_536, 1],
+            ),
+        ] {
+            let input = (0..length)
+                .map(|offset| (offset % 251) as u8)
+                .collect::<Vec<_>>();
+            let chunks = protocol_callback_chunks(&input).collect::<Vec<_>>();
+            assert_eq!(
+                chunks.iter().map(|chunk| chunk.len()).collect::<Vec<_>>(),
+                expected_lengths
+            );
+            assert!(
+                chunks
+                    .iter()
+                    .all(|chunk| chunk.len() <= PROTOCOL_CALLBACK_CHUNK_BYTES)
+            );
+            assert_eq!(chunks.concat(), input);
+        }
     }
 }
 

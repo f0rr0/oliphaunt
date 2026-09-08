@@ -204,7 +204,7 @@ prepare_patched_worktree() {
 	local extra_signature="${6:-}"
 	local patch_signature="skip"
 	if [ "$SKIP_PATCHES" -ne 1 ]; then
-		patch_signature="$(sha256_file "$patch")"
+		patch_signature="$(fresh_runtime_patch_hash "$patch")"
 	fi
 	local input_signature="$ref:$patch_signature:$extra_signature"
 	local signature_file="$SIGNATURE_ROOT/$name.signature"
@@ -221,8 +221,7 @@ prepare_patched_worktree() {
 		materialize_gitlink "WebAssembly testsuite" "tests/wast/spec" "$WASMER_SPEC_SOURCE_ROOT" "$WASMER_SPEC_REF"
 	fi
 	if [ "$SKIP_PATCHES" -ne 1 ]; then
-		git -C "$root" apply --check "$patch"
-		git -C "$root" apply "$patch"
+		fresh_apply_patch_series "$root" "$(dirname "$patch")" "$patch"
 	fi
 	mkdir -p "$SIGNATURE_ROOT"
 	printf '%s:%s' "$input_signature" "$(worktree_state_hash "$root")" >"$signature_file"
@@ -239,14 +238,14 @@ prepare_patched_worktree \
 	"$WASMER_SOURCE_ROOT" \
 	"$WASMER_ROOT" \
 	"$WASMER_REF" \
-	"$UPSTREAM_SOURCE_ROOT/patches/wasmer/0001-postgres-wasix-blockers.patch" \
+	"$UPSTREAM_SOURCE_ROOT/patches/wasmer/series" \
 	"$WASMER_NAPI_REF:$WASMER_TEST_FILES_REF:$WASMER_SPEC_REF"
 prepare_patched_worktree \
 	"wasix-libc" \
 	"$WASIX_LIBC_SOURCE_ROOT" \
 	"$WASIX_LIBC_ROOT" \
 	"$WASIX_LIBC_REF" \
-	"$UPSTREAM_SOURCE_ROOT/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+	"$UPSTREAM_SOURCE_ROOT/patches/wasix-libc/series"
 
 printf 'prepared Wasmer worktree: %s\n' "$WASMER_ROOT"
 printf '  base: %s\n' "$(git -C "$WASMER_ROOT" rev-parse HEAD)"

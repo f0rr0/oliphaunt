@@ -8,10 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Native backend thread stack, not Wasmer's execution stack or a SQL memory
+ * budget. OLIPHAUNT_STACK_BYTES adjusts this allocation before thread creation. */
 #define DEFAULT_BACKEND_STACK_BYTES (8 * 1024 * 1024)
 
 static const char *const DEFAULT_BACKEND_ARGS[] = {
-    "-F",
     "-c",
     "search_path=public",
     "-c",

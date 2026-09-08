@@ -5,7 +5,6 @@ import { PostgresError } from '../query.js';
 import {
   compileWasixModule,
   composeLifecycleFailure,
-  configureWasixDatabase,
   describeError,
   materializeWasixMounts,
   wasixPostgresEnvironment,
@@ -98,18 +97,14 @@ describe('WASIX host runtime helpers', () => {
     ).toBe('open failed; cleanup failed: trap');
   });
 
-  it('does not install selected extensions and only applies the quoted caller role', async () => {
+  it('passes the exact caller identity to PostgreSQL startup without SQL quoting', () => {
     const options = workerOpenOptions();
     options.username = 'app"role';
-    const inputs: Uint8Array[] = [];
-    await configureWasixDatabase(options, async (input) => {
-      inputs.push(input);
-      return querySuccess();
+    expect(wasixPostgresEnvironment(options)).toMatchObject({
+      PGUSER: 'app"role',
+      USER: 'app"role',
+      LOGNAME: 'app"role',
     });
-    expect(inputs).toHaveLength(1);
-    const sql = new TextDecoder().decode(inputs[0]);
-    expect(sql).toContain('SET ROLE "app""role"');
-    expect(sql).not.toMatch(/CREATE EXTENSION|\bLOAD\b|CREATE SCHEMA/u);
   });
 });
 
@@ -124,33 +119,4 @@ class RecordingDirectory {
   async createDir(path: string): Promise<void> {
     this.#created.push(path);
   }
-}
-
-function querySuccess(): Uint8Array {
-  return concatenate([
-    backendMessage('C', new TextEncoder().encode('SELECT 1\0')),
-    backendMessage('Z', Uint8Array.of('I'.charCodeAt(0))),
-  ]);
-}
-
-function backendMessage(tag: string, body: Uint8Array): Uint8Array {
-  const length = body.length + 4;
-  return Uint8Array.of(
-    tag.charCodeAt(0),
-    (length >>> 24) & 0xff,
-    (length >>> 16) & 0xff,
-    (length >>> 8) & 0xff,
-    length & 0xff,
-    ...body,
-  );
-}
-
-function concatenate(chunks: readonly Uint8Array[]): Uint8Array {
-  const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
 }

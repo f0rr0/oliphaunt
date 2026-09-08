@@ -1,0 +1,145 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 9/9] Keep concurrent Postmaster LLVM memory operations strict
+
+Postmaster shares guest linear memory across threads and processes. Enabling
+non-volatile memory operations promises an isolation guarantee that this
+runtime does not have. Use the conservative LLVM setting in the product AOT
+producer/verifier and both generic CLI compilation routes. Keep the existing
+disable option accepted but hidden for caller compatibility; add no new knob.
+
+This is an explicit correctness change AFTER the source-equivalent bundle
+split in patches 0001-0008, not part of that equivalence claim. Producer and
+verifier share one fixed configuration. Tests require nv0 deterministic
+compiler identities and distinguish the previously relaxed nv1 identity.
+The ordered patch digest changes runtime ABI/receipts; the changed compiler
+binary changes the AOT cache root. Old compiled carriers must be rebuilt.
+
+The strict LLVM policy is generally applicable to shared guest memory;
+product compiler plumbing and receipt requirements are Oliphaunt-specific.
+No performance win or fresh concurrent-runtime qualification is claimed here.
+
+diff --git a/lib/cli/src/backend.rs b/lib/cli/src/backend.rs
+index 17fe4c9..63c2144 100644
+--- a/lib/cli/src/backend.rs
++++ b/lib/cli/src/backend.rs
+@@ -170,11 +170,9 @@ pub struct RuntimeOptions {
+     #[clap(long = "enable-nan-canonicalization")]
+     enable_nan_canonicalization: bool,
+ 
+-    /// Disable LLVM non-volatile memory operations.
+-    ///
+-    /// Available for LLVM.
++    /// Deprecated compatibility option: this runtime always uses strict LLVM memory operations.
+     #[cfg(feature = "llvm")]
+-    #[clap(long = "disable-non-volatile-memops")]
++    #[clap(long = "disable-non-volatile-memops", hide = true)]
+     disable_non_volatile_memops: bool,
+ 
+     #[clap(flatten)]
+@@ -480,9 +478,7 @@ impl RuntimeOptions {
+                 use wasmer_compiler_llvm::LLVMCallbacks;
+                 use wasmer_types::entity::EntityRef;
+                 let mut config = LLVM::new();
+-                if !self.disable_non_volatile_memops {
+-                    config.enable_non_volatile_memops();
+-                }
++                config.non_volatile_memops(false);
+                 config.enable_readonly_funcref_table();
+ 
+                 if let Some(num_threads) = self.compiler_threads {
+@@ -631,9 +627,7 @@ impl BackendType {
+                 use wasmer_types::entity::EntityRef;
+ 
+                 let mut config = wasmer_compiler_llvm::LLVM::new();
+-                if !runtime_opts.disable_non_volatile_memops {
+-                    config.enable_non_volatile_memops();
+-                }
++                config.non_volatile_memops(false);
+                 config.enable_readonly_funcref_table();
+ 
+                 let supported_features = config.supported_features_for_target(target);
+@@ -751,3 +745,21 @@ impl std::fmt::Display for BackendType {
+         )
+     }
+ }
++
++#[cfg(all(test, feature = "llvm"))]
++mod tests {
++    use super::*;
++    use clap::Parser;
++
++    #[test]
++    fn llvm_cli_routes_use_strict_memory_identity() {
++        let target = Target::default();
++        for arguments in [vec!["wasmer"], vec!["wasmer", "--disable-non-volatile-memops"]] {
++            let options = RuntimeOptions::try_parse_from(arguments).unwrap();
++            let compiler = options.get_sys_compiler_config(&BackendType::LLVM).unwrap();
++            assert!(compiler.compiler().deterministic_id().contains("-nv0-"));
++            let engine = BackendType::LLVM.get_engine(&target, &options).unwrap();
++            assert!(engine.deterministic_id().contains("-nv0-"));
++        }
++    }
++}
+diff --git a/lib/oliphaunt-wasix-postmaster-executor/src/bin/compiler.rs b/lib/oliphaunt-wasix-postmaster-executor/src/bin/compiler.rs
+index c323d4d..461e924 100644
+--- a/lib/oliphaunt-wasix-postmaster-executor/src/bin/compiler.rs
++++ b/lib/oliphaunt-wasix-postmaster-executor/src/bin/compiler.rs
+@@ -106,6 +106,16 @@ fn parse() -> Result<Option<Options>> {
+     }))
+ }
+ 
++fn product_compiler() -> LLVM {
++    let mut compiler = LLVM::new();
++    // Postmaster shares guest memory across concurrently running threads.
++    compiler
++        .opt_level(LLVMOptLevel::Aggressive)
++        .non_volatile_memops(false)
++        .readonly_funcref_table(true);
++    compiler
++}
++
+ fn main() -> Result<()> {
+     let arguments: Vec<_> = env::args_os().skip(1).collect();
+     if arguments.first().and_then(|value| value.to_str()) == Some("verify-aot") {
+@@ -120,11 +130,7 @@ fn main() -> Result<()> {
+     verify_module_bytes(&module_bytes)
+         .with_context(|| format!("admit sealed module {}", options.input.display()))?;
+ 
+-    let mut compiler = LLVM::new();
+-    compiler
+-        .opt_level(LLVMOptLevel::Aggressive)
+-        .non_volatile_memops(true)
+-        .readonly_funcref_table(true);
++    let mut compiler = product_compiler();
+     if let Some(threads) = options.compiler_threads {
+         compiler.num_threads(threads);
+     }
+@@ -171,11 +177,7 @@ fn verify_aot(module_path: PathBuf, artifact_path: PathBuf) -> Result<()> {
+         .context("derive product verifier linear-memory profile")?;
+     let mut features = Features::default();
+     features.threads(true).exceptions(true);
+-    let mut compiler = LLVM::new();
+-    compiler
+-        .opt_level(LLVMOptLevel::Aggressive)
+-        .non_volatile_memops(true)
+-        .readonly_funcref_table(true);
++    let compiler = product_compiler();
+     let mut engine = Engine::new(
+         Box::new(compiler) as Box<dyn CompilerConfig>,
+         target,
+@@ -209,3 +211,14 @@ fn verify_aot(module_path: PathBuf, artifact_path: PathBuf) -> Result<()> {
+     println!("{}", expected_hash);
+     Ok(())
+ }
++
++#[test]
++fn product_compiler_uses_strict_memory_identity() {
++    let strict_id = Box::new(product_compiler()).compiler().deterministic_id();
++    let mut relaxed = product_compiler();
++    relaxed.non_volatile_memops(true);
++    let relaxed_id = Box::new(relaxed).compiler().deterministic_id();
++    assert!(strict_id.contains("-nv0-"));
++    assert!(relaxed_id.contains("-nv1-"));
++    assert_ne!(strict_id, relaxed_id);
++}

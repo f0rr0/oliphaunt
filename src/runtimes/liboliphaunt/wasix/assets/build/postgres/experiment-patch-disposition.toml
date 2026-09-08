@@ -37,27 +37,27 @@ rationale = "This is a narrow pg_dump source hygiene patch that supports standal
 
 [[patch]]
 experiment = "0006-like-literal-substring-fast-path.patch"
-status = "ported-with-tighter-guards"
-wasix_runtime_decision = "ported as 0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch"
-rationale = "The PG18 patch narrows the experiment shortcut to deterministic, case-sensitive LIKE matching for the simple %literal% shape and rejects escapes, _, inner %, lower/case-insensitive variants, and nondeterministic collations before using memchr/memcmp."
+status = "removed-after-correctness-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0024 remains reserved for traceability"
+rationale = "The bytewise substring search could begin and end inside characters in non-UTF8 multibyte encodings, changing valid LIKE results. The optimization objective remains an experiment until an encoding-aware design has cross-encoding differential evidence and isolated material performance evidence."
 
 [[patch]]
 experiment = "0007-top-xid-current-transaction-fast-path.patch"
-status = "ported"
-wasix_runtime_decision = "ported as 0015-oliphaunt-wasix-add-top-xid-current-transaction-fast-path.patch"
-rationale = "The final PG18 patch keeps the upstream parallel and subtransaction paths and only short-circuits the ordinary top-level case after all alternate current-XID sources are absent."
+status = "removed-after-evidence-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0015 remains reserved for traceability"
+rationale = "The PG18 port's early false result is semantically plausible because it runs only after the top-XID comparison fails and only when parallel XIDs, parent states, aborted state, and child XIDs are absent. Correctness alone does not earn a hot-path fork from PostgreSQL: neither the experiment nor the retained reports contain a factor-isolated profile or A/B showing a material gain. Restore TransactionIdIsCurrentTransactionId to upstream. Reopen only if an alternating retained-binary screen dominated by current-transaction tuple visibility shows a material repeatable removal regression, then carry differential aborted, nested, parallel, and prepared-transaction tests with the experiment."
 
 [[patch]]
 experiment = "0008-btree-int4-compare-fast-path.patch"
-status = "ported-with-tighter-guards"
-wasix_runtime_decision = "ported as 0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch"
-rationale = "The PG18 patch keeps index_getattr(), requires the built-in integer btree family, int4 input type, int4 or InvalidOid subtype, and InvalidOid collation. It does not assume every int4 opclass has the built-in ordering."
+status = "removed-after-correctness-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0016 remains reserved for traceability"
+rationale = "The relation opfamily and int4 input type do not prove that the active scan support function is PostgreSQL's built-in btint4cmp; a user-defined opclass can belong to that family. Bypassing FunctionCall2Coll could therefore change index ordering semantics. Any retry must prove the exact comparator identity and earn its place with isolated performance evidence."
 
 [[patch]]
 experiment = "0009-btree-delete-stack-state.patch"
-status = "ported-with-single-user-gate"
-wasix_runtime_decision = "ported as 0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch"
-rationale = "The PG18 patch is restricted to __wasi__ and OLIPHAUNT_WASM_SINGLE_USER. It keeps deletion policy and tableam behavior unchanged while avoiding page-local allocator churn."
+status = "removed-after-design-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0017 remains reserved for traceability"
+rationale = "The patch moved about 19 KiB of page-local B-tree deletion scratch from PostgreSQL memory contexts to each Wasm stack frame without isolated performance evidence. That worsened the failure boundary from a recoverable allocation error to a possible Wasm stack trap and silently changed the table-AM allocation contract. Preserve allocator-churn reduction as an experiment; any retry must first prove a material isolated win and retain explicit, recoverable ownership."
 
 [[patch]]
 experiment = "0010-btree-bottomup-delete-runtime-toggle.patch"
@@ -67,12 +67,42 @@ rationale = "Disabling bottom-up deletion changes PostgreSQL's index maintenance
 
 [[patch]]
 experiment = "0011-btree-first-int4-compare-fast-path.patch"
-status = "ported-with-tighter-guards"
-wasix_runtime_decision = "ported as 0026-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch"
-rationale = "The PG18 patch keeps the direct tuple-data read only for embedded WASIX, leaf pages, one-key non-null non-posting non-pivot tuples, built-in int4 btree family, int4 input type, InvalidOid collation, and non-DESC scan keys. Equal values still fall through to PostgreSQL's existing heap-TID and truncated-key tie-break logic."
+status = "removed-after-correctness-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0026 remains reserved for traceability"
+rationale = "This companion inherited the same unproven comparator-identity assumption as patch 0016 and additionally bypassed PostgreSQL's attribute extraction path. Restoring the upstream comparison path is correct and keeps the optimization available only as a future isolated experiment."
 
 [[patch]]
 experiment = "0012-hash-bytes-unaligned-load-fast-path.patch"
-status = "ported"
-wasix_runtime_decision = "ported as 0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch"
-rationale = "The PG18 patch uses memcpy-based little-endian 32-bit loads under __wasi__ only, preserving defined C behavior while giving LLVM a wasm-load lowering opportunity."
+status = "removed-after-toolchain-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0014 remains reserved for traceability"
+rationale = "With the selected WASIX clang 21.1.2 at -O2, both PostgreSQL's upstream four-byte shift expression and the patch's memcpy helper lower to the same unaligned i32.load 0:p2align=0. The patch duplicates both hash_bytes tail switches and changes only some 4-byte and 8-byte tail code shape, without isolated A/B evidence that this residual difference is material. Restore the smaller upstream implementation. Reopen only if an alternating retained-binary hash workload shows a material repeatable removal regression; any retry should target the proven residual code shape instead of duplicating the complete switch."
+
+[[patch]]
+experiment = "0035-oliphaunt-wasix-use-single-backend-spinlocks.patch"
+status = "removed-after-evidence-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0035 remains reserved for traceability"
+rationale = "PR #133 introduced 0035 together with 0036 to replace guest atomic read-modify-write spinlocks under a one-backend-per-instance assumption. Current public placements are normally single-owner: TypeScript selects the immutable SingleProgram host policy, Rust denies additional guest Wasm tasks, reusable modules are instantiated with fresh stores and memories, and public execution handles require mutable ownership. That topology evidence makes the idea plausible but does not earn a backend-wide synchronization rewrite: PR #133 and the retained benchmark reports contain no factor-isolated A/B for either patch, and the host policy only denies guest-created execution rather than itself proving every callback reentry, signal, environment clone/reinit, journal restore, and side-module observer path. Restore the normal PostgreSQL spinlock path instead of maintaining containment for an unmeasured optimization. Reopen only as a coupled experiment with 0036 if alternating retained-binary Node runs show a material, repeatable removal regression and adversarial equivalence closes every observer path."
+
+[[patch]]
+experiment = "0036-oliphaunt-wasix-specialize-single-backend-atomics.patch"
+status = "removed-after-evidence-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0036 remains reserved for traceability"
+rationale = "PR #133 introduced 0036 with 0035 to replace every PostgreSQL backend flag, uint32, uint64, fence, and read-modify-write operation with volatile scalar accesses. It preserved the public layouts and sequential compare-exchange result contract, but also asserted 8-byte single-copy atomicity and made the optimization depend on exclusive ownership across Rust AOT, all TypeScript placements, host callbacks, signals, side modules, and Wasmer clone/reinit/restore behavior. The immutable SingleProgram policy and Rust task gate substantially improve the normal topology, yet there is no factor-isolated A/B showing that this broad semantic risk buys material speed. Restore the normal PostgreSQL atomic path. Reopen only as a coupled experiment with 0035 after profiling identifies atomic instructions as material, alternating retained-binary Node runs reproduce a removal regression, and adversarial tests prove execution and observer exclusivity."
+
+[[patch]]
+experiment = "historical-0035-oliphaunt-wasix-avoid-xlogwrite-prevseg-division.patch"
+status = "removed-after-evidence-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0030 remains reserved for traceability"
+rationale = "The cached exclusive segment end wrapped to zero for the final uint64 WAL segment. Unsigned distance from a cached segment start can repair that invariant without division, and the retained property test proves it against PostgreSQL's PrevLogSegNo arithmetic for every valid segment size and uint64 endpoints. Correctness does not earn the optimization: the only focused target regressed COMMIT from 13.993 ms to 15.603 ms, while the claimed full-suite improvement lacks an isolated per-patch table and is confounded by artifact and run changes. Reopen only as a new experiment if a factor-isolated, repeatable COMMIT screen shows a material removal regression."
+
+[[patch]]
+experiment = "runtime-0013-fail-active-portals-on-host-recovery.patch"
+status = "removed-after-architecture-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0013 remains reserved for traceability"
+rationale = "The patch compensated for a force-all host recovery path that skipped arbitrary nested PG_TRY/PG_CATCH cleanup. Marking active portals failed repaired one observed symptom but could not restore every skipped handler. The main module now expands sigsetjmp at each protected call site, so PortalRun's own live PG_CATCH marks the portal failed before rethrowing to the typed top-level step boundary."
+
+[[patch]]
+experiment = "runtime-0020-rearm-exception-stack-after-host-recovery.patch"
+status = "removed-after-correctness-review"
+wasix_runtime_decision = "removed from the applied series; patch number 0020 remains reserved for traceability"
+rationale = "The patch assigned PG_exception_stack to PostgresMain's saved buffer after the _start export had already unwound, leaving a pointer to a returned WebAssembly frame. Each typed PostgresMainLoopOnce call now establishes its own live call-site boundary and clears PG_exception_stack before every return; no boundary is retained across host calls."

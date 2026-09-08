@@ -8,10 +8,16 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 #define OLIPHAUNT_ICU_DATA_DIR_ENV "OLIPHAUNT_ICU_DATA_DIR"
 #define OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV "OLIPHAUNT_EMBEDDED_MODULE_DIR"
 #define OLIPHAUNT_ERROR_CAPACITY 1024
+#define OLIPHAUNT_EMBEDDED_IO_ABI_VERSION 1U
+
+#define OLIPHAUNT_EMBEDDED_WAKE_NONE 0U
+#define OLIPHAUNT_EMBEDDED_WAKE_POSIX_FD 1U
+#define OLIPHAUNT_EMBEDDED_WAKE_WIN32_EVENT 2U
 
 /*
  * Every fallible public C operation installs one of these stack-owned scopes.
@@ -44,9 +50,13 @@ void oliphaunt_error_capture_current(
     bool failed);
 
 typedef struct OliphauntEmbeddedIO {
+    uint32_t abi_version;
+    uint32_t struct_size;
     void *context;
-    ssize_t (*read)(void *context, void *ptr, size_t len);
+    ssize_t (*read)(void *context, void *ptr, size_t len, long timeout_ms);
     ssize_t (*write)(void *context, const void *ptr, size_t len);
+    int (*set_timeout)(void *context, long timeout_ms);
+    int (*set_interrupt_wakeup)(void *context, uint32_t kind, uintptr_t token);
 } OliphauntEmbeddedIO;
 
 typedef struct OliphauntOutputChunk {
@@ -178,6 +188,16 @@ struct OliphauntHandle {
     size_t input_off;
     size_t input_cap;
 
+    /* PostgreSQL's nearest cooperative timeout, guarded by mutex. */
+    bool embedded_timeout_armed;
+    struct timespec embedded_timeout_deadline;
+    uint64_t embedded_timeout_generation;
+    uint64_t embedded_timeout_notified_generation;
+
+    /* PostgreSQL-owned raw wake endpoint, guarded by mutex. */
+    uint32_t interrupt_wakeup_kind;
+    uintptr_t interrupt_wakeup_token;
+
     unsigned char *output;
     size_t output_len;
     size_t output_cap;
@@ -298,8 +318,11 @@ uint64_t oliphaunt_elapsed_ns(uint64_t started_ns);
 void oliphaunt_reset_trace_locked(OliphauntHandle *handle, size_t request_len);
 void oliphaunt_print_trace_locked(OliphauntHandle *handle, uint64_t total_ns);
 
-ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len);
+ssize_t oliphaunt_embedded_read(void *context, void *ptr, size_t len, long timeout_ms);
 ssize_t oliphaunt_embedded_write(void *context, const void *ptr, size_t len);
+int oliphaunt_embedded_set_timeout(void *context, long timeout_ms);
+int oliphaunt_embedded_set_interrupt_wakeup(void *context, uint32_t kind, uintptr_t token);
+int oliphaunt_wake_backend_locked(OliphauntHandle *handle);
 int oliphaunt_set_input_locked(OliphauntHandle *handle, const void *buf, size_t len);
 int oliphaunt_startup_timeout_ms(void);
 int oliphaunt_wait_for_ready_locked(OliphauntHandle *handle, int timeout_ms);

@@ -982,8 +982,8 @@ fresh_runtime_abi_id() {
   local target_triple="$2"
   local host_platform="$3"
   local host_abi="$4"
-  local wasmer_patch="$FRESH_ROOT/runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
-  local wasix_libc_patch="$FRESH_ROOT/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+  local wasmer_patch="$FRESH_ROOT/runtime/patches/wasmer/series"
+  local wasix_libc_patch="$FRESH_ROOT/runtime/patches/wasix-libc/series"
 
   fresh_is_sha256 "$cargo_lock_sha256" || {
     printf 'runtime ABI Cargo.lock identity is not a lowercase SHA-256\n' >&2
@@ -1002,10 +1002,10 @@ fresh_runtime_abi_id() {
     printf '%s\0%s\0' wasmer-napi-commit "$FRESH_WASMER_NAPI_COMMIT"
     printf '%s\0%s\0' wasmer-test-files-commit "$FRESH_WASMER_TEST_FILES_COMMIT"
     printf '%s\0%s\0' wasmer-spec-commit "$FRESH_WASMER_SPEC_COMMIT"
-    printf '%s\0%s\0' wasmer-patch-sha256 "$(fresh_wasmer_bin_hash "$wasmer_patch")"
+    printf '%s\0%s\0' wasmer-patch-sha256 "$(fresh_runtime_patch_hash "$wasmer_patch")"
     printf '%s\0%s\0' wasmer-cargo-lock-sha256 "$cargo_lock_sha256"
     printf '%s\0%s\0' wasix-libc-source-commit "$FRESH_WASIX_LIBC_SOURCE_COMMIT"
-    printf '%s\0%s\0' wasix-libc-patch-sha256 "$(fresh_wasmer_bin_hash "$wasix_libc_patch")"
+    printf '%s\0%s\0' wasix-libc-patch-sha256 "$(fresh_runtime_patch_hash "$wasix_libc_patch")"
     printf '%s\0%s\0' sysroot-variant "$WASIXCC_SYSROOT_VARIANT"
     printf '%s\0%s\0' target-triple "$target_triple"
     printf '%s\0%s\0' host-platform "$host_platform"
@@ -1072,14 +1072,14 @@ fresh_require_local_wasmer_build_state() {
   local wasix_libc_signature="$runtime_root/.prepared/wasix-libc.signature"
   local carrier_manifest="$WASIXCC_SYSROOT_PREFIX/.oliphaunt-patched-sysroots.manifest"
   local variant_manifest="$WASIXCC_SYSROOT/.oliphaunt-patched-sysroot.manifest"
-  local wasmer_patch="$FRESH_ROOT/runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
-  local wasix_libc_patch="$FRESH_ROOT/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+  local wasmer_patch="$FRESH_ROOT/runtime/patches/wasmer/series"
+  local wasix_libc_patch="$FRESH_ROOT/runtime/patches/wasix-libc/series"
   local wasmer_patch_hash
   local wasix_libc_patch_hash
 
   fresh_require_command git || return
-  wasmer_patch_hash="$(fresh_wasmer_bin_hash "$wasmer_patch")"
-  wasix_libc_patch_hash="$(fresh_wasmer_bin_hash "$wasix_libc_patch")"
+  wasmer_patch_hash="$(fresh_runtime_patch_hash "$wasmer_patch")"
+  wasix_libc_patch_hash="$(fresh_runtime_patch_hash "$wasix_libc_patch")"
   fresh_require_prepared_worktree \
     Wasmer "$wasmer_root" "$FRESH_WASMER_SOURCE_COMMIT" "$wasmer_patch_hash" \
     "$FRESH_WASMER_NAPI_COMMIT:$FRESH_WASMER_TEST_FILES_COMMIT:$FRESH_WASMER_SPEC_COMMIT" \
@@ -1108,8 +1108,8 @@ fresh_require_local_wasmer_build_state() {
 
 fresh_require_patched_wasmer_receipt() {
   local manifest="${WASMER_BUILD_RECEIPT:-$FRESH_WASMER_BUILD_RECEIPT}"
-  local wasmer_patch="$FRESH_ROOT/runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
-  local wasix_libc_patch="$FRESH_ROOT/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+  local wasmer_patch="$FRESH_ROOT/runtime/patches/wasmer/series"
+  local wasix_libc_patch="$FRESH_ROOT/runtime/patches/wasix-libc/series"
 
   [ -f "$manifest" ] && [ ! -L "$manifest" ] || {
     printf 'missing regular Wasmer build receipt: %s\n' "$manifest" >&2
@@ -1135,9 +1135,9 @@ fresh_require_patched_wasmer_receipt() {
   fresh_require_manifest_value \
     "$manifest" wasix_libc_source_commit "$FRESH_WASIX_LIBC_SOURCE_COMMIT" || return
   fresh_require_manifest_value \
-    "$manifest" wasmer_patch_sha256 "$(fresh_wasmer_bin_hash "$wasmer_patch")" || return
+    "$manifest" wasmer_patch_sha256 "$(fresh_runtime_patch_hash "$wasmer_patch")" || return
   fresh_require_manifest_value \
-    "$manifest" wasix_libc_patch_sha256 "$(fresh_wasmer_bin_hash "$wasix_libc_patch")" || return
+    "$manifest" wasix_libc_patch_sha256 "$(fresh_runtime_patch_hash "$wasix_libc_patch")" || return
   fresh_require_manifest_value \
     "$manifest" wasmer_features "$FRESH_WASMER_COMPILER_FEATURES" || return
   fresh_require_manifest_value \
@@ -1238,7 +1238,7 @@ fresh_require_patched_postmaster_executor() {
     "$executor_receipt" wasmer_source_commit "$FRESH_WASMER_SOURCE_COMMIT" || return
   fresh_require_manifest_value \
     "$executor_receipt" wasmer_patch_sha256 \
-    "$(fresh_wasmer_bin_hash "$FRESH_ROOT/runtime/patches/wasmer/0001-postgres-wasix-blockers.patch")" || return
+    "$(fresh_runtime_patch_hash "$FRESH_ROOT/runtime/patches/wasmer/series")" || return
   fresh_require_manifest_value \
     "$executor_receipt" wasmer_prepared_signature_sha256 \
     "$(fresh_manifest_value "$wasmer_receipt" wasmer_prepared_signature_sha256)" || return
@@ -1630,6 +1630,58 @@ fresh_git_worktree_state_sha256() {
           return 2
         fi
       done || return
+  } | fresh_sha256_stream
+}
+
+# Shared by PostgreSQL overlays and the two runtime patch series. Keep the
+# ordered manifest authoritative; never apply an incidental directory glob.
+fresh_patch_series_files() {
+  local patches_dir="$1"
+  local series_file="$2"
+  local patch_name
+  local seen=" "
+  [ -f "$series_file" ] && [ ! -L "$series_file" ] || return 2
+  while IFS= read -r patch_name || [ -n "$patch_name" ]; do
+    case "$patch_name" in
+      ''|'#'*) continue ;;
+      .*|*[!a-zA-Z0-9._-]*) printf 'unsafe patch entry: %s\n' "$patch_name" >&2; return 2 ;;
+      *.patch) ;;
+      *) printf 'not a patch entry: %s\n' "$patch_name" >&2; return 2 ;;
+    esac
+    case "$seen" in
+      *" $patch_name "*) printf 'duplicate patch entry: %s\n' "$patch_name" >&2; return 2 ;;
+    esac
+    seen="$seen$patch_name "
+    [ -f "$patches_dir/$patch_name" ] && [ ! -L "$patches_dir/$patch_name" ] || return 2
+    printf '%s\n' "$patches_dir/$patch_name"
+  done <"$series_file"
+  [ "$seen" != " " ]
+}
+
+fresh_apply_patch_series() {
+  local worktree="$1"
+  local files
+  local patch
+  files="$(fresh_patch_series_files "$2" "$3")" || return
+  while IFS= read -r patch; do
+    git -C "$worktree" apply --whitespace=error-all "$patch" || return
+  done <<<"$files"
+}
+
+# Existing receipt *_patch_sha256 keys now mean this ordered-series digest.
+# Include names and the manifest itself as well as every member's contents.
+fresh_runtime_patch_hash() {
+  local series_file="$1"
+  local files
+  local patch
+  local digest
+  files="$(fresh_patch_series_files "$(dirname "$series_file")" "$series_file")" || return
+  {
+    printf 'series\0%s\0' "$(fresh_wasmer_bin_hash "$series_file")"
+    while IFS= read -r patch; do
+      digest="$(fresh_wasmer_bin_hash "$patch")" || return
+      printf 'patch\0%s\0%s\0' "${patch##*/}" "$digest"
+    done <<<"$files"
   } | fresh_sha256_stream
 }
 

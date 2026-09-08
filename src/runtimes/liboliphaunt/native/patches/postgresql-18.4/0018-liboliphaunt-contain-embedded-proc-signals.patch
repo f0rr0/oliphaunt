@@ -22,7 +22,7 @@ diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/proc
 index 4f9dcf1..b68d502 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -268,6 +268,31 @@ ProcSignalClearSlot(ProcNumber procNumber)
+@@ -269,6 +269,31 @@ ProcSignalClearSlot(ProcNumber procNumber)
 
  	ConditionVariableBroadcast(&slot->pss_barrierCV);
  }
@@ -54,7 +54,7 @@ index 4f9dcf1..b68d502 100644
 
  /*
   * SendProcSignal
-@@ -298,7 +324,7 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
+@@ -297,7 +323,7 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
  			slot->pss_signalFlags[reason] = true;
  			SpinLockRelease(&slot->pss_mutex);
  			/* Send signal */
@@ -63,7 +63,7 @@ index 4f9dcf1..b68d502 100644
  		}
  		SpinLockRelease(&slot->pss_mutex);
  	}
-@@ -326,7 +352,7 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
+@@ -325,7 +351,7 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
  					slot->pss_signalFlags[reason] = true;
  					SpinLockRelease(&slot->pss_mutex);
  					/* Send signal */
@@ -72,7 +72,7 @@ index 4f9dcf1..b68d502 100644
  				}
  				SpinLockRelease(&slot->pss_mutex);
  			}
-@@ -407,7 +433,8 @@ EmitProcSignalBarrier(ProcSignalBarrierType type)
+@@ -406,7 +432,8 @@ EmitProcSignalBarrier(ProcSignalBarrierType type)
  				/* see SendProcSignal for details */
  				slot->pss_signalFlags[PROCSIG_BARRIER] = true;
  				SpinLockRelease(&slot->pss_mutex);
@@ -86,7 +86,7 @@ diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
 index d4cdf45..79222a9 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -4511,6 +4511,11 @@ PostgresMain(const char *dbname, const char *username)
+@@ -4655,6 +4655,11 @@ PostgresMain(const char *dbname, const char *username)
  		 * midst of output during who-knows-what operation...
  		 */
  		pqsignal(SIGPIPE, SIG_IGN);

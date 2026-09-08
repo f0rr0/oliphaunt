@@ -8,6 +8,7 @@ REPO_ROOT="$(oliphaunt_wasix_repo_root "$SCRIPT_DIR")"
 SOURCE_ROOT="$SCRIPT_DIR/postgres"
 SOURCE_TOML="$REPO_ROOT/src/postgres/versions/18/source.toml"
 PATCH_DIR="$SOURCE_ROOT/patches"
+CONTRACT_HEADER="$SCRIPT_DIR/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h"
 
 read_toml_value() {
   local key="$1"
@@ -78,6 +79,7 @@ fi
 series_hash="$(
   {
     sha256_text_lf "$PATCH_DIR/series"
+    sha256_text_lf "$CONTRACT_HEADER"
     for patch_file in "$PATCH_DIR"/*.patch; do
       sha256_text_lf "$patch_file"
     done
@@ -86,6 +88,7 @@ series_hash="$(
 new_fingerprint="$PG_VERSION:$PG_SHA256:$series_hash"
 
 if [[ -d "$PATCHED_PGSRC" && -f "$FINGERPRINT" && "$(cat "$FINGERPRINT")" == "$new_fingerprint" ]] && ! source_has_patch_artifacts "$PATCHED_PGSRC"; then
+  install -m 0644 "$CONTRACT_HEADER" "$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
   if [[ ! -f "$SOURCE_FINGERPRINT_FILE" || "$(cat "$SOURCE_FINGERPRINT_FILE")" != "$new_fingerprint" ]]; then
     printf '%s\n' "$new_fingerprint" > "$SOURCE_FINGERPRINT_FILE"
   fi
@@ -103,8 +106,13 @@ mv "$WORK_ROOT/work/postgresql-$PG_VERSION" "$PATCHED_PGSRC"
 while IFS= read -r patch_name; do
   [[ -z "$patch_name" || "$patch_name" =~ ^# ]] && continue
   echo "prepare_postgres_source: applying $patch_name" >&2
-  (cd "$PATCHED_PGSRC" && patch --no-backup-if-mismatch -p1 < "$PATCH_DIR/$patch_name") >&2
+  # Do not discover the enclosing checkout when generated sources live inside it.
+  (cd "$PATCHED_PGSRC" &&
+    GIT_CEILING_DIRECTORIES="$(dirname "$PATCHED_PGSRC")" \
+      git apply --whitespace=error-all "$PATCH_DIR/$patch_name") >&2
 done < "$PATCH_DIR/series"
+
+install -m 0644 "$CONTRACT_HEADER" "$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
 
 if source_has_patch_artifacts "$PATCHED_PGSRC"; then
   echo "prepare_postgres_source: patch backup/reject files were left in $PATCHED_PGSRC" >&2
