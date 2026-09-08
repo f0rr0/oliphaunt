@@ -1,117 +1,93 @@
 ---
-title: Tauri Usage
-description: Use the Rust SDK from Tauri state and expose app-specific database commands to the webview.
+title: Use with Tauri
+description: Keep the database in Rust application state and expose focused commands to your webview.
 ---
 
-# Tauri Usage
+Use the native [Rust SDK](/docs/sdk/rust) in a Tauri app. Keep the database in Rust state and expose application operations such as adding or searching notes to the webview.
 
-Use the Rust SDK from Tauri state. `oliphaunt` is the native SDK for Tauri and
-Rust desktop apps; it owns direct embedded mode, broker mode, and server mode
-over native PostgreSQL.
+## Open persistent application storage
 
-WASIX bindings are separate products. Native Tauri apps start with the native
-Rust SDK unless they deliberately choose the Rust WASIX host.
+Use `AsyncOliphaunt` so database work does not block Tauri's async executor. This helper opens a root beneath the application-data directory and prepares a table:
 
-<TauriAppPattern />
-
-## App Shape
-
-Keep the database handle in Rust state and expose narrow Tauri commands to the
-webview. The webview calls app-specific commands such as `add_item` or
-`search_items`; Rust owns the storage directory, lock, runtime handle, lifecycle,
-and backup APIs.
-
-| Need | Recommended mode |
-| --- | --- |
-| One embedded app database with lowest overhead | `.direct()` |
-| Multiple database instances or helper-process ownership | `.broker()` |
-| SQLx pools, ORMs, `psql`, or `pg_dump` | `OliphauntServer::builder().start()` |
-
-## Direct Topology In Async Rust State
-
-Use `oliphaunt::AsyncOliphaunt` with direct topology when async Tauri
-commands share application state. PostgreSQL runs on one package-owned thread,
-so its synchronous work does not monopolize Tauri's async executor:
-
-```rust,no_run
+```rust
 use oliphaunt::{AsyncOliphaunt, DatabaseStorage};
-use tauri::State;
+use std::path::PathBuf;
 
-struct Db(AsyncOliphaunt);
+struct AppDatabase(AsyncOliphaunt);
 
+async fn open_database(app_data: PathBuf) -> oliphaunt::Result<AsyncOliphaunt> {
+    let db = AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(app_data.join("postgres")))
+        .direct()
+        .open()
+        .await?;
+    db.execute("CREATE TABLE IF NOT EXISTS notes (body text NOT NULL)").await?;
+    Ok(db)
+}
+```
+
+During your existing Tauri builder's setup, resolve the directory and register the handle:
+
+```rust
+use tauri::Manager;
+
+// Add this setup callback to your existing tauri::Builder.
+.setup(|app| {
+    let app_data = app.path().app_data_dir()?;
+    let db = tauri::async_runtime::block_on(open_database(app_data))?;
+    app.manage(AppDatabase(db));
+    Ok(())
+})
+```
+
+## Expose application commands
+
+Use managed state in an async command, bind user values, and register the command with `tauri::generate_handler![add_note]`:
+
+```rust
 #[tauri::command]
-async fn add_item(db: State<'_, Db>, value: String) -> Result<(), String> {
-    db.0
-        .execute_with_params("INSERT INTO items(value) VALUES ($1)", [value])
+async fn add_note(
+    db: tauri::State<'_, AppDatabase>,
+    body: String,
+) -> Result<(), String> {
+    db.0.execute_with_params("INSERT INTO notes (body) VALUES ($1)", [body])
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 ```
 
-Open the database under your app data directory during setup:
+The webview calls the command through Tauri:
 
-```rust,no_run
-use oliphaunt::{AsyncOliphaunt, DatabaseStorage};
+```ts
+import { invoke } from '@tauri-apps/api/core';
 
-async fn open_app_database(app_data_dir: std::path::PathBuf) -> oliphaunt::Result<AsyncOliphaunt> {
-    AsyncOliphaunt::builder()
-        .storage(DatabaseStorage::Directory(app_data_dir.join("postgres")))
-        .direct()
-        .open()
+await invoke('add_note', { body: 'First note' });
+```
+
+Validate inputs and expose only operations the frontend needs. Keep database paths and raw SQL out of the frontend command contract.
+
+## Use a PostgreSQL driver or ORM
+
+If your Rust integration expects a connection URL and independent sessions, start an `AsyncOliphauntServer`. Return and retain the server handle, not only its URL:
+
+```rust
+use oliphaunt::AsyncOliphauntServer;
+
+async fn start_server(app_data: PathBuf) -> oliphaunt::Result<AsyncOliphauntServer> {
+    AsyncOliphauntServer::builder()
+        .storage(DatabaseStorage::Directory(app_data.join("postgres")))
+        .start()
         .await
 }
 ```
 
-Store the resulting async handle with `tauri::State`. Its clones share one FIFO
-owner thread and one PostgreSQL session. The synchronous crate-root
-`oliphaunt::Oliphaunt` is `Send + !Sync`: it may move between threads but blocks
-the thread making each call and requires exclusive `&mut` access. Use it from a
-synchronous command or application-owned database thread, not directly on an
-async executor thread. Server mode is the path for independent PostgreSQL
-client sessions.
+Store the server alongside the application's driver or pool. Create the pool using `server.connection_string()`. During shutdown, close the pool before awaiting `server.close()`.
 
-## Existing Postgres Clients
+## Package and shut down
 
-Use the dedicated server builder when another Rust library expects a PostgreSQL
-URL, real independent sessions, SQLx pools, `psql`, or `pg_dump`:
+Ship the native runtime and any selected extensions with each desktop build. Test the packaged application; a development run may resolve files that are absent from the final bundle.
 
-```rust,no_run
-use oliphaunt::{AsyncOliphauntServer, DatabaseStorage};
+Stop accepting application work before closing the database. Await `db.close()` through your app's shutdown path to observe errors. Use the SDK's backup API for direct/broker storage and PostgreSQL tools for server workflows.
 
-async fn start_server_mode() -> oliphaunt::Result<String> {
-    let server = AsyncOliphauntServer::builder()
-        .storage(DatabaseStorage::Directory("./.liboliphaunt".into()))
-        .start()
-        .await?;
-
-    Ok(server.connection_string().to_owned())
-}
-```
-
-Use `.broker()` for desktop apps that want helper-process ownership or
-multiple database instances managed by the Rust SDK.
-
-## Extensions And Assets
-
-Select exact SQL extension names in Rust configuration before opening the database.
-Package only the extension artifacts your Tauri app uses, then verify the app
-artifact before release. An app that selects `vector` ships `vector` and its
-declared dependencies.
-
-## Backup And Restore
-
-Direct and broker databases expose one byte physical-backup API and static
-restore into an absent or empty destination. Local server handles intentionally
-omit SDK backup: use ordinary PostgreSQL `pg_basebackup` for physical backups or
-plain `pg_dump`/`psql` for logical workflows through the connection string.
-
-## Operational Guidance
-
-- Use `.direct()` for one embedded PostgreSQL session with minimal overhead.
-- Use `.broker()` when helper-process ownership matters more than direct
-  call overhead.
-- Use `OliphauntServer::builder().start()` for real concurrent PostgreSQL client
-  sessions and pools; the lifecycle handle itself does not execute SQL.
-- React Native apps use the React Native SDK, which delegates to Swift on
-  iOS/macOS and Kotlin on Android.
+See Tauri's [state management](https://v2.tauri.app/develop/state-management/) and [calling Rust](https://v2.tauri.app/develop/calling-rust/) documentation for application wiring.

@@ -1,7 +1,7 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
-import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import type { Metadata } from 'next';
+import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 
 const plexSans = IBM_Plex_Sans({
   subsets: ['latin'],
@@ -35,8 +35,17 @@ export default function Layout({ children }: LayoutProps<'/'>) {
       className={`${plexSans.variable} ${plexMono.variable}`}
       suppressHydrationWarning
     >
-      <body className="flex flex-col min-h-screen">
-        <RootProvider>{children}</RootProvider>
+      <body className="flex flex-col min-h-screen antialiased">
+        <RootProvider
+          search={{
+            options: {
+              type: 'static',
+              api: `${process.env.OLIPHAUNT_DOCS_BASE_PATH || ''}/api/search`,
+            },
+          }}
+        >
+          {children}
+        </RootProvider>
       </body>
     </html>
   );

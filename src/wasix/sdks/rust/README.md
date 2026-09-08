@@ -1,318 +1,35 @@
-# `oliphaunt-wasix`
+# Oliphaunt WASIX Rust SDK
 
-Embedded PostgreSQL 18 for Rust through the canonical `liboliphaunt-wasix`
-runtime. The root API is synchronous and runs PostgreSQL directly on the
-calling thread. Its retained Wasmer store is thread-affine, so root `Oliphaunt`
-is `!Send + !Sync` and must be created, used, closed, and dropped on one OS
-thread. Applications that need a movable/shared handle or need to keep an async
-executor responsive use the cloneable `Send + Sync` root `AsyncOliphaunt`
-handle, which owns a dedicated database thread.
+Host WebAssembly PostgreSQL in a Rust application. The synchronous handle must be created, used, and dropped on one OS thread. Use `AsyncOliphaunt` for a cloneable `Send + Sync` owner.
 
-The separate `oliphaunt-pgwire-server` package exposes this runtime through a
-one-client local PostgreSQL endpoint.
+## Install
 
 ```sh
 cargo add oliphaunt-wasix
 ```
 
-## Direct API
+The [quickstart](https://oliphaunt.dev/docs/sdk/wasix-rust) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
 
-```rust,no_run
-use oliphaunt_wasix::{DatabaseStorage, Error, Oliphaunt};
+## First query
 
-fn main() -> anyhow::Result<()> {
-    let mut database = Oliphaunt::builder()
-        .storage(DatabaseStorage::Directory("./data/main".into()))
-        .startup_guc("work_mem", "8MB")
-        .open()?;
+```rust
+use oliphaunt_wasix::Oliphaunt;
 
-    database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text NOT NULL)")?;
-    database
-        .sql("INSERT INTO items VALUES ($1, $2)")
-        .bind(1_i32)
-        .bind("hello")
-        .execute()?;
-    let result = database.query_with_params(
-        "SELECT value FROM items WHERE id = $1",
-        [1_i32],
-    )?;
-    assert_eq!(result.get_text(0, "value")?, Some("hello"));
-
-    database.transaction(|transaction| {
-        transaction.execute("UPDATE items SET value = 'committed' WHERE id = 1")?;
-        Ok::<(), Error>(())
-    })?;
-    database.close()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Oliphaunt::open()?;
+    let result = db.sql("SELECT $1::int4 AS answer").bind(42_i32).query()?;
+    let answer: i32 = result.rows()[0].try_get("answer")?;
+    println!("{answer}"); // 42
+    db.close()?;
     Ok(())
 }
 ```
 
-The root `Oliphaunt` is the no-hop database. Opening, queries, transactions,
-backup, restore, and close run synchronously on the calling thread. The handle
-is deliberately thread-affine and exclusive: it is `!Send + !Sync`, database
-methods take `&mut self`, and a transaction borrows that handle. Create, use,
-close, and drop it on one OS thread. This makes execution placement and ordering
-explicit without an internal queue or message boundary.
+Default storage is a memory filesystem and is discarded on close. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
-Starting close permanently retires the handle. `is_closed()` becomes true,
-later work is rejected, and repeated close calls replay the first terminal
-result. A transaction callback panic is caught long enough to attempt rollback;
-the original panic is then resumed. If rollback or commit cannot be confirmed,
-the database is poisoned until close.
+## Build your integration
 
-`execute` and `query` are the parameter-free forms;
-`execute_with_params` and `query_with_params` use PostgreSQL positional
-parameters. Query rows retain ordered raw bytes and expose OID-aware typed
-access through `FromSql`. Natural Rust values use `IntoParameter` and carry
-their PostgreSQL type OID and preferred encoding. `Parameter` provides
-explicit OID, format, and nullable bytes; its `text`, `binary`, and `null`
-constructors leave the OID for PostgreSQL to infer. An explicit OID 0 is
-accepted by `describe` because it is PostgreSQL's wire-level inference
-sentinel; an absent OID is the single execution spelling for inference. `exec`
-returns ordered simple-query
-results, `describe` resolves
-wire metadata without executing, and the database and transaction publish
-`is_closed()`. `query` also accepts command-only statements, returning empty
-fields and rows while retaining the command tag and affected-row count. A
-transaction mirrors the structured methods and supports explicit `rollback()`
-without a later commit.
-
-Managed transaction handles intentionally omit raw-protocol methods. Do not
-send transaction lifecycle SQL (`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, or
-`AND CHAIN`) through their structured methods; use callback completion or
-`rollback()` instead. Savepoints, including `ROLLBACK TO SAVEPOINT`, remain
-ordinary transaction work. Use the root database's raw-protocol adapter only
-when the application deliberately owns the full PostgreSQL session state.
-
-Transaction callbacks return ordinary `Result<T, E>` with `E: From<Error>`, so
-database work uses `?` while typed business aborts stay application-owned. The
-outer `TransactionResult<T, E>` distinguishes callback failure, an actually
-attempted rollback failure, and an independent database/protocol failure for
-which no rollback was sent.
-
-`exec_protocol_raw` is the buffered escape hatch for callers that need
-PostgreSQL frontend-protocol bytes. `exec_protocol_raw_stream` delivers
-bounded callback chunks and streams COPY output through the guest protocol
-pump instead of accumulating the complete response. Ordinary fallible methods
-return the crate-owned `Result<T>`; transactions and streams use the generic
-`TransactionResult<T, E>` and `RawStreamResult<T, E>` wrappers. The opaque
-`Error` implements `std::error::Error`, exposes a stable non-exhaustive
-`ErrorKind` through `kind()`, and offers `postgres_error()`; PostgreSQL failures return the exported
-`PostgresError` details, notices, and SQLSTATE. Failed rollback or an uncertain
-COMMIT poisons the database and never sends a misleading second control command.
-Streaming callbacks execute synchronously before the direct method returns and
-provide backpressure to PostgreSQL. The retained WASIX stdio attachment requires
-the callback to own `Send + 'static` captures; use `Arc<Mutex<_>>` for mutable
-state. Return `()` for infallible delivery or `Result<(), E>` for a typed stop.
-A callback error or panic is surfaced only after a successful guest protocol
-pump confirms recovery. Direct callback panics then resume; async owner-thread
-panics become `RawStreamError::CallbackPanicked` without poisoning. If the pump
-fails, `RawStreamError::Database` is authoritative, the database becomes
-close-only, and a retained callback panic is not resumed into an unknown session
-state. WASIX query cancellation is intentionally absent
-until the guest runtime can interrupt execution and prove protocol recovery.
-
-The builder also supports `username`, `database`, `startup_gucs`, and
-`extension`/`extensions`. Independently released extension crates expose typed
-selectors carrying their own portable payload and matching host AOT code:
-
-```toml
-oliphaunt-extension-vector = { version = "0.2", default-features = false, features = ["wasix"] }
-```
-
-Pass `oliphaunt_extension_vector::VECTOR` to `.extension(...)`. The extension
-version may differ from the SDK's; its declared runtime version must match.
-Selecting an extension makes its artifact and required pre-start configuration
-available; it never runs `CREATE EXTENSION`, `LOAD`, or migration SQL. Install
-database-local objects explicitly through your normal migrations.
-`Extension::ALL` and `Extension::by_sql_name` describe the catalog. Bare
-`Extension::...` values use payloads selected through the existing `extension-*`
-features; independently installed crates supply their own payloads.
-
-## Storage and physical backup
-
-`DatabaseStorage::Memory` is the default and keeps mutable PGDATA in Wasmer's
-memory filesystem. `DatabaseStorage::Directory(path)` persists a managed root;
-the caller-supplied Rust path must be nonempty and contain no NUL bytes:
-
-```text
-data/main/
-├── .oliphaunt.json
-└── pgdata/
-```
-
-A new empty root runs the runtime's initializer, or imports an explicitly selected
-seed supplied through `.seed(ClusterSeed::new(archive, manifest))`. Seed Cargo
-packages expose `seed_archive()` and `seed_manifest()` for this purpose; selecting
-a seed does not change where mutable PGDATA is stored. Supply canonical ICU data
-with `.icu_data(IcuData::new(data_bytes, manifest_bytes)?)`; this validates the
-data and selects the ICU profile without embedding a data carrier in the SDK.
-The optional `icu` Cargo feature selects the separately owned ICU data carrier
-as a convenience. Standard builds do not include ICU data. An ICU database needs
-its selected ICU data on every open; its initialization seed is needed only once.
-
-An existing root requires no seed and must contain an exact descriptor and complete PostgreSQL 18 PGDATA;
-incomplete or unexpected contents fail without being adopted, deleted, or
-reinitialized.
-
-Rust uses one stable sibling advisory lock for both open and restore. It
-coordinates Rust WASIX and native-host WASIX TypeScript owners of that path,
-including before a new root exists, because the Node-API path delegates
-directory ownership to this Rust runtime. Sequential cross-binding root handoff
-is not yet a supported or qualified workflow.
-
-Physical backup is a PostgreSQL online backup in a plain tar archive:
-
-```rust,no_run
-use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
-
-fn main() -> anyhow::Result<()> {
-    let mut source = Oliphaunt::open()?;
-    let backup = source.backup()?;
-    source.close()?;
-
-    Oliphaunt::restore("./data/restored", backup)?;
-    let mut restored = Oliphaunt::builder()
-        .storage(DatabaseStorage::Directory("./data/restored".into()))
-        .open()?;
-    restored.close()?;
-    Ok(())
-}
-```
-
-`restore` accepts an absent or empty directory, validates and stages the whole
-archive, then publishes the managed root. The archive contains `pgdata/**` and
-`.oliphaunt/backup-manifest.properties`; it does not contain the destination's
-`.oliphaunt.json` descriptor. Physical archives are for the same PostgreSQL
-major and WASIX physical format. Restore is synchronous; once publication
-starts, it runs to completion or returns an error. Use logical dump/restore for
-upgrades.
-
-## Standard PostgreSQL clients and tools
-
-Use the separate [`oliphaunt-pgwire-server`](../../pgwire-server) library or CLI
-to connect an ordinary PostgreSQL driver to an embedded WASIX database.
-
-With the `tools` feature, an open database gains fluent methods for the matching
-packaged WASIX PostgreSQL programs. The optional `tools` namespace contains
-their options and structured error type:
-
-```rust,no_run
-# #[cfg(feature = "tools")]
-use oliphaunt_wasix::{Oliphaunt, tools};
-
-# #[cfg(feature = "tools")]
-fn main() -> anyhow::Result<()> {
-    let mut source = Oliphaunt::open()?;
-    let sql = source.pg_dump(tools::PgDumpOptions::new().arg("--schema-only"))?;
-    source.close()?;
-    let mut target = Oliphaunt::open()?;
-    target.psql(tools::PsqlOptions::new().script(sql))?;
-    target.close()?;
-    Ok(())
-}
-
-# #[cfg(not(feature = "tools"))]
-# fn main() {}
-```
-
-`pg_dump` returns standard plain PostgreSQL SQL unchanged. `psql` is
-non-interactive and accepts a command, a script, or ordinary passthrough
-arguments. Connection, file input/output, format, compression, encoding, and
-parallel-job flags are managed and rejected from passthrough arguments. Direct
-tools are exclusive operations on the database and reset session state before
-and after the tool run.
-
-## Asynchronous API
-
-Use `AsyncOliphaunt` when PostgreSQL must not block the calling async executor:
-
-```rust,no_run
-use oliphaunt_wasix::AsyncOliphaunt;
-
-#[tokio::main]
-async fn main() -> oliphaunt_wasix::Result<()> {
-    let database = AsyncOliphaunt::open().await?;
-    let rows = database.query("SELECT 42::int4 AS answer").await?;
-    assert_eq!(rows.get_text(0, "answer")?, Some("42"));
-    database.close().await
-}
-```
-
-`AsyncOliphaunt` is `Clone + Send + Sync`. Every clone targets one
-PostgreSQL session whose Wasmer store is constructed and retained on an
-SDK-owned thread. Database work therefore does not block the calling executor
-thread. All admitted operations, transaction boundaries, and close are placed
-into one FIFO. Ordinary work awaits fair, bounded admission; saturation applies
-async backpressure instead of returning a queue-full error. Lifecycle controls
-do not consume ordinary capacity but never overtake earlier admitted work.
-Individual futures are `Send` only when their captured inputs, callbacks, and
-outputs also satisfy the applicable `Send` bounds.
-Starting close establishes an atomic cutoff: work already in the owner FIFO
-drains, while capacity waiters and later work are rejected. A retryable close
-does not resurrect waiters that missed its cutoff.
-
-Dropping an ordinary operation before it starts removes its database effect.
-After asynchronous execution begins, it runs to a PostgreSQL readiness boundary
-even if its future is abandoned. Dropping an active transaction future queues
-best-effort rollback in the same order. While a callback transaction is active,
-unpinned work is rejected. Concurrent `close().await` callers join one close
-attempt and receive the same result.
-
-An async transaction-body panic unwinds the awaiting task immediately. Its
-active transaction is dropped and queues best-effort rollback in the owner
-FIFO. The unwind does not wait for rollback to finish, but later database work
-cannot overtake that cleanup. This differs from the direct callback transaction,
-which settles synchronously before resuming the panic.
-
-The `Async*` root types mirror the direct database, SQL builder, transaction,
-backup/restore, raw-protocol, server, and optional tools surfaces with async
-methods. Streaming callbacks run synchronously on the database owner and must
-not reenter the same database; reentrancy is rejected instead of deadlocking.
-Their captures must also be owned `Send + 'static`; use `Arc<Mutex<_>>` for
-shared mutable state.
-`database.pg_dump(options).await` and `database.psql(options).await` queue the
-packaged tools on that same owner.
-
-The direct local server has a synchronous lifecycle API, but its listener
-thread owns the wire-protocol backend. The handle is `Send + !Sync`; move its
-exclusive ownership between threads rather than sharing references. Its
-`close(&mut self)` preserves the handle so `is_closed()` can report terminal
-retirement and repeated close calls can replay the first result. The async
-server handle is cloneable `Send + Sync`.
-Server `is_closed()` reports SDK lifecycle state only. It does not poll the
-proxy listener or guarantee that the published PostgreSQL endpoint is
-reachable; use the connected driver or pool for connection health.
-
-TCP endpoints are loopback-only because the embedded proxy uses PostgreSQL
-trust authentication. The default listener uses an automatically assigned
-loopback port on every supported host. `ServerListen::tcp_port` selects a fixed
-TCP port. On Unix hosts only, `ServerListen::unix` or
-`ServerListen::unix_port` selects a PostgreSQL-style Unix socket directory.
-The resolved directory must be valid UTF-8 so the returned connection string
-preserves its exact path across Rust drivers and ORMs.
-The server deliberately owns one connected client at a time; use the separate
-postmaster product for concurrent sessions.
-
-The crate makes no runtime downloads. Cargo resolves versioned runtime, AOT,
-tool, and selected extension artifacts. Compatibility follows their declared
-runtime, PostgreSQL, host, and engine versions; source fingerprints are producer
-provenance. Each payload is still verified against its own manifest hashes.
-
-## Maintainer commands
-
-Run these commands from this directory with the repository-pinned Rust toolchain, Moon and Bun available. Cargo resolves versioned workspace dependencies itself; no runtime build is needed for source tests. Bash is required for package staging (Git Bash on Windows). The initial locked Cargo fetch needs network access.
-
-| Command | Result |
-| --- | --- |
-| `moon run oliphaunt-wasix-rust:format` | Rewrite Rust formatting. |
-| `moon run oliphaunt-wasix-rust:format-check` | Check formatting without changing files. |
-| `moon run oliphaunt-wasix-rust:lint` | Clippy diagnostics for all targets; no database execution. |
-| `moon run oliphaunt-wasix-rust:build` | Compile this project and its Cargo dependencies. |
-| `moon run oliphaunt-wasix-rust:test` | Run source tests; Cargo compiles the required test targets. |
-| `moon run oliphaunt-wasix-rust:package` | Stage distributable source crates under target/sdk-artifacts/oliphaunt-wasix-rust; repeated runs replace this owner’s candidates. |
-| `moon run oliphaunt-wasix-rust:test-consumer` | Package prerequisites, then check the extracted candidate and its dependency closure in a disposable consumer workspace. |
-
-Native Cargo entry points remain available: `cargo build -p oliphaunt-wasix --locked`, `cargo test -p oliphaunt-wasix --locked`, `cargo clippy -p oliphaunt-wasix --all-targets --locked -- -D warnings`, and `cargo fmt -p oliphaunt-wasix --check`. Moon supplies the additional source-test feature matrix and artifact staging where defined. `package` assembles bytes; it does not run the project test suite.
-
-`moon run oliphaunt-wasix-rust:test-aot` first produces the host AOT runtime, then runs the actual SDK/runtime and extension compatibility tests. Source tests do not require those artifacts.
+- [Guide](https://oliphaunt.dev/docs/sdk/wasix-rust/guide): parameters, transactions, extensions, backups, and shutdown.
+- [API reference](https://oliphaunt.dev/docs/sdk/wasix-rust/api-reference): methods, configuration, results, and errors.
+- [Runtime support](https://oliphaunt.dev/docs/reference/capabilities): platforms, storage, and concurrency.
+- [Releases and upgrades](https://oliphaunt.dev/docs/reference/releases): dependency and database upgrades.

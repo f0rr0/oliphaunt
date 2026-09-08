@@ -38,3 +38,5 @@ When changing a workflow or contract:
 2. update the relevant maintainer entry point and its verified date;
 3. regenerate derived tables instead of hand-editing them;
 4. avoid policy assertions that depend on YAML step order, display text, or helper filenames unless the string itself is an external API.
+
+- [Documentation authoring](../../src/docs/README.md) and [rewrite audit](docs-rewrite-audit.md).

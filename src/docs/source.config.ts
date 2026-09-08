@@ -18,6 +18,8 @@ export const docs = defineDocs({
 export default defineConfig({
   plugins: [indexFile()],
   mdxOptions: {
-    // Keep MDX options centralized here; generated docs stay in target/.
+    rehypeCodeOptions: {
+      themes: { light: 'github-light', dark: 'github-dark-default' },
+    },
   },
 });

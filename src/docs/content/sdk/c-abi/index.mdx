@@ -1,89 +1,61 @@
 ---
 title: C ABI
-description: Native runtime boundary for language bindings and direct C consumers.
+description: Use liboliphaunt from C, C++, or a custom language binding.
 ---
 
-<SdkLanding id="c-abi" />
+Use `liboliphaunt` when you need a C boundary for native PostgreSQL. Application developers can usually start faster with a [language SDK](/docs/sdk).
 
-`liboliphaunt` is the native runtime boundary for SDKs and direct C consumers.
-Most app developers use a platform SDK, but binding authors use the C ABI as the
-stable layer under Swift, Kotlin, React Native, TypeScript native adapters, and
-other language bindings.
+The ABI returns PostgreSQL protocol bytes and owns native response buffers. Your binding supplies typed decoding, scheduling, and application-level lifecycle.
 
-Use this surface when you are writing a new SDK, integrating from a C or C++
-application, or validating the native runtime independently from a language
-wrapper.
+## Install and prepare storage
 
-## Install
+Download the native library, `oliphaunt.h`, and runtime resources for your platform from the [native runtime release](https://github.com/f0rr0/oliphaunt/releases/tag/liboliphaunt-native-v@VERSION(liboliphaunt-native)@). Compile against the matching header and link the matching library. Preserve the release's runtime-resource layout.
 
-Consume the released headers, libraries, and runtime assets for the target you
-are binding. Language SDKs package those artifacts through their own ecosystems,
-so app developers usually install the Rust, Swift, Kotlin, React Native,
-TypeScript, Rust WASIX, or WASIX TypeScript SDK.
+`oliphaunt_init` opens the `pgdata` child of an **already-prepared managed root**. It does not initialize an empty directory. Prepare the root through a native SDK, close its owner, and then use the root from your C program. See [Prepare a managed root](/docs/sdk/c-abi/guide#prepare-a-managed-root).
 
-The public boundary is intentionally small:
+## Open and query
 
-- open a native direct session over an already-prepared managed root;
-- execute raw PostgreSQL protocol bytes or simple SQL;
-- stream large protocol responses;
-- back up or restore the native physical archive;
-- read error strings;
-- close or detach according to the process lifecycle.
+Save this as `example.c`. Its argument is the `pgdata` path inside your prepared root. `runtime_dir` and `module_dir` use release-layout discovery unless you set explicit paths.
 
-The ABI owns handles and response buffers. Language bindings own serialization,
-typed query helpers, task scheduling, and platform packaging.
-
-## Open And Query
-
-The C ABI uses opaque handles and explicit response ownership:
+<!-- oliphaunt-snippet: liboliphaunt-native -->
 
 ```c
 #include <oliphaunt.h>
+#include <stdio.h>
 #include <string.h>
 
-OliphauntHandle *handle = NULL;
-OliphauntConfig config = {
-    .abi_version = OLIPHAUNT_ABI_VERSION,
-    .pgdata = "./app-data/main.oliphaunt/pgdata",
-    .username = "app",
-    .database = "app",
-};
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s /path/to/root/pgdata\n", argv[0]);
+        return 2;
+    }
+    OliphauntHandle *handle = NULL;
+    OliphauntErrorCapture error = {0};
+    OliphauntConfig config = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .pgdata = argv[1],
+        .username = "postgres",
+        .database = "postgres",
+    };
+    if (oliphaunt_init_with_error(&config, &handle, &error) != 0) {
+        fprintf(stderr, "%s\n", error.message);
+        return 1;
+    }
 
-int32_t status = oliphaunt_init(&config, &handle);
-if (status == 0) {
     OliphauntResponse response = {0};
-    const char *sql = "SELECT 1::text AS value";
-    status = oliphaunt_exec_simple_query(handle, sql, strlen(sql), &response);
+    const char *sql = "SELECT 42::int4 AS answer";
+    int32_t status = oliphaunt_exec_simple_query_with_error(
+        handle, sql, strlen(sql), &response, &error);
+    if (status != 0) fprintf(stderr, "%s\n", error.message);
+    else printf("Received %zu PostgreSQL protocol bytes\n", response.len);
     oliphaunt_free_response(&response);
+    int32_t closed = oliphaunt_close(handle);
+    return status != 0 || closed != 0;
 }
-oliphaunt_close(handle);
 ```
 
-## Runtime Shape
+The response is binary protocol data, not a string or a decoded row. Parse backend messages to read the result and detect PostgreSQL `ErrorResponse` messages. A successful transport call is not a substitute for inspecting the SQL result.
 
-The C ABI is the native direct runtime boundary. Its fixed ABI defines protocol,
-streaming, backup/restore, extension, cancellation, and lifecycle support.
+## Next steps
 
-Direct mode owns one serialized embedded PostgreSQL session. Language SDK APIs
-provide the higher-level broker and server modes.
-
-## App Responsibilities
-
-Bindings and direct C consumers own the app-facing contract above the ABI:
-
-- Keep all cross-language query transport on raw PostgreSQL protocol bytes or
-  simple SQL helpers provided by the ABI.
-- Serialize work according to the selected runtime mode.
-- Select exact SQL extension names before opening the database.
-- Translate error strings into ecosystem-native types.
-- Use ABI backup and restore calls instead of copying live PGDATA.
-- Capture the logical generation immediately after init when more than one host
-  environment or finalizer can own cleanup, and use generation-guarded terminal
-  close so stale teardown cannot close a newer lease.
-
-## First Query
-
-Use [Build a Binding](/docs/sdk/c-abi/guide) for open, query, close,
-lifecycle, extension, and backup behavior. Use the
-[API reference](/docs/sdk/c-abi/api-reference) for the public handle and
-function map.
+Read [Build a binding](/docs/sdk/c-abi/guide) for scheduling, buffer ownership, and lifecycle. Use the [API reference](/docs/sdk/c-abi/api-reference) for configuration and function groups.
