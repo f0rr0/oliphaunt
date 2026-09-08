@@ -282,10 +282,12 @@ tasks:
 
   regression:
     tags: ["runtime", "wasix", "postgres", "regression"]
-    command: "WASIX_SKIP_PRECOMPILE=1 WASIX_REGRESS_SUITE_NAME=wasix-regress-acceptance bash src/runtimes/liboliphaunt/wasix-postmaster/bin/run-wasix-regress-subset.sh boolean case copy"
+    command: "WASIX_SKIP_PRECOMPILE=1 WASIX_REGRESS_SUITE_NAME=wasix-regress-acceptance bash src/runtimes/liboliphaunt/wasix-postmaster/bin/run-wasix-regress-subset.sh"
     deps:
       - "liboliphaunt-wasix-postmaster:smoke"
     inputs:
+      - project: "postgres18"
+        group: "regression"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
@@ -384,6 +386,8 @@ tasks:
       - "liboliphaunt-wasix-postmaster:postgres-build"
       - "liboliphaunt-wasix-postmaster:runtime-capabilities"
     inputs:
+      - project: "postgres18"
+        group: "regression"
       - "**/*"
       - project: "third-party-wasix-postmaster"
         group: "sources"

@@ -1,6 +1,70 @@
 # Testing Policy
 
-Status: normative testing policy. Last verified: 2026-07-28. Owner: repository maintainers.
+Status: normative testing policy. Last updated: 2026-09-08. Owner: repository maintainers.
+
+PostgreSQL's official `src/test/regress` suite is the primary SQL regression
+suite. Use the SQL files, expected output, `resultmap`, and `pg_regress` from
+the checksum-pinned source in `src/postgres/versions/18/source.toml` (currently
+18.4). Do not translate upstream SQL into SDK assertions or regenerate expected
+output from Oliphaunt. The host client tools reuse the existing verified
+Postmaster source/build helper; the server under test is the Oliphaunt runtime.
+
+| Runtime | Upstream coverage | Command |
+| --- | --- | --- |
+| Native server, Linux/macOS | Full `parallel_schedule`, currently 231 tests, in upstream order with one connection at a time | `moon run liboliphaunt-native:regression` |
+| Embedded WASIX server | 29 self-contained upstream cases in `src/postgres/versions/18/embedded_schedule`, over the real embedded backend and TCP proxy | `moon run liboliphaunt-wasix:regression` |
+| WASIX Postmaster | The same embedded schedule plus upstream `copy`, using its host volume mapping | `moon run liboliphaunt-wasix-postmaster:regression` |
+
+Native runtime CI runs the full suite after building the Linux/macOS runtime.
+WASIX release regression and Postmaster qualification run their upstream
+profiles before reporting success. A mismatch fails the lane; logs, actual
+output, and `regression.diffs` are retained under `target/postgres-regress/`
+and uploaded by CI. Every run creates a fresh output directory. Native runs
+also create and stop a disposable cluster using Oliphaunt's installed
+`initdb` and `postgres`.
+
+The embedded profile excludes cases requiring upstream `test_setup`: that
+setup loads a native `regress` C module and reads host filesystem fixtures,
+which a WASIX guest cannot consume directly. It also excludes cases depending
+on those setup objects, such as `int4` and `float8`. Keep these cases in the
+full native schedule; extend WASIX coverage when its fixture/module support
+is available. No expected-output overrides or ignored failures are used.
+Windows and mobile retain their existing runtime checks; this host regression
+runner requires the Unix PostgreSQL build tools and does not establish full
+upstream coverage on those platforms.
+
+For a prebuilt native runtime, prepare the matching host tools once, then run:
+
+```sh
+moon run postgres18:regression-tools
+# Defaults to the local native producer's install and ICU directories.
+bash src/postgres/versions/18/run-regression.sh native
+```
+
+`OLIPHAUNT_WORK_ROOT`, `OLIPHAUNT_INSTALL_DIR`, and `OLIPHAUNT_ICU_DATA_DIR`
+can select an existing native build. `run-regression.sh embedded` requires
+`PGHOST`, `PGPORT`, `PGUSER`, and `PGDATABASE` pointing to a disposable server;
+the suite creates objects there. The WASIX test starts and closes that server
+itself. Missing tools or assets fail qualification.
+
+Keep architecture-specific checks alongside this suite: direct/broker FFI and
+protocol boundaries, SDK parameter/result conversion and callback recovery,
+instance isolation, persistence/crash recovery, cancellation, extension
+materialization, packaging, and platform ABI checks. Prefer an upstream case
+for SQL semantics; add a focused local test when the behavior is specific to
+Oliphaunt or is not covered upstream. The shared SDK behavior fixture remains
+a small cross-language integration contract.
+
+The initial Linux replay passed all 231 native cases and 28 of 29 embedded
+WASIX cases using available PostgreSQL 18.4 runtime artifacts. The upstream
+`json` case exposes a WASIX session-recovery defect: after its deliberate
+stack-depth errors with `max_stack_depth = '100kB'`, `RESET max_stack_depth`
+and subsequent queries keep reporting stack-depth errors. This case remains
+in the required profile and fails qualification until the runtime is fixed;
+the suite does not bless the incorrect output as a new baseline.
+
+See [PostgreSQL's regression test instructions](https://www.postgresql.org/docs/18/regress-run.html)
+and [pgrust's use of the suite](https://github.com/malisper/pgrust).
 
 Oliphaunt is a polyglot product repo. Product-native tests stay in product-native test roots.
 Each SDK is validated with the same tools its consumers use:

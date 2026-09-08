@@ -65,6 +65,21 @@ function taskRecord(target) {
   return Object.values(JSON.parse(result.stdout).data).find((task) => task.target === target);
 }
 
+test("upstream regression inputs select the runtime qualification lanes", () => {
+  const result = effects("src/postgres/versions/18/embedded_schedule");
+  for (const target of [
+    "postgres18:unit",
+    "liboliphaunt-native:regression",
+    "liboliphaunt-wasix:regression",
+    "liboliphaunt-wasix-postmaster:regression",
+  ]) {
+    assert.equal(result.tasks.includes(target), true, target);
+  }
+  for (const job of ["liboliphaunt-native-desktop", "liboliphaunt-wasix-runtime", "wasix-postmaster"]) {
+    assert.equal(result.jobs.includes(job), true, job);
+  }
+});
+
 test("JavaScript SDK source does not rebuild the Node Direct addon", () => {
   const result = effects("src/sdks/js/src/client.ts");
   assert.deepEqual(result.jobs, ["affected", "js-sdk-package"]);
