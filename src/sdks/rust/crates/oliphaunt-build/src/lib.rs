@@ -580,6 +580,12 @@ fn stage_artifacts(
                 executable: file.executable,
             });
         }
+        if artifact.kind == ArtifactKind::NativeRuntime {
+            for seed in ["cluster-seed", "cluster-seed-icu"] {
+                let inventory = artifact_dir.join(seed).join("directories-v1.txt");
+                restore_seed_directories(&inventory)?;
+            }
+        }
         staged.push(LockedArtifact {
             product: artifact.product.clone(),
             version: artifact.version.clone(),
@@ -592,6 +598,36 @@ fn stage_artifacts(
         });
     }
     Ok(staged)
+}
+
+fn restore_seed_directories(inventory: &Path) -> Result<()> {
+    let text = fs::read_to_string(inventory)
+        .map_err(|source| Error::io("read seed directory inventory", inventory, source))?;
+    if !text.ends_with('\n') {
+        return Err(Error::new("invalid seed directory inventory"));
+    }
+    let root = inventory
+        .parent()
+        .expect("inventory has a parent")
+        .join("files");
+    for relative in text.lines() {
+        if relative.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+        }) {
+            return Err(Error::new(format!(
+                "unsafe seed directory path: {relative:?}"
+            )));
+        }
+        let directory = root.join(checked_relative_path(relative)?);
+        fs::create_dir_all(&directory)
+            .map_err(|source| Error::io("restore seed directory", &directory, source))?;
+    }
+    Ok(())
 }
 
 fn checked_relative_path(path: &str) -> Result<PathBuf> {
@@ -1059,9 +1095,11 @@ impl ArtifactManifest {
                     &relatives,
                     &[
                         "cluster-seed/manifest.properties",
+                        "cluster-seed/directories-v1.txt",
                         "cluster-seed/files/PG_VERSION",
                         "cluster-seed/files/global/pg_control",
                         "cluster-seed-icu/manifest.properties",
+                        "cluster-seed-icu/directories-v1.txt",
                         "cluster-seed-icu/files/PG_VERSION",
                         "cluster-seed-icu/files/global/pg_control",
                     ],
@@ -1323,6 +1361,28 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn seed_directory_inventory_restores_empty_directories_and_rejects_escape() {
+        let temp = TempDir::new().unwrap();
+        let inventory = temp.path().join("directories-v1.txt");
+        fs::write(&inventory, "pg_notify\npg_wal/archive_status\n").unwrap();
+        restore_seed_directories(&inventory).unwrap();
+        assert!(temp.path().join("files/pg_notify").is_dir());
+        assert!(temp.path().join("files/pg_wal/archive_status").is_dir());
+        for invalid in [
+            "../escape",
+            "/escape",
+            "pg_wal/../../escape",
+            "pg_wal\\escape",
+        ] {
+            fs::write(&inventory, format!("{invalid}\n")).unwrap();
+            assert!(restore_seed_directories(&inventory).is_err());
+        }
+        fs::write(temp.path().join("files/collision"), "file").unwrap();
+        fs::write(&inventory, "collision/child\n").unwrap();
+        assert!(restore_seed_directories(&inventory).is_err());
+    }
 
     #[test]
     fn missing_application_metadata_fails() {
@@ -2346,9 +2406,11 @@ runtime-version = "0.1.0"
                     "runtime/bin/pg_ctl",
                     tool,
                     "cluster-seed/manifest.properties",
+                    "cluster-seed/directories-v1.txt",
                     "cluster-seed/files/PG_VERSION",
                     "cluster-seed/files/global/pg_control",
                     "cluster-seed-icu/manifest.properties",
+                    "cluster-seed-icu/directories-v1.txt",
                     "cluster-seed-icu/files/PG_VERSION",
                     "cluster-seed-icu/files/global/pg_control",
                 ],
@@ -2385,9 +2447,11 @@ runtime-version = "0.1.0"
                 "runtime/bin/initdb.exe",
                 "runtime/bin/pg_ctl.exe",
                 "cluster-seed/manifest.properties",
+                "cluster-seed/directories-v1.txt",
                 "cluster-seed/files/PG_VERSION",
                 "cluster-seed/files/global/pg_control",
                 "cluster-seed-icu/manifest.properties",
+                "cluster-seed-icu/directories-v1.txt",
                 "cluster-seed-icu/files/PG_VERSION",
                 "cluster-seed-icu/files/global/pg_control",
             ],
@@ -2436,9 +2500,11 @@ runtime-version = "0.1.0"
                 "runtime/bin/initdb.exe",
                 "runtime/bin/pg_ctl.exe",
                 "cluster-seed/manifest.properties",
+                "cluster-seed/directories-v1.txt",
                 "cluster-seed/files/PG_VERSION",
                 "cluster-seed/files/global/pg_control",
                 "cluster-seed-icu/manifest.properties",
+                "cluster-seed-icu/directories-v1.txt",
                 "cluster-seed-icu/files/PG_VERSION",
                 "cluster-seed-icu/files/global/pg_control",
             ],
@@ -2641,7 +2707,11 @@ target = {target:?}
             let source = source_root.join(relative.replace(['/', '\\'], "_"));
             fs::create_dir_all(source.parent().unwrap()).unwrap();
             let mut file = fs::File::create(&source).unwrap();
-            write!(file, "{product}:{kind}:{target}:{relative}").unwrap();
+            if relative.ends_with("/directories-v1.txt") {
+                writeln!(file, "pg_notify\npg_wal/archive_status").unwrap();
+            } else {
+                write!(file, "{product}:{kind}:{target}:{relative}").unwrap();
+            }
             let bytes = fs::read(&source).unwrap();
             let sha256 = sha256_hex(&bytes);
             manifest.push_str(&format!(
@@ -2725,9 +2795,11 @@ executable = false
                 "runtime/bin/initdb".to_owned(),
                 "runtime/bin/pg_ctl".to_owned(),
                 "cluster-seed/manifest.properties".to_owned(),
+                "cluster-seed/directories-v1.txt".to_owned(),
                 "cluster-seed/files/PG_VERSION".to_owned(),
                 "cluster-seed/files/global/pg_control".to_owned(),
                 "cluster-seed-icu/manifest.properties".to_owned(),
+                "cluster-seed-icu/directories-v1.txt".to_owned(),
                 "cluster-seed-icu/files/PG_VERSION".to_owned(),
                 "cluster-seed-icu/files/global/pg_control".to_owned(),
             ],

@@ -1185,9 +1185,11 @@ export function liboliphauntNpmTarballs(version) {
     const requiredMembers = [
       `package/${libraryRelativePath}`,
       "package/cluster-seed/manifest.properties",
+      "package/cluster-seed/directories-v1.txt",
       "package/cluster-seed/files/PG_VERSION",
       "package/cluster-seed/files/global/pg_control",
       "package/cluster-seed-icu/manifest.properties",
+      "package/cluster-seed-icu/directories-v1.txt",
       "package/cluster-seed-icu/files/PG_VERSION",
       "package/cluster-seed-icu/files/global/pg_control",
       "package/manifest.properties",

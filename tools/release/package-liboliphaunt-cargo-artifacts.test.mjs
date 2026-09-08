@@ -19,7 +19,7 @@ import {
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import { requiredCoreRuntimePaths } from "./optimize_native_runtime_payload.mjs";
-import { logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
+import { logicalTreeSha256, NATIVE_PGDATA_DIRECTORIES, writeNativeSeedDirectories } from "./native-cluster-seed-contract.mjs";
 import { nativeIcuDataManifest } from "./native-icu-data-contract.mjs";
 import { nativeRuntimeCarrierManifest } from "./native-runtime-carrier-contract.mjs";
 
@@ -54,8 +54,9 @@ function sha256(file) {
 
 function stageClusterSeed(root, directory, profile, target, icuDataTreeSha256 = "") {
   const seed = path.join(root, directory);
-  mkdirSync(path.join(seed, "files/global"), { recursive: true });
+  for (const directory of NATIVE_PGDATA_DIRECTORIES) mkdirSync(path.join(seed, "files", directory), { recursive: true });
   mkdirSync(path.join(seed, "files/pg_wal"), { recursive: true });
+  writeNativeSeedDirectories(seed);
   writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
   writeFileSync(path.join(seed, "files/global/pg_control"), `${profile}\n`);
   writeFileSync(path.join(seed, "manifest.properties"), [
@@ -174,6 +175,16 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
       "-tzf",
       path.resolve(ROOT, cratePath),
     ]).includes(`${name}-9.8.7/payload/files/cluster-seed-icu/manifest.properties`)));
+    for (const seed of ["cluster-seed", "cluster-seed-icu"]) {
+      const member = `payload/files/${seed}/directories-v1.txt`;
+      const part = runtimeParts.find(({ cratePath, name }) => commandOutput("tar", [
+        "-tzf", path.resolve(ROOT, cratePath),
+      ]).includes(`${name}-9.8.7/${member}`));
+      assert.ok(part, `${seed} directory inventory must survive Cargo packaging`);
+      assert.ok(commandOutput("tar", [
+        "-xOzf", path.resolve(ROOT, part.cratePath), `${part.name}-9.8.7/${member}`,
+      ]).split("\n").includes("pg_notify"));
+    }
     for (const item of manifest.packages) {
       const expectedProfile = item.role === "part" ? item.kind : "code-facade";
       assert.equal(item.noticeProfile, expectedProfile, `${item.name} must freeze its carrier notice profile`);

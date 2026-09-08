@@ -4,10 +4,8 @@ use super::super::super::ffi::{
     ENV_EMBEDDED_MODULE_DIR, ENV_INITDB, ENV_INSTALL_DIR, ENV_POSTGRES, env_path_candidates,
     resolve_library_path_candidates,
 };
-use crate::build_resources::registered_build_resources_dir;
+use crate::build_resources::resources_dir_candidates;
 use crate::error::{Error, Result};
-
-const ENV_RESOURCES_DIR: &str = "OLIPHAUNT_RESOURCES_DIR";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LocatedIcuData {
@@ -134,17 +132,6 @@ fn native_install_dir_is_valid(path: &Path) -> bool {
 
 fn native_tool_is_file(path: &Path, tool: &str) -> bool {
     path.join("bin").join(tool).is_file() || path.join("bin").join(format!("{tool}.exe")).is_file()
-}
-
-pub(super) fn resources_dir_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = registered_build_resources_dir() {
-        candidates.push(path);
-    }
-    if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
-        candidates.push(PathBuf::from(path));
-    }
-    candidates
 }
 
 pub(super) fn locate_native_icu_data() -> Result<Option<LocatedIcuData>> {

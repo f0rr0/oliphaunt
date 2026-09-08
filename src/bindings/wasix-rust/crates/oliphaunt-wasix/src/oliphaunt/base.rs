@@ -915,6 +915,7 @@ fn publish_cluster_seed_clone(source: &Path, pgdata: &Path) -> Result<()> {
     let result = (|| -> Result<()> {
         clone_cluster_seed_dir(source, &staging)?;
         remove_cluster_seed_runtime_state(&staging)?;
+        super::data_dir::apply_private_permissions(&staging, 0o700)?;
         promote_synced_directory(&staging, pgdata, root, "cluster seed")?;
         Ok(())
     })();
@@ -1134,11 +1135,13 @@ fn collect_regular_files(
 fn validated_embedded_cluster_seed_manifest(
     profile: CatalogProfile,
 ) -> Result<Option<ClusterSeedManifest>> {
-    let Some(seed_manifest) = assets::cluster_seed_manifest(profile) else {
-        return Ok(None);
-    };
-    let Some(seed_archive) = assets::cluster_seed_archive(profile) else {
-        return Ok(None);
+    let (seed_manifest, seed_archive) = match (
+        assets::cluster_seed_manifest(profile),
+        assets::cluster_seed_archive(profile),
+    ) {
+        (None, None) => return Ok(None),
+        (Some(manifest), Some(archive)) => (manifest, archive),
+        _ => bail!("packaged cluster seed requires both its manifest and archive"),
     };
 
     let manifest = CLUSTER_SEED_MANIFEST
@@ -1819,12 +1822,14 @@ fn prepare_memory_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
         .memory_filesystem()
         .expect("memory storage has a virtual filesystem");
 
-    let manifest = validated_embedded_cluster_seed_manifest(profile)?
-        .context("packaged cluster seed is unavailable")?;
-    ensure_module_matches_seed(&runtime_layout.module_path(), &manifest)?;
-    let archive = assets::cluster_seed_archive(profile)
-        .context("packaged cluster seed archive is unavailable")?;
-    unpack_cluster_seed_archive_virtual(archive, filesystem.as_ref())?;
+    if let Some(manifest) = validated_embedded_cluster_seed_manifest(profile)? {
+        ensure_module_matches_seed(&runtime_layout.module_path(), &manifest)?;
+        let archive = assets::cluster_seed_archive(profile)
+            .context("packaged cluster seed archive is unavailable")?;
+        unpack_cluster_seed_archive_virtual(archive, filesystem.as_ref())?;
+    } else {
+        PostgresMod::run_split_initdb(&runtime_layout, &pgdata_storage)?;
+    }
 
     remove_virtual_runtime_state(filesystem.as_ref())?;
     ensure!(
@@ -1900,17 +1905,10 @@ fn prepare_pgdata(
     if try_install_embedded_cluster_seed(paths, &runtime_layout.module_path(), profile)? {
         return Ok(());
     }
-    if std::env::var("OLIPHAUNT_WASIX_DEVELOPMENT_INITDB").as_deref() == Ok("1") {
-        PostgresMod::run_split_initdb(
-            runtime_layout,
-            &PgDataStorage::host_directory(paths.pgdata.clone()),
-        )?;
-    } else {
-        bail!(
-            "the selected packaged {} cluster seed is unavailable; published packages do not silently fall back to initdb",
-            profile.as_str()
-        );
-    }
+    PostgresMod::run_split_initdb(
+        runtime_layout,
+        &PgDataStorage::host_directory(paths.pgdata.clone()),
+    )?;
     ensure!(
         cluster_is_complete(paths),
         "split WASIX initdb finished but did not create a complete PGDATA cluster at {}",
@@ -2705,6 +2703,11 @@ mod tests {
         fs::write(source.path().join("PG_VERSION"), b"18\n")?;
         fs::write(source.path().join("global/pg_control"), b"control")?;
         fs::write(source.path().join("postmaster.pid"), b"stale")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(source.path(), fs::Permissions::from_mode(0o755))?;
+        }
 
         let parent = TempDir::new()?;
         let root = parent.path().join("database");
@@ -2718,6 +2721,12 @@ mod tests {
 
         assert!(pgdata.join("PG_VERSION").is_file());
         assert!(pgdata.join("global/pg_control").is_file());
+        assert!(pgdata.join("pg_wal").is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&pgdata)?.permissions().mode() & 0o777, 0o700);
+        }
         assert!(!pgdata.join("postmaster.pid").exists());
         assert!(!staging.exists());
         Ok(())

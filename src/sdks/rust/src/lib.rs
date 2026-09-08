@@ -61,6 +61,8 @@ mod session;
 mod storage;
 #[cfg(test)]
 mod test_fixtures;
+#[doc(hidden)]
+pub use build_resources::__register_build_resources;
 pub use build_resources::register_build_resources_dir;
 pub use builder::{AsyncOliphauntBuilder, AsyncOliphauntServerBuilder};
 pub use config::ServerListen;
