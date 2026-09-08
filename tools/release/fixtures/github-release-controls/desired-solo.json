@@ -85,7 +85,7 @@
       "branchPolicies": [
         { "name": "main", "type": "branch" }
       ],
-      "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]
+      "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN", "RELEASE_TAG_APP_CLIENT_ID", "RELEASE_TAG_APP_PRIVATE_KEY"]
     },
     "release-publish": {
       "environment": {
@@ -104,7 +104,9 @@
         "MAVEN_CENTRAL_USERNAME",
         "MAVEN_GPG_KEY_ID",
         "MAVEN_GPG_PASSPHRASE",
-        "MAVEN_GPG_PRIVATE_KEY"
+        "MAVEN_GPG_PRIVATE_KEY",
+        "RELEASE_TAG_APP_CLIENT_ID",
+        "RELEASE_TAG_APP_PRIVATE_KEY"
       ]
     }
   }

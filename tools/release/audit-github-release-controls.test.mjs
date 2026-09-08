@@ -17,6 +17,8 @@ import {
   summarizeFindings,
 } from "./audit-github-release-controls.mjs";
 
+const TAG_APP_SECRETS = ["RELEASE_TAG_APP_CLIENT_ID", "RELEASE_TAG_APP_PRIVATE_KEY"];
+
 const FIXTURES = path.join(import.meta.dir, "fixtures/github-release-controls");
 const TOOL = path.join(import.meta.dir, "audit-github-release-controls.mjs");
 
@@ -125,7 +127,7 @@ describe("GitHub release controls", () => {
   test("accepts only the lock-required revocable registry credentials while bootstrap is ready", () => {
     for (const token of ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]) {
       const snapshot = fixture("desired-solo");
-      snapshot.environments["release-bootstrap"].secretNames = [token];
+      snapshot.environments["release-bootstrap"].secretNames = [...TAG_APP_SECRETS, token];
       const findings = auditGitHubReleaseControls(snapshot, {
         bootstrapState: "ready",
         governance: "solo",
@@ -139,7 +141,7 @@ describe("GitHub release controls", () => {
 
   test("ready bootstrap mode rejects an empty credential set", () => {
     const snapshot = fixture("desired-solo");
-    snapshot.environments["release-bootstrap"].secretNames = [];
+    snapshot.environments["release-bootstrap"].secretNames = [...TAG_APP_SECRETS];
     const findings = auditGitHubReleaseControls(snapshot, {
       bootstrapState: "ready",
       governance: "solo",
@@ -153,7 +155,7 @@ describe("GitHub release controls", () => {
 
   test("accepts an idle pre-bootstrap environment without long-lived tokens", () => {
     const snapshot = fixture("desired-solo");
-    snapshot.environments["release-bootstrap"].secretNames = [];
+    snapshot.environments["release-bootstrap"].secretNames = [...TAG_APP_SECRETS];
     const findings = auditGitHubReleaseControls(snapshot, {
       bootstrapState: "idle",
       governance: "solo",
@@ -224,7 +226,7 @@ describe("GitHub release controls", () => {
 
   test("retired bootstrap mode requires long-lived bootstrap tokens to be absent", () => {
     const snapshot = fixture("desired-solo");
-    snapshot.environments["release-bootstrap"].secretNames = [];
+    snapshot.environments["release-bootstrap"].secretNames = [...TAG_APP_SECRETS];
     const findings = auditGitHubReleaseControls(snapshot, {
       bootstrapState: "retired",
       governance: "solo",
@@ -379,7 +381,7 @@ describe("GitHub controls audit CLI", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-github-audit-"));
     try {
       const snapshot = fixture("desired-solo");
-      snapshot.environments["release-bootstrap"].secretNames = [];
+      snapshot.environments["release-bootstrap"].secretNames = [...TAG_APP_SECRETS];
       const fixturePath = path.join(directory, "idle.json");
       writeFileSync(fixturePath, JSON.stringify(snapshot));
       const result = spawnSync(process.execPath, [

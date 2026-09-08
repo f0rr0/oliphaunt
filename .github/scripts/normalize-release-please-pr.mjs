@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
+import releaseBot from "../../tools/release/release-bot.json" with { type: "json" };
 
 const TOOL = "normalize-release-please-pr.mjs";
 const CANONICAL_REPOSITORY = "f0rr0/oliphaunt";
@@ -195,8 +196,8 @@ function normalize(args, repo) {
   let normalized = false;
   if (baseSha !== args.mainSha) {
     git([
-      "-c", "user.name=oliphaunt-release-bot",
-      "-c", "user.email=oliphaunt-release-bot@users.noreply.github.com",
+      "-c", `user.name=${releaseBot.name}`,
+      "-c", `user.email=${releaseBot.email}`,
       "rebase", "--onto", args.mainSha, baseSha,
     ], { cwd: repo });
     normalized = true;
@@ -210,8 +211,8 @@ function normalize(args, repo) {
       fail("release PR normalization produced no staged tree change");
     }
     git([
-      "-c", "user.name=oliphaunt-release-bot",
-      "-c", "user.email=oliphaunt-release-bot@users.noreply.github.com",
+      "-c", `user.name=${releaseBot.name}`,
+      "-c", `user.email=${releaseBot.email}`,
       "commit", "-m", title,
     ], { cwd: repo });
     normalized = true;

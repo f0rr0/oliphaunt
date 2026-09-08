@@ -109,6 +109,7 @@ test("normalizes the historical 100+35 file Release Please shape to one tree-ide
   const normalized = invoke(f, "normalize");
   assert.equal(normalized.status, 0, normalized.stderr);
   assert.match(normalized.stdout, /normalized=true/u);
+  assert.equal(gitText(f.work, ["show", "-s", "--format=%ae", "HEAD"]), "326451763+oliphaunt-release-bot[bot]@users.noreply.github.com");
   assert.equal(gitText(f.work, ["branch", "--show-current"]), BRANCH);
   assert.equal(gitText(f.work, ["rev-list", "--count", `${f.mainSha}..HEAD`]), "1");
   assert.equal(gitText(f.work, ["rev-parse", "HEAD^"]), f.mainSha);

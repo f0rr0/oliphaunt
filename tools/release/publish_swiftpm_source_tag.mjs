@@ -246,13 +246,22 @@ export function createSwiftpmManifestCommit(
   { root = ROOT, ambientEnv = process.env } = {},
 ) {
   const date = commitTimestamp(targetCommit, root);
+  // Freeze Git authorship with the source candidate, just like its tree and
+  // timestamp. Older approved candidates must retain their exact commit IDs.
+  const identityPath = "tools/release/release-bot.json";
+  const identity = git(["ls-tree", "--name-only", targetCommit, "--", identityPath], { root }).stdout;
+  const bot = identity ? JSON.parse(git(["show", `${targetCommit}:${identityPath}`], { root }).stdout)
+    : { name: RELEASE_BOT_NAME, email: RELEASE_BOT_EMAIL };
+  if (!bot || typeof bot.name !== "string" || !bot.name || typeof bot.email !== "string" || !bot.email || /[\r\n\0]/u.test(bot.name + bot.email)) {
+    throw new Error("invalid source-bound release bot identity");
+  }
   const env = {
     ...ambientEnv,
-    GIT_AUTHOR_NAME: RELEASE_BOT_NAME,
-    GIT_AUTHOR_EMAIL: RELEASE_BOT_EMAIL,
+    GIT_AUTHOR_NAME: bot.name,
+    GIT_AUTHOR_EMAIL: bot.email,
     GIT_AUTHOR_DATE: date,
-    GIT_COMMITTER_NAME: RELEASE_BOT_NAME,
-    GIT_COMMITTER_EMAIL: RELEASE_BOT_EMAIL,
+    GIT_COMMITTER_NAME: bot.name,
+    GIT_COMMITTER_EMAIL: bot.email,
     GIT_COMMITTER_DATE: date,
   };
   return git([
