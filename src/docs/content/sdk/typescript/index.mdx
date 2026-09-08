@@ -43,6 +43,10 @@ deno run --allow-ffi --allow-env --allow-read --allow-write main.ts
 
 The package supplies native runtime assets for supported desktop targets. Keep native files available when bundling your application.
 
+<Callout type="warn" title="Linux initialization issue in 0.2.0">
+The published native package currently fails to initialize a fresh database on Linux x64 under Node.js and Bun with a PostgreSQL data-directory permission error. The query example below reflects the API, but does not bypass this release defect. Use [WASIX TypeScript](/docs/sdk/wasix-typescript) if you need a verified Linux setup with the current releases.
+</Callout>
+
 ## Run your first query
 
 This example opens disposable storage, binds a parameter, reads the result, and closes the database. Run it in your application's JavaScript runtime.

@@ -7,14 +7,30 @@ Use `oliphaunt` for native desktop Rust and Tauri applications. Choose [WASIX Ru
 
 ## Install
 
-Use Rust 1.93 or later.
-
-Add the crate to `Cargo.toml`. The current source API requires Rust 1.93 or later.
+Use Rust 1.93 or later. Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
 oliphaunt = "@VERSION(oliphaunt-rust)@"
 ```
+
+## Configure the native runtime
+
+The crate dependency alone is not enough to run native queries in @VERSION(oliphaunt-rust)@. Download the matching [native runtime archive](https://github.com/f0rr0/oliphaunt/releases/tag/liboliphaunt-native-v@VERSION(liboliphaunt-native)@), preserve its complete directory structure, and set the runtime paths before launching your app.
+
+For Linux x64 GNU, run these commands from your Rust application's directory:
+
+```sh
+mkdir -p oliphaunt-resources/native-runtime/liboliphaunt-native
+curl -fL https://github.com/f0rr0/oliphaunt/releases/download/liboliphaunt-native-v@VERSION(liboliphaunt-native)@/liboliphaunt-@VERSION(liboliphaunt-native)@-linux-x64-gnu.tar.gz -o oliphaunt-runtime.tar.gz
+tar -xzf oliphaunt-runtime.tar.gz -C oliphaunt-resources/native-runtime/liboliphaunt-native
+export OLIPHAUNT_RESOURCES_DIR="$PWD/oliphaunt-resources"
+export LIBOLIPHAUNT_PATH="$OLIPHAUNT_RESOURCES_DIR/native-runtime/liboliphaunt-native/lib/liboliphaunt.so"
+```
+
+Select your platform's archive on other supported desktop targets and point `LIBOLIPHAUNT_PATH` to its dynamic library. Keep the runtime, cluster seeds (including empty directories), and libraries together. The resource directory is separate from your application's database storage. Your application launcher must provide these environment variables on subsequent runs too.
+
+In 0.2.0, `register_build_resources!()` fails to compile outside the SDK, and Cargo-staged cluster seeds can omit required empty directories. The archive setup above avoids those paths; do not replace it with build-helper registration alone.
 
 ## Run your first query
 

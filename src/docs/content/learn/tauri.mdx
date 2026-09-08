@@ -5,6 +5,8 @@ description: Keep the database in Rust application state and expose focused comm
 
 Use the native [Rust SDK](/docs/sdk/rust) in a Tauri app. Keep the database in Rust state and expose application operations such as adding or searching notes to the webview.
 
+Configure the [native runtime resources](/docs/sdk/rust#configure-the-native-runtime) before starting the Tauri process. Packaged applications must ship the complete runtime resources and configure the library/resource paths in their launcher; the database-state examples below do not perform that packaging.
+
 ## Open persistent application storage
 
 Use `AsyncOliphaunt` so database work does not block Tauri's async executor. This helper opens a root beneath the application-data directory and prepares a table:

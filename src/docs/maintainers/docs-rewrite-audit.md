@@ -184,3 +184,8 @@ Visual inspection covered the SDK chooser, TypeScript quickstart, dark code bloc
 Review artifacts are retained locally outside the repository and published site: `before.png`, `desktop.png`, `typescript-dark.png`, `typescript-mobile.png`, `table-320.png`, and `layout-audit.json`.
 
 No registry publication, deployment, hosted CI qualification, or complete cross-platform SDK runtime execution is claimed. The version snapshot records this working tree as dirty; archive a clean-commit build for a reproducible released snapshot.
+
+
+## Published-release follow-up
+
+See [published-package verification](published-docs-verification.md) for fresh registry execution after publication, runtime setup corrections, and native release defects found. This supersedes the earlier source-only execution boundaries where new evidence is available.

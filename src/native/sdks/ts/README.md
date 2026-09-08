@@ -32,3 +32,5 @@ Default storage is a disposable temporary directory. Direct mode stays bound to 
 - [API reference](https://oliphaunt.dev/docs/sdk/typescript/api-reference): methods, configuration, results, and errors.
 - [Runtime support](https://oliphaunt.dev/docs/reference/capabilities): platforms, storage, and concurrency.
 - [Releases and upgrades](https://oliphaunt.dev/docs/reference/releases): dependency and database upgrades.
+
+Native 0.2.0 currently fails fresh-database initialization on Linux x64 under Node.js and Bun with a data-directory permission error. See the [current quickstart](https://oliphaunt.dev/docs/sdk/typescript) and the working [WASIX alternative](https://oliphaunt.dev/docs/sdk/wasix-typescript).
