@@ -13,17 +13,25 @@ const CONTROL_FILES = new Set([
   ".github/scripts/release-transport-ref.mjs",
   ".github/scripts/download-bootstrap-ledger.mjs",
   ".github/scripts/download-bootstrap-ledger.test.mjs",
+  ".github/scripts/download-completed-bootstrap.mjs",
   "tools/release/publication-controller.mjs",
+  "tools/release/audit-github-release-controls.mjs",
+  "tools/release/fixtures/github-release-controls/desired-solo.json",
+  "tools/release/fixtures/github-release-controls/desired-team.json",
   "tools/release/crates-io-bootstrap-capacity.mjs",
   "tools/release/frozen-cargo-publish.mjs",
   "tools/release/verify_github_release_attestations.mjs",
 ]);
 
 export function assertPublicationController({ source, controller, root = ROOT }) {
+  assertQualifiedReplaySourceState({ repo: root, headRef: controller, expectedSha: controller });
+  return assertPublicationChanges({ source, controller, root });
+}
+
+export function assertPublicationChanges({ source, controller, root = ROOT }) {
   for (const sha of [source, controller]) {
     if (!/^[0-9a-f]{40}$/u.test(sha ?? "")) throw new Error("publication source and controller must be full commit SHAs");
   }
-  assertQualifiedReplaySourceState({ repo: root, headRef: controller, expectedSha: controller });
   const git = (...args) => {
     const result = captureCommandOutput("git", args, {
       cwd: root, label: "publication controller source comparison", allowEmptyOutput: true,

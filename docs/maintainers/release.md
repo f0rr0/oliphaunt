@@ -314,17 +314,23 @@ qualification, approval run, source SHA/tree, and package hashes. GitHub
 attestations verify the actual publishing workflow SHA and record it separately
 from the candidate source. No build or packaging command is replayed.
 
-Use the same publishing commit for bootstrap and normal publish so the latter
-can discover the completed bootstrap ledger. Incomplete bootstrap still resumes
-only through its original run; this does not add cross-run checkpoint migration.
+Normal publish discovers completed bootstrap evidence by the approved lock,
+independently of the publishing-code commit. Only successful `Release` runs
+from canonical `main`, with a successful bootstrap job and an immutable ledger
+artifact, qualify. The downloader checks the earlier publisher's permitted
+source changes, the complete checkpoint chain, source/tree, package envelope,
+and receipts; the following gate checks the public registry bytes. A newer
+publication-only fix therefore reuses the completed bootstrap without a rebuild,
+new dry-run, or bootstrap rerun. Incomplete bootstrap still resumes only through
+its original run; this does not add cross-run checkpoint migration.
 If a publication-only code fix makes that run unusable, retain its ledger and
 first verify every recorded public package against the approved lock. Then a
 fresh bootstrap dispatch at the corrected current `main`, with the same source
 SHA and approval run, inventories registry state and starts a new scope for
 only the still-absent names. Already-public versions are excluded from that new
 scope and remain subject to normal publication integrity verification. Use the
-new run for subsequent checkpoint retries and its publishing commit for normal
-publish. Never edit or transplant the old checkpoint chain.
+new run for subsequent checkpoint retries. Normal publish discovers its completed
+ledger by the approved lock. Never edit or transplant the old checkpoint chain.
 At the mutation boundary, a root
 `publish-bootstrap` or `publish` run first reads the lightweight
 `oliphaunt-release-transport/<full-sha>` tag and accepts only a direct commit

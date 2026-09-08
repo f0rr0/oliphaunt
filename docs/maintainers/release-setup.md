@@ -32,10 +32,35 @@ Create these environments:
 | --- | --- | --- | --- |
 | `release-pr` | Create/update the generated release PR | `RELEASE_PR_TOKEN` | main only |
 | `release-dry-run` | Exact-SHA artifact assembly and dry-run | none | main only |
-| `release-bootstrap` | Creation of npm/crates identities that do not exist yet | Only the short-lived, registry-scoped `CRATES_IO_BOOTSTRAP_TOKEN` and/or `NPM_BOOTSTRAP_TOKEN` required by the approved lock | `main` only; independent approval when available |
-| `release-publish` | Normal trusted publication | Maven Central credentials and signing key | `main` only; independent approval when available |
+| `release-bootstrap` | Creation of npm/crates identities that do not exist yet | Release tag App credentials plus only the short-lived, registry-scoped `CRATES_IO_BOOTSTRAP_TOKEN` and/or `NPM_BOOTSTRAP_TOKEN` required by the approved lock | `main` only; independent approval when available |
+| `release-publish` | Normal trusted publication | Release tag App credentials, Maven Central credentials and signing key | `main` only; independent approval when available |
 
 Use a GitHub App or narrowly scoped bot token for `RELEASE_PR_TOKEN`; PRs created by the default workflow token do not trigger the normal PR workflow. Keep bootstrap tokens out of repository secrets and out of `release-publish`. The approved-candidate inventory determines which of the two bootstrap tokens is required; do not provision a Cargo token for an npm-only bootstrap or vice versa. Delete/revoke each token immediately after trusted publishers are configured.
+
+Create one private GitHub App installed only on `f0rr0/oliphaunt`, with
+repository **Contents: read and write** and **Workflows: read and write** (no
+webhooks or account permissions). Store `RELEASE_TAG_APP_CLIENT_ID` and
+`RELEASE_TAG_APP_PRIVATE_KEY` in both `release-publish` and `release-bootstrap`.
+These are GitHub tag credentials; retain them when retiring registry bootstrap
+tokens. Do not copy `RELEASE_PR_TOKEN` or use a personal token for this role.
+
+GitHub can reject tags on an older candidate whose workflow files differ from
+the publishing commit, even with an existing transport ref. The normal
+`GITHUB_TOKEN` cannot request `workflows: write`. The pinned
+`actions/create-github-app-token` action requests only the two required
+permissions for this repository, checks them before candidate download, and
+mints fresh tokens immediately before product/transport tags and SwiftPM tags.
+It revokes each installation token during job cleanup. Ordinary publication,
+attestations, and registry authentication keep their existing credentials.
+A missing App installation or permission fails before release mutations.
+
+After a publication-only fix is merged and its `Required` check passes, dispatch
+normal `publish` from current `main` with the original `release_commit` and
+`approval_run_id`. The completed bootstrap is found by its approved lock;
+neither the binaries nor bootstrap need to run again. Retain the approved
+candidate artifacts and completed bootstrap artifact until publication finishes.
+A failure without a code change still resumes by rerunning the original failed
+publish run.
 
 Use exact custom deployment branch/tag policies. `release-pr` and
 `release-dry-run`, `release-bootstrap`, and `release-publish` allow only the

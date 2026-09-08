@@ -433,6 +433,18 @@ jobs:
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
 
+      - name: Check release tag App permissions
+        id: check_release_tag_app
+        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: &release_tag_app
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
+          permission-workflows: write
+
       - name: Check publish environment
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
         env:
@@ -1024,12 +1036,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          node .github/scripts/download-build-artifacts.mjs \
-            Release \
-            "$GITHUB_SHA" \
-            "$BOOTSTRAP_LEDGER_PATH" \
-            --artifact oliphaunt-bootstrap-ledger
+        run: bun .github/scripts/download-completed-bootstrap.mjs
 
       - name: Verify immutable bootstrap ledger and registry existence
         if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' }}
@@ -1040,6 +1047,7 @@ jobs:
             --lock "$PUBLICATION_LOCK_PATH" \
             --ledger "$BOOTSTRAP_LEDGER_PATH" \
             --products-json "$PRODUCTS_JSON" \
+            --require-complete \
             --verify-registries
 
       - name: Freeze complete publication candidate
@@ -1088,6 +1096,12 @@ jobs:
           overwrite: true
           retention-days: 90
 
+      - name: Create release tag token
+        id: release_tag_token
+        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: *release_tag_app
+
       - name: Reserve release transport content write
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
         timeout-minutes: 3
@@ -1100,7 +1114,7 @@ jobs:
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
         timeout-minutes: 3
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_OPERATION: publish
           RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: pre-reserved
@@ -1111,7 +1125,7 @@ jobs:
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
         timeout-minutes: 31
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
           bun .github/scripts/manage-release-drafts.mjs stage \
@@ -1206,12 +1220,18 @@ jobs:
             target/liboliphaunt/release-assets/*.sha256
             target/extension-artifacts/liboliphaunt-native/oliphaunt-extension-contrib-pg18/release-assets/*
 
+      - name: Create fresh SwiftPM tag token
+        id: swift_tag_token
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: *release_tag_app
+
       - name: Publish Swift SDK GitHub release and SwiftPM tags
         id: publish_swift_source_tag
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
         timeout-minutes: 6
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.swift_tag_token.outputs.token }}
         run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-swift --step github-release --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
 
       - name: Reserve broker attestation content write
@@ -1709,12 +1729,18 @@ jobs:
             exit 1
           fi
 
+      - name: Create bootstrap transport tag token
+        id: bootstrap_tag_token
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: *release_tag_app
+
       - name: Ensure exact immutable release transport ref
         id: ensure_bootstrap_transport_ref
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         timeout-minutes: 3
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.bootstrap_tag_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_OPERATION: publish-bootstrap
           RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: isolated-bootstrap

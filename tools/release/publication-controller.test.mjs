@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
-import { assertPublicationController } from "./publication-controller.mjs";
+import { assertPublicationChanges, assertPublicationController } from "./publication-controller.mjs";
 
 test("only clean publication-only descendants can execute an older frozen candidate", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "publication-controller-"));
@@ -22,6 +22,11 @@ test("only clean publication-only descendants can execute an older frozen candid
     write("tools/release/crates-io-bootstrap-capacity.mjs", "fixed publisher");
     const controller = commit();
     assert.deepEqual(assertPublicationController({ source, controller, root }), { source, controller });
+    write(".github/scripts/download-completed-bootstrap.mjs", "newer publisher");
+    const newer = commit();
+    assertPublicationController({ source, controller: newer, root });
+    assert.deepEqual(assertPublicationChanges({ source, controller, root }), { source, controller });
+    assert.throws(() => assertPublicationController({ source, controller, root }), /checkout|HEAD/u);
     for (const file of ["product", "tools/release/package-extension-release-carriers.mjs", "Cargo.lock", ".github/workflows/ci.yml", "tools/release/moon.yml"]) {
       git("checkout", "--detach", controller);
       write(file, "changed");

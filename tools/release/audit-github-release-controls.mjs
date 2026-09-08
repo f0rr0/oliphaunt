@@ -59,7 +59,9 @@ query OliphauntReleaseBranchProtection($owner: String!, $name: String!, $qualifi
   }
 }`;
 
+const RELEASE_TAG_APP_SECRETS = ["RELEASE_TAG_APP_CLIENT_ID", "RELEASE_TAG_APP_PRIVATE_KEY"];
 const RELEASE_PUBLISH_SECRETS = [
+  ...RELEASE_TAG_APP_SECRETS,
   "MAVEN_CENTRAL_PASSWORD",
   "MAVEN_CENTRAL_USERNAME",
   "MAVEN_GPG_KEY_ID",
@@ -83,7 +85,7 @@ function expectedBootstrapSecrets(bootstrapState) {
 
 function expectedEnvironments(bootstrapState) {
   return {
-    "release-bootstrap": expectedBootstrapSecrets(bootstrapState),
+    "release-bootstrap": [...RELEASE_TAG_APP_SECRETS, ...expectedBootstrapSecrets(bootstrapState)],
     "release-dry-run": [],
     "release-pr": ["RELEASE_PR_TOKEN"],
     "release-publish": RELEASE_PUBLISH_SECRETS,
@@ -310,7 +312,8 @@ export function auditGitHubReleaseControls(
     const allowedSecrets = expectedSecrets;
     const readyBootstrap = environmentName === "release-bootstrap" && bootstrapState === "ready";
     const missingSecrets = readyBootstrap
-      ? actualSecrets.some((secret) => allowedSecrets.includes(secret)) ? [] : expectedSecrets
+      ? [...arrayDifference(RELEASE_TAG_APP_SECRETS, actualSecrets),
+        ...(actualSecrets.some((secret) => BOOTSTRAP_SECRETS.includes(secret)) ? [] : BOOTSTRAP_SECRETS)]
       : arrayDifference(expectedSecrets, actualSecrets);
     const unexpectedSecrets = arrayDifference(actualSecrets, allowedSecrets);
     findings.push(missingSecrets.length === 0
@@ -318,7 +321,7 @@ export function auditGitHubReleaseControls(
         "PASS",
         `environment.${environmentName}.secrets-present`,
         readyBootstrap
-          ? `${environmentName} has at least one approved registry bootstrap token name`
+          ? `${environmentName} has tag App credentials and at least one approved registry bootstrap token name`
           : `${environmentName} has all expected secret names`,
       )
       : finding(
