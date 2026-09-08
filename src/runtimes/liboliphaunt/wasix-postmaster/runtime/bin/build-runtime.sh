@@ -19,6 +19,7 @@ esac
 
 UPSTREAM_WORK_ROOT="${UPSTREAM_WORK_ROOT:-$FRESH_WORK_ROOT/runtime}"
 WASMER_ROOT="${WASMER_ROOT:-$UPSTREAM_WORK_ROOT/wasmer}"
+WASIX_LIBC_ROOT="${WASIX_LIBC_ROOT:-$UPSTREAM_WORK_ROOT/wasix-libc}"
 LLVM_MAJOR=22
 WASMER_PATCH="$FRESH_ROOT/runtime/patches/wasmer/series"
 WASIX_LIBC_PATCH="$FRESH_ROOT/runtime/patches/wasix-libc/series"
@@ -104,6 +105,7 @@ LLVM_SYS_221_PREFIX="$(find_llvm_prefix)"
 export LLVM_SYS_221_PREFIX
 
 UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+	WASMER_ROOT="$WASMER_ROOT" WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 	"$FRESH_ROOT/runtime/bin/prepare-upstream-checkouts.sh"
 [ -f "$WASMER_ROOT/lib/cli/Cargo.toml" ] || {
 	printf 'missing prepared Wasmer checkout: %s\n' "$WASMER_ROOT" >&2
@@ -1128,14 +1130,17 @@ cargo build \
 	--features "$FRESH_POSTMASTER_COMPILER_FEATURES"
 if [ "$PORTABLE_INPUTS" -eq 1 ]; then
 	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+		WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 		"$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh" \
 		--no-build --portable-inputs
 elif [ -f "$WASIXCC_SYSROOT_PREFIX/.oliphaunt-patched-sysroots.manifest" ] && \
 	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+	WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 	"$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh" --no-build; then
 	:
 else
 	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+	WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 	"$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh"
 fi
 

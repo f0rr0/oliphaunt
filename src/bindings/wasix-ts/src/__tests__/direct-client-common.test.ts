@@ -263,12 +263,7 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
 
     expect(seedLoads).toBe(0);
-    expect(queries).toEqual([
-      'ROLLBACK',
-      'DISCARD ALL',
-      'ROLLBACK',
-      'DISCARD ALL',
-    ]);
+    expect(queries).toEqual(['ROLLBACK', 'DISCARD ALL', 'ROLLBACK', 'DISCARD ALL']);
   });
 
   it('reuses prepared pg_dump but creates fresh processes and publishes once per run', async () => {
