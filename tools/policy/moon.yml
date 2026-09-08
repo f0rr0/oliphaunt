@@ -16,7 +16,19 @@ owners:
   paths:
     "**/*": ["@oliphaunt/core"]
 
+fileGroups:
+  javascript-quality:
+    - "/tools/graph/**/*.mts"
+
 tasks:
+  js-format-check:
+    command: "pnpm exec biome format --no-errors-on-unmatched . ../graph"
+    options:
+      mergeArgs: replace
+  js-lint:
+    command: "pnpm exec biome lint --diagnostic-level=error --no-errors-on-unmatched . ../graph"
+    options:
+      mergeArgs: replace
   tools-compile:
     tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-policy-tools.sh"

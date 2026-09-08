@@ -38,8 +38,6 @@ tasks:
       - "!/src/**/Pods/**"
       - "!/src/**/DerivedData/**"
       - "/tools/dev/bun.sh"
-      - "/tools/dev/capture-command-output.mts"
-      - "/tools/dev/moon-command.mts"
       - "/tools/release/**/*"
     options:
       cache: true
@@ -85,9 +83,11 @@ tasks:
     command: "pnpm exec biome format package.json biome.json renovate.json .markdownlint-cli2.jsonc"
     inputs: ["/package.json", "/biome.json", "/renovate.json", "/.markdownlint-cli2.jsonc"]
     options:
+      mergeArgs: replace
       mergeInputs: replace
   js-lint:
     command: "pnpm exec biome lint --diagnostic-level=error package.json biome.json renovate.json .markdownlint-cli2.jsonc"
     inputs: ["/package.json", "/biome.json", "/renovate.json", "/.markdownlint-cli2.jsonc"]
     options:
+      mergeArgs: replace
       mergeInputs: replace

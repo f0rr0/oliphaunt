@@ -25,6 +25,7 @@ import {
   compareText,
   exactExtensionProducts,
   extensionPublicDependencySqlNames,
+  extensionSqlNames,
   extensionSqlNamesForProducts,
 } from '../../src/shared/product-metadata/release-artifact-targets.mts';
 import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';

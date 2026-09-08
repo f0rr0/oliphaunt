@@ -8,7 +8,12 @@ import {
   normalizeFiles,
 } from '../../src/shared/product-metadata/release-graph.mts';
 import { affectedNames, triggeringProjectNames, triggeringTaskNames } from '../graph/affected.mts';
-import { CI_JOB_TARGETS, planJobsForAffected, renderPlanWithSelection } from '../graph/ci_plan.mts';
+import {
+  CI_JOB_TARGETS,
+  planJobsForAffected,
+  renderPlanWithSelection,
+  selectedExtensionProductsForPlan,
+} from '../graph/ci_plan.mts';
 import { moonCommand, moonEnvironment } from '../test/moon-command.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -142,6 +147,25 @@ function assertNativeExtensionLifecycleSelection(relativePath) {
   const effects = directEffects(relativePath);
   assert.equal(effects.tasks.includes('native-extension-lifecycle:lifecycle'), true);
   assert.equal(effects.jobs.includes('native-extension-lifecycle'), true);
+  const jobs = new Set(effects.jobs);
+  const projects = new Set(effects.projects);
+  const tasks = new Set(effects.directTasks);
+  const plan = renderPlanWithSelection({
+    jobs,
+    projects,
+    tasks,
+    reason: relativePath,
+    selectedTargets: null,
+    selectedExtensionProducts: selectedExtensionProductsForPlan(projects, tasks, jobs),
+  });
+  assert.ok(plan.native_extension_lifecycle_sql_names.includes('vector'));
+  const producer = plan.extension_artifacts_native_matrix.include.find(
+    (row) => row.target === 'linux-x64-gnu',
+  );
+  assert.ok(producer, 'the lifecycle runner needs a Linux extension producer');
+  for (const name of plan.native_extension_lifecycle_sql_names) {
+    assert.ok(producer.sql_names_csv.split(',').includes(name), `${name} needs a producer`);
+  }
 }
 
 test('postmaster build-input pins select its builder and release', () => {

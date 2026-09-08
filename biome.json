@@ -28,6 +28,7 @@
     }
   },
   "javascript": {
+    "globals": ["Bun", "Deno"],
     "formatter": {
       "quoteStyle": "single",
       "semicolons": "always",
@@ -43,6 +44,9 @@
     "enabled": true,
     "rules": {
       "recommended": true,
+      "correctness": {
+        "noUndeclaredVariables": "error"
+      },
       "suspicious": {
         "noExplicitAny": "off",
         "noImplicitAnyLet": "off",
