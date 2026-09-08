@@ -229,13 +229,13 @@ pub const FIXTURE: bool = true;
       name,
       version,
       header: `schema = "oliphaunt-artifact-manifest-v1"\nproduct = ${JSON.stringify(product)}\nversion = ${JSON.stringify(version)}\nkind = ${JSON.stringify(kind)}\ntarget = ${JSON.stringify(host)}`,
-      members: [{ files: files.map((relative) => ({ relative, contents: `${name}:${relative}` })) }],
+      members: [{ files: files.map((relative) => ({ relative, contents: relative.endsWith("/directories-v1.txt") ? "pg_notify\npg_wal/archive_status\n" : `${name}:${relative}` })) }],
     });
     const runtime = genericCarrier("fixture-native-runtime", "liboliphaunt-native", nativeRuntimeVersion, "native-runtime", [
       "runtime/bin/postgres", "runtime/bin/initdb", "runtime/bin/pg_ctl",
-      "cluster-seed/manifest.properties", "cluster-seed/files/PG_VERSION",
+      "cluster-seed/manifest.properties", "cluster-seed/directories-v1.txt", "cluster-seed/files/PG_VERSION",
       "cluster-seed/files/global/pg_control", "cluster-seed-icu/manifest.properties",
-      "cluster-seed-icu/files/PG_VERSION", "cluster-seed-icu/files/global/pg_control",
+      "cluster-seed-icu/directories-v1.txt", "cluster-seed-icu/files/PG_VERSION", "cluster-seed-icu/files/global/pg_control",
     ]);
     const tools = genericCarrier("fixture-native-tools", "oliphaunt-tools", nativeRuntimeVersion, "native-tools", [
       "runtime/bin/pg_basebackup", "runtime/bin/pg_dump", "runtime/bin/psql",
@@ -279,6 +279,9 @@ oliphaunt-build = { path = ${JSON.stringify(path.join(import.meta.dir, "../../sr
     expect(cargo.status, `${cargo.stdout}\n${cargo.stderr}`).toBe(0);
     const lock = findFile(path.join(root, "cargo-target"), "oliphaunt-assets.lock");
     expect(lock).not.toBeNull();
+    for (const seed of ["cluster-seed", "cluster-seed-icu"]) {
+      expect(statSync(path.join(path.dirname(lock), "resources/native-runtime/liboliphaunt-native", seed, "files/pg_notify")).isDirectory()).toBe(true);
+    }
     const text = readFileSync(lock, "utf8");
     expect(text).toContain('extension = "cube"');
     expect(text).toContain('extension = "pg_trgm"');

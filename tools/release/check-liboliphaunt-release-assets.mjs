@@ -322,9 +322,11 @@ function validateNativeRuntimeCarrierEntries(
   for (const required of [
     "manifest.properties",
     "cluster-seed/manifest.properties",
+    "cluster-seed/directories-v1.txt",
     "cluster-seed/files/PG_VERSION",
     "cluster-seed/files/global/pg_control",
     "cluster-seed-icu/manifest.properties",
+    "cluster-seed-icu/directories-v1.txt",
     "cluster-seed-icu/files/PG_VERSION",
     "cluster-seed-icu/files/global/pg_control",
   ]) {
