@@ -248,6 +248,8 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-aot"
     inputs:
+      - project: "postgres18"
+        group: "regression"
       - "@group(cargo-workspace)"
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"

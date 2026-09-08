@@ -19,3 +19,29 @@ owners:
 fileGroups:
   source:
     - "source.toml"
+  regression:
+    - "embedded_schedule"
+    - "run-regression.sh"
+    - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/build-native-client-tools.sh"
+    - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/prepare-baseline.sh"
+    - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
+
+tasks:
+  regression-tools:
+    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/build-native-client-tools.sh"
+    inputs:
+      - "@group(source)"
+      - "@group(regression)"
+      - "fetch-source.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  unit:
+    tags: ["quality", "unit"]
+    command: "bash src/postgres/versions/18/run-regression.test.sh"
+    inputs:
+      - "@group(regression)"
+      - "run-regression.test.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

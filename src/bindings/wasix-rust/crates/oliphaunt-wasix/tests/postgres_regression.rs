@@ -10,6 +10,38 @@ use std::time::{Duration, Instant};
 const DURABILITY_CHILD_ROOT: &str = "OLIPHAUNT_WASIX_DURABILITY_CHILD_ROOT";
 const DURABILITY_CHILD_READY: &str = "OLIPHAUNT_WASIX_DURABILITY_CHILD_READY";
 
+#[test]
+#[ignore = "run by liboliphaunt-wasix:regression with pinned PostgreSQL client tools"]
+fn upstream_postgres_regression() -> Result<()> {
+    let mut server = oliphaunt_wasix::OliphauntServer::builder().start()?;
+    let authority = server
+        .connection_string()
+        .strip_prefix("postgresql://")
+        .and_then(|uri| uri.split('/').next())
+        .context("PostgreSQL TCP connection-string authority")?;
+    let address: std::net::SocketAddr = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host)
+        .parse()?;
+    let status = Command::new("bash")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../../src/postgres/versions/18/run-regression.sh"
+        ))
+        .arg("embedded")
+        .env("PGHOST", address.ip().to_string())
+        .env("PGPORT", address.port().to_string())
+        .env("PGUSER", "postgres")
+        .env("PGDATABASE", "postgres")
+        .status();
+    server.close()?;
+    ensure!(
+        status?.success(),
+        "upstream PostgreSQL regression failed; see target/postgres-regress"
+    );
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BehaviorContract {

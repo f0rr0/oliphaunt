@@ -13,8 +13,11 @@ case "$suite_name" in
     ;;
 esac
 tests=("$@")
+upstream_schedule=0
 if [ "${#tests[@]}" -eq 0 ]; then
-  tests=(boolean case copy)
+  upstream_schedule=1
+  # COPY uses host files exposed by this runtime's volume mapping.
+  tests=(copy)
 fi
 for test_name in "${tests[@]}"; do
   case "$test_name" in
@@ -103,6 +106,7 @@ wasmer_args+=(
   printf -- '- Generated: `%s`\n' "$(fresh_timestamp)"
   printf -- '- Port: `%s`\n' "$port"
   printf -- '- Tests: `%s`\n' "${tests[*]}"
+  printf -- '- Upstream embedded schedule: `%s`\n' "$upstream_schedule"
   printf -- '- PGDATA: `%s`\n' "$pgdata"
   printf -- '- Output dir: `%s`\n' "$regress_out"
   printf -- '- Report dir: `%s`\n\n' "$report_dir"
@@ -167,6 +171,11 @@ fi
 set +e
 (
   cd "$BASELINE_DIR/src/test/regress"
+  set -e
+  if [ "$upstream_schedule" -eq 1 ]; then
+    PGHOST=127.0.0.1 PGPORT="$port" PGUSER=wasix PGDATABASE=postgres \
+      bash "$REPO_ROOT/src/postgres/versions/18/run-regression.sh" embedded
+  fi
   "$pg_regress_bin" \
     --use-existing \
     --host=127.0.0.1 \

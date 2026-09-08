@@ -1,0 +1,6 @@
+# Upstream SQL/expected files, unchanged. One connection for embedded runtimes.
+# Only self-contained cases: test_setup needs host files and a loadable regress
+# C module. The full native schedule owns that fixture-dependent coverage.
+test: boolean name oid float4 bit numeric uuid enum money
+test: md5 lseg line box path polygon circle date time timetz timestamp timestamptz interval inet macaddr macaddr8
+test: case json jsonpath jsonpath_encoding

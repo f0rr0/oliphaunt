@@ -207,6 +207,21 @@ tasks:
       cache: true
       internal: true
       runFromWorkspaceRoot: true
+  regression:
+    tags: ["runtime", "regression"]
+    command: "bash src/postgres/versions/18/run-regression.sh native"
+    deps:
+      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "postgres18:regression-tools"
+    inputs:
+      - "@group(runtime)"
+      - project: "postgres18"
+        group: "source"
+      - project: "postgres18"
+        group: "regression"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
   host-smoke:
     tags: ["runtime", "smoke"]
     script: |
@@ -264,6 +279,8 @@ tasks:
     deps:
       - "liboliphaunt-native:build-runtime-desktop-target"
     inputs:
+      - project: "postgres18"
+        group: "regression"
       - "$OLIPHAUNT_CI_TARGET"
       - "@group(legal-files)"
       - "/src/runtimes/liboliphaunt/native/include/**/*"

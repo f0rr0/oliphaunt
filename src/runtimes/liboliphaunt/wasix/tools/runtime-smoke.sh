@@ -73,6 +73,12 @@ export OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR="$root/target/oliphaunt-wasix/assets
 export OLIPHAUNT_WASM_GENERATED_AOT_DIR="$root/target/oliphaunt-wasix/aot"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
 
+if [ "$mode" = "regression" ]; then
+  bash src/runtimes/liboliphaunt/wasix-postmaster/bin/build-native-client-tools.sh
+  oliphaunt_wasix_cargo_test --test postgres_regression upstream_postgres_regression \
+    -- --ignored --exact --nocapture --test-threads=1
+fi
+
 oliphaunt_wasix_cargo_test \
   --test runtime_smoke \
   --test proxy_smoke \

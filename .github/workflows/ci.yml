@@ -759,6 +759,25 @@ jobs:
             "$NATIVE_BUILD_ROOT/icu/share/icu" \
             target/liboliphaunt/portable-icu-assets
 
+      - name: Run upstream PostgreSQL regression suite
+        if: ${{ runner.os != 'Windows' }}
+        env:
+          OLIPHAUNT_WORK_ROOT: ${{ matrix.build-root }}
+        run: |
+          moon run postgres18:regression-tools
+          bash src/postgres/versions/18/run-regression.sh native
+
+      - name: Upload upstream PostgreSQL regression results
+        if: ${{ always() && runner.os != 'Windows' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: postgres-regression-${{ matrix.target }}
+          path: |
+            target/postgres-regress/*/regression.*
+            target/postgres-regress/*/results
+            target/postgres-regress/*/log
+          if-no-files-found: error
+
       - name: Upload liboliphaunt release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -2069,6 +2088,18 @@ jobs:
       - name: Build and qualify portable WASIX postmaster inputs
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:portable-inputs liboliphaunt-wasix-postmaster:runtime-patch-tests liboliphaunt-wasix-postmaster:regression
 
+      - name: Upload PostgreSQL regression diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: postgres-regression-wasix-postmaster
+          path: |
+            target/postgres-regress/*/regression.*
+            target/postgres-regress/*/results
+            target/oliphaunt-wasix-postmaster/reports
+            target/oliphaunt-wasix-postmaster/run/**/pg_regress
+          if-no-files-found: ignore
+
       - name: Upload portable WASIX postmaster build inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -2457,6 +2488,8 @@ jobs:
             ${{ steps.regression.outputs.run_path }}
             src/extensions/generated/docs/extension-evidence.json
             target/qualification/wasix-release-regression/runtime-smoke.log
+            target/postgres-regress/*/regression.*
+            target/postgres-regress/*/results
           if-no-files-found: error
           overwrite: true
           retention-days: 90
@@ -2466,7 +2499,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: wasix-release-regression-diagnostics
-          path: target/qualification/wasix-release-regression/runtime-smoke.log
+          path: |
+            target/qualification/wasix-release-regression/runtime-smoke.log
+            target/postgres-regress/*/regression.*
+            target/postgres-regress/*/results
           if-no-files-found: ignore
           overwrite: true
           retention-days: 14
