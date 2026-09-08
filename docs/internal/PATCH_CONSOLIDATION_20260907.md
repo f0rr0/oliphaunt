@@ -189,12 +189,34 @@ base commit. Exact embedded payload/source checks and all raw reports remain
 in the retained research evidence (`results/w0044-final-20260907.md` and its six
 result directories), outside product build inputs.
 
-The next performance investigation is the retained wide-INSERT pair, not another
-uncontrolled compiler variant. Earlier regular-backend initialization now
-creates PostgreSQL's normal backend statistics entry and correct PGPROC state;
-that is an **unproven attribution lead**, alongside AOT/code-layout effects and
-noise. Disabling correct identity, statistics, atomics or durability is not a
-remedy. The roughly **1.4–1.6x stock-server INSERT gap remains unresolved**.
+### Wide-workload profiling
+
+Four completed prior/final ABBA captures collected 45,283 user-CPU samples from
+the unchanged retained strict AOT payloads. Existing Wasmer function extents
+provided diagnostic address maps without recompiling the guest or switching
+engines. These instrumented timings are not additional benchmark replicates.
+
+The SQL constructs its payload with `repeat(chr(97+(g%26)),96)`. Exact guest
+disassembly and error-location strings identify PostgreSQL `repeat` as the
+caller of approximately 98% of sampled imported-memory-copy calls. Its loop
+performs 96 one-byte copies per row. The imported helper accounts for 24.02%
+of prior and 27.34% of final self samples; `pgstat_count_heap_insert` accounts
+for only 0.46% and 0.45%. The wide case therefore measures substantial string
+construction, not just tuple insertion.
+
+Both guests have the same repeat loop. This identifies a shared optimization
+target, **not the cause of the final/prior +5.1% warning**. Sample shares alone
+cannot establish extra operations or rule out layout effects and noise. A
+general cancellation-safe repeat improvement warrants a bounded experiment,
+keeping the original workload alongside payload-construction controls. No
+new optimization is promoted on profiling evidence alone.
+
+Raw profiles and exact payload/source attribution remain outside product
+inputs in the retained `oliphaunt-profile-20260908/REPORT.md` evidence. The
+user-authorized temporary profiling setting was restored immediately after
+capture (`kernel.perf_event_paranoid=4`); no persistent setting was changed.
+Disabling correct identity, statistics, atomics or durability is not a remedy.
+The roughly **1.4–1.6x stock-server INSERT gap remains unresolved**.
 
 ## Newly established Postmaster limitation
 
