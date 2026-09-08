@@ -111,11 +111,13 @@ surface:
 proto upgrade 0.61.3
 proto install
 tools/dev/bootstrap-tools.sh
-moon run dev-tools:doctor
-moon run policy-tools:js-format-check policy-tools:rust-format-check
-moon run :check :compile :format-check :lint :tools-compile --affected
-moon run :test :unit :tools-unit --affected
+moon query tasks --project oliphaunt-rust
+moon run oliphaunt-rust:compile oliphaunt-rust:unit oliphaunt-rust:package
 ```
+
+Choose the project you are changing; its tasks own the required checks and
+build tools. For workflow checks alone, `tools/dev/bootstrap-tools.sh --workflows`
+installs Actionlint and Zizmor. The default also installs Prek and cargo-nextest.
 
 For a product metadata change, also run the metadata gate:
 

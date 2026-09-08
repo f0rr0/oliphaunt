@@ -8,7 +8,7 @@ tags: ["javascript-quality", "tools", "developer-experience"]
 
 project:
   title: "Developer Tools"
-  description: "Local bootstrap, doctor, hook installation, and smoke helpers."
+  description: "Local bootstrap, hook installation, and smoke helpers."
   owner: "oliphaunt"
 
 owners:
@@ -24,8 +24,12 @@ tasks:
       for test in tools/dev/extract-pinned-zip.test.sh tools/dev/install-pinned-js-runtime.test.sh tools/dev/install-pinned-winflexbison.test.sh .github/actions/setup-moon/install-pinned-node.test.sh .github/actions/setup-moon/install-pinned-toolchain.test.sh .github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh .github/actions/setup-npm-publisher/install.test.sh .github/scripts/setup-native-build-tools.test.sh; do
         bash "$test"
       done
+      bun test --timeout=30000 ./tools/dev/maintainer-tool-install.test.mts
     inputs:
       - "install-pinned*"
+      - "install-actionlint.sh"
+      - "bootstrap-tools.sh"
+      - "maintainer-tool-install.test.mts"
       - "extract-pinned*"
       - "winflexbison-identity.mts"
       - "bun.sh"
@@ -39,21 +43,9 @@ tasks:
       - "/.github/actions/setup-npm-publisher/**"
       - "/.github/scripts/setup-native-build-tools*"
       - "/src/sources/toolchains/{bun,deno,moon-cli,moon-plugins,node-runtime,npm-publisher,pnpm,proto,winflexbison}.toml"
+      - "/src/sources/toolchains/maintainer-tools.toml"
       - "/src/shared/artifact-packaging/portable-archive.mts"
       - "/tools/test/{zip,tar}-fixture.mts"
       - "/tools/test/package-manager-fixture.mts"
     options:
-      runFromWorkspaceRoot: true
-  doctor:
-    tags: ["diagnostics", "developer-experience"]
-    command: "bash tools/dev/doctor.sh"
-    inputs:
-      - "/.moon/workspace.yml"
-      - "/.moon/toolchains.yml"
-      - "/.prototools"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "**/*"
-    options:
-      cache: false
       runFromWorkspaceRoot: true

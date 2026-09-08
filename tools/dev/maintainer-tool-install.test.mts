@@ -4,10 +4,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  accessSync,
   appendFileSync,
   chmodSync,
-  constants,
   cpSync,
   existsSync,
   mkdirSync,
@@ -15,7 +13,6 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -23,8 +20,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-import { ROOT } from '../../src/shared/product-metadata/release-graph.mts';
-
+const ROOT = path.resolve(import.meta.dir, '../..');
+const REAL_MV = Bun.which('mv');
+assert.ok(REAL_MV, 'installer tests require mv on PATH');
 const installer = path.join(ROOT, 'tools/dev/install-pinned-maintainer-tool.sh');
 const bootstrap = path.join(ROOT, 'tools/dev/bootstrap-tools.sh');
 const actionlintInstaller = path.join(ROOT, 'tools/dev/install-actionlint.sh');
@@ -41,26 +39,6 @@ function sha256(file) {
 function executable(file, contents) {
   writeFileSync(file, contents, 'utf8');
   chmodSync(file, 0o755);
-}
-
-function pathExecutable(commandName) {
-  const extensions =
-    process.platform === 'win32'
-      ? ['', ...(process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';')]
-      : [''];
-  for (const directory of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
-    for (const extension of extensions) {
-      const candidate = path.join(directory, `${commandName}${extension}`);
-      try {
-        accessSync(candidate, constants.X_OK);
-        if (statSync(candidate).isFile()) return candidate;
-      } catch {
-        // Keep searching the ambient PATH captured before the fixture prepends
-        // its fault-injection shims.
-      }
-    }
-  }
-  assert.fail(`test host PATH has no executable ${commandName}`);
 }
 
 function command(commandName, args, options = {}) {
@@ -117,7 +95,7 @@ function makeFixture() {
     cargoLog: path.join(root, 'cargo.log'),
     goLog: path.join(root, 'go.log'),
     mvFailureMarker: path.join(root, 'mv-failed-once'),
-    realMv: pathExecutable('mv'),
+    realMv: REAL_MV,
   };
   mkdirSync(fixture.bin);
   mkdirSync(fixture.fakeBin);
@@ -465,17 +443,4 @@ test('unsupported hosts fail before network access', () => {
   assert.equal(result.status, 69);
   assert.equal(existsSync(fixture.curlLog), false);
   assertNoInstallerDebris(fixture);
-});
-
-test('Taplo uses its locked source directly without probing cargo-quickinstall', () => {
-  const text = readFileSync(bootstrap, 'utf8');
-  assert.match(text, /install_cargo_tool taplo-cli taplo "\$TAPLO_VERSION" source-only/u);
-  assert.match(
-    text,
-    /if \[ "\$install_mode" = binary-first \] && has_command cargo-binstall; then/u,
-  );
-  assert.match(
-    text,
-    /elif \[ "\$install_mode" = source-only \]; then[\s\S]*no declared binary asset/u,
-  );
 });

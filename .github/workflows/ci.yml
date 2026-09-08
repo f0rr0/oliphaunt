@@ -272,7 +272,7 @@ jobs:
 
       - name: Install pinned maintainer tools
         if: ${{ matrix.requires_maintainer_tools }}
-        run: tools/dev/bootstrap-tools.sh
+        run: tools/dev/bootstrap-tools.sh --workflows
 
       - name: Run checks
         env:
@@ -318,7 +318,7 @@ jobs:
 
       - name: Install pinned maintainer tools
         if: ${{ needs.affected.outputs.policy_requires_maintainer_tools == 'true' }}
-        run: tools/dev/bootstrap-tools.sh
+        run: tools/dev/bootstrap-tools.sh --workflows
 
       - name: Run selected policy targets
         env:
@@ -403,7 +403,7 @@ jobs:
 
       - name: Install pinned maintainer tools
         if: ${{ matrix.requires_maintainer_tools }}
-        run: tools/dev/bootstrap-tools.sh
+        run: tools/dev/bootstrap-tools.sh --workflows
 
       - name: Run tests
         env:

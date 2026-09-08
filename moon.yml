@@ -49,9 +49,7 @@ tasks:
     command: "bash tools/policy/check-prek.sh"
     inputs:
       - "/.config/nextest.toml"
-      - "/.lychee.toml"
       - "/.markdownlint-cli2.jsonc"
-      - "/.typos.toml"
       - "/biome.json"
       - "/deny.toml"
       - "/package.json"

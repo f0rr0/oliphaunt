@@ -9,9 +9,13 @@ documentation.
 Bootstrap the pinned local toolchain once:
 
 ```sh
-moon run dev-tools:doctor
 tools/dev/bootstrap-tools.sh
 ```
+
+This installs Prek, cargo-nextest, Actionlint, and Zizmor. Use
+`tools/dev/bootstrap-tools.sh --workflows` when only the workflow validators are
+needed. Optional tools such as cargo-deny, cargo-hack, and cargo-semver-checks can
+be installed with Cargo when their checks are needed.
 
 For each change, follow `.codex/skills/qualify-oliphaunt-change/SKILL.md`:
 inspect Moon affectedness, run focused checks first, and expand only when the
