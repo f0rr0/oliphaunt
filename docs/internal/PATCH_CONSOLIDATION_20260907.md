@@ -242,7 +242,17 @@ string-construction mechanism. Preconstructed-payload controls still warn
 +3.9% memory and +7.6% directory, with mixed pair directions. Unrelated work
 overlapped later cases and then saturated every CPU. These are not grounds for
 a blanket non-regression claim: the candidate is **not in the product series**.
-A staged targeted prepared/preconstructed and A/A recheck needs no rebuild.
+A separate 72-child targeted recheck used six balanced repetitions and an
+identical-baseline A/A control on affinity 6,9. All result/settings checks
+passed. The preconstructed-directory warning did not persist; memory results
+were inconclusive. Prepared-directory INSERT remained **6–7% slower against
+both baseline controls**, predominantly in the transaction body, not COMMIT.
+The selected CPUs also experienced shared-host load during this window.
+The decision at this checkpoint is to **hold the patch**, not declare overall
+non-regression or tune durability to hide the warning. Exact retained binaries
+need no rebuild for subsequent attribution. Bytewise differences elsewhere in
+the whole-core link can include relocated data references; they do not prove
+that the single-function source edit changed other functions' semantics.
 
 Sanitizer/differential checks cover size/count combinations, overflow, chunk
 boundaries, high-bit bytes and injected interruption. Actual Native checks
