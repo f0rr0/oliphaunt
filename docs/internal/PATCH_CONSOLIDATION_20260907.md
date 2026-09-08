@@ -4,6 +4,14 @@ This is a main-based integration of completed patch work, not the research tree,
 an exact-release qualification, or a new performance-parity claim. Unfinished
 work and acceptance criteria are tracked in [issue #201](https://github.com/f0rr0/oliphaunt/issues/201).
 
+The 2026-09-08 follow-up adds centralized resource-budget constants/documentation
+and a [stack-safety review packet](stack-safety-20260908/README.md). The packet
+contains the tested VM/API/PostgreSQL/Rust patches and focused probes, not just
+recommendations. It is intentionally outside production patch/dependency
+selection: the new stack guard is **not enabled in packages by this PR**.
+Supported engine integration, recovery-margin qualification and Windows/browser
+contracts remain required before activation.
+
 ## What lands
 
 | Area | Product change |

@@ -266,8 +266,10 @@ by this inventory.
 The intended fix adds a second guard; it does not replace PostgreSQL's existing
 linear-stack check or convert an engine overflow into a recoverable SQL error:
 
-1. The engine measures remaining native guest-stack capacity **before** moving
-   a callback onto the host stack. Exclude guard pages and exception reserves;
+1. A fixed trusted engine operation measures remaining native guest-stack
+   capacity without moving the query onto the host stack. Ordinary callbacks
+   keep their host-stack isolation and need no budget snapshots.
+   Exclude guard pages and exception reserves;
    cap accounting to the configured budget even when a larger pooled stack is
    reused. Nested calls, normal return, traps, and panics must restore the
    previous measurement context.
@@ -286,11 +288,14 @@ linear-stack check or convert an engine overflow into a recoverable SQL error:
    PostgreSQL's checks can still hit a terminal engine trap, which must close
    the affected session rather than masquerade as success.
 
-Status: an isolated Wasmer 7.2.1 headroom API prototype passes its 60 VM tests in
-debug and optimized builds. It is **not consumed by this repository**. The
-PostgreSQL import, reserve selection, supported engine dependency, and
-cross-platform qualification remain outstanding. No production guard or
-larger execution stack is claimed by the constants cleanup.
+Status: the hardened candidate passes 62 VM tests in both debug and optimized
+builds, focused PostgreSQL recovery checks in memory/directory, and 144 benchmark
+children. The [review packet](../internal/stack-safety-20260908/README.md) contains
+the VM/API, PostgreSQL and Rust registration patches, regression probes and
+performance caveats. It is **not consumed by production dependencies or patch
+series**. Reserve qualification, the supported engine dependency and browser/
+Windows contracts remain outstanding. No production guard or larger execution
+stack is claimed by the constants cleanup.
 
 Admission checks must include low (100 kB) and default (2 MiB) SQL limits,
 repeated errors followed by valid queries, nested PL/pgSQL/savepoint cleanup,

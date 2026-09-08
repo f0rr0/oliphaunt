@@ -1,0 +1,25 @@
+Subject: [PATCH] fix(wasix): bind the trusted execution-stack query
+
+Base: Oliphaunt 3ed64471, after the budget-constant cleanup.
+Requires the matching patched Wasmer API/VM and rebuilt guarded guest/AOT.
+Not enabled in this PR: released Wasmer 7.2.1 does not provide this API.
+
+diff --git a/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs b/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs
+index fe36e8a7..1e6ce9b0 100644
+--- a/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs
++++ b/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs
+@@ -1189,6 +1189,14 @@ fn build_wasix_runtime(
+     let mut wasix_runtime = PluggableRuntime::new(task_manager);
+     wasix_runtime.set_engine(engine.clone());
+     wasix_runtime.set_module_cache(module_cache);
++    // Experimental guest ABI, kept out of the published runtime until qualified.
++    wasix_runtime.with_additional_imports(|_module, store| {
++        Ok(wasmer::imports! {
++            "oliphaunt_stack_probe" => {
++                "execution_stack_remaining" => wasmer::Function::new_execution_stack_remaining(store)?
++            }
++        })
++    });
+     Arc::new(wasix_runtime)
+ }
+ 

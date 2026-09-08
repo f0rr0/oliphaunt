@@ -1,0 +1,474 @@
+Subject: [PATCH] fix(vm): account active execution stack and guard exception entry
+
+Measure native SP against usable coroutine capacity, restore bounds on the parent stack, and fail closed below the experimental EH reserve. Host callbacks deliberately have no suspended-stack snapshot. Includes nested/trap/invariant tests. Linux x86_64 tested; other supported mechanisms remain unqualified.
+
+Base: published wasmer-vm-7.2.1 crate, apply from its crate root with git apply.
+Experimental candidate; not a merged upstream change.
+
+diff --git a/src/libcalls/eh/gcc.rs b/src/libcalls/eh/gcc.rs
+index 3706d1fb..c426761e 100644
+--- a/src/libcalls/eh/gcc.rs
++++ b/src/libcalls/eh/gcc.rs
+@@ -277,6 +277,12 @@ pub unsafe fn read_exnref(exception: *mut c_void) -> u32 {
+ /// Performs libunwind unwinding magic. Highly unsafe.
+ pub unsafe fn throw(ctx: &StoreObjects, exnref: u32) -> ! {
+     unsafe {
++        // Engine protection is independent of guest-language recursion checks.
++        // Do not allocate an exception or enter libunwind with a depleted stack.
++        // Baremetal/host execution has no coroutine budget to inspect.
++        if crate::is_on_wasm_stack() && crate::execution_stack_accounting_supported() {
++            crate::checked_execution_stack_remaining();
++        }
+         log!("[wasmer][eh] throw resolved exnref={exnref}");
+         if exnref == 0 {
+             crate::raise_lib_trap(crate::Trap::lib(
+diff --git a/src/trap/mod.rs b/src/trap/mod.rs
+index 94cfbc5a..b5e9b6af 100644
+--- a/src/trap/mod.rs
++++ b/src/trap/mod.rs
+@@ -19,12 +19,28 @@ pub use trap::{Trap, UnwindReason};
+ #[cfg(feature = "baremetal")]
+ pub use traphandlers::install_unwinder;
+ pub use traphandlers::{
+-    MAX_STACK_SIZE, TrapHandlerFn, VMConfig, catch_traps, drain_stack_pool, get_stack_size,
+-    on_host_stack, raise_lib_trap, raise_user_trap, set_stack_size,
++    MAX_STACK_SIZE, TrapHandlerFn, VMConfig, catch_traps, checked_execution_stack_remaining,
++    drain_stack_pool, execution_stack_accounting_supported, get_stack_size, is_on_wasm_stack,
++    on_host_stack, raise_lib_trap, raise_user_trap, remaining_execution_stack, set_stack_size,
+ };
+ pub use traphandlers::{init_traps, resume_panic};
+ pub use wasmer_types::TrapCode;
+ 
++/// Experimental minimum headroom before entering native EH or returning a
++/// recoverable stack-budget sample. This is NOT an application's recovery
++/// budget: PostgreSQL keeps its separate, larger 512 KiB soft reserve.
++pub const EXECUTION_STACK_HARD_RESERVE: usize = 64 * 1024;
++
++#[derive(Debug)]
++struct ExecutionStackUnavailable;
++
++impl std::fmt::Display for ExecutionStackUnavailable {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("execution-stack accounting unavailable on an active Wasm call")
++    }
++}
++impl std::error::Error for ExecutionStackUnavailable {}
++
+ /// Call a Wasm trampoline.
+ ///
+ /// # Safety
+diff --git a/src/trap/traphandlers.rs b/src/trap/traphandlers.rs
+index 9d6ddbd4..88ce5523 100644
+--- a/src/trap/traphandlers.rs
++++ b/src/trap/traphandlers.rs
+@@ -29,14 +29,31 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering, compiler_fence};
+ use std::sync::{LazyLock, Once};
+ use wasmer_types::TrapCode;
+ 
+-/// Convenience extension for [`Stack`] that exposes the total mapped size.
++/// Capacity accounting for corosensei's platform-specific default stack.
+ trait StackExt: Stack {
+     /// Returns the total size of the stack mapping (including guard page).
+     fn size(&self) -> usize {
+         self.base().get() - self.limit().get()
+     }
++
++    /// Capacity excluding guard pages and Windows' exception-handler reserve.
++    fn usable_size(&self) -> usize {
++        let page_size = region::page::size();
++        #[cfg(windows)]
++        let reserved = {
++            let guard_pages = if cfg!(target_pointer_width = "64") {
++                2
++            } else {
++                1
++            };
++            (guard_pages + 1) * page_size + self.teb_fields().GuaranteedStackBytes
++        };
++        #[cfg(not(windows))]
++        let reserved = page_size;
++        self.size().saturating_sub(reserved)
++    }
+ }
+-impl<T: Stack> StackExt for T {}
++impl StackExt for DefaultStack {}
+ 
+ /// Configuration for the runtime VM
+ /// Currently only the stack size is configurable
+@@ -87,6 +104,91 @@ pub fn get_stack_size() -> usize {
+     DEFAULT_STACK_SIZE.load(Ordering::Relaxed)
+ }
+ 
++/// Whether this backend can measure the actual native stack pointer.
++/// Capability is not a claim of platform qualification. No shadow/fake-stack
++/// local-variable address is used, including under address sanitizers.
++pub const fn execution_stack_accounting_supported() -> bool {
++    cfg!(all(
++        unix,
++        any(target_arch = "x86_64", target_arch = "aarch64")
++    ))
++}
++
++/// Whether the caller is executing on a Wasm coroutine rather than a host stack.
++#[inline]
++pub fn is_on_wasm_stack() -> bool {
++    YIELDER.with(|cell| cell.get().is_some())
++}
++
++/// Samples free native execution-stack bytes on the active Wasm stack only.
++///
++/// Ordinary host callbacks return `None`; there is deliberately no suspended
++/// snapshot or extra bookkeeping on host transitions. Nested Wasm entries
++/// measure their own stack. Guard pages and excess pooled capacity are excluded.
++/// This is a sample, not a reservation or a linear-memory stack measurement.
++#[inline]
++pub fn remaining_execution_stack() -> Option<usize> {
++    if !execution_stack_accounting_supported() {
++        return None;
++    }
++    let stack = EXECUTION_STACK.with(Cell::get)?;
++    let sp: usize;
++    #[cfg(target_arch = "x86_64")]
++    unsafe {
++        core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags));
++    }
++    #[cfg(target_arch = "aarch64")]
++    unsafe {
++        core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
++    }
++    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
++    {
++        sp = 0;
++    }
++    stack.remaining(sp)
++}
++
++/// Returns a known sample above the engine's hard reserve, or terminates the
++/// current invocation. Never turns missing accounting into a recoverable zero.
++///
++/// # Safety
++/// Must run on the active Wasm coroutine, with no live Rust destructors between
++/// the caller and the trap boundary. Failure performs a non-local exit.
++#[inline]
++pub unsafe fn checked_execution_stack_remaining() -> usize {
++    match remaining_execution_stack() {
++        Some(remaining) if remaining > super::EXECUTION_STACK_HARD_RESERVE => remaining,
++        remaining => unsafe { execution_stack_fault(remaining.is_none()) },
++    }
++}
++
++#[cold]
++#[inline(never)]
++unsafe fn execution_stack_fault(unavailable: bool) -> ! {
++    if unavailable {
++        // A zero-sized payload allocates no heap memory and captures no trace.
++        unsafe { raise_user_trap(Box::new(super::ExecutionStackUnavailable)) }
++    }
++    // Trace capture and allocation belong on the unconstrained parent stack,
++    // not the nearly exhausted guest stack. Raise only after switching back.
++    let trap = on_host_stack(|| Trap::lib(TrapCode::StackOverflow));
++    unsafe { raise_lib_trap(trap) }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++struct ExecutionStack {
++    lower: usize,
++    upper: usize,
++}
++
++impl ExecutionStack {
++    fn remaining(self, address: usize) -> Option<usize> {
++        (self.lower..self.upper)
++            .contains(&address)
++            .then(|| address - self.lower)
++    }
++}
++
+ /// Pool of pre-allocated coroutine stacks to avoid repeated mmap syscalls.
+ /// Acts as the cross-thread overflow store; per-thread reuse is served by
+ /// `TLS_STACK` to keep the hot path atomic-free.
+@@ -121,7 +223,7 @@ fn acquire_stack(min_size: usize) -> DefaultStack {
+     // Fast path: thread-local cache. Steady-state per-thread reuse never
+     // touches the SegQueue.
+     if let Some(stack) = TLS_STACK.with(|cache| cache.0.take()) {
+-        if stack.size() >= min_size {
++        if stack.usable_size() >= min_size {
+             return stack;
+         }
+         // Undersized — discard (mirrors the existing `STACK_POOL.pop().filter(...)`
+@@ -132,7 +234,7 @@ fn acquire_stack(min_size: usize) -> DefaultStack {
+     // as the pre-TLS implementation.
+     STACK_POOL
+         .pop()
+-        .filter(|s| s.size() >= min_size)
++        .filter(|s| s.usable_size() >= min_size)
+         .unwrap_or_else(|| DefaultStack::new(min_size).unwrap())
+ }
+ 
+@@ -849,17 +951,20 @@ where
+     on_wasm_stack(stack_size, trap_handler, closure).map_err(UnwindReason::into_trap)
+ }
+ 
+-// We need two separate thread-local variables here:
++// These thread-local variables serve separate purposes:
+ // - YIELDER is set within the new stack and is used to unwind back to the root
+ //   of the stack from inside it.
+ // - TRAP_HANDLER is set from outside the new stack and is solely used from
+ //   signal handlers. It must be atomic since it is used by signal handlers.
++// - EXECUTION_STACK is restored on the parent stack and sampled only during
++//   ordinary execution, never by signal handlers.
+ //
+ // We also do per-thread signal stack initialization on the first time
+ // TRAP_HANDLER is accessed.
+ thread_local! {
+     static YIELDER: Cell<Option<NonNull<Yielder<(), UnwindReason>>>> = const { Cell::new(None) };
+     static TRAP_HANDLER: AtomicPtr<TrapHandlerContext> = const { AtomicPtr::new(ptr::null_mut()) };
++    static EXECUTION_STACK: Cell<Option<ExecutionStack>> = const { Cell::new(None) };
+ }
+ 
+ /// Read-only information that is used by signal handlers to handle and recover
+@@ -1046,12 +1151,24 @@ fn on_wasm_stack<F: FnOnce() -> T + 'static, T: 'static>(
+     // Reuse a cached stack — TLS first (atomic-free hot path), then the
+     // cross-thread overflow pool, then allocate fresh. Size mismatches
+     // (e.g. after `drain_stack_pool()` + a stack-size change) are filtered
+-    // inside `acquire_stack`. `base() - limit()` is the full mmap region
+-    // (including guard page), which is always >= the requested size for
+-    // stacks allocated with that size.
++    // inside `acquire_stack`, using capacity excluding guards and platform
++    // exception reserves rather than the full mapped region.
+     let stack = acquire_stack(stack_size);
+     let mut stack = scopeguard::guard(stack, release_stack);
+ 
++    // Stack::limit includes guard pages. Restrict accounting to the requested
++    // usable capacity, even when the pool supplied a larger stack. This guard
++    // lives on the parent stack, so a guest trap cannot skip its restoration.
++    let upper = stack.base().get();
++    let execution_stack = ExecutionStack {
++        lower: upper - stack_size,
++        upper,
++    };
++    let previous = EXECUTION_STACK.with(|slot| slot.replace(Some(execution_stack)));
++    let _restore_execution_stack = scopeguard::guard(previous, |previous| {
++        EXECUTION_STACK.with(|slot| slot.set(previous));
++    });
++
+     // Create a coroutine with a new stack to run the function on.
+     let coro = ScopedCoroutine::with_stack(&mut *stack, move |yielder, ()| {
+         // Save the yielder to TLS so that it can be used later.
+@@ -1254,6 +1371,183 @@ mod tests {
+     // they don't step on each other.
+     static GLOBAL_STATE: Mutex<()> = Mutex::new(());
+ 
++    #[inline(never)]
++    fn execution_stack_recurse(depth: usize) -> Vec<usize> {
++        let padding = [0u8; 4096];
++        std::hint::black_box(&padding);
++        let remaining = remaining_execution_stack().expect("running on guest stack");
++        let mut samples = if depth == 0 {
++            vec![]
++        } else {
++            execution_stack_recurse(depth - 1)
++        };
++        std::hint::black_box(&padding);
++        samples.push(remaining);
++        samples
++    }
++
++    #[test]
++    fn execution_stack_recursion_and_host_unavailability() {
++        let _lock = GLOBAL_STATE.lock().unwrap();
++        assert_eq!(remaining_execution_stack(), None);
++        let size = 1024 * 1024;
++        on_wasm_stack(size, None, move || {
++            let samples = execution_stack_recurse(4);
++            assert!(samples.windows(2).all(|pair| pair[0] < pair[1]));
++            assert!(samples.iter().all(|remaining| *remaining < size));
++            let before = EXECUTION_STACK.with(Cell::get);
++            on_host_stack(|| {
++                assert!(!is_on_wasm_stack());
++                assert_eq!(remaining_execution_stack(), None);
++                let padding = [0u8; 8192];
++                std::hint::black_box(&padding);
++                assert_eq!(remaining_execution_stack(), None);
++                on_host_stack(|| assert_eq!(remaining_execution_stack(), None));
++            });
++            assert_eq!(EXECUTION_STACK.with(Cell::get), before);
++            assert!(is_on_wasm_stack());
++            assert!(remaining_execution_stack().unwrap() < size);
++        })
++        .unwrap();
++        assert_eq!(remaining_execution_stack(), None);
++    }
++
++    #[test]
++    fn execution_stack_nested_calls_and_traps_restore_bounds() {
++        let _lock = GLOBAL_STATE.lock().unwrap();
++        on_wasm_stack(1024 * 1024, None, || {
++            let outer = EXECUTION_STACK.with(Cell::get);
++            on_host_stack(|| {
++                assert_eq!(remaining_execution_stack(), None);
++                on_wasm_stack(128 * 1024, None, || {
++                    let inner = remaining_execution_stack().unwrap();
++                    assert!(inner < 128 * 1024);
++                    on_host_stack(|| assert_eq!(remaining_execution_stack(), None));
++                })
++                .unwrap();
++                assert_eq!(EXECUTION_STACK.with(Cell::get), outer);
++                assert_eq!(remaining_execution_stack(), None);
++                let trapped: Result<(), UnwindReason> =
++                    on_wasm_stack(128 * 1024, None, || unsafe {
++                        raise_lib_trap(Trap::lib(TrapCode::IntegerDivisionByZero));
++                    });
++                assert!(trapped.is_err());
++                assert_eq!(EXECUTION_STACK.with(Cell::get), outer);
++                assert_eq!(remaining_execution_stack(), None);
++            });
++            assert_eq!(EXECUTION_STACK.with(Cell::get), outer);
++            assert!(unsafe { checked_execution_stack_remaining() } > 512 * 1024);
++        })
++        .unwrap();
++        assert_eq!(remaining_execution_stack(), None);
++    }
++
++    #[test]
++    fn execution_stack_trap_and_panic_restore_state() {
++        let _lock = GLOBAL_STATE.lock().unwrap();
++        let trapped: Result<(), UnwindReason> = on_wasm_stack(1024 * 1024, None, || unsafe {
++            raise_lib_trap(Trap::lib(TrapCode::IntegerDivisionByZero));
++        });
++        assert!(trapped.is_err());
++        assert_eq!(remaining_execution_stack(), None);
++        on_wasm_stack(1024 * 1024, None, || {
++            let panic = std::panic::catch_unwind(|| {
++                on_host_stack(|| panic!("host callback panic"));
++            });
++            assert!(panic.is_err());
++            assert!(is_on_wasm_stack());
++            assert!(remaining_execution_stack().unwrap() < 1024 * 1024);
++        })
++        .unwrap();
++        assert_eq!(remaining_execution_stack(), None);
++    }
++
++    #[test]
++    fn execution_stack_budget_excludes_guards_and_larger_cached_capacity() {
++        let _lock = GLOBAL_STATE.lock().unwrap();
++        drain_stack_pool();
++        let stack = DefaultStack::new(64 * 1024).unwrap();
++        let usable = stack.usable_size();
++        assert!(usable < stack.size());
++        release_stack(stack);
++        let larger = acquire_stack(usable + 1);
++        assert!(
++            larger.usable_size() > usable,
++            "guard pages are not usable capacity"
++        );
++        release_stack(larger);
++        on_wasm_stack(32 * 1024, None, || {
++            assert!(remaining_execution_stack().unwrap() < 32 * 1024);
++        })
++        .unwrap();
++        assert_eq!(remaining_execution_stack(), None);
++        let bounds = ExecutionStack {
++            lower: 100,
++            upper: 200,
++        };
++        assert_eq!(bounds.remaining(99), None);
++        assert_eq!(bounds.remaining(100), Some(0));
++        assert_eq!(bounds.remaining(200), None);
++        drain_stack_pool();
++    }
++
++    #[test]
++    fn execution_stack_missing_accounting_is_a_terminal_invariant_error() {
++        let _lock = GLOBAL_STATE.lock().unwrap();
++        let result = on_wasm_stack(128 * 1024, None, || unsafe {
++            // Test-only fault injection. The parent's guard must restore state
++            // even though the inner coroutine cannot return normally.
++            EXECUTION_STACK.with(|slot| slot.set(None));
++            checked_execution_stack_remaining()
++        });
++        match result {
++            Err(UnwindReason::UserTrap(error)) => {
++                assert!(error.is::<super::super::ExecutionStackUnavailable>())
++            }
++            other => panic!("expected accounting invariant failure, got {other:?}"),
++        }
++        assert_eq!(EXECUTION_STACK.with(Cell::get), None);
++    }
++
++    #[inline(never)]
++    fn execution_stack_consume_to_hard_floor(depth: usize) {
++        let padding = [0u8; 2048];
++        std::hint::black_box(&padding);
++        unsafe {
++            checked_execution_stack_remaining();
++        }
++        if depth != 0 {
++            execution_stack_consume_to_hard_floor(depth - 1);
++        }
++        std::hint::black_box(&padding);
++    }
++
++    #[test]
++    fn execution_stack_hard_floor_traps_and_nested_outer_bounds_survive() {
++        let _lock = GLOBAL_STATE.lock().unwrap();
++        on_wasm_stack(1024 * 1024, None, || {
++            let outer = EXECUTION_STACK.with(Cell::get);
++            for _ in 0..20 {
++                on_host_stack(|| {
++                    let result = on_wasm_stack(128 * 1024, None, || {
++                        execution_stack_consume_to_hard_floor(1000);
++                    });
++                    assert!(matches!(
++                        result,
++                        Err(UnwindReason::LibTrap(Trap::Lib {
++                            trap_code: TrapCode::StackOverflow,
++                            ..
++                        }))
++                    ));
++                });
++                assert_eq!(EXECUTION_STACK.with(Cell::get), outer);
++                assert!(unsafe { checked_execution_stack_remaining() } > 512 * 1024);
++            }
++        })
++        .unwrap();
++        assert_eq!(EXECUTION_STACK.with(Cell::get), None);
++    }
++
+     /// Saves the current stack size and restores it on drop (even on panic).
+     struct RestoreStackSize(usize);
+     impl Drop for RestoreStackSize {
+diff --git a/src/trap/traphandlers_baremetal.rs b/src/trap/traphandlers_baremetal.rs
+index 28f20508..313a42d4 100644
+--- a/src/trap/traphandlers_baremetal.rs
++++ b/src/trap/traphandlers_baremetal.rs
+@@ -30,6 +30,28 @@ pub struct VMConfig {
+ /// Always 0 in baremetal mode — no coroutine stacks to bound.
+ pub const MAX_STACK_SIZE: usize = 0;
+ 
++/// Native execution-stack accounting is unavailable in baremetal mode.
++pub fn remaining_execution_stack() -> Option<usize> {
++    None
++}
++
++/// No bounded native coroutine stack exists in this backend.
++pub const fn execution_stack_accounting_supported() -> bool {
++    false
++}
++
++/// Baremetal execution does not use Wasm coroutine stacks.
++pub fn is_on_wasm_stack() -> bool {
++    false
++}
++
++/// # Safety
++/// Requires an installed non-returning trap handler and no live destructors.
++/// Capability checks must prevent binding this unsupported operation.
++pub unsafe fn checked_execution_stack_remaining() -> usize {
++    unsafe { raise_user_trap(Box::new(super::ExecutionStackUnavailable)) }
++}
++
+ /// No-op.
+ pub fn drain_stack_pool() {}
+ 
