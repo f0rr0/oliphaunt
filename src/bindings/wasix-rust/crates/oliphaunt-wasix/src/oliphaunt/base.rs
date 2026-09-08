@@ -1135,11 +1135,13 @@ fn collect_regular_files(
 fn validated_embedded_cluster_seed_manifest(
     profile: CatalogProfile,
 ) -> Result<Option<ClusterSeedManifest>> {
-    let Some(seed_manifest) = assets::cluster_seed_manifest(profile) else {
-        return Ok(None);
-    };
-    let Some(seed_archive) = assets::cluster_seed_archive(profile) else {
-        return Ok(None);
+    let (seed_manifest, seed_archive) = match (
+        assets::cluster_seed_manifest(profile),
+        assets::cluster_seed_archive(profile),
+    ) {
+        (None, None) => return Ok(None),
+        (Some(manifest), Some(archive)) => (manifest, archive),
+        _ => bail!("packaged cluster seed requires both its manifest and archive"),
     };
 
     let manifest = CLUSTER_SEED_MANIFEST
@@ -1820,12 +1822,14 @@ fn prepare_memory_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
         .memory_filesystem()
         .expect("memory storage has a virtual filesystem");
 
-    let manifest = validated_embedded_cluster_seed_manifest(profile)?
-        .context("packaged cluster seed is unavailable")?;
-    ensure_module_matches_seed(&runtime_layout.module_path(), &manifest)?;
-    let archive = assets::cluster_seed_archive(profile)
-        .context("packaged cluster seed archive is unavailable")?;
-    unpack_cluster_seed_archive_virtual(archive, filesystem.as_ref())?;
+    if let Some(manifest) = validated_embedded_cluster_seed_manifest(profile)? {
+        ensure_module_matches_seed(&runtime_layout.module_path(), &manifest)?;
+        let archive = assets::cluster_seed_archive(profile)
+            .context("packaged cluster seed archive is unavailable")?;
+        unpack_cluster_seed_archive_virtual(archive, filesystem.as_ref())?;
+    } else {
+        PostgresMod::run_split_initdb(&runtime_layout, &pgdata_storage)?;
+    }
 
     remove_virtual_runtime_state(filesystem.as_ref())?;
     ensure!(
@@ -1901,17 +1905,10 @@ fn prepare_pgdata(
     if try_install_embedded_cluster_seed(paths, &runtime_layout.module_path(), profile)? {
         return Ok(());
     }
-    if std::env::var("OLIPHAUNT_WASIX_DEVELOPMENT_INITDB").as_deref() == Ok("1") {
-        PostgresMod::run_split_initdb(
-            runtime_layout,
-            &PgDataStorage::host_directory(paths.pgdata.clone()),
-        )?;
-    } else {
-        bail!(
-            "the selected packaged {} cluster seed is unavailable; published packages do not silently fall back to initdb",
-            profile.as_str()
-        );
-    }
+    PostgresMod::run_split_initdb(
+        runtime_layout,
+        &PgDataStorage::host_directory(paths.pgdata.clone()),
+    )?;
     ensure!(
         cluster_is_complete(paths),
         "split WASIX initdb finished but did not create a complete PGDATA cluster at {}",

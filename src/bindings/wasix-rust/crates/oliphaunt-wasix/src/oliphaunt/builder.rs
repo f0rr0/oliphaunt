@@ -37,8 +37,8 @@ impl Default for OliphauntBuilder {
 }
 
 impl OliphauntBuilder {
-    /// Create a builder for a memory database initialized from the packaged
-    /// cluster seed.
+    /// Create a builder for a memory database initialized from a packaged
+    /// cluster seed when available, or with `initdb` otherwise.
     pub fn new() -> Self {
         Self::default()
     }
