@@ -218,6 +218,40 @@ capture (`kernel.perf_event_paranoid=4`); no persistent setting was changed.
 Disabling correct identity, statistics, atomics or durability is not a remedy.
 The roughly **1.4–1.6x stock-server INSERT gap remains unresolved**.
 
+### Retained repeat experiment: promising, not promoted
+
+The profile-supported experiment fills single-byte input in bounded 1 MiB
+chunks with interrupt checks, skips empty-input copying, and leaves the
+longer-string algorithm unchanged. It follows the smaller direction discussed
+in the [existing upstream repeat thread](https://www.postgresql.org/message-id/fc35e9a4-09c0-4220-8f6d-3cc371c980c3%40planetscale.com),
+not the unresolved general doubling proposal. No public flag or engine fork
+was added.
+
+All 184 independent children passed query-result and actual-setting oracles.
+Four balanced pairs per storage mode gave these median paired changes versus
+the final configured-identity baseline:
+
+| Case | Memory | Directory |
+| --- | ---: | ---: |
+| Wide temporary INSERT | -41.5% | -33.5% |
+| Logged wide INSERT | -29.0% | -20.7% |
+| Prepared multirow INSERT | +1.8% | +2.2% |
+
+The memory expression-only control improved 73.0%, supporting the intended
+string-construction mechanism. Preconstructed-payload controls still warn
++3.9% memory and +7.6% directory, with mixed pair directions. Unrelated work
+overlapped later cases and then saturated every CPU. These are not grounds for
+a blanket non-regression claim: the candidate is **not in the product series**.
+A staged targeted prepared/preconstructed and A/A recheck needs no rebuild.
+
+Sanitizer/differential checks cover size/count combinations, overflow, chunk
+boundaries, high-bit bytes and injected interruption. Actual Native checks
+cover UTF-8/LATIN1, statement timeout and connection reuse. Actual WASIX timeout
+delivery failed on both builds, as documented separately below; it is not
+counted as a passing cancellation check. Original producer outputs were
+restored, and exact candidate guest/seeds/AOT and baseline binaries remain
+retained outside the repository (`oliphaunt-repeat-20260908/README.md`).
+
 ## Newly established Postmaster limitation
 
 Libc's signal-jump macro now evaluates each argument once while retaining the
