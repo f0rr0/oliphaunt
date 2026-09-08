@@ -52,6 +52,33 @@ the earlier generator change did **not** remove those copies. SQL startup
 defaults and broker-frame limits also still have multiple language owners.
 Change and check every consumer together until those contracts are unified.
 
+## Is this PostgreSQL, our choice, or a platform rule?
+
+There are two questions: **who provides the mechanism**, and **who chooses its
+size**. A standard PostgreSQL setting can still have an Oliphaunt-selected value.
+"Our choice" also does not mean "proven optimization": some choices are safety
+limits, some are compatibility requirements, and some are tuning candidates.
+
+| Inventory family | Origin and purpose | Ordinary PostgreSQL equivalent? |
+| --- | --- | --- |
+| `shared_buffers`, `wal_buffers`, `min_wal_size` | **PostgreSQL mechanisms; Oliphaunt startup policy.** We explicitly choose 128/4/80 MiB. | Yes, the same SQL settings. Matching a normal value is not a custom optimization. |
+| `work_mem`, hash multiplier, maintenance/temp memory, `max_wal_size`, `max_stack_depth` | **PostgreSQL mechanisms/defaults**, unless a caller overrides them. | Yes. Memory for sorting, caching, logging and recursion checking exists in a normal server too. |
+| PostgreSQL's own 8 KiB receive/send buffers | **PostgreSQL implementation choices.** Separate from our bridge buffers even when equal. | Yes, `src/backend/libpq/pqcomm.c`; send storage can grow. |
+| Our 64 KiB batches, 4 MiB stream watermark, 256 KiB channels, initial growing containers and compaction thresholds | **Oliphaunt transport/allocation tuning.** Trade calls/copies against memory and waiting. | A server also buffers I/O, but does not have these SDK bridge constants. Their exact values need workload evidence. |
+| 64/256 work admission counts | **Oliphaunt overload control.** Bounds waiting work, not backend parallelism. | Client pools/server connection admission are analogous, but not the same queues or units. |
+| OPFS bridge sizes, 32 spares, 16 parallel file operations, one cached runtime | **Oliphaunt browser/startup tuning.** Reuse and batching can reduce setup work. | No OPFS or compiled-Wasm module cache in a normal native server. |
+| 64 MiB SQL/tool output and 128 MiB frontend/broker limits | **Oliphaunt safety/API policy.** Rejects oversized retained data. | PostgreSQL has its own message/allocation rules; these particular caps are ours, not SQL limits to attribute to PostgreSQL. |
+| Diagnostic tails, startup/error text and archive/metadata ceilings | **Oliphaunt diagnostics/input protection.** | Similar needs exist elsewhere; our exact limits are not PostgreSQL query-performance settings. |
+| Native backend 8 MiB thread stack, guest 8 MiB C stack, initial 128 MiB linear memory, Postmaster profile sizes | **Embedding/platform capacity choices.** Required resources with chosen budgets, not automatic speedups. | Native PostgreSQL also needs stack/heap space, but not these Wasm allocations or SDK thread defaults. |
+| Wasmer execution stack and reserved-address layout | **Engine-owned mechanism**, with engine/product policy deciding capacity. | An ordinary native server uses its process/OS stack; it has no Wasmer coroutine stack. |
+| Wasm page, TAR/wire headers, identifier/digest lengths, platform alignment | **Format/platform rules**, not free tuning knobs. | PostgreSQL-specific formats are shared; Wasm/TAR/Android rules belong to those respective formats/platforms. |
+| Hash/copy batches and release/source/package-tool envelopes | **Build/install choices**, outside normal SQL execution. | Not PostgreSQL query settings. |
+
+The transport/storage tuning rows are the optimization-*motivated* choices.
+This inventory does not establish that 64 KiB, 32 spares, or any other exact
+selection is the optimum. Safety rows must earn their place through correct
+limits and failure handling, not by producing a faster benchmark.
+
 ## Protocol and streaming
 
 Paths in this table are relative to the repository root. Rust paths abbreviated
@@ -129,15 +156,17 @@ startup settings, unlike compile-time transport constants. Caller settings can
 override the applicable defaults; inspect the running database rather than
 assuming a seed or caller has not changed them.
 
-| Setting | Selection | In simple words; effect |
-| --- | --- | --- |
-| `shared_buffers` | Embedded default 128 MiB | PostgreSQL's reusable data-page cache. More can reduce repeat reads; every database instance needs its own budget. It is **not** the guest's separate 128 MiB initial-memory setting. |
-| `wal_buffers` | Embedded default 4 MiB | Waiting space for the recovery log before writing it out. Can help write bursts; does not remove the need to persist commits. |
-| `min_wal_size` | Embedded default 80 MiB | Target minimum recycled log-file space under normal operation. Mostly a disk-space/file-reuse choice, not 80 MiB of RAM. |
-| `work_mem` | Inherited PostgreSQL default 4 MiB unless overridden | Working space for each sort/hash operation. More can reduce temporary-file work; several operations and sessions can each use it. Hash operations also use `hash_mem_multiplier` (default 2). |
-| `maintenance_work_mem` | Inherited default 64 MiB unless overridden | Working space for jobs such as index creation and vacuum. Can help those jobs, not a simple SELECT round trip. |
-| `temp_buffers` | Inherited default 8 MiB with standard blocks | Cache for temporary tables, used as needed. Separate from sorting memory. |
-| `max_wal_size` | Inherited default 1 GiB unless overridden | Soft target affecting when checkpoints happen, not a hard disk quota. More can spread checkpoint work but needs disk space and can increase recovery work. |
+| Setting | Oliphaunt embedded selection | PGlite 0.5.8 observed | Ordinary PostgreSQL / simple effect |
+| --- | --- | --- | --- |
+| `shared_buffers` | Explicit 128 MiB default | 128 MiB, configuration file | Standard setting, typically 128 MiB. Reuses data pages; larger caches cost memory per instance. Not the separate 128 MiB initial Wasm memory. |
+| `wal_buffers` | Explicit 4 MiB default | 4 MiB, automatically selected (`boot_val=-1`) | Standard setting; normally auto-sized. Same value here, different selection policy: our fixed 4 MiB does not automatically follow a caller's larger cache. Holds recovery-log writes temporarily. |
+| `min_wal_size` | Explicit 80 MiB default | 80 MiB, configuration file | Standard default 80 MiB. Recycled log-file space, not RAM. |
+| `work_mem` | Inherited 4 MiB unless overridden | 4 MiB | Standard default. Per-sort/hash working space; several operations/sessions multiply use. |
+| `hash_mem_multiplier` | Inherited 2 unless overridden | 2 | Standard default; hash operations can use twice `work_mem`. Not a separate fixed allocation. |
+| `maintenance_work_mem` | Inherited 64 MiB unless overridden | 64 MiB | Standard default. Working space for index creation/vacuum, not a simple SELECT speed setting. |
+| `temp_buffers` | Inherited 8 MiB with standard blocks | 8 MiB | Standard default. Temporary-table cache used as needed, not sorting memory. |
+| `max_wal_size` | Inherited 1 GiB unless overridden | 1 GiB, configuration file | Standard default. Soft checkpoint-related target, not a hard disk quota. |
+| `max_stack_depth` | PostgreSQL guard; ordinary startup commonly 2 MiB, inspect actual instance | 2 MiB | Standard SQL guard, not an allocated stack. Platform limits can affect the selected default. |
 
 PostgreSQL owns further settings not overridden by our runtime; this guide does
 not duplicate its complete configuration manual. See its [memory settings](https://www.postgresql.org/docs/18/runtime-config-resource.html)
@@ -145,6 +174,72 @@ and [WAL settings](https://www.postgresql.org/docs/18/runtime-config-wal.html).
 For actual values use `SHOW shared_buffers`, `SHOW wal_buffers`, `SHOW work_mem`,
 and the other setting names. These descriptions explain potential effects;
 this audit did not benchmark alternative settings.
+
+## PGlite comparison: embedding sizes
+
+Checked 2026-09-08 against the installed **`@electric-sql/pglite@0.5.8`**
+distribution and its source maps. A fresh in-memory Node 24.18.0 instance
+reported PostgreSQL **18.3**; Oliphaunt targets **18.4**. The SQL column above
+comes from that running instance's `pg_settings` (including `unit`, `source`
+and `boot_val`), not guesses from a build script. No directory/browser replay
+or performance comparison was run for this documentation update.
+
+Build-source evidence is separately pinned: PGlite repository snapshot
+`ae182ff8bd5ba4acb887d6c925d607a1498aa0b5`, PostgreSQL submodule
+`b133782cd759f08b3aeb263b80a963b39c7b7af1`. These source snapshots are not claimed
+to prove the exact compiler provenance of the published npm binary.
+
+| Topic | Oliphaunt | PGlite counterpart | What the comparison means |
+| --- | --- | --- | --- |
+| Guest C/shadow stack | 8 MiB link setting | 8 MiB in pinned backend link recipe [P1] | Same kind of stack and same selected size. Neither measures the host engine's execution stack. |
+| Initial guest memory | 128 MiB link setting | 128 MiB default, caller `initialMemory` option [P2] | Comparable starting capacity, not a database-size limit. Our probe already grew to 197,722,112 bytes after startup. |
+| Maximum guest memory | Product/engine-specific; Postmaster's 256 MiB profile is not the embedded default | 32,768 Wasm pages = 2 GiB in JS constructor [P2] | Do not compare a different Oliphaunt product's cap as if both ran under it. Native PostgreSQL has no equivalent one-piece Wasm ceiling. |
+| Native execution stack | Wasmer's separate 1 MiB default in the retained Rust runtime; Postmaster selects its own size | JS engine controls native Wasm execution; no corresponding numeric capacity selected in inspected PGlite SDK | No valid "1 MiB versus 8 MiB" comparison: the latter is PGlite's *other* stack. |
+| Growing result storage | Guest/native bridge output starts at 8 KiB | JS receive container starts at 1 MiB; grows, and resets to default on a later raw call [P3] | Similar job at different layers. Smaller starts save space for small work; larger starts avoid some growth. Both may also collect decoded rows. |
+| Collected-output ceiling | Enforced 64 MiB WASIX cap; native buffer has no matching cap | A constant named `MAX_BUFFER_SIZE` is 1 GiB, but see caveat below [P3] | Not evidence for a reliably enforced 1 GiB PGlite limit. |
+| Callback/read batches | Our 64 KiB callback maximum and separate reader batches | PGlite receives bytes through the guest callback; no matching fixed 64 KiB SDK callback cap found [P3] | PGlite's 1 MiB receive container is **not** its callback batch size. |
+| PostgreSQL's internal protocol buffers | Separate from our bridge allocations | Pinned PGlite PostgreSQL still defines 8 KiB receive and initial send buffers [P4] | These come from PostgreSQL; matching 8 KiB bridge starts do not make them the same allocation. |
+| 4 MiB queue / 256 KiB channels | Our native streaming / browser-tool transports | No direct matching fixed-byte waiting room found in inspected PGlite core | Compare streaming/copy counts and retained memory, not invented size parity. |
+| 64/256 ordinary-work limits | Our async/SDK admission policies | Query/transaction mutexes serialize PGlite work; no corresponding numeric admission bound found [P3] | A mutex orders work; it is not itself a bounded request queue. |
+| Browser filesystem transfer | 1 MiB bridge batch, 64 KiB directory page; 8 KiB starting staged files | OPFS AHP reads/writes requested file slices using synchronous access handles [P5] | Same filesystem problem, different route. No matching 1 MiB bridge/staging budget found there. |
+| OPFS spare files | 32 maintained spares | Configurable 1,000 initially, 100 maintained [P5] | Directly comparable concept, not identical lifecycle. PGlite spends more setup/resources preparing spare files; fewer spares can mean more later replenishment. |
+| OPFS batch concurrency | 16 helper operations | Pool work gathered with `Promise.all`; no matching 16-operation cap in inspected implementation [P5] | More parallel setup may help or contend for the same storage. Does not add SQL execution parallelism. |
+| Cached prepared runtime | One retained identity | URL-keyed compiled-module cache; no numeric eviction bound found [P6] | Related reuse policy, not identical cached objects. More retained identities can avoid setup while retaining more memory. |
+| Whole backup/archive handling | Initial containers, extraction ceilings and per-role checks documented below | TAR/compression helpers also gather whole data/chunks; no matching set of our archive ceilings found [P7] | Neither whole-result path becomes constant-memory just because reads are chunked. |
+| Diagnostics, broker/tool caps, carrier proofs, build/download envelopes | Our product-specific policies | No directly comparable shared numeric contract established in this review | Mark as our policy, not a PGlite or PostgreSQL performance disadvantage. |
+| Fixed-format sizes | Wasm page, TAR block, PostgreSQL page and headers | Same relevant formats; probe observed 8 KiB PG pages and 16 MiB WAL segments | Format compatibility is not an optimization. Check the cluster's WAL segment size rather than copying a test fixture. |
+
+**PGlite output-limit caveat:** in the inspected 0.5.8 `#defaultOnData`, the
+allocation length is computed before `requiredSize` is adjusted to the named
+maximum; the allocation uses that earlier length. Source inspection therefore
+does not establish a hard 1 GiB ceiling. No giant allocation test was attempted
+on this disk/memory-constrained host. This is a source-level finding, not a
+measured failure threshold.
+
+**Durability caveat:** the PGlite probe reports SQL `fsync=off` (its startup uses
+`-F`). PGlite also has filesystem-level synchronization and `relaxedDurability`
+handling. Do not infer identical persistence guarantees—or no persistence—from
+SQL settings alone. The same WAL buffer size cannot explain or normalize the
+cost of commits across different storage implementations. No durability setting
+was changed here.
+
+### PGlite evidence and refreshing the comparison
+
+- [P1 — backend linker settings](https://github.com/electric-sql/postgres-pglite/blob/b133782cd759f08b3aeb263b80a963b39c7b7af1/build-pglite.sh#L153).
+- [P2 — pinned JS memory construction](https://github.com/electric-sql/pglite/blob/ae182ff8bd5ba4acb887d6c925d607a1498aa0b5/packages/pglite/src/pglite.ts#L317).
+- [P3 — published 0.5.8 core source map](https://unpkg.com/@electric-sql/pglite@0.5.8/dist/index.js.map), original `../src/pglite.ts`: receive/growth code, raw execution, mutexes and startup flags.
+- [P4 — pinned PostgreSQL protocol implementation](https://github.com/electric-sql/postgres-pglite/blob/b133782cd759f08b3aeb263b80a963b39c7b7af1/src/backend/libpq/pqcomm.c#L119).
+- [P5 — published OPFS AHP source map](https://unpkg.com/@electric-sql/pglite@0.5.8/dist/fs/opfs-ahp.js.map), original `../../src/fs/opfs-ahp.ts`.
+- [P6 — published module-cache source map](https://unpkg.com/@electric-sql/pglite@0.5.8/dist/chunk-NNS5RQRF.js.map), original `../../pglite-utils/src/utils.ts`.
+- [P7 — published TAR helpers source map](https://unpkg.com/@electric-sql/pglite@0.5.8/dist/chunk-DDJLRBDX.js.map), original `../src/fs/tarUtils.ts`.
+
+To refresh, pin the package version, open a fresh instance with no startup
+overrides, and query `pg_settings` for the names above. Convert `8kB` units to
+bytes before comparing: `shared_buffers=16384` is 128 MiB, not 16 KiB.
+Record storage mode, PostgreSQL version and caller overrides. Keep package
+observations separate from newer source-main settings. "No counterpart found"
+means no equivalent in the inspected path, not a claim about every PGlite
+extension, third-party proxy or future release.
 
 ## Stacks are a different resource
 
