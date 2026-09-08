@@ -262,6 +262,24 @@ counted as a passing cancellation check. Original producer outputs were
 restored, and exact candidate guest/seeds/AOT and baseline binaries remain
 retained outside the repository (`oliphaunt-repeat-20260908/README.md`).
 
+## Windows/MSVC merge blocker
+
+Hosted Windows AOT serialization, asset validation and installation succeeded
+at `8e45be7e`, but the Rust regression process crashed during
+`savepoints_error_recovery_and_indexed_updates`. The consumed Wasmer 7.2.1
+MSVC exception implementation explicitly panics in `throw` (and its other
+exception operations). This guest requires real Wasm exception handling for
+PostgreSQL error recovery; successful serialization does not prove that support.
+
+Linux x64, Linux ARM64 and macOS ARM64 AOT jobs passed on that head. They do not
+qualify Windows. The Windows failure is **not waived**, and no target, test or
+error-recovery check is removed. Restoring the unsafe host-longjmp workaround,
+catching a host panic, or silently switching to Native is not a repair.
+Working MSVC exception support or a separately qualified compatible guest is
+required before this consolidation can be treated as merge-ready across the
+current supported targets. Issue #201 tracks this blocker separately from the
+optional repeat experiment and the existing timeout limitations.
+
 ## Newly established Postmaster limitation
 
 Libc's signal-jump macro now evaluates each argument once while retaining the
