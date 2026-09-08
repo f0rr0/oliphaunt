@@ -20,6 +20,22 @@ const TOOL = "verify-release-commit.mjs";
 const ROOT = path.resolve(import.meta.dir, "../..");
 const SEMVER = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:[.](?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:[.][0-9A-Za-z-]+)*)?$/u;
 const CARGO_DEPENDENCY_TABLES = new Set(["dependencies", "dev-dependencies", "build-dependencies"]);
+// Validate historical release commits made before MDX used generated version
+// tokens. These rules are intentionally absent from future release sync.
+const LEGACY_DOC_VERSION_RULES = ["index", "guide"].flatMap((page) => [
+  {
+    product: "oliphaunt-swift",
+    file: `src/docs/content/sdk/swift/${page}.mdx`,
+    prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "',
+    suffix: '")',
+  },
+  {
+    product: "oliphaunt-kotlin",
+    file: `src/docs/content/sdk/kotlin/${page}.mdx`,
+    prefix: 'implementation("dev.oliphaunt:oliphaunt-android:',
+    suffix: '")',
+  },
+]);
 let cachedDerivedRules;
 
 function error(message) {
@@ -217,7 +233,7 @@ function derivedVersionRules() {
     }
   }
 
-  for (const { file, product, prefix, suffix } of SDK_INSTALL_VERSION_RULES) {
+  for (const { file, product, prefix, suffix } of [...SDK_INSTALL_VERSION_RULES, ...LEGACY_DOC_VERSION_RULES]) {
     addText(file, { type: "embedded", sourceProduct: product, prefix, suffix });
   }
 
@@ -623,7 +639,10 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = "HEAD", products })
     throw error("release commit must change .release-please-manifest.json");
   }
   const versions = {};
-  const derivedFiles = new Set(releaseDerivedPathInventory());
+  const derivedFiles = new Set([
+    ...releaseDerivedPathInventory(),
+    ...LEGACY_DOC_VERSION_RULES.map(({ file }) => file),
+  ]);
   const allowedChangedFiles = new Set([".release-please-manifest.json", ...derivedFiles]);
   const fieldsByFile = new Map();
   const changelogs = new Set();
