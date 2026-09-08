@@ -51,6 +51,28 @@ function realSelection(changedFile) {
 }
 
 describe("normal publication plan", () => {
+  test("SDK documentation does not select releases, while mixed source changes still do", () => {
+    const graph = loadGraph("normal-publication-plan.test");
+    const files = [
+      "src/sdks/rust/README.md",
+      "src/sdks/js/README.md",
+      "src/sdks/swift/README.md",
+      "src/sdks/kotlin/README.md",
+      "src/sdks/react-native/README.md",
+      "src/bindings/wasix-ts/README.md",
+      "src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md",
+      "src/sdks/rust/docs/guide.mdx",
+    ];
+    expect(buildPlan(graph, files).releaseProducts).toEqual([]);
+    expect(buildPlan(graph, [...files, "src/sdks/rust/src/lib.rs"]).releaseProducts)
+      .toEqual(["oliphaunt-rust"]);
+    const explicit = {
+      ...graph,
+      shared_release_sources: [{ files: [files[0]], products: ["oliphaunt-rust"] }],
+    };
+    expect(buildPlan(explicit, files).releaseProducts).toEqual(["oliphaunt-rust"]);
+  });
+
   test("executes exact frozen carriers in lock-derived dependency order", () => {
     const value = lock([
       carrier({ id: "cargo:runtime", product: "runtime", publishOrder: 0 }),
