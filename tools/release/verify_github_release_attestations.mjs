@@ -1284,6 +1284,13 @@ function stableStringify(value) {
 
 function canonicalSigstoreBundleForGhComparison(bundle) {
   const canonical = structuredClone(bundle);
+  // The signing action emits an empty protobuf key ID; gh omits that default.
+  // Nonempty key IDs and every signature byte must still compare exactly.
+  if (Array.isArray(canonical?.dsseEnvelope?.signatures)) {
+    for (const signature of canonical.dsseEnvelope.signatures) {
+      if (signature?.keyid === "") delete signature.keyid;
+    }
+  }
   const timestampVerificationData =
     canonical?.verificationMaterial?.timestampVerificationData;
   if (
