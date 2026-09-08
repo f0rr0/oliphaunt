@@ -77,6 +77,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      mutex: "docs-generated-files"
+      # Next build already validates content and typechecks in CI.
+      runInCI: false
   build:
     tags: ["build", "quality", "static"]
     command: "pnpm --dir src/docs run build"
@@ -115,6 +118,7 @@ tasks:
     options:
       cache: local
       runFromWorkspaceRoot: true
+      mutex: "docs-generated-files"
   smoke:
     tags: ["quality", "runtime", "smoke"]
     command: "pnpm --dir src/docs run smoke"
@@ -168,3 +172,4 @@ tasks:
     options:
       cache: local
       runFromWorkspaceRoot: true
+      mutex: "docs-generated-files"

@@ -8,6 +8,7 @@
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
     "outDir": "lib",
+    "rewriteRelativeImportExtensions": true,
     "rootDir": "src",
     "skipLibCheck": true,
     "strict": true,

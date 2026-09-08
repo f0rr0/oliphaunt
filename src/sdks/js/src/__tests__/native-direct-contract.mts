@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { OliphauntClient, OliphauntDatabase, OpenConfig } from '../types.js';
 
-export async function assertNativeDatabaseContract(Oliphaunt, config, label) {
+export async function assertNativeDatabaseContract(
+  Oliphaunt: OliphauntClient,
+  config: Omit<OpenConfig, 'storage'>,
+  label: string,
+) {
   const root = await mkdtemp(join(tmpdir(), `oliphaunt-js-${label}-`));
-  let database;
+  let database: OliphauntDatabase | undefined;
   try {
     database = await Oliphaunt.open({
       ...config,
@@ -40,7 +45,7 @@ export async function assertNativeDatabaseContract(Oliphaunt, config, label) {
   }
 }
 
-async function assertStructuredQueryContract(database, label) {
+async function assertStructuredQueryContract(database: OliphauntDatabase, label: string) {
   const sql = `SELECT '${label}'::text AS value`;
   const decoded = await database.query(sql);
   assert.deepEqual(decoded.rows, [{ value: label }]);
@@ -52,7 +57,7 @@ async function assertStructuredQueryContract(database, label) {
   assert.equal(raw.getText(0, 'value'), label);
 }
 
-async function assertOrmSurfaceContract(database, label) {
+async function assertOrmSurfaceContract(database: OliphauntDatabase, label: string) {
   const decoded = await database.query(
     'SELECT $1::text AS label, $2::int8 AS wide, $3::jsonb AS document, $4::int4[] AS numbers',
     [label, 9007199254740993n, { ok: true }, [1, 2, 3]],
