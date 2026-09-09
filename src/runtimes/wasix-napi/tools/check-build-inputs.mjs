@@ -156,9 +156,6 @@ function portableInputs(portableRoot) {
     regularFile(path.join(portableRoot, seedManifest), `${profile} cluster seed manifest`);
   }
 
-  return { name, path: repoPath(file, `portable WASIX ${name} module`), sha256: sha256(file) };
-  });
-
   return {
     manifest,
     provenance: {
@@ -296,7 +293,7 @@ function extensionInputs(extensionRoot, target, targetTriple, sourceFingerprint)
   }).sort((left, right) => compareText(left.product, right.product));
 }
 
-function buildInventory(options) {
+export function buildInventory(options) {
   const portableRoot = path.resolve(options["portable-root"]);
   const aotRoot = path.resolve(options["aot-root"]);
   const extensionRoot = path.resolve(options["extension-root"]);
@@ -339,9 +336,11 @@ function main() {
   console.log(`WASIX Node-API build inputs validated: ${repoPath(destination, "build input inventory")}`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`${PREFIX}: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`${PREFIX}: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 }
