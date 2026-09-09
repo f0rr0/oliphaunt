@@ -49,6 +49,13 @@ function effects(paths) {
   };
 }
 
+test('an empty Moon selection requires no product tasks or releases', () => {
+  const result = effects([]);
+  assert.deepEqual(result.directTasks, []);
+  assert.deepEqual(result.tasks, []);
+  assert.deepEqual(result.releaseProducts, []);
+});
+
 function actionTargets(target) {
   const result = spawnSync(moonCommand(), ['task-graph', target, '--json'], {
     cwd: ROOT,

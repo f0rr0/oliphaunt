@@ -1,11 +1,11 @@
-export function affectedNames(value) {
+export function affectedNames(value = {}) {
   if (value === null || Array.isArray(value) || typeof value !== 'object') {
     throw new TypeError('Moon affected query must return an object');
   }
   return Object.keys(value).sort();
 }
 
-export function triggeringProjectNames(value) {
+export function triggeringProjectNames(value = {}) {
   affectedNames(value);
   return Object.entries(value)
     .filter(([, detail]) => {
@@ -16,7 +16,7 @@ export function triggeringProjectNames(value) {
     .sort();
 }
 
-export function triggeringTaskNames(value) {
+export function triggeringTaskNames(value = {}) {
   affectedNames(value);
   return Object.entries(value)
     .filter(([, detail]) => {

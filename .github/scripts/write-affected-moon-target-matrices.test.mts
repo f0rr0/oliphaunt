@@ -58,7 +58,9 @@ set -eu
 printf '%s\\n' "$*" >> "$QUERY_LOG"
 case "$1" in
   --version) printf 'moon %s\\n' "$QUERY_VERSION" ;;
-  query) cat "$QUERY_FILE"; exit "\${QUERY_EXIT:-0}" ;;
+  query)
+    if read -r unexpected; then echo "query inherited stdin: $unexpected" >&2; exit 2; fi
+    cat "$QUERY_FILE"; exit "\${QUERY_EXIT:-0}" ;;
   task-graph) cat "$QUERY_GRAPH" ;;
   *) exit 2 ;;
 esac
@@ -71,6 +73,7 @@ esac
       return spawnSync('bash', [WRITER], {
         cwd: ROOT,
         encoding: 'utf8',
+        input: 'caller input must not replace the requested commit range\n',
         env: {
           ...process.env,
           GITHUB_OUTPUT: output,

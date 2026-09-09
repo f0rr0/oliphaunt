@@ -17,6 +17,6 @@ head="${MOON_HEAD:-}"
 if [[ -n "${base//[[:space:]]/}" && -n "${head//[[:space:]]/}" ]]; then
   query_args+=(--affected --upstream none --downstream direct)
 fi
-"$moon_bin" "${query_args[@]}" >"$query_dir/selected.json"
+"$moon_bin" "${query_args[@]}" </dev/null >"$query_dir/selected.json"
 "$moon_bin" task-graph --json >"$query_dir/graph.json"
 node .github/scripts/write-affected-moon-target-matrices.mts "$query_dir/selected.json" "$query_dir/graph.json"

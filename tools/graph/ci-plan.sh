@@ -17,6 +17,6 @@ export OLIPHAUNT_MOON_AFFECTED_FILE="$plan_dir/affected.json"
 if [[ $# == 0 && ${GITHUB_EVENT_NAME:-} != workflow_dispatch ]]; then
   : "${MOON_BASE:?MOON_BASE is required for affected CI planning}"
   : "${MOON_HEAD:?MOON_HEAD is required for affected CI planning}"
-  "$moon_bin" query affected --upstream none --downstream direct > "$OLIPHAUNT_MOON_AFFECTED_FILE"
+  "$moon_bin" query affected --upstream none --downstream direct </dev/null > "$OLIPHAUNT_MOON_AFFECTED_FILE"
 fi
 bash tools/dev/bun.sh tools/graph/ci_plan.mts "$@"
