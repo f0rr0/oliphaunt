@@ -95,6 +95,10 @@ kover {
             includes {
                 classes(
                     "dev.oliphaunt.GeneratedExtensionsKt",
+                    "dev.oliphaunt.ExtensionDescriptor",
+                    "dev.oliphaunt.Extensions",
+                    "dev.oliphaunt.IcuData",
+                    "dev.oliphaunt.ResourcesKt",
                     "dev.oliphaunt.Oliphaunt*",
                     "dev.oliphaunt.Query*",
                 )

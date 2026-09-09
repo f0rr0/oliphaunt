@@ -1,3 +1,4 @@
+import COliphaunt
 import Foundation
 @testable @_spi(ExtensionSupport) import Oliphaunt
 import Testing
@@ -691,4 +692,41 @@ func explicitResourceSelectionKeepsDependenciesAndRejectsConflictingVersions() t
         OliphauntExtension(sqlName: "vector", product: "oliphaunt-extension-vector", version: "0.8.3"),
     ])
     #expect(throws: OliphauntError.self) { try configuration.prepareExtensionResources() }
+}
+
+@Test
+func staticExtensionRegistrationValidatesDescriptorsAndRollsBackRejectedResources() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {
+        OliphauntRuntimeResources.unregisterPackagedExtensionResource(sqlName: "vector", resourceRoot: root)
+        try? FileManager.default.removeItem(at: root)
+    }
+    try makeExtensionCompositionFragment(
+        at: root, product: "oliphaunt-extension-vector", sqlName: "vector", version: "0.8.2",
+        createsExtension: true, dependencies: [], nativeModuleStem: "vector",
+        nativeDependencies: [], sharedPreloadLibraries: []
+    )
+    func register(_ stem: String?, _ descriptor: UnsafePointer<OliphauntStaticExtension>?) throws {
+        try OliphauntStaticExtensionRegistry.register(
+            product: "oliphaunt-extension-vector", sqlName: "vector", version: "0.8.2",
+            dependencies: [], nativeDependencies: [], sharedPreloadLibraries: [],
+            nativeModuleStem: stem, resourceRoot: root, descriptor: descriptor
+        )
+    }
+    #expect(throws: OliphauntError.self) { try register("vector", nil) }
+    try "vector".withCString { name throws in
+        // A missing magic callback must be rejected even when liboliphaunt is installed.
+        var descriptor = OliphauntStaticExtension(abi_version: UInt32(OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION), name: name, magic: nil, init: nil, symbols: nil, symbol_count: 0, reserved_flags: 0)
+        try withUnsafePointer(to: &descriptor) { pointer throws in
+            #expect(throws: OliphauntError.self) { try register(nil, pointer) }
+            #expect(throws: OliphauntError.self) { try register("wrong", pointer) }
+            #expect(throws: OliphauntError.self) { try register("vector", pointer) }
+            // Native rejection must remove the newly inserted resource as well as its descriptor.
+            #expect(try OliphauntRuntimeResources.registerPackagedExtensionResource(
+                product: "oliphaunt-extension-vector", version: "0.8.2", sqlName: "vector",
+                dependencies: [], nativeDependencies: [], nativeModuleStem: "vector",
+                sharedPreloadLibraries: [], resourceRoot: root
+            ))
+        }
+    }
 }

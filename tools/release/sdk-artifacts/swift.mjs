@@ -16,6 +16,7 @@ import {
   assertReleaseNoticesInDirectory,
   stageReleaseNotices,
 } from "../release-notices.mjs";
+import { contribCarrierDescriptor, extensionArtifactProductRoot } from "../release-artifact-targets.mjs";
 import { productCompatibilityVersion } from "../release-graph.mjs";
 import { validateSwiftSourceReleaseContract } from "../swift-source-carrier-contract.mjs";
 import {
@@ -49,6 +50,8 @@ export async function stageArtifacts(artifactRoot, workRoot) {
     "tools/release/render_swiftpm_release_package.mjs",
     "--asset-dir",
     assetDir,
+    "--contrib-manifest",
+    path.join(ROOT, extensionArtifactProductRoot(contribCarrierDescriptor().artifactProduct, "native", "target/mobile-extension-artifacts"), "extension-artifacts.json"),
     "--output",
     path.join(artifactRoot, "Package.swift.release"),
     "--generated-tree",

@@ -1471,6 +1471,7 @@ jobs:
     needs:
       - affected
       - liboliphaunt-native-ios-abi
+      - mobile-extension-packages
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'swift-sdk-package') }}
     runs-on: macos-26
     timeout-minutes: 90
@@ -1494,10 +1495,16 @@ jobs:
           name: liboliphaunt-native-abi-compatible-release-assets-ios-datum64
           path: target/liboliphaunt/abi-compatible-release-assets/ios-datum64
 
+      - name: Download mobile extension package artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-mobile-extension-package-artifacts
+          path: target/mobile-extension-artifacts
+
       - name: Build Swift SDK package artifacts
         env:
           OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: ${{ github.workspace }}/target/liboliphaunt/abi-compatible-release-assets/ios-datum64
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-native:finalize-runtime-ios-abi"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-native:finalize-runtime-ios-abi", "extension-packages:package-mobile"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh swift-sdk-package
 
       - name: Upload Swift SDK package artifacts

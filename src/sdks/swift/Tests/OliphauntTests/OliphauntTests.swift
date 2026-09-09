@@ -2634,3 +2634,41 @@ private func makeCompletePgdata(at pgdata: URL) throws {
     try Data("18\n".utf8).write(to: pgdata.appendingPathComponent("PG_VERSION"))
     try Data("control".utf8).write(to: pgdata.appendingPathComponent("global/pg_control"))
 }
+
+@Test
+func explicitResourceDescriptorsPrepareOnceAndRejectConflictingVersions() throws {
+    let calls = ChunkBox()
+    let vector = OliphauntExtension(
+        sqlName: "vector", product: "oliphaunt-extension-vector", version: "0.8.2",
+        prepare: { calls.append(Data("vector".utf8)) }
+    )
+    let icu = OliphauntIcuData(version: "0.2.0", resourceDirectory: URL(fileURLWithPath: "/resources/icu"))
+    let configuration = OliphauntConfiguration(extensions: [vector, .init(
+        sqlName: "pg_trgm", product: "oliphaunt-extension-contrib-pg18",
+        prepare: { calls.append(Data("pg_trgm".utf8)) }
+    ), vector], icu: icu)
+    try configuration.prepareExtensionResources()
+    #expect(configuration.extensionSqlNames == ["vector", "pg_trgm", "vector"])
+    #expect(configuration.icu == icu)
+    #expect(calls.snapshot() == [Data("pg_trgm".utf8), Data("vector".utf8)])
+    #expect(vector == OliphauntExtension(sqlName: "vector", product: vector.product, version: "0.8.2"))
+    let conflicting = OliphauntExtension(sqlName: "vector", product: vector.product, version: "0.8.3")
+    #expect(vector != conflicting)
+    #expect(throws: OliphauntError.self) {
+        try OliphauntConfiguration(extensions: [vector, conflicting]).prepareExtensionResources()
+    }
+    #expect(calls.snapshot().count == 2)
+    for invalid in [
+        OliphauntExtension(sqlName: "../vector", product: vector.product, version: "0.8.2"),
+        OliphauntExtension(sqlName: "vector", product: "unrelated", version: "0.8.2"),
+        OliphauntExtension(sqlName: "vector", product: vector.product),
+        OliphauntExtension(sqlName: "vector", product: vector.product, version: ""),
+    ] {
+        #expect(throws: OliphauntError.self) { try invalid.prepare() }
+    }
+    let unavailable = OliphauntExtension(sqlName: "vector", product: vector.product, version: "0.8.2") {
+        throw OliphauntError.engine("missing selected package")
+    }
+    #expect(throws: OliphauntError.self) { try unavailable.prepare() }
+    #expect(throws: OliphauntError.self) { try selectedOliphauntExtensions(["unknown"]) }
+}

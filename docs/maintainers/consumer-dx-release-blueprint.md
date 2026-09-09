@@ -1,6 +1,6 @@
 # SDK resource packaging contract
 
-The approved next distribution contract makes standard seeds optional and uses
+A separate, deferred distribution change would make standard seeds optional and use
 `initdb` by default. The [cluster-seed transition](../architecture/cluster-seeds-and-icu.md#optional-download-transition)
 records the remaining native-mobile/browser initialization and carrier work.
 The bundled-standard-seed descriptions below describe the current implementation,

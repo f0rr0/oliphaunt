@@ -1080,7 +1080,7 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   validateWorkflowConsumer(workflow, "extension-packages", ["extension-artifacts-native", "extension-artifacts-wasix", "liboliphaunt-wasix-aot"], [...nativeExtensionArtifacts, ...wasixExtensionArtifacts, ...extensionAot]);
   validateWorkflowConsumer(workflow, "mobile-extension-packages", ["extension-artifacts-native"], nativeExtensionArtifacts);
   const abiCompatibleIosRelease = ["liboliphaunt-native-abi-compatible-release-assets-ios-datum64"];
-  validateWorkflowConsumer(workflow, "swift-sdk-package", ["liboliphaunt-native-ios-abi"], abiCompatibleIosRelease);
+  validateWorkflowConsumer(workflow, "swift-sdk-package", ["liboliphaunt-native-ios-abi", "mobile-extension-packages"], [...abiCompatibleIosRelease, "oliphaunt-mobile-extension-package-artifacts"]);
   validateWorkflowConsumer(workflow, "react-native-sdk-package", ["liboliphaunt-native-ios-abi"], abiCompatibleIosRelease);
   validateWorkflowConsumer(workflow, "mobile-build-android", ["liboliphaunt-native-android", "liboliphaunt-native-android-abi", "mobile-extension-packages", "kotlin-sdk-package", "react-native-sdk-package"], [
     ...matrixRows.reactNativeAndroid.map(({ target }) => `liboliphaunt-native-target-${target}`),

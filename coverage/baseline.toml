@@ -40,6 +40,13 @@ owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/extensions.rs"
+reason = "generated const descriptors contain no executable lines for LLVM instrumentation"
+evidence = "extensions:lint validates the generated model; sdk_extensions tests validate descriptor selection"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-rust.waivers]]
 path = "src/sdks/rust/src/lib.rs"
 reason = "crate root is a re-export surface with no durable executable behavior to line-cover"
 evidence = "cargo doctests and SDK package-shape checks"
@@ -75,6 +82,13 @@ exclude_globs = [
   "target/**",
 ]
 per_file_line_warning = 50.0
+
+[[products.oliphaunt-swift.waivers]]
+path = "src/sdks/swift/Sources/Oliphaunt/OliphauntExtensions.swift"
+reason = "generated static descriptor and dependency tables have no Swift coverage instrumentation"
+evidence = "extensions:lint validates generated metadata; explicit resource selection tests cover dependency closure"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
 
 [[products.oliphaunt-swift.waivers]]
 path = "src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift"

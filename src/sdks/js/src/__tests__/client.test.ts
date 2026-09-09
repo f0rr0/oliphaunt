@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'vitest';
 
 import { createOliphauntClient } from '../client.js';
+import { extensions as contrib } from '../extensions.js';
 import type {
   NativeBinding,
   NativeBindingOptions,
@@ -96,7 +97,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     return { state: 'closed' };
   };
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
-  const extensions: string[] = [];
+  const extensions: Array<typeof contrib.pg_trgm> = [];
   const config: OpenConfig = {
     topology: 'broker',
     storage: { kind: 'directory', path: root },
@@ -113,7 +114,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     config.username = 'after';
     config.database = 'after';
     startupGUCs.work_mem = '64MB';
-    extensions.push('vector');
+    extensions.push(contrib.pg_trgm);
 
     const database = await opening;
     assert.equal(direct.openCalls.length, 0);
@@ -196,7 +197,7 @@ test('snapshots server storage and nested configuration before asynchronous work
   const storage = { kind: 'directory' as const, path: root };
   const listen = { transport: 'tcp' as const, port: 15432 };
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
-  const extensions: string[] = [];
+  const extensions: Array<typeof contrib.pg_trgm> = [];
   const config: ServerOpenConfig = { storage, listen, startupGUCs, extensions };
   const client = createOliphauntClient(() => new FakeBinding(), { server: serverRuntime });
 
@@ -205,7 +206,7 @@ test('snapshots server storage and nested configuration before asynchronous work
     storage.path = movedRoot;
     listen.port = 25432;
     startupGUCs.work_mem = '64MB';
-    extensions.push('vector');
+    extensions.push(contrib.pg_trgm);
 
     const database = await opening;
     assert.equal(database.connectionString, 'postgresql://postgres@127.0.0.1:15432/postgres');

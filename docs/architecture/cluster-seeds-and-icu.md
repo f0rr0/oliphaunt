@@ -1,12 +1,15 @@
 # Cluster seeds and ICU
 
 Status: current distribution contract, with an optional-download transition
-approved below; updated 2026-09-09.
+deferred below; updated 2026-09-09.
 
 This document is the source of truth for preinitialized PostgreSQL clusters,
 ICU data, their public selection, and their release qualification.
 
 ## Optional-download transition
+
+This transition is deferred from the SDK consistency change. Standard seeds
+remain bundled; ICU data and its matching seeds remain optional.
 
 The intended package contract is:
 

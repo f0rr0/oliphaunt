@@ -161,6 +161,7 @@ tasks:
     deps:
       - "oliphaunt-swift:package"
       - "liboliphaunt-native:finalize-runtime-ios-abi"
+      - "extension-packages:package-mobile"
     inputs:
       - "@group(legal-files)"
       - "@group(release-archive-contract)"
@@ -177,6 +178,7 @@ tasks:
       - "/Package.swift"
       - "/src/extensions/generated/sdk/extensions.json"
       - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
+      - "/target/mobile-extension-artifacts/**/*"
       - "/tools/dev/bun.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
