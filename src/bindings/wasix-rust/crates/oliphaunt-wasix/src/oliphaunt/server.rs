@@ -349,7 +349,7 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Make one explicitly selected PostgreSQL extension artifact available to clients.
     /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
     pub fn extension(mut self, extension: impl Into<Extension>) -> Self {
@@ -357,7 +357,7 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Make explicitly selected PostgreSQL extension artifacts available to clients.
     /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
     pub fn extensions<E: Into<Extension>>(

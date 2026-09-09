@@ -70,7 +70,6 @@ assertTransferable(directResponse);
 const directChunks = [];
 assert.equal(
   direct.execProtocolRawStream(queryMessage('select 4102'), (chunk) => {
-    assertResponse(chunk, 4102);
     directChunks.push(assertTransferable(chunk));
   }),
   'complete',

@@ -12,7 +12,7 @@ import {
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, vi } from 'vitest';
 import * as publicEntrypoint from '../index.js';
 import Oliphaunt, { type OliphauntClient } from '../index.js';
@@ -1112,6 +1112,46 @@ async function testDenoPackageManagedResolverUsesStandardCarrierRuntime(): Promi
     assert.equal(install.libraryPath, join(runtimePackageRoot, target.libraryRelativePath));
     assert.equal(install.packageManaged, true);
     assert.equal(install.runtimeDirectory, join(runtimePackageRoot, target.runtimeRelativePath));
+    assert.equal(install.clusterSeedDirectory, join(runtimePackageRoot, 'cluster-seed'));
+
+    const icuRoot = join(root, 'optional-icu');
+    const icuBundle = join(icuRoot, 'OliphauntICU.bundle');
+    const versions = await readTypeScriptPackageVersions();
+    await writeFixtureFile(
+      join(icuRoot, 'package.json'),
+      JSON.stringify({
+        name: '@oliphaunt/icu',
+        version: versions.icuVersion,
+        oliphaunt: {
+          product: 'oliphaunt-icu',
+          kind: 'icu-data',
+          target: 'portable',
+          dataRelativePath: 'OliphauntICU.bundle/share/icu',
+          manifestRelativePath: 'OliphauntICU.bundle/manifest.properties',
+          icuDataTreeSha256: 'a'.repeat(64),
+        },
+      }),
+      createdFiles,
+    );
+    await writeFixtureFile(join(icuBundle, 'share/icu/icudt76l.dat'), 'ICU', createdFiles);
+    await writeFixtureFile(
+      join(icuBundle, 'manifest.properties'),
+      `schema=oliphaunt-icu-data-v1\nartifactRole=icu-data\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256=${'a'.repeat(64)}\n`,
+      createdFiles,
+    );
+    const seed = join(icuBundle, 'native-seeds', target.id);
+    await writeClusterSeedFixture(seed, 'icu', target.id, createdFiles);
+    const descriptor = {
+      schema: 'oliphaunt-native-icu-v1' as const,
+      packageName: '@oliphaunt/icu' as const,
+      version: versions.icuVersion,
+      packageJsonUrl: pathToFileURL(join(icuRoot, 'package.json')).href,
+    };
+    const withIcu = await resolveDenoNativeInstall(undefined, descriptor);
+    assert.equal(withIcu.clusterSeedDirectory, seed);
+    assert.equal(withIcu.catalogProfile, 'icu');
+    await rm(join(seed, 'manifest.properties'));
+    await assert.rejects(resolveDenoNativeInstall(undefined, descriptor), /ICU cluster seed/);
   } finally {
     if (previousDeno === undefined) {
       delete (globalThis as { Deno?: unknown }).Deno;

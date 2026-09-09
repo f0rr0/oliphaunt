@@ -1015,12 +1015,15 @@ async function writeGeneratedTree(selection, outputDir, basePackagePath, localBi
     products.push({ name: extension.swiftTarget, targets: [extension.swiftTarget], type: "library" });
     targets.push(...targetIR(extension, selection.bySqlName, localBinaryTargets));
     selected.push({
-      asset: releaseProduct === undefined || extension.asset === undefined
+      asset: releaseProduct === undefined || extension.asset == null
         ? extension.asset
         : { name: extension.asset.name, checksum: extension.asset.checksum },
       createsExtension: extension.resources.createsExtension,
       dependencies: extension.dependencies,
-      nativeDependencies: extension.nativeDependencies,
+      nativeDependencies: extension.nativeDependencies.map(({ asset, ...dependency }) => ({
+        ...dependency,
+        asset: releaseProduct === undefined ? asset : { name: asset.name, checksum: asset.checksum },
+      })),
       nativeModuleStem: extension.nativeModuleStem,
       product: extension.product,
       releaseProduct: extension.releaseProduct,

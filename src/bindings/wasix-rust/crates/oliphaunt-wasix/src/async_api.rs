@@ -1801,7 +1801,7 @@ impl AsyncOliphauntBuilder {
     }
 
     #[cfg(feature = "extensions")]
-    /// Make one bundled PostgreSQL extension artifact available to the database.
+    /// Make one explicitly selected PostgreSQL extension artifact available to the database.
     /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: impl Into<Extension>) -> Self {
         self.inner = self.inner.extension(extension);
@@ -1809,7 +1809,7 @@ impl AsyncOliphauntBuilder {
     }
 
     #[cfg(feature = "extensions")]
-    /// Make bundled PostgreSQL extension artifacts available to the database.
+    /// Make explicitly selected PostgreSQL extension artifacts available to the database.
     /// Database-local installation remains the application's migration concern.
     pub fn extensions<E: Into<Extension>>(
         mut self,
@@ -2444,7 +2444,7 @@ impl AsyncOliphauntServerBuilder {
     }
 
     #[cfg(feature = "extensions")]
-    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Make one explicitly selected PostgreSQL extension artifact available to clients.
     /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: impl Into<Extension>) -> Self {
         self.inner = self.inner.extension(extension);
@@ -2452,7 +2452,7 @@ impl AsyncOliphauntServerBuilder {
     }
 
     #[cfg(feature = "extensions")]
-    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Make explicitly selected PostgreSQL extension artifacts available to clients.
     /// Database-local installation remains the application's migration concern.
     pub fn extensions<E: Into<Extension>>(
         mut self,

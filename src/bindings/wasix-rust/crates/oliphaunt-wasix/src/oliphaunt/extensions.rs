@@ -30,7 +30,7 @@ impl ExtensionNativeModule {
 use oliphaunt_resources::WasixExtensionDescriptor;
 pub use oliphaunt_resources::WasixPackage as ExtensionPackage;
 
-/// A bundled PostgreSQL extension artifact that Oliphaunt can make available.
+/// A selected PostgreSQL extension artifact that Oliphaunt can make available.
 ///
 /// Selecting an extension does not run `CREATE EXTENSION`, `LOAD`, or other
 /// database-local SQL. Applications retain ordinary migration ownership.
@@ -300,7 +300,7 @@ fn visit_extension(
     }
     if !visiting.insert(extension.sql_name()) {
         return Err(crate::error::invalid_configuration(format!(
-            "cyclic bundled extension dependency involving '{}'",
+            "cyclic extension dependency involving '{}'",
             extension.sql_name()
         )));
     }

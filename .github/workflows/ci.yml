@@ -1405,7 +1405,6 @@ jobs:
         shell: bash
         env:
           OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1"
-          OLIPHAUNT_ICU_DATA_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu
           OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
           OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
           OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets

@@ -8,6 +8,7 @@ import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { stageExtensionUpstreamLicenses } from "./extension-upstream-licenses.mjs";
 import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { discoverPublicationArtifacts } from "./publication-lock.mjs";
+import { parseMavenArtifactManifest } from "./maven-artifact-staging.mjs";
 import {
   currentProductVersionSync,
   extensionReleaseVersion,
@@ -88,7 +89,7 @@ function singletonAndroidRuntime(root, target, { mutateUpstream = false, upstrea
   return output;
 }
 
-test("the real Maven manifest builder feeds the canonical ten-field schema into publication locking", {
+test("the Maven manifest builder feeds the canonical staging parser, not the publication lock", {
   timeout: 30_000,
 }, () => {
   const root = temporaryDirectory();
@@ -117,8 +118,9 @@ test("the real Maven manifest builder feeds the canonical ten-field schema into 
   expect(rows).toHaveLength(4);
   expect(rows.every((row) => row.split("\t").length === 10)).toBe(true);
 
-  const records = discoverPublicationArtifacts([manifest]);
-  expect(records.map(({ name }) => name).sort()).toEqual([
+  expect(discoverPublicationArtifacts([manifest])).toEqual([]);
+  const records = parseMavenArtifactManifest(manifest);
+  expect(records.map(({ groupId, artifactId }) => `${groupId}:${artifactId}`).sort()).toEqual([
     "dev.oliphaunt.runtime:liboliphaunt-android-arm64-v8a",
     "dev.oliphaunt.runtime:liboliphaunt-android-x86_64",
     "dev.oliphaunt.runtime:liboliphaunt-runtime-resources-android-datum64",
@@ -126,16 +128,14 @@ test("the real Maven manifest builder feeds the canonical ten-field schema into 
   ]);
   expect(records.every((record) =>
     record.version === version
-    && record.artifacts.length === 1
-    && record.artifacts[0].path.endsWith(".tar.gz")
-    && record.artifacts[0].sha256.length === 64)).toBe(true);
+    && record.artifact.endsWith(".tar.gz"))).toBe(true);
 
   const first = rows[0].split("\t");
   const mutations = [
-    ["legacy field count", first.slice(0, 8), /ten Maven publication fields/u],
-    ["missing display name", first.with(4, ""), /display name/u],
+    ["legacy field count", first.slice(0, 8), /ten.*fields/u],
+    ["missing display name", first.with(4, ""), /name must/u],
     ["half runtime binding", first.with(6, "liboliphaunt-native"), /both runtime product and version/u],
-    ["missing SPDX expression", first.with(8, ""), /SPDX expression/u],
+    ["missing SPDX expression", first.with(8, ""), /SPDX/u],
     ["non-array licenses", first.with(9, "{}"), /non-empty JSON array/u],
     [
       "non-canonical license entry",
@@ -150,7 +150,7 @@ test("the real Maven manifest builder feeds the canonical ten-field schema into 
   ];
   for (const [label, mutated, pattern] of mutations) {
     writeFileSync(manifest, `${mutated.join("\t")}\n${rows.slice(1).join("\n")}\n`);
-    expect(() => discoverPublicationArtifacts([manifest]), label).toThrow(pattern);
+    expect(() => parseMavenArtifactManifest(manifest), label).toThrow(pattern);
   }
 });
 

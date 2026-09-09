@@ -1050,9 +1050,9 @@ export function validateCiArtifactCoverage(workflow, inventory) {
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/assets"
       && wasixNapiBuild.env.OLIPHAUNT_WASM_GENERATED_AOT_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/aot"
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT === "${{ github.workspace }}/target/extension-artifacts"
-      && wasixNapiBuild.env.OLIPHAUNT_ICU_DATA_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu"
+      && wasixNapiBuild.env.OLIPHAUNT_ICU_DATA_DIR === undefined
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}",
-    "WASIX Node-API builds must fail closed on exact same-run portable, ICU, AOT, and extension payload roots",
+    "WASIX Node-API builds must fail closed on exact same-run portable, AOT, and contrib payload roots",
   );
   const releaseTasks = object(
     Bun.YAML.parse(readFileSync(path.join(ROOT, "tools/release/moon.yml"), "utf8")),
@@ -1060,8 +1060,8 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   ).tasks;
   invariant(
     String(releaseTasks?.["wasix-napi-runtime"]?.command ?? "").startsWith("bash ")
-      && String(releaseTasks["wasix-napi-runtime"].command).includes("build-extension-ci-artifacts.mjs --all --family wasix --require-wasix"),
-    "WASIX Node-API builds must stage complete exact-extension portable and target AOT inputs",
+      && String(releaseTasks["wasix-napi-runtime"].command).includes("build-extension-ci-artifacts.mjs oliphaunt-extension-contrib-pg18 --family wasix --require-wasix"),
+    "WASIX Node-API builds must stage only contrib portable and target AOT inputs",
   );
   const wasixNapiAotRestore = namedStep(workflow, "wasix-napi", "Restore exact target core and tool AOT layout");
   invariant(

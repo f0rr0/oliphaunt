@@ -67,7 +67,6 @@ type LiboliphauntPackageMetadata = {
     libraryRelativePath?: string;
     runtimeRelativePath?: string;
     clusterSeedRelativePath?: string;
-    icuClusterSeedRelativePath?: string;
     clusterSeedTarget?: string;
   };
 };

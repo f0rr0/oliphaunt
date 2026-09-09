@@ -58,7 +58,6 @@ type LiboliphauntPackageMetadata = {
     libraryRelativePath?: string;
     runtimeRelativePath?: string;
     clusterSeedRelativePath?: string;
-    icuClusterSeedRelativePath?: string;
     clusterSeedTarget?: string;
   };
 };
@@ -77,6 +76,7 @@ type IcuPackageMetadata = {
 };
 
 type ResolvedDenoIcuResources = {
+  seedDirectory: URL;
   dataDirectory: string;
   dataTreeSha256: string;
 };
@@ -196,11 +196,6 @@ async function resolvePackageNativeInstall(
     'cluster-seed',
     `${target.packageName} clusterSeedRelativePath`,
   );
-  const icuClusterSeedRelativePath = requireNativeClusterSeedPath(
-    packageJson.oliphaunt.icuClusterSeedRelativePath,
-    'cluster-seed-icu',
-    `${target.packageName} icuClusterSeedRelativePath`,
-  );
   const packageRoot = new URL('.', packageJsonUrl);
   const carrierManifestUrl = new URL('manifest.properties', packageRoot);
   await requireFile(deno, carrierManifestUrl, `${target.packageName} runtime carrier receipt`);
@@ -244,8 +239,8 @@ async function resolvePackageNativeInstall(
     icu === undefined
       ? standardClusterSeedUrl
       : resolvePackageRelativeUrl(
-          packageRoot,
-          icuClusterSeedRelativePath,
+          icu.seedDirectory,
+          clusterSeedTarget,
           `${target.packageName} ICU cluster seed metadata`,
         );
   let icuDataTreeSha256: string | undefined;
@@ -319,6 +314,7 @@ async function resolveDenoIcuResources(
     throw new Error(`${packageName} ICU data receipt does not match package metadata`);
   }
   return {
+    seedDirectory: new URL('native-seeds/', manifestUrl),
     dataDirectory: fileURLToPath(dataUrl),
     dataTreeSha256,
   };

@@ -118,14 +118,14 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Make one bundled PostgreSQL extension artifact available to the database.
+    /// Make one explicitly selected PostgreSQL extension artifact available to the database.
     /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: impl Into<ExtensionDescriptor>) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
 
-    /// Make bundled PostgreSQL extension artifacts available to the database.
+    /// Make explicitly selected PostgreSQL extension artifacts available to the database.
     /// Database-local installation remains the application's migration concern.
     pub fn extensions(
         mut self,
@@ -206,14 +206,14 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Make one explicitly selected PostgreSQL extension artifact available to clients.
     /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: impl Into<ExtensionDescriptor>) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
 
-    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Make explicitly selected PostgreSQL extension artifacts available to clients.
     /// Database-local installation remains the application's migration concern.
     pub fn extensions(
         mut self,

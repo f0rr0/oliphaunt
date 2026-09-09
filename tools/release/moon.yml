@@ -609,7 +609,7 @@ tasks:
 
   wasix-napi-runtime:
     tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-napi"]
-    command: "bash -c 'set -e; tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix; exec bash src/runtimes/wasix-napi/tools/build-native.sh'"
+    command: "bash -c 'set -e; tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-contrib-pg18 --family wasix --require-wasix; exec bash src/runtimes/wasix-napi/tools/build-native.sh'"
     deps:
       - "liboliphaunt-wasix:runtime-aot"
       - "extension-artifacts-wasix:build-target"
@@ -633,15 +633,14 @@ tasks:
       - "/src/runtimes/wasix-napi/tools/package-platform.mjs"
       - "/src/runtimes/wasix-napi/tools/portable-command.mjs"
       - "/src/runtimes/wasix-napi/tools/smoke-packaged-addon.mjs"
+      - "/src/runtimes/wasix-napi/tests/native.integration.mjs"
       - "/src/bindings/wasix-ts/tools/pgwire-client.mjs"
       - project: "oliphaunt-wasix-rust"
         group: "code"
       - project: "liboliphaunt-wasix"
         group: "crates"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
       - "/target/oliphaunt-wasix/aot/**/*"
-      - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
       - "/target/extensions/wasix/release-assets/**/*"
       - "/target/extensions/wasix/aot-artifacts/**/*"
       - "/target/extension-artifacts/**/*"

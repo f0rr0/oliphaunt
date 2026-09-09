@@ -330,6 +330,13 @@ async function main() {
     }
 
     await runWorkerUnloadSmoke(scratch, carrierManifest, options.runtime);
+    if (options.runtime === "node" && options.packageManager === "npm") {
+      const require = createRequire(path.join(scratch, "package.json"));
+      const addonPath = require.resolve(`${carrierManifest.name}/${BINARY}`);
+      const { stdout } = await run(process.execPath,
+        [path.join(PACKAGE_ROOT, "tests/native.integration.mjs"), addonPath], scratch);
+      process.stdout.write(stdout);
+    }
 
     const verification = path.join(scratch, "verify.mjs");
     await writeFile(
@@ -371,6 +378,7 @@ for (const name of [
   'extensionIdentity',
   'nodeApiVersion',
   'payloadIdentity',
+  'registerTools',
   'restore',
   'restoreDirect',
   'runtimeVersion',

@@ -699,6 +699,16 @@ async function main() {
   assert.match(standaloneManifest, /from: "0.1.0"/u);
   assert.doesNotMatch(standaloneManifest, /OliphauntSelectedExtensions/u);
 
+  const standalonePostgis = path.join(root, "standalone-postgis");
+  run(process.execPath, [generator, "--carrier", carrier,
+    "--extensions", "postgis", "--release-product", "oliphaunt-extension-postgis",
+    "--cache-dir", cache, "--allow-file-urls", "--local-binary-targets",
+    "--base-package-version", "0.1.0", "--output-dir", standalonePostgis]);
+  const standaloneProducts = await fs.readFile(path.join(standalonePostgis, "extension-products.json"), "utf8");
+  assert.doesNotMatch(standaloneProducts, /file:|"localPath"/u);
+  assert.deepEqual(JSON.parse(standaloneProducts).selected[0].nativeDependencies.map(({ name }) => name),
+    postgisNativeDependencies.map(([name]) => name));
+
   const pgtapRuntime = manifest.extensions.find(({ sqlName }) => sqlName === "pgtap").assets[0];
   const cachedPgtap = path.join(cache, "extracted", pgtapRuntime.sha256);
   await fs.writeFile(path.join(cachedPgtap, "manifest.properties"), "tampered-cache-entry\n");
