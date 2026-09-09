@@ -3,11 +3,27 @@ id: "native-extension-lifecycle"
 language: "rust"
 layer: "tool"
 tags: ["javascript-quality"]
+dependsOn:
+  - id: "oliphaunt-rust"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
 tasks:
   unit:
-    tags: ["quality", "unit"]
-    command: "bun test ./src/extensions/tests/native/tools"
+    tags: ["quality", "unit", "requires-rust"]
+    script: |
+      set -e
+      bun test ./src/extensions/tests/native/tools
+      cargo test --locked -p oliphaunt-native-extension-proof
     inputs:
+      - "Cargo.toml"
+      - "src/**/*.rs"
+      - "@group(cargo-workspace)"
+      - "/src/shared/rust-query-core/query_core.rs"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
       - "tools/**/*.mts"
       - "/src/shared/product-metadata/**/*.mts"
       - "/src/extensions/artifacts/native/tools/**/*.mts"
