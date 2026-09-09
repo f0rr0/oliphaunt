@@ -83,6 +83,7 @@ function fail(message) {
 
 function affectedProjectsAndTasks() {
   const affected = JSON.parse(readFileSync(process.env.OLIPHAUNT_MOON_AFFECTED_FILE, 'utf8'));
+  affectedNames(affected); // Reject malformed envelopes before defaulting omitted maps to empty.
   return {
     directProjects: new Set(triggeringProjectNames(affected.projects)),
     projects: new Set(affectedNames(affected.projects)),
