@@ -102,12 +102,13 @@ runs:
     - name: Restore Moon task outputs
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
+        # casOutputsCache uses these directories; hashes/ is diagnostic metadata.
         path: |
-          .moon/cache/hashes
-          .moon/cache/outputs
-        key: moon-task-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/**/*.yml', '**/moon.yml', 'Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
+          .moon/cache/blobs
+          .moon/cache/manifests
+        key: moon-task-cache-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/toolchains.yml') }}-${{ github.sha }}
         restore-keys: |
-          moon-task-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/**/*.yml', '**/moon.yml', 'Cargo.lock', 'pnpm-lock.yaml') }}-
+          moon-task-cache-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/toolchains.yml') }}-
 
     - name: Hydrate Moon plugins
       shell: bash
