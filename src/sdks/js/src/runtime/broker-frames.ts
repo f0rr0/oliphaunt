@@ -1,4 +1,4 @@
-import type { ByteStream } from './byte-stream.js';
+import type { ByteStream } from './types.js';
 
 const MAGIC = new Uint8Array([0x50, 0x47, 0x4f, 0x42]);
 const HEADER_LEN = 13;

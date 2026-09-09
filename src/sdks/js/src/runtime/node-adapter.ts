@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Socket, createConnection } from 'node:net';
 import type { Readable } from 'node:stream';
 
-import type { ByteStream } from './byte-stream.js';
+import type { ByteStream } from './types.js';
 
 export type LocalEndpoint =
   | { kind: 'unix'; path: string }

@@ -1,4 +1,4 @@
-import type { ByteStream } from '../runtime/byte-stream.js';
+import type { ByteStream } from '../runtime/types.js';
 
 export class MemoryDuplexStream implements ByteStream {
   readonly #input: Uint8Array[];

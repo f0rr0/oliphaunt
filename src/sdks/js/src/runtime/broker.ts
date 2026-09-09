@@ -19,7 +19,6 @@ import {
   writeBrokerRequest,
   type BrokerResponseFrame,
 } from './broker-frames.js';
-import type { ByteStream } from './byte-stream.js';
 import {
   connectEndpoint,
   cleanupFailedManagedLaunch,
@@ -34,7 +33,7 @@ import {
   type ManagedChild,
   type FailedManagedLaunch,
 } from './node-adapter.js';
-import type { RuntimeBinding, RuntimeHandle } from './types.js';
+import type { ByteStream, RuntimeBinding, RuntimeHandle } from './types.js';
 import { throwCollectedCloseFailures } from './close.js';
 import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
 import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';

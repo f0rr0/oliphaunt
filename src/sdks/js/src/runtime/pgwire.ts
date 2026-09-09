@@ -1,4 +1,4 @@
-import type { ByteStream } from './byte-stream.js';
+import type { ByteStream } from './types.js';
 import { connectEndpoint, type LocalEndpoint } from './node-adapter.js';
 import { throwCollectedCloseFailures } from './close.js';
 
