@@ -96,9 +96,6 @@ tasks:
       - "**/*"
       - "!/tools/release/**/*.test.{mjs,mts}"
       - "!/tools/release/**/*.md"
-      - "/tools/test/create-broker-release-fixture.mts"
-      - "/tools/test/create-liboliphaunt-release-fixture.mts"
-      - "/tools/test/release-fixture-utils.mts"
     options:
       cache: false
       runFromWorkspaceRoot: true

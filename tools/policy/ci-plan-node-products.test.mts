@@ -187,10 +187,19 @@ test('WASIX N-API source selects only its real WASIX artifact inputs', () => {
   assert.equal(result.tasks.includes('oliphaunt-wasix-napi:unit'), true);
 });
 
-test('WASIX N-API isolated unit fixtures do not start artifact builders', () => {
-  const result = effects('src/runtimes/wasix-napi/tools/package-contract.test.mts');
-  assert.deepEqual(result.jobs, ['affected']);
-  assert.equal(result.tasks.includes('oliphaunt-wasix-napi:unit'), true);
+test('packaging fixtures select their owner tests without artifact builders', () => {
+  for (const [file, task] of [
+    ['src/runtimes/wasix-napi/tools/package-contract.test.mts', 'oliphaunt-wasix-napi:unit'],
+    ['src/runtimes/broker/tools/create-release-fixture.mts', 'oliphaunt-broker:packaging-unit'],
+    [
+      'src/runtimes/broker/tools/broker-dependency-license-contract.test.mts',
+      'oliphaunt-broker:packaging-unit',
+    ],
+  ]) {
+    const result = effects(file);
+    assert.deepEqual(result.jobs, ['affected'], file);
+    assert.equal(result.tasks.includes(task), true, file);
+  }
 });
 
 test('WASIX test helpers invalidate only tasks that execute them', () => {

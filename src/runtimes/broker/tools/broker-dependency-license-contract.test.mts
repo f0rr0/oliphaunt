@@ -323,7 +323,7 @@ test('real npm target tarballs reopen the exact target-specific dependency closu
   const fixture = spawnSync(
     path.join(ROOT, 'tools/dev/bun.sh'),
     [
-      'tools/test/create-broker-release-fixture.mts',
+      'src/runtimes/broker/tools/create-release-fixture.mts',
       '--asset-dir',
       assetDir,
       '--version',
@@ -361,7 +361,7 @@ test('concurrent real Cargo payload packagers are isolated and reopen exact targ
   const fixture = spawnSync(
     path.join(ROOT, 'tools/dev/bun.sh'),
     [
-      'tools/test/create-broker-release-fixture.mts',
+      'src/runtimes/broker/tools/create-release-fixture.mts',
       '--asset-dir',
       assetDir,
       '--version',

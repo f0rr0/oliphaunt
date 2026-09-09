@@ -4,7 +4,7 @@ id: "oliphaunt-kotlin"
 language: "kotlin"
 layer: "library"
 stack: "systems"
-tags: ["sdk", "kotlin", "android", "native", "release-product"]
+tags: ["javascript-quality", "sdk", "kotlin", "android", "native", "release-product"]
 dependsOn:
   - id: "extensions"
     scope: "build"

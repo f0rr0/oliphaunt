@@ -15,13 +15,3 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
-
-tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bun build tools/test/create-liboliphaunt-release-fixture.mts tools/test/create-broker-release-fixture.mts --target=bun --outdir target"
-    inputs:
-      - "**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true

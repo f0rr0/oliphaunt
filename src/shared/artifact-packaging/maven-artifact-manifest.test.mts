@@ -114,12 +114,22 @@ test('the real Maven manifest builder feeds the canonical ten-field schema into 
   const version = currentProductVersionSync('liboliphaunt-native');
   mkdirSync(manifestDirectory, { recursive: true });
 
-  run('tools/test/create-liboliphaunt-release-fixture.mts', [
-    '--asset-dir',
-    assets,
-    '--version',
-    version,
-  ]);
+  mkdirSync(assets);
+  for (const [suffix, profile] of [
+    ['android-arm64-v8a', 'native-runtime'],
+    ['android-x86_64', 'native-runtime'],
+    ['runtime-resources-android-datum64', 'native-runtime-resources'],
+    ['icu-data', 'native-icu-data'],
+  ]) {
+    const name = `liboliphaunt-${version}-${suffix}`;
+    const stage = path.join(root, name);
+    mkdirSync(stage);
+    stageReleaseNotices(stage, { profile });
+    writeFileSync(
+      path.join(assets, `${name}.tar.gz`),
+      canonicalGzipSync(createDeterministicTar(stage, name, { fixedFileMode: 0o644 })),
+    );
+  }
   run('src/shared/artifact-packaging/build-maven-artifact-manifest.mts', [
     '--output',
     manifest,

@@ -4,8 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { stageBrokerDependencyLicenses } from '../../src/runtimes/broker/tools/broker-dependency-license-contract.mts';
-import { stageReleaseNotices } from '../../src/shared/artifact-packaging/release-notices.mts';
+import { stageBrokerDependencyLicenses } from './broker-dependency-license-contract.mts';
+import { stageReleaseNotices } from '../../../shared/artifact-packaging/release-notices.mts';
 
 import {
   elfFixture,
@@ -14,7 +14,7 @@ import {
   windowsPeFixture,
   writeChecksumManifest,
   writeEntriesArchive,
-} from './release-fixture-utils.mts';
+} from '../../../../tools/test/release-fixture-utils.mts';
 
 function brokerBinary(target) {
   if (target === 'macos-arm64') {

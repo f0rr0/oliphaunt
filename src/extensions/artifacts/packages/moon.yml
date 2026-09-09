@@ -4,7 +4,7 @@ id: "extension-packages"
 language: "typescript"
 layer: "tool"
 stack: "systems"
-tags: ["extensions", "artifacts", "release"]
+tags: ["javascript-quality", "extensions", "artifacts", "release"]
 dependsOn:
   - id: "extension-artifacts-native"
     scope: "build"

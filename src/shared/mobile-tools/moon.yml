@@ -3,6 +3,7 @@ id: "mobile-tools"
 language: "bash"
 layer: "tool"
 stack: "infrastructure"
+tags: ["javascript-quality"]
 tasks:
   unit:
     tags: ["quality", "unit"]

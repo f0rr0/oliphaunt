@@ -4,7 +4,7 @@ id: "oliphaunt-broker"
 language: "rust"
 layer: "library"
 stack: "systems"
-tags: ["runtime", "broker", "native", "postgres", "release-product"]
+tags: ["javascript-quality", "runtime", "broker", "native", "postgres", "release-product"]
 dependsOn:
   - id: "oliphaunt-rust"
     scope: "build"
@@ -34,6 +34,8 @@ fileGroups:
     - "!**/*.md"
     - "!moon.yml"
     - "!release.toml"
+    - "!tools/*.test.mts"
+    - "!tools/create-release-fixture.mts"
 
 tasks:
   build:
@@ -206,6 +208,8 @@ tasks:
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"
       - "@group(code)"
+      - "tools/broker-dependency-license-contract.test.mts"
+      - "tools/create-release-fixture.mts"
       - "/tools/test/**/*"
       - "/tools/dev/bun.sh"
       - "/src/shared/artifact-packaging/*.{mts,sh}"
