@@ -101,6 +101,8 @@ tasks:
     inputs: []
     options:
       cache: false
+      # Both suites share Cargo outputs; feature rebuilds must not race rustdoc.
+      runDepsInParallel: false
       runFromWorkspaceRoot: true
       runInCI: false
 

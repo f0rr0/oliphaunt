@@ -9,20 +9,15 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use napi::{Error, Result};
+#[cfg(feature = "tools")]
 use napi_derive::napi;
-use oliphaunt_wasix::{Extension, ExtensionPackage};
+use oliphaunt_wasix::ExtensionPackage;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+#[cfg(any(feature = "extensions", test))]
+use {super::NativeExtensionPackage, oliphaunt_wasix::Extension};
 
-#[napi(object)]
-pub struct NativeExtensionPackage {
-    pub sql_name: String,
-    pub product: String,
-    pub version: String,
-    pub package_json: String,
-    pub aot_package_json: Option<String>,
-}
-
+#[cfg(feature = "tools")]
 #[napi(object)]
 pub struct NativeToolPackage {
     pub package_json: String,
@@ -244,6 +239,7 @@ fn target() -> &'static str {
     "unsupported"
 }
 
+#[cfg(any(feature = "extensions", test))]
 pub(super) fn load(selection: NativeExtensionPackage) -> Result<Extension> {
     let extension = Extension::by_sql_name(&selection.sql_name)
         .ok_or_else(|| fail("unknown selected WASIX extension"))?;

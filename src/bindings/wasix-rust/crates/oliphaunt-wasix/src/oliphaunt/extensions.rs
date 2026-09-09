@@ -132,16 +132,16 @@ pub(crate) fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Exte
                 extension.sql_name()
             )));
         }
-        if let Some(package) = extension.package {
-            if package.runtime_version() != liboliphaunt_wasix_portable::PACKAGE_VERSION {
-                return Err(crate::error::invalid_configuration(format!(
-                    "{}@{} requires WASIX runtime {}, selected {}",
-                    package.product(),
-                    package.version(),
-                    package.runtime_version(),
-                    liboliphaunt_wasix_portable::PACKAGE_VERSION
-                )));
-            }
+        if let Some(package) = extension.package
+            && package.runtime_version() != liboliphaunt_wasix_portable::PACKAGE_VERSION
+        {
+            return Err(crate::error::invalid_configuration(format!(
+                "{}@{} requires WASIX runtime {}, selected {}",
+                package.product(),
+                package.version(),
+                package.runtime_version(),
+                liboliphaunt_wasix_portable::PACKAGE_VERSION
+            )));
         }
         visit_extension(
             extension,
@@ -312,14 +312,13 @@ fn visit_extension(
                 dependency
             ))
         })?;
-        if let Some(package) = extension.package {
-            if package
+        if let Some(package) = extension.package
+            && package
                 .archives()
                 .iter()
                 .any(|(name, _, _)| name == dependency)
-            {
-                dependency_extension = dependency_extension.with_package(package);
-            }
+        {
+            dependency_extension = dependency_extension.with_package(package);
         }
         if let Some(explicit) = selected.get(dependency) {
             if dependency_extension.package.is_some() && dependency_extension != *explicit {

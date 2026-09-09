@@ -229,6 +229,7 @@ test("the release preflight freezes and bundles the exact locally staged Maven b
 });
 
 
+// A cold runner downloads Gradle dependencies and compiles the real SDK jar.
 test("publishes importable external and ICU descriptors with their SDK dependency", async () => {
   const value = fixture();
   const fields = readFileSync(value.manifest, "utf8").trimEnd().split("\t");
@@ -258,4 +259,4 @@ public final class Vector {
   }
   expect(readFileSync(path.join(staged[1].directory, "oliphaunt-icu-1.2.3.tar.gz"), "utf8"))
     .toBe("exact runtime carrier\n");
-}, 120_000);
+}, 600_000);

@@ -1,8 +1,8 @@
-//! Cargo build-script integration for Oliphaunt applications.
+//! Cargo build-script integration for Oliphaunt SDKs and custom bundles.
 //!
-//! `configure()` is intended to be called from an application `build.rs`.
-//! Cargo resolves target-specific artifact crates; this crate stages the
-//! already-resolved files into `OUT_DIR`.
+//! SDK and resource crates call `embed_resolved_artifacts()` internally; ordinary
+//! applications need no build script. Custom bundles can call `configure()` to
+//! stage Cargo-resolved artifacts into `OUT_DIR`.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

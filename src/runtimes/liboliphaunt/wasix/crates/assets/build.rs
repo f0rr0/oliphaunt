@@ -493,18 +493,14 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
             required.display()
         );
     }
-    for (profile, archive, seed_manifest) in
-        [("standard", &standard_seed_archive, &standard_seed_manifest)]
-    {
-        assert!(
-            (archive.is_file() && seed_manifest.is_file())
-                || (!archive.exists() && !seed_manifest.exists()),
-            "generated asset directory {} has an incomplete {profile} cluster seed; expected both {} and {} or neither",
-            asset_dir.display(),
-            archive.display(),
-            seed_manifest.display()
-        );
-    }
+    assert!(
+        (standard_seed_archive.is_file() && standard_seed_manifest.is_file())
+            || (!standard_seed_archive.exists() && !standard_seed_manifest.exists()),
+        "generated asset directory {} has an incomplete standard cluster seed; expected both {} and {} or neither",
+        asset_dir.display(),
+        standard_seed_archive.display(),
+        standard_seed_manifest.display()
+    );
 
     let standard_seed_archive_body = optional_include_bytes_body(&standard_seed_archive);
     let standard_seed_manifest_body = optional_include_bytes_body(&standard_seed_manifest);

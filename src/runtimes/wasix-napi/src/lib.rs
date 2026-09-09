@@ -4,9 +4,9 @@
 //! owners directly. Promise settlement is the only owner-to-JavaScript hop;
 //! no Tokio runtime or Node async-work queue participates in database work.
 
+#[cfg(any(feature = "extensions", feature = "tools", test))]
 mod extension_package;
 mod icu_data;
-use extension_package::NativeExtensionPackage;
 use icu_data::NativeIcuData;
 
 use std::collections::BTreeMap;
@@ -60,6 +60,15 @@ fn retain_addon_image_for_process_runtime() {
 pub struct NativeStorageOptions {
     pub kind: String,
     pub path: Option<String>,
+}
+
+#[napi(object)]
+pub struct NativeExtensionPackage {
+    pub sql_name: String,
+    pub product: String,
+    pub version: String,
+    pub package_json: String,
+    pub aot_package_json: Option<String>,
 }
 
 #[napi(object)]
