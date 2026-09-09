@@ -42,10 +42,10 @@ case "$runtime" in
       npm exec --yes --package=electron@39.2.5 -- electron)
     ;;
 esac
-"$deadline" --kill-after=3s 300s "${host[@]}" "$scratch/worker-unload.mjs" > worker.log
+"$deadline" --kill-after=3s 300s "${host[@]}" ./worker-unload.mjs > worker.log
 cat worker.log
 grep -F "oliphaunt-wasix-napi-worker-unload-$runtime:PASS" worker.log >/dev/null
-"$deadline" --kill-after=3s 300s "${host[@]}" "$scratch/verify.mjs"
+"$deadline" --kill-after=3s 300s "${host[@]}" ./verify.mjs
 
 if [ "$runtime" = electron ]; then
   node "$stage" asar "$scratch" "${args[@]}"
@@ -55,14 +55,18 @@ if [ "$runtime" = electron ]; then
   binary="$(cat asar-binary.txt)"
   mv "$binary" "$binary.missing"
   status=0
-  "$deadline" --kill-after=3s 300s "${host[@]}" "$scratch/app.asar/main.cjs" > missing.log 2>&1 || status=$?
+  "$deadline" --kill-after=3s 300s "${host[@]}" ./app.asar/main.cjs > missing.log 2>&1 || status=$?
   mv "$binary.missing" "$binary"
   if [ "$status" = 0 ] || [ "$status" = 124 ] || [ "$status" = 137 ]; then
     cat missing.log >&2
     echo 'Electron must promptly reject a missing unpacked addon' >&2
     exit 1
   fi
-  "$deadline" --kill-after=3s 300s "${host[@]}" "$scratch/app.asar/main.cjs" > asar.log
+  grep -F 'oliphaunt_wasix_napi.node' missing.log >/dev/null || {
+    cat missing.log >&2
+    exit 1
+  }
+  "$deadline" --kill-after=3s 300s "${host[@]}" ./app.asar/main.cjs > asar.log
   cat asar.log
   grep -F 'oliphaunt-wasix-napi-asar-unpacked:PASS' asar.log >/dev/null
 fi

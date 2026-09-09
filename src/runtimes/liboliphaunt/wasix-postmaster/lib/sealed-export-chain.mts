@@ -255,11 +255,14 @@ export function linearMemorySourceHashes(root: string, inventory?: Inventory) {
       transformation: 'pinned-wasixcc-65536-to-embedded-4096-reversible-v1',
     }))
       assert.equal(module[key], expected, `memory module differs: ${path} ${key}`);
-    assert.equal(
-      sha256(readRegular(root, path, inventory)),
-      module['module-sha256'],
-      `memory module bytes differ: ${path}`,
-    );
+    // The install receipt also covers tools omitted from the runtime carrier.
+    // Validate all receipt records, and bind bytes for every shipped module.
+    if (!inventory || inventory.has(path))
+      assert.equal(
+        sha256(readRegular(root, path, inventory)),
+        module['module-sha256'],
+        `memory module bytes differ: ${path}`,
+      );
     assert(!hashes.has(path), `duplicate memory module: ${path}`);
     hashes.set(path, module['source-module-sha256']);
   }

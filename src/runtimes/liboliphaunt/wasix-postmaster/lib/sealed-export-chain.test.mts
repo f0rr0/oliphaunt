@@ -32,6 +32,7 @@ test('sealed export and memory receipts bind actual modules, proofs and inventor
     validateExportChain(root, project, hashes);
     const receipt = makeLinearMemoryFixture(root),
       modules = receipt.modules;
+    hashes.set('bin/pg_config', hashes.get('bin/initdb')!);
     const writeMemory = () =>
       writeFileSync(join(root, AGGREGATE_RELATIVE), JSON.stringify(receipt));
     writeMemory();

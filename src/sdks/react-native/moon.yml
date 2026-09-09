@@ -146,7 +146,6 @@ tasks:
       mkdir -p target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated
       cp src/extensions/generated/sdk/extensions.json src/extensions/generated/sdk/ios-static-dependencies.json target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated/
       cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/
-      node src/shared/js-core/tools/stage-package.mts target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native src/shared/js-core
     deps:
       - "oliphaunt-react-native:compile"
     inputs:

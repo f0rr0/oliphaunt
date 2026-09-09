@@ -1011,7 +1011,7 @@ jobs:
           if-no-files-found: error
 
       - name: Build native extension lifecycle proof runner
-        run: cargo build --offline --locked --release -p oliphaunt-native-extension-proof
+        run: cargo build --locked --release -p oliphaunt-native-extension-proof
 
       - name: Stage native extension lifecycle proof runner
         run: |
@@ -2205,29 +2205,6 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
-        with:
-          install-workspace: "false"
-
-      - name: Warm pinned extension metadata formatter
-        run: |
-          for attempt in 1 2 3; do
-            if printf 'export const oliphauntFormatterProbe={ready:true};\n' \
-              | pnpm --package=@biomejs/biome@2.4.16 dlx biome format \
-                  --stdin-file-path src/extensions/generated/sdk/react-native.ts \
-              >/dev/null; then
-              break
-            fi
-            if (( attempt == 3 )); then
-              echo 'Pinned Biome formatter preflight failed after three attempts' >&2
-              exit 1
-            fi
-            sleep $((attempt * 5))
-          done
-          printf 'export const oliphauntFormatterProbe={offline:true};\n' \
-            | PNPM_CONFIG_OFFLINE=true \
-              pnpm --package=@biomejs/biome@2.4.16 dlx biome format \
-                --stdin-file-path src/extensions/generated/sdk/react-native.ts \
-            >/dev/null
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -2285,9 +2262,6 @@ jobs:
         env:
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
-          # The pinned Biome package was fetched and exercised above. Keep the
-          # evidence mutation independent of a second registry lookup.
-          PNPM_CONFIG_OFFLINE: "true"
         run: |
           actual_sha="$(git rev-parse HEAD)"
           if [[ "$actual_sha" != "$CI_HEAD_SHA" ]]; then

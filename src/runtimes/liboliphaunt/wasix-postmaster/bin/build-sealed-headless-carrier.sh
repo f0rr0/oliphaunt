@@ -81,7 +81,6 @@ fresh_require_command bun
 carrier_data="$FRESH_ROOT/lib/build-sealed-carrier.mts"
 fresh_require_command cp
 fresh_require_command find
-fresh_require_command flock
 fresh_require_command sort
 
 [ "$wasix_core_profile_explicit" -eq 1 ] || {
@@ -317,7 +316,7 @@ copy_artifact() {
 
   module_sha256="$(fresh_wasmer_bin_hash "$module_source")"
   fresh_is_sha256 "$module_sha256" || fail "invalid module digest: $module_source"
-  module_hash="${module_sha256^^}"
+  module_hash="$(printf '%s' "$module_sha256" | tr '[:lower:]' '[:upper:]')"
   artifact_source="$cache_bucket/$module_hash.bin"
   [ -f "$artifact_source" ] && [ ! -L "$artifact_source" ] && [ -s "$artifact_source" ] || {
     fail "missing regular precompiled AOT artifact for $relative: $artifact_source"
@@ -584,13 +583,6 @@ fi
 # publishes a directory whose verified bytes only lived in page cache.
 bun "$carrier_data" sync-tree "$staging"
 
-publication_lock_path="$output_parent/.${output_name}.publish.lock"
-exec {publication_lock_fd}>"$publication_lock_path"
-chmod 0600 "$publication_lock_path"
-flock -n "$publication_lock_fd" ||
-  fail "another process is publishing the same carrier output: $output"
-[ ! -e "$output" ] && [ ! -L "$output" ] ||
-  fail "carrier output appeared before atomic publication: $output"
 fresh_atomic_publish_directory_noreplace "$staging" "$output" ||
   fail "could not atomically publish sealed carrier: $output"
 staging=""

@@ -161,7 +161,9 @@ export function makeSealedExportFixture(root: string, projectRoot: string) {
 
 export function makeLinearMemoryFixture(root: string, descendant = false) {
   const predecessor = 'share/postgresql/wasix-postmaster.sealed-export.structure.receipt';
-  const modules = [...requiredModules].sort().map((path) => {
+  // The full install includes client tools that the runtime carrier omits.
+  writeFileSync(join(root, 'bin/pg_config'), readFileSync(join(root, 'bin/initdb')));
+  const modules = ['bin/pg_config', ...requiredModules].sort().map((path) => {
     const source = readFileSync(join(root, path)),
       hash = digest(source);
     const sealed = descendant ? Buffer.concat([source, Buffer.from([0, 1, 0])]) : source;
