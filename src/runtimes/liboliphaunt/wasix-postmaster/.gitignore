@@ -4,8 +4,6 @@
 /reports/
 /run/
 /sources/
-/tools/*
-!/tools/sealed-export-closure/
 /tools/sealed-export-closure/target/
 /work/
 *.a
