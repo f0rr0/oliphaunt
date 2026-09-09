@@ -1496,6 +1496,8 @@ export function readPortableTarZstdBufferEntries(input, options = {}) {
 
 /** Validate a decompressed portable tar without retaining file contents in memory. */
 export async function readPortableTarStream(stream, file, options = {}, extraction = undefined) {
+  if (options.source && extraction)
+    throw archiveError(file, 'source archives require link-aware extraction');
   const archiveLimits = limits(options);
   const entries = [];
   let descriptor;
@@ -1552,7 +1554,7 @@ export async function readPortableTarStream(stream, file, options = {}, extracti
         if (zeroBlocks) throw archiveError(file, 'has data after its ustar end marker');
         if (++count > archiveLimits.maxEntries)
           throw archiveError(file, `exceeds its ${archiveLimits.maxEntries}-entry limit`);
-        const entry = parseTarHeader(header, file, archiveLimits);
+        const entry = parseTarHeader(header, file, archiveLimits, { source: options.source });
         expanded += entry.size;
         if (expanded > archiveLimits.maxExpandedBytes)
           throw archiveError(file, 'exceeds its expanded-data limit');

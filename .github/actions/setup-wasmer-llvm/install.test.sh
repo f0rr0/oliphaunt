@@ -100,7 +100,7 @@ run_installer() {
   RUNNER_OS=Linux \
   GITHUB_ENV="$runner_temp/github-env" \
   GITHUB_PATH="$runner_temp/github-path" \
-  PATH="$script_dir/testdata/setup-wasmer-llvm:$PATH" \
+  PATH="$script_dir/testdata:$PATH" \
     bash "$installer"
 }
 
@@ -152,7 +152,7 @@ fi
 assert_no_partial_install "$bad_size_runner" "$bad_size_key"
 
 unsafe_archive="$work_root/unsafe.tar.xz"
-bun "$script_dir/testdata/setup-wasmer-llvm/archive.mts" unsafe | xz -c > "$unsafe_archive"
+bun "$script_dir/testdata/archive.mts" unsafe | xz -c > "$unsafe_archive"
 unsafe_sha="$(sha256_file "$unsafe_archive")"
 unsafe_runner="$work_root/unsafe-runner"
 unsafe_key=wasmer-llvm-Linux-X64-22.1-unsafe
@@ -163,26 +163,10 @@ fi
 assert_no_partial_install "$unsafe_runner" "$unsafe_key"
 [ ! -e "$unsafe_runner/wasmer-llvm/$unsafe_key/escaped" ] || fail "traversal archive wrote outside staging"
 
-unsafe_link_archive="$work_root/unsafe-link.tar.xz"
-bun "$script_dir/testdata/setup-wasmer-llvm/archive.mts" unsafe-link | xz -c > "$unsafe_link_archive"
-assert_archive_rejected unsafe-link "$unsafe_link_archive"
-
-duplicate_archive="$work_root/duplicate.tar.xz"
-bun "$script_dir/testdata/setup-wasmer-llvm/archive.mts" duplicate | xz -c > "$duplicate_archive"
-assert_archive_rejected duplicate "$duplicate_archive"
-
-special_archive="$work_root/special.tar.xz"
-bun "$script_dir/testdata/setup-wasmer-llvm/archive.mts" special | xz -c > "$special_archive"
-assert_archive_rejected special "$special_archive"
-
-oversized_archive="$work_root/oversized.tar.xz"
-bun "$script_dir/testdata/setup-wasmer-llvm/archive.mts" oversized | xz -c > "$oversized_archive"
-assert_archive_rejected oversized "$oversized_archive"
-
 # Exercise the validator itself: rejection must happen before LLVM executable checks.
 for label in unsafe unsafe-link duplicate special oversized collision cycle ancestor privileged; do
   archive="$work_root/$label.tar.xz"
-  bun "$script_dir/testdata/setup-wasmer-llvm/archive.mts" "$label" | xz -c > "$archive"
+  bun "$script_dir/testdata/archive.mts" "$label" | xz -c > "$archive"
   if xz -dc "$archive" | bun "$repo_root/.github/actions/setup-wasmer-llvm/validate-archive.mts" "$(wc -c < "$archive")" >/dev/null 2>&1; then
     fail "$label passed archive validation"
   fi

@@ -17,6 +17,17 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
+  llvm-install-unit:
+    tags: ["quality", "unit"]
+    command: "bash .github/actions/setup-wasmer-llvm/install.test.sh"
+    inputs:
+      - "actions/setup-wasmer-llvm/**/*"
+      - "/src/shared/artifact-packaging/portable-archive.mts"
+      - "/tools/dev/curl-platform-flags.sh"
+      - "/tools/test/tar-fixture.mts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   check:
     tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools"]
     command: "bash tools/policy/check-workflows.sh"

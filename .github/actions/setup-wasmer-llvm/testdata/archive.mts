@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { gunzipSync } from 'node:zlib';
-import { tarArchive } from '../../../test/tar-fixture.mts';
+import { tarArchive } from '../../../../tools/test/tar-fixture.mts';
 
 const fixtures = {
   unsafe: [{ name: '../escaped', data: 'unsafe' }],

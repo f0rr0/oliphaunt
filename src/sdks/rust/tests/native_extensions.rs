@@ -14,6 +14,7 @@ use oliphaunt::{
 };
 
 mod support;
+use support::first_data_row_text_values;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -56,15 +57,7 @@ fn native_release_proof_catalog_and_smoke_recipes_match() {
         "native proof manifest must remain sorted by SQL name"
     );
 
-    let package_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let recipe_directory = [
-        package_root.join("../../shared/fixtures/extensions"),
-        package_root.join("../../src/shared/fixtures/extensions"),
-        package_root.join("testdata/extensions"),
-    ]
-    .into_iter()
-    .find(|candidate| candidate.is_dir())
-    .expect("canonical extension smoke recipe directory is missing");
+    let recipe_directory = support::fixtures::root().join("extensions");
     let recipes = fs::read_dir(recipe_directory)
         .expect("read canonical extension smoke recipes")
         .filter_map(|entry| {
@@ -355,7 +348,6 @@ fn run_direct_extension_child_install_backup(
     assert_repeated_create_extension_error_recovers(&db, TestMode::Direct, extension)?;
     assert_extension_visible(&db, TestMode::Direct, extension)?;
     run_extension_functional_smoke(&db, TestMode::Direct, extension, false)?;
-    assert_extension_root_artifacts(root, TestMode::Direct, extension);
     let archive = block_on(db.backup())?;
     fs::write(backup_path, &archive).expect("failed to write direct extension backup artifact");
     block_on(db.close())
@@ -371,7 +363,6 @@ fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path)
     )?);
     assert_extension_visible(&db, TestMode::Direct, extension)?;
     run_extension_functional_smoke(&db, TestMode::Direct, extension, true)?;
-    assert_extension_root_artifacts(root, TestMode::Direct, extension);
     block_on(db.close())
 }
 
@@ -404,7 +395,6 @@ fn run_extension_recovery_smoke(
     assert_repeated_create_extension_error_recovers(&db, mode, extension)?;
     assert_extension_visible(&db, mode, extension)?;
     run_extension_functional_smoke(&db, mode, extension, false)?;
-    assert_extension_root_artifacts(root, mode, extension);
     let archive = if mode == TestMode::Server {
         None
     } else {
@@ -415,7 +405,6 @@ fn run_extension_recovery_smoke(
     let reopened = block_on(open_extension_database(mode, broker, extension, root))?;
     assert_extension_visible(&reopened, mode, extension)?;
     run_extension_functional_smoke(&reopened, mode, extension, true)?;
-    assert_extension_root_artifacts(root, mode, extension);
     block_on(reopened.close())?;
 
     let Some(archive) = archive else {
@@ -430,7 +419,6 @@ fn run_extension_recovery_smoke(
     ))?;
     assert_extension_visible(&restored, mode, extension)?;
     run_extension_functional_smoke(&restored, mode, extension, true)?;
-    assert_extension_root_artifacts(restored_root, mode, extension);
     block_on(restored.close())
 }
 
@@ -708,8 +696,6 @@ fn assert_success_response(
     Ok(())
 }
 
-fn assert_extension_root_artifacts(_root: &Path, _mode: TestMode, _extension: Extension) {}
-
 fn native_runtime_env_is_unavailable() -> bool {
     std::env::var_os("LIBOLIPHAUNT_PATH").is_none()
 }
@@ -742,63 +728,6 @@ fn raw_message_tags(mut bytes: &[u8]) -> Vec<u8> {
         bytes = &bytes[total..];
     }
     tags
-}
-
-fn first_data_row_text_values(mut bytes: &[u8]) -> Vec<String> {
-    while bytes.len() >= 5 {
-        let tag = bytes[0];
-        let len = i32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
-        if len < 4 {
-            break;
-        }
-        let total = 1 + len as usize;
-        if bytes.len() < total {
-            break;
-        }
-        if tag == b'D' {
-            return parse_data_row_text_values(&bytes[5..total]);
-        }
-        bytes = &bytes[total..];
-    }
-    Vec::new()
-}
-
-fn parse_data_row_text_values(payload: &[u8]) -> Vec<String> {
-    if payload.len() < 2 {
-        return Vec::new();
-    }
-    let columns = i16::from_be_bytes([payload[0], payload[1]]);
-    if columns < 0 {
-        return Vec::new();
-    }
-    let mut offset = 2;
-    let mut values = Vec::with_capacity(columns as usize);
-    for _ in 0..columns {
-        if payload.len().saturating_sub(offset) < 4 {
-            return Vec::new();
-        }
-        let len = i32::from_be_bytes([
-            payload[offset],
-            payload[offset + 1],
-            payload[offset + 2],
-            payload[offset + 3],
-        ]);
-        offset += 4;
-        if len == -1 {
-            values.push("NULL".to_owned());
-            continue;
-        }
-        if len < 0 {
-            return Vec::new();
-        }
-        let len = len as usize;
-        if payload.len().saturating_sub(offset) < len {
-            return Vec::new();
-        }
-        values.push(String::from_utf8_lossy(&payload[offset..offset + len]).into_owned());
-        offset += len;
-    }
-    values
 }
 
 fn mode_label(mode: TestMode) -> &'static str {

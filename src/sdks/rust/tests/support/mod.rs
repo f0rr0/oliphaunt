@@ -1,33 +1,12 @@
-use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::path::Path;
 use std::time::Duration;
 
+#[path = "../../src/test_fixtures.rs"]
 #[allow(dead_code)]
-pub(crate) fn fixture_text(relative: &str) -> String {
-    let package_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        package_root.join("../../shared/fixtures").join(relative),
-        package_root
-            .join("../../src/shared/fixtures")
-            .join(relative),
-        package_root.join("testdata").join(relative),
-    ];
-    for candidate in &candidates {
-        if let Ok(value) = fs::read_to_string(candidate) {
-            return value;
-        }
-    }
-    panic!(
-        "missing canonical test fixture {relative}; checked {}",
-        candidates
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-}
+pub(crate) mod fixtures;
+#[allow(unused_imports)]
+pub(crate) use fixtures::text as fixture_text;
 
 /// Execute a raw frontend-protocol request through the public server endpoint.
 ///

@@ -1919,6 +1919,16 @@ jobs:
           path: target/oliphaunt-wasix-postmaster/portable-inputs/wasix-postmaster-portable-build-inputs.tar.gz
           if-no-files-found: error
 
+      - name: Upload Postmaster failure diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: wasix-postmaster-portable-diagnostics
+          path: |
+            target/oliphaunt-wasix-postmaster/reports
+            target/oliphaunt-wasix-postmaster/runtime/reports
+          retention-days: 3
+
   wasix-postmaster-target:
     name: Builds / WASIX Postmaster / ${{ matrix.target_id }} + qualification
     needs:

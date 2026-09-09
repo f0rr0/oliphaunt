@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { posix } from 'node:path';
 import {
   portableMemberName,
-  validateSourceTarStream,
+  readPortableTarStream,
 } from '../../../src/shared/artifact-packaging/portable-archive.mts';
 
 // Shell verifies the compressed pin and feeds xz's output; no file contents are buffered here.
@@ -11,7 +11,8 @@ assert(
   Number.isSafeInteger(bytes) && bytes > 0 && bytes <= 2 * 1024 ** 3,
   'expected archive bytes must be between 1 and 2 GiB',
 );
-const members = await validateSourceTarStream(process.stdin, 'Wasmer LLVM', {
+const members = await readPortableTarStream(process.stdin, 'Wasmer LLVM', {
+  source: true,
   maxEntries: 500_000,
   maxEntryBytes: 4 * 1024 ** 3,
   maxExpandedBytes: Math.min(12 * 1024 ** 3, Math.max(1024 ** 3, bytes * 20)),

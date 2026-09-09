@@ -262,40 +262,6 @@ fresh_write_report_header "$summary" "WASIX Concurrent Connections Smoke"
 } >>"$summary"
 printf 'client\tstatus\tlog\n' >"$summary_tsv"
 
-run_logged_timeout() {
-  local timeout_seconds="$1"
-  shift
-  local log="$1"
-  shift
-  local pid started elapsed status
-
-  "$@" >"$log" 2>&1 &
-  pid=$!
-  started="$(date +%s)"
-  while kill -0 "$pid" 2>/dev/null; do
-    elapsed=$(( $(date +%s) - started ))
-    if [ "$elapsed" -ge "$timeout_seconds" ]; then
-      {
-        printf '\ncommand timed out after %s seconds\n' "$timeout_seconds"
-        printf 'command:'
-        printf ' %q' "$@"
-        printf '\n'
-      } >>"$log"
-      kill "$pid" 2>/dev/null || true
-      sleep 0.5
-      kill -9 "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-      return 124
-    fi
-    sleep 0.1
-  done
-  if wait "$pid"; then
-    return 0
-  fi
-  status=$?
-  return "$status"
-}
-
 readiness_blocker_reason() {
   local log="$1"
 
@@ -392,7 +358,11 @@ env "${wasmer_env[@]}" \
     --no-locale \
     --encoding=UTF8 \
     --no-instructions \
-    >"$initdb_log" 2>&1
+    >"$initdb_log" 2>&1 || {
+      status=$?
+      cat "$initdb_log" >&2
+      exit "$status"
+    }
 
 server_pid=""
 server_pgid=""
@@ -585,7 +555,7 @@ for index in "${!client_pids[@]}"; do
 done
 
 if [ "$timed_out" -eq 1 ]; then
-  run_logged_timeout "$verify_timeout" "$timeout_activity_log" \
+  fresh_run_process_group_timeout "$verify_timeout" -- \
     "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" \
       -X -q -A -t -F $'\t' \
       -v ON_ERROR_STOP=1 \
@@ -595,15 +565,15 @@ if [ "$timed_out" -eq 1 ]; then
                left(regexp_replace(query, '[[:space:]]+', ' ', 'g'), 240)
         FROM pg_stat_activity
         ORDER BY pid
-      " || true
+      " >"$timeout_activity_log" 2>&1 || true
 fi
 
 set +e
-run_logged_timeout "$verify_timeout" "$verify_log" \
+fresh_run_process_group_timeout "$verify_timeout" -- \
   "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" \
     -X -q -A -t -F $'\t' \
     -v ON_ERROR_STOP=1 \
-    -f "$verify_sql"
+    -f "$verify_sql" >"$verify_log" 2>&1
 verify_status=$?
 set -e
 verify_line=""
