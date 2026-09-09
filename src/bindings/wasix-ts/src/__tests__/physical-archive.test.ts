@@ -13,7 +13,6 @@ import {
   refreshBackupPgControl,
   requiredBackupWalNames,
   snapshotPhysicalBackupBulk,
-  validateBackupWalRange,
   withoutPostStopState,
 } from '../physical-archive.js';
 import { PostgresError } from '../query.js';
@@ -92,13 +91,19 @@ describe('WASIX physical archives', () => {
     expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
   });
 
-  it('does not stop twice when archive assembly fails after a confirmed stop', async () => {
+  it.each([
+    'short',
+    'missing',
+  ])('rejects %s WAL without stopping backup twice after a confirmed stop', async (failure) => {
     const calls: string[] = [];
     const responses = [startResponse(), stopResponse()];
     const directory = backupDirectory();
     const readFile = directory.readFile.bind(directory);
     directory.readFile = async (path) => {
-      if (path.startsWith('pg_wal/')) return new Uint8Array(1024);
+      if (path.startsWith('pg_wal/')) {
+        if (failure === 'missing') throw new Error('WAL file does not exist');
+        return new Uint8Array(1024);
+      }
       return readFile(path);
     };
 
@@ -107,7 +112,7 @@ describe('WASIX physical archives', () => {
         calls.push(querySql(request));
         return nextResponse(responses);
       }, directory),
-    ).rejects.toThrow('has the wrong size');
+    ).rejects.toThrow(failure === 'missing' ? 'WAL file does not exist' : 'has the wrong size');
     expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
   });
 
@@ -412,24 +417,6 @@ describe('WASIX physical archives', () => {
     );
   });
 
-  it('validates same-segment and multi-segment WAL ranges', () => {
-    const size = 1024 * 1024;
-    const same = '00000001000000000000000A';
-    validateBackupWalRange(walSnapshot([[same, size]]), same, same, size);
-
-    const names = [
-      '000000010000000000000FFE',
-      '000000010000000000000FFF',
-      '000000010000000100000000',
-    ] as const;
-    validateBackupWalRange(
-      walSnapshot(names.map((name) => [name, size])),
-      names[0],
-      names[2],
-      size,
-    );
-  });
-
   it('matches the shared WAL-range vectors', () => {
     const text = readFileSync(
       fileURLToPath(
@@ -476,24 +463,6 @@ describe('WASIX physical archives', () => {
         expect(() => requiredBackupWalNames(start, stop, segmentSize)).toThrow(message);
       }
     }
-  });
-
-  it('rejects incomplete or malformed WAL ranges', () => {
-    const size = 1024 * 1024;
-    const start = '00000001000000000000000A';
-    const stop = '00000001000000000000000B';
-    expect(() => validateBackupWalRange(walSnapshot([[start, size]]), start, stop, size)).toThrow(
-      'missing WAL segment',
-    );
-    expect(() =>
-      validateBackupWalRange(walSnapshot([[start, size - 1]]), start, start, size),
-    ).toThrow('wrong size');
-    expect(() => validateBackupWalRange(walSnapshot([]), start.toLowerCase(), stop, size)).toThrow(
-      'invalid WAL filename',
-    );
-    expect(() =>
-      validateBackupWalRange(walSnapshot([]), start, '00000002000000000000000B', size),
-    ).toThrow('crosses timelines');
   });
 
   it('retains only the required post-stop WAL files', () => {

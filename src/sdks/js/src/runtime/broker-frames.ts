@@ -26,18 +26,6 @@ export async function writeBrokerRequest(
   await stream.writeAll(encodeBrokerRequest(frame));
 }
 
-export async function readBrokerRequest(stream: ByteStream): Promise<BrokerRequestFrame> {
-  const { kind, payload } = await readFrame(stream);
-  return decodeBrokerRequest(kind, payload);
-}
-
-export async function writeBrokerResponse(
-  stream: ByteStream,
-  frame: BrokerResponseFrame,
-): Promise<void> {
-  await stream.writeAll(encodeBrokerResponse(frame));
-}
-
 export async function readBrokerResponse(stream: ByteStream): Promise<BrokerResponseFrame> {
   const { kind, payload } = await readFrame(stream);
   return decodeBrokerResponse(kind, payload);
@@ -59,49 +47,6 @@ export function encodeBrokerRequest(frame: BrokerRequestFrame): Uint8Array {
       return encodeFrame(5, emptyPayload);
     case 'cancel':
       return encodeFrame(7, emptyPayload);
-  }
-}
-
-export function encodeBrokerResponse(frame: BrokerResponseFrame): Uint8Array {
-  switch (frame.kind) {
-    case 'ok':
-      return encodeFrame(101, frame.bytes);
-    case 'chunk':
-      return encodeFrame(103, frame.bytes);
-    case 'error':
-      return encodeFrame(102, encodeUtf8(frame.message));
-    case 'streamCallbackAborted':
-      return encodeFrame(104, encodeUtf8(frame.message));
-  }
-}
-
-export function decodeBrokerRequest(kind: number, payload: Uint8Array): BrokerRequestFrame {
-  switch (kind) {
-    case 6:
-      return {
-        kind: 'authenticate',
-        token: decodeUtf8(payload, 'broker auth frame'),
-      };
-    case 1:
-      return { kind: 'execProtocol', bytes: payload };
-    case 4:
-      return { kind: 'execProtocolStream', bytes: payload };
-    case 8:
-      return {
-        kind: 'execSimpleQuery',
-        sql: decodeUtf8(payload, 'broker simple-query frame'),
-      };
-    case 3:
-      assertEmptyPayload(payload);
-      return { kind: 'close' };
-    case 5:
-      assertEmptyPayload(payload);
-      return { kind: 'backup' };
-    case 7:
-      assertEmptyPayload(payload);
-      return { kind: 'cancel' };
-    default:
-      throw new Error(`unknown broker request frame ${kind}`);
   }
 }
 
@@ -154,12 +99,6 @@ function encodeFrame(kind: number, payload: Uint8Array): Uint8Array {
   new DataView(out.buffer, out.byteOffset + 5, 8).setBigUint64(0, BigInt(payload.length));
   out.set(payload, HEADER_LEN);
   return out;
-}
-
-function assertEmptyPayload(payload: Uint8Array): void {
-  if (payload.length > 0) {
-    throw new Error('broker control frame unexpectedly had a payload');
-  }
 }
 
 const emptyPayload = new Uint8Array();

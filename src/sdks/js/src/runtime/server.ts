@@ -1,6 +1,6 @@
 import type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
 import { spawn } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readdir, stat } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { createServer } from 'node:net';
@@ -9,14 +9,12 @@ import type { NormalizedOpenConfig } from '../config.js';
 import type { ServerListen } from '../types.js';
 import { envVar } from '../native/common.js';
 import {
-  connectEndpoint,
   cleanupFailedManagedLaunch,
   removeTree,
   spawnManagedChild,
   unixSocketPathsFit,
   waitForManagedChild,
   type LocalEndpoint,
-  type FailedManagedLaunch,
   type ManagedChild,
 } from './node-adapter.js';
 import { PostgresWireClient } from './pgwire.js';
@@ -652,7 +650,6 @@ export async function nativeServerRuntimeEnv(
   const runtimeDirectory = dirname(toolDirectory);
   const dynamicLibraryDirs = await nativeDynamicLibraryDirs(runtimeDirectory);
   const dynamicLibraryEnv = prependEnvPaths(
-    nativeDynamicLibraryEnvName(),
     dynamicLibraryDirs,
     envVar(nativeDynamicLibraryEnvName()),
   );
@@ -701,11 +698,7 @@ async function nativeDynamicLibraryDirs(runtimeDirectory: string): Promise<strin
   return dirs;
 }
 
-function prependEnvPaths(
-  name: string,
-  paths: string[],
-  existing: string | undefined,
-): string | undefined {
+function prependEnvPaths(paths: string[], existing: string | undefined): string | undefined {
   const entries = paths.filter((path) => path.length > 0);
   if (existing !== undefined && existing.length > 0) {
     entries.push(existing);

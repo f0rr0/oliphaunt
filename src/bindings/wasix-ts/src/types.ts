@@ -122,7 +122,13 @@ export type WasixExtensionNativeModule = Readonly<{
   size: number;
 }>;
 
-export type WasixExtensionDescriptorInput = Readonly<{
+/**
+ * A package-authored, runtime-validated WASIX extension import. Applications
+ * obtain these from extension packages instead of constructing SQL strings.
+ * The schema and runtime literals discriminate it structurally, so generated
+ * carrier packages do not need a dependency on this binding.
+ */
+export type WasixExtensionDescriptor = Readonly<{
   schema: 'oliphaunt-wasix-extension-v1';
   runtime: 'wasix';
   /** Product and version of the root carrier selected by `sqlName`. */
@@ -134,14 +140,6 @@ export type WasixExtensionDescriptorInput = Readonly<{
   /** Root carrier plus any extension carrier dependencies required by this import. */
   carriers: readonly WasixExtensionCarrier[];
 }>;
-
-/**
- * A package-authored, runtime-validated WASIX extension import. Applications
- * obtain these from extension packages instead of constructing SQL strings.
- * The schema and runtime literals discriminate it structurally, so generated
- * carrier packages do not need a dependency on this binding.
- */
-export type WasixExtensionDescriptor = WasixExtensionDescriptorInput;
 
 /** Lifecycle fields owned by an independently versioned extension carrier. */
 export type WasixExtensionLifecycle = {

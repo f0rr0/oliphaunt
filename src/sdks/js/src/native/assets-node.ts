@@ -348,24 +348,11 @@ async function resolveSelectedIcu(
   return resources;
 }
 
-export async function resolveNodeIcuDataDirectory(
-  expectedVersion?: string,
-  packageName?: string,
-): Promise<string | undefined> {
-  return (await resolveNodeIcuResources(expectedVersion, packageName))?.dataDirectory;
-}
-
 async function resolveNodeIcuResources(
-  expectedVersion?: string,
-  packageName?: string,
+  expected: string,
+  name: string,
   packageJsonUrl?: string,
 ): Promise<ResolvedNodeIcuResources | undefined> {
-  const versions =
-    expectedVersion === undefined || packageName === undefined
-      ? await packageVersions()
-      : undefined;
-  const expected = expectedVersion ?? versions?.icuVersion;
-  const name = packageName ?? versions?.icuPackage ?? '@oliphaunt/icu';
   const packageJsonPath =
     packageJsonUrl === undefined ? optionalResolvePackageJson(name) : fileURLToPath(packageJsonUrl);
   if (packageJsonPath === undefined) {
@@ -376,7 +363,7 @@ async function resolveNodeIcuResources(
   if (packageJson.name !== name) {
     throw new Error(`${name} package metadata has name ${packageJson.name ?? '<missing>'}`);
   }
-  if (expected !== undefined && packageJson.version !== expected) {
+  if (packageJson.version !== expected) {
     throw new Error(
       `${name} version ${packageJson.version ?? '<missing>'} does not match @oliphaunt/ts icuVersion ${expected}`,
     );

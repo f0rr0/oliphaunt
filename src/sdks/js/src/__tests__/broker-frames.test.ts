@@ -2,16 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import {
-  decodeBrokerRequest,
   decodeBrokerResponse,
   encodeBrokerRequest,
-  encodeBrokerResponse,
-  readBrokerRequest,
   readBrokerResponse,
   writeBrokerRequest,
-  writeBrokerResponse,
 } from '../runtime/broker-frames.js';
-import { MemoryDuplexStream } from '../runtime/byte-stream.js';
+import { encodeBrokerResponse } from './broker-response.js';
+import { MemoryDuplexStream } from './memory-duplex-stream.js';
 import { resolveBrokerStreamCompletion } from '../runtime/broker.js';
 
 async function main(): Promise<void> {
@@ -19,33 +16,40 @@ async function main(): Promise<void> {
   await responseFramesRoundTrip();
   rejectsMalformedFrames();
   streamCompletionUsesRecoveryAwareErrorPrecedence();
-  await streamHelpersUseBinaryFrames();
 }
 
 async function requestFramesRoundTrip(): Promise<void> {
-  assert.deepEqual(decodeBrokerRequest(6, new TextEncoder().encode('secret')), {
-    kind: 'authenticate',
-    token: 'secret',
-  });
-  assert.deepEqual(decodeBrokerRequest(1, new Uint8Array([1, 2])), {
-    kind: 'execProtocol',
-    bytes: new Uint8Array([1, 2]),
-  });
-  assert.deepEqual(decodeBrokerRequest(4, new Uint8Array([3, 4])), {
-    kind: 'execProtocolStream',
-    bytes: new Uint8Array([3, 4]),
-  });
-  assert.deepEqual(decodeBrokerRequest(8, new TextEncoder().encode('SELECT 1')), {
-    kind: 'execSimpleQuery',
-    sql: 'SELECT 1',
-  });
-  assert.deepEqual(decodeBrokerRequest(3, new Uint8Array()), { kind: 'close' });
-  assert.deepEqual(decodeBrokerRequest(5, new Uint8Array()), {
-    kind: 'backup',
-  });
-  assert.deepEqual(decodeBrokerRequest(7, new Uint8Array()), {
-    kind: 'cancel',
-  });
+  const requests = [
+    [{ kind: 'authenticate', token: 'secret' }, 6, [...new TextEncoder().encode('secret')]],
+    [{ kind: 'execProtocol', bytes: Uint8Array.of(1, 2) }, 1, [1, 2]],
+    [{ kind: 'execProtocolStream', bytes: Uint8Array.of(3, 4) }, 4, [3, 4]],
+    [{ kind: 'execSimpleQuery', sql: 'SELECT 1' }, 8, [...new TextEncoder().encode('SELECT 1')]],
+    [{ kind: 'close' }, 3, []],
+    [{ kind: 'backup' }, 5, []],
+    [{ kind: 'cancel' }, 7, []],
+  ] as const;
+  for (const [request, kind, payload] of requests) {
+    const expected = Uint8Array.from([
+      0x50,
+      0x47,
+      0x4f,
+      0x42,
+      kind,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      payload.length,
+      ...payload,
+    ]);
+    assert.deepEqual(encodeBrokerRequest(request), expected);
+    const stream = new MemoryDuplexStream();
+    await writeBrokerRequest(stream, request);
+    assert.deepEqual(stream.output, [expected]);
+  }
 }
 
 async function responseFramesRoundTrip(): Promise<void> {
@@ -78,9 +82,7 @@ async function responseFramesRoundTrip(): Promise<void> {
 }
 
 function rejectsMalformedFrames(): void {
-  assert.throws(() => decodeBrokerRequest(999, new Uint8Array()), /unknown broker request/);
   assert.throws(() => decodeBrokerResponse(999, new Uint8Array()), /unknown broker response/);
-  assert.throws(() => decodeBrokerRequest(5, new Uint8Array([99])), /unexpectedly had a payload/);
   assert.throws(
     () => decodeBrokerResponse(104, new Uint8Array([0xff])),
     /stream callback-aborted frame is not UTF-8/,
@@ -124,44 +126,6 @@ function streamCompletionUsesRecoveryAwareErrorPrecedence(): void {
   assert.doesNotThrow(() =>
     resolveBrokerStreamCompletion({ kind: 'ok', bytes: new Uint8Array() }, false, undefined),
   );
-}
-
-async function streamHelpersUseBinaryFrames(): Promise<void> {
-  const requestStream = new MemoryDuplexStream();
-  await writeBrokerRequest(requestStream, {
-    kind: 'execProtocol',
-    bytes: new Uint8Array([0x51, 0, 0, 0, 4]),
-  });
-  assert.deepEqual(await readBrokerRequest(new MemoryDuplexStream(requestStream.output)), {
-    kind: 'execProtocol',
-    bytes: new Uint8Array([0x51, 0, 0, 0, 4]),
-  });
-
-  const streamingRequest = new MemoryDuplexStream();
-  await writeBrokerRequest(streamingRequest, {
-    kind: 'execProtocolStream',
-    bytes: new Uint8Array([0x51]),
-  });
-  assert.deepEqual(await readBrokerRequest(new MemoryDuplexStream(streamingRequest.output)), {
-    kind: 'execProtocolStream',
-    bytes: new Uint8Array([0x51]),
-  });
-
-  const responseStream = new MemoryDuplexStream();
-  await writeBrokerResponse(responseStream, {
-    kind: 'ok',
-    bytes: new Uint8Array([0x5a]),
-  });
-  assert.deepEqual(await readBrokerResponse(new MemoryDuplexStream(responseStream.output)), {
-    kind: 'ok',
-    bytes: new Uint8Array([0x5a]),
-  });
-
-  const raw = encodeBrokerRequest({ kind: 'backup' });
-  assert.equal(raw[0], 0x50);
-  assert.equal(raw[1], 0x47);
-  assert.equal(raw[2], 0x4f);
-  assert.equal(raw[3], 0x42);
 }
 
 test('broker frames', async () => {

@@ -4,7 +4,6 @@ const CLOSED = 2;
 const FAILED = 3;
 const PROTOCOL_STATE = 4;
 const CONTROL_WORDS = 5;
-const PROTOCOL_IDLE = 0;
 const PROTOCOL_ACTIVE = 1;
 const PROTOCOL_COMPLETE = 2;
 
@@ -57,11 +56,6 @@ export function markWasixByteChannelProtocolComplete(channel: WasixByteChannel):
   );
 }
 
-/** @internal Observe protocol activity across the tool/database worker boundary. */
-export function wasixByteChannelProtocolStarted(channel: WasixByteChannel): boolean {
-  return Atomics.load(channelControl(channel), PROTOCOL_STATE) !== PROTOCOL_IDLE;
-}
-
 /** @internal Whether a failed tool may have left an unobserved PostgreSQL outcome. */
 export function wasixByteChannelProtocolOutcomeUnknown(channel: WasixByteChannel): boolean {
   return Atomics.load(channelControl(channel), PROTOCOL_STATE) === PROTOCOL_ACTIVE;
@@ -96,45 +90,6 @@ export function writeWasixByteChannelSync(channel: WasixByteChannel, input: Uint
     const writable = writableBytes(read, write, data.length);
     if (writable === 0) {
       Atomics.wait(control, READ_OFFSET, read);
-      continue;
-    }
-    const copied = produce(control, data, write, input.subarray(offset), writable);
-    offset += copied;
-  }
-}
-
-/** @internal Non-blocking-realm read. Empty bytes mean EOF. */
-export async function readWasixByteChannel(
-  channel: WasixByteChannel,
-  maximumBytes = WASIX_BYTE_CHANNEL_CHUNK_BYTES,
-): Promise<Uint8Array> {
-  const control = channelControl(channel);
-  const data = new Uint8Array(channel.data);
-  for (;;) {
-    assertChannelHealthy(control);
-    const read = Atomics.load(control, READ_OFFSET);
-    const write = Atomics.load(control, WRITE_OFFSET);
-    if (read !== write) return consume(control, data, read, write, maximumBytes);
-    if (Atomics.load(control, CLOSED) !== 0) return new Uint8Array();
-    await waitForChange(control, WRITE_OFFSET, write);
-  }
-}
-
-/** @internal Non-blocking-realm write with bounded backpressure. */
-export async function writeWasixByteChannel(
-  channel: WasixByteChannel,
-  input: Uint8Array,
-): Promise<void> {
-  const control = channelControl(channel);
-  const data = new Uint8Array(channel.data);
-  let offset = 0;
-  while (offset < input.length) {
-    assertChannelWritable(control);
-    const read = Atomics.load(control, READ_OFFSET);
-    const write = Atomics.load(control, WRITE_OFFSET);
-    const writable = writableBytes(read, write, data.length);
-    if (writable === 0) {
-      await waitForChange(control, READ_OFFSET, read);
       continue;
     }
     const copied = produce(control, data, write, input.subarray(offset), writable);
@@ -203,22 +158,4 @@ function assertChannelWritable(control: Int32Array): void {
   if (Atomics.load(control, CLOSED) !== 0) {
     throw new Error('Oliphaunt WASIX byte channel is closed');
   }
-}
-
-async function waitForChange(control: Int32Array, index: number, expected: number): Promise<void> {
-  const waitAsync = (
-    Atomics as typeof Atomics & {
-      waitAsync?: (
-        typedArray: Int32Array,
-        index: number,
-        value: number,
-      ) => { async: false; value: string } | { async: true; value: Promise<string> };
-    }
-  ).waitAsync;
-  if (waitAsync !== undefined) {
-    const waiting = waitAsync(control, index, expected);
-    if (waiting.async) await waiting.value;
-    return;
-  }
-  await new Promise<void>((resolve) => setTimeout(resolve, 1));
 }

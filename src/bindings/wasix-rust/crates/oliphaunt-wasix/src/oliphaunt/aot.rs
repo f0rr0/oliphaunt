@@ -241,12 +241,6 @@ pub(crate) fn load_psql_module(engine: &Engine) -> Result<Module> {
     load_artifact_module(engine, "tool:psql")
 }
 
-#[cfg(feature = "extensions")]
-#[allow(dead_code)]
-pub(crate) fn load_initdb_module(engine: &Engine) -> Result<Module> {
-    load_artifact_module(engine, "tool:initdb")
-}
-
 fn install_artifact(name: &str) -> Result<InstalledArtifact> {
     if let Some(artifact) = installed_artifact(name) {
         return Ok(artifact);

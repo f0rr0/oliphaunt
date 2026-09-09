@@ -2033,6 +2033,13 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `TextQueryParameter.format`
 - `TextQueryParameter.typeOid`
 - `TextQueryParameter.value`
+- `WasixExtensionDescriptor.carriers`
+- `WasixExtensionDescriptor.compatibility`
+- `WasixExtensionDescriptor.product`
+- `WasixExtensionDescriptor.runtime`
+- `WasixExtensionDescriptor.schema`
+- `WasixExtensionDescriptor.sqlName`
+- `WasixExtensionDescriptor.version`
 - `WasixStorageError.code`
 - `WasixStorageError.commitState`
 - `WasixStorageError.constructor()`
@@ -2210,6 +2217,13 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `TextQueryParameter.format`
 - `TextQueryParameter.typeOid`
 - `TextQueryParameter.value`
+- `WasixExtensionDescriptor.carriers`
+- `WasixExtensionDescriptor.compatibility`
+- `WasixExtensionDescriptor.product`
+- `WasixExtensionDescriptor.runtime`
+- `WasixExtensionDescriptor.schema`
+- `WasixExtensionDescriptor.sqlName`
+- `WasixExtensionDescriptor.version`
 - `WasixStorageError.code`
 - `WasixStorageError.commitState`
 - `WasixStorageError.constructor()`

@@ -455,7 +455,7 @@ async function launchBroker(
   try {
     const startupTimeoutMs = brokerStartupTimeoutMs();
     const resolvedExecutable = await resolveBrokerExecutable(executable);
-    const endpoint = await allocateBrokerEndpoint(config);
+    const endpoint = await allocateBrokerEndpoint();
     failedLaunch.paths[0] = endpoint.ipcDir;
     const nativeInstall = await resolveBrokerNativeInstall(config);
     const child = spawnManagedChild({
@@ -641,7 +641,7 @@ type BrokerEndpointPlan =
   | { kind: 'unix'; socket: string; cancelSocket: string; ipcDir: string }
   | { kind: 'tcp'; listen: string; cancelListen: string; ipcDir?: undefined };
 
-async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<BrokerEndpointPlan> {
+async function allocateBrokerEndpoint(): Promise<BrokerEndpointPlan> {
   const canUseUnix = process.platform !== 'win32';
   if (canUseUnix) {
     const ipcDir = await createTempDir('lpgo-');

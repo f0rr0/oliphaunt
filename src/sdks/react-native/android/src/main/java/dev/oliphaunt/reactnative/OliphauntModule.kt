@@ -13,7 +13,6 @@ import dev.oliphaunt.DatabaseStorage
 import dev.oliphaunt.Oliphaunt
 import dev.oliphaunt.OliphauntConfig
 import dev.oliphaunt.OliphauntDatabase
-import dev.oliphaunt.PostgresStartupGuc
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -396,7 +395,7 @@ class OliphauntModule(
     return ReactNativeAndroidOpenConfig(
       config = OliphauntConfig(
         storage = storage,
-        startupGucs = config.startupGucs("startupGUCs").associate { it.name to it.value },
+        startupGucs = config.startupGucs("startupGUCs"),
         username = username,
         database = database,
         extensions = config.extensionDescriptors(),
@@ -470,16 +469,13 @@ class OliphauntModule(
       return value
     }
 
-    private fun ReadableMap.startupGucs(name: String): List<PostgresStartupGuc> =
-      stringList(name).map { assignment ->
+    private fun ReadableMap.startupGucs(name: String): Map<String, String> =
+      stringList(name).associate { assignment ->
         val separator = assignment.indexOf('=')
         if (separator < 0) {
           throw IllegalArgumentException("PostgreSQL startup GUC string must use name=value")
         }
-        PostgresStartupGuc(
-          name = assignment.substring(0, separator),
-          value = assignment.substring(separator + 1),
-        )
+        assignment.substring(0, separator) to assignment.substring(separator + 1)
       }
 
     private fun validatePath(value: String?, label: String): String {
@@ -491,36 +487,6 @@ class OliphauntModule(
       }
       return value
     }
-
-    private fun validatePathOverride(value: String?, name: String): String? {
-      if (value == null) {
-        return null
-      }
-      if (value.isBlank()) {
-        throw IllegalArgumentException(pathOverrideMessage(name, PathOverrideError.Empty))
-      }
-      if (value.any { it.code == 0 }) {
-        throw IllegalArgumentException(pathOverrideMessage(name, PathOverrideError.Nul))
-      }
-      return value
-    }
-
-    private enum class PathOverrideError {
-      Empty,
-      Nul,
-    }
-
-    private fun pathOverrideMessage(name: String, error: PathOverrideError): String =
-      when (name to error) {
-        "runtimeDirectory" to PathOverrideError.Empty -> "runtimeDirectory must not be empty"
-        "runtimeDirectory" to PathOverrideError.Nul -> "runtimeDirectory must not contain NUL bytes"
-        "resourceRoot" to PathOverrideError.Empty -> "resourceRoot must not be empty"
-        "resourceRoot" to PathOverrideError.Nul -> "resourceRoot must not contain NUL bytes"
-        else -> when (error) {
-          PathOverrideError.Empty -> "$name must not be empty"
-          PathOverrideError.Nul -> "$name must not contain NUL bytes"
-        }
-      }
 
     private enum class StartupIdentityError {
       Empty,

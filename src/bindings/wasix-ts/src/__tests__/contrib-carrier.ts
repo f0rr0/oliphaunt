@@ -1,6 +1,6 @@
-import { defineWasixExtension } from '../extension-descriptor.js';
+import type { WasixExtensionDescriptor } from '../types.js';
 
-export const hstore = defineWasixExtension({
+export const hstore = {
   schema: 'oliphaunt-wasix-extension-v1',
   runtime: 'wasix',
   product: 'oliphaunt-extension-contrib-pg18',
@@ -44,4 +44,4 @@ export const hstore = defineWasixExtension({
       },
     },
   ],
-});
+} as const satisfies WasixExtensionDescriptor;

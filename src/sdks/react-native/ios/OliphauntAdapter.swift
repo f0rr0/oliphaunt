@@ -212,7 +212,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let icu = try string(config, "icuVersion").map { OliphauntIcuData(version: $0) }
         let configuration = OliphauntConfiguration(
             storage: storage,
-            startupGUCs: Dictionary(try startupGUCs(config, "startupGUCs").map { ($0.name, $0.value) }, uniquingKeysWith: { _, last in last }),
+            startupGUCs: try startupGUCs(config, "startupGUCs"),
             username: username,
             database: database,
             extensions: extensions,
@@ -330,15 +330,15 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    private static func startupGUCs(_ dictionary: NSDictionary, _ key: String) throws -> [OliphauntStartupGUC] {
-        try stringArray(dictionary, key).map { assignment in
+    private static func startupGUCs(_ dictionary: NSDictionary, _ key: String) throws -> [String: String] {
+        try Dictionary(stringArray(dictionary, key).map { assignment in
             guard let separator = assignment.firstIndex(of: "=") else {
                 throw adapterError("PostgreSQL startup GUC string must use name=value")
             }
             let name = String(assignment[..<separator])
             let value = String(assignment[assignment.index(after: separator)...])
-            return OliphauntStartupGUC(name, value)
-        }
+            return (name, value)
+        }, uniquingKeysWith: { _, last in last })
     }
 
     private static func arrayOfStringsMessage(_ key: String) -> String {
@@ -349,22 +349,6 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             return "startupGUCs must be an array of strings"
         }
         return "\(key) must be an array of strings"
-    }
-
-    private static func env(_ key: String) -> String? {
-        guard let value = ProcessInfo.processInfo.environment[key],
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return nil
-        }
-        return value
-    }
-
-    private static func urlFromPath(_ path: String?) -> URL? {
-        guard let path, !path.isEmpty else {
-            return nil
-        }
-        return URL(fileURLWithPath: path)
     }
 
     private static func adapterError(_ message: String) -> NSError {
@@ -406,14 +390,5 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         default:
             return (error as NSError).localizedDescription
         }
-    }
-}
-
-private extension String {
-    func removingPrefix(_ prefix: String) -> String? {
-        guard hasPrefix(prefix) else {
-            return nil
-        }
-        return String(dropFirst(prefix.count))
     }
 }

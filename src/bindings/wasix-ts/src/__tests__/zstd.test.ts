@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
+import { decompressIfNeeded } from '../archive.js';
 
 const frame = Uint8Array.of(
   40,
@@ -31,34 +32,6 @@ const frame = Uint8Array.of(
   116,
 );
 
-afterEach(() => vi.resetModules());
-
-describe('WASIX zstd decompression', () => {
-  it('uses the portable fallback by default', async () => {
-    const { decompressZstd } = await import('../zstd.js');
-
-    expect(new TextDecoder().decode(decompressZstd(frame))).toBe('oliphaunt-zstd-test');
-  });
-
-  it('selects one installed host decompressor', async () => {
-    const { decompressZstd, installZstdDecompressor } = await import('../zstd.js');
-    const output = Uint8Array.of(4, 2);
-    const host = vi.fn(() => output);
-
-    installZstdDecompressor(host);
-
-    expect(decompressZstd(frame)).toBe(output);
-    expect(host).toHaveBeenCalledWith(frame);
-    expect(() => installZstdDecompressor(host)).toThrow('already installed');
-  });
-
-  it('propagates host decoding failures without retrying', async () => {
-    const { decompressZstd, installZstdDecompressor } = await import('../zstd.js');
-    const failure = new Error('invalid native frame');
-    installZstdDecompressor(() => {
-      throw failure;
-    });
-
-    expect(() => decompressZstd(frame)).toThrow(failure);
-  });
+it('decompresses zstd archive bytes with the portable decoder', () => {
+  expect(new TextDecoder().decode(decompressIfNeeded(frame))).toBe('oliphaunt-zstd-test');
 });

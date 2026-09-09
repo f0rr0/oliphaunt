@@ -1,6 +1,5 @@
 import type { NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -9,7 +8,6 @@ import {
   resolveExplicitLibraryPath,
   resolveExplicitRuntimeDirectory,
 } from './common.js';
-import { type RuntimeFileHost, validatePreparedRuntimeExtensions } from './extension-runtime.js';
 import {
   requireIcuDataTreeSha256,
   requireIcuManifestRelativePath,
@@ -122,22 +120,6 @@ export async function resolveDenoNativeInstall(
         );
   const target = liboliphauntPackageTarget(deno.build.os, deno.build.arch);
   return resolvePackageNativeInstall(deno, target, versions.liboliphauntVersion, icu);
-}
-
-export async function validatePreparedDenoRuntimeExtensions(config: {
-  deno: DenoRuntime;
-  runtimeDirectory?: string;
-  extensions: ReadonlyArray<string>;
-  source: string;
-}): Promise<{ runtimeDirectory: string; moduleDirectory?: string }> {
-  const target = liboliphauntPackageTarget(config.deno.build.os, config.deno.build.arch);
-  return validatePreparedRuntimeExtensions({
-    runtimeDirectory: config.runtimeDirectory,
-    extensions: config.extensions,
-    target: target.id,
-    source: config.source,
-    host: denoRuntimeFileHost(config.deno),
-  });
 }
 
 async function packageVersions(deno: DenoRuntime): Promise<{
@@ -503,31 +485,4 @@ function denoRuntime(): DenoRuntime {
 function optionalDenoRuntime(): DenoRuntime | undefined {
   const deno = (globalThis as { Deno?: DenoRuntime }).Deno;
   return deno;
-}
-
-function denoRuntimeFileHost(deno: DenoRuntime): RuntimeFileHost {
-  return {
-    join,
-    async readDir(path: string) {
-      const entries: Array<{ name: string; isFile?: boolean }> = [];
-      for await (const entry of deno.readDir(path)) {
-        entries.push({ name: entry.name, isFile: entry.isFile });
-      }
-      return entries;
-    },
-    async isDirectory(path: string) {
-      try {
-        return (await deno.stat(path)).isDirectory === true;
-      } catch {
-        return false;
-      }
-    },
-    async isFile(path: string) {
-      try {
-        return (await deno.stat(path)).isFile === true;
-      } catch {
-        return false;
-      }
-    },
-  };
 }
