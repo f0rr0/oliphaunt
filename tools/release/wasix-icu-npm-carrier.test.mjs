@@ -41,7 +41,6 @@ function fixture() {
     .update(dataBytes).update("\n").digest("hex");
   const seedBytes = Buffer.from("seed\n");
   const moduleSha = "1".repeat(64);
-  const source = "fixture-source";
   const seedManifest = {
     schema: "oliphaunt-cluster-seed-v1",
     artifactRole: "cluster-seed-icu",
@@ -52,7 +51,7 @@ function fixture() {
       compatibilityKey: "wasix-pg18-datum32-v1", consumerSha256: moduleSha,
       producerSha256: moduleSha, initdbSha256: "2".repeat(64),
     },
-    source: { fingerprint: source, catalogVersion: "1", lane: "stable", producer: "wasix-initdb" },
+    source: { catalogVersion: "1", lane: "stable", producer: "wasix-initdb" },
     initProfile: "fixture", archive: { path: "cluster-seeds/icu.tar.zst", sha256: digest(seedBytes), compressedBytes: seedBytes.length, expandedBytes: 1, regularFiles: 1, directories: 1 },
     requiredRuntimeFeatures: ["icu"], extensions: { selected: [], startupConfiguration: [] },
     icu: { artifactRole: "icu-data", upstreamVersion: "76.1", sourceCommit: "3".repeat(40), dataTreeSha256: tree, dataVersion: "76.1", dataForm: "files-le" },

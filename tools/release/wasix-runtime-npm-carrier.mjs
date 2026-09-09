@@ -153,10 +153,6 @@ function assertCoreManifestContract(manifest, runtimeEntries, standardSeedEntrie
   if (manifest["format-version"] !== 2) {
     fail("frozen WASIX core manifest must use format-version 2");
   }
-  const sourceFingerprint = nonEmptyString(
-    manifest["source-fingerprint"],
-    "frozen WASIX core manifest source-fingerprint",
-  );
   const runtime = object(manifest.runtime, "frozen WASIX core manifest runtime");
   safeRelativePath(runtime.archive, "frozen WASIX core manifest runtime.archive");
   checkedSha256(runtime.sha256, "frozen WASIX core manifest runtime.sha256");
@@ -236,19 +232,12 @@ function assertCoreManifestContract(manifest, runtimeEntries, standardSeedEntrie
     standardSeed["runtime-module-sha256"],
     "frozen WASIX standard cluster seed runtime-module-sha256",
   );
-  const standardSeedFingerprint = nonEmptyString(
-    standardSeed["source-fingerprint"],
-    "frozen WASIX standard cluster seed source-fingerprint",
-  );
   const standardSeedPostgresMajor = postgresMajor(
     standardSeed["postgres-version"],
     "frozen WASIX standard cluster seed postgres-version",
   );
   if (runtimeModuleSha256 !== standardSeedRuntimeModuleSha256) {
     fail("frozen WASIX core manifest runtime and standard cluster seed identify different runtime modules");
-  }
-  if (sourceFingerprint !== standardSeedFingerprint) {
-    fail("frozen WASIX core manifest runtime and standard cluster seed identify different source fingerprints");
   }
   if (runtimePostgresMajor !== standardSeedPostgresMajor) {
     fail("frozen WASIX core manifest runtime and standard cluster seed identify different PostgreSQL majors");
@@ -277,7 +266,6 @@ function assertCoreManifestContract(manifest, runtimeEntries, standardSeedEntrie
     || seedManifest.archive?.compressedBytes !== standardSeed.size
     || seedManifest.runtime?.consumerSha256 !== runtimeModuleSha256
     || seedManifest.runtime?.producerSha256 !== runtimeModuleSha256
-    || seedManifest.source?.fingerprint !== sourceFingerprint
     || JSON.stringify(seedManifest.requiredRuntimeFeatures) !== "[]"
     || seedManifest.icu !== null
   ) {

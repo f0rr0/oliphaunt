@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Read};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
@@ -9,52 +9,25 @@ const ARTIFACT_SCHEMA: &str = "oliphaunt-artifact-manifest-v1";
 const ARTIFACT_PRODUCT: &str = "oliphaunt-icu";
 const ARTIFACT_KIND: &str = "icu-data";
 const ARTIFACT_TARGET: &str = "portable";
-const PACKAGED_ICU_ARCHIVE: &str = "payload/icu-data.tar.zst";
 
 fn main() {
-    let native_version_file = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-        .join("payload/native-runtime-version");
-    println!("cargo:rerun-if-changed={}", native_version_file.display());
-    let native_version = fs::read_to_string(&native_version_file)
-        .unwrap_or_else(|_| env::var("CARGO_PKG_VERSION").unwrap());
-    let native_version = native_version.trim();
-    assert!(
-        !native_version.is_empty()
-            && native_version
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte)),
-        "invalid native runtime version"
-    );
-    println!("cargo:rustc-env=OLIPHAUNT_ICU_NATIVE_RUNTIME_VERSION={native_version}");
     println!("cargo:rerun-if-env-changed=OLIPHAUNT_ICU_DATA_DIR");
     println!("cargo:rerun-if-env-changed=OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let out = out_dir.join("generated_icu.rs");
-    if let Some(archive) = find_packaged_icu_archive() {
-        println!("cargo:rerun-if-changed={}", archive.display());
-        let extracted_root = unpack_icu_archive(&archive, &out_dir.join("icu-data-expanded"));
-        emit_icu_artifact(&out, &out_dir, &archive, &extracted_root);
-    } else if let Some(icu_root) = find_icu_data_root() {
+    if let Some(icu_root) = find_icu_data_root() {
         emit_rerun_directives(&icu_root);
-        let archive = out_dir.join("icu-data.tar.zst");
-        write_icu_archive(&icu_root, &archive);
-        emit_icu_artifact(&out, &out_dir, &archive, &icu_root);
+        emit_icu_artifact(&out_dir, &icu_root);
     } else {
         if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
-            panic!(
-                "release packaging requires package-local ICU data under payload/icu-data.tar.zst or payload/share/icu"
-            );
+            panic!("release packaging requires package-local ICU data under payload/share/icu");
         }
-        write_generated_icu(&out, None);
         fs::write(out_dir.join("native_icu.rs"), "&[]\n").expect("write empty native ICU index");
     }
 }
 
-fn emit_icu_artifact(out: &Path, out_dir: &Path, archive: &Path, icu_root: &Path) {
-    let archive_sha256 = sha256_file(archive).expect("digest ICU data archive");
+fn emit_icu_artifact(out_dir: &Path, icu_root: &Path) {
     let data_tree_sha256 = logical_tree_sha256(icu_root).expect("digest ICU logical data tree");
-    write_generated_icu(out, Some((archive, &archive_sha256, &data_tree_sha256)));
     let receipt = out_dir.join("native-icu.properties");
     fs::write(&receipt, format!("schema=oliphaunt-icu-data-v1\nartifactRole=icu-data\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256={data_tree_sha256}\n")).expect("write native ICU receipt");
     emit_artifact_manifest(out_dir, icu_root, &receipt);
@@ -133,13 +106,6 @@ fn native_seed_root() -> Option<(&'static str, PathBuf)> {
     Some((target, root))
 }
 
-fn find_packaged_icu_archive() -> Option<PathBuf> {
-    let manifest_dir =
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
-    let archive = manifest_dir.join(PACKAGED_ICU_ARCHIVE);
-    archive.is_file().then_some(archive)
-}
-
 fn find_icu_data_root() -> Option<PathBuf> {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
@@ -158,78 +124,6 @@ fn icu_candidates(manifest_dir: &Path) -> Vec<PathBuf> {
         candidates.push(PathBuf::from(path));
     }
     candidates
-}
-
-fn unpack_icu_archive(archive: &Path, destination: &Path) -> PathBuf {
-    if destination.exists() {
-        fs::remove_dir_all(destination).expect("remove previously unpacked ICU data archive");
-    }
-    fs::create_dir_all(destination).expect("create ICU data archive destination");
-    let file = fs::File::open(archive).expect("open packaged ICU data archive");
-    let decoder = zstd::stream::read::Decoder::new(file).expect("decode packaged ICU data archive");
-    let mut archive_reader = tar::Archive::new(decoder);
-    let entries = archive_reader
-        .entries()
-        .expect("read packaged ICU data archive entries");
-    let mut entry_count = 0_usize;
-    for entry in entries {
-        entry_count += 1;
-        assert!(
-            entry_count <= 8192,
-            "packaged ICU data archive has too many entries"
-        );
-        let mut entry = entry.expect("read packaged ICU data archive entry");
-        let path = entry
-            .path()
-            .expect("read packaged ICU data archive entry path")
-            .into_owned();
-        let relative = icu_archive_relative_path(&path);
-        let destination_path = destination.join(&relative);
-        let entry_type = entry.header().entry_type();
-        if entry_type.is_dir() {
-            fs::create_dir_all(&destination_path).expect("create ICU data archive directory");
-            continue;
-        }
-        if !entry_type.is_file() {
-            panic!(
-                "packaged ICU data archive entry {} has unsupported type {:?}",
-                path.display(),
-                entry_type
-            );
-        }
-        if let Some(parent) = destination_path.parent() {
-            fs::create_dir_all(parent).expect("create ICU data archive entry parent");
-        }
-        entry
-            .unpack(&destination_path)
-            .expect("unpack packaged ICU data archive entry");
-    }
-    let root = destination.join("share/icu");
-    canonical_icu_data_root(&root).expect("packaged ICU data archive contains share/icu data")
-}
-
-fn icu_archive_relative_path(path: &Path) -> PathBuf {
-    let mut relative = PathBuf::new();
-    let mut components = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(part) => {
-                relative.push(part);
-                components.push(part.to_owned());
-            }
-            _ => panic!("unsafe packaged ICU data archive entry {}", path.display()),
-        }
-    }
-    let under_share_icu = components.first().and_then(|part| part.to_str()) == Some("share")
-        && components.get(1).and_then(|part| part.to_str()) == Some("icu");
-    if !under_share_icu {
-        panic!(
-            "packaged ICU data archive entry {} must stay under share/icu",
-            path.display()
-        );
-    }
-    relative
 }
 
 fn canonical_icu_data_root(candidate: &Path) -> Option<PathBuf> {
@@ -277,67 +171,6 @@ fn emit_rerun_directives(root: &Path) {
     for path in collect_files(root).expect("collect ICU data files for rerun tracking") {
         println!("cargo:rerun-if-changed={}", path.display());
     }
-}
-
-fn write_icu_archive(icu_root: &Path, archive: &Path) {
-    let file = fs::File::create(archive).expect("create ICU data archive");
-    let encoder = zstd::stream::write::Encoder::new(file, 19).expect("create zstd encoder");
-    let mut builder = tar::Builder::new(encoder);
-    for source in collect_files(icu_root).expect("collect ICU data files") {
-        let relative = source
-            .strip_prefix(icu_root)
-            .expect("ICU file stays under ICU root");
-        let archive_path = Path::new("share/icu").join(relative);
-        let bytes = fs::read(&source).expect("read ICU data file");
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o644);
-        header.set_uid(0);
-        header.set_gid(0);
-        header.set_mtime(0);
-        header.set_cksum();
-        builder
-            .append_data(&mut header, &archive_path, bytes.as_slice())
-            .expect("append ICU data file");
-    }
-    let encoder = builder.into_inner().expect("finish ICU tar archive");
-    encoder.finish().expect("finish ICU zstd archive");
-}
-
-fn write_generated_icu(out: &Path, archive: Option<(&Path, &str, &str)>) {
-    let text = match archive {
-        Some((archive, archive_sha256, data_tree_sha256)) => format!(
-            "pub const HAS_ICU_DATA: bool = true;\n\
-             pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = Some({archive_sha256:?});\n\
-             pub const ICU_DATA_TREE_SHA256: Option<&str> = Some({data_tree_sha256:?});\n\
-             pub const fn icu_data_archive() -> Option<&'static [u8]> {{ Some(include_bytes!({archive:?})) }}\n",
-            archive = archive.to_string_lossy(),
-        ),
-        None => "pub const HAS_ICU_DATA: bool = false;\n\
-                 pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = None;\n\
-                 pub const ICU_DATA_TREE_SHA256: Option<&str> = None;\n\
-                 pub const fn icu_data_archive() -> Option<&'static [u8]> { None }\n"
-            .to_owned(),
-    };
-    let mut text = text;
-    for (name, file) in [
-        ("ICU_SEED_ARCHIVE", "icu.tar.zst"),
-        ("ICU_SEED_MANIFEST", "icu.json"),
-    ] {
-        let seed = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
-            .join("payload/cluster-seeds")
-            .join(file);
-        println!("cargo:rerun-if-changed={}", seed.display());
-        let body = if seed.is_file() {
-            format!("Some(include_bytes!({seed:?}))")
-        } else {
-            "None".into()
-        };
-        text.push_str(&format!(
-            "pub const {name}: Option<&'static [u8]> = {body};\n"
-        ));
-    }
-    fs::write(out, text).expect("write generated ICU data module");
 }
 
 fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path, receipt: &Path) {

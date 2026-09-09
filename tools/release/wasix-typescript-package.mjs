@@ -224,7 +224,7 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix'
     || manifest.oliphaunt?.runtimeVersion !== dependencies[RUNTIME_PACKAGE]
     || manifest.oliphaunt?.wasixNapiProduct !== NATIVE_PRODUCT
-    || manifest.oliphaunt?.wasixAddonAbiVersion !== 1
+    || manifest.oliphaunt?.wasixAddonAbiVersion !== 2
     || manifest.oliphaunt?.nodeApiVersion !== 8
     || manifest.oliphaunt?.browserHost !== 'wasmer-js-patched'
     || manifest.oliphaunt?.serverHost !== 'wasix-rust-napi'

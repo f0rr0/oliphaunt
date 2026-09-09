@@ -2,7 +2,8 @@
 //!
 //! `NativeWasixActorDatabase` and `NativeWasixServer` reuse the Rust async
 //! owners directly. Promise settlement is the only owner-to-JavaScript hop;
-//! no Tokio runtime or Node async-work queue participates in database work.
+//! database operations stay on those owners. Optional tool package preparation
+//! uses Node async work; no additional Tokio runtime is created by this adapter.
 
 #[cfg(any(feature = "extensions", feature = "tools", test))]
 mod extension_package;
@@ -36,7 +37,7 @@ use oliphaunt_wasix::{
 };
 use sha2::{Digest, Sha256};
 
-const ADDON_ABI_VERSION: u32 = 1;
+const ADDON_ABI_VERSION: u32 = 2;
 const NODE_API_VERSION: u32 = 8;
 const RUNTIME_VERSION: &str = liboliphaunt_wasix_portable::PACKAGE_VERSION;
 
@@ -500,16 +501,21 @@ impl ObjectFinalize for NativeWasixServer {}
 #[napi]
 impl NativeWasixServer {
     #[napi(catch_unwind, ts_return_type = "Promise<NativeWasixServer>")]
-    pub fn open(env: Env, options: NativeServerOpenOptions) -> Result<Object<'static>> {
-        let builder = configure_async_server(options)?;
+    pub fn open(env: Env, mut options: NativeServerOpenOptions) -> Result<Object<'static>> {
+        if let Some(icu) = &mut options.icu {
+            icu.snapshot();
+        }
         let (deferred, promise) = env.create_deferred()?;
-        builder.start_with_completion(move |result| {
-            deferred.resolve(move |env| {
-                result
-                    .map(|server| Self { server })
-                    .map_err(|error| native_runtime_error(&env, "open WASIX server", error))
-            });
-        });
+        AsyncOliphauntServerBuilder::start_with_completion(
+            move || configure_async_server(options).map_err(|error| error.reason),
+            move |result| {
+                deferred.resolve(move |env| {
+                    result
+                        .map(|server| Self { server })
+                        .map_err(|error| native_runtime_error(&env, "open WASIX server", error))
+                });
+            },
+        );
         Ok(static_object(&env, promise))
     }
 
@@ -638,25 +644,22 @@ pub fn extension_identity(sql_name: String) -> Result<String> {
     }
 }
 
+/// Load optional tool resources without blocking the importing JavaScript thread.
+#[cfg(feature = "tools")]
+#[napi(js_name = "registerTools", catch_unwind)]
+pub fn register_tools(
+    selection: extension_package::NativeToolPackage,
+) -> napi::bindgen_prelude::AsyncTask<extension_package::RegisterTools> {
+    napi::bindgen_prelude::AsyncTask::new(extension_package::RegisterTools(Some(selection)))
+}
+
 #[napi(js_name = "toolIdentity", catch_unwind)]
 pub fn tool_identity(name: String) -> Result<String> {
     #[cfg(feature = "tools")]
     {
-        static PG_DUMP: OnceLock<String> = OnceLock::new();
-        static PSQL: OnceLock<String> = OnceLock::new();
-        let (bytes, identity) = match name.as_str() {
-            "pg_dump" => (
-                oliphaunt_wasix::tools::installed_tool_wasm("pg_dump"),
-                &PG_DUMP,
-            ),
-            "psql" => (oliphaunt_wasix::tools::installed_tool_wasm("psql"), &PSQL),
-            _ => {
-                return Err(invalid_argument(format!(
-                    "unsupported WASIX tool {name:?}; expected \"pg_dump\" or \"psql\""
-                )));
-            }
-        };
-        hashed_embedded_identity(&format!("tool {name}"), bytes, identity)
+        oliphaunt_wasix::tools::installed_tool_identity(&name)
+            .map(|(hash, size)| format!("{hash}:{size}"))
+            .ok_or_else(|| invalid_argument(format!("WASIX tool {name:?} is not installed")))
     }
     #[cfg(not(feature = "tools"))]
     {
@@ -1277,17 +1280,22 @@ impl ObjectFinalize for NativeWasixActorDatabase {}
 #[napi]
 impl NativeWasixActorDatabase {
     #[napi(catch_unwind, ts_return_type = "Promise<NativeWasixActorDatabase>")]
-    pub fn open(env: Env, options: NativeOpenOptions) -> Result<Object<'static>> {
-        let builder = configure_actor_database(options)?;
+    pub fn open(env: Env, mut options: NativeOpenOptions) -> Result<Object<'static>> {
+        if let Some(icu) = &mut options.icu {
+            icu.snapshot();
+        }
         let (deferred, promise) = env.create_deferred()?;
-        builder.open_with_completion(move |result| {
-            deferred.resolve(move |env| {
-                let database = result.map_err(|error| {
-                    native_runtime_error(&env, "open WASIX actor database", error)
-                })?;
-                Self::attach(&env, database)
-            });
-        });
+        AsyncOliphauntBuilder::open_with_completion(
+            move || configure_actor_database(options).map_err(|error| error.reason),
+            move |result| {
+                deferred.resolve(move |env| {
+                    let database = result.map_err(|error| {
+                        native_runtime_error(&env, "open WASIX actor database", error)
+                    })?;
+                    Self::attach(&env, database)
+                });
+            },
+        );
         Ok(static_object(&env, promise))
     }
 

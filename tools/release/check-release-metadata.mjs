@@ -495,7 +495,7 @@ function validateWasixContract(graph, catalog) {
   assert(sameStrings(runtimeCargo, coreCargoPackages), "liboliphaunt-wasix core Cargo carriers must exactly match the WASIX artifact contract");
 
   const manifests = new Map([
-    [ICU_PACKAGE, "src/runtimes/liboliphaunt/icu/Cargo.toml"],
+    [ICU_PACKAGE, "src/runtimes/liboliphaunt/wasix/crates/icu/Cargo.toml"],
     [RUNTIME_PACKAGE, "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml"],
     [TOOLS_PACKAGE, "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml"],
     ...Object.entries(AOT_PACKAGES).map(([target, name]) => [name, `src/runtimes/liboliphaunt/wasix/crates/aot/${AOT_TARGET_TRIPLES[target]}/Cargo.toml`]),

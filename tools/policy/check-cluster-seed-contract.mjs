@@ -169,7 +169,7 @@ export function validateSeed(seed, label = "cluster seed") {
     assert(SHA256.test(seed.runtime[key]), `${label} runtime.${key} must be SHA-256`);
   }
   for (const key of ["product", "version"]) assertText(seed.runtime[key], `${label} runtime.${key}`);
-  assertExactKeys(seed.source, ["catalogVersion", "fingerprint", "lane", "producer"], `${label} source`);
+  assertExactKeys(seed.source, ["catalogVersion", "lane", "producer"], `${label} source`);
   for (const [key, value] of Object.entries(seed.source)) assertText(value, `${label} source.${key}`);
   assertText(seed.initProfile, `${label} initProfile`);
   assertExactKeys(seed.archive, [

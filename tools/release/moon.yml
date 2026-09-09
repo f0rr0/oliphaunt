@@ -245,7 +245,6 @@ tasks:
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/sdk-artifacts/wasix-rust.mjs"
       - "/tools/release/wasix-cargo-toolchain-policy.mjs"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
       - project: "liboliphaunt-wasix"
         group: "crates"
       - "/src/sources/toolchains/wasix.toml"
@@ -359,6 +358,9 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs --mutation-tests-only --mutation-scope=release"
     inputs:
+      - "/src/runtimes/liboliphaunt/icu/**/*"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
       - "/.github/scripts/bootstrap-registry-*"
       - "/.github/scripts/download-bootstrap-*"
       - "/.github/scripts/download-build-artifacts*"
@@ -730,7 +732,6 @@ tasks:
         group: "code"
       - project: "liboliphaunt-wasix"
         group: "crates"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
       - project: "artifact-packaging"
         group: "source"
       - "/tools/release/check-native-helper-aggregate-assets.mjs"

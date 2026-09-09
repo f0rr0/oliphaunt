@@ -70,3 +70,36 @@ test("optional native ICU carrier owns the matching seed and base retains only s
     rmSync(root, { recursive: true, force: true });
   }
 }, 120_000);
+
+
+test("WASIX ICU uses its own runtime version and contains no native resources", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wasix-icu-version-"));
+  const repo = path.resolve(import.meta.dir, "../..");
+  try {
+    const crate = path.join(root, "icu");
+    cpSync(path.join(repo, "src/runtimes/liboliphaunt/wasix/crates/icu"), crate, { recursive: true });
+    const manifest = path.join(crate, "Cargo.toml");
+    writeFileSync(manifest, readFileSync(manifest, "utf8")
+      .replace(/^version = "[^"]+"$/mu, 'version = "7.6.5"')
+      .replace('path = "../../../../../sdks/rust/crates/oliphaunt-resources"', `path = ${JSON.stringify(path.join(repo, "src/sdks/rust/crates/oliphaunt-resources"))}`));
+    mkdirSync(path.join(crate, "payload/cluster-seeds"), { recursive: true });
+    writeFileSync(path.join(crate, "payload/icu-data.tar.zst"), "fixture ICU");
+    writeFileSync(path.join(crate, "payload/cluster-seeds/icu.tar.zst"), "fixture seed");
+    writeFileSync(path.join(crate, "payload/cluster-seeds/icu.json"), JSON.stringify({runtime: {version: "7.6.5"}, catalogProfile: "icu", icu: {dataTreeSha256: "a".repeat(64)}}));
+    const app = path.join(root, "app");
+    mkdirSync(path.join(app, "src"), { recursive: true });
+    writeFileSync(path.join(app, "Cargo.toml"), `[package]\nname = "wasix-icu-version-proof"\nversion = "0.0.0"\nedition = "2024"\n[dependencies]\noliphaunt-wasix-icu = { path = ${JSON.stringify(crate)} }\n[workspace]\n`);
+    writeFileSync(path.join(app, "src/main.rs"), `fn main() {
+      let icu = oliphaunt_wasix_icu::ICU;
+      assert_eq!(icu.runtime_version, "7.6.5");
+      assert_eq!(icu.native_runtime_version, "unavailable");
+      assert!(icu.resources.is_empty());
+      assert_eq!(icu.wasix_archive.unwrap(), b"fixture ICU");
+      assert_eq!(icu.wasix_seed_archive.unwrap(), b"fixture seed");
+    }`);
+    const result = spawnSync("cargo", ["run", "--offline", "--manifest-path", path.join(app, "Cargo.toml")], {
+      cwd: repo, encoding: "utf8", env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1", CARGO_TARGET_DIR: path.join(repo, "target/optional-native-icu-proof") },
+    });
+    expect(result.status, result.stderr).toBe(0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 120_000);

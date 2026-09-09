@@ -303,7 +303,7 @@ pub(crate) fn postgres_expected_source_fingerprint(
     ))
 }
 
-fn postgres_patch_series_hash() -> Result<String> {
+pub(crate) fn postgres_patch_series_hash() -> Result<String> {
     let mut hasher = Sha256::new();
     for path in postgres_fingerprint_inputs()? {
         let hash = sha256_text_file_lf(&path)?;

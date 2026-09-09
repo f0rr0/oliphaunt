@@ -80,7 +80,7 @@ export function serializeAssetSource(source: WasixAssetSource): SerializedAssetS
     return source.href;
   }
   if (source instanceof Uint8Array) {
-    return source.slice();
+    return new Uint8Array(source);
   }
   return new Uint8Array(source.slice(0));
 }

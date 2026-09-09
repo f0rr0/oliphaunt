@@ -433,6 +433,16 @@ pub fn register_installed_package(package: oliphaunt_resources::WasixPackage) ->
         package.runtime_version() == liboliphaunt_wasix_portable::PACKAGE_VERSION,
         "installed tools package runtime mismatch"
     );
+    if let Some(selected) = INSTALLED_TOOLS.get() {
+        if selected.product() == package.product()
+            && selected.version() == package.version()
+            && std::ptr::eq(selected.archives(), package.archives())
+            && std::ptr::eq(selected.aot_artifacts(), package.aot_artifacts())
+            && std::ptr::eq(selected.aot_manifest(), package.aot_manifest())
+        {
+            return Ok(());
+        }
+    }
     for name in ["pg_dump", "psql"] {
         let matches: Vec<_> = package
             .archives()
@@ -475,6 +485,16 @@ pub fn installed_tool_wasm(name: &str) -> Option<&'static [u8]> {
         .iter()
         .find(|(entry, _, _)| *entry == name)
         .map(|(_, bytes, _)| *bytes)
+}
+
+#[doc(hidden)]
+pub fn installed_tool_identity(name: &str) -> Option<(&'static str, usize)> {
+    INSTALLED_TOOLS
+        .get()?
+        .archives()
+        .iter()
+        .find(|(entry, _, _)| *entry == name)
+        .map(|(_, bytes, hash)| (*hash, bytes.len()))
 }
 
 fn pg_dump_wasm_asset() -> Result<&'static [u8]> {

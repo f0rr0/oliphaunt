@@ -232,8 +232,6 @@ pub(super) struct BuildOutputManifestOut {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_lane: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) source_fingerprint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) postgres_version: Option<String>,
     pub(super) build_profile: String,
     pub(super) modules: Vec<BuildModuleManifestOut>,
@@ -255,8 +253,6 @@ pub(super) struct AssetManifestOut {
     pub(super) format_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_lane: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) source_fingerprint: Option<String>,
     pub(super) runtime: RuntimeAssetOut,
     pub(super) runtime_support: Vec<BinaryAssetOut>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -307,8 +303,6 @@ pub(super) struct ClusterSeedAssetOut {
     pub(super) source_pins_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_lane: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) source_fingerprint: Option<String>,
     pub(super) postgres_version: String,
     pub(super) catalog_version: String,
     pub(super) init_profile: String,
@@ -421,8 +415,6 @@ pub(super) struct AotManifest {
     pub(super) format_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_lane: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) source_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) postgres_version: Option<String>,
     pub(super) target_triple: String,

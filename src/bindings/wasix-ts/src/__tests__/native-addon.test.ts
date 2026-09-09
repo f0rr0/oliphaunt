@@ -160,14 +160,14 @@ function addonFixture(): NativeWasixAddon {
     NativeWasixServer: Server,
     async restore() {},
     restoreDirect() {},
-    addonAbiVersion: () => 1,
+    addonAbiVersion: () => 2,
     nodeApiVersion: () => 8,
     runtimeVersion: () => '0.1.1',
     supportedProfiles: () => ['standard', 'icu'],
     payloadIdentity: () => `${'a'.repeat(64)}:1`,
     extensionIdentity: () => `${'a'.repeat(64)}:1`,
     toolIdentity: () => `${'a'.repeat(64)}:1`,
-    registerTools: () => {},
+    registerTools: async () => {},
   };
 }
 
@@ -179,7 +179,7 @@ function metadata() {
       runtimeVersion: '0.1.1',
       wasixNapiProduct: 'oliphaunt-wasix-napi',
       wasixNapiVersion: '0.1.1',
-      wasixAddonAbiVersion: 1,
+      wasixAddonAbiVersion: 2,
       nodeApiVersion: 8,
     },
   };

@@ -26,7 +26,7 @@ fn check_generated_manifest_with_outputs(
     outputs: Result<BuildOutputs>,
 ) -> Result<()> {
     let source_lane = DEFAULT_SOURCE_LANE;
-    match outputs.and_then(|outputs| effective_source_pins(manifest, &outputs)) {
+    match outputs.and_then(|_| effective_source_pins(manifest)) {
         Ok(expected_sources) => check_generated_manifest_sources_in(
             generated_assets_dir_for_source_lane(source_lane)?,
             &expected_sources,

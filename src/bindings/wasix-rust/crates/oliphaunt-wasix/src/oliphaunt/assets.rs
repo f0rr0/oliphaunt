@@ -3,11 +3,9 @@ use anyhow::{Context, Result, ensure};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetManifestMetadata {
     pub source_lane: Option<String>,
-    pub source_fingerprint: Option<String>,
     pub postgres_version: String,
     pub runtime_module_sha256: String,
     pub cluster_seed_source_lane: Option<String>,
-    pub cluster_seed_source_fingerprint: Option<String>,
     pub cluster_seed_postgres_version: Option<String>,
     pub cluster_seed_profile: String,
     pub cluster_seed_compatibility_key: String,
@@ -61,6 +59,18 @@ pub(crate) fn register_icu(data: oliphaunt_resources::IcuData) -> Result<()> {
         data.runtime_version == liboliphaunt_wasix_portable::PACKAGE_VERSION,
         "ICU package is incompatible with the selected WASIX runtime"
     );
+    if let Some(selected) = SELECTED_ICU.get() {
+        let same_bytes = |left: Option<&[u8]>, right: Option<&[u8]>| matches!((left, right), (Some(left), Some(right)) if std::ptr::eq(left, right));
+        if selected.version == data.version
+            && selected.wasix_archive_sha256 == data.wasix_archive_sha256
+            && selected.wasix_data_tree_sha256 == data.wasix_data_tree_sha256
+            && same_bytes(selected.wasix_archive, data.wasix_archive)
+            && same_bytes(selected.wasix_seed_archive, data.wasix_seed_archive)
+            && same_bytes(selected.wasix_seed_manifest, data.wasix_seed_manifest)
+        {
+            return Ok(());
+        }
+    }
     let archive = data
         .wasix_archive
         .context("selected ICU package has no WASIX archive")?;
@@ -123,47 +133,18 @@ pub(crate) fn asset_manifest_metadata_for(
 ) -> Result<AssetManifestMetadata> {
     let manifest =
         liboliphaunt_wasix_portable::manifest().context("parse oliphaunt-wasix asset manifest")?;
-    if cluster_seed_manifest(selected_profile).is_some() {
-        let seed = manifest
-            .cluster_seeds
-            .get(selected_profile.as_str())
-            .context("embedded WASIX assets are missing the selected cluster seed entry")?;
-        validate_embedded_source_fingerprints(
-            manifest.source_fingerprint.as_deref(),
-            seed.source_fingerprint.as_deref(),
-        )?;
-    }
     let seed = manifest.cluster_seeds.get(selected_profile.as_str());
     Ok(AssetManifestMetadata {
         source_lane: manifest.source_lane,
-        source_fingerprint: manifest.source_fingerprint,
         postgres_version: manifest.runtime.postgres_version,
         runtime_module_sha256: manifest.runtime.module_sha256,
         cluster_seed_source_lane: seed.and_then(|seed| seed.source_lane.clone()),
-        cluster_seed_source_fingerprint: seed.and_then(|seed| seed.source_fingerprint.clone()),
         cluster_seed_postgres_version: seed.map(|seed| seed.postgres_version.clone()),
         cluster_seed_profile: selected_profile.as_str().to_owned(),
         cluster_seed_compatibility_key: seed
             .map(|seed| seed.compatibility_key.clone())
             .unwrap_or_default(),
     })
-}
-
-fn validate_embedded_source_fingerprints(
-    asset_fingerprint: Option<&str>,
-    seed_fingerprint: Option<&str>,
-) -> Result<()> {
-    let asset_fingerprint = asset_fingerprint
-        .filter(|value| !value.trim().is_empty())
-        .context("embedded WASIX asset manifest is missing source-fingerprint metadata")?;
-    let seed_fingerprint = seed_fingerprint
-        .filter(|value| !value.trim().is_empty())
-        .context("embedded WASIX cluster seed is missing source-fingerprint metadata")?;
-    ensure!(
-        seed_fingerprint == asset_fingerprint,
-        "embedded WASIX runtime and cluster seed source fingerprints differ"
-    );
-    Ok(())
 }
 
 pub(crate) fn runtime_archive() -> Option<&'static [u8]> {
@@ -267,7 +248,6 @@ mod tests {
         CatalogProfile, asset_manifest_metadata, cluster_seed_archive, cluster_seed_manifest,
         expected_icu_data_archive_sha256, expected_icu_data_tree_sha256,
         expected_runtime_archive_sha256, icu_data_archive, runtime_archive,
-        validate_embedded_source_fingerprints,
     };
 
     #[test]
@@ -300,14 +280,5 @@ mod tests {
         let has_icu_assets = icu_data_archive(CatalogProfile::Icu).is_some();
         assert_eq!(expected_icu_data_archive_sha256().is_some(), has_icu_assets);
         assert_eq!(expected_icu_data_tree_sha256().is_some(), has_icu_assets);
-    }
-
-    #[test]
-    fn embedded_source_fingerprints_are_required_and_equal() {
-        validate_embedded_source_fingerprints(Some("source-key"), Some("source-key"))
-            .expect("matching identities");
-        assert!(validate_embedded_source_fingerprints(None, Some("source-key")).is_err());
-        assert!(validate_embedded_source_fingerprints(Some("source-key"), Some(" ")).is_err());
-        assert!(validate_embedded_source_fingerprints(Some("runtime"), Some("seed")).is_err());
     }
 }

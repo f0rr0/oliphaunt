@@ -61,7 +61,7 @@ test("packages exact host AOT bytes separately and rejects corrupted code before
   const manifest = {
     "format-version": 1, "source-lane": canonical.sourceLane, engine: canonical.engine,
     "wasmer-version": canonical.wasmerVersion, "wasmer-wasix-version": canonical.wasmerWasixVersion,
-    "target-triple": "x86_64-unknown-linux-gnu", "source-fingerprint": "fixture", "postgres-version": "18.3",
+    "target-triple": "x86_64-unknown-linux-gnu", "postgres-version": "18.3",
     artifacts: [{ name: "extension:vector", path: "vector.bin.zst", compressed: true,
       sha256: sha256Bytes(bytes), "raw-sha256": sha256Bytes(raw), "raw-size": raw.length,
       "module-sha256": "a".repeat(64) }],

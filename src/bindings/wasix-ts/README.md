@@ -203,8 +203,8 @@ pgdata/
 ```
 
 The descriptor records the shared database-root schema, PostgreSQL major, and
-WASIX physical format. Runtime source fingerprints and package hashes validate
-the asset graph; they are not physical-reopen identity. Native and WASIX roots
+WASIX physical format. Runtime/resource versions determine package compatibility; checksums verify
+artifact integrity. Neither is a physical-reopen identity. Native and WASIX roots
 are not rejected merely because of the originating family.
 
 Rust and WASIX TypeScript bindings use the same root and physical-archive
@@ -332,14 +332,21 @@ await using database = await WorkerOliphaunt.open();
 
 All imports expose the same PostgreSQL interface and retain the promise-shaped
 public API. A Promise does not itself imply off-thread execution. In a browser,
-the root steps the Wasmer guest in the importing realm. On native hosts, the
+`/browser` steps the Wasmer guest in the importing realm. On native hosts, the
 root uses one Rust owner actor so PostgreSQL does not block the importing event
-loop. `/direct` calls the synchronous Rust database on the importing thread and
+loop. Resource reads, verification, and startup run on that Rust owner;
+caller-owned byte inputs are copied before crossing threads. Optional tool
+registration uses Node background work before execution on the database owner.
+`/direct` calls the synchronous Rust database on the importing thread and
 removes that actor hop. `/worker` uses a real package-owned JavaScript Worker on
 every runtime and loads the direct implementation inside it.
 
-Importing the browser root or `/direct` from an application Worker blocks only
-that Worker; importing the browser root in a Window can block the page. Browser
+This differs from native `@oliphaunt/ts/direct`: there, “direct” selects an
+in-process database topology and calls still run asynchronously. WASIX
+`/direct` selects execution on the importing thread.
+
+Importing `/browser` from an application Worker blocks only that Worker;
+importing `/browser` in a Window can block the page. Browser
 Worker use requires cross-origin isolation. Chromium Window compilation
 of native side modules larger than 8 MiB requires `/worker`.
 

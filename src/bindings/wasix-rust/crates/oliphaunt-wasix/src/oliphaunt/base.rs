@@ -186,7 +186,6 @@ struct ClusterSeedRuntimeIdentity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ClusterSeedSourceIdentity {
-    fingerprint: String,
     catalog_version: String,
     lane: String,
     producer: String,
@@ -1228,18 +1227,6 @@ fn validate_cluster_seed_manifest_metadata(
             manifest.runtime.postgres_major.to_string() == expected,
             "embedded cluster seed PostgreSQL version mismatch: seed={} asset-entry={expected}",
             manifest.runtime.postgres_major
-        );
-    }
-
-    let expected_fingerprint = metadata
-        .cluster_seed_source_fingerprint
-        .as_deref()
-        .or(metadata.source_fingerprint.as_deref());
-    if let Some(expected) = expected_fingerprint {
-        ensure!(
-            manifest.source.fingerprint == expected,
-            "embedded cluster seed source fingerprint mismatch: seed={} assets={expected}",
-            manifest.source.fingerprint
         );
     }
 

@@ -11,7 +11,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-it('resolves an imported package by its file identity, including npm aliases, and rejects substituted versions', () => {
+it('resolves an imported package by its file identity, including npm aliases, and rejects substituted versions', async () => {
   const root = mkdtempSync(join(tmpdir(), 'oliphaunt-extension-'));
   roots.push(root);
   const owner = join(root, 'node_modules', 'my-pgtap-version');
@@ -41,7 +41,7 @@ it('resolves an imported package by its file identity, including npm aliases, an
     },
   };
   writeFileSync(join(owner, 'package.json'), JSON.stringify(manifest));
-  expect(nativeExtensionPackages(options)).toEqual([
+  expect(await nativeExtensionPackages(options)).toEqual([
     {
       sqlName: 'pgtap',
       product: carrier.product,
@@ -51,7 +51,11 @@ it('resolves an imported package by its file identity, including npm aliases, an
   ]);
   manifest.version = '1.3.5';
   writeFileSync(join(owner, 'package.json'), JSON.stringify(manifest));
-  expect(() => nativeExtensionPackages(options)).toThrow('does not match its installed package');
+  await expect(nativeExtensionPackages(options)).rejects.toThrow(
+    'does not match its installed package',
+  );
   carrier.source = 'https://example.com/untrusted.tar.zst';
-  expect(() => nativeExtensionPackages(options)).toThrow('requires an installed package file URL');
+  await expect(nativeExtensionPackages(options)).rejects.toThrow(
+    'requires an installed package file URL',
+  );
 });

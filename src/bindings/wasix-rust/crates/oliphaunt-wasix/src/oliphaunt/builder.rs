@@ -59,7 +59,7 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Select ICU data from the optional `oliphaunt-icu` package.
+    /// Select ICU data from the optional `oliphaunt-wasix-icu` package.
     pub fn icu(mut self, data: oliphaunt_resources::IcuData) -> Self {
         self.icu = Some(data);
         self.catalog_profile = CatalogProfile::Icu;

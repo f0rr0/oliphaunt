@@ -22,7 +22,7 @@
     "runtimeVersion": "0.2.0",
     "wasixNapiProduct": "oliphaunt-wasix-napi",
     "wasixNapiVersion": "0.1.0",
-    "wasixAddonAbiVersion": 1,
+    "wasixAddonAbiVersion": 2,
     "nodeApiVersion": 8,
     "browserHost": "wasmer-js-patched",
     "serverHost": "wasix-rust-napi"

@@ -141,7 +141,7 @@ build script or SDK `extension-vector` feature is required. The builder accepts
 selection prepares artifacts and startup requirements; migrations remain
 application-owned.
 
-For ICU collations, add `oliphaunt-icu` and pass `.icu(oliphaunt_icu::ICU)`.
+For ICU collations, add `oliphaunt-wasix-icu` and pass `.icu(oliphaunt_wasix_icu::ICU)`.
 The optional package supplies ICU data and the matching initialization seed.
 Omitting it selects standard initialization.
 

@@ -463,8 +463,9 @@ impl Drop for DatabaseOwnerInner {
 }
 
 impl DatabaseOwner {
-    fn open_with_completion<C>(builder: DirectOliphauntBuilder, completion: C)
+    fn open_with_completion<F, C>(configure: F, completion: C)
     where
+        F: FnOnce() -> Result<DirectOliphauntBuilder> + Send + 'static,
         C: FnOnce(Result<Self>) + Send + 'static,
     {
         let completion = SharedCompletion::new(completion);
@@ -486,7 +487,7 @@ impl DatabaseOwner {
                     "WASIX database owner stopped before open completed",
                 );
                 let opened =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| builder.open()));
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| configure()?.open()));
                 let database = match opened {
                     Ok(Ok(database)) => {
                         completion.complete(Ok(Self {
@@ -1766,7 +1767,7 @@ impl AsyncOliphauntBuilder {
         self
     }
 
-    /// Select ICU data from the optional `oliphaunt-icu` package.
+    /// Select ICU data from the optional `oliphaunt-wasix-icu` package.
     pub fn icu(mut self, data: oliphaunt_resources::IcuData) -> Self {
         self.inner = self.inner.icu(data);
         self
@@ -1822,15 +1823,18 @@ impl AsyncOliphauntBuilder {
     /// Construct the Wasmer runtime and PostgreSQL session on its permanent owner thread.
     pub async fn open(self) -> Result<AsyncOliphaunt> {
         let (reply, receiver) = oneshot::channel();
-        DatabaseOwner::open_with_completion(self.inner, move |result| {
-            let _ = reply.send(result.map(|owner| AsyncOliphaunt { owner }));
-        });
+        DatabaseOwner::open_with_completion(
+            move || Ok(self.inner),
+            move |result| {
+                let _ = reply.send(result.map(|owner| AsyncOliphaunt { owner }));
+            },
+        );
         receiver
             .await
             .map_err(|_| Error::lifecycle("WASIX database owner stopped before open completed"))?
     }
 
-    /// Construct the database on its owner thread and report completion without
+    /// Configure resources and construct the database on its owner thread, reporting completion without
     /// creating or polling a Rust future.
     ///
     /// Completion runs on the new owner thread after successful construction,
@@ -1838,13 +1842,21 @@ impl AsyncOliphauntBuilder {
     /// invoked exactly once.
     #[cfg(any(feature = "__internal-napi", test))]
     #[doc(hidden)]
-    pub fn open_with_completion<C>(self, completion: C)
+    pub fn open_with_completion<F, C>(configure: F, completion: C)
     where
+        F: FnOnce() -> std::result::Result<Self, String> + Send + 'static,
         C: FnOnce(Result<AsyncOliphaunt>) + Send + 'static,
     {
-        DatabaseOwner::open_with_completion(self.inner, move |result| {
-            completion(result.map(|owner| AsyncOliphaunt { owner }));
-        });
+        DatabaseOwner::open_with_completion(
+            move || {
+                configure()
+                    .map(|builder| builder.inner)
+                    .map_err(|error| Error::from_anyhow(crate::error::invalid_configuration(error)))
+            },
+            move |result| {
+                completion(result.map(|owner| AsyncOliphaunt { owner }));
+            },
+        );
     }
 }
 
@@ -2402,7 +2414,7 @@ impl AsyncOliphauntServerBuilder {
         self
     }
 
-    /// Select ICU data from the optional `oliphaunt-icu` package.
+    /// Select ICU data from the optional `oliphaunt-wasix-icu` package.
     pub fn icu(mut self, data: oliphaunt_resources::IcuData) -> Self {
         self.inner = self.inner.icu(data);
         self
@@ -2465,16 +2477,20 @@ impl AsyncOliphauntServerBuilder {
     /// Start the server and await its bound endpoint.
     pub async fn start(self) -> Result<AsyncOliphauntServer> {
         let (reply, receiver) = oneshot::channel();
-        self.start_with_reply(move |result| {
-            let _ = reply.send(result);
-        });
+        Self::start_with_reply(
+            move || Ok(self),
+            move |result| {
+                let _ = reply.send(result);
+            },
+        );
         receiver
             .await
             .map_err(|_| Error::lifecycle("WASIX server owner stopped before start completed"))?
     }
 
-    fn start_with_reply<C>(self, completion: C)
+    fn start_with_reply<F, C>(configure: F, completion: C)
     where
+        F: FnOnce() -> Result<Self> + Send + 'static,
         C: FnOnce(Result<AsyncOliphauntServer>) + Send + 'static,
     {
         let completion = SharedCompletion::new(completion);
@@ -2493,8 +2509,9 @@ impl AsyncOliphauntServerBuilder {
                     thread_completion,
                     "WASIX server owner stopped before start completed",
                 );
-                let opened =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.inner.start()));
+                let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    configure()?.inner.start()
+                }));
                 let server = match opened {
                     Ok(Ok(server)) => server,
                     Ok(Err(error)) => {
@@ -2547,16 +2564,23 @@ impl AsyncOliphauntServerBuilder {
         }
     }
 
-    /// Start the server and report its bound endpoint without creating or
+    /// Configure resources and start the server on its owner thread without creating or
     /// polling a Rust future. Completion runs exactly once, including thread
     /// spawn failure and owner loss during startup.
     #[cfg(any(feature = "__internal-napi", test))]
     #[doc(hidden)]
-    pub fn start_with_completion<C>(self, completion: C)
+    pub fn start_with_completion<F, C>(configure: F, completion: C)
     where
+        F: FnOnce() -> std::result::Result<Self, String> + Send + 'static,
         C: FnOnce(Result<AsyncOliphauntServer>) + Send + 'static,
     {
-        self.start_with_reply(completion);
+        Self::start_with_reply(
+            move || {
+                configure()
+                    .map_err(|error| Error::from_anyhow(crate::error::invalid_configuration(error)))
+            },
+            completion,
+        );
     }
 }
 
@@ -3860,5 +3884,48 @@ mod close_tests {
             .store(OWNER_STOPPED, Ordering::SeqCst);
 
         assert!(harness.server.is_closed());
+    }
+}
+
+#[cfg(test)]
+mod configured_owner_tests {
+    use super::*;
+
+    #[test]
+    fn resource_configuration_runs_on_owners_and_failure_completes_once() {
+        let caller = thread::current().id();
+        let (sent, received) = mpsc::channel();
+        AsyncOliphauntBuilder::open_with_completion(
+            move || {
+                assert_ne!(thread::current().id(), caller);
+                Err("invalid database resources".to_owned())
+            },
+            move |result| {
+                sent.send(result.err().unwrap()).unwrap();
+            },
+        );
+        let error = received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfiguration);
+        assert!(error.to_string().contains("invalid database resources"));
+        assert!(received.recv().is_err());
+
+        let (sent, received) = mpsc::channel();
+        AsyncOliphauntServerBuilder::start_with_completion(
+            move || {
+                assert_ne!(thread::current().id(), caller);
+                Err("invalid server resources".to_owned())
+            },
+            move |result| {
+                sent.send(result.err().unwrap()).unwrap();
+            },
+        );
+        let error = received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfiguration);
+        assert!(error.to_string().contains("invalid server resources"));
+        assert!(received.recv().is_err());
     }
 }

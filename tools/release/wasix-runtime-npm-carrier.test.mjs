@@ -70,11 +70,10 @@ function portableReleaseFixture(root, { transformManifest = (manifest) => manife
   writeMember(seedStage, "PG_VERSION", "18\n");
   const seedBytes = zstdCompressSync(deterministicTar(seedStage, "."));
 
-  const sourceFingerprint = "fixture-postgres-source-fingerprint";
   const runtimeModuleSha256 = sha256(Buffer.from("fixture:oliphaunt/bin/postgres\n"));
   const manifest = transformManifest({
     "format-version": 2,
-    "source-fingerprint": sourceFingerprint,
+
     runtime: {
       archive: "oliphaunt.wasix.tar.zst",
       sha256: sha256(runtimeBytes),
@@ -93,7 +92,7 @@ function portableReleaseFixture(root, { transformManifest = (manifest) => manife
         sha256: sha256(seedBytes),
         size: seedBytes.length,
         "runtime-module-sha256": runtimeModuleSha256,
-        "source-fingerprint": sourceFingerprint,
+
         "postgres-version": "18",
         "physical-format": "wasix-pg18-v1",
         "compatibility-key": "wasix-pg18-datum32-v1",
@@ -106,7 +105,7 @@ function portableReleaseFixture(root, { transformManifest = (manifest) => manife
         sha256: "c".repeat(64),
         size: 1,
         "runtime-module-sha256": runtimeModuleSha256,
-        "source-fingerprint": sourceFingerprint,
+
         "postgres-version": "18",
         "physical-format": "wasix-pg18-v1",
         "compatibility-key": "wasix-pg18-datum32-v1",
@@ -130,7 +129,7 @@ function portableReleaseFixture(root, { transformManifest = (manifest) => manife
       producerSha256: runtimeModuleSha256,
       initdbSha256: "e".repeat(64),
     },
-    source: { fingerprint: sourceFingerprint, catalogVersion: "202505281", lane: "stable", producer: "wasix-initdb" },
+    source: { catalogVersion: "202505281", lane: "stable", producer: "wasix-initdb" },
     initProfile: "encoding=UTF8,locale=C.UTF-8,locale-provider=libc,auth=trust,no-sync",
     archive: {
       path: "cluster-seeds/standard.tar.zst",

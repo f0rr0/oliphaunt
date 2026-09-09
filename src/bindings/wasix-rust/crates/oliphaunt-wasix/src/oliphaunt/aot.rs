@@ -110,16 +110,7 @@ fn validate_package_aot_header(manifest: &AotManifest) -> Result<()> {
         manifest.source_lane.as_deref() == Some("stable"),
         "package AOT source lane mismatch"
     );
-    ensure!(
-        manifest
-            .source_fingerprint
-            .as_deref()
-            .is_some_and(|value| value.len() == 64
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
-        "package AOT must identify its runtime source fingerprint"
-    );
+
     ensure!(
         manifest.target_triple == target_triple(),
         "package AOT target mismatch"
@@ -148,6 +139,10 @@ pub(crate) fn load_package_module(
     name: &str,
     wasm: &[u8],
 ) -> Result<Module> {
+    ensure!(
+        package.runtime_version() == liboliphaunt_wasix_portable::PACKAGE_VERSION,
+        "package AOT runtime version mismatch"
+    );
     let manifest: AotManifest = serde_json::from_str(package.aot_manifest())
         .context("parse selected extension AOT manifest")?;
     validate_package_aot_header(&manifest)?;
@@ -156,10 +151,7 @@ pub(crate) fn load_package_module(
         manifest.source_lane == runtime.source_lane,
         "package AOT source lane mismatch"
     );
-    ensure!(
-        manifest.source_fingerprint == runtime.source_fingerprint,
-        "extension AOT runtime source fingerprint mismatch"
-    );
+
     ensure!(
         manifest.postgres_version.as_deref() == Some(runtime.postgres_version.as_str()),
         "extension AOT PostgreSQL version mismatch"
@@ -188,8 +180,12 @@ pub(crate) fn load_package_module(
         "extension package must contain exactly one AOT payload {name}"
     );
     let bytes = matches[0].1;
-    validate_compressed_artifact_manifest(name, artifact, bytes)?;
-    let key = format!("package:{name}:{}", artifact.sha256);
+    let key = format!(
+        "package:{name}:{}:{:p}:{}",
+        artifact.sha256,
+        bytes.as_ptr(),
+        bytes.len()
+    );
     let mut modules = MODULE_CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -197,6 +193,7 @@ pub(crate) fn load_package_module(
     if let Some(module) = modules.get(&key) {
         return Ok(module.clone());
     }
+    validate_compressed_artifact_manifest(name, artifact, bytes)?;
     let size = artifact
         .raw_size
         .context("extension AOT is missing raw-size")?;
@@ -491,16 +488,6 @@ fn target_manifest_artifact(name: &str) -> Result<AotManifestArtifact> {
         manifest.wasmer_wasix_version
     );
     let metadata = assets::asset_manifest_metadata()?;
-    if let Some(expected) = metadata.source_fingerprint.as_deref() {
-        ensure!(
-            manifest.source_fingerprint.as_deref() == Some(expected),
-            "AOT manifest source fingerprint mismatch: manifest={} assets={expected}",
-            manifest
-                .source_fingerprint
-                .as_deref()
-                .unwrap_or("<missing>")
-        );
-    }
     let postgres_version = manifest
         .postgres_version
         .as_deref()
@@ -581,10 +568,7 @@ fn merge_tools_aot_manifest(manifest: &mut AotManifest) -> Result<()> {
         tools_manifest.wasmer_wasix_version,
         manifest.wasmer_wasix_version
     );
-    ensure!(
-        tools_manifest.source_fingerprint == manifest.source_fingerprint,
-        "tools AOT manifest source fingerprint mismatch"
-    );
+
     ensure!(
         tools_manifest.postgres_version == manifest.postgres_version,
         "tools AOT manifest postgres version mismatch"
@@ -658,10 +642,7 @@ fn merge_extension_aot_manifests(_manifest: &mut AotManifest) -> Result<()> {
                 extension_manifest.wasmer_wasix_version,
                 manifest.wasmer_wasix_version
             );
-            ensure!(
-                extension_manifest.source_fingerprint == manifest.source_fingerprint,
-                "extension AOT manifest source fingerprint mismatch for '{sql_name}'"
-            );
+
             ensure!(
                 extension_manifest.postgres_version == manifest.postgres_version,
                 "extension AOT manifest postgres version mismatch for '{sql_name}'"
@@ -1060,7 +1041,6 @@ struct AotManifest {
     format_version: Option<u32>,
     #[allow(dead_code)]
     source_lane: Option<String>,
-    source_fingerprint: Option<String>,
     postgres_version: Option<String>,
     target_triple: String,
     engine: String,
@@ -1218,7 +1198,7 @@ mod tests {
 #[test]
 fn package_aot_header_rejects_foreign_or_incomplete_executable_identities() {
     let valid = serde_json::json!({
-        "format-version": 1, "source-lane": "stable", "source-fingerprint": "a".repeat(64),
+        "format-version": 1, "source-lane": "stable",
         "postgres-version": "18.4", "target-triple": target_triple(), "engine": EXPECTED_AOT_ENGINE,
         "wasmer-version": EXPECTED_WASMER_VERSION, "wasmer-wasix-version": EXPECTED_WASMER_WASIX_VERSION,
         "artifacts": []
@@ -1227,7 +1207,6 @@ fn package_aot_header_rejects_foreign_or_incomplete_executable_identities() {
     for (field, value) in [
         ("format-version", serde_json::json!(2)),
         ("source-lane", serde_json::json!("other")),
-        ("source-fingerprint", serde_json::Value::Null),
         ("target-triple", serde_json::json!("other")),
         ("engine", serde_json::json!("other")),
         ("wasmer-version", serde_json::json!("other")),

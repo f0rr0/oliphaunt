@@ -156,7 +156,6 @@ export type WasixExtensionLifecycle = {
 /** Host-relevant subset of the generated liboliphaunt WASIX asset manifest. */
 export type WasixAssetManifest = {
   'format-version': 2;
-  'source-fingerprint': string;
   runtime: {
     archive: string;
     sha256: string;
@@ -187,7 +186,6 @@ export type WasixAssetManifest = {
         sha256: string;
         size: number;
         'runtime-module-sha256': string;
-        'source-fingerprint': string;
         'postgres-version': string;
         'physical-format': 'wasix-pg18-v1';
         'compatibility-key': 'wasix-pg18-datum32-v1';

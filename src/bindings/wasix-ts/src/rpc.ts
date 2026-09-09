@@ -249,7 +249,7 @@ export function deserializeWorkerError(error: SerializedWorkerError): Error {
     restored.name = error.name;
     return Object.assign(restored, {
       oliphauntWasixError: 'tool' as const,
-      oliphauntWasixAddonAbi: 1 as const,
+      oliphauntWasixAddonAbi: 2 as const,
       code: error.code,
       tool: error.tool,
       exitCode: error.exitCode,
@@ -276,7 +276,7 @@ function nativeToolError(error: unknown): NativeToolError | undefined {
   const candidate = error as Record<string, unknown>;
   if (
     candidate.oliphauntWasixError !== 'tool' ||
-    candidate.oliphauntWasixAddonAbi !== 1 ||
+    candidate.oliphauntWasixAddonAbi !== 2 ||
     candidate.code !== 'tool-error' ||
     typeof candidate.message !== 'string' ||
     typeof candidate.tool !== 'string' ||

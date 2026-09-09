@@ -27,13 +27,12 @@ test('base addon inputs require core, standard seed, and contrib without optiona
     const target = 'linux-x64-gnu';
     const triple = 'x86_64-unknown-linux-gnu';
     const bytes = Buffer.from('qualified fixture bytes');
-    const fingerprint = 'fixture-source';
     write(path.join(portable, 'runtime.tar.zst'), bytes);
     write(path.join(portable, 'bin/initdb.wasix.wasm'), bytes);
     write(path.join(portable, 'cluster-seeds/standard.tar.zst'), bytes);
     json(path.join(portable, 'cluster-seeds/standard.json'), { fixture: true });
     json(path.join(portable, 'manifest.json'), {
-      'format-version': 2, 'source-fingerprint': fingerprint,
+      'format-version': 2,
       runtime: { archive: 'runtime.tar.zst', sha256: digest(bytes) },
       'cluster-seeds': { standard: {
         archive: 'cluster-seeds/standard.tar.zst', manifest: 'cluster-seeds/standard.json', sha256: digest(bytes),
@@ -46,7 +45,7 @@ test('base addon inputs require core, standard seed, and contrib without optiona
         'format-version': 1, 'source-lane': canonical.sourceLane,
         engine: canonical.engine, 'wasmer-version': canonical.wasmerVersion,
         'wasmer-wasix-version': canonical.wasmerWasixVersion,
-        'target-triple': triple, 'source-fingerprint': fingerprint,
+        'target-triple': triple,
         artifacts: [{ name, path: 'module.bin.zst', sha256: digest(bytes) }],
       });
     };

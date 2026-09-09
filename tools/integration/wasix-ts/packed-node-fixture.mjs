@@ -292,7 +292,7 @@ function validateNativeCarrierArchive(file, entries, manifest, expected, runtime
     manifest.oliphaunt?.target !== expected.target ||
     manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix' ||
     manifest.oliphaunt?.runtimeVersion !== runtimeVersion ||
-    manifest.oliphaunt?.addonAbiVersion !== 1 ||
+    manifest.oliphaunt?.addonAbiVersion !== 2 ||
     manifest.oliphaunt?.nodeApiVersion !== 8 ||
     JSON.stringify(manifest.oliphaunt?.profiles) !== JSON.stringify(['standard', 'icu'])
   ) {
@@ -539,7 +539,6 @@ export async function runtimeBuildProvenance(manifest) {
   const profile = parseBuildProfile(profileText);
   if (
     outputs['format-version'] !== 1 ||
-    outputs['source-fingerprint'] !== manifest['source-fingerprint'] ||
     outputs['source-lane'] !== manifest['source-lane'] ||
     outputs['postgres-version'] !== manifest.runtime?.['postgres-version'] ||
     runtime?.sha256 !== manifest.runtime?.['module-sha256'] ||
@@ -553,7 +552,6 @@ export async function runtimeBuildProvenance(manifest) {
     formatVersion: outputs['format-version'],
     postgresVersion: outputs['postgres-version'],
     sourceLane: outputs['source-lane'],
-    sourceFingerprint: outputs['source-fingerprint'],
     runtimeModuleSha256: runtime.sha256,
     configuration: profile,
     buildProfile: {

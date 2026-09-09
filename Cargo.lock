@@ -2479,8 +2479,6 @@ version = "0.2.0"
 dependencies = [
  "oliphaunt-resources",
  "sha2 0.10.9",
- "tar",
- "zstd",
 ]
 
 [[package]]
@@ -2587,6 +2585,15 @@ dependencies = [
  "wasmer-wasix-types",
  "webc",
  "zstd",
+]
+
+[[package]]
+name = "oliphaunt-wasix-icu"
+version = "0.2.0"
+dependencies = [
+ "oliphaunt-resources",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

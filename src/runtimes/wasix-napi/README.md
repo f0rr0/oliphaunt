@@ -9,7 +9,7 @@ The addon supports four purpose-specific TypeScript placement paths:
 - the direct TypeScript entry point opens and runs the database on its caller's
   JavaScript thread;
 - the default native-host entry point uses one Rust database-owner actor so
-  synchronous guest work does not block the importing event loop;
+  resource preparation, verification, and guest work do not block the importing event loop;
 - the `/worker` entry point loads the direct class inside a real package-owned
   JavaScript Worker; and
 - `/server` wraps the Rust listener owner directly.
@@ -50,6 +50,11 @@ reports exit code zero; unrelated runtime failures remain thrown errors.
 `sha256:size`. `toolIdentity(name)` reports a tool from an explicitly registered
 installed tools package. The TypeScript adapter compares these identities with
 its validated public descriptors before use.
+
+`registerTools` returns a Promise and prepares the optional package in Node
+background work. It reuses verified immutable payloads on repeated registration.
+ICU file paths go to Rust directly; caller-owned byte inputs are detached before
+crossing to an owner.
 
 `payloadIdentity(component)` identifies the embedded runtime archive and
 standard seed archive/manifest. ICU payloads come from the selected ICU package.

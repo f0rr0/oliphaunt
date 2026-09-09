@@ -141,7 +141,7 @@ export async function prepareOliphauntWasixReleaseSource(version) {
     'package_oliphaunt_wasix_sdk_crate.mjs',
   );
   // ICU is an independent descriptor package; the base SDK does not depend on it.
-  const registryPackages = (await wasixCargoRegistryPackages()).filter(name => name !== 'oliphaunt-icu');
+  const registryPackages = (await wasixCargoRegistryPackages()).filter(name => name !== 'oliphaunt-wasix-icu');
   const stageDir = path.join(root, 'target/release/cargo-package-sources/oliphaunt-wasix');
   await stageWasixRustPackageSource(stageDir);
   const cargoToml = path.join(stageDir, 'Cargo.toml');

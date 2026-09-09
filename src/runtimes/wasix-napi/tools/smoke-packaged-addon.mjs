@@ -125,7 +125,7 @@ if (!addonPath.includes('app.asar')) {
 }
 const addon = require(addonPath);
 if (
-  addon.addonAbiVersion() !== 1 ||
+  addon.addonAbiVersion() !== 2 ||
   addon.nodeApiVersion() !== 8 ||
   JSON.stringify(addon.supportedProfiles()) !== JSON.stringify(['standard', 'icu'])
 ) {
@@ -365,7 +365,7 @@ const nativeFiles = readdirSync(prebuilds).filter((name) => name.endsWith('.node
 if (
   manifest.name !== packageName ||
   manifest.oliphaunt?.target !== expectedTarget ||
-  manifest.oliphaunt?.addonAbiVersion !== 1 ||
+  manifest.oliphaunt?.addonAbiVersion !== 2 ||
   manifest.oliphaunt?.nodeApiVersion !== 8 ||
   JSON.stringify(manifest.oliphaunt?.profiles) !== JSON.stringify(['standard', 'icu']) ||
   JSON.stringify(nativeFiles) !== JSON.stringify([${JSON.stringify(BINARY)}])

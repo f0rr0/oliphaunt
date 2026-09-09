@@ -1,9 +1,17 @@
+import { Buffer } from 'node:buffer';
+import { serializeAssetSource } from '../descriptor-validation.js';
 import { describe, expect, it } from 'vitest';
 
 import { serializeWasixRuntimeDescriptor } from '../runtime-descriptor.js';
 import type { WasixRuntimeDescriptor } from '../types.js';
 
 describe('WASIX runtime descriptors', () => {
+  it('owns Buffer snapshots, including views with an offset', () => {
+    const bytes = Buffer.from([0, 1, 2, 3]);
+    const snapshot = serializeAssetSource(bytes.subarray(1, 3));
+    bytes.fill(9);
+    expect(snapshot).toEqual(Uint8Array.of(1, 2));
+  });
   it('serializes one exact runtime identity and preserves package-relative URLs', () => {
     const value = descriptor();
     const serialized = serializeWasixRuntimeDescriptor(value);

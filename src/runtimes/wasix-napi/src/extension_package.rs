@@ -8,6 +8,8 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(feature = "tools")]
+use napi::bindgen_prelude::Task;
 use napi::{Error, Result};
 #[cfg(feature = "tools")]
 use napi_derive::napi;
@@ -25,8 +27,22 @@ pub struct NativeToolPackage {
 }
 
 #[cfg(feature = "tools")]
-#[napi(js_name = "registerTools", catch_unwind)]
-pub fn register_tools(selection: NativeToolPackage) -> Result<()> {
+pub struct RegisterTools(pub(super) Option<NativeToolPackage>);
+
+#[cfg(feature = "tools")]
+impl Task for RegisterTools {
+    type Output = ();
+    type JsValue = ();
+    fn compute(&mut self) -> Result<()> {
+        register_tools(self.0.take().expect("tool registration runs once"))
+    }
+    fn resolve(&mut self, _: napi::Env, _: ()) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "tools")]
+fn register_tools(selection: NativeToolPackage) -> Result<()> {
     let (root, manifest) = package(&selection.package_json)?;
     let metadata = &manifest["oliphaunt"];
     let version = string(&manifest, "version")?;
@@ -42,11 +58,14 @@ pub fn register_tools(selection: NativeToolPackage) -> Result<()> {
     for name in ["pg_dump", "psql"] {
         let module = &metadata["tools"][name];
         let hash = string(module, "sha256")?;
-        let bytes = payload(&root, string(module, "path")?, hash)?;
-        if module["size"].as_u64() != Some(bytes.len() as u64) {
-            return Err(fail("installed tool module size mismatch"));
-        }
-        modules.push((name, bytes, hash.to_owned()));
+        let size = module["size"]
+            .as_u64()
+            .ok_or_else(|| fail("installed tool module size missing"))?;
+        modules.push((
+            name,
+            (root.clone(), string(module, "path")?.to_owned(), size),
+            hash.to_owned(),
+        ));
     }
     let expected_name = format!("{name}-{}", target());
     let (aot_root, aot_package) = package(&selection.aot_package_json)?;
@@ -79,11 +98,11 @@ pub fn register_tools(selection: NativeToolPackage) -> Result<()> {
         }
         artifacts.push((
             name.to_owned(),
-            payload(
-                &aot_root,
-                string(artifact, "path")?,
-                string(artifact, "sha256")?,
-            )?,
+            (
+                aot_root.clone(),
+                string(artifact, "path")?.to_owned(),
+                string(artifact, "sha256")?.to_owned(),
+            ),
         ));
     }
     let key = format!(
@@ -102,6 +121,22 @@ pub fn register_tools(selection: NativeToolPackage) -> Result<()> {
     let package = if let Some(package) = packages.get(&key) {
         **package
     } else {
+        let modules = modules
+            .into_iter()
+            .map(|(name, (root, path, size), hash)| {
+                let bytes = payload(&root, &path, &hash)?;
+                if bytes.len() as u64 != size {
+                    return Err(fail("installed tool module size mismatch"));
+                }
+                Ok((name, bytes, hash))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let artifacts = artifacts
+            .into_iter()
+            .map(|(name, (root, path, hash))| {
+                payload(&root, &path, &hash).map(|bytes| (name, bytes))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let modules = Box::leak(
             modules
                 .into_iter()
@@ -272,10 +307,6 @@ pub(super) fn load(selection: NativeExtensionPackage) -> Result<Extension> {
     }
     let carrier = &metadata["carriers"][&selection.sql_name];
     let archive_hash = string(carrier, "sha256")?;
-    let archive = payload(&root, string(carrier, "path")?, archive_hash)?;
-    if carrier["size"].as_u64() != Some(archive.len() as u64) {
-        return Err(fail("installed extension archive size mismatch"));
-    }
     let needs_aot = carrier["requiresAot"]
         .as_bool()
         .ok_or_else(|| fail("extension carrier is missing requiresAot"))?;
@@ -322,11 +353,11 @@ pub(super) fn load(selection: NativeExtensionPackage) -> Result<Extension> {
             }
             artifacts.push((
                 name.to_owned(),
-                payload(
-                    &aot_root,
-                    string(artifact, "path")?,
-                    string(artifact, "sha256")?,
-                )?,
+                (
+                    aot_root.clone(),
+                    string(artifact, "path")?.to_owned(),
+                    string(artifact, "sha256")?.to_owned(),
+                ),
             ));
         }
         aot_manifest =
@@ -347,6 +378,14 @@ pub(super) fn load(selection: NativeExtensionPackage) -> Result<Extension> {
     if let Some(package) = packages.get(&key) {
         return Ok(extension.with_package(package));
     }
+    let archive = payload(&root, string(carrier, "path")?, archive_hash)?;
+    if carrier["size"].as_u64() != Some(archive.len() as u64) {
+        return Err(fail("installed extension archive size mismatch"));
+    }
+    let artifacts = artifacts
+        .into_iter()
+        .map(|(name, (root, path, hash))| payload(&root, &path, &hash).map(|bytes| (name, bytes)))
+        .collect::<Result<Vec<_>>>()?;
     // Match the lifetime of imported native modules. Only validated packages
     // are retained, once per exact content identity, across worker environments.
     let archives = Box::leak(
@@ -374,7 +413,7 @@ pub(super) fn load(selection: NativeExtensionPackage) -> Result<Extension> {
     // It never accepts remote assets or a caller's executable bytes/digest pair.
     // Owner, exact version, host, runtime and all package-owned file identities
     // have been checked above; the runtime additionally validates AOT engine,
-    // source fingerprint, raw bytes and WebAssembly identity before deserializing.
+    // runtime version, raw bytes and WebAssembly identity before deserializing.
     let package = unsafe {
         ExtensionPackage::from_trusted_release(
             Box::leak(selection.product.into_boxed_str()),
@@ -434,8 +473,9 @@ mod tests {
             .contains("does not match")
         );
         fs::write(root.join("extensions/pgtap/extension.tar.zst"), b"corrupt").unwrap();
+        assert_eq!(load(selection()).unwrap().sql_name(), "pgtap");
         assert!(
-            load(selection())
+            payload(&root, "extensions/pgtap/extension.tar.zst", &hash)
                 .unwrap_err()
                 .to_string()
                 .contains("hash mismatch")

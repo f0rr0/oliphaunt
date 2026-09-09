@@ -86,7 +86,7 @@ filesystem library. It does not define an application-data storage kind.
 
 Validate installed package ownership, version, runtime compatibility, target,
 archive layout, and hashes before loading payloads. Native AOT validation also
-checks compiler/runtime identity and the source fingerprint before deserialization.
+checks runtime, compiler, and target versions and verifies artifact integrity before deserialization.
 An arbitrary caller-supplied path and adjacent checksum are not package provenance.
 Native package installation is a trust boundary equivalent to installing native
 code; package verification is not a claim of cryptographic publisher signatures.

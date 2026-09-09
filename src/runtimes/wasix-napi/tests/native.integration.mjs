@@ -27,7 +27,7 @@ const expectedExports = [
   'toolIdentity',
 ];
 assert.deepEqual(Object.keys(addon).sort(), expectedExports);
-assert.equal(addon.addonAbiVersion(), 1);
+assert.equal(addon.addonAbiVersion(), 2);
 assert.equal(addon.nodeApiVersion(), 8);
 assert.deepEqual(addon.supportedProfiles(), ['standard', 'icu']);
 
@@ -39,6 +39,20 @@ const openOptions = (profile = 'standard', storage = { kind: 'memory' }) => ({
   startupGucs: {},
   extensions: [],
 });
+
+// Resource/configuration failures on async placements settle their Promise;
+// the direct placement deliberately reports them synchronously.
+let invalidOpen;
+assert.doesNotThrow(() => {
+  invalidOpen = addon.NativeWasixActorDatabase.open(openOptions('standard', { kind: 'directory' }));
+});
+await assert.rejects(invalidOpen, /requires a non-empty path/u);
+assert.throws(() => addon.NativeWasixDatabase.open(openOptions('standard', { kind: 'directory' })), /requires a non-empty path/u);
+let invalidServer;
+assert.doesNotThrow(() => {
+  invalidServer = addon.NativeWasixServer.open({ ...openOptions('standard', { kind: 'directory' }), listen: { transport: 'tcp' } });
+});
+await assert.rejects(invalidServer, /requires a non-empty path/u);
 
 const queryMessage = (sql) => {
   const text = Buffer.from(`${sql}\0`);
@@ -127,7 +141,7 @@ await Promise.all([actor.close(), actor.close()]);
 assert.equal(actor.closed, true);
 await assert.rejects(actor.execProtocolRaw(queryMessage('select 1')), (error) => {
   assert.equal(error.oliphauntWasixError, 'lifecycle');
-  assert.equal(error.oliphauntWasixAddonAbi, 1);
+  assert.equal(error.oliphauntWasixAddonAbi, 2);
   return true;
 });
 
@@ -165,7 +179,7 @@ try {
     (error) => {
       assert.equal(error.name, 'OliphauntWasixStorageError');
       assert.equal(error.oliphauntWasixError, 'storage');
-      assert.equal(error.oliphauntWasixAddonAbi, 1);
+      assert.equal(error.oliphauntWasixAddonAbi, 2);
       assert.equal(error.code, 'busy');
       assert.equal(error.commitState, 'unchanged');
       assert.equal(error.phase, 'ownership');

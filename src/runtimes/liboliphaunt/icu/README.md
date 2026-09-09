@@ -15,5 +15,5 @@ let db = oliphaunt::Oliphaunt::builder()
 ```
 
 The package embeds the current native target's seed and ICU data. WASIX
-consumers use the package's WASIX descriptor with `oliphaunt-wasix` instead.
+consumers use `oliphaunt-wasix-icu` with `oliphaunt-wasix` instead.
 Base runtime carriers include only the standard seed.

@@ -320,8 +320,8 @@ initial capacity use the portable path. Its size is an implementation detail,
 not a public database-capacity limit.
 
 Compatibility uses the PostgreSQL major and versioned WASIX physical format.
-Runtime hashes and source fingerprints still reject mixed runtime, cluster-seed,
-AOT, and extension build outputs, while package and carrier changes do not
+Runtime/resource versions govern package compatibility, and checksums verify
+artifact integrity, while package and carrier changes do not
 rewrite the managed-root descriptor or reject an unchanged physical format.
 Safe extension upgrade or removal remains an explicit migration concern rather
 than a reason to reject every change in the available carrier set.

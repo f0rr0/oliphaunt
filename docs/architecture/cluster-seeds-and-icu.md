@@ -139,7 +139,7 @@ Other SDKs retain language-native package selection:
 | Swift | base SwiftPM runtime resources | independent `OliphauntICU` package and `icu: OliphauntICU.descriptor` |
 | Kotlin / Java | ordinary Maven runtime resources | ICU dependency and explicit `ICU.data` configuration |
 | React Native | ordinary generated native resources | import `@oliphaunt/icu`, pass `{ icu }` |
-| Rust WASIX | portable runtime artifact | `oliphaunt-icu` dependency and `.icu(oliphaunt_icu::ICU)` |
+| Rust WASIX | portable runtime artifact | `oliphaunt-wasix-icu` dependency and `.icu(oliphaunt_wasix_icu::ICU)` |
 | WASIX TypeScript | default runtime descriptor | explicit `@oliphaunt/wasix-icu` descriptor |
 
 This is semantic parity, not identical signatures.

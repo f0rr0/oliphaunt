@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
   WasixStorageError,
@@ -138,7 +137,7 @@ export class NativeWasixSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
+    await validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
     if (options.tool.name === 'pg_dump') {
       try {
         return toolProcessResult(this.#handle.pgDump(options.args));
@@ -278,7 +277,7 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
+    await validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
     try {
       if (options.tool.name === 'pg_dump') {
         return toolProcessResult(await this.#handle.pgDump(options.args));
@@ -505,12 +504,12 @@ export async function nativeWasixOpenOptions(
           icu: {
             version: options.icu.version,
             runtimeVersion: options.icu.compatibility.runtimeVersion,
-            archive: await nativeIcuBytes(options.icu.dataArchive.source),
+            archive: nativeIcuSource(options.icu.dataArchive.source),
             archiveSha256: options.icu.dataArchive.sha256,
             dataTreeSha256: options.icu.compatibility.dataTreeSha256,
-            seedArchive: await nativeIcuBytes(options.icu.clusterSeedArchive.source),
+            seedArchive: nativeIcuSource(options.icu.clusterSeedArchive.source),
             seedArchiveSha256: options.icu.clusterSeedArchive.sha256,
-            seedManifest: await nativeIcuBytes(options.icu.clusterSeedManifest.source),
+            seedManifest: nativeIcuSource(options.icu.clusterSeedManifest.source),
             seedManifestSha256: options.icu.clusterSeedManifest.sha256,
           },
         }),
@@ -522,17 +521,17 @@ export async function nativeWasixOpenOptions(
     ...(Object.values(options.extensionCarriers).some(
       (carrier) => carrier.product !== 'oliphaunt-extension-contrib-pg18',
     )
-      ? { extensionPackages: nativeExtensionPackages(options) }
+      ? { extensionPackages: await nativeExtensionPackages(options) }
       : {}),
   };
 }
 
-async function nativeIcuBytes(source: string | Uint8Array): Promise<Uint8Array> {
+function nativeIcuSource(source: string | Uint8Array): string | Uint8Array {
   if (source instanceof Uint8Array)
     return Buffer.from(source.buffer, source.byteOffset, source.byteLength);
   if (!source.startsWith('file:'))
     throw new TypeError('WASIX native ICU data requires an installed file URL or bytes');
-  return readFile(fileURLToPath(source));
+  return fileURLToPath(source);
 }
 
 function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['storage'] {
@@ -546,11 +545,11 @@ function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['
 
 const registeredTools = new WeakMap<NativeWasixAddon, Set<string>>();
 
-function validateNativeToolCall(
+async function validateNativeToolCall(
   addon: NativeWasixAddon,
   runtimeVersion: string,
   options: WasixToolProcessOptions,
-): void {
+): Promise<void> {
   if (options.runtimeVersion !== '' && options.runtimeVersion !== runtimeVersion) {
     throw new Error(
       `WASIX tools runtime ${options.runtimeVersion} is incompatible with database runtime ${runtimeVersion}`,
@@ -560,10 +559,10 @@ function validateNativeToolCall(
   const key = `${options.tool.name}:${options.tool.sha256}:${options.tool.source}`;
   const registered = registeredTools.get(addon) ?? new Set<string>();
   if (!registered.has(key)) {
-    const packageDescriptor = nativeToolPackage(options.tool);
+    const packageDescriptor = await nativeToolPackage(options.tool);
     const packageKey = JSON.stringify(packageDescriptor);
     if (!registered.has(packageKey)) {
-      addon.registerTools(packageDescriptor);
+      await addon.registerTools(packageDescriptor);
       registered.add(packageKey);
     }
     registered.add(key);
@@ -677,7 +676,7 @@ function nativeStorageError(error: unknown): NativeStorageError | undefined {
   const candidate = error as Record<string, unknown>;
   if (
     candidate.oliphauntWasixError !== 'storage' ||
-    candidate.oliphauntWasixAddonAbi !== 1 ||
+    candidate.oliphauntWasixAddonAbi !== 2 ||
     !memberOf(candidate.code, STORAGE_CODES) ||
     !memberOf(candidate.commitState, STORAGE_COMMIT_STATES) ||
     !memberOf(candidate.phase, STORAGE_PHASES)

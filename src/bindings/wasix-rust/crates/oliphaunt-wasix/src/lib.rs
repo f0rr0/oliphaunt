@@ -40,5 +40,7 @@ pub mod tools {
         PgDumpOptions, PostgresToolError, PostgresToolOutput, PsqlOptions,
     };
     #[doc(hidden)]
-    pub use crate::oliphaunt::tools::{installed_tool_wasm, register_installed_package};
+    pub use crate::oliphaunt::tools::{
+        installed_tool_identity, installed_tool_wasm, register_installed_package,
+    };
 }

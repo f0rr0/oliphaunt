@@ -135,7 +135,7 @@ describe('WASIX native embedded payload compatibility', () => {
     nativeMocks.open.mockImplementation(() => {
       throw Object.assign(new Error('this deliberately says corrupt and available'), {
         oliphauntWasixError: 'storage',
-        oliphauntWasixAddonAbi: 1,
+        oliphauntWasixAddonAbi: 2,
         code: 'busy',
         commitState: 'unchanged',
         phase: 'ownership',
@@ -391,7 +391,7 @@ function addon(): NativeWasixAddon {
     }) as unknown as NativeWasixAddon['NativeWasixServer'],
     async restore() {},
     restoreDirect() {},
-    addonAbiVersion: () => 1,
+    addonAbiVersion: () => 2,
     nodeApiVersion: () => 8,
     runtimeVersion: () => '0.1.1',
     supportedProfiles: () => ['standard', 'icu'],

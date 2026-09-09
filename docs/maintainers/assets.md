@@ -35,7 +35,8 @@ applications pass their exported descriptors alongside the SDK's contrib values.
 See the [WASIX Rust guide](../../src/docs/content/sdk/wasix-rust/guide.mdx) for setup.
 
 The optional `tools` feature selects the split tool and tools-AOT carriers.
-ICU data and its matching seed come from `oliphaunt-icu`. Neither ICU nor external
+ICU data and its matching seed come from `oliphaunt-icu` for native Rust or
+`oliphaunt-wasix-icu` for WASIX Rust. Neither ICU nor external
 extensions use SDK feature flags. Ordinary applications need no build script.
 
 ## Cache Behavior
@@ -102,8 +103,9 @@ uses the same provenance path: ICU code is source-pinned in
 little-endian data archive is independently pinned in
 `src/sources/third-party/shared/icu-data.toml`. Native and WASIX builders compile
 target-specific ICU code but expand that one data archive into the shared
-files-data identity. ICU data is packaged as a separate `oliphaunt-icu`
-payload; standard native and WASIX runtime artifacts do not carry `share/icu`.
+files-data identity. Optional `oliphaunt-icu` and `oliphaunt-wasix-icu` Cargo
+packages carry the data and matching seeds for their respective runtimes;
+standard native and WASIX runtime artifacts do not carry `share/icu`.
 That payload supplies runtime capability; it is distinct
 from the per-database `pg_collation` catalog state created during `initdb`.
 An ICU-enabled new root therefore requires the matching `icu` cluster seed

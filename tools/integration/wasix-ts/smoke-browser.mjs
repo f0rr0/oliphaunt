@@ -435,7 +435,6 @@ async function candidateProvenance(plan) {
       archiveSize: archiveBytes.length,
       moduleSha256: runtime['module-sha256'],
       postgresVersion: runtime['postgres-version'],
-      sourceFingerprint: manifest['source-fingerprint'],
       sourceLane: manifest['source-lane'],
     },
     clusterSeed: {

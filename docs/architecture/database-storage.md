@@ -163,10 +163,9 @@ build physically interchangeable. Native roots are shared among compatible
 native SDKs. Rust and WASIX TypeScript use the same root descriptor and WASIX
 physical-format value, but cross-binding root handoff is not a supported or
 qualified workflow. The managed-root descriptor is
-written once when the root is created. WASIX source fingerprints remain
-asset-graph coherence identities used to reject mixed runtime, cluster-seed,
-AOT, and extension build outputs; they
-are not a physical-reopen key or binding identity in the root. Both runtime
+written once when the root is created. Runtime/resource versions determine
+package compatibility, and artifact checksums detect corruption. Neither is
+a physical-reopen key or binding identity in the root. Both runtime
 families validate either exact descriptor shape. Opening another family's root
 is not a supported transfer path, so the SDKs add no cross-family rejection
 policy; the underlying PostgreSQL/runtime behavior is authoritative.

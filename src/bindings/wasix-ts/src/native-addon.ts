@@ -21,12 +21,12 @@ export type NativeWasixOpenOptions = Readonly<{
   icu?: Readonly<{
     version: string;
     runtimeVersion: string;
-    archive: Uint8Array;
+    archive: string | Uint8Array;
     archiveSha256: string;
     dataTreeSha256: string;
-    seedArchive: Uint8Array;
+    seedArchive: string | Uint8Array;
     seedArchiveSha256: string;
-    seedManifest: Uint8Array;
+    seedManifest: string | Uint8Array;
     seedManifestSha256: string;
   }>;
 }>;
@@ -108,7 +108,7 @@ export type NativeWasixAddon = {
   ): string;
   extensionIdentity(sqlName: string): string;
   toolIdentity(name: 'pg_dump' | 'psql'): string;
-  registerTools(options: { packageJson: string; aotPackageJson: string }): void;
+  registerTools(options: { packageJson: string; aotPackageJson: string }): Promise<void>;
 };
 
 type WasixPackageMetadata = Readonly<{
@@ -383,7 +383,7 @@ export function validateNativeWasixAddon(
     throw new Error(`Oliphaunt WASIX native addon ${path} has an invalid export surface`);
   }
   const expectedAbi = metadata.oliphaunt?.wasixAddonAbiVersion;
-  if (expectedAbi !== 1 || addon.addonAbiVersion() !== expectedAbi) {
+  if (expectedAbi !== 2 || addon.addonAbiVersion() !== expectedAbi) {
     throw new Error(`Oliphaunt WASIX native addon ${path} has an incompatible addon ABI`);
   }
   const expectedNodeApi = metadata.oliphaunt?.nodeApiVersion;

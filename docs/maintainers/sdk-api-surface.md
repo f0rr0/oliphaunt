@@ -859,6 +859,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::tools::PsqlOptions.command()`
 - `oliphaunt_wasix::tools::PsqlOptions.new()`
 - `oliphaunt_wasix::tools::PsqlOptions.script()`
+- `oliphaunt_wasix::tools::installed_tool_identity()`
 - `oliphaunt_wasix::tools::installed_tool_wasm()`
 - `oliphaunt_wasix::tools::register_installed_package()`
 

@@ -130,9 +130,6 @@ function portableInputs(portableRoot) {
   const manifestFile = path.join(portableRoot, "manifest.json");
   const manifest = readJson(manifestFile, "portable WASIX manifest");
   if (manifest?.["format-version"] !== 2) fail("portable WASIX manifest must use format-version 2");
-  if (typeof manifest["source-fingerprint"] !== "string" || !manifest["source-fingerprint"]) {
-    fail("portable WASIX manifest must contain a source-fingerprint");
-  }
   const runtimeArchive = safeMember(manifest.runtime?.archive, "portable runtime archive");
   validateDigestFile(
     path.join(portableRoot, runtimeArchive),
@@ -167,7 +164,7 @@ function portableInputs(portableRoot) {
   };
 }
 
-function validateAotManifest(file, targetTriple, sourceFingerprint, label, namePredicate) {
+function validateAotManifest(file, targetTriple, label, namePredicate) {
   const manifest = readJson(file, label);
   try {
     assertCanonicalWasixAotManifest(manifest, {
@@ -176,9 +173,6 @@ function validateAotManifest(file, targetTriple, sourceFingerprint, label, nameP
     });
   } catch (error) {
     fail(error.message);
-  }
-  if (manifest["source-fingerprint"] !== sourceFingerprint) {
-    fail(`${label} source-fingerprint does not match the portable WASIX runtime`);
   }
   const names = new Set();
   for (const [index, artifact] of manifest.artifacts.entries()) {
@@ -194,7 +188,7 @@ function validateAotManifest(file, targetTriple, sourceFingerprint, label, nameP
   return { manifest, names };
 }
 
-function runtimeAotInputs(aotRoot, targetTriple, sourceFingerprint) {
+function runtimeAotInputs(aotRoot, targetTriple) {
   directory(aotRoot, "WASIX AOT artifact root");
   const targetRoot = path.basename(path.resolve(aotRoot)) === targetTriple
     ? path.resolve(aotRoot)
@@ -203,7 +197,7 @@ function runtimeAotInputs(aotRoot, targetTriple, sourceFingerprint) {
   const { names } = validateAotManifest(
     manifestFile,
     targetTriple,
-    sourceFingerprint,
+
     "host WASIX AOT manifest",
     (name) => !name.startsWith("extension:"),
   );
@@ -225,7 +219,7 @@ function manifestMembers(manifest, product) {
   fail(`${product} has an unsupported extension-artifacts schema ${JSON.stringify(manifest.schema)}`);
 }
 
-function extensionInputs(extensionRoot, target, targetTriple, sourceFingerprint) {
+function extensionInputs(extensionRoot, target, targetTriple) {
   directory(extensionRoot, "WASIX extension artifact root");
   return [contribCarrierDescriptor(PREFIX).artifactProduct].map((product) => {
     const productRoot = extensionArtifactProductRoot(product, "wasix", extensionRoot, PREFIX);
@@ -268,7 +262,7 @@ function extensionInputs(extensionRoot, target, targetTriple, sourceFingerprint)
       const { names } = validateAotManifest(
         file,
         targetTriple,
-        sourceFingerprint,
+
         `${product}/${sqlName} AOT manifest`,
         (name) => name === `extension:${sqlName}` || name.startsWith(`extension:${sqlName}:`),
       );
@@ -307,13 +301,11 @@ export function buildInventory(options) {
       runtimeAotManifest: runtimeAotInputs(
         aotRoot,
         options["target-triple"],
-        portable.manifest["source-fingerprint"],
       ),
       extensionArtifacts: extensionInputs(
         extensionRoot,
         options.target,
         options["target-triple"],
-        portable.manifest["source-fingerprint"],
       ),
     },
   };

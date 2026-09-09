@@ -13,7 +13,7 @@ fn main() {
     for name in RELEASE_INPUT_ENVS {
         println!("cargo::rerun-if-env-changed={name}");
     }
-    println!("cargo::rustc-env=OLIPHAUNT_WASIX_NAPI_ABI_VERSION=1");
+    println!("cargo::rustc-env=OLIPHAUNT_WASIX_NAPI_ABI_VERSION=2");
     validate_release_inputs();
 }
 

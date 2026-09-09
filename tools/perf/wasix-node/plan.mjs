@@ -25,7 +25,7 @@ const NATIVE_ADDON = Object.freeze({
   schema: 'oliphaunt-wasix-napi-host-v1',
   product: 'oliphaunt-wasix-napi',
   binary: 'oliphaunt_wasix_napi.node',
-  addonAbiVersion: 1,
+  addonAbiVersion: 2,
   nodeApiVersion: 8,
   profiles: Object.freeze(['standard', 'icu']),
   build: Object.freeze({
@@ -363,9 +363,9 @@ export async function validateRepositoryBindings(plan) {
   const candidate = JSON.parse(await readFile(candidateFile, 'utf8'));
   equal(candidate.name, plan.engines.candidate.package, `${relative(candidateFile)}.name`);
   equal(
-    candidate.exports?.['.']?.node,
+    candidate.exports?.['.']?.node?.default,
     './lib/index.node.js',
-    `${relative(candidateFile)}.exports["."].node`,
+    `${relative(candidateFile)}.exports["."].node.default`,
   );
   equal(
     candidate.exports?.['./direct']?.node,
@@ -373,9 +373,9 @@ export async function validateRepositoryBindings(plan) {
     `${relative(candidateFile)}.exports["./direct"].node`,
   );
   equal(
-    candidate.exports?.['./worker']?.node,
+    candidate.exports?.['./worker']?.node?.default,
     './lib/worker-entry.node.js',
-    `${relative(candidateFile)}.exports["./worker"].node`,
+    `${relative(candidateFile)}.exports["./worker"].node.default`,
   );
   equal(
     candidate.dependencies?.fzstd,

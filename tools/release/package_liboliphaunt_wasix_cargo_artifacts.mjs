@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { stageNativeIcuSeeds } from "./native-icu-seeds.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -1580,7 +1579,7 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
     const manifestPath = path.join(member.sourceDir, "manifest.json");
     const manifest = readJson(manifestPath);
     if (combinedManifest === undefined) combinedManifest = { ...manifest, artifacts: [] };
-    for (const key of ["target-triple", "engine", "wasmer-version", "wasmer-wasix-version", "source-fingerprint", "postgres-version"]) {
+    for (const key of ["target-triple", "engine", "wasmer-version", "wasmer-wasix-version", "postgres-version"]) {
       if (combinedManifest[key] !== manifest[key]) fail(`${spec.name} contains incompatible AOT manifests (${key})`);
     }
     combinedManifest.artifacts.push(...manifest.artifacts);
@@ -1841,17 +1840,11 @@ function packageSpecs(assetDir, extractRoot, version) {
   for (const file of ["icu.tar.zst", "icu.json"]) {
     copyFileSync(path.join(runtimeRoot, "cluster-seeds", file), path.join(icuPayloadRoot, "cluster-seeds", file));
   }
-  const nativeVersion = currentProductVersionSync("liboliphaunt-native", PREFIX);
-  writeFileSync(path.join(icuPayloadRoot, "native-runtime-version"), `${nativeVersion}\n`);
-  stageNativeIcuSeeds(
-    process.env.OLIPHAUNT_NATIVE_RELEASE_ASSET_DIR ?? path.join(ROOT, "target/liboliphaunt/release-assets"),
-    nativeVersion, path.join(icuPayloadRoot, "native-seeds"), icuRoot,
-  );
   specs.push({
     name: ICU_PACKAGE,
     target: "portable",
     kind: "icu-data",
-    templateDir: path.join(ROOT, "src/runtimes/liboliphaunt/icu"),
+    templateDir: path.join(ROOT, "src/runtimes/liboliphaunt/wasix/crates/icu"),
     payloadRoot: icuPayloadRoot,
     payloadDirName: "payload",
   });
