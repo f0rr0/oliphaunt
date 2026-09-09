@@ -3,8 +3,9 @@
 Optional standard PostgreSQL `pg_dump` and non-interactive `psql` runners for
 an open `@oliphaunt/wasix-ts` database. This package remains the public opt-in
 facade on every host. Browsers load separately carried portable tool binaries;
-Node.js, Bun, Deno, and Electron call the copies compiled into the matching Node-API
-platform carrier.
+Node.js, Bun, Deno, and Electron use the same installed portable modules with
+matching host AOT packages. The Node-API carrier validates and loads those
+optional resources.
 
 `pgDump()` returns PostgreSQL's ordinary plain SQL dump, including normal
 `COPY` data. `psql()` accepts a command or script and can restore that output.

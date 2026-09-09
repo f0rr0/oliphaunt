@@ -7,7 +7,9 @@ base `Oliphaunt` product includes PostgreSQL, supported contrib extensions, and
 the standard cluster seed. External extensions and ICU are separate packages.
 
 ```swift
-// Package.swift
+// swift-tools-version: 6.0
+import PackageDescription
+
 let package = Package(
     name: "Example",
     platforms: [.iOS(.v17), .macOS(.v14)],

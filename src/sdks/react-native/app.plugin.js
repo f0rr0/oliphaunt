@@ -92,13 +92,11 @@ function resolveInstalledResources(projectRoot) {
         queue.push(resolve(`${name}/package.json`));
       } catch (error) {
         if (error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
-          let directory = path.dirname(resolve(name));
-          while (!fs.existsSync(path.join(directory, 'package.json'))) {
-            const parent = path.dirname(directory);
-            if (parent === directory) throw error;
-            directory = parent;
-          }
-          queue.push(path.join(directory, 'package.json'));
+          const packageJson = (resolve.paths(name) ?? [])
+            .map((directory) => path.join(directory, name, 'package.json'))
+            .find((file) => fs.statSync(file, { throwIfNoEntry: false })?.isFile());
+          if (packageJson === undefined) throw error;
+          queue.push(packageJson);
         } else if (error.code !== 'MODULE_NOT_FOUND'
           || (manifest.dependencies?.[name] && !manifest.optionalDependencies?.[name])) {
           throw error;

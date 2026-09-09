@@ -610,6 +610,7 @@ test('shipping resources follow resolved dependencies, aliases, and nested versi
     const feature = path.join(root, 'node_modules/feature');
     writeJson(path.join(feature, 'package.json'), {
       name: 'feature',
+      exports: { './feature': { import: './dist/feature.js' } },
       dependencies: { vectors: 'npm:@oliphaunt/extension-vector@0.8.2', '@oliphaunt/icu': '0.2.0' },
     });
     const vector = path.join(feature, 'node_modules/vectors/package.json');

@@ -1247,8 +1247,7 @@ async function main() {
   ], { expectFailure: true });
   assert.match(diagnostic, /checksum mismatch/u);
 
-  // Recreate only the SQL-only archive and leave a buildable consumer package
-  // for check-sdk's clean Swift compile/link lane.
+  // Compile an app against an independent package and the public descriptor API.
   const pgtap = await extension("pgtap", null);
   const sqlOnly = carrierize([pgtap]);
   const sqlCarrier = path.join(root, "sql-only-carrier.json");
@@ -1260,10 +1259,29 @@ async function main() {
   const sqlOutput = path.join(root, "sql-only");
   run(process.execPath, [
     generator, "--carrier", sqlCarrier, "--extensions", "pgtap", "--cache-dir", path.join(root, "sql-cache"),
+    "--release-product", "oliphaunt-extension-pgtap",
     "--allow-file-urls", "--base-package-version", "0.1.0", "--base-package-path", sdk, "--output-dir", sqlOutput,
   ]);
   const sqlPackage = await fs.readFile(path.join(sqlOutput, "Package.swift"), "utf8");
   assert.doesNotMatch(sqlPackage, /binaryTarget/u);
+  const consumer = path.join(root, "consumer");
+  await fs.mkdir(path.join(consumer, "Sources", "Consumer"), { recursive: true });
+  await fs.writeFile(path.join(consumer, "Package.swift"), `// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(name: "Consumer", platforms: [.macOS(.v14)], dependencies: [
+  .package(name: "oliphaunt", path: ${JSON.stringify(sdk)}),
+  .package(name: "pgtap", path: ${JSON.stringify(sqlOutput)})
+], targets: [.executableTarget(name: "Consumer", dependencies: [
+  .product(name: "Oliphaunt", package: "oliphaunt"),
+  .product(name: "OliphauntExtensionPgtap", package: "pgtap")
+])])
+`);
+  await fs.writeFile(path.join(consumer, "Sources", "Consumer", "main.swift"), `import Oliphaunt
+import OliphauntExtensionPgtap
+let configuration = OliphauntConfiguration(extensions: [OliphauntExtensionPgtap.descriptor, OliphauntExtensions.hstore])
+precondition(configuration.extensions.map(\\.sqlName) == ["pgtap", "hstore"])
+`);
+  run("swift", ["run", "--package-path", consumer, "--scratch-path", path.join(root, "../consumer-build"), "Consumer"], { timeout: 180_000 });
   console.log(`swift-carrier-resolver.test.mjs: metadata, malicious ZIP, cache-tamper, and consumer checks passed; sql-only-package=${sqlOutput}`);
 }
 

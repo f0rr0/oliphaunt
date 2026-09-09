@@ -921,6 +921,7 @@ android {
 
     defaultConfig {
         minSdk = 24
+        consumerProguardFiles("consumer-rules.pro")
         if (androidAbiFilters.isNotEmpty()) {
             ndk {
                 abiFilters.addAll(androidAbiFilters)

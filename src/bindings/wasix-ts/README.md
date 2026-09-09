@@ -346,11 +346,10 @@ await psql(target, { script: sql });
 `pgDump()` runs with the database's existing owner, so it supports root,
 `/direct`, and `/worker` entrypoints where available. In browsers, `psql()` requires `/worker`
 because restoring COPY input is full duplex. Node.js, Bun, Deno, and Electron route both
-tools through the frontend binaries compiled into the native carrier, so
-`psql()` works with root, `/direct`, and `/worker` on those hosts. The optional
-`@oliphaunt/wasix-tools` package remains the public opt-in API even though the
-native carrier includes the tool code at build time. Adding or changing a tool
-requires a matching N-API carrier release.
+tools through the portable modules and matching host AOT artifacts supplied by
+the optional tools package. `psql()` works with root, `/direct`, and `/worker`
+on those hosts. The N-API carrier validates and loads those installed packages;
+it does not embed the tool payloads.
 
 The package preserves PostgreSQL's normal plain SQL and COPY output. It does
 not support interactive psql, custom dump archives, parallel jobs, or

@@ -1580,12 +1580,12 @@ function extensionModuleDirectory(runtimeDir) {
   return null;
 }
 
-function writeExtensionReadme(packageDir, packageName, members, target) {
+function writeExtensionReadme(packageDir, packageName, product, members, target) {
   const targetText = target === null ? "" : ` for \`${target}\``;
   const memberText = members.length === 1
     ? `the \`${members[0]}\` PostgreSQL extension`
     : `${members.length} PostgreSQL contrib extensions`;
-  const selectionExample = members.length === 1 ? members[0] : members.slice(0, 2).join("', '");
+  const ownerPackage = extensionNpmPackageForProduct(product);
   writeFileSync(
     path.join(packageDir, "README.md"),
     [
@@ -1593,8 +1593,19 @@ function writeExtensionReadme(packageDir, packageName, members, target) {
       "",
       `Oliphaunt registry package for ${memberText}${targetText}.`,
       "",
-      "This package is consumed by `@oliphaunt/ts` when an application opens a database with",
-      `\`extensions: ['${selectionExample}']\`.`,
+      ...(members.length > 1
+        ? ["Contrib ships with the base SDK. Select its descriptors explicitly, for example", "`extensions: [extensions.hstore]` after importing `{ extensions }` from `@oliphaunt/ts`."]
+        : [
+          `Install \`${ownerPackage}\` alongside \`@oliphaunt/ts\` or \`@oliphaunt/react-native\`.`,
+          "",
+          "```typescript",
+          "import Oliphaunt from '@oliphaunt/ts';",
+          `import extension from '${ownerPackage}';`,
+          "",
+          "const db = await Oliphaunt.open({ extensions: [extension] });",
+          "```",
+        ]),
+      "Installing the package supplies resources; select them per database and use SQL migrations to create extensions.",
       "",
     ].join("\n"),
   );
@@ -1647,7 +1658,7 @@ export function writeExtensionMetaPackage(packageDir, {
       .map((item) => [item, extensionNpmTargetPackageForProduct(product, item)]),
   );
   mkdirSync(packageDir, { recursive: true });
-  writeExtensionReadme(packageDir, packageName, members, null);
+  writeExtensionReadme(packageDir, packageName, product, members, null);
   if (iosCarrier !== undefined) writeJsonFile(path.join(packageDir, IOS_CARRIER_FILENAME), iosCarrier);
   const descriptorExports = {};
   for (const sqlName of members) {
@@ -1732,7 +1743,7 @@ function writeExtensionTargetPackage(packageDir, {
     metadata.moduleRelativePath = path.relative(packageDir, moduleDir).split(path.sep).join("/");
   }
   mkdirSync(packageDir, { recursive: true });
-  writeExtensionReadme(packageDir, packageName, members, target);
+  writeExtensionReadme(packageDir, packageName, product, members, target);
   writeJsonFile(
     path.join(packageDir, NPM_EXTENSION_CONTRACT_FILENAME),
     renderNpmExtensionContractManifest({ product, version, target, members: memberContracts }),

@@ -20,8 +20,9 @@ portable liboliphaunt-wasix       Rust actor, direct, Worker, server
 The browser adapter owns the portable runtime/seed descriptors and dynamic
 extension carrier installation. The server adapter owns no Wasmer JavaScript
 fallback: it loads one exact, prebuilt platform carrier whose Rust dependency
-embeds the runtime, AOT objects, cluster seed, tools, and supported extension
-catalog. Both execute the canonical WASIX guest and preserve its physical
+embeds the core runtime, core AOT objects, standard cluster seed, and contrib.
+External extensions, ICU, and tools come from separately installed packages.
+Both execute the canonical WASIX guest and preserve its physical
 database and backup formats.
 
 This boundary deliberately does not depend on `src/sdks/js`,
@@ -411,13 +412,11 @@ carrier-owned installed-file inventory. The core manifest is required to have
 
 That byte-closure processing is the browser implementation. Node.js, Bun, Deno,
 and Electron retain the same public descriptor and perform its structural/runtime
-validation, but pass only the validated, dependency-ordered SQL names across
-the N-API boundary. The Rust runtime resolves those names against the exact
-extension features compiled into the release carrier. Unknown names fail; the
-addon never treats arbitrary descriptor bytes as native code. A new or upgraded
-extension can ship independently for browsers, but it becomes available to
-native-host consumers only after the N-API product is rebuilt and released
-with that feature.
+validation. Contrib uses the embedded payloads; external selections pass installed
+package identities and locations across the N-API boundary. Rust verifies package
+ownership, version, runtime compatibility, target, and payload hashes before
+loading portable resources and host AOT modules. External extensions can ship
+independently of N-API when they match its runtime and AOT compatibility contract.
 
 ## Host compatibility
 
@@ -579,12 +578,13 @@ Linux carriers are GNU/glibc-only. The adapter identifies libc from the
 runtime diagnostic report before resolving package-adjacent, optional, or
 explicit addon paths; known musl and unknown libc identities fail closed.
 
-Native release builds embed the runtime, seed, AOT objects, frontend tools, and
-complete currently supported extension feature set. Optional extensions remain
-exact, separately imported `-wasix` packages at the public TypeScript boundary,
-but native hosts use their descriptor identity to select compiled-in artifacts
-instead of copying the carrier bytes. Their availability is consequently a
-release-time N-API contract.
+Native release builds embed the core runtime, standard seed, core AOT objects,
+and contrib. External extensions use independently versioned `-wasix` packages
+for their portable bytes and target-specific packages for their AOT objects.
+ICU data with matching seeds and frontend tools are separate packages too.
+The adapter resolves the selected installed packages, and N-API validates their
+identity and bytes before loading them. Compatible extension releases do not
+require rebuilding N-API.
 
 The source workspace manifest deliberately does not resolve that generated
 carrier from npm: the carrier exists only after same-candidate runtime assets

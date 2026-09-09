@@ -18,7 +18,9 @@ this SDK, so the Swift lifecycle model is the Apple behavior source.
 Add the Swift package from Xcode or `Package.swift`:
 
 ```swift
-// Package.swift
+// swift-tools-version: 6.0
+import PackageDescription
+
 let package = Package(
     name: "Example",
     platforms: [.iOS(.v17), .macOS(.v14)],

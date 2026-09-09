@@ -24,7 +24,9 @@ Add the Swift package in Xcode or `Package.swift`. The package includes the
 Swift API plus the platform runtime artifacts required for the selected target.
 
 ```swift
-// Package.swift
+// swift-tools-version: 6.0
+import PackageDescription
+
 let package = Package(
     name: "Example",
     platforms: [.iOS(.v17), .macOS(.v14)],

@@ -11,7 +11,7 @@ versioned dependency; contrib ships with the SDK.
 
 ```kotlin
 plugins {
-    id("dev.oliphaunt.android") version "0.1.1"
+    id("dev.oliphaunt.android") version "0.2.0"
 }
 
 dependencies {

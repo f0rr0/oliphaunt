@@ -8,14 +8,14 @@ import dev.oliphaunt.IcuData;
 import dev.oliphaunt.OliphauntConfig;
 import dev.oliphaunt.OliphauntJava;
 import java.io.File;
-import java.util.Map;
+import java.util.Collections;
 
 /** Compile-only proof of the Java API against the packaged Android AAR. */
 public final class JavaPublicApiConsumer {
     public static void useDatabase(Context context, File directory, ExtensionDescriptor vector, IcuData icu) {
         var config = OliphauntConfig.builder()
             .storage(new DatabaseStorage.Directory(directory))
-            .startupGucs(Map.of("application_name", "java-consumer"))
+            .startupGucs(Collections.singletonMap("application_name", "java-consumer"))
             .extensions(vector, Extensions.HSTORE)
             .icu(icu)
             .build();

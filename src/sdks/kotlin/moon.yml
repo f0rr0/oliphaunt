@@ -82,7 +82,7 @@ tasks:
     options:
       cache: true
   package:
-    tags: ["package"]
+    tags: ["package", "requires-android-sdk"]
     script: |
       set -e
       ./gradlew \
@@ -91,6 +91,10 @@ tasks:
         "-Dmaven.repo.local=$MOON_WORKSPACE_ROOT/target/moon/oliphaunt-kotlin/package/maven" \
         "-PoliphauntAndroidAbiFilters=arm64-v8a,x86_64" \
         --no-configuration-cache
+      ./gradlew -p tests/public-api-consumer checkMinifiedCallbacks \
+        "-PoliphauntConsumerAar=$MOON_WORKSPACE_ROOT/target/moon/oliphaunt-kotlin/package/oliphaunt/outputs/aar/oliphaunt-release.aar" \
+        "-PoliphauntConsumerBuildRoot=$MOON_WORKSPACE_ROOT/target/moon/oliphaunt-kotlin/package/consumer" \
+        --configuration-cache
     env:
       OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../target/moon/oliphaunt-kotlin/package"
     inputs:

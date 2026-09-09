@@ -14,6 +14,7 @@ import {
   extensionRegistryPackageTargetSets,
 } from "./release-artifact-targets.mjs";
 import { loadGraph } from "./release-graph.mjs";
+import { stageRustPackageSource } from "../../src/sdks/rust/tools/package-source.mjs";
 import {
   nativeExtensionCargoPackageName,
 } from "./extension-registry-packages.mjs";
@@ -290,12 +291,28 @@ oliphaunt-build = { path = ${JSON.stringify(path.join(import.meta.dir, "../../sr
     expect(text).not.toContain('extension = "hstore"');
     // The ordinary API needs only dependencies and imported descriptors.
     rmSync(path.join(app, "build.rs"));
-    let plainManifest = readFileSync(path.join(app, "Cargo.toml"), "utf8")
-      .replace('build = "build.rs"\n', "")
-      .replace(/\[package\.metadata\.oliphaunt\][\s\S]*?(?=\[dependencies\])/u, "")
-      .replace(/\[build-dependencies\][\s\S]*?(?=\[workspace\])/u, "")
-      .replace("[dependencies]", `[dependencies]\noliphaunt = { path = ${JSON.stringify(dependencyPaths.oliphaunt)} }`);
-    writeFileSync(path.join(app, "Cargo.toml"), plainManifest);
+    const sdk = path.join(root, "sdk");
+    const sdkManifest = stageRustPackageSource(sdk);
+    let sdkText = readFileSync(sdkManifest, "utf8");
+    for (const name of ["oliphaunt-resources", "oliphaunt-build"]) {
+      sdkText = sdkText.replace(new RegExp(`^${name} = .+$`, "m"), `${name} = { path = ${JSON.stringify(dependencyPaths[name])} }`);
+    }
+    const hostTarget = Object.entries(targetTriples).find(([, triple]) => triple === host)[0];
+    const contribName = nativeExtensionCargoPackageName("oliphaunt-extension-contrib-pg18", hostTarget);
+    sdkText = sdkText.replace("[dependencies]", `[dependencies]
+fixture-native-runtime = { path = ${JSON.stringify(runtime)} }
+fixture-broker = { path = ${JSON.stringify(broker)} }
+${contribName} = { path = ${JSON.stringify(dependencyPaths[contribName])} }`);
+    writeFileSync(sdkManifest, sdkText);
+    writeFileSync(path.join(app, "Cargo.toml"), `[package]
+name = "facade-app"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+oliphaunt = { path = ${JSON.stringify(sdk)} }
+vector = { package = "oliphaunt-extension-vector", path = ${JSON.stringify(path.join(generated, "sources/oliphaunt-extension-vector"))} }
+[workspace]
+`);
     writeFileSync(path.join(app, "src/lib.rs"), `pub fn configured() -> oliphaunt::OliphauntBuilder {
       oliphaunt::Oliphaunt::builder().extensions([vector::VECTOR, oliphaunt::extensions::HSTORE])
     }\n`);
@@ -303,5 +320,17 @@ oliphaunt-build = { path = ${JSON.stringify(path.join(import.meta.dir, "../../sr
       cwd: app, encoding: "utf8", maxBuffer: 20 * 1024 * 1024,
     });
     expect(plain.status, `${plain.stdout}\n${plain.stderr}`).toBe(0);
+    const buildRoot = path.join(root, "cargo-target/debug/build");
+    const embedded = readdirSync(buildRoot)
+      .filter(name => /^oliphaunt-[0-9a-f]+$/u.test(name))
+      .map(name => findFile(path.join(buildRoot, name), "embedded_resources.rs"))
+      .filter(file => file !== null)
+      .map(file => readFileSync(file, "utf8"))
+      .find(source => source.includes("native-runtime/liboliphaunt-native/"));
+    expect(embedded).toContain("runtime/bin/postgres");
+    expect(embedded).toContain("cluster-seed/files/pg_notify/");
+    expect(embedded).toContain("extension/oliphaunt-extension-contrib-pg18/");
+    expect(embedded).not.toContain("native-tools/");
+    expect(embedded).not.toContain("extension/oliphaunt-extension-vector/");
   });
 });
