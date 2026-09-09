@@ -46,59 +46,46 @@ Ordinary frontend nonzero exits therefore retain stdout and stderr. A
 `PostgresToolError` is still thrown with its structured diagnostics even if it
 reports exit code zero; unrelated runtime failures remain thrown errors.
 
-`extensionIdentity(sqlName)` and `toolIdentity(name)` expose each embedded
-archive/module as canonical `sha256:size`. The TypeScript adapter compares
-these identities with its validated public descriptors, so a same-name but
-different payload fails before database startup or tool execution.
+`extensionIdentity(sqlName)` exposes an embedded contrib archive as canonical
+`sha256:size`. `toolIdentity(name)` reports a tool from an explicitly registered
+installed tools package. The TypeScript adapter compares these identities with
+its validated public descriptors before use.
 
-`payloadIdentity(component)` exposes the same identity form for the runtime,
-standard seed, ICU data, and ICU seed payloads embedded in the single addon.
+`payloadIdentity(component)` identifies the embedded runtime archive and
+standard seed archive/manifest. ICU payloads come from the selected ICU package.
 
 ## Standard and ICU profiles
 
 Each platform carrier contains one stable addon subpath,
-`oliphaunt_wasix_napi.node`. The release feature embeds both the standard and
-ICU payloads in that binary, and database open options select the requested
-profile. `supportedProfiles()` reports the exact `['standard', 'icu']` contract.
+`oliphaunt_wasix_napi.node`. It embeds the runtime, initdb, standard seed, and
+contrib extensions. External extensions, ICU data with its matching seed, and
+frontend tools are separate dependencies. Standard seeds remain bundled; making
+those optional is a separate rollout.
 
-The existing TypeScript `icu` option therefore changes the selected database
-profile, not the package or binary that gets loaded. The default remains the
-standard profile.
+`supportedProfiles()` reports `['standard', 'icu']`. Standard is the default.
+Selecting ICU requires the installed ICU descriptor and its bytes; the same
+addon supports both profiles without embedding the optional data.
 
-Release builds enable the `release` Cargo feature, which includes packaged
-PostgreSQL tools and all extension features supported by the WASIX catalog.
-The TypeScript API continues to accept extension descriptors, but the addon
-receives the validated SQL names and resolves them against this compile-time
-catalog. It never loads arbitrary extension bytes from JavaScript. A new or
-updated server extension, or a changed frontend tool, therefore needs a new
-N-API carrier release. This makes each carrier larger, but removes portable
-archive expansion, WebAssembly compilation, and dynamic side-module linking
-from server startup.
+Release builds enable the `release` feature, which enables extension and tool
+APIs. It does not pull optional payload crates into the addon. TypeScript passes
+contrib SQL names to Rust and resolves external descriptors to their installed
+portable and host AOT package manifests. Rust validates owner, version, target,
+runtime compatibility, containment, and payload hashes before loading them.
+The tools package follows the same installed-package registration contract.
+Compatible external package releases do not require rebuilding the addon.
 
-Source-only `cargo check` intentionally leaves those payload features disabled.
-The artifact build validates every staged runtime, tool, extension, cluster
-seed, and AOT payload before embedding it.
+Source-only `cargo check` leaves release features disabled. The artifact builder
+validates its base payload closure through these inputs:
 
-`tools/build-native.sh` fails closed unless the same-run producer outputs are
-available through the dependency build-script contract:
+- `OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR`: portable runtime, initdb, and standard seed;
+- `OLIPHAUNT_WASM_GENERATED_AOT_DIR`: the current target's core AOT manifest;
+- `OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT`: contrib portable and target AOT inventory;
+- `OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD=1`: reject source-only payload fallbacks.
 
-- `OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR` points at the portable runtime and
-  split `pg_dump`/`psql` payload root;
-- `OLIPHAUNT_WASM_GENERATED_AOT_DIR` points at the root containing the current
-  Rust target triple's core and tool AOT manifest;
-- `OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT` points at the exact portable and
-  per-target AOT extension inventory;
-- `OLIPHAUNT_ICU_DATA_DIR` points at the portable ICU data tree; and
-- `OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD=1` prevents every dependency crate
-  from selecting its source-only fallback.
-
-The build records and rechecks a deterministic inventory before packaging.
-Its portable manifest, split tools, host AOT manifest, every selected extension
-manifest/archive/AOT manifest, and ICU tree digest are embedded under
-`artifact-provenance.json.buildInputs` in both distribution forms. Its `build`
-object also records the release Cargo profile, disabled incremental compilation,
-single codegen unit, thin LTO, symbol stripping, exact `release` feature, and
-Rust target triple.
+The build records and rechecks the runtime and contrib inventories in
+`artifact-provenance.json.buildInputs`. The `build` object records the release
+Cargo profile, disabled incremental compilation, single codegen unit, thin LTO,
+symbol stripping, exact `release` feature, and Rust target triple.
 The addon's `runtimeVersion()` identity comes directly from the selected
 `liboliphaunt-wasix-portable` crate. Workspace builds therefore report the
 local runtime while released carriers retain exact product compatibility pins.
@@ -117,7 +104,7 @@ managers to install only the matching target:
 - `@oliphaunt/wasix-napi-win32-x64-msvc`
 
 Carrier packages have no install scripts and never download executable code.
-`tools/build-native.sh` creates the single profile-complete addon and
+`tools/build-native.sh` creates the single base addon and
 `tools/package-platform.mjs` stages the matching carrier and portable release
 archive with source/artifact provenance before `pnpm pack`. Per-target jobs do
 not write the shared checksum filename; the aggregate release-assets task

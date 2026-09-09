@@ -7,7 +7,7 @@ import { Worker } from 'node:worker_threads';
 
 const addonPath = process.argv[2];
 if (addonPath === undefined) {
-  throw new Error('usage: node native.integration.mjs /absolute/path/to/addon.node [--tools]');
+  throw new Error('usage: node native.integration.mjs /absolute/path/to/release-addon.node');
 }
 
 const addon = createRequire(import.meta.url)(addonPath);
@@ -19,6 +19,7 @@ const expectedExports = [
   'extensionIdentity',
   'nodeApiVersion',
   'payloadIdentity',
+  'registerTools',
   'restore',
   'restoreDirect',
   'runtimeVersion',
@@ -119,12 +120,8 @@ assert.equal(
 );
 assertResponse(await actor.execProtocolRaw(queryMessage('select 4204')), 4204);
 
-if (process.argv.includes('--tools')) {
-  const dump = await actor.pgDump([]);
-  assert.equal(dump.status, 0);
-  assert(dump.stdout.byteLength > 0);
-  assertTransferable(dump.stdout);
-  assertTransferable(dump.stderr);
+for (const name of ['pg_dump', 'psql']) {
+  assert.throws(() => addon.toolIdentity(name), /not installed|not embedded|missing|unavailable/iu);
 }
 
 await Promise.all([actor.close(), actor.close()]);
@@ -143,10 +140,16 @@ assert.match(server.connectionString, /^postgresql:\/\//u);
 await Promise.all([server.close(), server.close()]);
 assert.equal(server.closed, true);
 
-assert.match(addon.payloadIdentity('icuDataArchive'), /^[0-9a-f]{64}:\d+$/u);
-const icu = await addon.NativeWasixActorDatabase.open(openOptions('icu'));
-assertResponse(await icu.execProtocolRaw(queryMessage('select 4301')), 4301);
-await icu.close();
+for (const component of ['icuDataArchive', 'icuSeedArchive', 'icuSeedManifest']) {
+  assert.throws(() => addon.payloadIdentity(component), /unsupported WASIX payload component/u);
+}
+for (const sqlName of ['vector', 'pgtap']) {
+  assert.throws(() => addon.extensionIdentity(sqlName), /not embedded/u);
+}
+assert.throws(
+  () => addon.NativeWasixActorDatabase.open(openOptions('icu')),
+  /requires the optional ICU package/u,
+);
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'oliphaunt-wasix-napi-'));
 try {
