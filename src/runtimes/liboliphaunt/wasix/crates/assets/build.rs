@@ -497,8 +497,9 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
         [("standard", &standard_seed_archive, &standard_seed_manifest)]
     {
         assert!(
-            archive.is_file() && seed_manifest.is_file(),
-            "generated asset directory {} is missing the required {profile} cluster seed; expected both {} and {}",
+            (archive.is_file() && seed_manifest.is_file())
+                || (!archive.exists() && !seed_manifest.exists()),
+            "generated asset directory {} has an incomplete {profile} cluster seed; expected both {} and {} or neither",
             asset_dir.display(),
             archive.display(),
             seed_manifest.display()

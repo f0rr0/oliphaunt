@@ -123,7 +123,7 @@ pub(crate) fn asset_manifest_metadata_for(
 ) -> Result<AssetManifestMetadata> {
     let manifest =
         liboliphaunt_wasix_portable::manifest().context("parse oliphaunt-wasix asset manifest")?;
-    if liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS {
+    if cluster_seed_manifest(selected_profile).is_some() {
         let seed = manifest
             .cluster_seeds
             .get(selected_profile.as_str())

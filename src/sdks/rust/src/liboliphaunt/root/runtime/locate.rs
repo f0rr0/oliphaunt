@@ -4,10 +4,8 @@ use super::super::super::ffi::{
     ENV_EMBEDDED_MODULE_DIR, ENV_INITDB, ENV_INSTALL_DIR, ENV_POSTGRES, env_path_candidates,
     resolve_library_path_candidates,
 };
-use crate::build_resources::registered_build_resources_dir;
+use crate::build_resources::resources_dir_candidates;
 use crate::error::{Error, Result};
-
-const ENV_RESOURCES_DIR: &str = "OLIPHAUNT_RESOURCES_DIR";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LocatedIcuData {
@@ -136,20 +134,6 @@ fn native_tool_is_file(path: &Path, tool: &str) -> bool {
     path.join("bin").join(tool).is_file() || path.join("bin").join(format!("{tool}.exe")).is_file()
 }
 
-pub(super) fn resources_dir_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = registered_build_resources_dir() {
-        candidates.push(path);
-    }
-    if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
-        candidates.push(PathBuf::from(path));
-    }
-    if let Some(path) = crate::build_resources::embedded_base_resources_dir() {
-        candidates.push(path);
-    }
-    candidates
-}
-
 pub(super) fn locate_native_icu_data(
     selected_resources: Option<&Path>,
 ) -> Result<Option<LocatedIcuData>> {
@@ -186,12 +170,14 @@ pub(super) fn locate_native_icu_data(
 pub(super) fn locate_native_cluster_seed(
     resources_dir: &Path,
     profile: super::super::NativeCatalogProfile,
+    selected_resources: Option<&Path>,
 ) -> Result<Option<LocatedClusterSeed>> {
     let payload = resources_dir.join("native-runtime/liboliphaunt-native");
     let carrier_target = read_native_runtime_carrier(&payload.join("manifest.properties"))?;
     let directory = match profile {
         super::super::NativeCatalogProfile::Standard => payload.join("cluster-seed"),
-        super::super::NativeCatalogProfile::Icu => resources_dir
+        super::super::NativeCatalogProfile::Icu => selected_resources
+            .unwrap_or(resources_dir)
             .join("icu-data/oliphaunt-icu/native-seeds")
             .join(&carrier_target),
     };
@@ -527,6 +513,47 @@ mod tests {
 
         restore_env(ENV_EMBEDDED_MODULE_DIR, previous);
         assert_eq!(located, modules_dir);
+    }
+
+    #[test]
+    fn selected_icu_seed_uses_its_own_resource_directory() {
+        let temp = TempTree::new("selected-icu-seed");
+        let base = temp.path().join("base");
+        let selected = temp.path().join("selected");
+        let payload = base.join("native-runtime/liboliphaunt-native");
+        fs::create_dir_all(&payload).unwrap();
+        let target = native_host_target_id().unwrap();
+        write_runtime_carrier_receipt(
+            &payload.join("manifest.properties"),
+            target,
+            "cluster-seed",
+            "cluster-seed-icu",
+            "",
+        );
+        let directory = selected
+            .join("icu-data/oliphaunt-icu/native-seeds")
+            .join(target);
+        write_cluster_seed_fixture(&directory, "native-icu.valid.properties");
+        let manifest = directory.join("manifest.properties");
+        let text = fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("linux-x64-gnu", target);
+        fs::write(manifest, text).unwrap();
+        assert!(
+            locate_native_cluster_seed(&base, NativeCatalogProfile::Icu, None)
+                .unwrap()
+                .is_none()
+        );
+        let found = locate_native_cluster_seed(&base, NativeCatalogProfile::Icu, Some(&selected))
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.directory, directory);
+        assert_eq!(found.target, target);
+        assert!(
+            locate_native_cluster_seed(&base, NativeCatalogProfile::Standard, Some(&selected))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

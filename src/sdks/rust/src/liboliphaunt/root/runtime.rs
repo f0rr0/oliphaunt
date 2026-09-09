@@ -47,6 +47,7 @@ pub(super) fn resolve_runtime_closure(
         requested_catalog_profile,
         None,
         None,
+        false,
     )
 }
 
@@ -56,6 +57,7 @@ pub(super) fn resolve_runtime_closure_with_resources(
     requested_catalog_profile: Option<NativeCatalogProfile>,
     selected_resources: Option<&Path>,
     selected_icu: Option<bool>,
+    needs_initialization: bool,
 ) -> Result<ResolvedRuntimeClosure> {
     let install_dir = locate_native_install_dir()?;
     let package_resources_root = package_resources_root_for_install(&install_dir);
@@ -94,17 +96,20 @@ pub(super) fn resolve_runtime_closure_with_resources(
     )?;
     let package_closure_root = package_resources_root;
     // Packaging materializes the seeds after resolving the runtime closure. Only an
-    // ordinary SDK open consumes a seed that already belongs to a released carrier.
-    let cluster_seed = if requested_catalog_profile.is_none() {
+    // new SDK database consumes a seed; existing roots do not require seed resources.
+    let cluster_seed = if needs_initialization {
         package_closure_root
             .as_deref()
-            .map(|resources_root| locate_native_cluster_seed(resources_root, catalog_profile))
+            .map(|resources_root| {
+                locate_native_cluster_seed(resources_root, catalog_profile, selected_resources)
+            })
             .transpose()?
             .flatten()
     } else {
         None
     };
-    if requested_catalog_profile.is_none()
+    if needs_initialization
+        && catalog_profile == NativeCatalogProfile::Icu
         && package_closure_root.is_some()
         && cluster_seed.is_none()
     {

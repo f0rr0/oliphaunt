@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { NATIVE_PGDATA_DIRECTORIES } from '../release/native-cluster-seed-contract.mjs';
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -277,7 +278,10 @@ function nativeClusterSeedEntries(profile, prefix, target, icuDataTreeSha256 = '
     [`${prefix}manifest.properties`]: manifest,
     [`${prefix}files/PG_VERSION`]: '18\n',
     [`${prefix}files/global/pg_control`]: `${profile}-fixture-control\n`,
-    [`${prefix}files/pg_wal/`]: '',
+    ...Object.fromEntries(
+      NATIVE_PGDATA_DIRECTORIES.map((directory) => [`${prefix}files/${directory}/`, '']),
+    ),
+    [`${prefix}directories-v1.txt`]: `${[...NATIVE_PGDATA_DIRECTORIES].sort().join('\n')}\n`,
   };
 }
 

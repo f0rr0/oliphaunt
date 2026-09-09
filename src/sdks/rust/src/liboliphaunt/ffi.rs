@@ -200,37 +200,31 @@ fn decode_error_text(length: usize, message: &[c_char]) -> Option<String> {
 }
 
 fn resolve_library_path() -> Result<PathBuf> {
-    resolve_library_path_candidates()
-        .into_iter()
-        .next()
+    if let Some(path) = std::env::var_os(ENV_OLIPHAUNT) {
+        return Ok(PathBuf::from(path));
+    }
+    let candidates = resolve_library_path_candidates();
+    candidates.iter().find(|path| path.is_file()).cloned()
         .ok_or_else(|| {
             Error::Engine(format!(
-                "{ENV_OLIPHAUNT} is not set; set it to a native liboliphaunt dynamic library"
+                "could not locate native liboliphaunt; register build resources or set {ENV_OLIPHAUNT}; searched {candidates:?}"
             ))
         })
 }
 
 pub(super) fn resolve_library_path_candidates() -> Vec<PathBuf> {
-    let mut candidates = env_path_candidates([ENV_OLIPHAUNT]);
-    if let Some(root) = crate::build_resources::registered_build_resources_dir()
-        .or_else(|| std::env::var_os("OLIPHAUNT_RESOURCES_DIR").map(PathBuf::from))
-        .or_else(crate::build_resources::embedded_base_resources_dir)
-    {
-        let payload = root.join("native-runtime/liboliphaunt-native");
-        let path = if cfg!(windows) {
-            payload.join("bin/oliphaunt.dll")
-        } else {
-            payload.join(format!(
-                "lib/{}oliphaunt{}",
-                std::env::consts::DLL_PREFIX,
-                std::env::consts::DLL_SUFFIX
-            ))
-        };
-        if path.is_file() {
-            candidates.push(path);
-        }
-    }
-    candidates
+    env_path_candidates([ENV_OLIPHAUNT])
+        .into_iter()
+        .chain(
+            crate::build_resources::resources_dir_candidates()
+                .into_iter()
+                .map(|root| {
+                    root.join("native-runtime/liboliphaunt-native")
+                        .join(if cfg!(windows) { "bin" } else { "lib" })
+                        .join(libloading::library_filename("oliphaunt"))
+                }),
+        )
+        .collect()
 }
 
 pub(super) fn env_path_candidates<const N: usize>(names: [&str; N]) -> Vec<PathBuf> {

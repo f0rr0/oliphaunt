@@ -1,9 +1,44 @@
 # Cluster seeds and ICU
 
-Status: locked architecture and implemented contract, updated 2026-08-24.
+Status: current distribution contract, with an optional-download transition
+approved below; updated 2026-09-09.
 
 This document is the source of truth for preinitialized PostgreSQL clusters,
 ICU data, their public selection, and their release qualification.
+
+## Optional-download transition
+
+The intended package contract is:
+
+- Ordinary installs download neither seeds nor ICU data. New databases run
+  `initdb`, retaining the caller's storage choice.
+- An explicit standard-seed selection accelerates creation.
+- One language-native ICU selection resolves both the compatible ICU seed and
+  common ICU data. Target-specific carriers may implement that selection.
+- Existing databases are never reseeded. Adding ICU makes its data available;
+  importing collations remains an explicit application migration.
+
+This is not yet the shipped default. The distribution descriptions below remain
+the current implementation until these prerequisites are complete:
+
+1. Native mobile needs seed-free initialization. The C ABI accepts prepared
+   PGDATA; Swift only runs packaged `initdb` on macOS, and Android requires a
+   seed. A shared native initialization implementation must be qualified before
+   mobile seeds can be removed. Calling PostgreSQL bootstrap entry points alone
+   does not provide the process isolation or state cleanup needed by `initdb`.
+2. Browser WASIX needs a seed-free initialization path. Rust WASIX now supports
+   split `initdb` for both memory and directory storage when no seed is supplied.
+3. Standard-seed bytes must leave default runtime archives and Cargo/npm/Maven/
+   mobile resources. ICU data and ICU seeds already have optional carriers;
+   WASIX N-API still embeds the standard seed. Optional dependency declarations
+   alone do not remove downloads from a default carrier.
+4. Separately downloadable standard and ICU seeds need artifact graph rows,
+   carrier identities, compatibility edges, and publication ordering under
+   their native/WASIX release owners. ICU selection must resolve the matching
+   seed plus shared data; a new carrier does not imply a new versioned product.
+5. Fresh installed consumers must prove default download exclusion, seeded and
+   seed-free creation, ICU creation, and adding ICU to an existing database
+   without losing rows. Retain seed compatibility and incomplete-layout checks.
 
 ## Names
 

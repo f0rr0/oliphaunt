@@ -16,6 +16,7 @@ assertExactKeys(contract, [
   "icu",
   "icuDataSchema",
   "manifests",
+  "pgdataDirectories",
   "physicalFormats",
   "profiles",
   "schema",

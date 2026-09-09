@@ -226,8 +226,8 @@ pub(crate) fn materialize_embedded_resources(files: &[EmbeddedResource]) -> Resu
 /// Advanced preassembled deployments call [`crate::register_build_resources!`]
 /// after their `build.rs` has called `oliphaunt_build::configure()`. Ordinary
 /// applications use automatically embedded resources. The native
-/// runtime locator uses this directory before falling back to explicit
-/// environment variables and source-tree build layouts.
+/// runtime locator uses this directory before source-tree layouts. Explicit
+/// library and install-directory environment overrides take precedence.
 pub fn register_build_resources_dir(path: impl Into<PathBuf>) -> Result<()> {
     let path = path.into();
     if path.as_os_str().is_empty() {
@@ -260,6 +260,23 @@ pub(crate) fn registered_build_resources_dir() -> Option<PathBuf> {
         .and_then(|lock| lock.read().ok().and_then(|guard| guard.clone()))
 }
 
+pub(crate) fn resources_dir_candidates() -> Vec<PathBuf> {
+    registered_build_resources_dir()
+        .into_iter()
+        .chain(std::env::var_os("OLIPHAUNT_RESOURCES_DIR").map(PathBuf::from))
+        .chain(embedded_base_resources_dir())
+        .collect()
+}
+
+/// Implementation of the exported registration macro.
+#[doc(hidden)]
+pub fn __register_build_resources(path: Option<&str>) -> Result<()> {
+    let path = path.ok_or_else(|| Error::InvalidConfig(
+        "OLIPHAUNT_RESOURCES_DIR was not emitted for this package; add oliphaunt-build as a build dependency and call oliphaunt_build::configure() from build.rs".to_owned(),
+    ))?;
+    register_build_resources_dir(path)
+}
+
 /// Register the resources staged by `oliphaunt-build` for the current package.
 ///
 /// The macro expands in the application crate, so it can read the
@@ -268,13 +285,7 @@ pub(crate) fn registered_build_resources_dir() -> Option<PathBuf> {
 #[macro_export]
 macro_rules! register_build_resources {
     () => {
-        match option_env!("OLIPHAUNT_RESOURCES_DIR") {
-            Some(path) => $crate::register_build_resources_dir(path),
-            None => Err($crate::Error::InvalidConfig(
-                "OLIPHAUNT_RESOURCES_DIR was not emitted for this package; add oliphaunt-build as a build dependency and call oliphaunt_build::configure() from build.rs"
-                    .to_owned(),
-            )),
-        }
+        $crate::__register_build_resources(option_env!("OLIPHAUNT_RESOURCES_DIR"))
     };
 }
 

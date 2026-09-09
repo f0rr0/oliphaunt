@@ -974,15 +974,15 @@ fn archive_entry_plan<R: Read>(entry: &tar::Entry<'_, R>) -> Result<ArchiveEntry
 }
 
 #[cfg(unix)]
-fn apply_private_permissions(path: &Path, mode: u32) -> Result<()> {
+pub(super) fn apply_private_permissions(path: &Path, mode: u32) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
-        .with_context(|| format!("set restored PGDATA permissions on {}", path.display()))
+        .with_context(|| format!("set PGDATA permissions on {}", path.display()))
 }
 
 #[cfg(not(unix))]
-fn apply_private_permissions(_path: &Path, _mode: u32) -> Result<()> {
+pub(super) fn apply_private_permissions(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 

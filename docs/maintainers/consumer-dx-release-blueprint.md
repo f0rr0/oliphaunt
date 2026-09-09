@@ -1,5 +1,11 @@
 # SDK resource packaging contract
 
+The approved next distribution contract makes standard seeds optional and uses
+`initdb` by default. The [cluster-seed transition](../architecture/cluster-seeds-and-icu.md#optional-download-transition)
+records the remaining native-mobile/browser initialization and carrier work.
+The bundled-standard-seed descriptions below describe the current implementation,
+not the target of that rollout.
+
 Applications install a base SDK and explicitly select descriptors when opening a
 database. The base SDK includes PostgreSQL, supported contrib extensions, and
 the standard cluster seed. External extensions, ICU data with its matching seed,

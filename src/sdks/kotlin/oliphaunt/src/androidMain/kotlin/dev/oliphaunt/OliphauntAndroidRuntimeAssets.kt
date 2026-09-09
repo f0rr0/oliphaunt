@@ -422,6 +422,12 @@ internal object OliphauntAndroidRuntimeAssets {
     ): AndroidPgdataPublication {
         validateCompleteAndroidPgdata(staging)
         if (isCompleteAndroidPgdata(destination)) return AndroidPgdataPublication.Existing
+        if (!staging.setReadable(false, false) || !staging.setWritable(false, false) ||
+            !staging.setExecutable(false, false) || !staging.setReadable(true, true) ||
+            !staging.setWritable(true, true) || !staging.setExecutable(true, true)
+        ) {
+            throw OliphauntException("failed to set private PGDATA permissions: ${staging.absolutePath}")
+        }
         syncPublicationTree(staging)
 
         if (destination.exists()) {

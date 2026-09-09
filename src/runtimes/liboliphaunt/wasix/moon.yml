@@ -97,6 +97,7 @@ tasks:
       - "tools/verify-committed-assets.sh"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/xtask/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "/src/sources/tools/verify-source-tree.py"
     options:
       cache: false
@@ -129,6 +130,7 @@ tasks:
       - "!assets/generated/**"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/xtask/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "@group(release-archive-contract)"
       - "/src/sources/tools/verify-source-tree.py"
     outputs:
@@ -168,6 +170,7 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/xtask/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "@group(release-archive-contract)"
       - "/src/sources/tools/verify-source-tree.py"
     outputs:
@@ -201,6 +204,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/crates/assets/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/aot/**/*"
       - "/tools/xtask/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "/tools/release/check-liboliphaunt-wasix-release-assets.mjs"
       - "@group(release-archive-contract)"
       - "/src/sources/tools/verify-source-tree.py"
@@ -236,6 +240,7 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/xtask/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "/src/sources/tools/verify-source-tree.py"
     options:
       cache: local
@@ -271,6 +276,7 @@ tasks:
       - "/tools/release/wasix-typescript-package.mjs"
       - "@group(release-archive-contract)"
       - "/tools/xtask/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "/src/sources/tools/verify-source-tree.py"
     options:
       cache: local

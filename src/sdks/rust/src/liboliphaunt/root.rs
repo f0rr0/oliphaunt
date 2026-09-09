@@ -117,6 +117,7 @@ impl PreparedNativeRoot {
             None,
             config.resource_directory.as_deref(),
             Some(config.icu),
+            !initialized,
         )?;
         let runtime_dir = runtime_closure.runtime_dir;
         let mut pgdata_cleanup = CreatedPgdataCleanup::new();

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import os from "node:os";
 import path from "node:path";
 import { splitNativeIcuSeed, stageNativeIcuSeeds, nativeIcuSeedAsset } from "./native-icu-seeds.mjs";
-import { filesystemTreeRows, logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
+import { filesystemTreeRows, logicalTreeSha256, NATIVE_PGDATA_DIRECTORIES, writeNativeSeedDirectories } from "./native-cluster-seed-contract.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 test("optional native ICU carrier owns the matching seed and base retains only standard", async () => {
@@ -14,8 +14,10 @@ test("optional native ICU carrier owns the matching seed and base retains only s
     mkdirSync(data);
     writeFileSync(path.join(data, "icudt76l.dat"), "ICU fixture");
     const seed = path.join(root, "cluster-seed-icu");
-    mkdirSync(path.join(seed, "files/global"), { recursive: true });
-    mkdirSync(path.join(seed, "files/pg_wal"));
+    for (const directory of NATIVE_PGDATA_DIRECTORIES) {
+      mkdirSync(path.join(seed, "files", directory), { recursive: true });
+    }
+    writeNativeSeedDirectories(seed);
     writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
     writeFileSync(path.join(seed, "files/global/pg_control"), "fixture");
     const fixture = readFileSync(new URL("../../src/shared/cluster-seed-contract/fixtures/native-icu.valid.properties", import.meta.url), "utf8");
