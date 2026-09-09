@@ -91,6 +91,32 @@ test('counts bootstrap and outer activations, validates portable copies and reje
   assert.equal(result.postgres_pids, '202');
   assert.equal(result.read_advice_calls, '6');
   assert.doesNotThrow(() => run(lifecycle(true), 'portable-copy'));
+  assert.doesNotThrow(() => run(lifecycle(), 'compatible'));
+  for (const mode of ['streamed-copy', 'reflink']) {
+    const records = lifecycle().map((value) => ({
+      ...value,
+      snapshot_mode: mode,
+      source_bytes_read: mode === 'streamed-copy' ? 4096 : 0,
+      snapshot_bytes_written: mode === 'streamed-copy' ? 4096 : 0,
+      snapshot_cache_eviction_applicable: true,
+      snapshot_cache_eviction_calls: 1,
+      snapshot_cache_eviction_successes: 1,
+      write_policy:
+        mode === 'streamed-copy'
+          ? 'private-streamed-copy-no-sync'
+          : 'private-reflink-no-userspace-payload-write',
+    }));
+    assert.doesNotThrow(() => run(records, 'compatible'));
+    assert.throws(() => run(records, 'direct-immutable'), /snapshot mode/);
+    for (const change of [
+      { source_bytes_written: 1 },
+      { mapping_bytes_hashed: 4095 },
+      { snapshot_bytes_written: 1 },
+      { write_policy: 'none-immutable-source' },
+    ]) {
+      assert.throws(() => run([{ ...records[0], ...change }, ...records.slice(1)], 'compatible'));
+    }
+  }
   assert.throws(() => run([record(initdb, 101), record(postgres, 202)]), /bootstrap postgres/);
   assert.throws(() => run([...lifecycle(), record(postgres, 202)]), /not unique/);
   assert.throws(() => run([...lifecycle(), record('f'.repeat(64), 303)]), /not in sealed manifest/);

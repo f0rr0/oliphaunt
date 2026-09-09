@@ -11,6 +11,7 @@ for command in pnpm rustfmt; do
     exit 1
   fi
 done
+pnpm exec biome --version
 
 for name in GITHUB_ACTIONS GITHUB_REPOSITORY GITHUB_WORKFLOW GITHUB_RUN_ID GITHUB_RUN_ATTEMPT GITHUB_JOB CI_HEAD_SHA; do
   if [ -z "${!name:-}" ]; then

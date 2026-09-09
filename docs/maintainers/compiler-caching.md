@@ -45,10 +45,10 @@ src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
 ccache --show-stats
 ```
 
-On Linux:
+On Linux, provision GCC/G++ 12 and optional `ccache` before running the build.
+The build itself does not install system packages or elevate privileges:
 
 ```sh
-sudo apt-get install ccache gcc-12 g++-12
 src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh
 ccache --show-stats
 ```

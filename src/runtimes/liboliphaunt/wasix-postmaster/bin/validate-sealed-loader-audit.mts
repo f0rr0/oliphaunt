@@ -149,7 +149,7 @@ export function validate(
   postgresCount = 1n,
 ): string {
   assert(
-    ['direct', 'direct-immutable', 'portable-copy'].includes(policy),
+    ['direct', 'direct-immutable', 'portable-copy', 'compatible'].includes(policy),
     'unknown snapshot policy',
   );
   assert(initdbCount > 0n && postgresCount > 0n, 'expected executions must be positive');
@@ -202,24 +202,35 @@ export function validate(
       digest(record.module_sha256);
       assert(hashes.has(record.module_sha256), 'audit module SHA-256 is not in sealed manifest');
       assert(
-        portable
-          ? record.snapshot_mode === 'streamed-copy'
-          : policy === 'direct-immutable'
-            ? record.snapshot_mode === 'direct-immutable-inode'
-            : ['direct-immutable-inode', 'direct-read-only-filesystem'].includes(
-                record.snapshot_mode,
-              ),
+        policy === 'compatible'
+          ? [
+              'direct-immutable-inode',
+              'direct-read-only-filesystem',
+              'reflink',
+              'streamed-copy',
+            ].includes(record.snapshot_mode)
+          : portable
+            ? record.snapshot_mode === 'streamed-copy'
+            : policy === 'direct-immutable'
+              ? record.snapshot_mode === 'direct-immutable-inode'
+              : ['direct-immutable-inode', 'direct-read-only-filesystem'].includes(
+                  record.snapshot_mode,
+                ),
         'snapshot mode differs from policy',
       );
+      const streamed = record.snapshot_mode === 'streamed-copy';
+      const reflink = record.snapshot_mode === 'reflink';
+      const privateCopy = streamed || reflink;
       const logical = integer(record.logical_bytes, 'logical_bytes');
       const read = integer(record.source_bytes_read, 'source_bytes_read');
       assert(
-        logical > 0n && (portable ? read === logical : read === 0n || read === logical),
+        logical > 0n &&
+          (streamed ? read === logical : reflink ? read === 0n : read === 0n || read === logical),
         'source byte accounting differs',
       );
       for (const [field, expected] of Object.entries({
         source_bytes_written: 0n,
-        snapshot_bytes_written: portable ? logical : 0n,
+        snapshot_bytes_written: streamed ? logical : 0n,
         mapping_bytes_hashed: logical,
         sync_calls: 0n,
       })) {
@@ -233,7 +244,7 @@ export function validate(
         const errno = record[`${prefix}_${index === 0 ? 'first_errno' : 'errno'}`];
         assert.equal(
           applicable,
-          index < 2 || (index === 2 && portable),
+          index < 2 || (index === 2 && privateCopy),
           `${prefix} applicability differs`,
         );
         assert.equal(typeof supported, 'boolean', `${prefix} supported must be boolean`);
@@ -255,7 +266,11 @@ export function validate(
         residency(record[checkpoint], logical, portable, checkpoint);
       assert.equal(
         record.write_policy,
-        portable ? 'private-streamed-copy-no-sync' : 'none-immutable-source',
+        streamed
+          ? 'private-streamed-copy-no-sync'
+          : reflink
+            ? 'private-reflink-no-userspace-payload-write'
+            : 'none-immutable-source',
         'write policy differs',
       );
       return record;

@@ -28,7 +28,10 @@ while IFS= read -r file; do
   case "$file" in
     *.rs) rustfmt "$stage/$file" ;;
     *.ts)
-      pnpm exec biome format --stdin-file-path "$file" < "$stage/$file" > "$stage/formatted"
+      pnpm exec biome format --stdin-file-path "$file" < "$stage/$file" > "$stage/formatted" || {
+        cat "$stage/formatted" >&2
+        exit 1
+      }
       mv "$stage/formatted" "$stage/$file"
       ;;
   esac

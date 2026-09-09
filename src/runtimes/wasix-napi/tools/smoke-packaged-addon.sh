@@ -42,10 +42,10 @@ case "$runtime" in
       npm exec --yes --package=electron@39.2.5 -- electron)
     ;;
 esac
-"$deadline" --kill-after=3s 300s "${host[@]}" ./worker-unload.mjs > worker.log
+"$deadline" --kill-after=3s 300s "${host[@]}" "$scratch/worker-unload.mjs" > worker.log
 cat worker.log
 grep -F "oliphaunt-wasix-napi-worker-unload-$runtime:PASS" worker.log >/dev/null
-"$deadline" --kill-after=3s 300s "${host[@]}" ./verify.mjs
+"$deadline" --kill-after=3s 300s "${host[@]}" "$scratch/verify.mjs"
 
 if [ "$runtime" = electron ]; then
   node "$stage" asar "$scratch" "${args[@]}"

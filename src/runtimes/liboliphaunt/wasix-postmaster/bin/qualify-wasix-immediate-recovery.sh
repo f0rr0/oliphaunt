@@ -28,8 +28,8 @@ Options:
                              macos-arm64.
   --immutable-carrier-receipt FILE
                              External receipt created by
-                             deploy-immutable-sealed-carrier.sh. Required on
-                             Linux; unsupported on macOS.
+                             deploy-immutable-sealed-carrier.sh. Opts into
+                             Linux immutable-deployment qualification.
   --cgroup-memory-max SIZE   Finite MemoryMax for each postmaster server tree.
   --cgroup-memory-high SIZE  Finite MemoryHigh for each postmaster server tree.
   --cgroup-swap-max SIZE     Finite MemorySwapMax for each postmaster server
@@ -57,7 +57,8 @@ Both release targets require full cryptographic carrier verification at both
 campaign boundaries, continuity checks before every execution, an exact
 population of one outer initdb and three outer postgres executor invocations,
 and loader evidence for every activated module (including initdb's bootstrap
-postgres and dynamic modules). Linux additionally requires immutable-inode
+postgres and dynamic modules). Ordinary qualification uses unprivileged sealed
+activation. An immutable receipt additionally requires Linux immutable-inode
 activation and proven MemoryMax/MemoryHigh/MemorySwapMax membership. macOS
 requires private streamed-copy activation with no source writes or sync calls.
 USAGE
@@ -207,9 +208,14 @@ release_target="${release_target:-$host_target}"
 }
 case "$release_target" in
   linux-arm64-gnu|linux-x64-gnu)
-    hardened_qualification=1
-    boundary_verification_scope=full-cryptographic-plus-immutable-receipt
-    required_snapshot_policy=direct-immutable
+    hardened_qualification=0
+    boundary_verification_scope=full-cryptographic
+    required_snapshot_policy=compatible
+    if [ -n "$immutable_carrier_receipt" ]; then
+      hardened_qualification=1
+      boundary_verification_scope=full-cryptographic-plus-immutable-receipt
+      required_snapshot_policy=direct-immutable
+    fi
     ;;
   macos-arm64)
     hardened_qualification=0
@@ -252,7 +258,7 @@ if [ "$hardened_qualification" -eq 1 ]; then
     echo "--immutable-carrier-receipt is required on Linux" >&2
     exit 2
   }
-elif [ "$cgroup_enabled" -eq 1 ] || [ -n "$immutable_carrier_receipt" ]; then
+elif [ "$release_target" = macos-arm64 ] && { [ "$cgroup_enabled" -eq 1 ] || [ -n "$immutable_carrier_receipt" ]; }; then
   echo "immutable-carrier receipts and Linux cgroup controls are unsupported on macOS" >&2
   exit 2
 fi

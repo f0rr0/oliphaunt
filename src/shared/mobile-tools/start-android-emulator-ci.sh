@@ -13,13 +13,8 @@ need_cmd() {
 ensure_kvm_access() {
   [ "$abi" = "x86_64" ] || return 0
   [ -e /dev/kvm ] || fail "x86_64 Android emulator requires /dev/kvm on Linux CI"
-  [ -r /dev/kvm ] && [ -w /dev/kvm ] && return 0
-  need_cmd sudo
-  sudo chmod a+rw /dev/kvm ||
-    fail "failed to make /dev/kvm readable and writable for Android emulator"
-  if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-    fail "x86_64 Android emulator still cannot access /dev/kvm after permission fix"
-  fi
+  [ -r /dev/kvm ] && [ -w /dev/kvm ] ||
+    fail "runner setup must grant read/write access to /dev/kvm before starting the emulator"
 }
 
 [ -n "${ANDROID_HOME:-}" ] || fail "ANDROID_HOME is not set"

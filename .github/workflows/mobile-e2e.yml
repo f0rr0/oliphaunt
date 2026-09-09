@@ -131,6 +131,13 @@ jobs:
             --artifact react-native-mobile-android-app-android-x86_64
           find target/mobile-build/react-native/android -maxdepth 2 -type f -print
 
+      - name: Provision runner KVM access
+        run: |
+          test -c /dev/kvm
+          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            sudo chmod a+rw /dev/kvm
+          fi
+
       - name: Start Android emulator
         id: start_android_emulator
         env:
