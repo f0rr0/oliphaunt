@@ -27,6 +27,10 @@ until mkdir "$lock_dir" 2>/dev/null; do
   sleep 0.2
 done
 cleanup() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ -f "${log:-}" ]; then
+    tail -n 80 "$log" >&2
+  fi
   fresh_unlock_postgres_baseline || true
   rmdir "$lock_dir" 2>/dev/null || true
 }
@@ -108,6 +112,8 @@ fresh_require_managed_generated_path "$CLIENT_TOOLS_INSTALL_DIR" CLIENT_TOOLS_IN
   fi
   # Only psql and pg_regress are consumed by Postmaster qualification.
   make -C src/backend generated-headers
+  # psql's recursive dependencies otherwise race to generate pg_config_paths.h.
+  make -C src/bin/psql -j "$jobs" submake-libpgfeutils
   make -C src/bin/psql -j "$jobs"
   make -C src/interfaces/libpq install
   make -C src/bin/psql install

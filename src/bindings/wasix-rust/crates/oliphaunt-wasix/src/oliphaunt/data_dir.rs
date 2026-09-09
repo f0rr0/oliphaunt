@@ -1390,6 +1390,8 @@ fn archive_path(relative: &Path) -> Result<String> {
     let relative = relative
         .to_str()
         .with_context(|| format!("PGDATA archive path is not UTF-8: {}", relative.display()))?;
+    #[cfg(windows)]
+    let relative = relative.replace('\\', "/");
     ensure!(
         !relative.contains('\\'),
         "PGDATA archive path contains a backslash: {relative:?}"
@@ -1793,7 +1795,7 @@ mod tests {
     }
 
     #[test]
-    fn physical_archive_writer_uses_private_portable_modes() -> Result<()> {
+    fn physical_archive_writer_uses_portable_paths_and_private_modes() -> Result<()> {
         let source = tempfile::tempdir()?;
         fs::create_dir(source.path().join("base"))?;
         fs::write(source.path().join("base/value"), b"value")?;
@@ -1802,6 +1804,7 @@ mod tests {
         let mut archive = Archive::new(Cursor::new(bytes));
         for entry in archive.entries()? {
             let entry = entry?;
+            assert!(!entry.path_bytes().contains(&b'\\'));
             let path = entry.path()?.into_owned();
             let expected = if entry.header().entry_type().is_dir() {
                 0o700
