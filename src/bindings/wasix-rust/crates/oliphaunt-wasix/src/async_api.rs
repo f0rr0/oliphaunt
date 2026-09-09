@@ -1647,7 +1647,7 @@ impl AsyncOliphaunt {
     }
 
     /// Run packaged `pg_dump` against this database on its owner thread.
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub async fn pg_dump(&self, options: crate::oliphaunt::tools::PgDumpOptions) -> Result<String> {
         self.owner
             .call(None, move |database| {
@@ -1658,7 +1658,7 @@ impl AsyncOliphaunt {
 
     /// Submit packaged `pg_dump` and return exact stdout/stderr bytes without
     /// creating or polling a Rust future.
-    #[cfg(all(feature = "tools", any(feature = "__internal-napi", test)))]
+    #[cfg(all(feature = "__internal-tools", any(feature = "__internal-napi", test)))]
     #[doc(hidden)]
     pub fn pg_dump_output_with_completion<C>(
         &self,
@@ -1675,7 +1675,7 @@ impl AsyncOliphaunt {
     }
 
     /// Run packaged non-interactive `psql` against this database on its owner thread.
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub async fn psql(&self, options: crate::oliphaunt::tools::PsqlOptions) -> Result<String> {
         self.owner
             .call(None, move |database| {
@@ -1686,7 +1686,7 @@ impl AsyncOliphaunt {
 
     /// Submit packaged `psql` and return exact stdout/stderr bytes without
     /// creating or polling a Rust future.
-    #[cfg(all(feature = "tools", any(feature = "__internal-napi", test)))]
+    #[cfg(all(feature = "__internal-tools", any(feature = "__internal-napi", test)))]
     #[doc(hidden)]
     pub fn psql_output_with_completion<C>(
         &self,
@@ -1766,6 +1766,12 @@ impl AsyncOliphauntBuilder {
         self
     }
 
+    /// Select ICU data from the optional `oliphaunt-icu` package.
+    pub fn icu(mut self, data: oliphaunt_resources::IcuData) -> Self {
+        self.inner = self.inner.icu(data);
+        self
+    }
+
     /// Set one PostgreSQL startup GUC.
     pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.inner = self.inner.startup_guc(name, value);
@@ -1797,7 +1803,7 @@ impl AsyncOliphauntBuilder {
     #[cfg(feature = "extensions")]
     /// Make one bundled PostgreSQL extension artifact available to the database.
     /// Database-local installation remains the application's migration concern.
-    pub fn extension(mut self, extension: Extension) -> Self {
+    pub fn extension(mut self, extension: impl Into<Extension>) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
@@ -1805,7 +1811,10 @@ impl AsyncOliphauntBuilder {
     #[cfg(feature = "extensions")]
     /// Make bundled PostgreSQL extension artifacts available to the database.
     /// Database-local installation remains the application's migration concern.
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
+    pub fn extensions<E: Into<Extension>>(
+        mut self,
+        extensions: impl IntoIterator<Item = E>,
+    ) -> Self {
         self.inner = self.inner.extensions(extensions);
         self
     }
@@ -2393,6 +2402,12 @@ impl AsyncOliphauntServerBuilder {
         self
     }
 
+    /// Select ICU data from the optional `oliphaunt-icu` package.
+    pub fn icu(mut self, data: oliphaunt_resources::IcuData) -> Self {
+        self.inner = self.inner.icu(data);
+        self
+    }
+
     /// Select loopback TCP on any supported host or a PostgreSQL Unix-domain
     /// socket on a Unix host.
     pub fn listen(mut self, listen: ServerListen) -> Self {
@@ -2431,7 +2446,7 @@ impl AsyncOliphauntServerBuilder {
     #[cfg(feature = "extensions")]
     /// Make one bundled PostgreSQL extension artifact available to clients.
     /// Database-local installation remains the application's migration concern.
-    pub fn extension(mut self, extension: Extension) -> Self {
+    pub fn extension(mut self, extension: impl Into<Extension>) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
@@ -2439,7 +2454,10 @@ impl AsyncOliphauntServerBuilder {
     #[cfg(feature = "extensions")]
     /// Make bundled PostgreSQL extension artifacts available to clients.
     /// Database-local installation remains the application's migration concern.
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
+    pub fn extensions<E: Into<Extension>>(
+        mut self,
+        extensions: impl IntoIterator<Item = E>,
+    ) -> Self {
         self.inner = self.inner.extensions(extensions);
         self
     }

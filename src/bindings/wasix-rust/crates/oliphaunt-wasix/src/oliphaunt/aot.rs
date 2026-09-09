@@ -100,13 +100,144 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
     Ok(module)
 }
 
-#[cfg(feature = "tools")]
+#[cfg(any(feature = "extensions", feature = "__internal-tools"))]
+fn validate_package_aot_header(manifest: &AotManifest) -> Result<()> {
+    ensure!(
+        manifest.format_version == Some(1),
+        "package AOT format version mismatch"
+    );
+    ensure!(
+        manifest.source_lane.as_deref() == Some("stable"),
+        "package AOT source lane mismatch"
+    );
+    ensure!(
+        manifest
+            .source_fingerprint
+            .as_deref()
+            .is_some_and(|value| value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
+        "package AOT must identify its runtime source fingerprint"
+    );
+    ensure!(
+        manifest.target_triple == target_triple(),
+        "package AOT target mismatch"
+    );
+    ensure!(
+        manifest.engine == EXPECTED_AOT_ENGINE,
+        "package AOT engine mismatch"
+    );
+    ensure!(
+        manifest.wasmer_version == EXPECTED_WASMER_VERSION,
+        "package AOT Wasmer version mismatch"
+    );
+    ensure!(
+        manifest.wasmer_wasix_version == EXPECTED_WASMER_WASIX_VERSION,
+        "package AOT WASIX engine version mismatch"
+    );
+    Ok(())
+}
+
+/// Load AOT from a trusted package descriptor, checking its exact module identity.
+#[cfg(any(feature = "extensions", feature = "__internal-tools"))]
+#[allow(unsafe_code)]
+pub(crate) fn load_package_module(
+    engine: &Engine,
+    package: &oliphaunt_resources::WasixPackage,
+    name: &str,
+    wasm: &[u8],
+) -> Result<Module> {
+    let manifest: AotManifest = serde_json::from_str(package.aot_manifest())
+        .context("parse selected extension AOT manifest")?;
+    validate_package_aot_header(&manifest)?;
+    let runtime = assets::asset_manifest_metadata()?;
+    ensure!(
+        manifest.source_lane == runtime.source_lane,
+        "package AOT source lane mismatch"
+    );
+    ensure!(
+        manifest.source_fingerprint == runtime.source_fingerprint,
+        "extension AOT runtime source fingerprint mismatch"
+    );
+    ensure!(
+        manifest.postgres_version.as_deref() == Some(runtime.postgres_version.as_str()),
+        "extension AOT PostgreSQL version mismatch"
+    );
+    let matches = manifest
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.name == name)
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "extension AOT must contain exactly one artifact {name}"
+    );
+    let artifact = matches[0];
+    ensure!(
+        artifact.module_sha256 == sha256_hex(wasm),
+        "extension AOT WebAssembly module identity mismatch"
+    );
+    let matches = package
+        .aot_artifacts()
+        .iter()
+        .filter(|(artifact_name, _)| *artifact_name == name)
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "extension package must contain exactly one AOT payload {name}"
+    );
+    let bytes = matches[0].1;
+    validate_compressed_artifact_manifest(name, artifact, bytes)?;
+    let key = format!("package:{name}:{}", artifact.sha256);
+    let mut modules = MODULE_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("AOT module cache poisoned");
+    if let Some(module) = modules.get(&key) {
+        return Ok(module.clone());
+    }
+    let size = artifact
+        .raw_size
+        .context("extension AOT is missing raw-size")?;
+    let mut raw = Vec::new();
+    if bytes.starts_with(ZSTD_MAGIC) {
+        ZstdDecoder::new(Cursor::new(bytes))?
+            .take(
+                size.checked_add(1)
+                    .context("extension AOT raw-size overflow")?,
+            )
+            .read_to_end(&mut raw)?;
+    } else {
+        raw.extend_from_slice(bytes);
+    }
+    expected_raw_hash(name, artifact, &raw, AotVerifyMode::Full)?;
+    // SAFETY: ExtensionPackage can only be constructed through its unsafe trusted
+    // release constructor. We additionally verify the engine/target/runtime and
+    // both compressed and raw identities, and deserialize these same owned bytes.
+    let module = unsafe { Module::deserialize(engine, raw) }
+        .context("deserialize selected extension AOT module")?;
+    modules.insert(key, module.clone());
+    Ok(module)
+}
+
+#[cfg(feature = "__internal-tools")]
 pub(crate) fn load_pg_dump_module(engine: &Engine) -> Result<Module> {
+    if let Some(package) = super::tools::installed_tool_package() {
+        let wasm = super::tools::installed_tool_wasm("pg_dump")
+            .context("installed package has no pg_dump")?;
+        return load_package_module(engine, package, "tool:pg_dump", wasm);
+    }
     load_artifact_module(engine, "tool:pg_dump")
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 pub(crate) fn load_psql_module(engine: &Engine) -> Result<Module> {
+    if let Some(package) = super::tools::installed_tool_package() {
+        let wasm =
+            super::tools::installed_tool_wasm("psql").context("installed package has no psql")?;
+        return load_package_module(engine, package, "tool:psql", wasm);
+    }
     load_artifact_module(engine, "tool:psql")
 }
 
@@ -931,6 +1062,10 @@ fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct AotManifest {
+    #[allow(dead_code)]
+    format_version: Option<u32>,
+    #[allow(dead_code)]
+    source_lane: Option<String>,
     source_fingerprint: Option<String>,
     postgres_version: Option<String>,
     target_triple: String,
@@ -1082,5 +1217,33 @@ mod tests {
             }
         }
         panic!("WASIX toolchain manifest has toolchain.{key}");
+    }
+}
+
+#[cfg(all(test, any(feature = "extensions", feature = "__internal-tools")))]
+#[test]
+fn package_aot_header_rejects_foreign_or_incomplete_executable_identities() {
+    let valid = serde_json::json!({
+        "format-version": 1, "source-lane": "stable", "source-fingerprint": "a".repeat(64),
+        "postgres-version": "18.4", "target-triple": target_triple(), "engine": EXPECTED_AOT_ENGINE,
+        "wasmer-version": EXPECTED_WASMER_VERSION, "wasmer-wasix-version": EXPECTED_WASMER_WASIX_VERSION,
+        "artifacts": []
+    });
+    validate_package_aot_header(&serde_json::from_value(valid.clone()).unwrap()).unwrap();
+    for (field, value) in [
+        ("format-version", serde_json::json!(2)),
+        ("source-lane", serde_json::json!("other")),
+        ("source-fingerprint", serde_json::Value::Null),
+        ("target-triple", serde_json::json!("other")),
+        ("engine", serde_json::json!("other")),
+        ("wasmer-version", serde_json::json!("other")),
+        ("wasmer-wasix-version", serde_json::json!("other")),
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = value;
+        assert!(
+            validate_package_aot_header(&serde_json::from_value(invalid).unwrap()).is_err(),
+            "{field}"
+        );
     }
 }

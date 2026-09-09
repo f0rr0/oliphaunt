@@ -33,11 +33,9 @@ plugins {
 
 dependencies {
     implementation("dev.oliphaunt:oliphaunt-android:0.2.0")
+    implementation("dev.oliphaunt.extensions:oliphaunt-extension-vector:0.2.0")
 }
 
-oliphaunt {
-    selectedExtensions.add("vector")
-}
 ```
 
 Storage defaults to an SDK-owned temporary directory. Choose an app-private
@@ -54,6 +52,9 @@ coroutines.
 <!-- oliphaunt-snippet: oliphaunt-kotlin -->
 
 ```kotlin
+import dev.oliphaunt.*
+import dev.oliphaunt.extensions.vector.Vector
+
 val database =
     Oliphaunt.open(
         context = context,
@@ -61,7 +62,7 @@ val database =
             storage = DatabaseStorage.Directory(
                 context.filesDir.resolve("main.oliphaunt").absolutePath,
             ),
-            extensions = listOf("vector"),
+            extensions = listOf(Vector.descriptor, Extensions.HSTORE),
         ),
     )
 
@@ -181,8 +182,8 @@ safely rollbackable is not automatically wrapped in either composite exception.
 
 ### Select extensions
 
-Select exact SQL extension names before opening the database. Android artifacts
-contain only those selected extensions and mandatory dependencies.
+Declare external packages as Gradle dependencies. The plugin packages them with
+base contrib; each database explicitly selects descriptors in its configuration.
 
 </Step>
 <Step>

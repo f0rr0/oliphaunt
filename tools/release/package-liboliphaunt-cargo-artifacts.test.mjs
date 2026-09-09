@@ -19,7 +19,6 @@ import {
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import { requiredCoreRuntimePaths } from "./optimize_native_runtime_payload.mjs";
-import { logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
 import { nativeIcuDataManifest } from "./native-icu-data-contract.mjs";
 import { nativeRuntimeCarrierManifest } from "./native-runtime-carrier-contract.mjs";
 
@@ -130,9 +129,7 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     mkdirSync(icuData, { recursive: true });
     const icuBytes = Buffer.from("fixture ICU data\n");
     writeFileSync(path.join(icuData, "icudt76l.dat"), icuBytes);
-    const icuDigest = logicalTreeSha256([{ path: "icudt76l.dat", bytes: icuBytes }]);
     stageClusterSeed(runtime, "cluster-seed", "standard", "linux-x64-gnu");
-    stageClusterSeed(runtime, "cluster-seed-icu", "icu", "linux-x64-gnu", icuDigest);
     writeFileSync(path.join(runtime, "manifest.properties"), nativeRuntimeCarrierManifest("linux-x64-gnu"));
     writeFileSync(path.join(runtime, "runtime/manifest.properties"), nativeRuntimeResourceManifestFixture({
       cacheKey: "fixture-runtime",
@@ -170,14 +167,38 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     assert.ok(manifest.packages.every(({ cratePath }) => typeof cratePath === "string" && cratePath.endsWith(".crate")));
     assert.equal(readdirSync(output).filter((name) => name.endsWith(".crate")).length, manifest.packages.length);
     const runtimeParts = manifest.packages.filter(({ role, kind }) => role === "part" && kind === "native-runtime");
-    assert.ok(runtimeParts.some(({ cratePath, name }) => commandOutput("tar", [
+    assert.ok(runtimeParts.every(({ cratePath, name }) => !commandOutput("tar", [
       "-tzf",
       path.resolve(ROOT, cratePath),
     ]).includes(`${name}-9.8.7/payload/files/cluster-seed-icu/manifest.properties`)));
     for (const item of manifest.packages) {
       const expectedProfile = item.role === "part" ? item.kind : "code-facade";
       assert.equal(item.noticeProfile, expectedProfile, `${item.name} must freeze its carrier notice profile`);
-      const packedManifest = commandOutput("tar", [
+      if (process.platform === "linux" && process.arch === "x64") {
+      const consumer = path.join(root, "consumer");
+      mkdirSync(path.join(consumer, "src"), { recursive: true });
+      const runtimeCarrier = manifest.packages.find(row => row.role === "aggregator" && row.kind === "native-runtime");
+      writeFileSync(path.join(consumer, "Cargo.toml"), `[package]
+name = "native-seed-directory-proof"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+${runtimeCarrier.name} = { path = ${JSON.stringify(path.dirname(path.resolve(ROOT, runtimeCarrier.manifestPath)))} }
+[workspace]
+`);
+      writeFileSync(path.join(consumer, "build.rs"), `fn main() {
+    let manifest = std::env::vars().find(|(key, _)| key.starts_with("DEP_OLIPHAUNT_ARTIFACT_") && key.ends_with("_MANIFEST")).unwrap().1;
+    let path = std::path::Path::new(&manifest);
+    assert!(path.parent().unwrap().join("payload/cluster-seed/files/pg_wal").is_dir());
+    let text = std::fs::read_to_string(manifest).unwrap();
+    assert!(text.contains("cluster-seed/files/pg_wal"));
+}`);
+      writeFileSync(path.join(consumer, "src/main.rs"), "fn main() {}");
+      run("cargo", ["check", "--offline", "--manifest-path", path.join(consumer, "Cargo.toml")], {
+        env: { ...process.env, CARGO_TARGET_DIR: path.join(root, "consumer-target") },
+      });
+    }
+    const packedManifest = commandOutput("tar", [
         "-xOzf",
         path.resolve(ROOT, item.cratePath),
         `${item.name}-9.8.7/Cargo.toml`,
@@ -207,6 +228,30 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     assert.doesNotThrow(() => assertLockedArtifactSet(lock, records, { product: "fixture", ecosystem: "cargo" }));
 
     const packedAggregator = manifest.packages.find(({ role }) => role === "aggregator");
+    if (process.platform === "linux" && process.arch === "x64") {
+      const consumer = path.join(root, "consumer");
+      mkdirSync(path.join(consumer, "src"), { recursive: true });
+      const runtimeCarrier = manifest.packages.find(row => row.role === "aggregator" && row.kind === "native-runtime");
+      writeFileSync(path.join(consumer, "Cargo.toml"), `[package]
+name = "native-seed-directory-proof"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+${runtimeCarrier.name} = { path = ${JSON.stringify(path.dirname(path.resolve(ROOT, runtimeCarrier.manifestPath)))} }
+[workspace]
+`);
+      writeFileSync(path.join(consumer, "build.rs"), `fn main() {
+    let manifest = std::env::vars().find(|(key, _)| key.starts_with("DEP_OLIPHAUNT_ARTIFACT_") && key.ends_with("_MANIFEST")).unwrap().1;
+    let path = std::path::Path::new(&manifest);
+    assert!(path.parent().unwrap().join("payload/cluster-seed/files/pg_wal").is_dir());
+    let text = std::fs::read_to_string(manifest).unwrap();
+    assert!(text.contains("cluster-seed/files/pg_wal"));
+}`);
+      writeFileSync(path.join(consumer, "src/main.rs"), "fn main() {}");
+      run("cargo", ["check", "--offline", "--manifest-path", path.join(consumer, "Cargo.toml")], {
+        env: { ...process.env, CARGO_TARGET_DIR: path.join(root, "consumer-target") },
+      });
+    }
     const packedManifest = commandOutput("tar", [
       "-xOzf",
       path.resolve(ROOT, packedAggregator.cratePath),

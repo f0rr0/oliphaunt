@@ -18,7 +18,11 @@ test("selects exact final-crate closure checks only for the two Cargo SDKs", () 
   assert.deepEqual(rust.stubDependencyPrefixes, [
     "liboliphaunt-native-",
     "oliphaunt-broker-",
+    "oliphaunt-extension-contrib-pg18-",
   ]);
+
+  assert.deepEqual(rust.dependencyCrates, ["oliphaunt-build", "oliphaunt-resources"].map(name =>
+    path.join(ROOT, `target/sdk-artifacts/oliphaunt-rust/${name}-${rustVersion}.crate`)));
 
   const wasixVersion = currentProductVersionSync(
     "oliphaunt-wasix-rust",
@@ -33,7 +37,7 @@ test("selects exact final-crate closure checks only for the two Cargo SDKs", () 
     ),
   );
   assert.equal(wasix.noDefaultFeatures, true);
-  assert.deepEqual(wasix.features, ["extensions", "tools", "icu"]);
+  assert.deepEqual(wasix.features, ["extensions", "tools"]);
   assert.deepEqual(wasix.pathDependencyManifests, [
     path.join(ROOT, "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"),
   ]);

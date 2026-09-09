@@ -71,6 +71,7 @@ const BASE_LEGAL_PROFILES = Object.freeze([
     memberPrefix: "",
     profile: "native-icu-data",
   }),
+  Object.freeze({ assetRole: "icu-seed", memberPrefix: "", profile: "native-runtime-resources" }),
 ]);
 
 function error(message) {
@@ -495,6 +496,7 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archi
       name: `liboliphaunt-${version}-icu-data.tar.gz`,
       member: ".",
     },
+    { role: "icu-seed", name: `liboliphaunt-${version}-icu-seed-ios-datum64.tar.gz`, member: "." },
   ];
   const assets = rows.map((row) => asset({
       ...row,
@@ -537,7 +539,7 @@ function frozenBaseCarrier(file) {
   if (base?.product !== product || base.version !== version || base.tag !== tag || !Array.isArray(base.assets)) {
     throw error(`${file} does not freeze the current ${product} base carrier`);
   }
-  const expectedRoles = ["base-xcframework", "runtime-resources", "icu-data"];
+  const expectedRoles = ["base-xcframework", "runtime-resources", "icu-data", "icu-seed"];
   if (JSON.stringify(base.assets.map(({ role }) => role)) !== JSON.stringify(expectedRoles)) {
     throw error(`${file} base carrier roles must be exactly ${expectedRoles.join(", ")}`);
   }

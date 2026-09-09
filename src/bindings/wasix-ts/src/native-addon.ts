@@ -17,6 +17,26 @@ export type NativeWasixOpenOptions = Readonly<{
   database: string;
   startupGucs: Record<string, string>;
   extensions: string[];
+  extensionPackages?: NativeExtensionPackage[];
+  icu?: Readonly<{
+    version: string;
+    runtimeVersion: string;
+    archive: Uint8Array;
+    archiveSha256: string;
+    dataTreeSha256: string;
+    seedArchive: Uint8Array;
+    seedArchiveSha256: string;
+    seedManifest: Uint8Array;
+    seedManifestSha256: string;
+  }>;
+}>;
+
+export type NativeExtensionPackage = Readonly<{
+  sqlName: string;
+  product: string;
+  version: string;
+  packageJson: string;
+  aotPackageJson?: string;
 }>;
 
 export type NativeWasixServerListen =
@@ -84,16 +104,11 @@ export type NativeWasixAddon = {
   runtimeVersion(): string;
   supportedProfiles(): readonly NativeProfile[];
   payloadIdentity(
-    component:
-      | 'runtimeArchive'
-      | 'standardSeedArchive'
-      | 'standardSeedManifest'
-      | 'icuDataArchive'
-      | 'icuSeedArchive'
-      | 'icuSeedManifest',
+    component: 'runtimeArchive' | 'standardSeedArchive' | 'standardSeedManifest',
   ): string;
   extensionIdentity(sqlName: string): string;
   toolIdentity(name: 'pg_dump' | 'psql'): string;
+  registerTools(options: { packageJson: string; aotPackageJson: string }): void;
 };
 
 type WasixPackageMetadata = Readonly<{
@@ -362,6 +377,7 @@ export function validateNativeWasixAddon(
     typeof addon.supportedProfiles !== 'function' ||
     typeof addon.payloadIdentity !== 'function' ||
     typeof addon.extensionIdentity !== 'function' ||
+    typeof addon.registerTools !== 'function' ||
     typeof addon.toolIdentity !== 'function'
   ) {
     throw new Error(`Oliphaunt WASIX native addon ${path} has an invalid export surface`);

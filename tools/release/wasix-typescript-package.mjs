@@ -16,6 +16,7 @@ import {
 
 const TOOL = 'wasix-typescript-package.mjs';
 const PACKAGE_NAME = '@oliphaunt/wasix-ts';
+const CONTRIB_PACKAGE = '@oliphaunt/extension-contrib-pg18-wasix';
 const RUNTIME_PACKAGE = '@oliphaunt/liboliphaunt-wasix';
 const FZSTD_PACKAGE = 'fzstd';
 const FZSTD_VERSION = '0.1.1';
@@ -58,10 +59,11 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   }
   const dependencies = manifest.dependencies ?? {};
   const optionalDependencies = manifest.optionalDependencies ?? {};
-  const expectedDependencies = [FZSTD_PACKAGE, JS_CORE_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
+  const expectedDependencies = [CONTRIB_PACKAGE, FZSTD_PACKAGE, JS_CORE_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
   const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
   if (
     JSON.stringify(sortedKeys(dependencies)) !== JSON.stringify(expectedDependencies)
+    || dependencies[CONTRIB_PACKAGE] !== dependencies[RUNTIME_PACKAGE]
     || typeof dependencies[RUNTIME_PACKAGE] !== 'string'
     || !/^\d+\.\d+\.\d+$/u.test(dependencies[RUNTIME_PACKAGE])
     || dependencies[FZSTD_PACKAGE] !== FZSTD_VERSION

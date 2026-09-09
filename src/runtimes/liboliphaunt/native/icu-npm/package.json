@@ -2,7 +2,7 @@
   "name": "@oliphaunt/icu",
   "version": "0.2.0",
   "description": "Portable ICU data files for Oliphaunt runtimes.",
-  "license": "MIT AND Unicode-3.0",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
   "type": "commonjs",
   "repository": {
     "type": "git",
@@ -33,9 +33,20 @@
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
-    "THIRD_PARTY_LICENSES/ICU-LICENSE"
+    "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+    "THIRD_PARTY_LICENSES/ICU-LICENSE",
+    "index.js",
+    "node.js",
+    "index.d.ts"
   ],
   "exports": {
-    "./package.json": "./package.json"
-  }
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./index.d.ts",
+      "react-native": "./index.js",
+      "node": "./node.js",
+      "default": "./index.js"
+    }
+  },
+  "sideEffects": false
 }

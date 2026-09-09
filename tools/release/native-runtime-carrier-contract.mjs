@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -97,7 +97,9 @@ export function validateNativeRuntimeCarrier(root, { icuData } = {}) {
     throw new Error(`${runtimeManifestPath}: runtime resource manifest is not canonical for ${target}`);
   }
   validateNativeClusterSeedDirectory(path.join(root, "cluster-seed"), "standard", { target });
-  validateNativeClusterSeedDirectory(path.join(root, "cluster-seed-icu"), "icu", { target, icuData });
+  if (existsSync(path.join(root, "cluster-seed-icu"))) {
+    validateNativeClusterSeedDirectory(path.join(root, "cluster-seed-icu"), "icu", { target, icuData });
+  }
   return Object.freeze({ target });
 }
 

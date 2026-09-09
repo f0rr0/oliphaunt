@@ -60,7 +60,7 @@ function parseArgs(argv) {
       else args.offline = true;
       continue;
     }
-    if (!["--carrier", "--extension-carrier", "--extensions", "--cache-dir", "--output-dir", "--base-package-path", "--base-package-url", "--base-package-version"].includes(arg)) {
+    if (!["--carrier", "--extension-carrier", "--extensions", "--cache-dir", "--output-dir", "--base-package-path", "--base-package-url", "--base-package-version", "--release-product"].includes(arg)) {
       usage();
       fail(`unknown argument ${arg}`);
     }
@@ -77,6 +77,7 @@ function parseArgs(argv) {
     if (arg === "--base-package-path") args.basePackagePath = path.resolve(value);
     if (arg === "--base-package-url") args.basePackageUrl = value;
     if (arg === "--base-package-version") args.basePackageVersion = value;
+    if (arg === "--release-product") args.releaseProduct = value;
   }
   if (!args.outputDir || !args.extensions?.length) {
     usage();
@@ -755,6 +756,7 @@ function renderSwift(extension, bySqlName) {
     `    public static let dependencies: [String] = [${extension.dependencies.map(swiftString).join(", ")}]\n\n` +
     `    public static let nativeDependencies: [String] = [${extension.nativeDependencies.map(({ name }) => swiftString(name)).join(", ")}]\n\n` +
     `    public static let sharedPreloadLibraries: [String] = [${extension.sharedPreloadLibraries.map(swiftString).join(", ")}]\n\n` +
+    `    public static let descriptor = OliphauntExtension(sqlName: sqlName, product: product, version: version, prepare: register)\n\n` +
     `    public static func register() throws {\n` +
     `${dependencyRegistrations ? `${dependencyRegistrations}\n` : ""}` +
     `        guard let resourceRoot = Bundle.module.url(forResource: "extension-artifact", withExtension: nil) else {\n` +
@@ -843,6 +845,61 @@ function renderTargetDependency(dependency) {
   return `.product(name: ${swiftString(dependency.product)}, package: ${swiftString(dependency.package)})`;
 }
 
+/** Generate the runtime-owned contrib distribution inside the base SDK target. */
+export async function writeBundledContrib(selection, outputDir) {
+  if (selection.extensions.some(extension => extension.product !== "oliphaunt-extension-contrib-pg18")) {
+    fail("the base Swift SDK can bundle only runtime-owned contrib extensions");
+  }
+  if (selection.nativeDependencies.length > 0) {
+    fail("bundled contrib must not introduce separately owned native dependency products");
+  }
+  const prefix = "generated/swiftpm/contrib";
+  const generated = path.join(outputDir, prefix);
+  const swiftRoot = path.join(outputDir, "src/sdks/swift/Sources/Oliphaunt");
+  const targets = [];
+  const dependencies = [];
+  const imports = ["import Foundation", "import COliphaunt"];
+  const cases = [];
+  for (const extension of selection.extensions) {
+    if (extension.cTarget) {
+      await copyLocalBinaryArtifact(extension.asset, extension.binaryTarget, generated);
+      const cRoot = path.join(generated, "Sources", extension.cTarget);
+      await fs.mkdir(path.join(cRoot, "include"), { recursive: true });
+      await fs.writeFile(path.join(cRoot, "include", `${extension.cTarget}.h`), renderHeader(extension));
+      await fs.writeFile(path.join(cRoot, "registration.c"), renderC(extension));
+      imports.push(`import ${extension.cTarget}`);
+      dependencies.push(extension.cTarget);
+      targets.push(...targetIR(extension, selection.bySqlName, true)
+        .filter(target => target.name !== extension.swiftTarget)
+        .map(target => ({ ...target, path: `${prefix}/${target.path}`,
+          ...(target.dependencies ? { dependencies: target.dependencies.map(dependency => typeof dependency === "string" ? dependency : dependency.product) } : {}) })));
+    }
+    await copyResourceArtifact(extension, path.join(swiftRoot, "ContribResources", extension.sqlName));
+    cases.push(`    case ${swiftString(extension.sqlName)}:\n` +
+      extension.dependencies.map(name => `        try prepareBundledContrib(${swiftString(name)})\n`).join("") +
+      `        guard let root = Bundle.module.url(forResource: "extension-artifact", withExtension: nil, subdirectory: ${swiftString(`ContribResources/${extension.sqlName}/Resources`)}) else {\n` +
+      `            throw OliphauntError.engine("missing bundled contrib resources for ${extension.sqlName}")\n        }\n` +
+      `        try OliphauntStaticExtensionRegistry.register(\n` +
+      `            product: ${swiftString(extension.product)}, sqlName: ${swiftString(extension.sqlName)}, version: ${swiftString(extension.version)},\n` +
+      `            dependencies: [${extension.dependencies.map(swiftString).join(", ")}], nativeDependencies: [],\n` +
+      `            sharedPreloadLibraries: [${extension.sharedPreloadLibraries.map(swiftString).join(", ")}],\n` +
+      `            nativeModuleStem: ${extension.nativeModuleStem === null ? "nil" : swiftString(extension.nativeModuleStem)},\n` +
+      `            resourceRoot: root, descriptor: ${extension.cFunction ? `${extension.cFunction}()` : "nil"}\n        )`);
+  }
+  await fs.writeFile(path.join(swiftRoot, "OliphauntBundledContrib.swift"),
+    `${imports.join("\n")}\n\nfunc prepareBundledContrib(_ name: String) throws {\n    switch name {\n${cases.join("\n")}\n    default: throw OliphauntError.engine("unknown bundled contrib extension: \\(name)")\n    }\n}\n`);
+  return { targets, dependencies };
+}
+
+export function renderSwiftTargets(targets) {
+  return targets.map(target => {
+    if (target.kind === "binaryTarget") {
+      return `.binaryTarget(name: ${swiftString(target.name)}, path: ${swiftString(target.path)})`;
+    }
+    return `.target(name: ${swiftString(target.name)}, dependencies: [${target.dependencies.map(renderTargetDependency).join(", ")}], path: ${swiftString(target.path)}, publicHeadersPath: "include")`;
+  }).join(",\n        ");
+}
+
 function renderPackage(manifest, basePackagePath) {
   const products = manifest.products
     .map(
@@ -880,13 +937,12 @@ function renderPackage(manifest, basePackagePath) {
     .join(",\n");
   const baseDependency = basePackagePath
     ? `.package(name: "oliphaunt", path: ${swiftString(basePackagePath)})`
-    : `.package(\n            url: ${swiftString(manifest.basePackage.url)},\n            exact: ${swiftString(manifest.basePackage.version)}\n        )`;
+    : `.package(\n            url: ${swiftString(manifest.basePackage.url)},\n            ${manifest.consumerOwned ? "exact" : "from"}: ${swiftString(manifest.basePackage.version)}\n        )`;
   return `// swift-tools-version: 6.0\n\n` +
     `import PackageDescription\n\n` +
-    `// Generated by ${PREFIX}. Do not edit. This local package belongs to the\n` +
-    `// consuming application; exact-extension assets remain separately released.\n` +
+    `// Generated by ${PREFIX}. Do not edit.\n` +
     `let package = Package(\n` +
-    `    name: "OliphauntSelectedExtensions",\n` +
+    `    name: ${swiftString(manifest.consumerOwned ? "OliphauntSelectedExtensions" : manifest.products[0].name)},\n` +
     `    platforms: [.iOS(.v17), .macOS(.v14)],\n` +
     `    products: [\n${products}\n    ],\n` +
     `    dependencies: [\n        ${baseDependency}\n    ],\n` +
@@ -923,7 +979,10 @@ async function copyLocalBinaryArtifact(asset, targetName, outputDir) {
   });
 }
 
-async function writeGeneratedTree(selection, outputDir, basePackagePath, localBinaryTargets) {
+async function writeGeneratedTree(selection, outputDir, basePackagePath, localBinaryTargets, releaseProduct) {
+  if (releaseProduct !== undefined && (selection.extensions.length !== 1 || selection.extensions[0].product !== releaseProduct)) {
+    fail("an independent SwiftPM release package must contain exactly its external extension product");
+  }
   const products = [];
   const targets = [];
   const selected = [];
@@ -956,7 +1015,9 @@ async function writeGeneratedTree(selection, outputDir, basePackagePath, localBi
     products.push({ name: extension.swiftTarget, targets: [extension.swiftTarget], type: "library" });
     targets.push(...targetIR(extension, selection.bySqlName, localBinaryTargets));
     selected.push({
-      asset: extension.asset,
+      asset: releaseProduct === undefined || extension.asset === undefined
+        ? extension.asset
+        : { name: extension.asset.name, checksum: extension.asset.checksum },
       createsExtension: extension.resources.createsExtension,
       dependencies: extension.dependencies,
       nativeDependencies: extension.nativeDependencies,
@@ -974,7 +1035,7 @@ async function writeGeneratedTree(selection, outputDir, basePackagePath, localBi
   }
   const manifest = {
     basePackage: selection.basePackage,
-    consumerOwned: true,
+    consumerOwned: releaseProduct === undefined,
     nativeRuntime: selection.nativeRuntime,
     products,
     requiredBaseProducts: ["COliphaunt", "Oliphaunt", "OliphauntExtensionSupport"],
@@ -1122,6 +1183,7 @@ export async function writeGenerated(
   basePackagePath,
   localBinaryTargets,
   protectedPaths,
+  releaseProduct,
 ) {
   const resolvedOutput = await safeGeneratedOutput(outputDir, protectedPaths);
   const parent = path.dirname(resolvedOutput);
@@ -1138,7 +1200,7 @@ export async function writeGenerated(
   let outputComplete = false;
   let operationError;
   try {
-    await writeGeneratedTree(selection, staging, basePackagePath, localBinaryTargets);
+    await writeGeneratedTree(selection, staging, basePackagePath, localBinaryTargets, releaseProduct);
     const stagingEntries = await validatedStagingEntries(staging);
     const publishOutput = await safeGeneratedOutput(outputDir, protectedPaths);
     if (publishOutput !== resolvedOutput) {
@@ -1229,6 +1291,7 @@ async function main() {
         })),
       ]),
     ].filter(({ path: protectedPath }) => protectedPath !== undefined),
+    args.releaseProduct,
   );
   console.log(
     `${PREFIX}: generated ${selection.extensions.length} selected extension product(s) in ${path.resolve(args.outputDir)}`,

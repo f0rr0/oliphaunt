@@ -113,14 +113,37 @@ close-only, and a retained callback panic is not resumed into an unknown session
 state. WASIX query cancellation is intentionally absent
 until the guest runtime can interrupt execution and prove protocol recovery.
 
-The builder also supports `username`, `database`, `startup_gucs`, and bundled
-`extension`/`extensions` when the corresponding crate features are enabled.
-Selecting an extension makes its artifact and required pre-start configuration
-available; it never runs `CREATE EXTENSION`, `LOAD`, or migration SQL. Install
-database-local objects explicitly through your normal migrations. Each
-associated selector is compiled only by its matching `extension-*` feature;
-`Extension::ALL` and `Extension::by_sql_name` therefore describe exactly the
-artifacts enabled in the current Cargo build, not the full packaging catalog.
+## Extensions and ICU
+
+The base dependency includes the supported contrib distribution. Select contrib
+explicitly using values from `oliphaunt_wasix::extensions`. External extensions
+are independently versioned Cargo dependencies:
+
+```sh
+cargo add oliphaunt-extension-vector-wasix
+```
+
+```rust,ignore
+use oliphaunt_wasix::{extensions, Oliphaunt};
+use oliphaunt_extension_vector_wasix::VECTOR;
+
+let mut database = Oliphaunt::builder()
+    .extensions([VECTOR, extensions::HSTORE])
+    .open()?;
+database.execute("CREATE EXTENSION vector")?;
+database.execute("CREATE EXTENSION hstore")?;
+database.close()?;
+```
+
+Cargo selects the extension package's matching host AOT artifact. No application
+build script or SDK `extension-vector` feature is required. The builder accepts
+`username`, `database`, and PostgreSQL `startup_guc` settings as usual. Extension
+selection prepares artifacts and startup requirements; migrations remain
+application-owned.
+
+For ICU collations, add `oliphaunt-icu` and pass `.icu(oliphaunt_icu::ICU)`.
+The optional package supplies ICU data and the matching initialization seed.
+Omitting it selects standard initialization.
 
 ## Storage and physical backup
 

@@ -18,7 +18,19 @@ this SDK, so the Swift lifecycle model is the Apple behavior source.
 Add the Swift package from Xcode or `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.7.0")
+// Package.swift
+let package = Package(
+    name: "Example",
+    platforms: [.iOS(.v17), .macOS(.v14)],
+    dependencies: [
+        .package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.7.0"),
+        .package(url: "https://github.com/f0rr0/oliphaunt-extension-vector.git", from: "0.2.0")
+    ],
+    targets: [.executableTarget(name: "Example", dependencies: [
+        .product(name: "Oliphaunt", package: "oliphaunt"),
+        .product(name: "OliphauntExtensionVector", package: "oliphaunt-extension-vector")
+    ])]
+)
 ```
 
 The package carries the Swift API and the native runtime artifacts for supported
@@ -30,6 +42,7 @@ Open a database from an async context:
 
 ```swift
 import Oliphaunt
+import OliphauntExtensionVector
 
 let appSupport = FileManager.default.urls(
     for: .applicationSupportDirectory,
@@ -39,7 +52,7 @@ let appSupport = FileManager.default.urls(
 let database = try await OliphauntDatabase.open(
     configuration: OliphauntConfiguration(
         storage: .directory(appSupport.appending(path: "main.oliphaunt")),
-        extensions: ["vector"]
+        extensions: [OliphauntExtensionVector.descriptor, OliphauntExtensions.hstore]
     )
 )
 
@@ -60,8 +73,8 @@ against the resident backend and preserves transaction ordering.
 
 - Use `.directory(url)` for persistent user data. Omit it for SDK-owned
   temporary storage.
-- Select exact SQL extension names so the app bundle contains only selected
-  extension artifacts and declared dependencies.
+- Install external packages and explicitly select their descriptors alongside
+  contrib descriptors when opening each database.
 - Use backup and restore APIs for export, import, and user-visible data
   movement.
 

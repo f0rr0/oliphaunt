@@ -144,11 +144,20 @@ pub(super) fn resources_dir_candidates() -> Vec<PathBuf> {
     if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
         candidates.push(PathBuf::from(path));
     }
+    if let Some(path) = crate::build_resources::embedded_base_resources_dir() {
+        candidates.push(path);
+    }
     candidates
 }
 
-pub(super) fn locate_native_icu_data() -> Result<Option<LocatedIcuData>> {
-    for resources_dir in resources_dir_candidates() {
+pub(super) fn locate_native_icu_data(
+    selected_resources: Option<&Path>,
+) -> Result<Option<LocatedIcuData>> {
+    for resources_dir in selected_resources
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(resources_dir_candidates())
+    {
         let directory = resources_dir.join("icu-data/oliphaunt-icu/share/icu");
         if !icu_data_dir_is_valid(&directory) {
             continue;
@@ -180,11 +189,12 @@ pub(super) fn locate_native_cluster_seed(
 ) -> Result<Option<LocatedClusterSeed>> {
     let payload = resources_dir.join("native-runtime/liboliphaunt-native");
     let carrier_target = read_native_runtime_carrier(&payload.join("manifest.properties"))?;
-    let relative = match profile {
-        super::super::NativeCatalogProfile::Standard => "cluster-seed",
-        super::super::NativeCatalogProfile::Icu => "cluster-seed-icu",
+    let directory = match profile {
+        super::super::NativeCatalogProfile::Standard => payload.join("cluster-seed"),
+        super::super::NativeCatalogProfile::Icu => resources_dir
+            .join("icu-data/oliphaunt-icu/native-seeds")
+            .join(&carrier_target),
     };
-    let directory = payload.join(relative);
     if !directory.is_dir() {
         return Ok(None);
     }

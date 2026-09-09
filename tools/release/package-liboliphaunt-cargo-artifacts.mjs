@@ -69,6 +69,7 @@ const TARGET: &str = __TARGET__;
 const PART_ROOTS: &[&str] = &[
 __PART_ROOTS__
 ];
+const DIRECTORIES: &[&str] = &[__DIRECTORIES__];
 const FILE_SHA256: &[(&str, &str)] = &[
 __FILE_SHA256__
 ];
@@ -119,13 +120,16 @@ fn emit_manifest() {
         }
     }
 
+    for directory in DIRECTORIES {
+        fs::create_dir_all(payload.join(directory)).expect("restore packaged empty directory");
+    }
     let files = collect_files(&payload).expect("collect reconstructed liboliphaunt payload files");
     if files.is_empty() {
         panic!("liboliphaunt native payload part crates produced no files");
     }
     let manifest = out_dir.join("oliphaunt-artifact.toml");
     let mut text = format!(
-        "schema = {SCHEMA:?}\nproduct = {PRODUCT:?}\nversion = {VERSION:?}\nkind = {KIND:?}\ntarget = {TARGET:?}\n"
+        "schema = {SCHEMA:?}\nproduct = {PRODUCT:?}\nversion = {VERSION:?}\nkind = {KIND:?}\ntarget = {TARGET:?}\ndirectories = {DIRECTORIES:?}\n"
     );
     if files.len() != FILE_SHA256.len() {
         panic!("reconstructed liboliphaunt payload file count does not match the frozen inventory");
@@ -418,6 +422,7 @@ function validateNativePayload(payloadRoot, target, { toolSet }) {
 }
 
 function validateNativeCargoRuntimeClosure(runtimeRoot, target, icuRoot) {
+  if (existsSync(path.join(runtimeRoot, "cluster-seed-icu"))) fail("base Cargo runtime must not bundle the optional ICU seed");
   const icuData = path.join(icuRoot, "share/icu");
   try {
     const { target: actualTarget } = validateNativeRuntimeCarrier(runtimeRoot, { icuData });
@@ -517,6 +522,7 @@ function writeAggregatorCrate(
     artifactKind,
     artifactLabel,
     payloadFiles,
+    payloadDirectories,
   },
 ) {
   rmSync(crateDir, { recursive: true, force: true });
@@ -586,6 +592,7 @@ pub const LIBRARY_RELATIVE_PATH: &str = "${libraryRelativePath}";
       .replace("__KIND__", tomlString(artifactKind))
       .replace("__TARGET__", tomlString(target.triple))
       .replace("__PART_ROOTS__", partRoots.join("\n"))
+      .replace("__DIRECTORIES__", payloadDirectories.map(tomlString).join(", "))
       .replace("__FILE_SHA256__", payloadFiles.map(({ relative, sha256 }) => `    (${tomlString(relative)}, ${tomlString(sha256)}),`).join("\n")),
   );
   stageReleaseNotices(crateDir, { profile: "code-facade" });
@@ -970,6 +977,10 @@ function packagePayload(
     artifactKind,
     artifactLabel,
     payloadFiles: frozenPayloadFiles(payloadRoot),
+    payloadDirectories: readdirSync(payloadRoot, { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => path.relative(payloadRoot, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+      .sort(compareText),
   });
 
   const packages = [];

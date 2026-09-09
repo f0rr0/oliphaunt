@@ -487,7 +487,7 @@ an empty one requires `not-required`.
 These are exact identities, not selection aliases or catalog expansions. SDK
 availability checks use `selectedExtensions`; they must never use the narrower
 createable `extensions` field to decide whether module-only resources exist.
-SDKs reject `open(... extensions: ["vector"])` when the selected runtime does
+SDKs reject `open({ extensions: [vector] })` when the selected runtime does
 not advertise `vector` in `selectedExtensions`.
 
 The size report is exact-extension based:

@@ -20,6 +20,7 @@ import process from "node:process";
 
 import {
   DEFAULT_PUBLICATION_LOCK,
+  directoryEnvelope,
   loadPublicationLock,
 } from "./publication-lock.mjs";
 import {
@@ -311,7 +312,14 @@ export function publicConsumerPlan(lock, products, graph, {
     repositoryUrl: repositoryUrl(repository),
     products: productRows.map(({ id }) => id).sort(compareText),
     surfaces,
-    github: { productTags, swift },
+    github: { productTags, swift, swiftPackages: (lock.productArtifacts ?? [])
+      .filter(row => row.kind === "swiftpm-independent-package")
+      .map(row => ({
+        product: row.product, repository: `${repository.split("/")[0]}/${row.identity}`,
+        tag: productRows.find(product => product.id === row.product).version,
+        sha256: row.sha256, size: row.size,
+      })).sort((a, b) => compareText(a.repository, b.repository)) },
+
   };
 }
 
@@ -1172,13 +1180,39 @@ async function runGithubSurface({ plan, root, deadlineMilliseconds, signal }) {
       proofScope: "anonymous-source-tag-and-manifest-only",
     };
   }
+  const swiftPackages = [];
+  for (const row of plan.github.swiftPackages) {
+    const packageRoot = path.join(root, row.repository.split("/")[1]);
+    const packageGit = `${packageRoot}.git`;
+    await git(["init", "--bare", packageGit], { cwd: root, env, deadlineMilliseconds, signal });
+    await git(["--git-dir", packageGit, "fetch", "--no-tags", repositoryUrl(row.repository),
+      `refs/tags/${row.tag}:refs/tags/${row.tag}`], { cwd: root, env, deadlineMilliseconds, signal });
+    mkdirSync(packageRoot);
+    await git(["--git-dir", packageGit, "--work-tree", packageRoot, "checkout", row.tag, "--", "."],
+      { cwd: root, env, deadlineMilliseconds, signal });
+    const observed = directoryEnvelope(packageRoot);
+    if (observed.sha256 !== row.sha256 || observed.size !== row.size) {
+      throw error(`SwiftPM ${row.repository}@${row.tag} source differs from the frozen package`);
+    }
+    const manifest = await runBoundedCommand("swift", ["package", "dump-package"], {
+      cwd: packageRoot, env: sanitizedPublicEnvironment({
+        HOME: path.join(root, "swift-home"),
+        SWIFTPM_MODULECACHE_OVERRIDE: path.join(root, "swift-module-cache"),
+        CLANG_MODULE_CACHE_PATH: path.join(root, "swift-module-cache"),
+      }), deadlineMilliseconds, signal,
+    });
+    const description = JSON.parse(manifest.stdout);
+    if (typeof description.name !== "string" || !description.name) throw error(`invalid SwiftPM package ${row.repository}`);
+    swiftPackages.push({ ...row, packageName: description.name, proofScope: "anonymous-source-tag-and-manifest-only" });
+  }
   return {
     surface: "github",
     mode: "anonymous-public-exact-tag-resolution",
     repository: plan.repository,
     productTags: resolvedProductTags,
     swift,
-    limitation: plan.github.swift === null
+    swiftPackages,
+    limitation: plan.github.swift === null && swiftPackages.length === 0
       ? null
       : "Draft GitHub binaryTarget assets are not anonymously public before promotion; their exact bytes are covered by the bound immutable GitHub receipt, not this source-tag probe.",
   };
@@ -1268,6 +1302,11 @@ export function validatePublicConsumerEvidence(evidence, lock, plan) {
   }
   if (plan.github.swift === null ? github?.swift !== null : github?.swift?.tag !== plan.github.swift.tag) {
     throw error("GitHub public consumer evidence SwiftPM source-tag coverage mismatch");
+  }
+  const observedSwiftPackages = (github?.swiftPackages ?? []).map(({ product, repository, tag, sha256, size }) =>
+    ({ product, repository, tag, sha256, size }));
+  if (stableJson(observedSwiftPackages) !== stableJson(plan.github.swiftPackages)) {
+    throw error("GitHub public consumer evidence independent SwiftPM coverage mismatch");
   }
   const withoutDigest = structuredClone(evidence);
   delete withoutDigest.evidenceDigest;

@@ -15,7 +15,8 @@ import { afterAll, expect, test } from "bun:test";
 
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
-import { CORE_RUNTIME_ARCHIVE_FILES } from "./wasix-cargo-artifact-contract.mjs";
+import { canonicalWasixAotMetadata } from "./wasix-aot-manifest.mjs";
+import { AOT_TARGET_TRIPLES, CORE_RUNTIME_ARCHIVE_FILES } from "./wasix-cargo-artifact-contract.mjs";
 import {
   packWasixRuntimeNpmCarrier,
   renderWasixRuntimeDescriptorModule,
@@ -262,6 +263,25 @@ console.log(JSON.stringify({
 test("packs split pg_dump and psql bytes from the same qualified release archive", () => {
   const root = temporaryRoot("oliphaunt-wasix-tools-npm-");
   const fixture = portableReleaseFixture(root);
+  const canonical = canonicalWasixAotMetadata();
+  for (const [target, triple] of Object.entries(AOT_TARGET_TRIPLES)) {
+    const stage = path.join(root, `aot-${target}`);
+    const artifacts = ["runtime", "tool:pg_dump", "tool:psql"].map((name, index) => {
+      const raw = Buffer.from(`fixture-${name}`);
+      const bytes = zstdCompressSync(raw);
+      const member = `${index}.bin.zst`;
+      writeMember(stage, member, bytes);
+      return { name, path: member, compressed: true, sha256: sha256(bytes),
+        "raw-sha256": sha256(raw), "raw-size": raw.length, "module-sha256": "a".repeat(64) };
+    });
+    writeMember(stage, "manifest.json", JSON.stringify({
+      "format-version": 1, "source-lane": canonical.sourceLane, engine: canonical.engine,
+      "wasmer-version": canonical.wasmerVersion, "wasmer-wasix-version": canonical.wasmerWasixVersion,
+      "target-triple": triple, artifacts,
+    }));
+    writeFileSync(path.join(root, `liboliphaunt-wasix-7.8.9-runtime-aot-${target}.tar.zst`),
+      zstdCompressSync(deterministicTar(stage, "aot")));
+  }
   const packed = packWasixToolsNpmCarrier({
     version: "7.8.9",
     portableReleaseArchive: fixture.archive,

@@ -421,6 +421,7 @@ impl PostgresMod {
                 &self.runtime_storage,
                 module.runtime_path(),
                 module.aot_name(),
+                extension.package(),
                 &format!(
                     "extension '{}' support module '{}'",
                     extension.sql_name(),
@@ -439,6 +440,7 @@ impl PostgresMod {
             &self.runtime_storage,
             &format!("lib/postgresql/{module_file}"),
             extension.aot_name(),
+            extension.package(),
             &format!("extension '{}'", extension.sql_name()),
         )?;
         Ok(())
@@ -755,12 +757,12 @@ impl PostgresMod {
         })
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
         self.startup_response.clone()
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn startup_config(&self) -> &StartupConfig {
         &self.startup_config
     }
@@ -1363,6 +1365,7 @@ fn seed_extension_side_module(
     runtime_root: &StorageRoot,
     runtime_path: &str,
     aot_name: Option<&'static str>,
+    package: Option<&super::extensions::ExtensionPackage>,
     label: &str,
 ) -> Result<()> {
     let Some(aot_name) = aot_name else {
@@ -1372,6 +1375,15 @@ fn seed_extension_side_module(
     let wasm = runtime_root
         .read(&path)
         .with_context(|| format!("{label} is not installed at {}", path.display()))?;
+    if let Some(package) = package {
+        let module = aot::load_package_module(engine, package, aot_name, &wasm)?;
+        block_on_tokio_runtime(
+            runtime,
+            module_cache.save(ModuleHash::new(&wasm), engine, &module),
+        )
+        .with_context(|| format!("seed Wasmer module cache for {label}"))?;
+        return Ok(());
+    }
     seed_wasix_module_cache_bytes(runtime, engine, module_cache, &wasm, aot_name, label)
 }
 

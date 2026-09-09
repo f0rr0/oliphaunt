@@ -295,7 +295,7 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
-    fun validatesExplicitRuntimeDirectoryAgainstReleaseShapedResources() {
+    fun explicitRuntimeDirectoryPreloadsOnlySelectedExtensions() {
         val resourceRoot = Files.createTempDirectory("liboliphaunt-explicit-runtime").toFile()
         try {
             val runtimeFiles =
@@ -311,7 +311,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     listOf("vector"),
                 )
 
-            assertEquals(setOf("pg_search"), sharedPreloadLibraries)
+            assertEquals(emptySet<String>(), sharedPreloadLibraries)
         } finally {
             resourceRoot.deleteRecursively()
         }

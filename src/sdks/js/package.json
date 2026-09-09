@@ -53,6 +53,10 @@
     },
     "./package.json": {
       "default": "./package.json"
+    },
+    "./storage/node": {
+      "types": "./lib/storage/node.d.ts",
+      "default": "./lib/storage/node.js"
     }
   },
   "main": "lib/index.js",

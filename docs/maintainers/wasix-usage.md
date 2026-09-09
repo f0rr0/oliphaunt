@@ -58,12 +58,12 @@ server handles are `Send + Sync`, while `AsyncTransaction` is `Send` but not
 `Sync` and requires exclusive mutable access. These traits expose the real
 Wasmer/runtime owner instead of implying concurrency that does not exist.
 
-Each exact `extension-*` leaf feature enables the common extension selector
-machinery and its matching uppercase associated constant. `Extension::ALL`
-and `Extension::by_sql_name` contain only the enabled leaf set, while
-`sql_name` returns the selected extension's PostgreSQL name. Reopening a
-database whose catalog uses an extension requires the receiving host to select
-and provide that runtime code again.
+Select contrib explicitly through `extensions::HSTORE` (and other contrib
+descriptors). External extensions use independently versioned crates, for example
+`oliphaunt-extension-vector-wasix` and its `VECTOR` descriptor. Pass both to
+`.extensions([VECTOR, extensions::HSTORE])`. The SDK has no per-extension Cargo
+features. Reopening a database whose catalog uses an extension requires the
+receiving host to select and provide that runtime code again.
 
 ## TypeScript host
 

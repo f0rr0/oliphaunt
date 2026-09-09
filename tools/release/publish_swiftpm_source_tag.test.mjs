@@ -9,6 +9,7 @@ import {
   createSwiftpmManifestCommit,
   createSwiftpmReleaseTree,
   ensureTag,
+  ensureIndependentSwiftpmTag,
   preflightSwiftpmSourceTagExactly,
   pushSwiftpmSourceTagExactly,
   SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS,
@@ -328,4 +329,40 @@ test("SwiftPM preflight and push modes are mutually exclusive", async () => {
     preflight: true,
     push: true,
   }, { version: "0.6.0" })).rejects.toThrow(/mutually exclusive/u);
+});
+
+
+test("independent SwiftPM versions publish only the exact package tree and reject replacement", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "oliphaunt-swift-independent."));
+  const source = path.join(fixture, "source");
+  const remote = path.join(fixture, "remote.git");
+  const packageTree = path.join(fixture, "package");
+  try {
+    for (const dir of [source, remote, packageTree]) mkdirSync(dir);
+    git(source, ["init", "--quiet"]);
+    git(source, ["config", "user.name", "fixture"]);
+    git(source, ["config", "user.email", "fixture@example.invalid"]);
+    writeFileSync(path.join(source, "unrelated.txt"), "must not ship");
+    git(source, ["add", "."]);
+    git(source, ["commit", "--quiet", "-m", "source"]);
+    git(remote, ["init", "--bare", "--quiet"]);
+    writeFileSync(path.join(packageTree, "Package.swift"), "// swift-tools-version: 6.0\nimport PackageDescription\n");
+    writeFileSync(path.join(packageTree, "payload.dat"), "extension bytes");
+    const args = { sourceTree: packageTree, repository: "f0rr0/oliphaunt-extension-vector", version: "0.1.0" };
+    const options = { root: source, remote, reserveContentWrite: () => {} };
+    const pending = ensureIndependentSwiftpmTag({ ...args, preflight: true }, options);
+    expect(pending.state).toBe("absent");
+    expect(git(remote, ["tag", "--list"])).toBe("");
+    const pushed = ensureIndependentSwiftpmTag({ ...args, push: true }, options);
+    expect(pushed.tagTarget).toBe(pending.tagTarget);
+    expect(git(remote, ["ls-tree", "--name-only", "0.1.0"])).toBe("Package.swift\npayload.dat");
+    expect(git(remote, ["rev-list", "--count", "0.1.0"])).toBe("1");
+    expect(ensureIndependentSwiftpmTag({ ...args, push: true }, options).state).toBe("exact");
+    writeFileSync(path.join(packageTree, "payload.dat"), "new extension bytes");
+    expect(() => ensureIndependentSwiftpmTag({ ...args, preflight: true }, options)).toThrow("not expected");
+    ensureIndependentSwiftpmTag({ ...args, version: "0.2.0", push: true }, options);
+    expect(git(remote, ["tag", "--list"])).toBe("0.1.0\n0.2.0");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });

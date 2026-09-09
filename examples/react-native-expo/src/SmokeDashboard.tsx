@@ -1,10 +1,14 @@
 import {
   Oliphaunt,
+  directory,
   type DatabaseStorage,
+  type NativeIcuDescriptor,
   type OliphauntDatabase,
   type QueryResult,
 } from '@oliphaunt/react-native';
+import { Directory, Paths } from 'expo-file-system';
 import {
+  GENERATED_MOBILE_ICU,
   GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
   GENERATED_MOBILE_EXTENSION_PLAN,
   GENERATED_MOBILE_EXTENSION_SMOKE,
@@ -78,6 +82,7 @@ type SmokeGlobalState = {
 };
 
 type OpenTuning = {
+  icu?: NativeIcuDescriptor;
   startupGUCs?: Readonly<Record<string, string>>;
   storage?: DatabaseStorage;
   storageLabel?: string;
@@ -927,9 +932,13 @@ async function openDatabase(
     const started = now();
     const { storage, storageLabel: _storageLabel, ...tuning } = openTuning;
     const config = {
-      storage: storage ?? ({ kind: 'applicationData', name: defaultSmokeStorageName } as const),
+      storage: storage ?? directory(new Directory(Paths.document, defaultSmokeStorageName).uri),
       ...tuning,
-      extensions,
+      extensions: extensions.map(sqlName => {
+        const selected = GENERATED_MOBILE_EXTENSION_PLAN.find(row => row.sqlName === sqlName);
+        if (!selected) throw new Error(`unknown qualification extension ${sqlName}`);
+        return selected.descriptor;
+      }),
       username: 'postgres',
       database: 'postgres',
     } satisfies Parameters<typeof Oliphaunt.open>[0];
@@ -961,6 +970,7 @@ async function resolveOpenTuning(): Promise<OpenTuning> {
   const startupGUCs = parseStartupGUCs(rawStartupGUCs);
   return {
     startupGUCs: Object.keys(startupGUCs).length > 0 ? startupGUCs : undefined,
+    icu: packagedCatalogProfile === 'icu' ? GENERATED_MOBILE_ICU : undefined,
     ...resolveHarnessStorage(url),
   };
 }
@@ -978,24 +988,22 @@ function parseStartupGUCs(value: string): Record<string, string> {
 }
 
 function resolveHarnessStorage(url: string | null): Pick<OpenTuning, 'storage' | 'storageLabel'> {
-  const applicationData = optionalNonBlankString(
-    process.env.EXPO_PUBLIC_OLIPHAUNT_APPLICATION_DATA ??
-      extractQueryParam(url, 'liboliphauntApplicationData'),
-    'liboliphauntApplicationData',
+  const name = optionalNonBlankString(
+    process.env.EXPO_PUBLIC_OLIPHAUNT_DIRECTORY_NAME ?? extractQueryParam(url, 'liboliphauntDirectoryName'),
+    'liboliphauntDirectoryName',
   );
-  if (applicationData) {
-    return {
-      storage: { kind: 'applicationData', name: applicationData },
-      storageLabel: `applicationData:${applicationData}`,
-    };
+  if (name) {
+    if (name === '.' || name === '..' || /[\\/\0]/.test(name)) throw new Error('database directory name must be one path component');
+    const storage = directory(new Directory(Paths.document, name).uri);
+    return { storage, storageLabel: storage.path };
   }
-  const directory = optionalNonBlankString(
+  const location = optionalNonBlankString(
     process.env.EXPO_PUBLIC_OLIPHAUNT_STORAGE_DIRECTORY ??
       extractQueryParam(url, 'liboliphauntStorageDirectory'),
     'liboliphauntStorageDirectory',
   );
-  return directory
-    ? { storage: { kind: 'directory', path: directory }, storageLabel: directory }
+  return location
+    ? { storage: directory(location), storageLabel: location }
     : {};
 }
 

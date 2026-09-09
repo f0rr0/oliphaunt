@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   await testNodeNativeBindingUsesExplicitAssetsAndAddon();
   await testDenoAssetResolverHonorsExplicitPaths();
   await testDenoPackageManagedResolverUsesStandardCarrierRuntime();
-  await testDenoNativeBindingRejectsPackageManagedExtensions();
+  await testDenoNativeBindingRequiresCompleteExplicitRuntime();
   await testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMutation();
 }
 
@@ -412,7 +412,7 @@ async function testDenoAssetResolverHonorsExplicitPaths(): Promise<void> {
   }
 }
 
-async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<void> {
+async function testDenoNativeBindingRequiresCompleteExplicitRuntime(): Promise<void> {
   const previousDeno = (globalThis as { Deno?: unknown }).Deno;
   const previousLibrary = process.env.LIBOLIPHAUNT_PATH;
   const previousRuntime = process.env.OLIPHAUNT_RUNTIME_DIR;
@@ -574,7 +574,7 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
             startupArgs: [],
           }),
         ),
-      /Deno direct execution does not automatically materialize extension packages/,
+      /explicit native runtimeDirectory requires runtimeDirectory/,
     );
     await assert.rejects(
       () =>
@@ -588,7 +588,7 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
             startupArgs: [],
           }),
         ),
-      /Deno direct explicit runtimeDirectory is missing hstore.control/,
+      /explicit native runtimeDirectory is missing hstore.control/,
     );
     assert.deepEqual(calls, ['dlopen:/tmp/liboliphaunt-deno-test.so']);
   } finally {

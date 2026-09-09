@@ -1,4 +1,5 @@
 import {
+  AOT_TARGET_TRIPLES,
   expectedExtensionAotTargets,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
@@ -44,6 +45,13 @@ export function extensionNpmPackageForProduct(product) {
  */
 export function extensionNpmWasixPackageForProduct(product) {
   return `${extensionNpmPackageForProduct(product)}-wasix`;
+}
+
+export function extensionNpmWasixAotTargets(product, aotTargets = expectedExtensionAotTargets()) {
+  if (product === "oliphaunt-extension-contrib-pg18") return [];
+  return Object.entries(AOT_TARGET_TRIPLES)
+    .filter(([, triple]) => aotTargets.includes(triple))
+    .map(([target]) => target).sort(compareText);
 }
 
 export function extensionNpmTargetPackageForProduct(product, target) {
@@ -121,9 +129,11 @@ export function extensionWasixCargoPackageNames(
 }
 
 export function extensionMavenPackageNames(product, androidTargets) {
-  return stringTargetList(androidTargets, "extension Android Maven targets")
-    .map((target) => `dev.oliphaunt.extensions:${product}-${target}`)
-    .sort(compareText);
+  const targets = stringTargetList(androidTargets, "extension Android Maven targets");
+  return [
+    ...(targets.length > 0 && product !== "oliphaunt-extension-contrib-pg18" ? [`dev.oliphaunt.extensions:${product}`] : []),
+    ...targets.map((target) => `dev.oliphaunt.extensions:${product}-${target}`),
+  ].sort(compareText);
 }
 
 export function extensionRegistryPackageEntries({
@@ -184,7 +194,12 @@ export function extensionWasixRegistryPackageEntries({
     ...extensionWasixCargoPackageNames(product, { includeAot, aotTargets })
       .map((name) => ({ kind: "crates", name })),
     ...(includeNpm
-      ? [{ kind: "npm", name: extensionNpmWasixPackageForProduct(product) }]
+      ? [
+        { kind: "npm", name: extensionNpmWasixPackageForProduct(product) },
+        ...(includeAot ? extensionNpmWasixAotTargets(product, aotTargets).map(target => ({
+          kind: "npm", name: `${extensionNpmWasixPackageForProduct(product)}-${target}`,
+        })) : []),
+      ]
       : []),
   ];
 }

@@ -19,6 +19,15 @@ const nativeMocks = vi.hoisted(() => ({
   pgDump: vi.fn(),
   psql: vi.fn(),
   toolIdentity: vi.fn(),
+  registerTools: vi.fn(),
+}));
+
+vi.mock('../native-extension-packages.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../native-extension-packages.js')>()),
+  nativeToolPackage: () => ({
+    packageJson: '/installed/tools/package.json',
+    aotPackageJson: '/installed/tools-aot/package.json',
+  }),
 }));
 
 vi.mock('../native-addon.js', () => ({
@@ -73,23 +82,29 @@ describe('WASIX native embedded payload compatibility', () => {
     );
   });
 
-  it('accepts an extension descriptor only when its exact archive is embedded', () => {
+  it('accepts a contrib descriptor only when its exact archive is embedded', () => {
     const options = workerOpenOptions();
-    options.extensionCarriers.pgtap = extensionCarrier('pgtap');
+    options.extensionCarriers.hstore = {
+      ...extensionCarrier('hstore'),
+      product: 'oliphaunt-extension-contrib-pg18',
+    };
 
     expect(requireCompatibleNativeWasixAddon(options)).toBe(
       nativeMocks.loadAddon.mock.results[0]?.value,
     );
-    expect(nativeMocks.extensionIdentity).toHaveBeenCalledWith('pgtap');
+    expect(nativeMocks.extensionIdentity).toHaveBeenCalledWith('hstore');
   });
 
-  it('rejects an extension descriptor whose archive differs from the embedded archive', () => {
+  it('rejects a contrib descriptor whose archive differs from the embedded archive', () => {
     const options = workerOpenOptions();
-    options.extensionCarriers.pgtap = extensionCarrier('pgtap');
+    options.extensionCarriers.hstore = {
+      ...extensionCarrier('hstore'),
+      product: 'oliphaunt-extension-contrib-pg18',
+    };
     nativeMocks.extensionIdentity.mockReturnValue(`${'b'.repeat(64)}:7`);
 
     expect(() => requireCompatibleNativeWasixAddon(options)).toThrow(
-      'WASIX extension pgtap descriptor does not match the archive embedded in the native addon',
+      'WASIX extension hstore descriptor does not match the archive embedded in the native addon',
     );
   });
 
@@ -103,9 +118,7 @@ describe('WASIX native embedded payload compatibility', () => {
         tool: { name: 'pg_dump', sha256: digest, size: 7, source: 'embedded' },
         args: pgDumpArguments(),
       }),
-    ).rejects.toThrow(
-      'WASIX pg_dump descriptor does not match the tool embedded in the native addon',
-    );
+    ).rejects.toThrow('WASIX pg_dump descriptor does not match the tool in the installed package');
     expect(nativeMocks.pgDump).not.toHaveBeenCalled();
   });
 
@@ -188,7 +201,38 @@ describe('WASIX native embedded payload compatibility', () => {
     );
     expect(
       nativeWasixOpenOptions(
-        { ...options, icu: {} as NonNullable<typeof options.icu> },
+        {
+          ...options,
+          icu: {
+            schema: 'oliphaunt-wasix-icu-v1',
+            runtime: 'wasix',
+            product: 'oliphaunt-icu',
+            version: '0.1.1',
+            compatibility: {
+              runtimeProduct: 'liboliphaunt-wasix',
+              runtimeVersion: '0.1.1',
+              postgresMajor: '18',
+              physicalFormat: 'wasix-pg18-v1',
+              compatibilityKey: 'wasix-pg18-datum32-v1',
+              dataVersion: '76.1',
+              dataForm: 'files-le',
+              dataTreeSha256: digest,
+            },
+            dataArchive: {
+              archive: 'icu.tar.zst',
+              sha256: digest,
+              size: 1,
+              source: Uint8Array.of(1),
+            },
+            clusterSeedArchive: {
+              archive: 'seed.tar.zst',
+              sha256: digest,
+              size: 1,
+              source: Uint8Array.of(2),
+            },
+            clusterSeedManifest: { sha256: digest, size: 1, source: Uint8Array.of(3) },
+          },
+        },
         { kind: 'memory' },
       ).profile,
     ).toBe('icu');
@@ -352,6 +396,7 @@ function addon(): NativeWasixAddon {
     payloadIdentity: nativeMocks.payloadIdentity,
     extensionIdentity: nativeMocks.extensionIdentity,
     toolIdentity: nativeMocks.toolIdentity,
+    registerTools: nativeMocks.registerTools,
   };
 }
 

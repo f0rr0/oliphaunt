@@ -239,7 +239,7 @@ async function validateLegalSelection(payloadDir, selection, frozenSelected) {
     const baseRole = /^licenses\/base\/([^/]+)\//u.exec(destination)?.[1];
     if (baseRole !== undefined) {
       requirePortableSelectionId(baseRole, `${label} base legal role`);
-      if (!new Set(["base-xcframework", "runtime-resources", "icu-data"]).has(baseRole)) {
+      if (!new Set(["base-xcframework", "runtime-resources", "icu-data", "icu-seed"]).has(baseRole)) {
         fail(`${label}.destination carries unknown base legal role ${baseRole}`);
       }
       if (row.source !== "base") fail(`${label}.source must be base for a base legal destination`);
@@ -259,7 +259,7 @@ async function validateLegalSelection(payloadDir, selection, frozenSelected) {
       }
       extensionScopes.add(extension);
     }
-    if (destination.startsWith("licenses/base/icu-data/") && selection.icu !== true) {
+    if (["licenses/base/icu-data/", "licenses/base/icu-seed/"].some(prefix => destination.startsWith(prefix)) && selection.icu !== true) {
       fail(`${label}.destination carries unselected ICU legal material`);
     }
     if (!new Set(["license", "notice"]).has(row.kind) || !new Set(["base", "extension"]).has(row.source)) {
@@ -285,7 +285,7 @@ async function validateLegalSelection(payloadDir, selection, frozenSelected) {
   }
   const expectedBaseScopes = [
     "base-xcframework",
-    ...(selection.icu ? ["icu-data"] : []),
+    ...(selection.icu ? ["icu-data", "icu-seed"] : []),
     "runtime-resources",
   ].sort(compareText);
   requireExactDomain([...baseScopes].sort(compareText), expectedBaseScopes, `${payloadDir} base legal scopes`);
@@ -537,10 +537,11 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
     path.join(resourceRoot, "cluster-seed/files"),
     "iOS standard cluster seed",
   );
-  await requirePayloadFiles(
-    path.join(resourceRoot, "cluster-seed-icu/files"),
-    "iOS ICU cluster seed",
-  );
+  if (selection.icu) {
+    await requirePayloadFiles(path.join(resourceRoot, "cluster-seed-icu/files"), "iOS ICU cluster seed");
+  } else if (await fs.stat(path.join(resourceRoot, "cluster-seed-icu")).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; })) {
+    fail("unselected ICU seed must not be bundled");
+  }
   await requireFile(path.join(resourceRoot, "package-size.tsv"), "iOS package-size report");
   const baseFrameworks = await validateBaseLibrary(payloadDir, resourceRoot, allowRuntimeDylib);
   await validateNoBuildInputsInResources(resourceRoot);

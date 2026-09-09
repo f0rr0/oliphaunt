@@ -47,6 +47,8 @@ internal class AndroidNativeDirectEngine(
                             ?: env("OLIPHAUNT_INSTALL_DIR")
                             ?: env("OLIPHAUNT_RUNTIME_DIR"),
                         requestedExtensions = config.extensions,
+                        descriptors = config.extensionDescriptors,
+                        icu = config.icu,
                         resourceRoot = resourceRoot,
                     )
                 val storageDirectory =

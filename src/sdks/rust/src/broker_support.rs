@@ -52,6 +52,8 @@ pub fn open(
     extensions: Vec<Extension>,
 ) -> Result<BrokerSession> {
     let config = OpenConfig {
+        resource_directory: std::env::var_os("OLIPHAUNT_SELECTED_RESOURCES_DIR").map(PathBuf::from),
+        icu: std::env::var("OLIPHAUNT_SELECTED_ICU").as_deref() == Ok("1"),
         mode: EngineMode::Direct,
         storage: DatabaseStorage::Directory(root),
         broker: NativeBrokerConfig::default(),

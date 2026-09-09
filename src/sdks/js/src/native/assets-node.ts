@@ -1,3 +1,5 @@
+import type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
+import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -84,6 +86,7 @@ type IcuPackageMetadata = {
 };
 
 type ResolvedNodeIcuResources = {
+  seedDirectory: string;
   dataDirectory: string;
   dataTreeSha256: string;
 };
@@ -171,14 +174,15 @@ const NPM_EXTENSION_CONTRACT_MEMBER_FIELDS = [
 
 export async function resolveNodeNativeInstall(
   libraryPath?: string,
+  icuDescriptor?: NativeIcuDescriptor,
 ): Promise<ResolvedNativeInstall> {
   const versions = await packageVersions();
   const explicit = resolveExplicitLibraryPath(libraryPath);
   if (explicit !== undefined) {
-    const icuDataDirectory = await resolveNodeIcuDataDirectory(
-      versions.icuVersion,
-      versions.icuPackage,
-    );
+    const icuDataDirectory =
+      icuDescriptor === undefined
+        ? undefined
+        : (await resolveSelectedIcu(icuDescriptor, versions.icuVersion)).dataDirectory;
     return {
       libraryPath: explicit,
       runtimeDirectory: resolveExplicitRuntimeDirectory(),
@@ -188,7 +192,10 @@ export async function resolveNodeNativeInstall(
     };
   }
 
-  const icu = await resolveNodeIcuResources(versions.icuVersion, versions.icuPackage);
+  const icu =
+    icuDescriptor === undefined
+      ? undefined
+      : await resolveSelectedIcu(icuDescriptor, versions.icuVersion);
   const target = liboliphauntPackageTarget(platform(), arch());
   return resolvePackageNativeInstall(target, versions.liboliphauntVersion, icu);
 }
@@ -196,12 +203,15 @@ export async function resolveNodeNativeInstall(
 export async function prepareNodeExtensionInstall(
   install: ResolvedNativeInstall,
   extensions: ReadonlyArray<string> = [],
-  options: { explicitRuntimeDirectory?: boolean } = {},
+  options: {
+    explicitRuntimeDirectory?: boolean;
+    descriptors?: readonly NativeExtensionDescriptor[];
+  } = {},
 ): Promise<ResolvedNativeInstall> {
   if (options.explicitRuntimeDirectory === true && extensions.length > 0) {
     return validatePreparedNodeRuntimeExtensions(install, extensions);
   }
-  return materializeNodeExtensionInstall(install, extensions);
+  return materializeNodeExtensionInstall(install, extensions, options.descriptors);
 }
 
 export async function validatePreparedNodeRuntimeExtensions(
@@ -226,6 +236,7 @@ export async function validatePreparedNodeRuntimeExtensions(
 export async function materializeNodeExtensionInstall(
   install: ResolvedNativeInstall,
   extensions: ReadonlyArray<string> = [],
+  descriptors: readonly NativeExtensionDescriptor[] = [],
 ): Promise<ResolvedNativeInstall> {
   const selected = selectedExtensionClosure(extensions);
   if (selected.length === 0) {
@@ -242,7 +253,12 @@ export async function materializeNodeExtensionInstall(
   const target = liboliphauntPackageTarget(platform(), arch());
   const packages = await Promise.all(
     selected.map((sqlName) =>
-      resolveExtensionPackage(sqlName, target.id, versions.liboliphauntVersion),
+      resolveExtensionPackage(
+        sqlName,
+        target.id,
+        versions.liboliphauntVersion,
+        descriptors.find((value) => value.sqlName === sqlName),
+      ),
     ),
   );
   const cacheKey = runtimeCacheKey({
@@ -315,6 +331,24 @@ export async function materializeNodeExtensionInstall(
   return { ...install, runtimeDirectory, moduleDirectory };
 }
 
+async function resolveSelectedIcu(
+  descriptor: NativeIcuDescriptor,
+  runtimeVersion: string,
+): Promise<ResolvedNodeIcuResources> {
+  if (descriptor.version !== runtimeVersion) {
+    throw new Error(
+      `ICU package ${descriptor.version} is incompatible with runtime ${runtimeVersion}`,
+    );
+  }
+  const resources = await resolveNodeIcuResources(
+    descriptor.version,
+    descriptor.packageName,
+    descriptor.packageJsonUrl,
+  );
+  if (resources === undefined) throw new Error('selected ICU package is not installed');
+  return resources;
+}
+
 export async function resolveNodeIcuDataDirectory(
   expectedVersion?: string,
   packageName?: string,
@@ -325,6 +359,7 @@ export async function resolveNodeIcuDataDirectory(
 async function resolveNodeIcuResources(
   expectedVersion?: string,
   packageName?: string,
+  packageJsonUrl?: string,
 ): Promise<ResolvedNodeIcuResources | undefined> {
   const versions =
     expectedVersion === undefined || packageName === undefined
@@ -332,7 +367,8 @@ async function resolveNodeIcuResources(
       : undefined;
   const expected = expectedVersion ?? versions?.icuVersion;
   const name = packageName ?? versions?.icuPackage ?? '@oliphaunt/icu';
-  const packageJsonPath = optionalResolvePackageJson(name);
+  const packageJsonPath =
+    packageJsonUrl === undefined ? optionalResolvePackageJson(name) : fileURLToPath(packageJsonUrl);
   if (packageJsonPath === undefined) {
     return undefined;
   }
@@ -383,7 +419,11 @@ async function resolveNodeIcuResources(
   if (receiptDigest !== dataTreeSha256) {
     throw new Error(`${name} ICU data receipt does not match package metadata`);
   }
-  return { dataDirectory, dataTreeSha256 };
+  return {
+    dataDirectory,
+    dataTreeSha256,
+    seedDirectory: join(dirname(manifestPath), 'native-seeds'),
+  };
 }
 
 async function packageVersions(): Promise<{
@@ -423,6 +463,7 @@ async function resolveExtensionPackage(
   sqlName: string,
   target: string,
   liboliphauntVersion: string,
+  descriptor?: NativeExtensionDescriptor,
 ): Promise<ResolvedExtensionPackage> {
   const extension = generatedExtensionBySqlName(sqlName);
   if (extension === undefined) {
@@ -434,6 +475,7 @@ async function resolveExtensionPackage(
     extension,
     targetPackageName,
     target,
+    descriptor,
   );
   const packageJsonPath = resolvedTarget.packageJsonPath;
   const packageRoot = dirname(packageJsonPath);
@@ -1341,11 +1383,7 @@ async function resolvePackageNativeInstall(
     'cluster-seed',
     `${target.packageName} clusterSeedRelativePath`,
   );
-  const icuClusterSeedRelativePath = requireNativeClusterSeedPath(
-    packageJson.oliphaunt.icuClusterSeedRelativePath,
-    'cluster-seed-icu',
-    `${target.packageName} icuClusterSeedRelativePath`,
-  );
+
   const carrierManifestPath = join(packageRoot, 'manifest.properties');
   await requireFile(carrierManifestPath, `${target.packageName} runtime carrier receipt`);
   validateNativeRuntimeCarrierReceipt(
@@ -1386,8 +1424,8 @@ async function resolvePackageNativeInstall(
     icu === undefined
       ? standardClusterSeedDirectory
       : resolvePackageRelativePath(
-          packageRoot,
-          icuClusterSeedRelativePath,
+          icu.seedDirectory,
+          clusterSeedTarget,
           `${target.packageName} ICU cluster seed metadata`,
         );
   let icuDataTreeSha256: string | undefined;
@@ -1525,12 +1563,24 @@ async function resolveExtensionTargetPackageJson(
   extension: GeneratedExtensionMetadata,
   targetPackageName: string,
   target: string,
+  descriptor?: NativeExtensionDescriptor,
 ): Promise<{ packageJsonPath: string; ownerVersion: string }> {
   const packageName = extension.npmPackage;
   const expectedMembers = extensionOwnerMembers(extension);
   const isBundle = expectedMembers.length > 1;
-  const packageJsonPath = optionalResolvePackageJson(packageName);
+  if (
+    descriptor !== undefined &&
+    (descriptor.product !== extension.artifactProduct || descriptor.packageName !== packageName)
+  ) {
+    throw new Error(`extension descriptor identity does not match ${extension.sqlName}`);
+  }
+  const packageJsonPath =
+    descriptor?.packageJsonUrl === undefined
+      ? optionalResolvePackageJson(packageName)
+      : fileURLToPath(descriptor.packageJsonUrl);
   if (packageJsonPath === undefined) {
+    if (descriptor !== undefined)
+      throw new Error(`${packageName} selected by an imported descriptor is not installed`);
     if (isBundle) {
       throw new Error(
         `${packageName} is not installed; add it to the application dependencies for CREATE EXTENSION support`,
@@ -1567,6 +1617,11 @@ async function resolveExtensionTargetPackageJson(
   requireExtensionPackageMembers(packageJson, expectedMembers, packageName);
   if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) {
     throw new Error(`${packageName} package metadata is missing version`);
+  }
+  if (descriptor?.version !== undefined && packageJson.version !== descriptor.version) {
+    throw new Error(
+      `${packageName} version ${packageJson.version} does not match imported descriptor ${descriptor.version}`,
+    );
   }
   const resolvedTargetPackageName =
     packageJson.oliphaunt.targetPackageNames?.[target] ?? targetPackageName;

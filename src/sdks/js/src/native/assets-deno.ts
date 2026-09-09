@@ -1,3 +1,4 @@
+import type { NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -82,16 +83,23 @@ type ResolvedDenoIcuResources = {
 
 export async function resolveDenoNativeInstall(
   libraryPath?: string,
+  icuDescriptor?: NativeIcuDescriptor,
 ): Promise<ResolvedDenoNativeInstall> {
   const explicit = resolveExplicitLibraryPath(libraryPath);
   if (explicit !== undefined) {
     const deno = optionalDenoRuntime();
     const versions = deno === undefined ? undefined : await packageVersions(deno);
     const icuDataDirectory =
-      deno === undefined || versions === undefined
+      deno === undefined || versions === undefined || icuDescriptor === undefined
         ? undefined
-        : (await resolveDenoIcuResources(deno, versions.icuVersion, versions.icuPackage))
-            ?.dataDirectory;
+        : (
+            await resolveDenoIcuResources(
+              deno,
+              versions.icuVersion,
+              versions.icuPackage,
+              icuDescriptor,
+            )
+          )?.dataDirectory;
     return {
       libraryPath: explicit,
       runtimeDirectory: resolveExplicitRuntimeDirectory(),
@@ -103,7 +111,15 @@ export async function resolveDenoNativeInstall(
 
   const deno = denoRuntime();
   const versions = await packageVersions(deno);
-  const icu = await resolveDenoIcuResources(deno, versions.icuVersion, versions.icuPackage);
+  const icu =
+    icuDescriptor === undefined
+      ? undefined
+      : await resolveDenoIcuResources(
+          deno,
+          versions.icuVersion,
+          versions.icuPackage,
+          icuDescriptor,
+        );
   const target = liboliphauntPackageTarget(deno.build.os, deno.build.arch);
   return resolvePackageNativeInstall(deno, target, versions.liboliphauntVersion, icu);
 }
@@ -262,11 +278,15 @@ async function resolveDenoIcuResources(
   deno: DenoRuntime,
   expectedVersion: string,
   packageName: string,
-): Promise<ResolvedDenoIcuResources | undefined> {
-  const packageJsonUrl = optionalResolvePackageJsonUrl(packageName);
-  if (packageJsonUrl === undefined) {
-    return undefined;
+  descriptor: NativeIcuDescriptor,
+): Promise<ResolvedDenoIcuResources> {
+  if (descriptor.packageName !== packageName || descriptor.version !== expectedVersion) {
+    throw new Error(`Selected ICU package must be ${packageName}@${expectedVersion}`);
   }
+  const packageJsonUrl =
+    descriptor.packageJsonUrl === undefined
+      ? resolvePackageJsonUrl(packageName)
+      : new URL(descriptor.packageJsonUrl);
   const packageJson = JSON.parse(await deno.readTextFile(packageJsonUrl)) as IcuPackageMetadata;
   validateDenoIcuPackageMetadata(packageJson, packageName, expectedVersion);
   const metadata = packageJson.oliphaunt!;
@@ -393,23 +413,6 @@ function resolvePackageJsonUrl(packageName: string): URL {
       `${packageName} is not installed; import Oliphaunt from npm:@oliphaunt/ts with optional dependencies enabled`,
       { cause: error },
     );
-  }
-}
-
-function optionalResolvePackageJsonUrl(packageName: string): URL | undefined {
-  const specifier = `${packageName}/package.json`;
-  const resolver = (import.meta as ImportMeta & { resolve?: (specifier: string) => string })
-    .resolve;
-  if (resolver === undefined) {
-    return optionalResolvePackageJsonUrlWithRequire(specifier);
-  }
-  try {
-    return new URL(resolver(specifier));
-  } catch (error) {
-    if (importMetaResolveUnsupported(error)) {
-      return optionalResolvePackageJsonUrlWithRequire(specifier);
-    }
-    return undefined;
   }
 }
 

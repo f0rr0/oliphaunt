@@ -2547,6 +2547,14 @@ jobs:
             exit 1
           fi
           closure="$(dirname "$1")"
+          set --
+          while IFS= read -r archive; do
+            [ -n "$archive" ] && set -- "$@" "$archive"
+          done < <(find target/liboliphaunt/android-runtime-assets -type f -name 'liboliphaunt-*-icu-seed-android-datum64.tar.gz' | LC_ALL=C sort)
+          [ "$#" -eq 1 ] || { echo "Expected one optional android-datum64 ICU seed" >&2; exit 1; }
+          mkdir -p "$closure/cluster-seed-icu"
+          tar -xzf "$1" -C "$closure/cluster-seed-icu"
+
           # JavaScript template interpolation belongs inside the single-quoted Bun program.
           # shellcheck disable=SC2016
           tools/dev/bun.sh -e '
@@ -2698,6 +2706,14 @@ jobs:
             exit 1
           fi
           closure="$(dirname "$1")"
+          set --
+          while IFS= read -r archive; do
+            [ -n "$archive" ] && set -- "$@" "$archive"
+          done < <(find target/liboliphaunt/release-assets -type f -name 'liboliphaunt-*-icu-seed-ios-datum64.tar.gz' | LC_ALL=C sort)
+          [ "$#" -eq 1 ] || { echo "Expected one optional ios-datum64 ICU seed" >&2; exit 1; }
+          mkdir -p "$closure/cluster-seed-icu"
+          tar -xzf "$1" -C "$closure/cluster-seed-icu"
+
           # JavaScript template interpolation belongs inside the single-quoted Bun program.
           # shellcheck disable=SC2016
           tools/dev/bun.sh -e '

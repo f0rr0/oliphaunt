@@ -54,12 +54,22 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database, label: "database")
         try validateOliphauntStartupGUCs(configuration.startupGUCs)
-        _ = try OliphauntRuntimeResources.validateExtensionIds(configuration.extensions)
-        let packagedRuntimeResources = try runtimeResources ?? OliphauntRuntimeResources.bundled(
-            containing: configuration.extensions
+        _ = try OliphauntRuntimeResources.validateExtensionIds(configuration.extensionSqlNames)
+        var packagedRuntimeResources = try runtimeResources ?? OliphauntRuntimeResources.bundled(
+            containing: configuration.extensionSqlNames
         )
+        try packagedRuntimeResources?.validateSelectedResources(configuration)
+        packagedRuntimeResources?.icuSelected = configuration.icu != nil
+        if let icu = configuration.icu {
+            if let directory = icu.resourceDirectory {
+                try validateOliphauntDirectory(directory, label: "ICU resource directory")
+                packagedRuntimeResources?.icuResourceDirectories = [directory]
+            }
+        } else {
+            packagedRuntimeResources?.icuResourceDirectories = []
+        }
         let resolvedRuntime = try resolveRuntime(
-            extensions: configuration.extensions,
+            extensions: configuration.extensionSqlNames,
             runtimeResources: packagedRuntimeResources
         )
         let username = configuration.username ?? "postgres"

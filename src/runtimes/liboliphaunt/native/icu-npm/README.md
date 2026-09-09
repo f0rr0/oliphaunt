@@ -1,22 +1,26 @@
 # @oliphaunt/icu
 
-Portable ICU data files for Oliphaunt runtimes.
+Optional ICU data and matching PostgreSQL catalog seeds for native Node, Bun,
+Deno, and React Native. Install this package when you need ICU collations:
 
-Install this package only when an application needs PostgreSQL ICU collations.
-Ordinary Oliphaunt runtime packages do not include ICU data.
+```sh
+npm install @oliphaunt/icu
+```
 
-The published package stores the ICU tree once under
-`OliphauntICU.bundle/share/icu`, with its exact data receipt at
-`OliphauntICU.bundle/manifest.properties`. Target-specific native runtime
-packages carry their own matching PostgreSQL ICU-catalog cluster seed. Node, Bun, and
-Deno consumers should resolve the data directory from
-`oliphaunt.dataRelativePath` rather than hard-coding its location.
+```ts
+import icu from '@oliphaunt/icu';
 
-On Apple platforms, `OliphauntICU.podspec` installs the prebuilt
-`OliphauntICU.bundle` as one resource. Copying the bundle atomically preserves
-the ICU subdirectories and prevents locale files with the same basename from
-colliding during the Xcode build.
+const db = await Oliphaunt.open({ icu });
+```
 
-The carrier deliberately disables React Native autolinking on iOS and Android.
-The `@oliphaunt/react-native` config plugin stages selected ICU data through its
-app-owned native payload instead.
+Import `Oliphaunt` from your SDK. Installing the package makes its resources
+available; passing the descriptor selects ICU for that database.
+
+The package owns `OliphauntICU.bundle/share/icu` and the matching seeds under
+`OliphauntICU.bundle/native-seeds`. The SDK resolves the current platform and
+validates the seed against the data. Base runtime packages carry the standard
+seed only.
+
+The React Native Expo plugin discovers this installed dependency and stages
+its resources into the app. No additional plugin option or separate pod is
+needed. Native Node, Bun, and Deno resolve resources from the imported package.

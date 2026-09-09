@@ -17,6 +17,7 @@ use crate::oliphaunt::storage::DatabaseStorage;
 pub struct OliphauntBuilder {
     storage: DatabaseStorage,
     catalog_profile: CatalogProfile,
+    icu: Option<oliphaunt_resources::IcuData>,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
     #[cfg(feature = "extensions")]
@@ -28,6 +29,7 @@ impl Default for OliphauntBuilder {
         Self {
             storage: DatabaseStorage::Memory,
             catalog_profile: default_catalog_profile(),
+            icu: None,
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
             #[cfg(feature = "extensions")]
@@ -54,6 +56,13 @@ impl OliphauntBuilder {
     #[doc(hidden)]
     pub fn catalog_profile(mut self, profile: CatalogProfile) -> Self {
         self.catalog_profile = profile;
+        self
+    }
+
+    /// Select ICU data from the optional `oliphaunt-icu` package.
+    pub fn icu(mut self, data: oliphaunt_resources::IcuData) -> Self {
+        self.icu = Some(data);
+        self.catalog_profile = CatalogProfile::Icu;
         self
     }
 
@@ -92,16 +101,20 @@ impl OliphauntBuilder {
     /// Make one bundled PostgreSQL extension artifact available to the database.
     /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
-    pub fn extension(mut self, extension: Extension) -> Self {
-        self.extensions.push(extension);
+    pub fn extension(mut self, extension: impl Into<Extension>) -> Self {
+        self.extensions.push(extension.into());
         self
     }
 
     /// Make bundled PostgreSQL extension artifacts available to the database.
     /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
-        self.extensions.extend(extensions);
+    pub fn extensions<E: Into<Extension>>(
+        mut self,
+        extensions: impl IntoIterator<Item = E>,
+    ) -> Self {
+        self.extensions
+            .extend(extensions.into_iter().map(Into::into));
         self
     }
 
@@ -117,6 +130,9 @@ impl OliphauntBuilder {
         let postgres_config = self.postgres_config.clone();
         postgres_config.validate()?;
         self.storage.validate()?;
+        if let Some(data) = self.icu {
+            crate::oliphaunt::assets::register_icu(data)?;
+        }
         self.startup_config.validate()?;
         let plan = DatabasePlan::new(self.storage.clone(), self.catalog_profile);
         let prepared = prepare_database(plan, &self.startup_config.username)?;
@@ -191,7 +207,6 @@ mod storage_tests {
         assert_eq!(icu.catalog_profile, CatalogProfile::Icu);
     }
 
-    #[cfg(not(feature = "icu"))]
     #[test]
     fn unavailable_icu_profile_is_rejected_before_storage_mutation() {
         let parent = tempfile::tempdir().expect("temporary parent");
@@ -201,7 +216,7 @@ mod storage_tests {
             .catalog_profile(CatalogProfile::Icu)
             .open()
             .err()
-            .expect("ICU profile requires its packaging feature");
+            .expect("ICU profile requires explicit package data");
 
         assert_eq!(error.kind(), crate::ErrorKind::InvalidConfiguration);
         assert!(error.to_string().contains("requires"));
@@ -239,7 +254,7 @@ mod storage_tests {
     }
 }
 
-#[cfg(all(test, feature = "extension-pg-textsearch"))]
+#[cfg(all(test, feature = "extensions"))]
 mod tests {
     use super::*;
     use crate::oliphaunt::extensions::Extension;

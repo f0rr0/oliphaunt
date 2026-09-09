@@ -235,7 +235,7 @@ test("the Maven manifest builder validates singleton upstream licenses in the ru
     "--extension-artifact-root",
     root,
   ]);
-  expect(readFileSync(manifest, "utf8").trimEnd().split("\n")).toHaveLength(2);
+  expect(readFileSync(manifest, "utf8").trimEnd().split("\n")).toHaveLength(3);
 
   for (const [label, options, pattern] of [
     ["missing files namespace", { upstreamRoot: null }, /packed upstream license members differ/u],

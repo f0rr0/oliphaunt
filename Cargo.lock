@@ -2446,7 +2446,10 @@ version = "0.2.0"
 dependencies = [
  "fs2",
  "getrandom 0.3.4",
+ "libc",
  "libloading 0.8.9",
+ "oliphaunt-build",
+ "oliphaunt-resources",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2474,6 +2477,7 @@ dependencies = [
 name = "oliphaunt-icu"
 version = "0.2.0"
 dependencies = [
+ "oliphaunt-resources",
  "sha2 0.10.9",
  "tar",
  "zstd",
@@ -2532,6 +2536,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-resources"
+version = "0.2.0"
+
+[[package]]
 name = "oliphaunt-tools"
 version = "0.2.0"
 
@@ -2552,7 +2560,7 @@ dependencies = [
  "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
  "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
  "liboliphaunt-wasix-portable",
- "oliphaunt-icu",
+ "oliphaunt-resources",
  "oliphaunt-wasix-tools",
  "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
  "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
@@ -2589,10 +2597,9 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "oliphaunt-icu",
  "oliphaunt-wasix",
- "oliphaunt-wasix-tools",
  "rustix",
+ "serde_json",
  "sha2 0.10.9",
 ]
 

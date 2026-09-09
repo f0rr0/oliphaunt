@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   WasixStorageError,
   type WasixStorageCommitState,
@@ -28,6 +30,7 @@ import type {
   WasixToolProcessResult,
 } from './tool-runtime.js';
 import { validateWasixToolDescriptor } from './tool-runtime.js';
+import { nativeExtensionPackages, nativeToolPackage } from './native-extension-packages.js';
 
 /** @internal A synchronous Rust Oliphaunt owned by the importing JavaScript realm. */
 export class NativeWasixSession implements WasixDatabaseSession {
@@ -135,18 +138,7 @@ export class NativeWasixSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    if (options.runtimeVersion !== '' && options.runtimeVersion !== this.#runtimeVersion) {
-      throw new Error(
-        `WASIX tools runtime ${options.runtimeVersion} is incompatible with database runtime ${this.#runtimeVersion}`,
-      );
-    }
-    validateWasixToolDescriptor(options.tool);
-    const expectedIdentity = `${options.tool.sha256}:${options.tool.size}`;
-    if (this.#addon.toolIdentity(options.tool.name) !== expectedIdentity) {
-      throw new Error(
-        `WASIX ${options.tool.name} descriptor does not match the tool embedded in the native addon`,
-      );
-    }
+    validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
     if (options.tool.name === 'pg_dump') {
       try {
         return toolProcessResult(
@@ -471,30 +463,11 @@ export function requireCompatibleNativeWasixAddon(
     options.runtime.standardSeedManifest,
     'standard cluster seed manifest',
   );
-  if (options.icu !== undefined) {
-    requireEmbeddedPayloadIdentity(
-      addon,
-      'icuDataArchive',
-      options.icu.dataArchive,
-      'ICU data archive',
-    );
-    requireEmbeddedPayloadIdentity(
-      addon,
-      'icuSeedArchive',
-      options.icu.clusterSeedArchive,
-      'ICU cluster seed archive',
-    );
-    requireEmbeddedPayloadIdentity(
-      addon,
-      'icuSeedManifest',
-      options.icu.clusterSeedManifest,
-      'ICU cluster seed manifest',
-    );
-  }
   for (const [sqlName, carrier] of Object.entries(options.extensionCarriers)) {
     if (carrier.sqlName !== sqlName) {
       throw new Error(`WASIX extension carrier key ${sqlName} does not match ${carrier.sqlName}`);
     }
+    if (carrier.product !== 'oliphaunt-extension-contrib-pg18') continue;
     const expectedIdentity = `${carrier.sha256}:${carrier.size}`;
     if (addon.extensionIdentity(sqlName) !== expectedIdentity) {
       throw new Error(
@@ -524,12 +497,39 @@ export function nativeWasixOpenOptions(
   const identity = normalizeWasixDatabaseIdentity(options.username, options.database);
   return {
     profile: options.icu === undefined ? 'standard' : 'icu',
+    ...(options.icu === undefined
+      ? {}
+      : {
+          icu: {
+            version: options.icu.version,
+            runtimeVersion: options.icu.compatibility.runtimeVersion,
+            archive: nativeIcuBytes(options.icu.dataArchive.source),
+            archiveSha256: options.icu.dataArchive.sha256,
+            dataTreeSha256: options.icu.compatibility.dataTreeSha256,
+            seedArchive: nativeIcuBytes(options.icu.clusterSeedArchive.source),
+            seedArchiveSha256: options.icu.clusterSeedArchive.sha256,
+            seedManifest: nativeIcuBytes(options.icu.clusterSeedManifest.source),
+            seedManifestSha256: options.icu.clusterSeedManifest.sha256,
+          },
+        }),
     storage,
     username: identity.username,
     database: identity.database,
     startupGucs: { ...options.startupGUCs },
     extensions: [...options.extensions],
+    ...(Object.values(options.extensionCarriers).some(
+      (carrier) => carrier.product !== 'oliphaunt-extension-contrib-pg18',
+    )
+      ? { extensionPackages: nativeExtensionPackages(options) }
+      : {}),
   };
+}
+
+function nativeIcuBytes(source: string | Uint8Array): Uint8Array {
+  if (source instanceof Uint8Array) return Buffer.from(source);
+  if (!source.startsWith('file:'))
+    throw new TypeError('WASIX native ICU data requires an installed file URL or bytes');
+  return readFileSync(fileURLToPath(source));
 }
 
 function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['storage'] {
@@ -540,6 +540,8 @@ function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['
   const provider = options.storage.kind === 'indexed-db' ? 'IndexedDB' : 'OPFS';
   throw new TypeError(`@oliphaunt/wasix-ts ${provider} storage is browser-only`);
 }
+
+const registeredTools = new WeakMap<NativeWasixAddon, Set<string>>();
 
 function validateNativeToolCall(
   addon: NativeWasixAddon,
@@ -552,10 +554,17 @@ function validateNativeToolCall(
     );
   }
   validateWasixToolDescriptor(options.tool);
+  const key = `${options.tool.name}:${options.tool.sha256}:${options.tool.source}`;
+  const registered = registeredTools.get(addon) ?? new Set<string>();
+  if (!registered.has(key)) {
+    addon.registerTools(nativeToolPackage(options.tool));
+    registered.add(key);
+    registeredTools.set(addon, registered);
+  }
   const expectedIdentity = `${options.tool.sha256}:${options.tool.size}`;
   if (addon.toolIdentity(options.tool.name) !== expectedIdentity) {
     throw new Error(
-      `WASIX ${options.tool.name} descriptor does not match the tool embedded in the native addon`,
+      `WASIX ${options.tool.name} descriptor does not match the tool in the installed package`,
     );
   }
 }

@@ -32,9 +32,9 @@ impl CatalogProfile {
     }
 
     pub(crate) fn validate_available(self) -> Result<()> {
-        if self == Self::Icu && !cfg!(feature = "icu") {
+        if self == Self::Icu && SELECTED_ICU.get().is_none() {
             return Err(crate::error::invalid_configuration(
-                "the ICU catalog profile requires the oliphaunt-wasix `icu` feature",
+                "the ICU catalog profile requires explicitly selected ICU package data",
             ));
         }
         Ok(())
@@ -48,11 +48,70 @@ impl Default for CatalogProfile {
 }
 
 pub(crate) const fn default_catalog_profile() -> CatalogProfile {
-    if cfg!(feature = "icu") {
-        CatalogProfile::Icu
-    } else {
-        CatalogProfile::Standard
-    }
+    CatalogProfile::Standard
+}
+
+// One exact ICU release serves this runtime generation. Database selection stays
+// on each builder; publishing data here never changes another builder's profile.
+static SELECTED_ICU: std::sync::OnceLock<oliphaunt_resources::IcuData> = std::sync::OnceLock::new();
+
+pub(crate) fn register_icu(data: oliphaunt_resources::IcuData) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    ensure!(
+        data.runtime_version == liboliphaunt_wasix_portable::PACKAGE_VERSION,
+        "ICU package is incompatible with the selected WASIX runtime"
+    );
+    let archive = data
+        .wasix_archive
+        .context("selected ICU package has no WASIX archive")?;
+    let expected = data
+        .wasix_archive_sha256
+        .context("selected ICU package has no archive digest")?;
+    ensure!(
+        format!("{:x}", Sha256::digest(archive)) == expected,
+        "ICU package archive hash mismatch"
+    );
+    let tree = data
+        .wasix_data_tree_sha256
+        .context("selected ICU package has no logical tree digest")?;
+    let manifest = liboliphaunt_wasix_portable::manifest()?;
+    let seed = data
+        .wasix_seed_archive
+        .context("selected ICU package has no cluster seed")?;
+    let seed_manifest = data
+        .wasix_seed_manifest
+        .context("selected ICU package has no seed manifest")?;
+    let expected_seed = manifest
+        .cluster_seeds
+        .get("icu")
+        .context("runtime has no ICU seed identity")?;
+    ensure!(
+        format!("{:x}", Sha256::digest(seed)) == expected_seed.sha256,
+        "ICU cluster seed archive hash mismatch"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(seed_manifest)?;
+    ensure!(
+        parsed["catalogProfile"] == "icu"
+            && parsed["runtime"]["version"] == data.runtime_version
+            && parsed["icu"]["dataTreeSha256"] == tree,
+        "ICU seed manifest does not match selected package"
+    );
+    ensure!(
+        manifest
+            .cluster_seeds
+            .get("icu")
+            .and_then(|seed| seed.icu_data_tree_sha256.as_deref())
+            == Some(tree),
+        "selected ICU package does not match the runtime's ICU seed"
+    );
+    let selected = SELECTED_ICU.get_or_init(|| data);
+    ensure!(
+        selected.version == data.version
+            && selected.wasix_archive_sha256 == data.wasix_archive_sha256
+            && selected.wasix_data_tree_sha256 == data.wasix_data_tree_sha256,
+        "conflicting ICU packages for one WASIX runtime"
+    );
+    Ok(())
 }
 
 pub fn asset_manifest_metadata() -> Result<AssetManifestMetadata> {
@@ -120,79 +179,60 @@ pub(crate) fn expected_runtime_archive_sha256() -> Result<String> {
 pub(crate) fn cluster_seed_archive(profile: CatalogProfile) -> Option<&'static [u8]> {
     match profile {
         CatalogProfile::Standard => liboliphaunt_wasix_portable::standard_cluster_seed_archive(),
-        CatalogProfile::Icu => {
-            #[cfg(feature = "icu")]
-            {
-                liboliphaunt_wasix_portable::icu_cluster_seed_archive()
-            }
-            #[cfg(not(feature = "icu"))]
-            {
-                None
-            }
-        }
+        CatalogProfile::Icu => SELECTED_ICU.get().and_then(|data| data.wasix_seed_archive),
     }
 }
 
 pub(crate) fn cluster_seed_manifest(profile: CatalogProfile) -> Option<&'static [u8]> {
     match profile {
         CatalogProfile::Standard => liboliphaunt_wasix_portable::standard_cluster_seed_manifest(),
-        CatalogProfile::Icu => {
-            #[cfg(feature = "icu")]
-            {
-                liboliphaunt_wasix_portable::icu_cluster_seed_manifest()
-            }
-            #[cfg(not(feature = "icu"))]
-            {
-                None
-            }
-        }
+        CatalogProfile::Icu => SELECTED_ICU.get().and_then(|data| data.wasix_seed_manifest),
     }
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 pub(crate) fn pg_dump_wasm() -> Option<&'static [u8]> {
-    oliphaunt_wasix_tools::pg_dump_wasm()
+    if let Some(bytes) = super::tools::installed_tool_wasm("pg_dump") {
+        return Some(bytes);
+    }
+    #[cfg(feature = "tools")]
+    {
+        return oliphaunt_wasix_tools::pg_dump_wasm();
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 pub(crate) fn psql_wasm() -> Option<&'static [u8]> {
-    oliphaunt_wasix_tools::psql_wasm()
+    if let Some(bytes) = super::tools::installed_tool_wasm("psql") {
+        return Some(bytes);
+    }
+    #[cfg(feature = "tools")]
+    {
+        return oliphaunt_wasix_tools::psql_wasm();
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 pub(crate) fn icu_data_archive(profile: CatalogProfile) -> Option<&'static [u8]> {
     if profile == CatalogProfile::Standard {
         return None;
     }
-    #[cfg(feature = "icu")]
-    {
-        oliphaunt_icu::icu_data_archive()
-    }
-    #[cfg(not(feature = "icu"))]
-    {
-        None
-    }
+    SELECTED_ICU.get().and_then(|data| data.wasix_archive)
 }
 
 pub(crate) fn expected_icu_data_archive_sha256() -> Option<&'static str> {
-    #[cfg(feature = "icu")]
-    {
-        oliphaunt_icu::ICU_DATA_ARCHIVE_SHA256
-    }
-    #[cfg(not(feature = "icu"))]
-    {
-        None
-    }
+    SELECTED_ICU
+        .get()
+        .and_then(|data| data.wasix_archive_sha256)
 }
 
 pub(crate) fn expected_icu_data_tree_sha256() -> Option<&'static str> {
-    #[cfg(feature = "icu")]
-    {
-        oliphaunt_icu::ICU_DATA_TREE_SHA256
-    }
-    #[cfg(not(feature = "icu"))]
-    {
-        None
-    }
+    SELECTED_ICU
+        .get()
+        .and_then(|data| data.wasix_data_tree_sha256)
 }
 
 #[cfg(feature = "extensions")]
@@ -232,16 +272,12 @@ mod tests {
 
     #[test]
     fn asset_helpers_expose_a_consistent_feature_contract() {
-        let default_profile = if cfg!(feature = "icu") {
-            CatalogProfile::Icu
-        } else {
-            CatalogProfile::Standard
-        };
+        let default_profile = CatalogProfile::Standard;
         assert_eq!(CatalogProfile::default(), default_profile);
         CatalogProfile::Standard.validate_available().unwrap();
         assert_eq!(
             CatalogProfile::Icu.validate_available().is_ok(),
-            cfg!(feature = "icu")
+            super::SELECTED_ICU.get().is_some()
         );
 
         let metadata = asset_manifest_metadata().unwrap();

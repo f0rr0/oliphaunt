@@ -511,7 +511,7 @@ function validateWasixContract(graph, catalog) {
   const dependencies = object(sdk.dependencies, "oliphaunt-wasix dependencies");
   workspaceDependency(dependencies, RUNTIME_PACKAGE);
   workspaceDependency(dependencies, TOOLS_PACKAGE, { optional: true });
-  workspaceDependency(dependencies, ICU_PACKAGE, { optional: true });
+  assert(!(ICU_PACKAGE in dependencies), "WASIX SDK must not depend on optional ICU bytes");
   const targetTables = object(sdk.target, "oliphaunt-wasix target dependencies");
   for (const [cfg, name] of Object.entries(publicAotCargoDependencies())) {
     workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name);
@@ -519,13 +519,13 @@ function validateWasixContract(graph, catalog) {
   for (const [cfg, name] of Object.entries(publicToolsAotCargoDependencies())) {
     workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name, { optional: true });
   }
-  assert(sameStrings(sdk.features?.tools ?? [], publicToolsFeatureDependencies()), "oliphaunt-wasix tools feature must select exactly the split tool carriers");
+  assert(sameStrings(sdk.features?.tools ?? [], ["__internal-tools", ...publicToolsFeatureDependencies()]), "oliphaunt-wasix tools feature must select exactly the split tool carriers");
   assert(!("bundled" in object(sdk.features, "oliphaunt-wasix features")), "oliphaunt-wasix must not expose an inert bundled feature");
   const extensionFeatures = exactExtensionProducts(TOOL)
     .flatMap((product) => extensionSqlNames(product, TOOL))
     .map((sqlName) => `extension-${sqlName.replaceAll("_", "-")}`);
   const sdkExtensionFeatures = Object.keys(sdk.features).filter((feature) => feature.startsWith("extension-"));
-  assert(sameStrings(extensionFeatures, sdkExtensionFeatures), "oliphaunt-wasix extension features must exactly match modeled extensions");
+  assert(sdkExtensionFeatures.length === 0, "WASIX SDK extensions must use independent packages, not SDK features");
   const runtimeFeatures = Object.keys(readToml("src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml").features ?? {});
   assert(sameStrings(extensionFeatures, runtimeFeatures), "portable WASIX runtime features must exactly match modeled extensions");
   const dump = (sdk.bin ?? []).find((entry) => entry.name === "oliphaunt-wasix-dump");

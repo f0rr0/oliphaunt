@@ -13,9 +13,9 @@ use tar::{Archive, Builder, EntryType, Header};
 use wasmer_wasix::virtual_fs::FileSystem as VirtualFileSystem;
 
 use super::base::DirectoryLock;
-use super::database_root_descriptor::{
-    PGDATA_DIRECTORY, PHYSICAL_FORMAT, POSTGRES_MAJOR, write_database_root_descriptor,
-};
+use liboliphaunt_wasix_portable::{PHYSICAL_FORMAT, POSTGRES_MAJOR};
+
+use super::database_root_descriptor::{PGDATA_DIRECTORY, write_database_root_descriptor};
 use crate::oliphaunt::storage::{PgDataStorage, vfs_read};
 use crate::{StorageCommitState, StorageErrorCode, StorageErrorPhase};
 

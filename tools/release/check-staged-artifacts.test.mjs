@@ -261,6 +261,7 @@ function selectionNeutralCarrier(version = "1.2.3") {
     ["base-xcframework", `liboliphaunt-${version}-apple-spm-xcframework.zip`, "zip", "liboliphaunt.xcframework", "a"],
     ["runtime-resources", `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`, "tar.gz", "oliphaunt", "b"],
     ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", ".", "c"],
+    ["icu-seed", `liboliphaunt-${version}-icu-seed-ios-datum64.tar.gz`, "tar.gz", ".", "d"],
   ].map(([role, name, format, member, digit], index) => ({
     bytes: index + 1,
     format,

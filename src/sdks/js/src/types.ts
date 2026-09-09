@@ -1,3 +1,5 @@
+import type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
+
 export type DatabaseStorage =
   | { readonly kind: 'temporaryDirectory' }
   | { readonly kind: 'directory'; readonly path: string };
@@ -19,7 +21,8 @@ export type OpenConfig = {
   startupGUCs?: Readonly<Record<string, string>>;
   username?: string;
   database?: string;
-  extensions?: ReadonlyArray<string>;
+  extensions?: ReadonlyArray<NativeExtensionDescriptor>;
+  icu?: NativeIcuDescriptor;
   libraryPath?: string;
   runtimeDirectory?: string;
   brokerExecutable?: string;

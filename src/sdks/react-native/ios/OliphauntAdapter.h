@@ -16,7 +16,6 @@ typedef void (^OliphauntVoidCompletion)(NSError *_Nullable error);
 + (void)openWithConfig:(NSDictionary *)config completion:(OliphauntOpenCompletion)completion;
 + (void)restoreWithStorageKind:(NSString *)storageKind
                     storagePath:(nullable NSString *)storagePath
-                    storageName:(nullable NSString *)storageName
                      backupData:(NSData *)backupData
                      completion:(OliphauntVoidCompletion)completion;
 

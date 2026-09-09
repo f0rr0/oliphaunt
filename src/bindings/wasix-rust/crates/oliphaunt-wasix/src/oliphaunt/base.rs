@@ -1849,6 +1849,27 @@ pub(crate) fn install_missing_extension_archives(
     extensions: &[Extension],
 ) -> Result<()> {
     for extension in extensions {
+        if let Some(package) = extension.package() {
+            let (_, bytes, expected) = package
+                .archives()
+                .iter()
+                .find(|(name, _, _)| *name == extension.sql_name())
+                .with_context(|| {
+                    format!(
+                        "{}@{} has no archive for {}",
+                        package.product(),
+                        package.version(),
+                        extension.sql_name()
+                    )
+                })?;
+            ensure!(
+                sha256_hex(bytes) == *expected,
+                "extension {} archive hash mismatch",
+                extension.sql_name()
+            );
+            install_extension_reader(&outcome.runtime_layout.mutable_root, Cursor::new(bytes))?;
+            continue;
+        }
         let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
             crate::error::invalid_configuration(format!(
                 "extension asset '{}' is not bundled in this oliphaunt-wasix build",
@@ -2317,7 +2338,6 @@ fn copy_runtime_file_if_exists(src: PathBuf, dest: PathBuf) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "icu")]
     #[derive(Debug)]
     struct PreparedProfileSnapshot {
         profile: CatalogProfile,
@@ -2328,7 +2348,6 @@ mod tests {
         has_icu_data: bool,
     }
 
-    #[cfg(feature = "icu")]
     fn both_catalog_profiles_are_packaged() -> bool {
         assets::runtime_archive().is_some()
             && [CatalogProfile::Standard, CatalogProfile::Icu]
@@ -2340,7 +2359,6 @@ mod tests {
             && assets::icu_data_archive(CatalogProfile::Icu).is_some()
     }
 
-    #[cfg(feature = "icu")]
     fn prepare_profile_snapshot(profile: CatalogProfile) -> Result<PreparedProfileSnapshot> {
         let prepared = prepare_database(
             DatabasePlan::new(DatabaseStorage::Memory, profile),
@@ -2375,7 +2393,6 @@ mod tests {
         })
     }
 
-    #[cfg(feature = "icu")]
     fn assert_profile_snapshots_do_not_contaminate(
         standard: &PreparedProfileSnapshot,
         icu: &PreparedProfileSnapshot,
@@ -2542,7 +2559,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "icu")]
     #[test]
     fn database_profiles_remain_isolated_in_both_construction_orders() -> Result<()> {
         if !both_catalog_profiles_are_packaged() {
@@ -2563,7 +2579,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "icu")]
     #[test]
     fn database_profiles_materialize_concurrently_without_contamination() -> Result<()> {
         if !both_catalog_profiles_are_packaged() {

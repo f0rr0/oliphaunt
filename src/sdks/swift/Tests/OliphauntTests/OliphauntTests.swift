@@ -1563,7 +1563,7 @@ func configurationForwardsOnlyExplicitPostgresSettings() async throws {
     let engine = TestEngine(session: session)
     _ = try await OliphauntDatabase.open(
         configuration: OliphauntConfiguration(
-            startupGUCs: [.init("shared_buffers", "16MB")],
+            startupGUCs: ["shared_buffers": "16MB"],
             username: "alice",
             database: "app"
         ),
@@ -1586,26 +1586,26 @@ func freshRootAcceptsOnlyFixedBootstrapRole() throws {
 @Test
 func startupGUCNamesUsePortablePostgresGrammar() async throws {
     try validateOliphauntStartupGUCs([
-        .init("_name", ""),
-        .init("ext.name$1", "on"),
+        "_name": "",
+        "ext.name$1": "on",
     ])
     for name in ["1name", ".foo", "a..b", "a.1b", "ext.$name"] {
         #expect(throws: OliphauntError.self) {
-            try validateOliphauntStartupGUCs([.init(name, "1")])
+            try validateOliphauntStartupGUCs([name: "1"])
         }
     }
     #expect(throws: OliphauntError.self) {
-        try validateOliphauntStartupGUCs([.init("good", "bad\0value")])
+        try validateOliphauntStartupGUCs(["good": "bad\0value"])
     }
     for name in ["CONFIG_FILE", "data_directory"] {
         #expect(throws: OliphauntError.self) {
-            try validateOliphauntStartupGUCs([.init(name, "/tmp/other")])
+            try validateOliphauntStartupGUCs([name: "/tmp/other"])
         }
     }
 
     let config = OliphauntConfiguration(startupGUCs: [
-        .init("work_mem", "16MB"),
-        .init("SHARED_PRELOAD_LIBRARIES", "auto_explain, pg_textsearch"),
+        "work_mem": "16MB",
+        "SHARED_PRELOAD_LIBRARIES": "auto_explain, pg_textsearch",
     ])
     #expect(config.postgresStartupArgs(sharedPreloadLibraries: ["pg_textsearch", "z"]) == [
         "-c", "work_mem=16MB",

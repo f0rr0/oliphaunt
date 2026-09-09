@@ -6,7 +6,12 @@ mod error;
 mod oliphaunt;
 
 #[cfg(feature = "extensions")]
-pub use oliphaunt::extensions::Extension;
+pub use oliphaunt::extensions::{Extension, ExtensionPackage};
+pub use oliphaunt_resources::{IcuData, WasixExtensionDescriptor as ExtensionDescriptor};
+/// Explicit selection of PostgreSQL contrib extensions included with the runtime.
+pub mod extensions {
+    include!("oliphaunt/generated_contrib_descriptors.rs");
+}
 
 pub use async_api::{
     AsyncOliphaunt, AsyncOliphauntBuilder, AsyncOliphauntServer, AsyncOliphauntServerBuilder,
@@ -29,9 +34,11 @@ pub use oliphaunt::{
 };
 
 /// Options and structured errors for packaged PostgreSQL frontend programs.
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 pub mod tools {
     pub use crate::oliphaunt::tools::{
         PgDumpOptions, PostgresToolError, PostgresToolOutput, PsqlOptions,
     };
+    #[doc(hidden)]
+    pub use crate::oliphaunt::tools::{installed_tool_wasm, register_installed_package};
 }

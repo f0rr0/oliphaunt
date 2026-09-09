@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { fetchText, missingRequiredAppleArm64Slices } from "./render_swiftpm_release_package.mjs";
+import { fetchText, missingRequiredAppleArm64Slices, renderManifest } from "./render_swiftpm_release_package.mjs";
 
 describe("SwiftPM Apple carrier architecture contract", () => {
   test("accepts the three published arm64 slices", () => {
@@ -45,4 +45,16 @@ describe("SwiftPM remote checksum manifest", () => {
       }),
     })).rejects.toThrow("checksum manifest exceeds 1048576 bytes");
   });
+});
+
+
+test("the base Swift manifest owns contrib and leaves ICU in a separate package", () => {
+  const manifest = renderManifest("https://example.invalid/assets", "0.2.0", "a".repeat(64), {
+    dependencies: ["COliphauntExtensionHstore"],
+    targets: [{ kind: "binaryTarget", name: "OliphauntExtensionHstoreBinary", path: "generated/swiftpm/contrib/Artifacts/hstore.xcframework" }],
+  });
+  expect(manifest).toContain('dependencies: ["COliphaunt", "COliphauntExtensionHstore"]');
+  expect(manifest).toContain('resources: [.copy("ContribResources")]');
+  expect(manifest).toContain('OLIPHAUNT_PACKAGED_CONTRIB');
+  expect(manifest).not.toContain('OliphauntICU');
 });

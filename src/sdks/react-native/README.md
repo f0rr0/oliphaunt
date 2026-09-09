@@ -6,52 +6,56 @@ native SDKs while using platform-native storage and lifecycle adapters.
 
 ## Setup and use
 
-Install the package, run CocoaPods for iOS, and apply the package's Expo config
-plugin when using Expo prebuild. The supported platforms and packaged targets
-are declared by the repository SDK manifest; the package does not advertise
-future platform targets.
+Install the SDK and any external extension dependencies, then rebuild the native app:
 
-Enable PostgreSQL ICU collations through the Expo plugin only when the app needs
-them:
+```sh
+npm install @oliphaunt/react-native @oliphaunt/extension-vector
+```
+
+React Native shares `@oliphaunt/extension-vector` with native Node. With Expo,
+add the config plugin; it reads installed dependencies and versions:
 
 ```json
 {
   "expo": {
-    "plugins": [["@oliphaunt/react-native", { "icu": true }]]
+    "plugins": ["@oliphaunt/react-native"]
   }
 }
 ```
 
-The plugin packages ICU data with the matching platform cluster seed; this is a
-build-time choice and does not add a database-open option.
+Use the directory supplied by your platform filesystem API. For example, with
+Expo FileSystem:
 
 ```typescript
-import Oliphaunt from '@oliphaunt/react-native';
+import { Directory, Paths } from 'expo-file-system';
+import Oliphaunt, { directory, extensions } from '@oliphaunt/react-native';
+import vector from '@oliphaunt/extension-vector';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'primary' },
+  storage: directory(new Directory(Paths.document, 'postgres').uri),
   startupGUCs: { application_name: 'my-app' },
+  extensions: [vector, extensions.hstore],
 });
-
-await db.execute('CREATE TABLE events(value text)');
-await db.execute('INSERT INTO events(value) VALUES ($1)', ['ready']);
-const result = await db.query('SELECT value FROM events');
-console.log(result.rows[0]?.value);
-
-const bytes = await db.backup();
-await db.close();
-await Oliphaunt.restore(
-  { kind: 'applicationData', name: 'restored' },
-  bytes,
-);
+try {
+  await db.execute('CREATE EXTENSION vector');
+  await db.execute('CREATE EXTENSION hstore');
+} finally {
+  await db.close();
+}
 ```
 
-`username` selects an existing PostgreSQL role. New roots are bootstrapped with
-`postgres`; create other roles before reopening the root as them.
+`directory` accepts a native path or local file URI. Omit storage for an SDK-owned
+temporary directory. Restore accepts a persistent directory destination, such as
+`Oliphaunt.restore(directory(restoredDirectoryUri), bytes)`.
 
-Storage is `temporaryDirectory`, an explicit `directory`, or an
-`applicationData` name resolved by the native platform adapter. Restore accepts
-only persistent directory/application-data destinations.
+Contrib ships with the SDK but must be selected explicitly. For ICU collations,
+install `@oliphaunt/icu`, import its default `icu` value, and pass `icu` when
+opening. The plugin packages installed resources; each database selects its own
+extensions and ICU option. There is no repeated plugin extension list or ICU flag.
+Native dependency changes require a native rebuild, including when using Metro.
+
+`username` selects an existing PostgreSQL role. New roots start with `postgres`;
+create other roles before reopening the root as them.
 
 ## API contract
 

@@ -13,8 +13,11 @@ import {
   resolveSwiftCarrierSelection,
 } from "./swift-carrier-resolver.mjs";
 
+import { validateSelection, writeBundledContrib, renderSwiftTargets } from "./render-extension-products.mjs";
+import { loadSwiftExtensionInventoryCatalog, validateSwiftExtensionResourceArtifact } from "./extension-resource-inventory.mjs";
+
 const sdk = path.resolve(import.meta.dirname, "..");
-const root = path.resolve(process.argv[2] ?? path.join(sdk, ".build", "carrier-test"));
+const root = path.resolve(process.argv[2] ?? path.join(sdk, "../../../target/swift-carrier-test"));
 const generator = path.join(import.meta.dirname, "render-extension-products.mjs");
 const schema = "oliphaunt-react-native-ios-carrier-v1";
 const extensionCarrierSchema = "oliphaunt-swift-extension-carrier-v1";
@@ -265,11 +268,14 @@ async function base() {
   );
   const icu = path.join(archives, "liboliphaunt-0.1.0-icu-data.tar.gz");
   run("tar", ["--no-xattrs", "-czf", icu, "-C", path.join(root, "base", "icu"), "."]);
+  const icuSeed = path.join(archives, "liboliphaunt-0.1.0-icu-seed-ios-datum64.tar.gz");
+  await fs.copyFile(icu, icuSeed);
   return {
     assets: [
       await asset("base-xcframework", framework, "zip", "liboliphaunt.xcframework"),
       await asset("runtime-resources", runtime, "tar.gz", "oliphaunt"),
       await asset("icu-data", icu, "tar.gz", "."),
+      await asset("icu-seed", icuSeed, "tar.gz", "."),
     ],
     product: "liboliphaunt-native",
     tag: "liboliphaunt-native-v0.1.0",
@@ -667,6 +673,31 @@ async function main() {
       new RegExp(`\\.binaryTarget\\(\\s*name: "${targetName}",[\\s\\S]*?path: "Artifacts/${targetName}\\.xcframework"`, "u"),
     );
   }
+
+  const bundledOutput = path.join(root, "bundled-contrib");
+  const contribInput = await resolveSwiftCarrierSelection({ carrierFile: carrier, cacheDir: cache,
+    allowFileUrls: true, localBinaryTargets: true, basePackageVersion: "0.1.0", extensions: ["earthdistance"] });
+  const contrib = validateSelection(contribInput, root, { allowFileUrls: true, localBinaryTargets: true });
+  const inventoryCatalog = await loadSwiftExtensionInventoryCatalog();
+  for (const extension of contrib.extensions) {
+    extension.resources = await validateSwiftExtensionResourceArtifact({ extension, canonical: inventoryCatalog.get(extension.sqlName),
+      nativeRuntime: contrib.nativeRuntime, label: "bundled contrib fixture", allowMobileCarrierArchives: true });
+  }
+  const bundled = await writeBundledContrib(contrib, bundledOutput);
+  const bundledSource = await fs.readFile(path.join(bundledOutput, "src/sdks/swift/Sources/Oliphaunt/OliphauntBundledContrib.swift"), "utf8");
+  assert.match(bundledSource, /try prepareBundledContrib\("cube"\)/u);
+  assert.doesNotMatch(bundledSource, /postgis|pgtap/u);
+  assert.equal((await fs.stat(path.join(bundledOutput, "src/sdks/swift/Sources/Oliphaunt/ContribResources/cube/Resources/extension-artifact/manifest.properties"))).isFile(), true);
+  assert.match(renderSwiftTargets(bundled.targets), /generated\/swiftpm\/contrib\/Artifacts/u);
+
+  const standalone = path.join(root, "standalone-pgtap");
+  run(process.execPath, [generator, "--carrier", carrier, "--extension-carrier", pgtapCarrier,
+    "--extensions", "pgtap", "--release-product", "oliphaunt-extension-pgtap",
+    "--cache-dir", cache, "--allow-file-urls", "--base-package-version", "0.1.0", "--output-dir", standalone]);
+  const standaloneManifest = await fs.readFile(path.join(standalone, "Package.swift"), "utf8");
+  assert.match(standaloneManifest, /name: "OliphauntExtensionPgtap"/u);
+  assert.match(standaloneManifest, /from: "0.1.0"/u);
+  assert.doesNotMatch(standaloneManifest, /OliphauntSelectedExtensions/u);
 
   const pgtapRuntime = manifest.extensions.find(({ sqlName }) => sqlName === "pgtap").assets[0];
   const cachedPgtap = path.join(cache, "extracted", pgtapRuntime.sha256);

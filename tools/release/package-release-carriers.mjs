@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { stageSwiftIcuPackage } from "./render_swiftpm_release_package.mjs";
+import { stageNativeIcuSeeds } from "./native-icu-seeds.mjs";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -983,7 +985,6 @@ function stageLiboliphauntNpmPayloads(version) {
     extractReleaseArchiveTree(archive, "lib/modules", path.join(stage, "lib/modules"));
     extractReleaseArchiveTree(archive, "runtime", path.join(stage, "runtime"));
     extractReleaseArchiveTree(archive, "cluster-seed", path.join(stage, "cluster-seed"));
-    extractReleaseArchiveTree(archive, "cluster-seed-icu", path.join(stage, "cluster-seed-icu"));
     extractReleaseArchiveFile(archive, "manifest.properties", path.join(stage, "manifest.properties"));
     const vcRuntimeMembers = [
       ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "bin", { profile: "provider" }),
@@ -1066,13 +1067,13 @@ function stageLiboliphauntToolsNpmFacade(version) {
   return stage;
 }
 
-function stageLiboliphauntIcuNpmPayload(version) {
+export function stageLiboliphauntIcuNpmPayload(version, { seedTargets } = {}) {
   const stage = stageNpmPackageDescriptor(
     LIBOLIPHAUNT_ICU_PACKAGE_NAME,
     LIBOLIPHAUNT_ICU_PACKAGE_ROOT,
     version,
     {
-      extraDescriptors: [ICU_PODSPEC, ICU_REACT_NATIVE_CONFIG],
+      extraDescriptors: [ICU_PODSPEC, ICU_REACT_NATIVE_CONFIG, "index.js", "node.js", "index.d.ts"],
       target: "portable",
     },
   );
@@ -1098,6 +1099,7 @@ function stageLiboliphauntIcuNpmPayload(version) {
   if (digest === undefined) {
     fail(`${rel(sourceArchive)} has no canonical ICU data tree digest`);
   }
+  stageNativeIcuSeeds(path.dirname(sourceArchive), version, path.join(stage, "OliphauntICU.bundle/native-seeds"), path.join(stage, ...ICU_DATA_RELATIVE_PATH.split("/")), seedTargets);
   packageJson.oliphaunt.icuDataTreeSha256 = digest;
   writeFileSync(manifestFile, `${JSON.stringify(packageJson, null, 2)}\n`);
   stageReleaseNotices(stage, { profile: "native-icu-data" });
@@ -1187,9 +1189,6 @@ export function liboliphauntNpmTarballs(version) {
       "package/cluster-seed/manifest.properties",
       "package/cluster-seed/files/PG_VERSION",
       "package/cluster-seed/files/global/pg_control",
-      "package/cluster-seed-icu/manifest.properties",
-      "package/cluster-seed-icu/files/PG_VERSION",
-      "package/cluster-seed-icu/files/global/pg_control",
       "package/manifest.properties",
       ...embeddedCoreModuleMembers(target.target, "package/lib/modules"),
       ...runtimeMembers,
@@ -1564,6 +1563,11 @@ async function packageLiboliphauntNativeCarriers() {
   const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
   liboliphauntNativeCargoArtifactPackages(version);
   liboliphauntNpmTarballs(version);
+  await stageSwiftIcuPackage({
+    assetDir: path.join(ROOT, "target/liboliphaunt/release-assets"), version,
+    baseSdkVersion: currentProductVersionSync("oliphaunt-swift", TOOL),
+    outputDir: path.join(ROOT, "target/release/swift-packages/oliphaunt-icu"),
+  });
   const contribProduct = contribCarrierDescriptor(TOOL).artifactProduct;
   const manifest = await buildMavenArtifactManifest(
     "target/release/maven-manifests/liboliphaunt-native.tsv",
@@ -1690,6 +1694,7 @@ export function liboliphauntWasixCargoArtifactPackages(
 ) {
   const outputDir = path.join(ROOT, "target/oliphaunt-wasix/cargo-artifacts");
   ensureWasixReleaseAssets();
+  ensureLiboliphauntReleaseAssets();
   const args = [
     process.execPath,
     "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
@@ -1850,6 +1855,30 @@ function packageExtensionFacade(product) {
   }
 }
 
+function packageExtensionSwiftCarriers(product) {
+  ensureLiboliphauntReleaseAssets();
+  const manifest = path.join(extensionPackageDir(product, "native"), "extension-artifacts.json");
+  const carrier = buildIosCarrierManifest({
+    baseAssetDir: path.join(ROOT, "target/liboliphaunt/release-assets"),
+    extensionManifests: [manifest], localUrls: true,
+  });
+  const staging = path.join(ROOT, "target/release/extension-carriers/swift", product);
+  mkdirSync(staging, { recursive: true });
+  const carrierFile = path.join(staging, "carrier-input.json");
+  writeFileSync(carrierFile, `${JSON.stringify(carrier, null, 2)}\n`);
+  const releaseTree = path.join(ROOT, "target/release/swift-packages", product);
+  rmSync(releaseTree, { recursive: true, force: true });
+  run(TOOL, [process.execPath, "src/sdks/swift/tools/render-extension-products.mjs",
+    "--carrier", carrierFile, "--extensions", carrier.extensions.map(row => row.sqlName).join(","),
+    "--release-product", product, "--base-package-version", currentProductVersionSync("oliphaunt-swift", TOOL),
+    "--allow-file-urls", "--local-binary-targets", "--cache-dir", path.join(staging, "cache"),
+    "--output-dir", releaseTree,
+  ]);
+  run(TOOL, [process.execPath, "src/shared/artifact-packaging/archive-directory.mjs",
+    releaseTree, path.join(staging, `${product}-swift-source.zip`),
+  ]);
+}
+
 async function packageExtensionCarriers(product) {
   requireExtensionAssets(product);
   await packageExtensionMavenCarriers(product);
@@ -1857,6 +1886,7 @@ async function packageExtensionCarriers(product) {
   packageExtensionNativeCargoCarriers(product);
   packageExtensionWasixCargoCarriers(product);
   packageExtensionFacade(product);
+  packageExtensionSwiftCarriers(product);
 }
 
 async function packageContribNativeCarriers() {

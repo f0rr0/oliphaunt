@@ -22,7 +22,7 @@ pub(crate) mod storage;
 pub(crate) mod sync_host_fs;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 pub mod tools;
 pub(crate) mod transport;
 pub(crate) mod wire;

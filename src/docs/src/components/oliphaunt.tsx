@@ -270,7 +270,8 @@ const embeddedModelRows = [
   },
   {
     title: 'Exact extensions',
-    description: 'Apps select SQL extension names before packaging or opening the database.',
+    description:
+      'Apps install external packages and explicitly select extension descriptors before opening.',
     icon: ShieldCheck,
   },
   {
@@ -702,8 +703,8 @@ const extensionFlow = [
     title: 'Select exact extensions',
     description: (
       <>
-        Use the native SDK's SQL-name form, Rust WASIX typed values, or imported WASIX TypeScript
-        descriptors.
+        Install external packages through your ecosystem package manager, then select external and
+        contrib descriptors explicitly for each database.
       </>
     ),
   },
@@ -1584,7 +1585,6 @@ const firstQueryExamples = [
     packageName: '@oliphaunt/ts',
     code: `const db = await Oliphaunt.open({
   storage: { kind: 'directory', path: 'main.oliphaunt' },
-  extensions: ['vector'],
 });
 
 const rows = await db.query('select 1 as ready');
@@ -1596,7 +1596,6 @@ await db.close();`,
     code: `let mut db = Oliphaunt::builder()
     .storage(DatabaseStorage::Directory("main.oliphaunt".into()))
     .direct()
-    .extension(Extension::VECTOR)
     .open()?;
 
 db.query("select 1 as ready")?;
@@ -1607,8 +1606,7 @@ db.close()?;`,
     packageName: 'Oliphaunt',
     code: `let db = try await OliphauntDatabase.open(
   configuration: OliphauntConfiguration(
-    storage: .directory(appStorage.appending(path: "main.oliphaunt")),
-    extensions: ["vector"]
+    storage: .directory(appStorage.appending(path: "main.oliphaunt"))
   )
 )
 
@@ -1624,11 +1622,11 @@ export function FirstQueryFlow() {
         <div>
           <p className="text-sm font-semibold">First query shape</p>
           <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-            The same storage, extension, query, and lifecycle concepts in ecosystem-native syntax.
+            The same storage, query, and lifecycle concepts in ecosystem-native syntax.
           </p>
         </div>
         <ol className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
-          {['Product', 'Storage', 'Extensions', 'Query', 'Close'].map((item, index) => (
+          {['Product', 'Storage', 'Query', 'Close'].map((item, index) => (
             <li key={item}>
               <span className="text-xs font-medium text-fd-muted-foreground">
                 {String(index + 1).padStart(2, '0')}
@@ -1861,9 +1859,9 @@ export function ExactExtensionRule() {
         <div>
           <p className="text-sm font-semibold">Extension selection is exact and product-native.</p>
           <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-            Native SDKs select exact SQL names, Rust WASIX uses exact Cargo features and typed
-            values, and WASIX TypeScript imports exact <code>-wasix</code> descriptors. Every form
-            includes only the selected carrier closure.
+            Every SDK explicitly selects contrib and external descriptors. Contrib ships with the
+            base SDK; external packages own their bytes and versions. Package dependencies determine
+            what ships, and database configuration determines what is used.
           </p>
         </div>
       </div>

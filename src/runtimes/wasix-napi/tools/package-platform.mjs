@@ -106,7 +106,8 @@ function main() {
     || typeof buildInputs.targetTriple !== "string"
     || buildInputs.targetTriple.length === 0
     || !Array.isArray(buildInputs.inputs?.extensionArtifacts)
-    || buildInputs.inputs.extensionArtifacts.length === 0
+    || buildInputs.inputs.extensionArtifacts.length !== 1
+    || buildInputs.inputs.extensionArtifacts[0].product !== "oliphaunt-extension-contrib-pg18"
   ) {
     throw new Error(`${path.basename(buildInputsFile)} has incompatible WASIX N-API build inputs`);
   }

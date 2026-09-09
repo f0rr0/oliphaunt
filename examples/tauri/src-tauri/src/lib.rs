@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use oliphaunt::{AsyncOliphaunt, DatabaseStorage};
-use oliphaunt::{Extension, QueryResult};
+use oliphaunt::{extensions, QueryResult};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -123,10 +123,9 @@ impl From<oliphaunt::Error> for CommandError {
 }
 
 async fn open_database(directory: PathBuf) -> anyhow::Result<AsyncOliphaunt> {
-    oliphaunt::register_build_resources!()?;
     let db = AsyncOliphaunt::builder()
         .storage(DatabaseStorage::Directory(directory))
-        .extensions([Extension::HSTORE, Extension::PG_TRGM, Extension::UNACCENT])
+        .extensions([extensions::HSTORE, extensions::PG_TRGM, extensions::UNACCENT])
         .open()
         .await?;
     db.execute(SCHEMA).await?;

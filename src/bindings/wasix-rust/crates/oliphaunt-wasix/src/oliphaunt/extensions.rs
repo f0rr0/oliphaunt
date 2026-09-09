@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
-#[cfg(all(test, feature = "extension-pg-textsearch"))]
+#[cfg(test)]
 use anyhow::bail;
 
 use crate::oliphaunt::config::PostgresConfig;
@@ -27,6 +27,9 @@ impl ExtensionNativeModule {
     }
 }
 
+use oliphaunt_resources::WasixExtensionDescriptor;
+pub use oliphaunt_resources::WasixPackage as ExtensionPackage;
+
 /// A bundled PostgreSQL extension artifact that Oliphaunt can make available.
 ///
 /// Selecting an extension does not run `CREATE EXTENSION`, `LOAD`, or other
@@ -39,9 +42,21 @@ pub struct Extension {
     aot_name: Option<&'static str>,
     dependencies: &'static [&'static str],
     startup_config: &'static [&'static str],
+    package: Option<&'static ExtensionPackage>,
 }
 
 impl Extension {
+    /// Bind extension metadata to the exact package selected by Cargo.
+    #[doc(hidden)]
+    pub const fn with_package(mut self, package: &'static ExtensionPackage) -> Self {
+        self.package = Some(package);
+        self
+    }
+
+    pub(crate) const fn package(self) -> Option<&'static ExtensionPackage> {
+        self.package
+    }
+
     /// SQL extension name used in `CREATE EXTENSION`.
     pub const fn sql_name(self) -> &'static str {
         self.sql_name
@@ -76,14 +91,65 @@ impl Extension {
     }
 }
 
+impl From<WasixExtensionDescriptor> for Extension {
+    fn from(descriptor: WasixExtensionDescriptor) -> Self {
+        let mut extension = Self::by_sql_name(descriptor.sql_name).unwrap_or(Self {
+            sql_name: descriptor.sql_name,
+            native_support_modules: &[],
+            native_module_file: None,
+            aot_name: None,
+            dependencies: &[],
+            startup_config: &[],
+            package: None,
+        });
+        extension.package = descriptor.package;
+        extension
+    }
+}
+
 pub(crate) fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Extension>> {
     let mut visiting = BTreeSet::new();
     let mut visited = BTreeSet::new();
     let mut resolved = Vec::new();
     let mut requested = extensions.to_vec();
     requested.sort_by_key(|extension| extension.sql_name());
+    for pair in requested.windows(2) {
+        if pair[0].sql_name() == pair[1].sql_name() && pair[0] != pair[1] {
+            return Err(crate::error::invalid_configuration(format!(
+                "conflicting packages selected for extension '{}'",
+                pair[0].sql_name()
+            )));
+        }
+    }
+    let selected: BTreeMap<_, _> = requested
+        .iter()
+        .map(|extension| (extension.sql_name(), *extension))
+        .collect();
     for extension in requested {
-        visit_extension(extension, &mut visiting, &mut visited, &mut resolved)?;
+        if Extension::by_sql_name(extension.sql_name()).is_none() {
+            return Err(crate::error::invalid_configuration(format!(
+                "unsupported extension '{}'",
+                extension.sql_name()
+            )));
+        }
+        if let Some(package) = extension.package {
+            if package.runtime_version() != liboliphaunt_wasix_portable::PACKAGE_VERSION {
+                return Err(crate::error::invalid_configuration(format!(
+                    "{}@{} requires WASIX runtime {}, selected {}",
+                    package.product(),
+                    package.version(),
+                    package.runtime_version(),
+                    liboliphaunt_wasix_portable::PACKAGE_VERSION
+                )));
+            }
+        }
+        visit_extension(
+            extension,
+            &selected,
+            &mut visiting,
+            &mut visited,
+            &mut resolved,
+        )?;
     }
     Ok(resolved)
 }
@@ -143,7 +209,7 @@ pub(crate) fn postgres_config_with_extension_startup(
     Ok(postgres_config)
 }
 
-#[cfg(all(test, feature = "extension-pg-textsearch"))]
+#[cfg(test)]
 pub(crate) fn ensure_extension_startup_config_is_active(
     postgres_config: &PostgresConfig,
     extension: Extension,
@@ -215,11 +281,21 @@ fn comma_separated_values(value: &str) -> impl Iterator<Item = &str> {
 
 fn visit_extension(
     extension: Extension,
+    selected: &BTreeMap<&'static str, Extension>,
     visiting: &mut BTreeSet<&'static str>,
     visited: &mut BTreeSet<&'static str>,
     resolved: &mut Vec<Extension>,
 ) -> Result<()> {
     if visited.contains(extension.sql_name()) {
+        if resolved
+            .iter()
+            .any(|prior| prior.sql_name() == extension.sql_name() && *prior != extension)
+        {
+            return Err(crate::error::invalid_configuration(format!(
+                "conflicting packages selected for extension '{}'",
+                extension.sql_name()
+            )));
+        }
         return Ok(());
     }
     if !visiting.insert(extension.sql_name()) {
@@ -229,14 +305,31 @@ fn visit_extension(
         )));
     }
     for dependency in extension.dependencies() {
-        let dependency_extension = Extension::by_sql_name(dependency).ok_or_else(|| {
+        let mut dependency_extension = Extension::by_sql_name(dependency).ok_or_else(|| {
             crate::error::invalid_configuration(format!(
                 "selected extension '{}' depends on missing catalog extension '{}'",
                 extension.sql_name(),
                 dependency
             ))
         })?;
-        visit_extension(dependency_extension, visiting, visited, resolved)?;
+        if let Some(package) = extension.package {
+            if package
+                .archives()
+                .iter()
+                .any(|(name, _, _)| name == dependency)
+            {
+                dependency_extension = dependency_extension.with_package(package);
+            }
+        }
+        if let Some(explicit) = selected.get(dependency) {
+            if dependency_extension.package.is_some() && dependency_extension != *explicit {
+                return Err(crate::error::invalid_configuration(format!(
+                    "conflicting packages selected for extension '{dependency}'"
+                )));
+            }
+            dependency_extension = *explicit;
+        }
+        visit_extension(dependency_extension, selected, visiting, visited, resolved)?;
     }
     visiting.remove(extension.sql_name());
     visited.insert(extension.sql_name());
@@ -264,7 +357,7 @@ fn extension_activation_sql_for_test(extension: Extension) -> Result<Vec<&'stati
         .collect())
 }
 
-#[cfg(all(test, feature = "extension-pg-textsearch"))]
+#[cfg(test)]
 mod startup_config_tests {
     use super::*;
 
@@ -316,7 +409,7 @@ mod extension_tests {
     }
 
     #[test]
-    #[cfg(all(feature = "extension-cube", feature = "extension-earthdistance"))]
+
     fn dependent_extension_activation_includes_dependencies_first() -> Result<()> {
         let activation = extension_activation_sql_for_test(Extension::EARTHDISTANCE)?;
         assert_eq!(activation.len(), 2);
@@ -326,24 +419,24 @@ mod extension_tests {
     }
 
     #[test]
-    #[cfg(feature = "extension-uuid-ossp")]
+
     fn uuid_ossp_aot_direct_and_restart_smoke() -> Result<()> {
         run_direct_and_restart_smoke_set(&[Extension::UUID_OSSP])
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[cfg(feature = "extension-uuid-ossp")]
+
     async fn uuid_ossp_aot_server_smoke() -> Result<()> {
         run_server_smoke_set(&[Extension::UUID_OSSP]).await
     }
 
     #[test]
-    #[cfg(feature = "extension-uuid-ossp")]
+
     fn uuid_ossp_aot_materialization_smoke() -> Result<()> {
         run_lifecycle_materialization_set(&[Extension::UUID_OSSP])
     }
 
-    #[cfg(all(feature = "tools", feature = "extension-uuid-ossp"))]
+    #[cfg(feature = "__internal-tools")]
     #[test]
     fn uuid_ossp_aot_dump_restore_smoke() -> Result<()> {
         use crate::tools::{PgDumpOptions, PsqlOptions};

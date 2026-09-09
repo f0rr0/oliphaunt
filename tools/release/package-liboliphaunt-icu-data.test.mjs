@@ -67,7 +67,7 @@ test("packages the portable ICU payload deterministically outside platform relea
   expect(members).toContain("manifest.properties");
   expect(members.some((member) => member.startsWith("cluster-seed"))).toBe(false);
   expect(members).toContain("package-size.tsv");
-  expect(members).not.toContain("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT");
+  expect(members).toContain("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT");
   expect(members).toContain("THIRD_PARTY_LICENSES/ICU-LICENSE");
   const receipt = spawnSync("tar", ["-xOzf", archive, "manifest.properties"], { encoding: "utf8" });
   expect(receipt.status, receipt.stderr).toBe(0);

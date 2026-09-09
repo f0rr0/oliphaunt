@@ -35,14 +35,35 @@ pub(super) struct ResolvedRuntimeClosure {
     pub(super) cluster_seed_dir: Option<PathBuf>,
 }
 
+#[cfg(feature = "internal-native-packaging")]
 pub(super) fn resolve_runtime_closure(
     profile: NativeRuntimeProfile,
     extensions: &[Extension],
     requested_catalog_profile: Option<NativeCatalogProfile>,
 ) -> Result<ResolvedRuntimeClosure> {
+    resolve_runtime_closure_with_resources(
+        profile,
+        extensions,
+        requested_catalog_profile,
+        None,
+        None,
+    )
+}
+
+pub(super) fn resolve_runtime_closure_with_resources(
+    profile: NativeRuntimeProfile,
+    extensions: &[Extension],
+    requested_catalog_profile: Option<NativeCatalogProfile>,
+    selected_resources: Option<&Path>,
+    selected_icu: Option<bool>,
+) -> Result<ResolvedRuntimeClosure> {
     let install_dir = locate_native_install_dir()?;
     let package_resources_root = package_resources_root_for_install(&install_dir);
-    let available_icu_data = locate_native_icu_data()?;
+    let available_icu_data = if selected_icu == Some(false) {
+        None
+    } else {
+        locate_native_icu_data(selected_resources)?
+    };
     let catalog_profile = requested_catalog_profile.unwrap_or_else(|| {
         if available_icu_data.is_some() {
             NativeCatalogProfile::Icu
@@ -63,20 +84,15 @@ pub(super) fn resolve_runtime_closure(
     let icu_tree_sha256 = icu_data
         .as_ref()
         .and_then(|data| data.tree_sha256.as_deref());
-    let runtime_dir = materialize_runtime(
+    let runtime_dir = materialize_runtime_with_resources(
         profile,
         &install_dir,
         extensions,
         icu_directory,
         icu_tree_sha256,
+        selected_resources,
     )?;
-    let package_closure_root = package_resources_root.filter(|resources_root| match &icu_data {
-        None => catalog_profile == NativeCatalogProfile::Standard,
-        Some(icu) => {
-            catalog_profile == NativeCatalogProfile::Icu
-                && icu.package_resources_root.as_ref() == Some(resources_root)
-        }
-    });
+    let package_closure_root = package_resources_root;
     // Packaging materializes the seeds after resolving the runtime closure. Only an
     // ordinary SDK open consumes a seed that already belongs to a released carrier.
     let cluster_seed = if requested_catalog_profile.is_none() {
@@ -113,14 +129,22 @@ pub(super) fn resolve_runtime_closure(
     })
 }
 
-pub(super) fn materialize_runtime(
+fn materialize_runtime_with_resources(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
     extensions: &[Extension],
     icu_data: Option<&Path>,
     icu_data_tree_sha256: Option<&str>,
+    selected_resources: Option<&Path>,
 ) -> Result<PathBuf> {
-    let extension_artifact_dirs = locate_native_extension_artifact_dirs();
+    let mut extension_artifact_dirs = Vec::new();
+    if let Some(resources) = selected_resources {
+        for entry in sorted_read_dir(&resources.join("extension")).unwrap_or_default() {
+            extension_artifact_dirs.push(entry.path());
+        }
+    }
+    extension_artifact_dirs.extend(locate_native_extension_artifact_dirs());
+
     let embedded_modules = if profile.needs_embedded_modules() {
         Some(locate_native_embedded_modules_dir(install_dir)?)
     } else {

@@ -12,6 +12,20 @@ const ARTIFACT_TARGET: &str = "portable";
 const PACKAGED_ICU_ARCHIVE: &str = "payload/icu-data.tar.zst";
 
 fn main() {
+    let native_version_file = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("payload/native-runtime-version");
+    println!("cargo:rerun-if-changed={}", native_version_file.display());
+    let native_version = fs::read_to_string(&native_version_file)
+        .unwrap_or_else(|_| env::var("CARGO_PKG_VERSION").unwrap());
+    let native_version = native_version.trim();
+    assert!(
+        !native_version.is_empty()
+            && native_version
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte)),
+        "invalid native runtime version"
+    );
+    println!("cargo:rustc-env=OLIPHAUNT_ICU_NATIVE_RUNTIME_VERSION={native_version}");
     println!("cargo:rerun-if-env-changed=OLIPHAUNT_ICU_DATA_DIR");
     println!("cargo:rerun-if-env-changed=OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD");
 
@@ -33,6 +47,7 @@ fn main() {
             );
         }
         write_generated_icu(&out, None);
+        fs::write(out_dir.join("native_icu.rs"), "&[]\n").expect("write empty native ICU index");
     }
 }
 
@@ -40,7 +55,82 @@ fn emit_icu_artifact(out: &Path, out_dir: &Path, archive: &Path, icu_root: &Path
     let archive_sha256 = sha256_file(archive).expect("digest ICU data archive");
     let data_tree_sha256 = logical_tree_sha256(icu_root).expect("digest ICU logical data tree");
     write_generated_icu(out, Some((archive, &archive_sha256, &data_tree_sha256)));
-    emit_artifact_manifest(out_dir, icu_root, &data_tree_sha256);
+    let receipt = out_dir.join("native-icu.properties");
+    fs::write(&receipt, format!("schema=oliphaunt-icu-data-v1\nartifactRole=icu-data\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256={data_tree_sha256}\n")).expect("write native ICU receipt");
+    emit_artifact_manifest(out_dir, icu_root, &receipt);
+    let mut native = String::from("&[\n");
+    for file in collect_files(icu_root)
+        .expect("collect native ICU files")
+        .into_iter()
+        .chain([receipt.clone()])
+    {
+        let relative = if file == receipt {
+            "manifest.properties".to_owned()
+        } else {
+            format!(
+                "share/icu/{}",
+                file.strip_prefix(icu_root)
+                    .expect("ICU file path")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            )
+        };
+        let digest = sha256_file(&file).expect("hash native ICU file");
+        native.push_str(&format!(
+            "({:?}, include_bytes!({:?}), {digest:?}, false),\n",
+            format!("icu-data/oliphaunt-icu/{relative}"),
+            file
+        ));
+    }
+    if let Some((target, seed_root)) = native_seed_root() {
+        println!("cargo:rerun-if-changed={}", seed_root.display());
+        if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
+            assert!(
+                seed_root.join("manifest.properties").is_file(),
+                "native ICU seed missing for {target}"
+            );
+        }
+        for directory in
+            collect_directories(&seed_root).expect("collect native ICU seed directories")
+        {
+            let relative = directory
+                .strip_prefix(&seed_root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            let name = format!("icu-data/oliphaunt-icu/native-seeds/{target}/{relative}/");
+            native.push_str(&format!("({name:?}, b\"\", \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\", false),\n"));
+        }
+        for file in collect_files(&seed_root).expect("collect native ICU seed files") {
+            let relative = file
+                .strip_prefix(&seed_root)
+                .expect("seed file path")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let digest = sha256_file(&file).expect("hash native ICU seed file");
+            native.push_str(&format!(
+                "({:?}, include_bytes!({:?}), {digest:?}, false),\n",
+                format!("icu-data/oliphaunt-icu/native-seeds/{target}/{relative}"),
+                file
+            ));
+        }
+    }
+    native.push_str("]\n");
+    fs::write(out_dir.join("native_icu.rs"), native).expect("write native ICU resource index");
+}
+
+fn native_seed_root() -> Option<(&'static str, PathBuf)> {
+    let target = match env::var("TARGET").unwrap_or_default().as_str() {
+        "x86_64-unknown-linux-gnu" => "linux-x64-gnu",
+        "aarch64-unknown-linux-gnu" => "linux-arm64-gnu",
+        "aarch64-apple-darwin" => "macos-arm64",
+        "x86_64-pc-windows-msvc" => "windows-x64-msvc",
+        _ => return None,
+    };
+    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
+        .join("payload/native-seeds")
+        .join(target);
+    Some((target, root))
 }
 
 fn find_packaged_icu_archive() -> Option<PathBuf> {
@@ -220,24 +310,42 @@ fn write_generated_icu(out: &Path, archive: Option<(&Path, &str, &str)>) {
             "pub const HAS_ICU_DATA: bool = true;\n\
              pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = Some({archive_sha256:?});\n\
              pub const ICU_DATA_TREE_SHA256: Option<&str> = Some({data_tree_sha256:?});\n\
-             pub fn icu_data_archive() -> Option<&'static [u8]> {{ Some(include_bytes!({archive:?})) }}\n",
+             pub const fn icu_data_archive() -> Option<&'static [u8]> {{ Some(include_bytes!({archive:?})) }}\n",
             archive = archive.to_string_lossy(),
         ),
         None => "pub const HAS_ICU_DATA: bool = false;\n\
                  pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = None;\n\
                  pub const ICU_DATA_TREE_SHA256: Option<&str> = None;\n\
-                 pub fn icu_data_archive() -> Option<&'static [u8]> { None }\n"
+                 pub const fn icu_data_archive() -> Option<&'static [u8]> { None }\n"
             .to_owned(),
     };
+    let mut text = text;
+    for (name, file) in [
+        ("ICU_SEED_ARCHIVE", "icu.tar.zst"),
+        ("ICU_SEED_MANIFEST", "icu.json"),
+    ] {
+        let seed = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
+            .join("payload/cluster-seeds")
+            .join(file);
+        println!("cargo:rerun-if-changed={}", seed.display());
+        let body = if seed.is_file() {
+            format!("Some(include_bytes!({seed:?}))")
+        } else {
+            "None".into()
+        };
+        text.push_str(&format!(
+            "pub const {name}: Option<&'static [u8]> = {body};\n"
+        ));
+    }
     fs::write(out, text).expect("write generated ICU data module");
 }
 
-fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path, data_tree_sha256: &str) {
+fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path, receipt: &Path) {
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
     let manifest_path = out_dir.join("oliphaunt-artifact.toml");
     let files = collect_files(icu_root).expect("collect ICU data files for manifest");
     let mut text = format!(
-        "schema = {ARTIFACT_SCHEMA:?}\nproduct = {ARTIFACT_PRODUCT:?}\nversion = {version:?}\nkind = {ARTIFACT_KIND:?}\ntarget = {ARTIFACT_TARGET:?}\ndata_tree_sha256 = {data_tree_sha256:?}\ndata_version = \"76.1\"\ndata_form = \"files-le\"\n"
+        "schema = {ARTIFACT_SCHEMA:?}\nproduct = {ARTIFACT_PRODUCT:?}\nversion = {version:?}\nkind = {ARTIFACT_KIND:?}\ntarget = {ARTIFACT_TARGET:?}\n"
     );
     for file in files {
         let relative = file
@@ -253,8 +361,65 @@ fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path, data_tree_sha256: &st
             sha256,
         ));
     }
+    let receipt_sha256 = sha256_file(receipt).expect("hash ICU receipt");
+    text.push_str(&format!(
+        "\n[[files]]\nsource = {:?}\nrelative = \"manifest.properties\"\nsha256 = {receipt_sha256:?}\nexecutable = false\n",
+        receipt.display().to_string()
+    ));
+    if let Some((target, root)) = native_seed_root() {
+        let directories = collect_directories(&root)
+            .expect("collect seed directories")
+            .iter()
+            .map(|directory| {
+                format!(
+                    "native-seeds/{target}/{}",
+                    directory
+                        .strip_prefix(&root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                )
+            })
+            .collect::<Vec<_>>();
+        let insert_at = text.find("\n[[files]]").unwrap_or(text.len());
+        text.insert_str(insert_at, &format!("\ndirectories = {directories:?}\n"));
+        for file in collect_files(&root).expect("collect native ICU seed manifest files") {
+            let relative = file
+                .strip_prefix(&root)
+                .expect("seed relative path")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let sha256 = sha256_file(&file).expect("hash native ICU seed");
+            text.push_str(&format!(
+                "\n[[files]]\nsource = {:?}\nrelative = {:?}\nsha256 = {:?}\nexecutable = false\n",
+                file.display().to_string(),
+                format!("native-seeds/{target}/{relative}"),
+                sha256
+            ));
+        }
+    }
     fs::write(&manifest_path, text).expect("write ICU Cargo artifact manifest");
     println!("cargo::metadata=manifest={}", manifest_path.display());
+}
+
+fn collect_directories(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut directories = Vec::new();
+    if !root.exists() {
+        return Ok(directories);
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "seed symlink"));
+        }
+        if kind.is_dir() {
+            directories.push(entry.path());
+            directories.extend(collect_directories(&entry.path())?);
+        }
+    }
+    directories.sort();
+    Ok(directories)
 }
 
 fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {

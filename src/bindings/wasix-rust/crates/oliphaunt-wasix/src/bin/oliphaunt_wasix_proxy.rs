@@ -149,5 +149,5 @@ fn print_usage() {
     eprintln!("  --print-uri       Print the PostgreSQL connection URI to stdout");
     eprintln!("  --startup-guc NAME=VALUE");
     eprintln!("                    Set a PostgreSQL startup GUC on the embedded backend");
-    eprintln!("  --extension NAME  Select an extension artifact by SQL name");
+    eprintln!("  --extension NAME  Select a bundled contrib extension by SQL name");
 }

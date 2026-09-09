@@ -24,11 +24,11 @@ test("the live WASIX public surface includes the PostGIS product", () => {
     "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
   ]) {
     const cargo = Bun.TOML.parse(readFileSync(path.join(ROOT, relative), "utf8"));
-    assert.equal(Object.hasOwn(cargo.features ?? {}, "extension-postgis"), true, relative);
+    assert.equal(Object.hasOwn(cargo.features ?? {}, "extension-postgis"), relative.includes("/assets/"), relative);
   }
 });
 
-test("full WASIX evidence enables every extension feature", () => {
+test("source WASIX evidence enables every internal extension fixture", () => {
   const manifest = {
     extensions: [
       { "sql-name": "vector" },
@@ -36,10 +36,10 @@ test("full WASIX evidence enables every extension feature", () => {
     ],
   };
 
-  assert.deepEqual(extensionFeatures(manifest), ["extension-pg-trgm", "extension-vector"]);
+  assert.deepEqual(extensionFeatures(manifest), ["liboliphaunt-wasix-portable/extension-pg-trgm", "liboliphaunt-wasix-portable/extension-vector"]);
   assert.equal(
     fullEvidenceFeatures(manifest),
-    "extensions,tools,extension-pg-trgm,extension-vector",
+    "extensions,tools,liboliphaunt-wasix-portable/extension-pg-trgm,liboliphaunt-wasix-portable/extension-vector",
   );
 });
 

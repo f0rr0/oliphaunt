@@ -95,6 +95,30 @@ test("supports source-only selections and records the exact Swift source tag sep
   });
 });
 
+test("independent Swift sources are bound to their owning product version and frozen bytes", () => {
+  const products = [product("oliphaunt-extension-vector", ["github-release"], "2.3.4")];
+  const frozen = lock(products, []);
+  frozen.productArtifacts = [{
+    kind: "swiftpm-independent-package", product: products[0].id,
+    identity: "oliphaunt-extension-vector", sha256: "c".repeat(64), size: 123,
+  }];
+  const plan = publicConsumerPlan(frozen, [products[0].id], graph(products));
+  assert.deepEqual(plan.github.swiftPackages, [{
+    product: products[0].id, repository: "f0rr0/oliphaunt-extension-vector",
+    tag: "2.3.4", sha256: "c".repeat(64), size: 123,
+  }]);
+  const evidence = publicConsumerEvidence({
+    lock: frozen, plan, registryReceiptSha256: "e".repeat(64), githubReceiptDigest: "f".repeat(64),
+    surfaces: [{
+      surface: "github", mode: "anonymous-public-exact-tag-resolution",
+      productTags: plan.github.productTags, swift: null, swiftPackages: plan.github.swiftPackages,
+    }],
+  });
+  assert.equal(validatePublicConsumerEvidence(evidence, frozen, plan), evidence);
+  evidence.surfaces[0].swiftPackages = [];
+  assert.throws(() => validatePublicConsumerEvidence(evidence, frozen, plan), /independent SwiftPM coverage/);
+});
+
 test("derives consumer closures from package-manager scopes instead of publication-only dev edges", () => {
   const products = [product("alpha", ["crates-io"])];
   const leaf = carrier("cargo:leaf", "alpha", 0);

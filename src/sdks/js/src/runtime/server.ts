@@ -1,3 +1,4 @@
+import type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
 import { spawn } from 'node:child_process';
 import { chmod, lstat, mkdir, mkdtemp, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -288,6 +289,8 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       serverExecutable: config.serverExecutable,
       runtimeDirectory: config.runtimeDirectory,
       extensions: config.extensions,
+      extensionDescriptors: config.extensionDescriptors,
+      icu: config.icu,
     });
     const executable = tools.executable;
     const toolDirectory = tools.toolDirectory;
@@ -543,6 +546,8 @@ export async function resolveServerTools(options: {
   serverExecutable?: string;
   runtimeDirectory?: string;
   extensions?: readonly string[];
+  extensionDescriptors?: readonly NativeExtensionDescriptor[];
+  icu?: NativeIcuDescriptor;
 }): Promise<ServerTools> {
   const candidates = [
     options.serverExecutable,
@@ -565,7 +570,11 @@ export async function resolveServerTools(options: {
   if (options.serverExecutable !== undefined || options.runtimeDirectory !== undefined) {
     throw new Error(`set serverExecutable, runtimeDirectory, or ${OLIPHAUNT_POSTGRES_ENV}`);
   }
-  const install = await resolvePackageManagedServerInstall(options.extensions ?? []);
+  const install = await resolvePackageManagedServerInstall(
+    options.extensions ?? [],
+    options.extensionDescriptors,
+    options.icu,
+  );
   if (install.runtimeDirectory !== undefined) {
     const toolDirectory = join(install.runtimeDirectory, 'bin');
     const executable = join(toolDirectory, executableName('postgres'));
@@ -587,28 +596,22 @@ export async function resolveServerTools(options: {
   );
 }
 
-async function resolvePackageManagedServerInstall(extensions: readonly string[]): Promise<{
+async function resolvePackageManagedServerInstall(
+  extensions: readonly string[],
+  descriptors: readonly NativeExtensionDescriptor[] = [],
+  icu?: NativeIcuDescriptor,
+): Promise<{
   runtimeDirectory?: string;
   icuDataDirectory?: string;
   catalogProfile?: 'standard' | 'icu';
 }> {
-  if (runtimeName() === 'deno') {
-    if (extensions.length > 0) {
-      throw new Error(
-        `Deno server execution does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun openServer(). Selected extensions: ${extensions.join(', ')}`,
-      );
-    }
-    const install = await import('../native/assets-deno.js').then((module) =>
-      module.resolveDenoNativeInstall(),
-    );
-    return {
-      runtimeDirectory: install.runtimeDirectory,
-      icuDataDirectory: install.icuDataDirectory,
-      catalogProfile: install.catalogProfile,
-    };
-  }
-
-  return materializeNodeExtensionInstall(await resolveNodeNativeInstall(), extensions);
+  const install =
+    runtimeName() === 'deno'
+      ? await import('../native/assets-deno.js').then((module) =>
+          module.resolveDenoNativeInstall(undefined, icu),
+        )
+      : await resolveNodeNativeInstall(undefined, icu);
+  return materializeNodeExtensionInstall(install, extensions, descriptors);
 }
 
 async function optionalTool(

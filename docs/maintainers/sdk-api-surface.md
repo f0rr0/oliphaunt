@@ -36,6 +36,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::AsyncOliphauntBuilder.direct()`
 - `oliphaunt::AsyncOliphauntBuilder.extension()`
 - `oliphaunt::AsyncOliphauntBuilder.extensions()`
+- `oliphaunt::AsyncOliphauntBuilder.icu()`
 - `oliphaunt::AsyncOliphauntBuilder.new()`
 - `oliphaunt::AsyncOliphauntBuilder.open()`
 - `oliphaunt::AsyncOliphauntBuilder.startup_guc()`
@@ -51,6 +52,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::AsyncOliphauntServerBuilder.database()`
 - `oliphaunt::AsyncOliphauntServerBuilder.extension()`
 - `oliphaunt::AsyncOliphauntServerBuilder.extensions()`
+- `oliphaunt::AsyncOliphauntServerBuilder.icu()`
 - `oliphaunt::AsyncOliphauntServerBuilder.listen()`
 - `oliphaunt::AsyncOliphauntServerBuilder.new()`
 - `oliphaunt::AsyncOliphauntServerBuilder.server_executable()`
@@ -84,6 +86,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::CommandResult.row_count()`
 - `oliphaunt::DatabaseStorage`
 - `oliphaunt::DecodeError`
+- `oliphaunt::EmbeddedResource`
 - `oliphaunt::Error`
 - `oliphaunt::Error.kind()`
 - `oliphaunt::Error.postgres_error()`
@@ -136,9 +139,11 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::Extension.VECTOR`
 - `oliphaunt::Extension.by_sql_name()`
 - `oliphaunt::Extension.sql_name()`
+- `oliphaunt::ExtensionDescriptor`
 - `oliphaunt::FromSql`
 - `oliphaunt::FromSql.check_type()`
 - `oliphaunt::FromSql.from_sql()`
+- `oliphaunt::IcuData`
 - `oliphaunt::IntoParameter`
 - `oliphaunt::IntoParameter.TYPE_OID`
 - `oliphaunt::IntoParameter.into_parameter()`
@@ -168,6 +173,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::OliphauntBuilder.direct()`
 - `oliphaunt::OliphauntBuilder.extension()`
 - `oliphaunt::OliphauntBuilder.extensions()`
+- `oliphaunt::OliphauntBuilder.icu()`
 - `oliphaunt::OliphauntBuilder.new()`
 - `oliphaunt::OliphauntBuilder.open()`
 - `oliphaunt::OliphauntBuilder.startup_guc()`
@@ -183,6 +189,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::OliphauntServerBuilder.database()`
 - `oliphaunt::OliphauntServerBuilder.extension()`
 - `oliphaunt::OliphauntServerBuilder.extensions()`
+- `oliphaunt::OliphauntServerBuilder.icu()`
 - `oliphaunt::OliphauntServerBuilder.listen()`
 - `oliphaunt::OliphauntServerBuilder.new()`
 - `oliphaunt::OliphauntServerBuilder.server_executable()`
@@ -420,6 +427,7 @@ The unpublished workspace packaging tool enables `internal-native-packaging` and
 - `oliphaunt_build::BuildOutput.resources_dir`
 - `oliphaunt_build::Error`
 - `oliphaunt_build::configure()`
+- `oliphaunt_build::embed_resolved_artifacts()`
 - `oliphaunt_build::try_configure()`
 
 ## Native Rust tools: oliphaunt-tools
@@ -469,6 +477,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::AsyncOliphaunt.transaction()`
 - `oliphaunt_wasix::AsyncOliphauntBuilder`
 - `oliphaunt_wasix::AsyncOliphauntBuilder.database()`
+- `oliphaunt_wasix::AsyncOliphauntBuilder.icu()`
 - `oliphaunt_wasix::AsyncOliphauntBuilder.new()`
 - `oliphaunt_wasix::AsyncOliphauntBuilder.open()`
 - `oliphaunt_wasix::AsyncOliphauntBuilder.startup_guc()`
@@ -482,6 +491,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::AsyncOliphauntServer.is_closed()`
 - `oliphaunt_wasix::AsyncOliphauntServerBuilder`
 - `oliphaunt_wasix::AsyncOliphauntServerBuilder.database()`
+- `oliphaunt_wasix::AsyncOliphauntServerBuilder.icu()`
 - `oliphaunt_wasix::AsyncOliphauntServerBuilder.listen()`
 - `oliphaunt_wasix::AsyncOliphauntServerBuilder.new()`
 - `oliphaunt_wasix::AsyncOliphauntServerBuilder.start()`
@@ -525,6 +535,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::FromSql`
 - `oliphaunt_wasix::FromSql.check_type()`
 - `oliphaunt_wasix::FromSql.from_sql()`
+- `oliphaunt_wasix::IcuData`
 - `oliphaunt_wasix::IntoParameter`
 - `oliphaunt_wasix::IntoParameter.TYPE_OID`
 - `oliphaunt_wasix::IntoParameter.into_parameter()`
@@ -547,6 +558,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::Oliphaunt.transaction()`
 - `oliphaunt_wasix::OliphauntBuilder`
 - `oliphaunt_wasix::OliphauntBuilder.database()`
+- `oliphaunt_wasix::OliphauntBuilder.icu()`
 - `oliphaunt_wasix::OliphauntBuilder.new()`
 - `oliphaunt_wasix::OliphauntBuilder.open()`
 - `oliphaunt_wasix::OliphauntBuilder.startup_guc()`
@@ -560,6 +572,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::OliphauntServer.is_closed()`
 - `oliphaunt_wasix::OliphauntServerBuilder`
 - `oliphaunt_wasix::OliphauntServerBuilder.database()`
+- `oliphaunt_wasix::OliphauntServerBuilder.icu()`
 - `oliphaunt_wasix::OliphauntServerBuilder.listen()`
 - `oliphaunt_wasix::OliphauntServerBuilder.new()`
 - `oliphaunt_wasix::OliphauntServerBuilder.start()`
@@ -759,6 +772,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::ValueRef.format()`
 - `oliphaunt_wasix::ValueRef.is_null()`
 - `oliphaunt_wasix::ValueRef.type_oid()`
+- `oliphaunt_wasix::WasixExtensionDescriptor`
 
 ### `extensions` feature
 
@@ -768,8 +782,48 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::AsyncOliphauntServerBuilder.extensions()`
 - `oliphaunt_wasix::Extension`
 - `oliphaunt_wasix::Extension.ALL`
+- `oliphaunt_wasix::Extension.AMCHECK`
+- `oliphaunt_wasix::Extension.AUTO_EXPLAIN`
+- `oliphaunt_wasix::Extension.BLOOM`
+- `oliphaunt_wasix::Extension.BTREE_GIN`
+- `oliphaunt_wasix::Extension.BTREE_GIST`
+- `oliphaunt_wasix::Extension.CITEXT`
+- `oliphaunt_wasix::Extension.CUBE`
+- `oliphaunt_wasix::Extension.DICT_INT`
+- `oliphaunt_wasix::Extension.DICT_XSYN`
+- `oliphaunt_wasix::Extension.EARTHDISTANCE`
+- `oliphaunt_wasix::Extension.FILE_FDW`
+- `oliphaunt_wasix::Extension.FUZZYSTRMATCH`
+- `oliphaunt_wasix::Extension.HSTORE`
+- `oliphaunt_wasix::Extension.INTARRAY`
+- `oliphaunt_wasix::Extension.ISN`
+- `oliphaunt_wasix::Extension.LO`
+- `oliphaunt_wasix::Extension.LTREE`
+- `oliphaunt_wasix::Extension.PAGEINSPECT`
+- `oliphaunt_wasix::Extension.PGCRYPTO`
+- `oliphaunt_wasix::Extension.PGTAP`
+- `oliphaunt_wasix::Extension.PG_BUFFERCACHE`
+- `oliphaunt_wasix::Extension.PG_FREESPACEMAP`
+- `oliphaunt_wasix::Extension.PG_HASHIDS`
+- `oliphaunt_wasix::Extension.PG_IVM`
+- `oliphaunt_wasix::Extension.PG_SURGERY`
+- `oliphaunt_wasix::Extension.PG_TEXTSEARCH`
+- `oliphaunt_wasix::Extension.PG_TRGM`
+- `oliphaunt_wasix::Extension.PG_UUIDV7`
+- `oliphaunt_wasix::Extension.PG_VISIBILITY`
+- `oliphaunt_wasix::Extension.PG_WALINSPECT`
+- `oliphaunt_wasix::Extension.POSTGIS`
+- `oliphaunt_wasix::Extension.SEG`
+- `oliphaunt_wasix::Extension.TABLEFUNC`
+- `oliphaunt_wasix::Extension.TCN`
+- `oliphaunt_wasix::Extension.TSM_SYSTEM_ROWS`
+- `oliphaunt_wasix::Extension.TSM_SYSTEM_TIME`
+- `oliphaunt_wasix::Extension.UNACCENT`
+- `oliphaunt_wasix::Extension.UUID_OSSP`
+- `oliphaunt_wasix::Extension.VECTOR`
 - `oliphaunt_wasix::Extension.by_sql_name()`
 - `oliphaunt_wasix::Extension.sql_name()`
+- `oliphaunt_wasix::ExtensionPackage`
 - `oliphaunt_wasix::OliphauntBuilder.extension()`
 - `oliphaunt_wasix::OliphauntBuilder.extensions()`
 - `oliphaunt_wasix::OliphauntServerBuilder.extension()`
@@ -805,50 +859,8 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::tools::PsqlOptions.command()`
 - `oliphaunt_wasix::tools::PsqlOptions.new()`
 - `oliphaunt_wasix::tools::PsqlOptions.script()`
-
-### Individual `extension-*` features
-
-Each leaf feature also enables `extensions`; the constant below additionally requires the feature shown.
-
-- `extension-amcheck`: `oliphaunt_wasix::Extension.AMCHECK`
-- `extension-auto-explain`: `oliphaunt_wasix::Extension.AUTO_EXPLAIN`
-- `extension-bloom`: `oliphaunt_wasix::Extension.BLOOM`
-- `extension-btree-gin`: `oliphaunt_wasix::Extension.BTREE_GIN`
-- `extension-btree-gist`: `oliphaunt_wasix::Extension.BTREE_GIST`
-- `extension-citext`: `oliphaunt_wasix::Extension.CITEXT`
-- `extension-cube`: `oliphaunt_wasix::Extension.CUBE`
-- `extension-dict-int`: `oliphaunt_wasix::Extension.DICT_INT`
-- `extension-dict-xsyn`: `oliphaunt_wasix::Extension.DICT_XSYN`
-- `extension-earthdistance`: `oliphaunt_wasix::Extension.EARTHDISTANCE`
-- `extension-file-fdw`: `oliphaunt_wasix::Extension.FILE_FDW`
-- `extension-fuzzystrmatch`: `oliphaunt_wasix::Extension.FUZZYSTRMATCH`
-- `extension-hstore`: `oliphaunt_wasix::Extension.HSTORE`
-- `extension-intarray`: `oliphaunt_wasix::Extension.INTARRAY`
-- `extension-isn`: `oliphaunt_wasix::Extension.ISN`
-- `extension-lo`: `oliphaunt_wasix::Extension.LO`
-- `extension-ltree`: `oliphaunt_wasix::Extension.LTREE`
-- `extension-pageinspect`: `oliphaunt_wasix::Extension.PAGEINSPECT`
-- `extension-pg-buffercache`: `oliphaunt_wasix::Extension.PG_BUFFERCACHE`
-- `extension-pg-freespacemap`: `oliphaunt_wasix::Extension.PG_FREESPACEMAP`
-- `extension-pg-hashids`: `oliphaunt_wasix::Extension.PG_HASHIDS`
-- `extension-pg-ivm`: `oliphaunt_wasix::Extension.PG_IVM`
-- `extension-pg-surgery`: `oliphaunt_wasix::Extension.PG_SURGERY`
-- `extension-pg-textsearch`: `oliphaunt_wasix::Extension.PG_TEXTSEARCH`
-- `extension-pg-trgm`: `oliphaunt_wasix::Extension.PG_TRGM`
-- `extension-pg-uuidv7`: `oliphaunt_wasix::Extension.PG_UUIDV7`
-- `extension-pg-visibility`: `oliphaunt_wasix::Extension.PG_VISIBILITY`
-- `extension-pg-walinspect`: `oliphaunt_wasix::Extension.PG_WALINSPECT`
-- `extension-pgcrypto`: `oliphaunt_wasix::Extension.PGCRYPTO`
-- `extension-pgtap`: `oliphaunt_wasix::Extension.PGTAP`
-- `extension-postgis`: `oliphaunt_wasix::Extension.POSTGIS`
-- `extension-seg`: `oliphaunt_wasix::Extension.SEG`
-- `extension-tablefunc`: `oliphaunt_wasix::Extension.TABLEFUNC`
-- `extension-tcn`: `oliphaunt_wasix::Extension.TCN`
-- `extension-tsm-system-rows`: `oliphaunt_wasix::Extension.TSM_SYSTEM_ROWS`
-- `extension-tsm-system-time`: `oliphaunt_wasix::Extension.TSM_SYSTEM_TIME`
-- `extension-unaccent`: `oliphaunt_wasix::Extension.UNACCENT`
-- `extension-uuid-ossp`: `oliphaunt_wasix::Extension.UUID_OSSP`
-- `extension-vector`: `oliphaunt_wasix::Extension.VECTOR`
+- `oliphaunt_wasix::tools::installed_tool_wasm()`
+- `oliphaunt_wasix::tools::register_installed_package()`
 
 ## Native C ABI: liboliphaunt
 
@@ -904,6 +916,7 @@ Each leaf feature also enables `extensions`; the constant below additionally req
 - `OliphauntCommandResult.rowCount`
 - `OliphauntConfiguration.database`
 - `OliphauntConfiguration.extensions`
+- `OliphauntConfiguration.icu`
 - `OliphauntConfiguration.init`
 - `OliphauntConfiguration.startupGUCs`
 - `OliphauntConfiguration.storage`
@@ -925,6 +938,45 @@ Each leaf feature also enables `extensions`; the constant below additionally req
 - `OliphauntExecResult.init`
 - `OliphauntExecResult.notices`
 - `OliphauntExecResult.statements`
+- `OliphauntExtension.init`
+- `OliphauntExtension.product`
+- `OliphauntExtension.sqlName`
+- `OliphauntExtension.version`
+- `OliphauntExtensions.amcheck`
+- `OliphauntExtensions.autoExplain`
+- `OliphauntExtensions.bloom`
+- `OliphauntExtensions.btreeGin`
+- `OliphauntExtensions.btreeGist`
+- `OliphauntExtensions.citext`
+- `OliphauntExtensions.cube`
+- `OliphauntExtensions.dictInt`
+- `OliphauntExtensions.dictXsyn`
+- `OliphauntExtensions.earthdistance`
+- `OliphauntExtensions.fileFdw`
+- `OliphauntExtensions.fuzzystrmatch`
+- `OliphauntExtensions.hstore`
+- `OliphauntExtensions.intarray`
+- `OliphauntExtensions.isn`
+- `OliphauntExtensions.lo`
+- `OliphauntExtensions.ltree`
+- `OliphauntExtensions.pageinspect`
+- `OliphauntExtensions.pgBuffercache`
+- `OliphauntExtensions.pgFreespacemap`
+- `OliphauntExtensions.pgSurgery`
+- `OliphauntExtensions.pgTrgm`
+- `OliphauntExtensions.pgVisibility`
+- `OliphauntExtensions.pgWalinspect`
+- `OliphauntExtensions.pgcrypto`
+- `OliphauntExtensions.seg`
+- `OliphauntExtensions.tablefunc`
+- `OliphauntExtensions.tcn`
+- `OliphauntExtensions.tsmSystemRows`
+- `OliphauntExtensions.tsmSystemTime`
+- `OliphauntExtensions.unaccent`
+- `OliphauntExtensions.uuidOssp`
+- `OliphauntIcuData.init`
+- `OliphauntIcuData.resourceDirectory`
+- `OliphauntIcuData.version`
 - `OliphauntPostgresDecodable.decodePostgres()`
 - `OliphauntPostgresDiagnostic.columnName`
 - `OliphauntPostgresDiagnostic.constraintName`
@@ -1065,9 +1117,6 @@ Each leaf feature also enables `extensions`; the constant below additionally req
 - `OliphauntQueryRow.text()`
 - `OliphauntQueryRow.value()`
 - `OliphauntQueryRow.values`
-- `OliphauntStartupGUC.init`
-- `OliphauntStartupGUC.name`
-- `OliphauntStartupGUC.value`
 - `OliphauntTransaction.describe()`
 - `OliphauntTransaction.exec()`
 - `OliphauntTransaction.execute()`
@@ -1083,6 +1132,7 @@ Each leaf feature also enables `extensions`; the constant below additionally req
 - `actor OliphauntDatabase`
 - `enum OliphauntDatabaseStorage`
 - `enum OliphauntError`
+- `enum OliphauntExtensions`
 - `enum OliphauntQueryFormat`
 - `enum OliphauntStatementResult`
 - `enum OliphauntValueFormat`
@@ -1092,6 +1142,8 @@ Each leaf feature also enables `extensions`; the constant below additionally req
 - `struct OliphauntCommandResult`
 - `struct OliphauntConfiguration`
 - `struct OliphauntExecResult`
+- `struct OliphauntExtension`
+- `struct OliphauntIcuData`
 - `struct OliphauntPostgresDiagnostic`
 - `struct OliphauntPostgresError`
 - `struct OliphauntPostgresErrorField`
@@ -1101,7 +1153,6 @@ Each leaf feature also enables `extensions`; the constant below additionally req
 - `struct OliphauntQueryParam`
 - `struct OliphauntQueryResult`
 - `struct OliphauntQueryRow`
-- `struct OliphauntStartupGUC`
 - `struct OliphauntTransaction`
 - `struct OliphauntTransactionDatabaseError`
 - `struct OliphauntTransactionRollbackError`
@@ -1123,6 +1174,10 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `CommandResult.rowCount`
 - `ExecResult.notices`
 - `ExecResult.statements`
+- `ExtensionDescriptor.product`
+- `ExtensionDescriptor.sqlName`
+- `ExtensionDescriptor.version`
+- `IcuData.version`
 - `OliphauntDatabase.backup()`
 - `OliphauntDatabase.cancel()`
 - `OliphauntDatabase.close()`
@@ -1270,8 +1325,6 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `PostgresOid.varcharArray`
 - `PostgresOid.xml`
 - `PostgresOid.xmlArray`
-- `PostgresStartupGuc.name`
-- `PostgresStartupGuc.value`
 - `QueryDescription.fields`
 - `QueryDescription.notices`
 - `QueryDescription.parameterTypes`
@@ -1314,6 +1367,8 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `StatementResult.Rows.result`
 - `class CommandResult`
 - `class ExecResult`
+- `class ExtensionDescriptor`
+- `class IcuData`
 - `class OliphauntDatabase`
 - `class OliphauntException`
 - `class OliphauntTransaction`
@@ -1324,7 +1379,6 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `class PostgresErrorField`
 - `class PostgresException`
 - `class PostgresNotice`
-- `class PostgresStartupGuc`
 - `class QueryDescription`
 - `class QueryField`
 - `class QueryFormat`
@@ -1339,6 +1393,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `enum class ValueFormat`
 - `fun interface PostgresDecoder`
 - `interface StatementResult`
+- `object Extensions`
 - `object PostgresDecoders`
 - `object QueryFormat.Binary`
 - `object QueryFormat.Text`
@@ -1347,19 +1402,38 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 
 ### androidMain
 
+- `BlockingOliphauntDatabase.backup()`
+- `BlockingOliphauntDatabase.cancel()`
+- `BlockingOliphauntDatabase.exec()`
+- `BlockingOliphauntDatabase.execute()`
+- `BlockingOliphauntDatabase.query()`
 - `DatabaseStorage.Directory.path`
 - `Oliphaunt.open()`
 - `Oliphaunt.restore()`
+- `OliphauntConfig.Builder.build()`
+- `OliphauntConfig.Builder.database()`
+- `OliphauntConfig.Builder.extensions()`
+- `OliphauntConfig.Builder.icu()`
+- `OliphauntConfig.Builder.startupGuc()`
+- `OliphauntConfig.Builder.startupGucs()`
+- `OliphauntConfig.Builder.storage()`
+- `OliphauntConfig.Builder.username()`
+- `OliphauntConfig.builder()`
 - `OliphauntConfig.database`
 - `OliphauntConfig.extensions`
+- `OliphauntConfig.icu`
 - `OliphauntConfig.startupGucs`
 - `OliphauntConfig.storage`
 - `OliphauntConfig.username`
+- `OliphauntJava.open()`
+- `class BlockingOliphauntDatabase`
 - `class DatabaseStorage.Directory`
 - `class OliphauntConfig`
+- `class OliphauntConfig.Builder`
 - `interface DatabaseStorage`
 - `object DatabaseStorage.TemporaryDirectory`
 - `object Oliphaunt`
+- `object OliphauntJava`
 
 ### jvmMain
 
@@ -1392,6 +1466,8 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `EncodedQueryParameter`
 - `ExecResult`
 - `InferQueryRow`
+- `NativeExtensionDescriptor`
+- `NativeIcuDescriptor`
 - `NullQueryParameter`
 - `OliphauntClient`
 - `OliphauntDatabase`
@@ -1425,6 +1501,8 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `PostgresError`
 - `array`
 - `binary`
+- `directory`
+- `extensions`
 - `json`
 - `postgresOids`
 - `text`
@@ -1469,6 +1547,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `OliphauntTransaction.rollback()`
 - `OpenConfig.database`
 - `OpenConfig.extensions`
+- `OpenConfig.icu`
 - `OpenConfig.startupGUCs`
 - `OpenConfig.storage`
 - `OpenConfig.username`
@@ -1552,6 +1631,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 
 - `. = {"types":"./lib/index.d.ts","default":"./lib/index.js"}`
 - `./package.json = {"default":"./package.json"}`
+- `./storage/node = {"types":"./lib/storage/node.d.ts","default":"./lib/storage/node.js"}`
 
 ### Types
 
@@ -1563,6 +1643,8 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `EncodedQueryParameter`
 - `ExecResult`
 - `InferQueryRow`
+- `NativeExtensionDescriptor`
+- `NativeIcuDescriptor`
 - `NullQueryParameter`
 - `OliphauntClient`
 - `OliphauntDatabase`
@@ -1599,6 +1681,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `PostgresError`
 - `array`
 - `binary`
+- `extensions`
 - `json`
 - `postgresOids`
 - `text`
@@ -1649,6 +1732,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `OpenConfig.brokerExecutable`
 - `OpenConfig.database`
 - `OpenConfig.extensions`
+- `OpenConfig.icu`
 - `OpenConfig.libraryPath`
 - `OpenConfig.runtimeDirectory`
 - `OpenConfig.startupGUCs`

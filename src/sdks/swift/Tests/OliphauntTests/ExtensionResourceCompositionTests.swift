@@ -676,3 +676,19 @@ private func extensionCompositionProperties(_ url: URL) throws -> [String: Strin
     }
     return values
 }
+
+@Test
+func explicitResourceSelectionKeepsDependenciesAndRejectsConflictingVersions() throws {
+    let selected = try selectedOliphauntExtensions(["earthdistance", "vector"])
+    #expect(selected.contains("cube"))
+    #expect(includeSelectedOliphauntRuntimeFile("lib/postgresql/vector.so", extensions: selected, icu: false))
+    #expect(includeSelectedOliphauntRuntimeFile("share/postgresql/extension/cube--1.5.sql", extensions: selected, icu: false))
+    #expect(!includeSelectedOliphauntRuntimeFile("share/postgresql/extension/hstore.control", extensions: selected, icu: false))
+    #expect(!includeSelectedOliphauntRuntimeFile("lib/postgresql/hstore.so", extensions: selected, icu: false))
+    #expect(!includeSelectedOliphauntRuntimeFile("share/icu/icudt.dat", extensions: selected, icu: false))
+    let configuration = OliphauntConfiguration(extensions: [
+        OliphauntExtension(sqlName: "vector", product: "oliphaunt-extension-vector", version: "0.8.2"),
+        OliphauntExtension(sqlName: "vector", product: "oliphaunt-extension-vector", version: "0.8.3"),
+    ])
+    #expect(throws: OliphauntError.self) { try configuration.prepareExtensionResources() }
+}

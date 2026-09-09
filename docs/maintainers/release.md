@@ -533,7 +533,15 @@ before transport. A paced mutation receives its complete configured transport
 timeout only when that timeout still fits the job deadline. Read transports
 recompute and clamp their attempt timeout after journal reservation, and never
 start if the read deadline was exhausted while acquiring the journal lock. The
-SwiftPM source-tag push is likewise
+Independent SwiftPM extension packages publish semantic tags to their matching
+`f0rr0/oliphaunt-extension-*` repositories; ICU publishes to
+`f0rr0/oliphaunt-icu`. Provision these public repositories and grant the release
+GitHub App contents access before enabling their first release. The workflow
+requests a separate token scoped to the selected repositories. Each tag contains
+only its frozen package source, and the anonymous consumer gate checks that
+source against the publication lock and parses its SwiftPM manifest.
+
+The SwiftPM source-tag push is likewise
 noninteractive and bounded; success, rejection, disconnect, and timeout are all
 resolved by an exact remote tag/SHA read before the result is accepted. Before
 any release mutation, a lock-derived SwiftPM preflight constructs the exact

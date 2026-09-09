@@ -56,18 +56,7 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
     crateDir: "examples/tauri/src-tauri",
     ignoredLock: "examples/tauri/src-tauri/Cargo.lock",
     wasixToolchain: false,
-    dependencyBindings: [
-      dependencyBinding("oliphaunt-build", ["build-dependencies"]),
-      dependencyBinding("oliphaunt", ["dependencies"]),
-      dependencyBinding("liboliphaunt-native-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
-      dependencyBinding("oliphaunt-broker-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
-      dependencyBinding("oliphaunt-extension-contrib-pg18-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
-    ],
-    runtime: {
-      product: "liboliphaunt-native",
-      productParts: Object.freeze(["package", "metadata", "oliphaunt", "runtime"]),
-      versionParts: Object.freeze(["package", "metadata", "oliphaunt", "runtime-version"]),
-    },
+    dependencyBindings: [dependencyBinding("oliphaunt", ["dependencies"])],
     requiredPackages: Object.freeze([
       "oliphaunt",
       "oliphaunt-build",

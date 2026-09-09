@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { packagedCargoManifestText } from "./cargo-source-package.mjs";
 import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -186,7 +187,7 @@ function pathDependencyPatches(manifests, scratch, packagedManifest) {
       const packagedVersions = new Set(
         packagedDependencies
           .filter(({ name }) => name === dependency.name)
-          .map(({ version }) => exactVersion(version, dependency.name)),
+          .map(({ version }) => version?.replace(/^[=^]/u, "")),
       );
       if (packagedVersions.size !== 1 || !packagedVersions.has(local.version)) {
         throw error(
@@ -202,7 +203,11 @@ function pathDependencyPatches(manifests, scratch, packagedManifest) {
       }
       sourceDirectories.set(dependency.name, realSource);
       const staged = path.join(scratch, "path-dependency-sources", dependency.name);
-      if (!patches.has(dependency.name)) copyCleanDependencySource(directory, staged);
+      if (!patches.has(dependency.name)) {
+        copyCleanDependencySource(directory, staged);
+        const stagedManifest = path.join(staged, "Cargo.toml");
+        writeFileSync(stagedManifest, packagedCargoManifestText(readFileSync(stagedManifest, "utf8")));
+      }
       addPatch(patches, dependency.name, staged, resolvedManifest);
     }
   }
@@ -335,6 +340,7 @@ export function verifyPackagedCargoTestClosure({
   cratePath,
   targetDir = process.env.CARGO_TARGET_DIR ?? path.join(ROOT, "target/cargo-package-test-closure"),
   pathDependencyManifests = [],
+  dependencyCrates = [],
   stubDependencies = [],
   stubDependencyPrefixes = [],
   allFeatures = false,
@@ -356,6 +362,10 @@ export function verifyPackagedCargoTestClosure({
       scratch,
       extracted.manifest,
     );
+    for (const dependencyCrate of dependencyCrates) {
+      const dependency = extractCrate(path.resolve(dependencyCrate), scratch);
+      addPatch(patches, dependency.identity.name, dependency.packageRoot, "packaged dependency");
+    }
     const stubs = createStubPatches({
       manifest: extracted.manifest,
       scratch,

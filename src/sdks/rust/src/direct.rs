@@ -13,7 +13,7 @@ use crate::error::{
     Error, RawStreamCallbackOutput, RawStreamError, RawStreamResult, Result, SESSION_STATE_UNKNOWN,
     TransactionError, TransactionResult,
 };
-use crate::extension::Extension;
+use crate::extension::{ExtensionDescriptor, IcuData};
 use crate::liboliphaunt::OliphauntRuntime;
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::query::{
@@ -112,16 +112,25 @@ impl OliphauntBuilder {
         self
     }
 
+    /// Select the optional package-owned ICU data.
+    pub fn icu(mut self, data: IcuData) -> Self {
+        self.inner = self.inner.icu(data);
+        self
+    }
+
     /// Make one bundled PostgreSQL extension artifact available to the database.
     /// Database-local installation remains the application's migration concern.
-    pub fn extension(mut self, extension: Extension) -> Self {
+    pub fn extension(mut self, extension: impl Into<ExtensionDescriptor>) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
 
     /// Make bundled PostgreSQL extension artifacts available to the database.
     /// Database-local installation remains the application's migration concern.
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
+    pub fn extensions(
+        mut self,
+        extensions: impl IntoIterator<Item = impl Into<ExtensionDescriptor>>,
+    ) -> Self {
         self.inner = self.inner.extensions(extensions);
         self
     }
@@ -191,16 +200,25 @@ impl OliphauntServerBuilder {
         self
     }
 
+    /// Select the optional package-owned ICU data.
+    pub fn icu(mut self, data: IcuData) -> Self {
+        self.inner = self.inner.icu(data);
+        self
+    }
+
     /// Make one bundled PostgreSQL extension artifact available to clients.
     /// Database-local installation remains the application's migration concern.
-    pub fn extension(mut self, extension: Extension) -> Self {
+    pub fn extension(mut self, extension: impl Into<ExtensionDescriptor>) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
 
     /// Make bundled PostgreSQL extension artifacts available to clients.
     /// Database-local installation remains the application's migration concern.
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
+    pub fn extensions(
+        mut self,
+        extensions: impl IntoIterator<Item = impl Into<ExtensionDescriptor>>,
+    ) -> Self {
         self.inner = self.inner.extensions(extensions);
         self
     }

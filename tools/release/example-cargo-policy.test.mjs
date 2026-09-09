@@ -55,19 +55,14 @@ describe("ephemeral example Cargo policy", () => {
     }
   });
 
-  test("rejects stale runtime metadata, duplicate dependencies, and dependency scope drift", () => {
+  test("rejects duplicate dependencies and dependency scope drift", () => {
     const policy = EXAMPLE_CARGO_POLICIES.find(({ id }) => id === "native-tauri");
     const bindings = exampleCargoReleaseVersionBindings().filter(({ policyId }) => policyId === policy.id);
-    const runtimeBinding = bindings.find(({ kind }) => kind === "runtime");
     const manifest = Bun.TOML.parse(readFileSync(path.join(ROOT, policy.crateDir, "Cargo.toml"), "utf8"));
 
-    manifest.package.metadata.oliphaunt["runtime-version"] = "9.9.9";
     manifest["dev-dependencies"] = { oliphaunt: bindings.find(({ name }) => name === "oliphaunt").expected };
     delete manifest.dependencies.oliphaunt;
     const failures = validateExampleManifestPolicy(policy, manifest, bindings);
-    expect(failures).toContain(
-      `${policy.crateDir}/Cargo.toml runtime-version uses "9.9.9"; expected ${runtimeBinding.expected}`,
-    );
     expect(failures).toContain(
       `${policy.crateDir}/Cargo.toml oliphaunt must remain at TOML path dependencies.oliphaunt`,
     );

@@ -106,14 +106,13 @@ cargo_target_dir="$product_target_root/cargo-release"
 build_inputs_file="$product_target_root/build-inputs/$target_id.json"
 mkdir -p "$prebuild_dir"
 
-# Release addons must consume the exact portable runtime, target AOT, exact
-# extension, and ICU payloads staged by the same CI run. Export the canonical
+# Release addons consume the exact core runtime, target AOT and contrib
+# payloads staged by the same CI run. Export the canonical
 # dependency build-script variables explicitly so no source-only fallback can
 # be selected through a package-local or stale workspace probe.
 export OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR="${OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR:-$workspace_root/target/oliphaunt-wasix/assets}"
 export OLIPHAUNT_WASM_GENERATED_AOT_DIR="${OLIPHAUNT_WASM_GENERATED_AOT_DIR:-$workspace_root/target/oliphaunt-wasix/aot}"
 export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT:-$workspace_root/target/extension-artifacts}"
-export OLIPHAUNT_ICU_DATA_DIR="${OLIPHAUNT_ICU_DATA_DIR:-$workspace_root/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu}"
 export OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD=1
 export OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS="$build_inputs_file"
 
@@ -123,7 +122,6 @@ build_input_args=(
   --portable-root "$OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR"
   --aot-root "$OLIPHAUNT_WASM_GENERATED_AOT_DIR"
   --extension-root "$OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT"
-  --icu-root "$OLIPHAUNT_ICU_DATA_DIR"
 )
 tools/dev/bun.sh src/runtimes/wasix-napi/tools/check-build-inputs.mjs \
   "${build_input_args[@]}" \
@@ -245,19 +243,11 @@ function expectedIdentity(record, kind) {
   return `${record.sha256}:${size}`;
 }
 
-const portableTools = buildInputs.inputs?.portableTools;
-if (
-  buildInputs.schema !== "oliphaunt-wasix-napi-build-inputs-v1"
-  || JSON.stringify(portableTools?.map(({ name }) => name)) !== JSON.stringify(["pg_dump", "psql"])
-) {
-  throw new Error(`${buildInputsPath} has an incompatible portable tool inventory`);
-}
-for (const tool of portableTools) {
-  const actual = addon.toolIdentity(tool.name);
-  const expected = expectedIdentity(tool, `${tool.name} tool`);
-  if (actual !== expected) {
-    throw new Error(`${addonPath} reports ${tool.name} tool identity ${actual}; expected ${expected}`);
-  }
+if (typeof addon.registerTools !== "function") throw new Error("addon has no installed tools loader");
+for (const name of ["pg_dump", "psql"]) {
+  let missing = false;
+  try { addon.toolIdentity(name); } catch { missing = true; }
+  if (!missing) throw new Error(`base addon unexpectedly embeds ${name}`);
 }
 
 const portableExtensions = (buildInputs.inputs?.extensionArtifacts ?? [])
@@ -283,9 +273,6 @@ for (const component of [
   "runtimeArchive",
   "standardSeedArchive",
   "standardSeedManifest",
-  "icuDataArchive",
-  "icuSeedArchive",
-  "icuSeedManifest",
 ]) {
   const identity = addon.payloadIdentity(component);
   if (!/^[0-9a-f]{64}:[1-9][0-9]*$/.test(identity)) {

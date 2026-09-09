@@ -78,7 +78,6 @@ workspace_path() {
 generated_assets="$(workspace_path OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR)"
 generated_aot="$(workspace_path OLIPHAUNT_WASM_GENERATED_AOT_DIR)"
 extension_artifacts="$(workspace_path OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT)"
-icu_data="$(workspace_path OLIPHAUNT_ICU_DATA_DIR)"
 build_inputs="$(workspace_path OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS)"
 
 cargo_root="${CARGO_HOME:-$HOME/.cargo}"
@@ -144,7 +143,6 @@ docker_cargo() {
     --env "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR=$generated_assets" \
     --env "OLIPHAUNT_WASM_GENERATED_AOT_DIR=$generated_aot" \
     --env "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT=$extension_artifacts" \
-    --env "OLIPHAUNT_ICU_DATA_DIR=$icu_data" \
     --env "OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS=$build_inputs" \
     --env "EXPECTED_BUILDER_GLIBC=$expected_builder_glibc" \
     --env "EXPECTED_RUST_RELEASE=$rust_release" \

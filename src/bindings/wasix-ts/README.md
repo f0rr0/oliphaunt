@@ -20,8 +20,9 @@ The published SDK is one universal browser-and-server package. Its browser host
 files and exact `@oliphaunt/liboliphaunt-wasix` dependency are therefore
 installed on Node.js, Bun, Deno, and Electron too, although native export
 conditions never load them. The matching target-filtered optional platform
-package embeds the runtime, both cluster profiles, tools, and qualified
-extension catalog used on those hosts. Carrier packages have no install scripts
+package embeds PostgreSQL, standard initialization assets, and contrib.
+External extensions, ICU data with its matching seed, and frontend tools are
+provided by their separately installed packages. Carrier packages have no install scripts
 and do not download a binary at install or first use. Applications do not
 configure raw runtime assets.
 
@@ -63,11 +64,9 @@ import icu from '@oliphaunt/wasix-icu';
 await using database = await Oliphaunt.open({ icu });
 ```
 
-Browser conditions load the ICU assets from their portable carrier. Each
-native platform carrier contains one addon with both `standard` and `icu`
-profiles, and the existing `icu` option selects the database profile. The loader checks
-the exact SDK/carrier version, WASIX runtime version, addon ABI, Node-API level,
-target, and ICU profile before running native code.
+Both browser and native conditions load ICU data and the matching seed from the
+selected optional package. The native adapter passes the data through N-API;
+Rust verifies runtime, seed, and ICU tree identities before initialization.
 
 ## Query PostgreSQL
 
@@ -254,27 +253,32 @@ thread, and `/worker` uses a temporary package-owned Worker.
 
 ## Extensions
 
-Import package-authored WASIX extension descriptors and pass them at open:
+Install vector independently of the SDK:
 
-```ts
-import Oliphaunt from '@oliphaunt/wasix-ts';
-import pgtap from '@oliphaunt/extension-pgtap-wasix';
-
-await using database = await Oliphaunt.open({ extensions: [pgtap] });
-await database.execute('CREATE EXTENSION pgtap');
-const version = await database.query('select pgtap_version()');
+```sh
+npm install @oliphaunt/wasix-ts @oliphaunt/extension-vector-wasix
 ```
 
-The call shape and lifecycle ownership are host-independent. A browser verifies
-the selected carrier and its dependency closure, installs its artifacts before
-startup, and applies required startup/preload settings. Node.js, Bun, Deno, and Electron
-validate the same descriptor but resolve its SQL name against the extension
-catalog compiled into the platform addon. Release addons contain the complete
-currently supported extension catalog; they do not load arbitrary side-module
-bytes from npm at runtime. Adding or upgrading a server extension therefore
-requires a matching N-API carrier release. This increases the carrier size in
-exchange for eliminating runtime archive expansion and dynamic linking on the
-native path.
+```ts
+import Oliphaunt, { extensions } from '@oliphaunt/wasix-ts';
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+import vector from '@oliphaunt/extension-vector-wasix';
+
+await using database = await Oliphaunt.open({
+  storage: directory('./postgres'),
+  extensions: [vector, extensions.hstore],
+});
+await database.execute('CREATE EXTENSION vector');
+await database.execute('CREATE EXTENSION hstore');
+```
+
+Contrib is supplied by the base dependency and selected explicitly through
+`extensions`. External descriptors bind the imported package's version and
+resources. Browser hosts load portable artifacts. Node.js, Bun, and Deno resolve
+the installed package and matching host AOT dependency, then pass those package
+locations through N-API. Rust validates package ownership, runtime compatibility,
+engine and host identity, and payload hashes before loading executable code.
+A compatible extension update does not require another base addon release.
 
 Neither host runs database-local `CREATE EXTENSION`, `LOAD`, schema,
 post-create, upgrade, or migration SQL. Applications and ORM migrations own

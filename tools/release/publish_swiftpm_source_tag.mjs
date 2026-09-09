@@ -495,6 +495,63 @@ export async function ensureTag(
   return tag;
 }
 
+/** Publish a complete standalone package without copying the monorepo history. */
+export function ensureIndependentSwiftpmTag({
+  sourceTree, repository, version, target = "HEAD", preflight = false, push = false,
+}, {
+  root = ROOT, remote = `https://github.com/${repository}.git`,
+  environment = process.env, reserveContentWrite = reserveGitHubContentWriteSync,
+} = {}) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
+      || !SEMVER_RE.test(version) || (preflight && push)) {
+    throw new TypeError("independent SwiftPM publication requires a repository, semantic version, and one mode");
+  }
+  const source = commitForRef(target, root);
+  const date = commitTimestamp(source, root);
+  const packageRoot = path.resolve(root, sourceTree);
+  const manifest = readFileSync(path.join(packageRoot, "Package.swift"), "utf8");
+  if (!manifest.startsWith("// swift-tools-version:") || manifest.includes("file://")) {
+    throw new Error("standalone SwiftPM manifest must declare a tools version and contain no file URLs");
+  }
+  const scratch = mkdtempSync(path.join(tmpdir(), "oliphaunt-swiftpm-package."));
+  try {
+    git(["init", "--quiet"], { root: scratch });
+    git(["remote", "add", "origin", remote], { root: scratch });
+    const env = {
+      ...environment,
+      GIT_AUTHOR_NAME: RELEASE_BOT_NAME, GIT_AUTHOR_EMAIL: RELEASE_BOT_EMAIL,
+      GIT_COMMITTER_NAME: RELEASE_BOT_NAME, GIT_COMMITTER_EMAIL: RELEASE_BOT_EMAIL,
+      GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date,
+    };
+    git(["read-tree", "--empty"], { root: scratch, env });
+    for (const file of iterTreeFiles(packageRoot)) {
+      const relative = path.relative(packageRoot, file).split(path.sep).join("/");
+      if (relative.split("/").some(part => part === ".git" || part === ".build")) {
+        throw new Error(`standalone SwiftPM tree contains a forbidden path: ${relative}`);
+      }
+      addBlobToIndex(scratch, env, relative, readFileSync(file));
+    }
+    const tree = git(["write-tree"], { root: scratch, env }).stdout;
+    const tagTarget = git(["commit-tree", tree, "-m",
+      `Release ${repository} ${version}\n\nSource: ${source}`], { root: scratch, env }).stdout;
+    const outcome = preflightSwiftpmSourceTagExactly({
+      root: scratch, environment, tag: version, tagTarget,
+    });
+    if (push && outcome.state === "absent") {
+      git(["tag", version, tagTarget], { root: scratch, env });
+      pushSwiftpmSourceTagExactly({
+        root: scratch, environment, tag: version, tagTarget, reserveContentWrite,
+        budget: createGitHubOperationBudget({
+          defaultWindowMs: SWIFTPM_PUSH_OPERATION_WINDOW_MS, environment,
+        }),
+      });
+    }
+    return { ...outcome, repository, source, tree, published: push };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 if (import.meta.main) {
   await ensureTag(parseArgs(Bun.argv.slice(2)));
 }

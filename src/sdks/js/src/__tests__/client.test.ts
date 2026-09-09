@@ -43,6 +43,8 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
       username: 'app',
       database: 'appdb',
       extensions: [],
+      extensionDescriptors: [],
+      icu: undefined,
       startupArgs: ['-c', 'work_mem=16MB'],
     });
     assert.deepEqual(await db.execute('UPDATE things SET value = 1'), {
@@ -125,6 +127,8 @@ test('snapshots open configuration before asynchronous storage work', async () =
       username: 'before',
       database: 'before',
       extensions: [],
+      extensionDescriptors: [],
+      icu: undefined,
       libraryPath: undefined,
       runtimeDirectory: undefined,
       brokerExecutable: undefined,
@@ -229,6 +233,8 @@ test('snapshots server storage and nested configuration before asynchronous work
       username: 'postgres',
       database: 'postgres',
       extensions: [],
+      extensionDescriptors: [],
+      icu: undefined,
       libraryPath: undefined,
       runtimeDirectory: undefined,
       brokerExecutable: undefined,

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { stageNativeIcuSeeds } from "./native-icu-seeds.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -291,7 +292,12 @@ function validateCanonicalAotManifest(manifest, manifestPath, expectedTarget) {
   }
 }
 
-export function validateRuntimePayload(root) {
+export function validateRuntimePayload(root, { producerClosure = false } = {}) {
+  if (!producerClosure) {
+    for (const file of ["icu.tar.zst", "icu.json"]) {
+      if (isFile(path.join(root, "cluster-seeds", file))) fail("base WASIX Cargo runtime must not bundle the optional ICU seed");
+    }
+  }
   const extensionRoot = path.join(root, "extensions");
   const extensionFiles = isDirectory(extensionRoot) ? payloadFiles(extensionRoot) : [];
   if (extensionFiles.length > 0) {
@@ -312,8 +318,6 @@ export function validateRuntimePayload(root) {
     "bin/initdb.wasix.wasm",
     "cluster-seeds/standard.tar.zst",
     "cluster-seeds/standard.json",
-    "cluster-seeds/icu.tar.zst",
-    "cluster-seeds/icu.json",
   ]) {
     if (!isFile(path.join(root, required))) {
       fail(`WASIX runtime Cargo payload is missing ${required}`);
@@ -445,6 +449,7 @@ function splitRuntimeToolsPayload(runtimeRoot, extractRoot) {
   rmSync(toolsRoot, { recursive: true, force: true });
   cpSync(runtimeRoot, coreRoot, { recursive: true });
   rmSync(path.join(coreRoot, "extensions"), { recursive: true, force: true });
+  for (const file of ["icu.tar.zst", "icu.json"]) rmSync(path.join(coreRoot, "cluster-seeds", file), { force: true });
   const missing = [];
   for (const relative of TOOLS_PAYLOAD_FILES) {
     const source = path.join(runtimeRoot, relative);
@@ -677,6 +682,9 @@ function rewriteCargoManifest(manifest, { packageName, version, extensionSources
     `license = ${JSON.stringify(releaseProfilePackageLicense(noticeProfile).spdx)}`,
   );
   text = injectCargoNoticeIncludes(text, noticeProfile);
+  if (packageName === ICU_PACKAGE) {
+    text = text.replace(/^oliphaunt-resources = .*$/mu, `oliphaunt-resources = { version = "${currentProductVersionSync("oliphaunt-rust", PREFIX)}", path = ${JSON.stringify(path.join(ROOT, "src/sdks/rust/crates/oliphaunt-resources"))} }`);
+  }
   if (packageName === RUNTIME_PACKAGE && extensionSources.length > 0) {
     text = injectRuntimeExtensionDependencies(text, extensionSources, extensionAotSources);
   }
@@ -834,7 +842,7 @@ function cargoPackage(crateDir, targetDir, { noVerify = false } = {}) {
 }
 
 function packagedManifestText(text) {
-  return text.replace(/, path = "\.\.\/[^"]+"/gu, "");
+  return text.replace(/, path = "[^"]+"/gu, "");
 }
 
 function cargoPackageWithoutDependencyResolution(crateDir, targetDir) {
@@ -1422,6 +1430,33 @@ function validateExtensionAotCoverage(extensionSpecs) {
   }
 }
 
+export function renderWasixExtensionDescriptors(spec) {
+  const targets = spec.aotTargets ?? [];
+  const lines = [
+    "pub const ARCHIVES: &[(&str, &[u8], &str)] = &[",
+    ...spec.members.map(member => `    (${JSON.stringify(member.sqlName)}, include_bytes!(concat!(env!("OUT_DIR"), "/payload/extensions/${member.sqlName}/extension.tar.zst")), ${JSON.stringify(member.sha256)}),`),
+    "];",
+  ];
+  for (const target of targets) {
+    const crate = target.name.replaceAll("-", "_");
+    lines.push(`#[${AOT_TARGET_CFGS[target.target]}]`,
+      `const AOT: (&str, &[(&str, &[u8])]) = (${crate}::MANIFEST_JSON, ${crate}::AOT_ARTIFACTS);`);
+  }
+  const cfgs = targets.map(target => AOT_TARGET_CFGS[target.target].slice(4, -1));
+  lines.push(`#[cfg(not(any(${cfgs.join(", ")})))]`, 'const AOT: (&str, &[(&str, &[u8])]) = ("", &[]);',
+    "#[allow(unsafe_code)]",
+    "// SAFETY: these immutable artifacts and identities are emitted together by the verified release build.",
+    "pub const PACKAGE: oliphaunt_resources::WasixPackage = unsafe {",
+    "    oliphaunt_resources::WasixPackage::from_trusted_release(",
+    `        ${JSON.stringify(spec.product)}, ${JSON.stringify(spec.version)}, ${JSON.stringify(spec.runtimeVersion)}, ARCHIVES, AOT.0, AOT.1,`,
+    "    )", "};");
+  for (const member of spec.members) {
+    const constant = member.sqlName.replaceAll("-", "_").toUpperCase();
+    lines.push(`pub const ${constant}: oliphaunt_resources::WasixExtensionDescriptor = oliphaunt_resources::WasixExtensionDescriptor { sql_name: ${JSON.stringify(member.sqlName)}, package: Some(&PACKAGE) };`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
   const crateDir = path.join(sourceRoot, spec.name);
   if (existsSync(crateDir)) {
@@ -1489,6 +1524,12 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
     "[lib]",
     'path = "src/lib.rs"',
     "",
+    "[dependencies]",
+    `oliphaunt-resources = { version = "${currentProductVersionSync("oliphaunt-rust", PREFIX)}", path = ${JSON.stringify(path.join(ROOT, "src/sdks/rust/crates/oliphaunt-resources"))} }`,
+    ...(spec.aotTargets ?? []).flatMap(target => [
+      `[target.'${AOT_TARGET_CFGS[target.target]}'.dependencies]`,
+      `${target.name} = { version = "=${spec.version}", path = "../${target.name}" }`,
+    ]),
     "[build-dependencies]",
     ...partSources.map((part) => `${part.name} = { version = "=${spec.version}", path = "../${part.name}" }`),
     "",
@@ -1516,6 +1557,7 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
     "}",
     "",
   ].join("\n"));
+  writeFileSync(path.join(crateDir, "src/lib.rs"), readFileSync(path.join(crateDir, "src/lib.rs"), "utf8") + renderWasixExtensionDescriptors(spec));
   writeFileSync(path.join(crateDir, "build.rs"), extensionArtifactBuildRs({ ...spec, target: "portable" }, files, partSources));
   return {
     spec,
@@ -1533,9 +1575,15 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
   }
   mkdirSync(path.join(crateDir, "src"), { recursive: true });
   const artifacts = [];
+  let combinedManifest;
   for (const member of spec.members) {
     const manifestPath = path.join(member.sourceDir, "manifest.json");
     const manifest = readJson(manifestPath);
+    if (combinedManifest === undefined) combinedManifest = { ...manifest, artifacts: [] };
+    for (const key of ["target-triple", "engine", "wasmer-version", "wasmer-wasix-version", "source-fingerprint", "postgres-version"]) {
+      if (combinedManifest[key] !== manifest[key]) fail(`${spec.name} contains incompatible AOT manifests (${key})`);
+    }
+    combinedManifest.artifacts.push(...manifest.artifacts);
     const manifestDestination = path.join(crateDir, "manifests", `${member.sqlName}.json`);
     mkdirSync(path.dirname(manifestDestination), { recursive: true });
     copyFileSync(manifestPath, manifestDestination);
@@ -1627,6 +1675,10 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
     `pub const SQL_NAMES: &[&str] = &[${spec.members.map((member) => JSON.stringify(member.sqlName)).join(", ")}];`,
     ...(spec.members.length === 1 ? [`pub const SQL_NAME: &str = ${JSON.stringify(spec.members[0].sqlName)};`] : []),
     `pub const TARGET_TRIPLE: &str = "${spec.target}";`,
+    `pub const MANIFEST_JSON: &str = ${JSON.stringify(JSON.stringify(combinedManifest))};`,
+    "pub const AOT_ARTIFACTS: &[(&str, &[u8])] = &[",
+    ...artifacts.map(artifact => `    (${JSON.stringify(artifact.name)}, include_bytes!(concat!(env!("OUT_DIR"), "/payload/${artifact.payloadRelative}"))),`),
+    "];",
     "",
     "pub fn aot_manifest_json(sql_name: &str) -> Option<&'static str> {",
     "    match sql_name {",
@@ -1755,7 +1807,7 @@ function packageSpecs(assetDir, extractRoot, version) {
   const runtimeExtract = path.join(extractRoot, "runtime-extracted");
   extractTarZstd(runtimeArchive, runtimeExtract);
   const runtimeRoot = targetAssetRoot(runtimeExtract);
-  validateRuntimePayload(runtimeRoot);
+  validateRuntimePayload(runtimeRoot, { producerClosure: true });
   const [runtimeCoreRoot, toolsRoot] = splitRuntimeToolsPayload(runtimeRoot, extractRoot);
   validateRuntimePayload(runtimeCoreRoot);
   validateToolsPayload(toolsRoot);
@@ -1785,6 +1837,16 @@ function packageSpecs(assetDir, extractRoot, version) {
   const icuRoot = canonicalIcuRoot(targetIcuRoot(icuExtract));
   validateIcuPayload(icuRoot);
   const icuPayloadRoot = writeIcuPayloadArchive(icuRoot, path.join(extractRoot, "icu-payload"));
+  mkdirSync(path.join(icuPayloadRoot, "cluster-seeds"), { recursive: true });
+  for (const file of ["icu.tar.zst", "icu.json"]) {
+    copyFileSync(path.join(runtimeRoot, "cluster-seeds", file), path.join(icuPayloadRoot, "cluster-seeds", file));
+  }
+  const nativeVersion = currentProductVersionSync("liboliphaunt-native", PREFIX);
+  writeFileSync(path.join(icuPayloadRoot, "native-runtime-version"), `${nativeVersion}\n`);
+  stageNativeIcuSeeds(
+    process.env.OLIPHAUNT_NATIVE_RELEASE_ASSET_DIR ?? path.join(ROOT, "target/liboliphaunt/release-assets"),
+    nativeVersion, path.join(icuPayloadRoot, "native-seeds"), icuRoot,
+  );
   specs.push({
     name: ICU_PACKAGE,
     target: "portable",

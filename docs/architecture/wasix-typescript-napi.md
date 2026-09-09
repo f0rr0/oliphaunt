@@ -307,16 +307,13 @@ Electron versions rather than inventing a Node maximum unrelated to evidence.
 Linux carriers follow the repository's existing glibc build and maximum-symbol
 policy; this project does not redefine that baseline.
 
-The release topology is one addon binary per target. It contains both qualified
-standard and ICU seed/data profiles plus the release's frozen extension and
-tool catalog; opening a database selects the profile without loading a second
-addon. Profile selection is immutable per builder/database, including server
-builders, and every reusable runtime, seed, and materialization cache is keyed
-by profile. This removes duplicate runtime/code/catalog payload while
-preserving the existing descriptor-based application API. Do not redesign
-native extension loading in this migration. Independent native extension
-carriers are a future package-size optimization and need their own measurements
-and threat model.
+The release topology is one addon binary per target, containing the runtime,
+standard seed, and supported contrib. External extensions, ICU data and matching
+seeds, and frontend tools are separate packages. TypeScript resolves installed
+descriptors and passes their payloads to Rust; Rust validates owner, version,
+target, runtime identity, and hashes before loading. Profile and extension
+selection remain immutable per database, and reusable caches include the
+selected resource identities.
 
 `@oliphaunt/wasix-ts` deliberately remains one universal browser-and-server npm
 package. The published tarball includes the patched browser Wasmer host and its

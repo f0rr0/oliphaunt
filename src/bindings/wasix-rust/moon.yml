@@ -56,7 +56,7 @@ tasks:
       set -e
       cargo test -p oliphaunt-wasix --doc --locked
       cargo test -p oliphaunt-wasix --doc --locked --features tools
-      cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features extensions,tools,extension-vector --test public_api --no-tests=fail --test-threads=1
+      cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features extensions,tools --test public_api --no-tests=fail --test-threads=1
       cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions --test runtime_smoke --test client_compat --no-run
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
@@ -110,8 +110,8 @@ tasks:
       set -e
       rm -rf target/oliphaunt-wasix-rust/package
       node src/bindings/wasix-rust/tools/package-source.mjs target/oliphaunt-wasix-rust/package/source
-      cargo package --manifest-path target/oliphaunt-wasix-rust/package/source/Cargo.toml --allow-dirty --no-verify
       cargo package --manifest-path target/oliphaunt-wasix-rust/package/source/Cargo.toml --allow-dirty --list > target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt
+      tools/dev/bun.sh tools/release/package_oliphaunt_wasix_sdk_crate.mjs --output-dir target/oliphaunt-wasix-rust/package/artifacts
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/package"
     inputs:
@@ -125,6 +125,8 @@ tasks:
         group: "crates"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/package-source.mjs"
+      - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
+      - "@group(release-archive-contract)"
     outputs:
       - "/target/oliphaunt-wasix-rust/package/**/*"
     options:

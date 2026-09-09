@@ -3,51 +3,119 @@
 
 package dev.oliphaunt
 
+public object Extensions {
+    @JvmField public val AMCHECK = ExtensionDescriptor("amcheck", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val AUTO_EXPLAIN = ExtensionDescriptor("auto_explain", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val BLOOM = ExtensionDescriptor("bloom", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val BTREE_GIN = ExtensionDescriptor("btree_gin", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val BTREE_GIST = ExtensionDescriptor("btree_gist", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val CITEXT = ExtensionDescriptor("citext", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val CUBE = ExtensionDescriptor("cube", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val DICT_INT = ExtensionDescriptor("dict_int", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val DICT_XSYN = ExtensionDescriptor("dict_xsyn", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val EARTHDISTANCE = ExtensionDescriptor("earthdistance", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val FILE_FDW = ExtensionDescriptor("file_fdw", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val FUZZYSTRMATCH = ExtensionDescriptor("fuzzystrmatch", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val HSTORE = ExtensionDescriptor("hstore", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val INTARRAY = ExtensionDescriptor("intarray", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val ISN = ExtensionDescriptor("isn", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val LO = ExtensionDescriptor("lo", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val LTREE = ExtensionDescriptor("ltree", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PAGEINSPECT = ExtensionDescriptor("pageinspect", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PG_BUFFERCACHE = ExtensionDescriptor("pg_buffercache", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PG_FREESPACEMAP = ExtensionDescriptor("pg_freespacemap", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PG_SURGERY = ExtensionDescriptor("pg_surgery", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PG_TRGM = ExtensionDescriptor("pg_trgm", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PG_VISIBILITY = ExtensionDescriptor("pg_visibility", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PG_WALINSPECT = ExtensionDescriptor("pg_walinspect", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val PGCRYPTO = ExtensionDescriptor("pgcrypto", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val SEG = ExtensionDescriptor("seg", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val TABLEFUNC = ExtensionDescriptor("tablefunc", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val TCN = ExtensionDescriptor("tcn", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val TSM_SYSTEM_ROWS = ExtensionDescriptor("tsm_system_rows", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val TSM_SYSTEM_TIME = ExtensionDescriptor("tsm_system_time", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val UNACCENT = ExtensionDescriptor("unaccent", "oliphaunt-extension-contrib-pg18")
+
+    @JvmField public val UUID_OSSP = ExtensionDescriptor("uuid-ossp", "oliphaunt-extension-contrib-pg18")
+}
+
 internal data class GeneratedExtensionRuntimeContract(
     val createsExtension: Boolean,
     val nativeModuleStem: String?,
+    val dependencies: List<String> = emptyList(),
+    val sharedPreloads: List<String> = emptyList(),
 )
 
 internal val generatedExtensionRuntimeContracts: Map<String, GeneratedExtensionRuntimeContract> = mapOf(
-    "amcheck" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "amcheck"),
-    "auto_explain" to GeneratedExtensionRuntimeContract(createsExtension = false, nativeModuleStem = "auto_explain"),
-    "bloom" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "bloom"),
-    "btree_gin" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "btree_gin"),
-    "btree_gist" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "btree_gist"),
-    "citext" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "citext"),
-    "cube" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "cube"),
-    "dict_int" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "dict_int"),
-    "dict_xsyn" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "dict_xsyn"),
-    "earthdistance" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "earthdistance"),
-    "file_fdw" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "file_fdw"),
-    "fuzzystrmatch" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "fuzzystrmatch"),
-    "hstore" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "hstore"),
-    "intarray" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "_int"),
-    "isn" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "isn"),
-    "lo" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "lo"),
-    "ltree" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "ltree"),
-    "pageinspect" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pageinspect"),
-    "pg_buffercache" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_buffercache"),
-    "pg_freespacemap" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_freespacemap"),
-    "pg_hashids" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_hashids"),
-    "pg_ivm" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_ivm"),
-    "pg_surgery" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_surgery"),
-    "pg_textsearch" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_textsearch"),
-    "pg_trgm" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_trgm"),
-    "pg_uuidv7" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_uuidv7"),
-    "pg_visibility" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_visibility"),
-    "pg_walinspect" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_walinspect"),
-    "pgcrypto" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pgcrypto"),
-    "pgtap" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = null),
-    "postgis" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "postgis-3"),
-    "seg" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "seg"),
-    "tablefunc" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tablefunc"),
-    "tcn" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tcn"),
-    "tsm_system_rows" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tsm_system_rows"),
-    "tsm_system_time" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tsm_system_time"),
-    "unaccent" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "unaccent"),
-    "uuid-ossp" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "uuid-ossp"),
-    "vector" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "vector"),
+    "amcheck" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "amcheck", dependencies = listOf(), sharedPreloads = listOf()),
+    "auto_explain" to GeneratedExtensionRuntimeContract(createsExtension = false, nativeModuleStem = "auto_explain", dependencies = listOf(), sharedPreloads = listOf()),
+    "bloom" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "bloom", dependencies = listOf(), sharedPreloads = listOf()),
+    "btree_gin" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "btree_gin", dependencies = listOf(), sharedPreloads = listOf()),
+    "btree_gist" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "btree_gist", dependencies = listOf(), sharedPreloads = listOf()),
+    "citext" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "citext", dependencies = listOf(), sharedPreloads = listOf()),
+    "cube" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "cube", dependencies = listOf(), sharedPreloads = listOf()),
+    "dict_int" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "dict_int", dependencies = listOf(), sharedPreloads = listOf()),
+    "dict_xsyn" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "dict_xsyn", dependencies = listOf(), sharedPreloads = listOf()),
+    "earthdistance" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "earthdistance", dependencies = listOf("cube"), sharedPreloads = listOf()),
+    "file_fdw" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "file_fdw", dependencies = listOf(), sharedPreloads = listOf()),
+    "fuzzystrmatch" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "fuzzystrmatch", dependencies = listOf(), sharedPreloads = listOf()),
+    "hstore" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "hstore", dependencies = listOf(), sharedPreloads = listOf()),
+    "intarray" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "_int", dependencies = listOf(), sharedPreloads = listOf()),
+    "isn" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "isn", dependencies = listOf(), sharedPreloads = listOf()),
+    "lo" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "lo", dependencies = listOf(), sharedPreloads = listOf()),
+    "ltree" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "ltree", dependencies = listOf(), sharedPreloads = listOf()),
+    "pageinspect" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pageinspect", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_buffercache" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_buffercache", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_freespacemap" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_freespacemap", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_hashids" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_hashids", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_ivm" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_ivm", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_surgery" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_surgery", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_textsearch" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_textsearch", dependencies = listOf(), sharedPreloads = listOf("pg_textsearch")),
+    "pg_trgm" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_trgm", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_uuidv7" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_uuidv7", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_visibility" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_visibility", dependencies = listOf(), sharedPreloads = listOf()),
+    "pg_walinspect" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pg_walinspect", dependencies = listOf(), sharedPreloads = listOf()),
+    "pgcrypto" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "pgcrypto", dependencies = listOf(), sharedPreloads = listOf()),
+    "pgtap" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = null, dependencies = listOf(), sharedPreloads = listOf()),
+    "postgis" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "postgis-3", dependencies = listOf(), sharedPreloads = listOf()),
+    "seg" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "seg", dependencies = listOf(), sharedPreloads = listOf()),
+    "tablefunc" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tablefunc", dependencies = listOf(), sharedPreloads = listOf()),
+    "tcn" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tcn", dependencies = listOf(), sharedPreloads = listOf()),
+    "tsm_system_rows" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tsm_system_rows", dependencies = listOf(), sharedPreloads = listOf()),
+    "tsm_system_time" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "tsm_system_time", dependencies = listOf(), sharedPreloads = listOf()),
+    "unaccent" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "unaccent", dependencies = listOf(), sharedPreloads = listOf()),
+    "uuid-ossp" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "uuid-ossp", dependencies = listOf(), sharedPreloads = listOf()),
+    "vector" to GeneratedExtensionRuntimeContract(createsExtension = true, nativeModuleStem = "vector", dependencies = listOf(), sharedPreloads = listOf()),
 )
 
 internal val generatedExtensionSqlNames: Set<String> = generatedExtensionRuntimeContracts.keys

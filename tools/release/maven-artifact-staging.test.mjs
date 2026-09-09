@@ -227,3 +227,35 @@ test("the release preflight freezes and bundles the exact locally staged Maven b
   }
   expect(lstatSync(result.bundle).size).toBeGreaterThan(0);
 });
+
+
+test("publishes importable external and ICU descriptors with their SDK dependency", async () => {
+  const value = fixture();
+  const fields = readFileSync(value.manifest, "utf8").trimEnd().split("\t");
+  const source = path.join(value.root, "Vector.java");
+  writeFileSync(source, `package dev.oliphaunt.extensions.vector;
+public final class Vector {
+    public static final dev.oliphaunt.ExtensionDescriptor descriptor =
+        new dev.oliphaunt.ExtensionDescriptor("vector", "oliphaunt-extension-vector", "1.2.3");
+}
+`);
+  const vector = fields.with(1, "oliphaunt-extension-vector").with(3, source);
+  const icu = fields.with(0, "dev.oliphaunt.runtime").with(1, "oliphaunt-icu");
+  writeFileSync(value.manifest, `${vector.join("\t")}\n${icu.join("\t")}\n`);
+  const staged = await stageMavenArtifactManifest(value.manifest, value.output);
+  for (const [index, classFile] of [
+    "dev/oliphaunt/extensions/vector/Vector.class", "dev/oliphaunt/icu/ICU.class",
+  ].entries()) {
+    const row = staged[index];
+    expect(row.packaging).toBe("jar");
+    const prefix = `${row.artifactId}-${row.version}`;
+    const jar = path.join(row.directory, `${prefix}.jar`);
+    expect(readPortableArchiveEntries(jar).has(classFile)).toBe(true);
+    const pom = readFileSync(path.join(row.directory, `${prefix}.pom`), "utf8");
+    expect(pom).toContain("<artifactId>oliphaunt-android</artifactId>");
+    const sourceEntries = readPortableArchiveEntries(path.join(row.directory, `${prefix}-sources.jar`));
+    expect([...sourceEntries.keys()].some(name => name.endsWith(".java"))).toBe(true);
+  }
+  expect(readFileSync(path.join(staged[1].directory, "oliphaunt-icu-1.2.3.tar.gz"), "utf8"))
+    .toBe("exact runtime carrier\n");
+}, 120_000);

@@ -451,7 +451,7 @@ function mavenManifestArtifacts(file) {
   return records;
 }
 
-function directoryEnvelope(directory) {
+export function directoryEnvelope(directory) {
   const files = walkFiles(directory, { ignoreBuildDirectories: true });
   const hash = createHash("sha256");
   let size = 0;
@@ -1587,6 +1587,26 @@ function runtimeOwnedExtensionGithubReleaseArtifacts(files, product) {
   }));
 }
 
+export function independentSwiftPackageName(product) {
+  if (product.id === "liboliphaunt-native") return "oliphaunt-icu";
+  return product.kind === "exact-extension-artifact" ? product.id : null;
+}
+
+function independentSwiftReleaseInput(files, product) {
+  const name = independentSwiftPackageName(product);
+  if (name === null) return [];
+  const matches = files.filter(file => file.split(path.sep).join("/")
+    .endsWith(`/swift-packages/${name}/Package.swift`));
+  if (matches.length !== 1) {
+    throw error(`${product.id} requires exactly one standalone SwiftPM package ${name}, found ${matches.length}`);
+  }
+  return [productDirectoryArtifact({
+    product: product.id, id: "release-input:swiftpm-independent-package",
+    role: "release-input", kind: "swiftpm-independent-package", target: "portable",
+    identity: name, name, directory: path.dirname(matches[0]),
+  })];
+}
+
 function discoverProductArtifactsForSelection(roots, products, selectedProducts) {
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(compareText);
   const artifacts = [];
@@ -1605,6 +1625,7 @@ function discoverProductArtifactsForSelection(roots, products, selectedProducts)
       artifacts.push(...fixedGithubReleaseArtifacts(files, product));
       artifacts.push(...runtimeOwnedExtensionGithubReleaseArtifacts(files, product));
     }
+    artifacts.push(...independentSwiftReleaseInput(files, product));
     if (product.id === "oliphaunt-swift") {
       artifacts.push(...swiftReleaseInputs(files, product, {
         requireExtensionFixture: hasSelectedExtensionProducts,
@@ -1983,6 +2004,16 @@ function validateExtensionProductArtifactInventory(product, artifacts) {
 }
 
 function validateProductArtifactInventory(product, artifacts, { hasSelectedExtensionProducts }) {
+  const independentPackage = independentSwiftPackageName(product);
+  if (independentPackage !== null) {
+    const sources = artifacts.filter(artifact => artifact.id === "release-input:swiftpm-independent-package");
+    if (sources.length !== 1 || sources[0].kind !== "swiftpm-independent-package"
+        || sources[0].identity !== independentPackage || sources[0].name !== independentPackage
+        || sources[0].role !== "release-input") {
+      throw error(`${product.id} requires its exact standalone SwiftPM package input`);
+    }
+    artifacts = artifacts.filter(artifact => artifact !== sources[0]);
+  }
   if (EXTENSION_PRODUCT_KINDS.has(product.kind)) {
     validateExtensionProductArtifactInventory(product, artifacts);
     return;

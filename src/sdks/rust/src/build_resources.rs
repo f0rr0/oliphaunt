@@ -5,10 +5,227 @@ use crate::error::{Error, Result};
 
 static BUILD_RESOURCES_DIR: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
 
+pub use oliphaunt_resources::EmbeddedResource;
+
+const BASE_RESOURCES: &[EmbeddedResource] = include!(env!("OLIPHAUNT_EMBEDDED_RESOURCES_RS"));
+static EMBEDDED_BASE: OnceLock<std::result::Result<Option<PathBuf>, String>> = OnceLock::new();
+
+pub(crate) fn prepare_base_resources() -> Result<Option<PathBuf>> {
+    EMBEDDED_BASE
+        .get_or_init(|| {
+            if BASE_RESOURCES.is_empty() {
+                return Ok(None);
+            }
+            materialize_embedded_resources(BASE_RESOURCES)
+                .map(Some)
+                .map_err(|error| error.to_string())
+        })
+        .clone()
+        .map_err(Error::Engine)
+}
+
+pub(crate) fn embedded_base_resources_dir() -> Option<PathBuf> {
+    EMBEDDED_BASE
+        .get()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .flatten()
+}
+
+pub(crate) fn materialize_embedded_resources(files: &[EmbeddedResource]) -> Result<PathBuf> {
+    use fs2::FileExt;
+    use sha2::{Digest, Sha256};
+    use std::fs::{self, OpenOptions};
+    use std::path::{Component, Path};
+    let mut selected = std::collections::BTreeMap::new();
+    for &(relative, bytes, digest, executable) in files {
+        if (relative.ends_with('/') && (!bytes.is_empty() || executable))
+            || relative.is_empty()
+            || relative.contains('\\')
+            || relative.contains(':')
+            || Path::new(relative)
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            return Err(Error::InvalidConfig(format!(
+                "invalid embedded resource path {relative:?}"
+            )));
+        }
+        if format!("{:x}", Sha256::digest(bytes)) != digest {
+            return Err(Error::InvalidConfig(format!(
+                "embedded resource checksum mismatch: {relative}"
+            )));
+        }
+        if let Some(previous) = selected.insert(relative, (bytes, digest, executable))
+            && previous != (bytes, digest, executable)
+        {
+            return Err(Error::InvalidConfig(format!(
+                "conflicting embedded resource: {relative}"
+            )));
+        }
+    }
+    let mut hash = Sha256::new();
+    for (relative, (_, digest, executable)) in &selected {
+        hash.update(relative.as_bytes());
+        hash.update([0]);
+        hash.update(digest.as_bytes());
+        hash.update([u8::from(*executable)]);
+    }
+    let key = format!("{:x}", hash.finalize());
+    let cache = std::env::var_os("OLIPHAUNT_RUNTIME_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
+        .or_else(|| std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .ok_or_else(|| {
+            Error::Engine("no cache directory available for native resources".to_owned())
+        })?
+        .join("oliphaunt-embedded");
+    let io = |error: std::io::Error| {
+        Error::Engine(format!("prepare embedded native resources: {error}"))
+    };
+    fs::create_dir_all(&cache).map_err(io)?;
+    if fs::symlink_metadata(&cache)
+        .map_err(io)?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(Error::Engine(
+            "embedded resource cache must not be a symbolic link".to_owned(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).map_err(io)?;
+    }
+    let lock_path = cache.join(format!("{key}.lock"));
+    if fs::symlink_metadata(&lock_path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(Error::Engine(
+            "embedded resource lock must not be a symbolic link".to_owned(),
+        ));
+    }
+    let mut lock_options = OpenOptions::new();
+    lock_options
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        lock_options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let lock = lock_options.open(lock_path).map_err(io)?;
+    lock.lock_exclusive().map_err(io)?;
+    let directory = cache.join(&key);
+    let expected_paths = selected
+        .keys()
+        .flat_map(|relative| {
+            Path::new(relative)
+                .ancestors()
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(|path| directory.join(path))
+                .collect::<Vec<_>>()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut pending = vec![directory.clone()];
+    let mut inventory_valid = true;
+    while let Some(parent) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&parent) else {
+            inventory_valid = false;
+            break;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                inventory_valid = false;
+                break;
+            };
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                inventory_valid = false;
+                break;
+            };
+            if !expected_paths.contains(&path)
+                || kind.is_symlink()
+                || (!kind.is_file() && !kind.is_dir())
+            {
+                inventory_valid = false;
+                break;
+            }
+            if kind.is_dir() {
+                pending.push(path);
+            }
+        }
+        if !inventory_valid {
+            break;
+        }
+    }
+    let valid = inventory_valid
+        && fs::symlink_metadata(&directory)
+            .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        && selected.iter().all(|(relative, (_, digest, executable))| {
+            let path = directory.join(relative);
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                return false;
+            };
+            if relative.ends_with('/') {
+                return metadata.is_dir() && !metadata.file_type().is_symlink();
+            }
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if (metadata.permissions().mode() & 0o111 != 0) != *executable {
+                    return false;
+                }
+            }
+            fs::read(path).is_ok_and(|bytes| format!("{:x}", Sha256::digest(bytes)) == *digest)
+        });
+    if !valid {
+        let staging = cache.join(format!(".{key}-{}", std::process::id()));
+        if staging.exists() {
+            fs::remove_dir_all(&staging).map_err(io)?;
+        }
+        fs::create_dir(&staging).map_err(io)?;
+        for (relative, (bytes, _, executable)) in selected {
+            let path = staging.join(relative);
+            if relative.ends_with('/') {
+                fs::create_dir_all(&path).map_err(io)?;
+                continue;
+            }
+            fs::create_dir_all(path.parent().expect("resource parent")).map_err(io)?;
+            fs::write(&path, bytes).map_err(io)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(
+                    path,
+                    fs::Permissions::from_mode(if executable { 0o700 } else { 0o600 }),
+                )
+                .map_err(io)?;
+            }
+        }
+        if let Ok(metadata) = fs::symlink_metadata(&directory) {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                fs::remove_file(&directory).map_err(io)?;
+            } else {
+                fs::remove_dir_all(&directory).map_err(io)?;
+            }
+        }
+        fs::rename(staging, &directory).map_err(io)?;
+    }
+    FileExt::unlock(&lock).map_err(io)?;
+    Ok(directory)
+}
+
 /// Register the Oliphaunt resource directory staged by `oliphaunt-build`.
 ///
-/// Applications usually call [`crate::register_build_resources!`] once during startup
-/// after their `build.rs` has called `oliphaunt_build::configure()`. The native
+/// Advanced preassembled deployments call [`crate::register_build_resources!`]
+/// after their `build.rs` has called `oliphaunt_build::configure()`. Ordinary
+/// applications use automatically embedded resources. The native
 /// runtime locator uses this directory before falling back to explicit
 /// environment variables and source-tree build layouts.
 pub fn register_build_resources_dir(path: impl Into<PathBuf>) -> Result<()> {
@@ -64,6 +281,76 @@ macro_rules! register_build_resources {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_resources_reject_unsafe_paths_and_repair_modified_cache_files() {
+        use sha2::{Digest, Sha256};
+        let digest: &'static str =
+            Box::leak(format!("{:x}", Sha256::digest(b"resource cache test")).into_boxed_str());
+        for relative in ["../escape", "/absolute", "C:/escape", "a/../escape"] {
+            assert!(
+                materialize_embedded_resources(&[(
+                    relative,
+                    b"resource cache test",
+                    digest,
+                    false
+                )])
+                .is_err()
+            );
+        }
+        assert!(materialize_embedded_resources(&[("file", b"wrong", digest, false)]).is_err());
+        let files = [(
+            "extension/test/payload",
+            &b"resource cache test"[..],
+            digest,
+            false,
+        )];
+        let root = materialize_embedded_resources(&files).unwrap();
+        assert_eq!(root, materialize_embedded_resources(&files).unwrap());
+        std::fs::write(root.join("extension/test/payload"), b"modified").unwrap();
+        let repaired = materialize_embedded_resources(&files).unwrap();
+        assert_eq!(
+            std::fs::read(repaired.join("extension/test/payload")).unwrap(),
+            b"resource cache test"
+        );
+        std::fs::write(root.join("unexpected.so"), b"unselected code").unwrap();
+        materialize_embedded_resources(&files).unwrap();
+        assert!(!root.join("unexpected.so").exists());
+        #[cfg(unix)]
+        {
+            let outside = root.with_extension("symlink-test");
+            std::fs::create_dir_all(outside.join("test")).unwrap();
+            std::fs::write(outside.join("test/payload"), b"resource cache test").unwrap();
+            std::fs::remove_dir_all(root.join("extension")).unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("extension")).unwrap();
+            materialize_embedded_resources(&files).unwrap();
+            assert!(
+                !std::fs::symlink_metadata(root.join("extension"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(
+                std::fs::read(outside.join("test/payload")).unwrap(),
+                b"resource cache test"
+            );
+            std::fs::remove_dir_all(outside).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+        let directory_resources = [(
+            "cluster-seed/files/pg_wal/",
+            &b""[..],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            false,
+        )];
+        let directory_root = materialize_embedded_resources(&directory_resources).unwrap();
+        assert!(directory_root.join("cluster-seed/files/pg_wal").is_dir());
+        assert_eq!(
+            directory_root,
+            materialize_embedded_resources(&directory_resources).unwrap()
+        );
+        std::fs::remove_dir_all(directory_root).unwrap();
+    }
 
     #[test]
     fn registration_and_macro_contract_is_process_wide_and_immutable() {

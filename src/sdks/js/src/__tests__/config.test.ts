@@ -1,3 +1,4 @@
+import { extensions } from '../extensions.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vitest';
@@ -28,7 +29,16 @@ test('normalizes only the public database and server configuration', () => {
       startupGUCs: { work_mem: '16MB' },
       username: 'app_user',
       database: 'app_db',
-      extensions: [' vector ', '', 'hstore'],
+      extensions: [
+        {
+          schema: 'oliphaunt-native-extension-v1',
+          product: 'oliphaunt-extension-vector',
+          packageName: '@oliphaunt/extension-vector',
+          sqlName: 'vector',
+          version: '0.8.2',
+        },
+        extensions.hstore,
+      ],
     },
     { instanceDirectory: '/app/root', temporaryDirectory: false },
   );

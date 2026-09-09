@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -6,7 +7,7 @@ import {
   loadPublicationLock,
   lockedProductArtifactPaths,
 } from "./publication-lock.mjs";
-import { ensureTag } from "./publish_swiftpm_source_tag.mjs";
+import { ensureIndependentSwiftpmTag, ensureTag } from "./publish_swiftpm_source_tag.mjs";
 
 function error(message) {
   return new Error(`preflight-swiftpm-source-tag: ${message}`);
@@ -33,6 +34,16 @@ export function parseSwiftpmPreflightArgs(argv) {
 
 export async function preflightLockedSwiftpmSourceTag({ lock, releaseCommit, ensureTagImpl = ensureTag }) {
   assertPublicationLockSource(lock, releaseCommit);
+  for (const product of lock.products) {
+    for (const input of lockedProductArtifactPaths(lock, product.id)
+      .filter(({ artifact }) => artifact.kind === "swiftpm-independent-package")) {
+      ensureIndependentSwiftpmTag({
+        sourceTree: input.path, repository: `f0rr0/${input.artifact.identity}`,
+        version: product.version, target: releaseCommit, preflight: true,
+      });
+    }
+  }
+  if (!lock.products.some(product => product.id === "oliphaunt-swift")) return;
   const inputs = lockedProductArtifactPaths(lock, "oliphaunt-swift");
   const manifests = inputs.filter(({ artifact, type }) => artifact.kind === "swiftpm-release-manifest" && type === "file");
   const trees = inputs.filter(({ artifact, type }) => artifact.kind === "swiftpm-release-tree" && type === "directory");
@@ -50,10 +61,16 @@ export async function preflightLockedSwiftpmSourceTag({ lock, releaseCommit, ens
 if (import.meta.main) {
   try {
     const args = parseSwiftpmPreflightArgs(process.argv.slice(2));
+    const lock = loadPublicationLock(args.publicationLock);
     await preflightLockedSwiftpmSourceTag({
-      lock: loadPublicationLock(args.publicationLock),
+      lock,
       releaseCommit: args.releaseCommit,
     });
+    if (process.env.GITHUB_OUTPUT) {
+      const repositories = lock.productArtifacts.filter(row => row.kind === "swiftpm-independent-package")
+        .map(row => row.identity).sort().join(",");
+      appendFileSync(process.env.GITHUB_OUTPUT, `repositories=${repositories}\n`);
+    }
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause));
     process.exitCode = 1;

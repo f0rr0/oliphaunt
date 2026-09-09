@@ -293,12 +293,7 @@ pack_react_native_sdk_if_needed() {
   fi
 
   patch_expo_example_react_native_dependency "file:$tarball"
-  if [ ! -d "$example_dir/node_modules/@oliphaunt/react-native" ] ||
-    [ "$tarball" -nt "$example_dir/node_modules/@oliphaunt/react-native/package.json" ]; then
-    install_expo_example_dependencies
-  else
-    echo "Expo example dependencies are current"
-  fi
+  install_expo_example_dependencies
 }
 
 install_react_native_sdk_tarball() {
@@ -772,6 +767,9 @@ main() {
     need_cmd diff
   fi
   prepare_expo_example_workspace
+  bash "$root/tools/dev/bun.sh" "$root/tools/release/stage-react-native-resource-packages.mjs" \
+    android "$(normalize_mobile_extensions)" "$android_icu_enabled" \
+    "$scratch_root/resource-packages" "$example_dir" "$scratch_root/pnpm-workspace.yaml"
   pack_react_native_sdk_if_needed
   ensure_android_project
   local runtime_resources jni_libs source_so static_registry_source

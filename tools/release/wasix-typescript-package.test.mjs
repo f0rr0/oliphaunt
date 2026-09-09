@@ -12,6 +12,7 @@ function manifest() {
     dependencies: {
       '@oliphaunt/js-core': '0.0.0',
       '@oliphaunt/liboliphaunt-wasix': '1.2.3',
+      '@oliphaunt/extension-contrib-pg18-wasix': '1.2.3',
       fzstd: '0.1.1',
     },
     bundledDependencies: ['@oliphaunt/js-core'],

@@ -59,6 +59,60 @@ function normalizeOptions(options = {}) {
   };
 }
 
+// Follow the installed dependency graph, including aliases and nested package versions.
+// Dependency declarations determine the app's shipping set; open() remains explicit.
+function resolveInstalledResources(projectRoot) {
+  const { createRequire } = require('node:module');
+  const queue = [path.join(projectRoot, 'package.json')];
+  const visited = new Set();
+  const resourcePackages = new Map();
+  const selected = new Set();
+  while (queue.length > 0) {
+    const manifestFile = fs.realpathSync(queue.pop());
+    if (visited.has(manifestFile)) continue;
+    visited.add(manifestFile);
+    const manifest = readJsonObject(manifestFile, 'installed dependency manifest');
+    const members = extensionMetadata.extensions.filter((row) => row['npm-package'] === manifest.name);
+    if (members.length > 0 || manifest.name === '@oliphaunt/icu') {
+      const previous = resourcePackages.get(manifest.name);
+      if (previous && readJsonObject(previous, 'resource package').version !== manifest.version) {
+        throw new Error(`app dependencies resolve conflicting versions of ${manifest.name}`);
+      }
+      resourcePackages.set(manifest.name, manifestFile);
+      for (const member of members) selected.add(member['sql-name']);
+    }
+    const resolve = createRequire(manifestFile).resolve;
+    const names = new Set([
+      ...Object.keys(manifest.dependencies ?? {}),
+      ...Object.keys(manifest.optionalDependencies ?? {}),
+      ...Object.keys(manifest.peerDependencies ?? {}),
+    ]);
+    for (const name of names) {
+      try {
+        queue.push(resolve(`${name}/package.json`));
+      } catch (error) {
+        if (error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+          let directory = path.dirname(resolve(name));
+          while (!fs.existsSync(path.join(directory, 'package.json'))) {
+            const parent = path.dirname(directory);
+            if (parent === directory) throw error;
+            directory = parent;
+          }
+          queue.push(path.join(directory, 'package.json'));
+        } else if (error.code !== 'MODULE_NOT_FOUND'
+          || (manifest.dependencies?.[name] && !manifest.optionalDependencies?.[name])) {
+          throw error;
+        }
+      }
+    }
+  }
+  return {
+    extensions: [...selected].sort(),
+    icu: resourcePackages.has('@oliphaunt/icu'),
+    packageJsonResolver: (name, paths) => resourcePackages.get(name) ?? resolvePackageJson(name, paths),
+  };
+}
+
 function optionalString(value) {
   if (value == null) {
     return undefined;
@@ -1009,7 +1063,9 @@ function patchAndroidGradle(androidRoot, normalized) {
 
 function withOliphaunt(config, options = {}) {
   const plugin = require('expo/config-plugins');
-  const normalized = normalizeOptions(options);
+  if (Object.hasOwn(options, 'extensions') || Object.hasOwn(options, 'icu')) {
+    throw new Error('Oliphaunt build resources come from installed dependencies; select extensions and ICU in open()');
+  }
   // Expo's built-in iOS mods consume this synchronously and propagate it to
   // both the Xcode project and Podfile.properties.json during prebuild.
   config = ensureIosConfigDeploymentTarget(config);
@@ -1018,11 +1074,13 @@ function withOliphaunt(config, options = {}) {
     'android',
     (modConfig) => {
       const projectRoot = modConfig.modRequest.projectRoot;
+      const installedResources = resolveInstalledResources(projectRoot);
+      const normalized = normalizeOptions({ ...options, ...installedResources });
       const androidRoot = path.join(projectRoot, 'android');
       const installedExtensions = resolveInstalledExtensionOwners(
         projectRoot,
         normalized.extensions,
-        { liboliphauntVersion: normalized.liboliphauntVersion },
+        { liboliphauntVersion: normalized.liboliphauntVersion, packageJsonResolver: installedResources.packageJsonResolver },
       );
       const androidOptions = {
         ...normalized,
@@ -1048,8 +1106,10 @@ function withOliphaunt(config, options = {}) {
     'ios',
     (modConfig) => {
       const projectRoot = modConfig.modRequest.projectRoot;
+      const installedResources = resolveInstalledResources(projectRoot);
+      const normalized = normalizeOptions({ ...options, ...installedResources });
       const iosRoot = path.join(projectRoot, 'ios');
-      stageIosAppPayload(projectRoot, iosRoot, normalized);
+      stageIosAppPayload(projectRoot, iosRoot, normalized, { packageJsonResolver: installedResources.packageJsonResolver });
       writeJson(path.join(iosRoot, 'oliphaunt.json'), normalized);
       writeJson(path.join(iosRoot, 'OliphauntExtensions.json'), {
         extensions: normalized.extensions,
@@ -1083,3 +1143,5 @@ module.exports.iosPodfileBlock = iosPodfileBlock;
 module.exports.ensureIosDeploymentTarget = ensureIosDeploymentTarget;
 module.exports.ensureIosConfigDeploymentTarget = ensureIosConfigDeploymentTarget;
 module.exports.insertAppGradlePlugin = insertAppGradlePlugin;
+
+module.exports.resolveInstalledResources = resolveInstalledResources;

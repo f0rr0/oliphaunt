@@ -13,6 +13,10 @@ import path from 'node:path';
 
 import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 import { validatePortableReleaseAsset } from './check-liboliphaunt-wasix-release-assets.mjs';
+import { assertWasixAotArtifactPayloads } from './check-liboliphaunt-wasix-release-assets.mjs';
+import { assertCanonicalWasixAotManifest } from './wasix-aot-manifest.mjs';
+import { AOT_TARGET_TRIPLES } from './wasix-cargo-artifact-contract.mjs';
+import { npmPlatformConstraints, pnpmPackForNpmPublish } from './package-extension-release-carriers.mjs';
 import {
   NPM_TRUSTED_PUBLISHING_REPOSITORY,
   validateNpmTrustedPublishingManifest,
@@ -118,7 +122,11 @@ export function stageWasixToolsNpmCarrier({ version, portableReleaseArchive, pac
       target: 'portable',
       runtimeVersion: version,
       descriptorSchema: DESCRIPTOR_SCHEMA,
+      tools: Object.fromEntries(Object.values(tools).map(tool => [tool.name, {
+        path: `assets/${tool.name}.wasix.wasm`, sha256: tool.sha256, size: tool.size,
+      }])),
     },
+    optionalDependencies: Object.fromEntries(Object.keys(AOT_TARGET_TRIPLES).map(target => [`${PACKAGE_NAME}-${target}`, version])),
     publishConfig: { access: 'public', provenance: true },
     files: ['README.md', 'index.js', 'index.d.ts', 'assets', ...notices],
     exports: {
@@ -158,7 +166,51 @@ export function packWasixToolsNpmCarrier({
   if (typeof filename !== 'string') fail('pnpm pack did not report its filename');
   const tarball = path.isAbsolute(filename) ? filename : path.join(output, filename);
   assertWasixToolsNpmArchive(tarball, staged.descriptor);
+  for (const target of Object.keys(AOT_TARGET_TRIPLES)) {
+    const aotDir = `${packageDir}-${target}`;
+    stageWasixToolsAotNpmCarrier({
+      version, target, packageDir: aotDir,
+      aotReleaseArchive: path.join(path.dirname(portableReleaseArchive), `liboliphaunt-wasix-${version}-runtime-aot-${target}.tar.zst`),
+    });
+    pnpmPackForNpmPublish(aotDir, output);
+  }
   return Object.freeze({ ...staged, tarball });
+}
+
+export function stageWasixToolsAotNpmCarrier({ version, target, packageDir, aotReleaseArchive }) {
+  const entries = readPortableArchiveEntries(aotReleaseArchive);
+  const candidates = [...entries.keys()].filter(member => member.endsWith('/manifest.json'));
+  if (candidates.length !== 1) fail('tools AOT release must contain exactly one manifest');
+  const manifestPath = candidates[0];
+  const prefix = path.posix.dirname(manifestPath);
+  const manifest = JSON.parse(requiredEntry(entries, manifestPath, aotReleaseArchive).toString('utf8'));
+  assertCanonicalWasixAotManifest(manifest, { expectedTarget: AOT_TARGET_TRIPLES[target] });
+  const artifacts = assertWasixAotArtifactPayloads(manifest, {
+    readArtifact: relative => requiredEntry(entries, `${prefix}/${relative}`, aotReleaseArchive),
+  }).filter(artifact => ['tool:pg_dump', 'tool:psql'].includes(artifact.name));
+  if (artifacts.length !== 2) fail('tools AOT release is missing pg_dump or psql');
+  rmSync(packageDir, { recursive: true, force: true });
+  mkdirSync(packageDir, { recursive: true });
+  for (const artifact of artifacts) {
+    const output = path.join(packageDir, artifact.path);
+    mkdirSync(path.dirname(output), { recursive: true });
+    writeFileSync(output, requiredEntry(entries, `${prefix}/${artifact.path}`, aotReleaseArchive));
+  }
+  const bytes = Buffer.from(`${JSON.stringify({ ...manifest, artifacts }, null, 2)}\n`);
+  writeFileSync(path.join(packageDir, 'aot-manifest.json'), bytes);
+  stageReleaseNotices(packageDir, NOTICE_OPTIONS);
+  const packageJson = {
+    name: `${PACKAGE_NAME}-${target}`, version, ...npmPlatformConstraints(target),
+    license: releaseProfilePackageLicense('wasix-runtime').spdx,
+    repository: { type: 'git', url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
+    publishConfig: { access: 'public', provenance: true },
+    oliphaunt: { kind: 'wasix-tools-aot', target, runtimeVersion: version, manifestSha256: sha256(bytes) },
+    files: ['aot-manifest.json', ...artifacts.map(artifact => artifact.path), ...releaseNoticeRows(NOTICE_OPTIONS).map(({ member }) => member)],
+    exports: { './package.json': './package.json' },
+  };
+  validateNpmTrustedPublishingManifest(packageJson, `${PACKAGE_NAME} tools AOT`);
+  writeFileSync(path.join(packageDir, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`);
+  return packageJson;
 }
 
 export function assertWasixToolsNpmArchive(archive, descriptor) {

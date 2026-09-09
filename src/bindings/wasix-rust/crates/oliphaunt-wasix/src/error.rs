@@ -443,7 +443,7 @@ impl Error {
     }
 
     /// Return structured frontend-program failure details for `pg_dump` or `psql`.
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub fn tool_error(&self) -> Option<&crate::tools::PostgresToolError> {
         self.inner.downcast_ref()
     }

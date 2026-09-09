@@ -211,7 +211,26 @@ fn resolve_library_path() -> Result<PathBuf> {
 }
 
 pub(super) fn resolve_library_path_candidates() -> Vec<PathBuf> {
-    env_path_candidates([ENV_OLIPHAUNT])
+    let mut candidates = env_path_candidates([ENV_OLIPHAUNT]);
+    if let Some(root) = crate::build_resources::registered_build_resources_dir()
+        .or_else(|| std::env::var_os("OLIPHAUNT_RESOURCES_DIR").map(PathBuf::from))
+        .or_else(crate::build_resources::embedded_base_resources_dir)
+    {
+        let payload = root.join("native-runtime/liboliphaunt-native");
+        let path = if cfg!(windows) {
+            payload.join("bin/oliphaunt.dll")
+        } else {
+            payload.join(format!(
+                "lib/{}oliphaunt{}",
+                std::env::consts::DLL_PREFIX,
+                std::env::consts::DLL_SUFFIX
+            ))
+        };
+        if path.is_file() {
+            candidates.push(path);
+        }
+    }
+    candidates
 }
 
 pub(super) fn env_path_candidates<const N: usize>(names: [&str; N]) -> Vec<PathBuf> {

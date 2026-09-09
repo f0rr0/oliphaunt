@@ -31,7 +31,7 @@ import {
 
 const PREFIX = "build-sdk-ci-artifacts.mjs";
 
-export function stageArtifacts(artifactRoot, workRoot) {
+export async function stageArtifacts(artifactRoot, workRoot) {
   requireCommand("swift");
   const swiftSourceArchive = path.join(
     ROOT,

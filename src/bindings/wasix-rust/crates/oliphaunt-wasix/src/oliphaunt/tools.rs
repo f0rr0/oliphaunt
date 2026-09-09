@@ -423,6 +423,60 @@ fn disallowed_flag(
     None
 }
 
+static INSTALLED_TOOLS: std::sync::OnceLock<oliphaunt_resources::WasixPackage> =
+    std::sync::OnceLock::new();
+
+/// Register an installed, trusted tools package for the native binding.
+#[doc(hidden)]
+pub fn register_installed_package(package: oliphaunt_resources::WasixPackage) -> Result<()> {
+    anyhow::ensure!(
+        package.runtime_version() == liboliphaunt_wasix_portable::PACKAGE_VERSION,
+        "installed tools package runtime mismatch"
+    );
+    for name in ["pg_dump", "psql"] {
+        let matches: Vec<_> = package
+            .archives()
+            .iter()
+            .filter(|(entry, _, _)| *entry == name)
+            .collect();
+        anyhow::ensure!(
+            matches.len() == 1,
+            "tools package must contain exactly one {name}"
+        );
+        use sha2::{Digest, Sha256};
+        anyhow::ensure!(
+            format!("{:x}", Sha256::digest(matches[0].1)) == matches[0].2,
+            "tools package {name} hash mismatch"
+        );
+        aot::load_package_module(
+            &aot::headless_engine(),
+            &package,
+            &format!("tool:{name}"),
+            matches[0].1,
+        )?;
+    }
+    let selected = INSTALLED_TOOLS.get_or_init(|| package);
+    anyhow::ensure!(
+        *selected == package,
+        "conflicting tools packages for one runtime"
+    );
+    Ok(())
+}
+
+pub(crate) fn installed_tool_package() -> Option<&'static oliphaunt_resources::WasixPackage> {
+    INSTALLED_TOOLS.get()
+}
+
+#[doc(hidden)]
+pub fn installed_tool_wasm(name: &str) -> Option<&'static [u8]> {
+    INSTALLED_TOOLS
+        .get()?
+        .archives()
+        .iter()
+        .find(|(entry, _, _)| *entry == name)
+        .map(|(_, bytes, _)| *bytes)
+}
+
 fn pg_dump_wasm_asset() -> Result<&'static [u8]> {
     assets::pg_dump_wasm()
         .filter(|bytes| !bytes.is_empty())
@@ -1289,7 +1343,6 @@ mod tests {
         ))
     }
 
-    #[cfg(feature = "extension-pgtap")]
     #[test]
     fn public_tools_round_trip_shared_logical_fixture() -> crate::Result<()> {
         let seed = crate::oliphaunt::test_fixtures::text("postgres/logical-tools-seed.sql");

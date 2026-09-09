@@ -2,6 +2,7 @@ import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.bundling.Jar
+import org.gradle.api.tasks.compile.JavaCompile
 import java.util.Locale
 
 plugins {
@@ -147,6 +148,52 @@ publishing {
     publications {
         oliphauntArtifacts.forEach { artifact ->
             val publicationName = publicationName(artifact)
+            val icuDescriptor = artifact.groupId == "dev.oliphaunt.runtime" && artifact.artifactId == "oliphaunt-icu"
+            val descriptorSource = if (icuDescriptor) {
+                layout.buildDirectory.file("generated/oliphaunt-descriptors/$publicationName/src/ICU.java").get().asFile
+            } else artifact.file.takeIf { it.extension == "java" }
+            val generateIcuDescriptor = if (icuDescriptor) {
+                tasks.register("${publicationName}GenerateDescriptor") {
+                    inputs.property("version", artifact.version)
+                    outputs.file(descriptorSource!!)
+                    doLast {
+                        descriptorSource.parentFile.mkdirs()
+                        descriptorSource.writeText("""
+                            package dev.oliphaunt.icu;
+                            /** Optional ICU data supplied by this package. */
+                            public final class ICU {
+                                private ICU() {}
+                                public static final dev.oliphaunt.IcuData data = new dev.oliphaunt.IcuData("${artifact.version}");
+                            }
+                        """.trimIndent() + "\n")
+                    }
+                }
+            } else null
+            val descriptorClasses = layout.buildDirectory.dir("generated/oliphaunt-descriptors/$publicationName/classes")
+            val compileDescriptor = descriptorSource?.let { source ->
+                tasks.register<JavaCompile>("${publicationName}CompileDescriptor") {
+                    val sdkJar = project(":oliphaunt").tasks.named("jvmJar")
+                    dependsOn(sdkJar)
+                    if (generateIcuDescriptor != null) dependsOn(generateIcuDescriptor)
+                    source(source)
+                    classpath = files(sdkJar)
+                    destinationDirectory.set(descriptorClasses)
+                    sourceCompatibility = "17"
+                    targetCompatibility = "17"
+                }
+            }
+            val descriptorJar = compileDescriptor?.let { compile ->
+                tasks.register<Jar>("${publicationName}DescriptorJar") {
+                    dependsOn(compile)
+                    archiveBaseName.set(artifact.artifactId)
+                    archiveVersion.set(artifact.version)
+                    destinationDirectory.set(layout.buildDirectory.dir("oliphaunt-maven-artifacts/$publicationName"))
+                    from(descriptorClasses)
+                    from(baseReleaseNoticeFiles) { into("META-INF") }
+                    isPreserveFileTimestamps = false
+                    isReproducibleFileOrder = true
+                }
+            }
             val placeholderRoot = layout.buildDirectory.dir("generated/oliphaunt-maven-artifacts/$publicationName")
             val placeholderSources = placeholderRoot.map { it.file("sources/README.md") }
             val placeholderJavadocs = placeholderRoot.map { it.file("javadoc/index.html") }
@@ -161,7 +208,7 @@ publishing {
                         }
                         placeholderJavadocs.get().asFile.apply {
                             parentFile.mkdirs()
-                            writeText("<!doctype html><meta charset=\"utf-8\"><title>$coordinate</title><p>This binary carrier has no Java API.</p>\n")
+                            writeText("<!doctype html><meta charset=\"utf-8\"><title>$coordinate</title><p>${if (descriptorSource != null) "Versioned resource descriptor for Kotlin and Java. See the sources archive." else "This binary carrier has no Java API."}</p>\n")
                         }
                     }
                 }
@@ -174,7 +221,10 @@ publishing {
                     destinationDirectory.set(layout.buildDirectory.dir("oliphaunt-maven-artifacts/$publicationName"))
                     isPreserveFileTimestamps = false
                     isReproducibleFileOrder = true
-                    from(placeholderSources)
+                    if (descriptorSource != null) {
+                        if (generateIcuDescriptor != null) dependsOn(generateIcuDescriptor)
+                        from(descriptorSource)
+                    } else from(placeholderSources)
                     from(baseReleaseNoticeFiles) {
                         into("META-INF")
                         filePermissions {
@@ -203,9 +253,8 @@ publishing {
                 groupId = artifact.groupId
                 artifactId = artifact.artifactId
                 version = artifact.version
-                artifact(artifact.file) {
-                    extension = "tar.gz"
-                }
+                if (descriptorJar != null) artifact(descriptorJar)
+                if (descriptorJar == null || icuDescriptor) artifact(artifact.file) { extension = "tar.gz" }
                 artifact(sourcesJar)
                 artifact(javadocJar)
                 pom {
@@ -217,6 +266,17 @@ publishing {
                         publicationProperties["oliphaunt.runtime.version"] = artifact.runtimeVersion
                     }
                     properties.set(publicationProperties)
+                    if (descriptorSource != null) {
+                        withXml {
+                            val dependencies = asNode().appendNode("dependencies")
+                            val dependency = dependencies.appendNode("dependency")
+                            dependency.appendNode("groupId", "dev.oliphaunt")
+                            dependency.appendNode("artifactId", "oliphaunt-android")
+                            dependency.appendNode("version", project(":oliphaunt").version.toString())
+                            dependency.appendNode("type", "aar")
+                            dependency.appendNode("scope", "compile")
+                        }
+                    }
                     inceptionYear.set("2026")
                     url.set("https://github.com/f0rr0/oliphaunt")
                     licenses {
@@ -272,8 +332,8 @@ tasks.register("validateOliphauntMavenArtifacts") {
             if (!artifact.file.isFile) {
                 throw GradleException("Missing Maven artifact file for ${artifact.groupId}:${artifact.artifactId}: ${artifact.file}")
             }
-            if (!artifact.file.name.endsWith(".tar.gz")) {
-                throw GradleException("Oliphaunt Maven artifact ${artifact.file} must be a .tar.gz file")
+            if (!artifact.file.name.endsWith(".tar.gz") && artifact.file.extension != "java") {
+                throw GradleException("Oliphaunt Maven artifact ${artifact.file} must be a carrier .tar.gz or descriptor .java file")
             }
             if ((artifact.runtimeProduct == null) != (artifact.runtimeVersion == null)) {
                 throw GradleException(

@@ -230,6 +230,13 @@ prepare_runtime_resources() {
     "$package_root"
 }
 
+installed_mobile_extensions() {
+  node - "$root/src/sdks/react-native/app.plugin.js" "$example_dir" <<'NODE'
+const plugin = require(process.argv[2]);
+process.stdout.write(plugin.resolveInstalledResources(process.argv[3]).extensions.join(","));
+NODE
+}
+
 find_ios_library_artifact() {
   local artifact="${OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK:-}"
   [ -n "$artifact" ] || artifact="${OLIPHAUNT_EXPO_IOS_OLIPHAUNT_FRAMEWORK:-}"
@@ -506,18 +513,16 @@ configure_ios_carrier_inputs() {
   local selected_extensions icu_enabled
   selected_extensions="$(normalize_mobile_extensions)"
   icu_enabled="${OLIPHAUNT_EXPO_IOS_ICU:-0}"
-  node - "$example_dir/app.json" "$selected_extensions" "$icu_enabled" <<'NODE'
+  bash "$root/tools/dev/bun.sh" "$root/tools/release/stage-react-native-resource-packages.mjs" \
+    "$carrier_manifest" "$selected_extensions" "$icu_enabled" \
+    "$scratch_root/resource-packages" "$example_dir" "$scratch_root/pnpm-workspace.yaml"
+  node - "$example_dir/app.json" <<'NODE'
 const fs = require("node:fs");
 const file = process.argv[2];
-const extensions = process.argv[3].split(",").map((value) => value.trim()).filter(Boolean);
-const icu = ["1", "true", "yes"].includes(process.argv[4].toLowerCase());
 const value = JSON.parse(fs.readFileSync(file, "utf8"));
-const plugins = Array.isArray(value.expo?.plugins) ? value.expo.plugins : [];
-value.expo.plugins = plugins.filter((entry) => {
-  const name = Array.isArray(entry) ? entry[0] : entry;
-  return name !== "@oliphaunt/react-native";
-});
-value.expo.plugins.push(["@oliphaunt/react-native", { extensions, icu }]);
+value.expo.plugins = (value.expo.plugins ?? []).filter(entry =>
+  (Array.isArray(entry) ? entry[0] : entry) !== "@oliphaunt/react-native");
+value.expo.plugins.push("@oliphaunt/react-native");
 fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 NODE
 }
@@ -835,7 +840,7 @@ build_ios_app() {
     echo "bundled: $resource_root/lib/liboliphaunt.dylib" >&2
   fi
   local selected_extensions app_resource_files
-  selected_extensions="$(normalize_mobile_extensions)"
+  selected_extensions="$(installed_mobile_extensions)"
   app_resource_files="$scratch_root/ios-resource-files.txt"
   find "$resource_root" -type f -print >"$app_resource_files"
   oliphaunt_dev_assert_runtime_file_list "$selected_extensions" "iOS" <"$app_resource_files"
@@ -980,7 +985,7 @@ main() {
     install_react_native_sdk_from_source_for_reuse
     if [ "$runner" = "crash" ]; then
       crash_storage="$crash_storage_override"
-      [ -n "$crash_storage" ] || crash_storage="app-data:oliphaunt-crash-recovery-$crash_storage_suffix"
+      [ -n "$crash_storage" ] || crash_storage="app-directory:oliphaunt-crash-recovery-$crash_storage_suffix"
       exercise_ios_device_crash_recovery "$device_id" "$crash_storage"
       return
     fi
@@ -997,8 +1002,9 @@ main() {
   fi
   configure_iphoneos_signing
   local app
-  pack_react_native_sdk
   configure_ios_carrier_inputs
+  pack_react_native_sdk
+  install_expo_example_dependencies
   ensure_ios_project
   prepare_swift_sdk_artifact_git_repo_if_required
   patch_expo_modules_jsi_for_host_toolchain
@@ -1010,7 +1016,7 @@ main() {
     "$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties" \
     "iOS app"
   local selected_extensions
-  selected_extensions="$(normalize_mobile_extensions)"
+  selected_extensions="$(installed_mobile_extensions)"
   write_ios_build_artifact_report "$app" "$selected_extensions"
   if is_ios_build_only; then
     printf '\niOS build-only mobile artifact complete: %s\n' "$app"

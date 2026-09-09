@@ -224,6 +224,15 @@ static int load_symbols(const char *library_path, OliphauntSymbols *symbols) {
     return 0;
 }
 
+int32_t oliphaunt_swift_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count) {
+    OliphauntSymbols symbols;
+    if (load_symbols(NULL, &symbols) != 0) return -1;
+    int32_t status = symbols.register_static_extensions(extensions, count);
+    if (status != 0) set_global_native_error(&symbols, NULL, "static extension registration failed");
+    unload_symbols(&symbols);
+    return status;
+}
+
 static int register_selected_static_extensions(OliphauntSymbols *symbols) {
     dlerror();
     OliphauntSelectedStaticExtensionsFn selected = NULL;

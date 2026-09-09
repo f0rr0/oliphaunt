@@ -1,3 +1,5 @@
+import type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
+
 export type NativeBindingOptions = {
   libraryPath?: string;
   nodeAddonPath?: string;
@@ -9,6 +11,8 @@ export type NativeOpenConfig = {
   username: string;
   database: string;
   extensions: string[];
+  extensionDescriptors?: NativeExtensionDescriptor[];
+  icu?: NativeIcuDescriptor;
   startupArgs: string[];
 };
 

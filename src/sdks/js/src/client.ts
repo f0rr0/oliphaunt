@@ -1,3 +1,4 @@
+import { snapshotNativeExtensions, snapshotNativeIcu } from '@oliphaunt/js-core/resources';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1180,7 +1181,9 @@ function snapshotCommonOpenConfig(config: OpenConfig | ServerOpenConfig) {
     startupGUCs: config.startupGUCs === undefined ? undefined : { ...config.startupGUCs },
     username: config.username,
     database: config.database,
-    extensions: config.extensions === undefined ? undefined : [...config.extensions],
+    extensions:
+      config.extensions === undefined ? undefined : snapshotNativeExtensions(config.extensions),
+    icu: snapshotNativeIcu(config.icu),
     runtimeDirectory: config.runtimeDirectory,
   };
 }

@@ -167,6 +167,7 @@ function addonFixture(): NativeWasixAddon {
     payloadIdentity: () => `${'a'.repeat(64)}:1`,
     extensionIdentity: () => `${'a'.repeat(64)}:1`,
     toolIdentity: () => `${'a'.repeat(64)}:1`,
+    registerTools: () => {},
   };
 }
 

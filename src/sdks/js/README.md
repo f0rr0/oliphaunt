@@ -8,9 +8,10 @@ use the separate WASIX TypeScript package.
 
 ```ts
 import Oliphaunt from '@oliphaunt/ts';
+import { directory } from '@oliphaunt/ts/storage/node';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'directory', path: '.oliphaunt' },
+  storage: directory('.oliphaunt'),
   startupGUCs: { application_name: 'my-app' },
 });
 
@@ -199,15 +200,36 @@ the SDK deliberately does not guess that an owner is stale.
 
 ## Runtime and extensions
 
-Platform native runtime, Node addon, broker, and ICU packages are optional
-dependencies selected for the installed host. Explicit library, runtime, addon,
-broker, or server paths exist for packaging and development scenarios. Native
-client-tool packages remain separate products and are not SDK dependencies.
+The SDK installs PostgreSQL and the supported contrib distribution for the host.
+External extensions and ICU data are separate dependencies:
 
-Extensions are selected by exact PostgreSQL SQL name through `extensions`.
-Runtime artifact discovery remains internal. The package intentionally does not
-publish capability profiles, supported-mode introspection, package-size reports,
-generic streams, protocol parsers, or backup format helpers.
+```sh
+npm install @oliphaunt/ts @oliphaunt/extension-vector
+```
 
-The package has one public code entrypoint, `@oliphaunt/ts`, plus
-`@oliphaunt/ts/package.json` for package metadata.
+```ts
+import Oliphaunt, { extensions } from '@oliphaunt/ts';
+import { directory } from '@oliphaunt/ts/storage/node';
+import vector from '@oliphaunt/extension-vector';
+
+const db = await Oliphaunt.open({
+  storage: directory('./postgres'),
+  extensions: [vector, extensions.hstore],
+});
+try {
+  await db.execute('CREATE EXTENSION vector');
+  await db.execute('CREATE EXTENSION hstore');
+} finally {
+  await db.close();
+}
+```
+
+`directory` accepts a filesystem path or local `file:` URL. Contrib needs no
+additional application dependency, but its descriptor must be passed explicitly.
+The imported external descriptor identifies the installed package and version;
+resource resolution is internal. Selection never runs migration SQL.
+
+For ICU collations, install `@oliphaunt/icu`, import its default `icu` value,
+and pass `icu` to `Oliphaunt.open`. The same extension and ICU options apply to
+broker and local-server configuration. Explicit library and runtime paths remain
+available for advanced packaging and development.
