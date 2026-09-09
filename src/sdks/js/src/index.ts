@@ -42,6 +42,7 @@ export type {
   OliphauntTransaction,
   OliphauntServer,
   OpenConfig,
+  RestoreDestination,
   RestoreOptions,
   ServerListen,
   ServerOpenConfig,

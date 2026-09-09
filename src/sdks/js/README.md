@@ -44,7 +44,7 @@ The deliberate public vocabulary is:
 - `execProtocolRawStream` for callback delivery of raw backend protocol chunks,
   including COPY responses, without buffering the complete response.
 - `backup()` returning the one physical backup format as `Uint8Array`.
-- `Oliphaunt.restore(destination, bytes)` for an absent or empty destination.
+- `Oliphaunt.restore(directory(path), bytes)` for an absent or empty destination.
 - `Oliphaunt.openServer(config)` for the distinct local-server handle.
 
 `execute` asserts one command with no rows. `query` accepts command-only or
@@ -121,24 +121,26 @@ session when its state is unknown.
 
 ```ts
 const source = await Oliphaunt.open({
-  storage: { kind: 'directory', path: '.oliphaunt-source' },
+  storage: directory('.oliphaunt-source'),
 });
 const bytes = await source.backup();
 await source.close();
 
-await Oliphaunt.restore('.oliphaunt-restored', bytes);
+await Oliphaunt.restore(directory('.oliphaunt-restored'), bytes);
 ```
 
 Backup bytes are a PostgreSQL physical initialization payload containing PGDATA
 and backup metadata. They do not contain the outer `.oliphaunt.json` descriptor.
 Restore stages and validates PGDATA, then creates the receiving root identity.
 There is no archive selector and no replace-existing option.
+Open and restore accept the same `directory(path)` helper, including local
+`file:` URLs. Restore requires persistent storage and does not open a database.
 
 ## Local server
 
 ```ts
 const server = await Oliphaunt.openServer({
-  storage: { kind: 'directory', path: '.oliphaunt-server' },
+  storage: directory('.oliphaunt-server'),
   listen: { transport: 'tcp' },
 });
 console.log(server.connectionString);

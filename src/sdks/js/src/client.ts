@@ -54,6 +54,7 @@ import type {
   ServerListen,
   ServerOpenConfig,
   ProtocolChunkCallback,
+  RestoreDestination,
   RestoreOptions,
 } from './types.js';
 
@@ -1110,15 +1111,19 @@ export function createOliphauntClient(
     },
 
     async restore(
-      destination: string,
+      destination: RestoreDestination,
       backup: BinaryInput,
       options: RestoreOptions = {},
     ): Promise<void> {
-      validateDirectoryPath(destination, 'restore destination');
+      if (destination?.kind !== 'directory' || typeof destination.path !== 'string') {
+        throw new TypeError('restore destination must be a directory storage descriptor');
+      }
+      const path = destination.path;
+      validateDirectoryPath(path, 'restore destination');
       const bytes = toUint8Array(backup).slice();
       const binding = await bindingFor({ libraryPath: options.libraryPath });
       await binding.restore({
-        destination,
+        destination: path,
         bytes,
       });
     },

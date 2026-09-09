@@ -1669,6 +1669,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `QueryValueDecoder`
 - `RawQueryResult`
 - `RawQueryRow`
+- `RestoreDestination`
 - `RestoreOptions`
 - `ServerListen`
 - `ServerOpenConfig`
