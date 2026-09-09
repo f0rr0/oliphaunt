@@ -1,3 +1,4 @@
+import { cargoDatabaseSmokeSource } from "./public-consumer-smoke.mjs";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
@@ -316,6 +317,7 @@ vector = { package = "oliphaunt-extension-vector", path = ${JSON.stringify(path.
     writeFileSync(path.join(app, "src/lib.rs"), `pub fn configured() -> oliphaunt::OliphauntBuilder {
       oliphaunt::Oliphaunt::builder().extensions([vector::VECTOR, oliphaunt::extensions::HSTORE])
     }\n`);
+    writeFileSync(path.join(app, "src/main.rs"), cargoDatabaseSmokeSource().replace("use locked_entry::", "use oliphaunt::"));
     const plain = spawnSync("cargo", ["check", "--offline", "--target-dir", path.join(root, "cargo-target")], {
       cwd: app, encoding: "utf8", maxBuffer: 20 * 1024 * 1024,
     });

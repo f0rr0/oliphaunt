@@ -13,6 +13,7 @@ import {
   resolveSwiftCarrierSelection,
 } from "./swift-carrier-resolver.mjs";
 
+import { prepareExtensionReleaseConsumer } from "./prepare-extension-release-consumer.mjs";
 import { validateSelection, writeBundledContrib, renderSwiftTargets } from "./render-extension-products.mjs";
 import { loadSwiftExtensionInventoryCatalog, validateSwiftExtensionResourceArtifact } from "./extension-resource-inventory.mjs";
 
@@ -1265,23 +1266,15 @@ async function main() {
   const sqlPackage = await fs.readFile(path.join(sqlOutput, "Package.swift"), "utf8");
   assert.doesNotMatch(sqlPackage, /binaryTarget/u);
   const consumer = path.join(root, "consumer");
-  await fs.mkdir(path.join(consumer, "Sources", "Consumer"), { recursive: true });
-  await fs.writeFile(path.join(consumer, "Package.swift"), `// swift-tools-version: 6.0
-import PackageDescription
-let package = Package(name: "Consumer", platforms: [.macOS(.v14)], dependencies: [
-  .package(name: "oliphaunt", path: ${JSON.stringify(sdk)}),
-  .package(name: "pgtap", path: ${JSON.stringify(sqlOutput)})
-], targets: [.executableTarget(name: "Consumer", dependencies: [
-  .product(name: "Oliphaunt", package: "oliphaunt"),
-  .product(name: "OliphauntExtensionPgtap", package: "pgtap")
-])])
-`);
-  await fs.writeFile(path.join(consumer, "Sources", "Consumer", "main.swift"), `import Oliphaunt
-import OliphauntExtensionPgtap
-let configuration = OliphauntConfiguration(extensions: [OliphauntExtensionPgtap.descriptor, OliphauntExtensions.hstore])
-precondition(configuration.extensions.map(\\.sqlName) == ["pgtap", "hstore"])
-`);
-  run("swift", ["run", "--package-path", consumer, "--scratch-path", path.join(root, "../consumer-build"), "Consumer"], { timeout: 180_000 });
+  prepareExtensionReleaseConsumer({
+    plan: {
+      extensions: ["pgtap"], extensionProducts: ["oliphaunt-extension-pgtap"],
+      finalLink: { kind: "base-runtime", runtimeProduct: "liboliphaunt-native", runtimeVersion: manifest.base.version },
+    },
+    productsFile: path.join(sqlOutput, "extension-products.json"), releasePackage: sdk,
+    carrier: sqlCarrier, extensionCarriers: [], cache: path.join(root, "sql-cache"), output: consumer,
+  });
+  run("swift", ["build", "--package-path", consumer, "--scratch-path", path.join(root, "../consumer-build")], { timeout: 180_000 });
   console.log(`swift-carrier-resolver.test.mjs: metadata, malicious ZIP, cache-tamper, and consumer checks passed; sql-only-package=${sqlOutput}`);
 }
 

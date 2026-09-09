@@ -735,6 +735,7 @@ function copyExtractedTree(source, destination) {
 }
 
 export function extractReleaseArchiveTree(archive, sourcePrefix, destination) {
+  if (!isFile(archive)) fail(`missing release archive: ${rel(archive)}`);
   const temp = archiveTempDir();
   const prefix = sourcePrefix.replace(/\/+$/u, "");
   try {

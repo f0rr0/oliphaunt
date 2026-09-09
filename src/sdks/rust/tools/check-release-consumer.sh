@@ -115,13 +115,14 @@ build_consumer() {
 run_consumer() {
   local consumer="$1"
   local native_assets="$2"
-  local runtime_archive tools_archive install_dir tools_dir
+  local runtime_archive tools_archive install_dir tools_dir native_version
   require_linux_x64
   require_file "$consumer"
   [ -x "$consumer" ] || fail "release consumer is not executable: $consumer"
   [ -d "$native_assets" ] || fail "native asset directory is missing: $native_assets"
-  runtime_archive="$(find_one "$native_assets" 'liboliphaunt-*-linux-x64-gnu.tar.gz')"
-  tools_archive="$(find_one "$native_assets" 'oliphaunt-tools-*-linux-x64-gnu.tar.gz')"
+  native_version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
+  runtime_archive="$(find_one "$native_assets" "liboliphaunt-$native_version-linux-x64-gnu.tar.gz")"
+  tools_archive="$(find_one "$native_assets" "oliphaunt-tools-$native_version-linux-x64-gnu.tar.gz")"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-rust-release-consumer-run.XXXXXX")"
 
   mkdir -p "$scratch/native" "$scratch/tools" "$scratch/runtime-cache"

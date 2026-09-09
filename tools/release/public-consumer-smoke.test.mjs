@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   PUBLIC_CONSUMER_EVIDENCE_SCHEMA,
   cargoEntryFeatureNames,
+  npmDatabaseSmokeSource,
   publicCargoEnvironment,
   publicConsumerEvidence,
   publicConsumerPlan,
@@ -343,6 +344,10 @@ test("public probes discard inherited credentials and package-manager substituti
   }, {
     PATH: "/usr/bin",
     CARGO_SOURCE_CRATES_IO_REPLACE_WITH: "local-mirror",
+    CARGO_TARGET_DIR: "/workspace/target",
+    CARGO_ENCODED_RUSTFLAGS: "--cfg=workspace",
+    RUSTC_WRAPPER: "/workspace/wrapper",
+    RUSTFLAGS: "--cfg=workspace",
     DENO_CONFIG: "/workspace/deno.json",
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "url.file:///workspace/.insteadOf",
@@ -352,6 +357,13 @@ test("public probes discard inherited credentials and package-manager substituti
     npm_config_userconfig: "/workspace/.npmrc",
     ORG_GRADLE_PROJECT_repositoryPassword: "secret",
     RELEASE_TOKEN: "secret",
+    OLIPHAUNT_INSTALL_DIR: "/workspace/runtime",
+    OLIPHAUNT_RUNTIME_CACHE_DIR: "/workspace/cache",
+    LIBOLIPHAUNT_DIR: "/workspace/lib",
+    LD_LIBRARY_PATH: "/workspace/lib",
+    DYLD_LIBRARY_PATH: "/workspace/lib",
+    NODE_OPTIONS: "--import=/workspace/mock.mjs",
+    NODE_PATH: "/workspace/node_modules",
   });
   assert.deepEqual(env, {
     PATH: "/usr/bin",
@@ -426,19 +438,20 @@ test("Cargo consumer toolchain context fails closed on unpinned or unavailable i
 });
 
 test("builds canonical lock/receipt-bound evidence and writes it immutably", () => {
-  const products = [product("alpha", ["npm"])];
-  const frozen = lock(products, [carrier("npm:@example/alpha", "alpha", 0)]);
-  const plan = publicConsumerPlan(frozen, ["alpha"], graph(products));
+  const products = [product("oliphaunt-js", ["npm"])];
+  const frozen = lock(products, [carrier("npm:@oliphaunt/ts", "oliphaunt-js", 0)]);
+  const plan = publicConsumerPlan(frozen, ["oliphaunt-js"], graph(products));
   const surfaces = [{
     surface: "npm",
     mode: "anonymous-public-independent-entry-host-install-and-lock-resolution",
-    carrierIds: ["npm:@example/alpha"],
+    carrierIds: ["npm:@oliphaunt/ts"],
     dependencyScopes: ["optional", "peer", "runtime"],
-    entryCarrierIds: ["npm:@example/alpha"],
-    plannedEntryClosures: [{ entryCarrierId: "npm:@example/alpha", carrierIds: ["npm:@example/alpha"] }],
-    entries: [{ entryCarrierId: "npm:@example/alpha", resolvedCarrierIds: ["npm:@example/alpha"] }],
-    installedCarrierIds: ["npm:@example/alpha"],
-    resolved: [{ id: "npm:@example/alpha", version: "1.2.3", integrity: "sha512-exact" }],
+    entryCarrierIds: ["npm:@oliphaunt/ts"],
+    plannedEntryClosures: [{ entryCarrierId: "npm:@oliphaunt/ts", carrierIds: ["npm:@oliphaunt/ts"] }],
+    entries: [{ entryCarrierId: "npm:@oliphaunt/ts", resolvedCarrierIds: ["npm:@oliphaunt/ts"] }],
+    installedCarrierIds: ["npm:@oliphaunt/ts"],
+    executedDatabaseCarrierIds: ["npm:@oliphaunt/ts"],
+    resolved: [{ id: "npm:@oliphaunt/ts", version: "1.2.3", integrity: "sha512-exact" }],
     receiptCoveredNotHostInstalledCarrierIds: [],
   }, {
     surface: "github",
@@ -455,6 +468,12 @@ test("builds canonical lock/receipt-bound evidence and writes it immutably", () 
   });
   assert.equal(evidence.schema, PUBLIC_CONSUMER_EVIDENCE_SCHEMA);
   assert.equal(validatePublicConsumerEvidence(evidence, frozen, plan), evidence);
+  const unresolvedRuntime = structuredClone(evidence);
+  unresolvedRuntime.surfaces.find(row => row.surface === "npm").executedDatabaseCarrierIds = [];
+  assert.throws(() => validatePublicConsumerEvidence(unresolvedRuntime, frozen, plan), /required installed database execution/u);
+  const notInstalled = structuredClone(evidence);
+  notInstalled.surfaces.find(row => row.surface === "npm").installedCarrierIds = [];
+  assert.throws(() => validatePublicConsumerEvidence(notInstalled, frozen, plan), /must use a host-installed carrier/u);
   const changed = structuredClone(evidence);
   changed.surfaces.find(({ surface }) => surface === "github").productTags = [];
   assert.throws(() => validatePublicConsumerEvidence(changed, frozen, plan), /every exact product tag/u);
@@ -560,4 +579,57 @@ test("transient registry visibility failures retry from an empty workspace and c
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("installed npm database probe executes descriptors, migrations, query, reopen and close", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-database-probe-"));
+  try {
+    for (const name of ["@oliphaunt/ts", "@oliphaunt/wasix-ts"]) {
+      const directory = path.join(root, "node_modules", name);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(path.join(directory, "package.json"), JSON.stringify({ name, type: "module", exports: { ".": "./index.js", "./storage/node": "./storage.js" } }));
+      writeFileSync(path.join(directory, "storage.js"), "export const directory = path => ({kind: 'directory', path});");
+      writeFileSync(path.join(directory, "index.js"), `import assert from 'node:assert/strict';
+let opens = 0, closes = 0, migrations = 0;
+export const extensions = {hstore: {sqlName: 'hstore'}};
+export default {async open(config) {
+  assert.equal(config.storage.kind, 'directory');
+  assert.deepEqual(config.extensions, [extensions.hstore]);
+  assert.equal(opens, closes);
+  opens += 1;
+  return {async exec(sql) { assert.equal(sql, 'CREATE EXTENSION hstore'); migrations += 1; },
+    async query() { assert.equal(migrations, 1); return {rows: [{value: process.env.PROBE_WRONG_RESULT ? 'wrong' : 'ready'}]}; },
+    async close() { closes += 1; }};
+}};
+process.on('exit', () => { if (!process.env.PROBE_WRONG_RESULT) { assert.equal(opens, 2); assert.equal(closes, 2); } });
+`);
+      const file = path.join(root, "consumer.mjs");
+      writeFileSync(file, npmDatabaseSmokeSource({ name }));
+      const options = { cwd: root, deadlineMilliseconds: Date.now() + 30_000 };
+      const result = await runBoundedCommand("node", [file], options);
+      assert.match(result.stdout, /OLIPHAUNT_PUBLIC_DATABASE_PASS/u);
+      await assert.rejects(runBoundedCommand("node", [file], { ...options, env: { ...process.env, PROBE_WRONG_RESULT: "1" } }), /wrong/u);
+    }
+    assert.equal(npmDatabaseSmokeSource({ name: "@oliphaunt/react-native" }), null);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Cargo evidence requires installed native SDK execution as well as complete receipt coverage", () => {
+  const products = [product("oliphaunt-rust", ["crates-io"])];
+  const frozen = lock(products, [carrier("cargo:oliphaunt", "oliphaunt-rust", 0)]);
+  const plan = publicConsumerPlan(frozen, ["oliphaunt-rust"], graph(products));
+  const surface = plan.surfaces[0];
+  const evidence = publicConsumerEvidence({
+    lock: frozen, plan, registryReceiptSha256: "e".repeat(64), githubReceiptDigest: "f".repeat(64),
+    surfaces: [{
+      surface: "cargo", carrierIds: surface.carrierIds, entryCarrierIds: surface.entryCarrierIds,
+      dependencyScopes: surface.dependencyScopes, plannedEntryClosures: surface.entryClosures,
+      entries: [{ entryCarrierId: "cargo:oliphaunt", resolvedCarrierIds: ["cargo:oliphaunt"] }],
+      resolved: [{ id: "cargo:oliphaunt", version: "1.2.3", checksum: "d".repeat(64) }],
+      receiptCoveredCarrierIds: ["cargo:oliphaunt"], executedDatabaseCarrierIds: ["cargo:oliphaunt"],
+    }, { surface: "github", productTags: plan.github.productTags, swift: null }],
+  });
+  assert.doesNotThrow(() => validatePublicConsumerEvidence(evidence, frozen, plan));
+  evidence.surfaces.find(row => row.surface === "cargo").executedDatabaseCarrierIds = [];
+  assert.throws(() => validatePublicConsumerEvidence(evidence, frozen, plan), /required installed database execution/u);
 });

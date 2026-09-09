@@ -2569,6 +2569,11 @@ jobs:
             const { target } = validateNativeRuntimeCarrier(root, { icuData });
             if (target !== "android-datum64") throw new Error(`expected android-datum64, got ${target}`);
           ' "$closure" "target/liboliphaunt-mobile-host/$OLIPHAUNT_NATIVE_TARGET/icu/share/icu"
+          # Assemble the optional npm ICU package inputs from these same-run bytes.
+          tools/release/package-liboliphaunt-icu-data.sh \
+            "target/liboliphaunt-mobile-host/$OLIPHAUNT_NATIVE_TARGET/icu/share/icu" \
+            target/liboliphaunt/release-assets
+          cp "$1" target/liboliphaunt/release-assets/
           echo "OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR=$GITHUB_WORKSPACE/$closure" >> "$GITHUB_ENV"
 
       - name: Download Kotlin SDK package artifacts

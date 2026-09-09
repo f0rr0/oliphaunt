@@ -27,6 +27,8 @@ tasks:
       - "@group(cargo-workspace)"
       - "**/*"
       - "/src/shared/cluster-seed-contract/**/*"
+      - "/src/extensions/generated/extensions.catalog.json"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs"
     options:
       cache: true
       runFromWorkspaceRoot: true

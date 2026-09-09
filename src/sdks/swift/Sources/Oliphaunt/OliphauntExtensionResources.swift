@@ -62,8 +62,7 @@ extension OliphauntRuntimeResources {
     }
 
     /// Registers a generated SwiftPM exact-extension resource fragment.
-    /// Applications normally call the generated `OliphauntExtension*.register()`
-    /// wrapper rather than invoking this packaging API directly.
+    /// The generated extension descriptor invokes registration when opening a database.
     @discardableResult
     @_spi(ExtensionSupport) public static func registerPackagedExtensionResource(
         product: String,
