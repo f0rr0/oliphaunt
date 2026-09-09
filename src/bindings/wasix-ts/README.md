@@ -10,6 +10,22 @@ native hosts the root uses a dedicated Rust owner thread. The explicit
 `/direct` import runs synchronously in the importing realm, while `/worker`
 uses a separate JavaScript Worker on every runtime.
 
+For explicit browser imports, use `@oliphaunt/wasix-ts/browser`. It rejects native
+hosts before opening an engine. Its TypeScript options accept only memory,
+IndexedDB, and OPFS. Native root, `/direct`, `/worker`, and `/server` entrypoints
+accept only memory and directory storage. Restore accepts the same persistent
+storage kinds as open. These restrictions apply to descriptors passed through
+variables, and JavaScript callers receive runtime errors for unsupported storage.
+The default and `/worker` exports select matching types under Node, Bun, and Deno
+TypeScript resolution conditions; browser bundlers use the browser/default types.
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts/browser';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
+
+await using database = await Oliphaunt.open({ storage: indexedDB('app') });
+```
+
 ## Install
 
 ```sh

@@ -1,7 +1,7 @@
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { serializeOpenConfig } from './client-common.js';
+import { serializeOpenConfig } from './open-config.js';
 import { hostRuntime } from './host-runtime.js';
 import { restoreNativeWasix, restoreNativeWasixDirect } from './native-session.js';
 import { toUint8Array } from './query.js';
@@ -16,7 +16,7 @@ export async function restoreNodeWasix(
 ): Promise<void> {
   const options = serializeOpenConfig({ storage });
   requireNodeStorage(options);
-  return restoreNativeWasix(options, toUint8Array(bytes).slice());
+  return restoreNativeWasix(options, toUint8Array(bytes));
 }
 
 /** @internal Restore synchronously in the importing realm for `/direct`. */
@@ -26,7 +26,7 @@ export async function restoreNodeWasixDirect(
 ): Promise<void> {
   const options = serializeOpenConfig({ storage });
   requireNodeStorage(options);
-  return restoreNativeWasixDirect(options, toUint8Array(bytes).slice());
+  return restoreNativeWasixDirect(options, toUint8Array(bytes));
 }
 
 /** @internal Validate and normalize storage shared by direct and Worker entrypoints. */

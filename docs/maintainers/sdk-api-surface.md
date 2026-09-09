@@ -1629,9 +1629,11 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 
 ### Package exports
 
-- `. = {"types":"./lib/index.d.ts","default":"./lib/index.js"}`
+- `. = {"types":"./lib/index.d.ts","node":"./lib/index.js","bun":"./lib/index.js","deno":"./lib/index.js","browser":"./lib/native-only.js","default":"./lib/index.js"}`
 - `./package.json = {"default":"./package.json"}`
 - `./storage/node = {"types":"./lib/storage/node.d.ts","default":"./lib/storage/node.js"}`
+- `./direct = {"types":"./lib/direct.d.ts","node":"./lib/direct.js","bun":"./lib/direct.js","deno":"./lib/direct.js","browser":"./lib/native-only.js","default":"./lib/direct.js"}`
+- `./broker = {"types":"./lib/broker.d.ts","node":"./lib/broker.js","bun":"./lib/broker.js","deno":"./lib/broker.js","browser":"./lib/native-only.js","default":"./lib/broker.js"}`
 
 ### Types
 
@@ -1851,17 +1853,18 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 
 ### Package exports
 
-- `. = {"types":"./lib/index.d.ts","deno":"./lib/index.deno.js","bun":"./lib/index.bun.js","node":"./lib/index.node.js","browser":"./lib/index.js","default":"./lib/index.js"}`
-- `./worker = {"types":"./lib/worker-entry.d.ts","deno":"./lib/worker-entry.deno.js","bun":"./lib/worker-entry.bun.js","node":"./lib/worker-entry.node.js","browser":"./lib/worker-entry.js","default":"./lib/worker-entry.js"}`
-- `./direct = {"types":"./lib/direct.node.d.ts","deno":"./lib/direct.node.js","bun":"./lib/direct.node.js","node":"./lib/direct.node.js"}`
+- `. = {"deno":{"types":"./lib/index.deno.d.ts","default":"./lib/index.deno.js"},"bun":{"types":"./lib/index.bun.d.ts","default":"./lib/index.bun.js"},"node":{"types":"./lib/index.node.d.ts","default":"./lib/index.node.js"},"browser":{"types":"./lib/index.d.ts","default":"./lib/index.js"},"default":{"types":"./lib/index.d.ts","default":"./lib/index.js"}}`
+- `./worker = {"deno":{"types":"./lib/worker-entry.deno.d.ts","default":"./lib/worker-entry.deno.js"},"bun":{"types":"./lib/worker-entry.bun.d.ts","default":"./lib/worker-entry.bun.js"},"node":{"types":"./lib/worker-entry.node.d.ts","default":"./lib/worker-entry.node.js"},"browser":{"types":"./lib/worker-entry.d.ts","default":"./lib/worker-entry.js"},"default":{"types":"./lib/worker-entry.d.ts","default":"./lib/worker-entry.js"}}`
+- `./direct = {"types":"./lib/direct.node.d.ts","deno":"./lib/direct.node.js","bun":"./lib/direct.node.js","node":"./lib/direct.node.js","browser":"./lib/native-only.js","default":"./lib/native-only.js"}`
 - `./internal/tools = {"types":"./lib/internal.d.ts","deno":"./lib/internal.node.js","bun":"./lib/internal.node.js","node":"./lib/internal.node.js","browser":"./lib/internal.js","default":"./lib/internal.js"}`
-- `./server = {"types":"./lib/server.node.d.ts","deno":"./lib/server.node.js","bun":"./lib/server.node.js","node":"./lib/server.node.js"}`
+- `./server = {"types":"./lib/server.node.d.ts","deno":"./lib/server.node.js","bun":"./lib/server.node.js","node":"./lib/server.node.js","browser":"./lib/native-only.js","default":"./lib/native-only.js"}`
 - `./storage/indexed-db = {"types":"./lib/storage/indexed-db.d.ts","default":"./lib/storage/indexed-db.js"}`
 - `./storage/opfs = {"types":"./lib/storage/opfs.d.ts","default":"./lib/storage/opfs.js"}`
 - `./storage/node = {"types":"./lib/storage/node.d.ts","node":"./lib/storage/node.js"}`
 - `./storage/bun = {"types":"./lib/storage/bun.d.ts","bun":"./lib/storage/bun.js"}`
 - `./storage/deno = {"types":"./lib/storage/deno.d.ts","deno":"./lib/storage/deno.js"}`
 - `./package.json = {"default":"./package.json"}`
+- `./browser = {"types":"./lib/browser.d.ts","default":"./lib/browser.js"}`
 
 ### Types
 

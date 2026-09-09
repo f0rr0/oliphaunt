@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import {
   lstatSync,
+  readFileSync,
   mkdirSync,
   rmSync,
   statSync,
@@ -67,30 +68,44 @@ function regularArchive(file) {
   }
 }
 
-export function wasixToolsNpmInputs({ portableReleaseArchive }) {
-  const archive = path.resolve(portableReleaseArchive);
-  regularArchive(archive);
-  validatePortableReleaseAsset(archive);
-  const entries = readPortableArchiveEntries(archive);
+export function wasixToolsNpmInputs({ portableReleaseArchive, assetDirectory }) {
+  if ((portableReleaseArchive === undefined) === (assetDirectory === undefined)) {
+    fail('tools staging requires exactly one release archive or producer asset directory');
+  }
+  let entries;
+  let manifest;
+  if (portableReleaseArchive !== undefined) {
+    const archive = path.resolve(portableReleaseArchive);
+    regularArchive(archive);
+    validatePortableReleaseAsset(archive);
+    entries = readPortableArchiveEntries(archive);
+  } else {
+    manifest = JSON.parse(readFileSync(path.join(assetDirectory, 'manifest.json'), 'utf8'));
+  }
   const tools = {};
   for (const [descriptorName, spec] of Object.entries(RELEASE_TOOLS)) {
-    const bytes = requiredEntry(entries, spec.member, archive);
-    tools[descriptorName] = Object.freeze({
-      name: spec.name,
-      sha256: sha256(bytes),
-      size: bytes.length,
-      bytes,
-    });
+    const relative = `bin/${spec.name}.wasix.wasm`;
+    const bytes = entries === undefined
+      ? readFileSync(path.join(assetDirectory, relative))
+      : requiredEntry(entries, spec.member, portableReleaseArchive);
+    const digest = sha256(bytes);
+    if (manifest !== undefined) {
+      const row = manifest[descriptorName === 'pgDump' ? 'pg-dump' : 'psql'];
+      if (row?.path !== relative || row.sha256 !== digest || row.size !== bytes.length) {
+        fail(`${spec.name} differs from its producer manifest`);
+      }
+    }
+    tools[descriptorName] = Object.freeze({ name: spec.name, sha256: digest, size: bytes.length, bytes });
   }
   return Object.freeze(tools);
 }
 
-export function stageWasixToolsNpmCarrier({ version, portableReleaseArchive, packageDir }) {
+export function stageWasixToolsNpmCarrier({ version, portableReleaseArchive, assetDirectory, packageDir }) {
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(version)) {
     throw new TypeError(`${TOOL}: version must be an exact semantic version`);
   }
   const output = path.resolve(packageDir);
-  const tools = wasixToolsNpmInputs({ portableReleaseArchive });
+  const tools = wasixToolsNpmInputs({ portableReleaseArchive, assetDirectory });
   rmSync(output, { recursive: true, force: true });
   mkdirSync(path.join(output, 'assets'), { recursive: true });
   for (const [name, tool] of Object.entries(tools)) {
@@ -177,24 +192,29 @@ export function packWasixToolsNpmCarrier({
   return Object.freeze({ ...staged, tarball });
 }
 
-export function stageWasixToolsAotNpmCarrier({ version, target, packageDir, aotReleaseArchive }) {
-  const entries = readPortableArchiveEntries(aotReleaseArchive);
-  const candidates = [...entries.keys()].filter(member => member.endsWith('/manifest.json'));
+export function stageWasixToolsAotNpmCarrier({ version, target, packageDir, aotReleaseArchive, aotArtifactDirectory }) {
+  if ((aotReleaseArchive === undefined) === (aotArtifactDirectory === undefined)) {
+    fail('tools AOT staging requires exactly one release archive or producer artifact directory');
+  }
+  const entries = aotReleaseArchive === undefined ? undefined : readPortableArchiveEntries(aotReleaseArchive);
+  const candidates = entries === undefined ? ['manifest.json'] : [...entries.keys()].filter(member => member.endsWith('/manifest.json'));
   if (candidates.length !== 1) fail('tools AOT release must contain exactly one manifest');
   const manifestPath = candidates[0];
   const prefix = path.posix.dirname(manifestPath);
-  const manifest = JSON.parse(requiredEntry(entries, manifestPath, aotReleaseArchive).toString('utf8'));
+  const readArtifact = relative => entries === undefined
+    ? readFileSync(path.join(aotArtifactDirectory, relative))
+    : requiredEntry(entries, `${prefix}/${relative}`, aotReleaseArchive);
+  const manifest = JSON.parse(readArtifact('manifest.json').toString('utf8'));
   assertCanonicalWasixAotManifest(manifest, { expectedTarget: AOT_TARGET_TRIPLES[target] });
-  const artifacts = assertWasixAotArtifactPayloads(manifest, {
-    readArtifact: relative => requiredEntry(entries, `${prefix}/${relative}`, aotReleaseArchive),
-  }).filter(artifact => ['tool:pg_dump', 'tool:psql'].includes(artifact.name));
+  const artifacts = assertWasixAotArtifactPayloads(manifest, { readArtifact })
+    .filter(artifact => ['tool:pg_dump', 'tool:psql'].includes(artifact.name));
   if (artifacts.length !== 2) fail('tools AOT release is missing pg_dump or psql');
   rmSync(packageDir, { recursive: true, force: true });
   mkdirSync(packageDir, { recursive: true });
   for (const artifact of artifacts) {
     const output = path.join(packageDir, artifact.path);
     mkdirSync(path.dirname(output), { recursive: true });
-    writeFileSync(output, requiredEntry(entries, `${prefix}/${artifact.path}`, aotReleaseArchive));
+    writeFileSync(output, readArtifact(artifact.path));
   }
   const bytes = Buffer.from(`${JSON.stringify({ ...manifest, artifacts }, null, 2)}\n`);
   writeFileSync(path.join(packageDir, 'aot-manifest.json'), bytes);

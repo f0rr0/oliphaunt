@@ -85,3 +85,11 @@ Use [Build With TypeScript](/docs/sdk/typescript/guide) for open/query,
 configuration, helper resolution, lifecycle, exact extensions, backup, restore,
 and troubleshooting. Use the [API reference](/docs/sdk/typescript/api-reference)
 for the public API map.
+
+## Select an execution mode by import
+
+`@oliphaunt/ts/direct` and `@oliphaunt/ts/broker` come with the same installation
+and expose the same database, restore, and server APIs as the default import.
+Neither accepts `topology` in `open`; the direct entrypoint also rejects
+`brokerExecutable`, including when options arrive through a variable. The
+default `@oliphaunt/ts` import continues to support runtime topology selection.

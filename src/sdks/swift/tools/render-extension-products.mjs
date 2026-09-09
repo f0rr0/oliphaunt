@@ -850,9 +850,6 @@ export async function writeBundledContrib(selection, outputDir) {
   if (selection.extensions.some(extension => extension.product !== "oliphaunt-extension-contrib-pg18")) {
     fail("the base Swift SDK can bundle only runtime-owned contrib extensions");
   }
-  if (selection.nativeDependencies.length > 0) {
-    fail("bundled contrib must not introduce separately owned native dependency products");
-  }
   const prefix = "generated/swiftpm/contrib";
   const generated = path.join(outputDir, prefix);
   const swiftRoot = path.join(outputDir, "src/sdks/swift/Sources/Oliphaunt");
@@ -860,6 +857,11 @@ export async function writeBundledContrib(selection, outputDir) {
   const dependencies = [];
   const imports = ["import Foundation", "import COliphaunt"];
   const cases = [];
+  for (const dependency of selection.nativeDependencies) {
+    await copyLocalBinaryArtifact(dependency.asset, dependency.binaryTarget, generated);
+    const target = binaryTargetIR(dependency.binaryTarget, dependency.asset, true);
+    targets.push({ ...target, path: `${prefix}/${target.path}` });
+  }
   for (const extension of selection.extensions) {
     if (extension.cTarget) {
       await copyLocalBinaryArtifact(extension.asset, extension.binaryTarget, generated);
@@ -881,7 +883,7 @@ export async function writeBundledContrib(selection, outputDir) {
       `            throw OliphauntError.engine("missing bundled contrib resources for ${extension.sqlName}")\n        }\n` +
       `        try OliphauntStaticExtensionRegistry.register(\n` +
       `            product: ${swiftString(extension.product)}, sqlName: ${swiftString(extension.sqlName)}, version: ${swiftString(extension.version)},\n` +
-      `            dependencies: [${extension.dependencies.map(swiftString).join(", ")}], nativeDependencies: [],\n` +
+      `            dependencies: [${extension.dependencies.map(swiftString).join(", ")}], nativeDependencies: [${extension.nativeDependencies.map(({ name }) => swiftString(name)).join(", ")}],\n` +
       `            sharedPreloadLibraries: [${extension.sharedPreloadLibraries.map(swiftString).join(", ")}],\n` +
       `            nativeModuleStem: ${extension.nativeModuleStem === null ? "nil" : swiftString(extension.nativeModuleStem)},\n` +
       `            resourceRoot: root, descriptor: ${extension.cFunction ? `${extension.cFunction}()` : "nil"}\n        )`);

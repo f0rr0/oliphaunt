@@ -6,7 +6,7 @@ import path from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
 import { createDeterministicTar } from './cargo-source-package.mjs';
 import { canonicalWasixAotMetadata } from './wasix-aot-manifest.mjs';
-import { stageWasixToolsAotNpmCarrier } from './wasix-tools-npm-carrier.mjs';
+import { stageWasixToolsAotNpmCarrier, stageWasixToolsNpmCarrier } from './wasix-tools-npm-carrier.mjs';
 
 test('the optional tools host package contains only pg_dump and psql from the verified runtime release', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-tools-aot-'));
@@ -35,9 +35,37 @@ test('the optional tools host package contains only pg_dump and psql from the ve
     const packageDir = path.join(root, 'package');
     const manifest = stageWasixToolsAotNpmCarrier({ version: '0.2.0', target: 'linux-x64-gnu',
       packageDir, aotReleaseArchive: archive });
+    const fromDirectory = stageWasixToolsAotNpmCarrier({ version: '0.2.0', target: 'linux-x64-gnu',
+      packageDir: path.join(root, 'from-directory'), aotArtifactDirectory: source });
+    expect(fromDirectory).toEqual(manifest);
+    expect(readFileSync(path.join(root, 'from-directory', 'aot-manifest.json'))).toEqual(readFileSync(path.join(packageDir, 'aot-manifest.json')));
     expect(manifest.name).toBe('@oliphaunt/liboliphaunt-wasix-tools-linux-x64-gnu');
     expect(existsSync(path.join(packageDir, '0.bin.zst'))).toBe(false);
     expect(JSON.parse(readFileSync(path.join(packageDir, 'aot-manifest.json'))).artifacts.map(row => row.name))
       .toEqual(['tool:pg_dump', 'tool:psql']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('portable tools staged from producer files retain the published manifest and reject changed bytes', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-portable-tools-'));
+  try {
+    const assets = path.join(root, 'assets');
+    mkdirSync(path.join(assets, 'bin'), { recursive: true });
+    const manifest = {};
+    for (const [key, name] of [['pg-dump', 'pg_dump'], ['psql', 'psql']]) {
+      const bytes = Buffer.from(`verified-${name}`);
+      const relative = `bin/${name}.wasix.wasm`;
+      writeFileSync(path.join(assets, relative), bytes);
+      manifest[key] = { path: relative, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length };
+    }
+    writeFileSync(path.join(assets, 'manifest.json'), JSON.stringify(manifest));
+    const packageDir = path.join(root, 'package');
+    stageWasixToolsNpmCarrier({ version: '0.2.0', assetDirectory: assets, packageDir });
+    const published = JSON.parse(readFileSync(path.join(packageDir, 'package.json')));
+    expect(published.oliphaunt.kind).toBe('wasix-tools');
+    expect(published.oliphaunt.tools.pg_dump.sha256).toBe(manifest['pg-dump'].sha256);
+    expect(published.optionalDependencies['@oliphaunt/liboliphaunt-wasix-tools-linux-x64-gnu']).toBe('0.2.0');
+    writeFileSync(path.join(assets, 'bin/psql.wasix.wasm'), 'tampered');
+    expect(() => stageWasixToolsNpmCarrier({ version: '0.2.0', assetDirectory: assets, packageDir })).toThrow('differs from its producer manifest');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

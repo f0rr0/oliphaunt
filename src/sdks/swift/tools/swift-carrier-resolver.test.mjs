@@ -691,6 +691,27 @@ async function main() {
   assert.equal((await fs.stat(path.join(bundledOutput, "src/sdks/swift/Sources/Oliphaunt/ContribResources/cube/Resources/extension-artifact/manifest.properties"))).isFile(), true);
   assert.match(renderSwiftTargets(bundled.targets), /generated\/swiftpm\/contrib\/Artifacts/u);
 
+  // Exercise the bundled writer with a native dependency shared by two members.
+  // Dependency archive resolution is already qualified by the PostGIS carrier above.
+  const localPostgisInput = await resolveSwiftCarrierSelection({ carrierFile: carrier, cacheDir: cache,
+    allowFileUrls: true, localBinaryTargets: true, basePackageVersion: "0.1.0", extensions: ["postgis"] });
+  const localPostgis = validateSelection(localPostgisInput, root, { allowFileUrls: true, localBinaryTargets: true });
+  const nativeDependency = localPostgis.nativeDependencies[0];
+  const withNativeDependency = {
+    ...contrib, nativeDependencies: [nativeDependency],
+    extensions: contrib.extensions.map(extension => ({ ...extension, nativeDependencies: [nativeDependency] })),
+  };
+  const nativeBundledOutput = path.join(root, "bundled-native-dependency");
+  const nativeBundled = await writeBundledContrib(withNativeDependency, nativeBundledOutput);
+  const dependencyTargets = nativeBundled.targets.filter(target => target.name === nativeDependency.binaryTarget);
+  assert.equal(dependencyTargets.length, 1);
+  const nativeBundledSource = await fs.readFile(path.join(nativeBundledOutput, "src/sdks/swift/Sources/Oliphaunt/OliphauntBundledContrib.swift"), "utf8");
+  assert.ok(nativeBundledSource.includes(`nativeDependencies: ["${nativeDependency.name}"]`));
+  assert.equal((await fs.stat(path.join(nativeBundledOutput, dependencyTargets[0].path, "Info.plist"))).isFile(), true);
+  for (const extension of withNativeDependency.extensions) {
+    assert.ok(nativeBundled.targets.find(target => target.name === extension.cTarget).dependencies.includes(nativeDependency.binaryTarget));
+  }
+
   const standalone = path.join(root, "standalone-pgtap");
   run(process.execPath, [generator, "--carrier", carrier, "--extension-carrier", pgtapCarrier,
     "--extensions", "pgtap", "--release-product", "oliphaunt-extension-pgtap",

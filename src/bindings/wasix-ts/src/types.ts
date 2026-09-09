@@ -9,7 +9,7 @@ import type {
   QueryResult,
   RawQueryResult,
 } from './query.js';
-import type { PersistentWasixStorage, WasixStorage } from './storage.js';
+import type { PersistentWasixStorage, WasixStorage, WasixStorageKind } from './storage.js';
 
 type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
@@ -199,7 +199,7 @@ export type WasixAssetManifest = {
   extensions: readonly [];
 };
 
-export type OpenConfig = {
+export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
   /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
   username?: string;
   database?: string;
@@ -210,7 +210,7 @@ export type OpenConfig = {
   /** Selectively imported WASIX carriers. SQL strings are intentionally not accepted. */
   extensions?: readonly WasixExtensionDescriptor[];
   /** Fresh memory by default, or an explicitly imported host storage adapter. */
-  storage?: WasixStorage;
+  storage?: WasixStorage<Kind>;
 };
 
 export type OliphauntDatabase = {
@@ -286,7 +286,10 @@ export type OliphauntTransaction = {
   rollback(): Promise<void>;
 };
 
-export type OliphauntClient = {
-  open(config?: OpenConfig): Promise<OliphauntDatabase>;
-  restore(storage: PersistentWasixStorage, bytes: BinaryInput): Promise<void>;
+export type OliphauntClient<Kind extends WasixStorageKind = WasixStorageKind> = {
+  open(config?: OpenConfig<Kind>): Promise<OliphauntDatabase>;
+  restore(
+    storage: PersistentWasixStorage<Exclude<Kind, 'memory'>>,
+    bytes: BinaryInput,
+  ): Promise<void>;
 };

@@ -116,7 +116,7 @@ describe('WASIX native embedded payload compatibility', () => {
       session.runTool({
         runtimeVersion: '0.1.1',
         tool: { name: 'pg_dump', sha256: digest, size: 7, source: 'embedded' },
-        args: pgDumpArguments(),
+        args: [],
       }),
     ).rejects.toThrow('WASIX pg_dump descriptor does not match the tool in the installed package');
     expect(nativeMocks.pgDump).not.toHaveBeenCalled();
@@ -179,7 +179,7 @@ describe('WASIX native embedded payload compatibility', () => {
     const result = await session.runTool({
       runtimeVersion: '0.1.1',
       tool: { name: 'pg_dump', sha256: digest, size: 7, source: 'embedded' },
-      args: pgDumpArguments(),
+      args: [],
     });
 
     expect(result).toEqual({
@@ -200,40 +200,42 @@ describe('WASIX native embedded payload compatibility', () => {
       expect.objectContaining({ profile: 'standard' }),
     );
     expect(
-      nativeWasixOpenOptions(
-        {
-          ...options,
-          icu: {
-            schema: 'oliphaunt-wasix-icu-v1',
-            runtime: 'wasix',
-            product: 'oliphaunt-icu',
-            version: '0.1.1',
-            compatibility: {
-              runtimeProduct: 'liboliphaunt-wasix',
-              runtimeVersion: '0.1.1',
-              postgresMajor: '18',
-              physicalFormat: 'wasix-pg18-v1',
-              compatibilityKey: 'wasix-pg18-datum32-v1',
-              dataVersion: '76.1',
-              dataForm: 'files-le',
-              dataTreeSha256: digest,
+      (
+        await nativeWasixOpenOptions(
+          {
+            ...options,
+            icu: {
+              schema: 'oliphaunt-wasix-icu-v1',
+              runtime: 'wasix',
+              product: 'oliphaunt-icu',
+              version: '0.1.1',
+              compatibility: {
+                runtimeProduct: 'liboliphaunt-wasix',
+                runtimeVersion: '0.1.1',
+                postgresMajor: '18',
+                physicalFormat: 'wasix-pg18-v1',
+                compatibilityKey: 'wasix-pg18-datum32-v1',
+                dataVersion: '76.1',
+                dataForm: 'files-le',
+                dataTreeSha256: digest,
+              },
+              dataArchive: {
+                archive: 'icu.tar.zst',
+                sha256: digest,
+                size: 1,
+                source: Uint8Array.of(1),
+              },
+              clusterSeedArchive: {
+                archive: 'seed.tar.zst',
+                sha256: digest,
+                size: 1,
+                source: Uint8Array.of(2),
+              },
+              clusterSeedManifest: { sha256: digest, size: 1, source: Uint8Array.of(3) },
             },
-            dataArchive: {
-              archive: 'icu.tar.zst',
-              sha256: digest,
-              size: 1,
-              source: Uint8Array.of(1),
-            },
-            clusterSeedArchive: {
-              archive: 'seed.tar.zst',
-              sha256: digest,
-              size: 1,
-              source: Uint8Array.of(2),
-            },
-            clusterSeedManifest: { sha256: digest, size: 1, source: Uint8Array.of(3) },
           },
-        },
-        { kind: 'memory' },
+          { kind: 'memory' },
+        )
       ).profile,
     ).toBe('icu');
   });
@@ -262,7 +264,7 @@ describe('WASIX native embedded payload compatibility', () => {
     const toolOptions = {
       runtimeVersion: '0.1.1',
       tool: { name: 'pg_dump' as const, sha256: digest, size: 7, source: 'embedded' },
-      args: pgDumpArguments(),
+      args: [],
     };
     const directTool = await direct.runTool(toolOptions);
     const actorTool = await actor.runTool(toolOptions);
@@ -521,13 +523,23 @@ function extensionCarrier(sqlName: string): SerializedExtensionCarrier {
   };
 }
 
-function pgDumpArguments(): string[] {
-  return [
-    '--encoding=UTF8',
-    '--no-password',
-    '--username=postgres',
-    '--host=127.0.0.1',
-    '--port=65432',
-    '--dbname=postgres',
-  ];
-}
+it('registers a shared tools package once and passes user arguments and command directly to Rust', async () => {
+  const session = await NativeWasixSession.open(workerOpenOptions());
+  const tool = {
+    name: 'pg_dump' as const,
+    sha256: digest,
+    size: 7,
+    source: 'file:///tools/assets/pg_dump.wasix.wasm',
+  };
+  await session.runTool({ runtimeVersion: '0.1.1', tool, args: ['--schema-only'] });
+  await session.runTool({
+    runtimeVersion: '0.1.1',
+    tool: { ...tool, name: 'psql', source: 'file:///tools/assets/psql.wasix.wasm' },
+    args: ['--quiet'],
+    command: 'select 1',
+  });
+  expect(nativeMocks.registerTools).toHaveBeenCalledOnce();
+  expect(nativeMocks.pgDump).toHaveBeenLastCalledWith(['--schema-only']);
+  expect(nativeMocks.psql).toHaveBeenLastCalledWith(['--quiet'], 'select 1', undefined);
+  await session.close();
+});

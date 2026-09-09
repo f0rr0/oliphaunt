@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { arch, platform } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -50,7 +50,6 @@ export async function createPackedWasixConsumer({
     await readFile(resolve(repositoryRoot, '.release-please-manifest.json'), 'utf8'),
   );
   const runtimeVersion = releaseVersions['src/runtimes/liboliphaunt/wasix'];
-  const extensionVersion = releaseVersions['src/extensions/external/pgtap'];
   const tarballs = resolve(scratch, 'tarballs');
   await mkdir(tarballs, { recursive: true });
 
@@ -64,6 +63,10 @@ export async function createPackedWasixConsumer({
   const toolsCarrier = includeTools
     ? await packToolsCarrier({ scratch, tarballs, runtimeVersion })
     : undefined;
+  const toolsAot =
+    includeTools && includeNative
+      ? await packToolsAotCarrier({ scratch, tarballs, runtimeVersion })
+      : undefined;
   const toolsFacade = includeTools
     ? await packToolsFacade({ scratch, tarballs, bindingVersion: binding.version })
     : undefined;
@@ -73,14 +76,23 @@ export async function createPackedWasixConsumer({
   const runtime = useStubRuntime
     ? await packStubRuntime({ scratch, tarballs, runtimeVersion })
     : await packRuntime({ scratch, tarballs, runtimeVersion });
-  const extension = includePgtap
-    ? await packPgtap({ scratch, tarballs, runtimeVersion, extensionVersion })
-    : undefined;
+  const extensionPackages = await packExtensions({ scratch, includePgtap });
+  const contrib = extensionPackages.find(
+    (row) => row.name === '@oliphaunt/extension-contrib-pg18-wasix',
+  );
+  const extension = extensionPackages.find(
+    (row) => row.name === '@oliphaunt/extension-pgtap-wasix',
+  );
+  if (contrib === undefined || (includePgtap && extension === undefined))
+    throw new Error(
+      `same-candidate WASIX extension packages are missing; staged: ${extensionPackages.map((row) => row.name).join(', ')}`,
+    );
   const consumer = resolve(scratch, 'consumer');
   await mkdir(consumer, { recursive: true });
   const dependencies = {
     [runtime.name]: pathToFileURL(runtime.file).href,
     [binding.name]: pathToFileURL(binding.file).href,
+    [contrib.name]: pathToFileURL(contrib.file).href,
   };
   if (nativeCarrier !== undefined) {
     dependencies[nativeCarrier.name] = pathToFileURL(nativeCarrier.file).href;
@@ -91,6 +103,7 @@ export async function createPackedWasixConsumer({
   if (toolsCarrier !== undefined) {
     dependencies[toolsCarrier.name] = pathToFileURL(toolsCarrier.file).href;
   }
+  if (toolsAot !== undefined) dependencies[toolsAot.name] = pathToFileURL(toolsAot.file).href;
   if (toolsFacade !== undefined) {
     dependencies[toolsFacade.name] = pathToFileURL(toolsFacade.file).href;
   }
@@ -108,6 +121,8 @@ export async function createPackedWasixConsumer({
     extension,
     toolsCarrier,
     toolsFacade,
+    toolsAot,
+    contrib,
   ].filter(Boolean);
   await writeFile(
     resolve(consumer, 'pnpm-workspace.yaml'),
@@ -133,6 +148,8 @@ export async function createPackedWasixConsumer({
     packages: {
       binding,
       runtime,
+      contrib,
+      ...(toolsAot === undefined ? {} : { toolsAot }),
       ...(nativeCarrier === undefined ? {} : { nativeCarrier }),
       ...(extension === undefined ? {} : { extension }),
       ...(toolsCarrier === undefined ? {} : { toolsCarrier }),
@@ -339,42 +356,86 @@ function nativeCarrierIdentity(currentPlatform, currentArch) {
   );
 }
 
-async function packToolsCarrier({ scratch, tarballs, runtimeVersion }) {
-  requireReleaseVersion(runtimeVersion, 'src/runtimes/liboliphaunt/wasix');
-  const staging = resolve(scratch, 'tools-carrier');
-  const assets = resolve(staging, 'assets');
-  await mkdir(assets, { recursive: true });
-  const manifest = JSON.parse(await readFile(resolve(assetRoot, 'manifest.json'), 'utf8'));
-  const descriptors = {};
-  for (const [field, key, filename] of [
-    ['pgDump', 'pg-dump', 'pg_dump.wasix.wasm'],
-    ['psql', 'psql', 'psql.wasix.wasm'],
-  ]) {
-    const row = manifest[key];
-    const bytes = await readFile(resolve(assetRoot, row.path));
-    requireDigest(bytes, row.sha256, row.path);
-    if (bytes.length !== row.size) throw new Error(`${row.path} size differs from its manifest`);
-    await writeFile(resolve(assets, filename), bytes);
-    descriptors[field] = {
-      name: row.name,
-      sha256: row.sha256,
-      size: row.size,
-      filename,
-    };
-  }
-  const tool = ({ name, sha256: digest, size, filename }) =>
-    `Object.freeze({ name: ${JSON.stringify(name)}, sha256: ${JSON.stringify(digest)}, size: ${size}, source: new URL('./assets/${filename}', import.meta.url).href })`;
-  await writeFile(
-    resolve(staging, 'index.js'),
-    `export default Object.freeze({\n  schema: 'oliphaunt-wasix-tools-v1',\n  product: 'oliphaunt-wasix-tools',\n  version: ${JSON.stringify(runtimeVersion)},\n  runtimeProduct: 'liboliphaunt-wasix',\n  runtimeVersion: ${JSON.stringify(runtimeVersion)},\n  pgDump: ${tool(descriptors.pgDump)},\n  psql: ${tool(descriptors.psql)},\n});\n`,
+function stageResources(options) {
+  return runFixtureCommand(
+    resolve(repositoryRoot, 'tools/dev/bun.sh'),
+    ['tools/integration/wasix-ts/stage-resource-packages.mjs', JSON.stringify(options)],
+    repositoryRoot,
   );
-  await writeJson(resolve(staging, 'package.json'), {
-    name: '@oliphaunt/liboliphaunt-wasix-tools',
+}
+
+async function packToolsCarrier({ scratch, tarballs, runtimeVersion }) {
+  const staging = resolve(scratch, 'tools-carrier');
+  await stageResources({
+    kind: 'tools',
     version: runtimeVersion,
-    type: 'module',
-    exports: { '.': './index.js' },
+    packageDir: staging,
+    assetDirectory: assetRoot,
   });
   return pack(staging, tarballs);
+}
+
+async function packToolsAotCarrier({ scratch, tarballs, runtimeVersion }) {
+  const { target } = nativeCarrierIdentity(platform(), arch());
+  const staging = resolve(scratch, 'tools-aot');
+  await stageResources({
+    kind: 'tools-aot',
+    version: runtimeVersion,
+    target,
+    packageDir: staging,
+    aotArtifactDirectory: resolve(repositoryRoot, 'target/oliphaunt-wasix/aot'),
+  });
+  return pack(staging, tarballs);
+}
+
+async function packExtensions({ scratch, includePgtap }) {
+  // The canonical artifact builder deliberately keeps its output in the checkout.
+  const work = await mkdtemp(resolve(repositoryRoot, 'target/wasix-consumer-resources-'));
+  try {
+    const artifactRoot = resolve(work, 'artifacts');
+    await runFixtureCommand(
+      resolve(repositoryRoot, 'tools/dev/bun.sh'),
+      [
+        'tools/release/build-extension-ci-artifacts.mjs',
+        '--output-root',
+        artifactRoot,
+        '--family',
+        'wasix',
+        '--require-wasix',
+        'oliphaunt-extension-contrib-pg18',
+        ...(includePgtap ? ['oliphaunt-extension-pgtap'] : []),
+      ],
+      repositoryRoot,
+      120_000,
+      { OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT: assetRoot },
+    );
+    const stagingRoot = resolve(work, 'packages');
+    await stageResources({ kind: 'extensions', artifactRoot, stagingRoot });
+    const tarballRoot = resolve(stagingRoot, 'tarballs');
+    return await Promise.all(
+      (await readdir(tarballRoot, { recursive: true }))
+        .filter((name) => name.endsWith('.tgz'))
+        .map(async (name) => {
+          const source = resolve(tarballRoot, name);
+          const file = resolve(scratch, 'tarballs', source.split(/[\\/]/).at(-1));
+          await cp(source, file);
+          const bytes = await readFile(file);
+          const entries = readPortableArchiveEntries(file);
+          const manifest = JSON.parse(
+            Buffer.from(entries.get('package/package.json').data()).toString('utf8'),
+          );
+          return {
+            file,
+            name: manifest.name,
+            version: manifest.version,
+            sha256: sha256(bytes),
+            size: bytes.length,
+          };
+        }),
+    );
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
 }
 
 async function packToolsFacade({ scratch, tarballs, bindingVersion }) {
@@ -533,75 +594,6 @@ export function parseBuildProfile(value) {
     configuration[field] = fields.get(key);
   }
   return configuration;
-}
-
-async function packPgtap({ scratch, tarballs, runtimeVersion, extensionVersion }) {
-  requireReleaseVersion(extensionVersion, 'src/extensions/external/pgtap');
-  const staging = resolve(scratch, 'pgtap');
-  const assets = resolve(staging, 'assets');
-  await mkdir(assets, { recursive: true });
-  const manifest = JSON.parse(await readFile(resolve(assetRoot, 'manifest.json'), 'utf8'));
-  const row = manifest.extensions.find((candidate) => candidate['sql-name'] === 'pgtap');
-  if (row === undefined) throw new Error('WASIX manifest has no pgtap carrier');
-  await cp(resolve(assetRoot, row.archive), resolve(assets, 'pgtap.tar.zst'));
-  const lifecycle = row.lifecycle;
-  const carrier = {
-    product: 'oliphaunt-extension-pgtap',
-    version: extensionVersion,
-    sqlName: 'pgtap',
-    archive: row.archive,
-    sha256: row.sha256,
-    size: row.size,
-    install: {
-      schema: 'oliphaunt-wasix-extension-install-v1',
-      name: row.name,
-      nativeModule: null,
-      nativeModules: [],
-      dependencies: row.dependencies,
-      coreExportsRequired: row['core-exports-required'],
-      loadOrder: row['load-order'],
-      lifecycle: {
-        createExtension: lifecycle['create-extension'],
-        createSchema: lifecycle['create-schema'],
-        loadSql: lifecycle['load-sql'],
-        postCreateSql: lifecycle['post-create-sql'],
-        startupConfig: lifecycle['startup-config'],
-        preloadRequired: lifecycle['preload-required'],
-        restartRequired: lifecycle['restart-required'],
-        sharedMemoryRequired: lifecycle['shared-memory-required'],
-      },
-      installedFiles: row['installed-files'],
-      unresolvedImports: row['unresolved-imports'],
-    },
-  };
-  const descriptor = {
-    schema: 'oliphaunt-wasix-extension-v1',
-    runtime: 'wasix',
-    product: carrier.product,
-    version: carrier.version,
-    compatibility: {
-      extensionRuntimeContract: 'oliphaunt-extension-runtime-contract-v1',
-      postgresMajor: manifest.runtime['postgres-version'].split('.')[0],
-      wasixRuntimeProduct: 'liboliphaunt-wasix',
-      wasixRuntimeVersion: runtimeVersion,
-    },
-    sqlName: 'pgtap',
-    carriers: [carrier],
-  };
-  await writeFile(
-    resolve(staging, 'index.js'),
-    `const descriptor = ${JSON.stringify(descriptor, null, 2)};
-descriptor.carriers[0].source = new URL('./assets/pgtap.tar.zst', import.meta.url);
-export default descriptor;
-`,
-  );
-  await writeJson(resolve(staging, 'package.json'), {
-    name: '@oliphaunt/extension-pgtap-wasix',
-    version: extensionVersion,
-    type: 'module',
-    exports: { '.': './index.js' },
-  });
-  return pack(staging, tarballs);
 }
 
 async function pack(directory, tarballs) {

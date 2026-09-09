@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { nativeExtensionCarrierLegal, writeExtensionMetaPackage } from "./package-extension-release-carriers.mjs";
-import { currentProductVersionSync, extensionRegistryPackageTargetSets } from "./release-artifact-targets.mjs";
+import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import { stageLiboliphauntIcuNpmPayload } from "./package-release-carriers.mjs";
 
 export function stageReactNativeResourcePackages({ carrier, selected, icu, outputDir, project, workspace, platform = "ios" }) {
@@ -40,7 +40,8 @@ export function stageReactNativeResourcePackages({ carrier, selected, icu, outpu
     const directory = path.join(outputDir, product);
     writeExtensionMetaPackage(directory, {
       product, version, members: sqlNames,
-      targets: extensionRegistryPackageTargetSets(product, "mobile source qualification").npmTargets,
+      // Mobile payloads come from the same candidate through Gradle or SwiftPM.
+      targets: [],
       iosCarrier: platform === "android" ? undefined : {
         ...carrier, extensions: members,
         carriers: carrier.carriers.filter(row => row.product === product),

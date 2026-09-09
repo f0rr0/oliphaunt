@@ -5,7 +5,7 @@ import { defineOpfsStorage, type PersistentWasixStorage } from '../storage.js';
  * same-realm synchronous exact-range I/O; other placements publish to the
  * same format through the portable journaled path.
  */
-export function opfs(name: string): PersistentWasixStorage {
+export function opfs(name: string): PersistentWasixStorage<'opfs'> {
   return defineOpfsStorage(name);
 }
 

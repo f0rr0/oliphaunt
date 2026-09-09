@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 
-import { serializeOpenConfig } from './client-common.js';
+import { serializeOpenConfig } from './open-config.js';
 import type { NativeWasixServerHandle, NativeWasixServerListen } from './native-addon.js';
 import {
   mapNativeError,
@@ -8,7 +8,7 @@ import {
   requireCompatibleNativeWasixAddon,
 } from './native-session.js';
 import { requireNodeStorage } from './node-client-common.js';
-import type { OpenConfig } from './types.js';
+import type { OpenConfig } from './native-public.js';
 
 export type ServerListen =
   | Readonly<{ transport: 'tcp'; port?: number }>
@@ -45,7 +45,7 @@ export async function openServer(config: ServerOpenConfig = {}): Promise<Oliphau
   let connectionString: string;
   try {
     handle = await addon.NativeWasixServer.open({
-      ...nativeWasixOpenOptions(options, storage),
+      ...(await nativeWasixOpenOptions(options, storage)),
       listen,
     });
     connectionString = validateServerHandle(handle);

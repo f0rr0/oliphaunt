@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { runWasixPgDumpProcess, WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES } from '../database.js';
+import {
+  tryRunWasixNativeToolProcess,
+  runWasixPgDumpProcess,
+  WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
+} from '../database.js';
 import type { WorkerResponse } from '../rpc.js';
 import { createWorkerSessionDispatcher } from '../worker-dispatch.js';
 import { openWorkerDatabase, WorkerRpc } from '../worker-rpc.js';
@@ -858,3 +862,35 @@ async function postedRequest(port: FakeWorkerPort, index: number) {
   }
   return request;
 }
+
+it('preserves the installed optional tool location and structured input across the native worker boundary', async () => {
+  const port = new FakeWorkerPort();
+  const opening = openWorkerDatabase(port, workerOpenOptions());
+  const open = await postedRequest(port, 0);
+  port.respond({ id: open.id, ok: true });
+  const database = await opening;
+  const options = {
+    runtimeVersion: '0.1.1',
+    tool: {
+      name: 'psql' as const,
+      sha256: '4'.repeat(64),
+      size: 1,
+      source: 'file:///optional-tools/assets/psql.wasix.wasm',
+    },
+    args: ['--quiet'],
+    command: 'select 1',
+  };
+  const running = tryRunWasixNativeToolProcess(database, options);
+  const request = await postedRequest(port, 1);
+  expect(request).toMatchObject({ method: 'runTool', options });
+  port.respond({
+    id: request.id,
+    ok: true,
+    value: { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() },
+  });
+  await running;
+  const closing = database.close();
+  const close = await postedRequest(port, 2);
+  port.respond({ id: close.id, ok: true });
+  await closing;
+});

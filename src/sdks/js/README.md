@@ -22,6 +22,21 @@ console.log(result.rows[0]?.value);
 await db.close();
 ```
 
+Both execution modes come with one installation. Select a mode through its import
+path for stricter options:
+
+```ts
+import Direct from '@oliphaunt/ts/direct';
+import Broker from '@oliphaunt/ts/broker';
+
+await using direct = await Direct.open();
+await using broker = await Broker.open();
+```
+
+These entrypoints share the root client and preserve its database, restore, and
+server APIs. Neither accepts `topology`; `/direct` also rejects `brokerExecutable`.
+Browser bundlers receive an early diagnostic directing them to the WASIX SDK.
+
 Direct topology is the default. Set `topology: 'broker'` to place the embedded
 backend in a helper process while keeping the same database API. If that helper
 fails, the database object fails permanently; close it and explicitly open a new

@@ -54,8 +54,8 @@ export type NativeWasixDatabaseHandle = {
     onChunk: (chunk: Uint8Array) => void,
   ): 'complete' | 'callbackAborted';
   backup(): Uint8Array;
-  pgDump(args: string[]): NativeWasixToolResult;
-  psql(args: string[], command?: string, script?: string): NativeWasixToolResult;
+  pgDump(args: readonly string[]): NativeWasixToolResult;
+  psql(args: readonly string[], command?: string, script?: string): NativeWasixToolResult;
   close(): void;
 };
 
@@ -67,8 +67,8 @@ export type NativeWasixActorDatabaseHandle = {
     onChunk: (chunk: Uint8Array) => void,
   ): Promise<'complete' | 'callbackAborted'>;
   backup(): Promise<Uint8Array>;
-  pgDump(args: string[]): Promise<NativeWasixToolResult>;
-  psql(args: string[], command?: string, script?: string): Promise<NativeWasixToolResult>;
+  pgDump(args: readonly string[]): Promise<NativeWasixToolResult>;
+  psql(args: readonly string[], command?: string, script?: string): Promise<NativeWasixToolResult>;
   close(): Promise<void>;
 };
 

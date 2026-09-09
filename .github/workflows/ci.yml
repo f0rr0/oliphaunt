@@ -1696,9 +1696,23 @@ jobs:
           name: oliphaunt-wasix-napi-npm-package-linux-x64-gnu
           path: target/oliphaunt-wasix-napi/npm-packages
 
+      - name: Download same-run Linux x64 WASIX tool AOT inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-runtime-aot-linux-x64-gnu
+          path: target/oliphaunt-wasix/sdk-aot-download
+
+      - name: Restore verified Linux x64 tool AOT layout
+        run: |
+          artifact_dir=target/oliphaunt-wasix/sdk-aot-download
+          test "$(tr -d '\r\n' < "$artifact_dir/target-triple.txt")" = x86_64-unknown-linux-gnu
+          destination=target/oliphaunt-wasix/aot/x86_64-unknown-linux-gnu
+          mkdir -p "$destination"
+          cp -R "$artifact_dir/files/." "$destination/"
+
       - name: Build, test, and package the WASIX TypeScript SDK
         env:
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "release-tools:wasix-napi-runtime"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "liboliphaunt-wasix:runtime-aot", "release-tools:wasix-napi-runtime"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
 
       - name: Upload WASIX TypeScript SDK package artifacts

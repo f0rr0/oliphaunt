@@ -9,7 +9,7 @@ import { defineDirectoryStorage, type PersistentWasixStorage } from '../storage.
  * and performs PostgreSQL-safe durable writes at each native operation
  * boundary. Network and cross-host shared filesystems are unsupported.
  */
-export function directory(path: string | URL): PersistentWasixStorage {
+export function directory(path: string | URL): PersistentWasixStorage<'directory'> {
   return defineDirectoryStorage(typeof path === 'string' ? path : fileURLToPath(path));
 }
 
