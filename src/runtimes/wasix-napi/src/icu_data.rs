@@ -71,12 +71,11 @@ pub(super) fn load(profile: &str, input: Option<NativeIcuData>) -> Result<Option
     if matches!(
         (&input.archive, &input.seed_archive, &input.seed_manifest),
         (Either::B(_), Either::B(_), Either::B(_))
-    ) {
-        if let Some((key, data)) = ICU.get() {
-            if key == &identity && data.wasix_data_tree_sha256 == Some(&input.data_tree_sha256) {
-                return Ok(Some(*data));
-            }
-        }
+    ) && let Some((key, data)) = ICU.get()
+        && key == &identity
+        && data.wasix_data_tree_sha256 == Some(&input.data_tree_sha256)
+    {
+        return Ok(Some(*data));
     }
     let archive = bytes(input.archive)?;
     let seed_archive = bytes(input.seed_archive)?;

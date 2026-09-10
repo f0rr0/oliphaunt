@@ -1388,12 +1388,22 @@ fn should_skip_bulk_backup_entry(relative: &Path) -> bool {
 
 fn archive_path(relative: &Path) -> Result<String> {
     let relative = relative
-        .to_str()
-        .with_context(|| format!("PGDATA archive path is not UTF-8: {}", relative.display()))?;
-    ensure!(
-        !relative.contains('\\'),
-        "PGDATA archive path contains a backslash: {relative:?}"
-    );
+        .components()
+        .map(|component| {
+            let Component::Normal(name) = component else {
+                bail!("unsafe PGDATA archive path: {}", relative.display());
+            };
+            let name = name.to_str().with_context(|| {
+                format!("PGDATA archive path is not UTF-8: {}", relative.display())
+            })?;
+            ensure!(
+                !name.contains('\\'),
+                "PGDATA archive path contains a backslash: {name:?}"
+            );
+            Ok(name)
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("/");
     let path = format!("pgdata/{relative}");
     ensure_ustar_path(&path)?;
     Ok(path)
@@ -2101,6 +2111,15 @@ mod tests {
             error.to_string().contains("unsafe PGDATA archive path"),
             "unexpected error: {error:#}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn backup_paths_use_portable_archive_separators() -> Result<()> {
+        assert_eq!(archive_path(&Path::new("base").join("1"))?, "pgdata/base/1");
+        assert!(archive_path(Path::new("../outside")).is_err());
+        #[cfg(unix)]
+        assert!(archive_path(Path::new("base\\1")).is_err());
         Ok(())
     }
 

@@ -159,8 +159,8 @@ for (const component of ['icuDataArchive', 'icuSeedArchive', 'icuSeedManifest'])
 for (const sqlName of ['vector', 'pgtap']) {
   assert.throws(() => addon.extensionIdentity(sqlName), /not embedded/u);
 }
-assert.throws(
-  () => addon.NativeWasixActorDatabase.open(openOptions('icu')),
+await assert.rejects(
+  addon.NativeWasixActorDatabase.open(openOptions('icu')),
   /requires the optional ICU package/u,
 );
 
