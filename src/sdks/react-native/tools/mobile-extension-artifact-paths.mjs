@@ -14,6 +14,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -120,7 +121,7 @@ function fail(message, code = 1) {
 
 function usage() {
   fail(
-    "usage: mobile-extension-artifact-paths.mjs --root PATH --artifact-root PATH --materialize-root PATH --extensions CSV --asset-kind runtime|ios-xcframework --asset-target TARGET|* --required 0|1",
+    "usage: mobile-extension-artifact-paths.mjs --root PATH --artifact-root PATH --materialize-root PATH --extensions CSV --asset-kind runtime|ios-xcframework --asset-target TARGET|* --required 0|1 [--resource-receipt PATH] [--icu 0|1]",
     2,
   );
 }
@@ -133,7 +134,7 @@ function parseOptions(args) {
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     const value = args[index + 1];
-    if (!OPTION_NAMES.has(name)) {
+    if (!OPTION_NAMES.has(name) && !["--resource-receipt", "--icu"].includes(name)) {
       fail(`unknown option: ${name}`, 2);
     }
     if (options.has(name)) {
@@ -1330,6 +1331,8 @@ async function main() {
   if (!new Set(["0", "1"]).has(requiredValue)) {
     usage();
   }
+  const icu = options.get("--icu") ?? "0";
+  if (!["0", "1"].includes(icu)) fail("--icu must be 0 or 1", 2);
   const required = requiredValue === "1";
   if (new Set(selected).size !== selected.length) {
     fail("selected exact-extension list must not contain duplicates");
@@ -1337,7 +1340,7 @@ async function main() {
   const repositoryContract = await loadRepositoryContract(root);
 
   const bySqlName = new Map();
-  for (const manifestPath of await manifestPaths(artifactRoot, repositoryContract)) {
+  for (const manifestPath of selected.length === 0 ? [] : await manifestPaths(artifactRoot, repositoryContract)) {
     let manifest;
     try {
       manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -1417,6 +1420,21 @@ async function main() {
   }
   if (resolved.some((file) => typeof file !== "string" || file.length === 0)) {
     fail("internal error: exact-extension artifact selection was not fully resolved");
+  }
+  const receipt = options.get("--resource-receipt");
+  if (receipt !== undefined) {
+    const values = {
+      schema: "oliphaunt-sdk-resources-v1",
+      runtimeVersion: repositoryContract.nativeRuntimeVersion,
+      icuVersion: icu === "1" ? repositoryContract.nativeRuntimeVersion : "",
+    };
+    for (const sqlName of selected) {
+      const { manifest } = bySqlName.get(sqlName);
+      values[`extension.${sqlName}.product`] = manifest.product;
+      values[`extension.${sqlName}.version`] = manifest.version;
+    }
+    mkdirSync(dirname(receipt), { recursive: true });
+    writeFileSync(receipt, Object.keys(values).sort(compareText).map(key => `${key}=${values[key]}\n`).join(""));
   }
   for (const file of resolved) {
     console.log(file);

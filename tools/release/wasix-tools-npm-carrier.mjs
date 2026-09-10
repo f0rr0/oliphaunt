@@ -207,7 +207,8 @@ export function stageWasixToolsAotNpmCarrier({ version, target, packageDir, aotR
   const manifest = JSON.parse(readArtifact('manifest.json').toString('utf8'));
   assertCanonicalWasixAotManifest(manifest, { expectedTarget: AOT_TARGET_TRIPLES[target] });
   const artifacts = assertWasixAotArtifactPayloads(manifest, { readArtifact })
-    .filter(artifact => ['tool:pg_dump', 'tool:psql'].includes(artifact.name));
+    .filter(row => ['tool:pg_dump', 'tool:psql'].includes(row.name))
+    .map(row => row.artifact);
   if (artifacts.length !== 2) fail('tools AOT release is missing pg_dump or psql');
   rmSync(packageDir, { recursive: true, force: true });
   mkdirSync(packageDir, { recursive: true });

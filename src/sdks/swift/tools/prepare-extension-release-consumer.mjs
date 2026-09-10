@@ -19,6 +19,8 @@ export function prepareExtensionReleaseConsumer({ plan, productsFile, releasePac
     assert.equal(plan.finalLink.kind, "base-runtime");
     assert(selected.every(row => row.nativeModuleStem === null), "SQL-only proof contains a native extension");
   }
+  const carriers = extensionCarriers.map(file => ({ file, document: JSON.parse(readFileSync(file, "utf8")) }));
+  const byName = new Map(selected.map(row => [row.sqlName, row]));
   const packageDependencies = [`.package(name: "oliphaunt", path: ${JSON.stringify(releasePackage)})`];
   const targetDependencies = [`.product(name: "Oliphaunt", package: "oliphaunt")`];
   const imports = ["import Foundation", "import Oliphaunt"];
@@ -33,11 +35,19 @@ export function prepareExtensionReleaseConsumer({ plan, productsFile, releasePac
       const stem = row.swiftProduct.slice("OliphauntExtension".length);
       descriptors.push(`OliphauntExtensions.${stem[0].toLowerCase()}${stem.slice(1)}`);
     } else {
+      const required = new Set();
+      const visit = name => {
+        if (required.has(name)) return;
+        required.add(name);
+        for (const dependency of byName.get(name).dependencies) visit(dependency);
+      };
+      visit(row.sqlName);
+      const selectedCarriers = carriers.filter(({ document }) => document.entries.some(entry => required.has(entry.sqlName)));
       const directory = path.join(output, "packages", row.product);
       const result = spawnSync(process.execPath, [
         path.join(import.meta.dirname, "render-extension-products.mjs"),
         "--carrier", carrier,
-        ...extensionCarriers.flatMap(file => ["--extension-carrier", file]),
+        ...selectedCarriers.flatMap(({ file }) => ["--extension-carrier", file]),
         "--extensions", row.sqlName, "--release-product", row.product,
         "--base-package-path", releasePackage,
         "--base-package-version", products.basePackage.version,

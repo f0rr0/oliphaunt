@@ -1286,6 +1286,10 @@ async function main() {
   ]);
   const sqlPackage = await fs.readFile(path.join(sqlOutput, "Package.swift"), "utf8");
   assert.doesNotMatch(sqlPackage, /binaryTarget/u);
+  const sqlExtensionCarrier = path.join(root, "sql-extension-carrier.json");
+  await fs.writeFile(sqlExtensionCarrier, JSON.stringify(extensionCarrier(
+    manifest.base, sqlOnly.extensions[0], sqlOnly.extensions, sqlOnly.carriers,
+  )));
   const consumer = path.join(root, "consumer");
   prepareExtensionReleaseConsumer({
     plan: {
@@ -1293,7 +1297,7 @@ async function main() {
       finalLink: { kind: "base-runtime", runtimeProduct: "liboliphaunt-native", runtimeVersion: manifest.base.version },
     },
     productsFile: path.join(sqlOutput, "extension-products.json"), releasePackage: sdk,
-    carrier: sqlCarrier, extensionCarriers: [], cache: path.join(root, "sql-cache"), output: consumer,
+    carrier: sqlCarrier, extensionCarriers: [sqlExtensionCarrier, earthdistanceCarrier], cache: path.join(root, "sql-cache"), output: consumer,
   });
   run("swift", ["build", "--package-path", consumer, "--scratch-path", path.join(root, "../consumer-build")], { timeout: 180_000 });
   console.log(`swift-carrier-resolver.test.mjs: metadata, malicious ZIP, cache-tamper, and consumer checks passed; sql-only-package=${sqlOutput}`);

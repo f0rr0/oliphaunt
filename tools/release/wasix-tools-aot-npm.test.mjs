@@ -41,8 +41,8 @@ test('the optional tools host package contains only pg_dump and psql from the ve
     expect(readFileSync(path.join(root, 'from-directory', 'aot-manifest.json'))).toEqual(readFileSync(path.join(packageDir, 'aot-manifest.json')));
     expect(manifest.name).toBe('@oliphaunt/liboliphaunt-wasix-tools-linux-x64-gnu');
     expect(existsSync(path.join(packageDir, '0.bin.zst'))).toBe(false);
-    expect(JSON.parse(readFileSync(path.join(packageDir, 'aot-manifest.json'))).artifacts.map(row => row.name))
-      .toEqual(['tool:pg_dump', 'tool:psql']);
+    expect(JSON.parse(readFileSync(path.join(packageDir, 'aot-manifest.json'))).artifacts)
+      .toEqual(artifacts.slice(1));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
