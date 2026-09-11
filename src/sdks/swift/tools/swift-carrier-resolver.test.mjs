@@ -13,8 +13,12 @@ import {
   resolveSwiftCarrierSelection,
 } from "./swift-carrier-resolver.mjs";
 
+import { prepareExtensionReleaseConsumer } from "./prepare-extension-release-consumer.mjs";
+import { validateSelection, writeBundledContrib, renderSwiftTargets } from "./render-extension-products.mjs";
+import { loadSwiftExtensionInventoryCatalog, validateSwiftExtensionResourceArtifact } from "./extension-resource-inventory.mjs";
+
 const sdk = path.resolve(import.meta.dirname, "..");
-const root = path.resolve(process.argv[2] ?? path.join(sdk, ".build", "carrier-test"));
+const root = path.resolve(process.argv[2] ?? path.join(sdk, "../../../target/swift-carrier-test"));
 const generator = path.join(import.meta.dirname, "render-extension-products.mjs");
 const schema = "oliphaunt-react-native-ios-carrier-v1";
 const extensionCarrierSchema = "oliphaunt-swift-extension-carrier-v1";
@@ -265,11 +269,14 @@ async function base() {
   );
   const icu = path.join(archives, "liboliphaunt-0.1.0-icu-data.tar.gz");
   run("tar", ["--no-xattrs", "-czf", icu, "-C", path.join(root, "base", "icu"), "."]);
+  const icuSeed = path.join(archives, "liboliphaunt-0.1.0-icu-seed-ios-datum64.tar.gz");
+  await fs.copyFile(icu, icuSeed);
   return {
     assets: [
       await asset("base-xcframework", framework, "zip", "liboliphaunt.xcframework"),
       await asset("runtime-resources", runtime, "tar.gz", "oliphaunt"),
       await asset("icu-data", icu, "tar.gz", "."),
+      await asset("icu-seed", icuSeed, "tar.gz", "."),
     ],
     product: "liboliphaunt-native",
     tag: "liboliphaunt-native-v0.1.0",
@@ -667,6 +674,62 @@ async function main() {
       new RegExp(`\\.binaryTarget\\(\\s*name: "${targetName}",[\\s\\S]*?path: "Artifacts/${targetName}\\.xcframework"`, "u"),
     );
   }
+
+  const bundledOutput = path.join(root, "bundled-contrib");
+  const contribInput = await resolveSwiftCarrierSelection({ carrierFile: carrier, cacheDir: cache,
+    allowFileUrls: true, localBinaryTargets: true, basePackageVersion: "0.1.0", extensions: ["earthdistance"] });
+  const contrib = validateSelection(contribInput, root, { allowFileUrls: true, localBinaryTargets: true });
+  const inventoryCatalog = await loadSwiftExtensionInventoryCatalog();
+  for (const extension of contrib.extensions) {
+    extension.resources = await validateSwiftExtensionResourceArtifact({ extension, canonical: inventoryCatalog.get(extension.sqlName),
+      nativeRuntime: contrib.nativeRuntime, label: "bundled contrib fixture", allowMobileCarrierArchives: true });
+  }
+  const bundled = await writeBundledContrib(contrib, bundledOutput);
+  const bundledSource = await fs.readFile(path.join(bundledOutput, "src/sdks/swift/Sources/Oliphaunt/OliphauntBundledContrib.swift"), "utf8");
+  assert.match(bundledSource, /try prepareBundledContrib\("cube"\)/u);
+  assert.doesNotMatch(bundledSource, /postgis|pgtap/u);
+  assert.equal((await fs.stat(path.join(bundledOutput, "src/sdks/swift/Sources/Oliphaunt/ContribResources/cube/Resources/extension-artifact/manifest.properties"))).isFile(), true);
+  assert.match(renderSwiftTargets(bundled.targets), /generated\/swiftpm\/contrib\/Artifacts/u);
+
+  // Exercise the bundled writer with a native dependency shared by two members.
+  // Dependency archive resolution is already qualified by the PostGIS carrier above.
+  const localPostgisInput = await resolveSwiftCarrierSelection({ carrierFile: carrier, cacheDir: cache,
+    allowFileUrls: true, localBinaryTargets: true, basePackageVersion: "0.1.0", extensions: ["postgis"] });
+  const localPostgis = validateSelection(localPostgisInput, root, { allowFileUrls: true, localBinaryTargets: true });
+  const nativeDependency = localPostgis.nativeDependencies[0];
+  const withNativeDependency = {
+    ...contrib, nativeDependencies: [nativeDependency],
+    extensions: contrib.extensions.map(extension => ({ ...extension, nativeDependencies: [nativeDependency] })),
+  };
+  const nativeBundledOutput = path.join(root, "bundled-native-dependency");
+  const nativeBundled = await writeBundledContrib(withNativeDependency, nativeBundledOutput);
+  const dependencyTargets = nativeBundled.targets.filter(target => target.name === nativeDependency.binaryTarget);
+  assert.equal(dependencyTargets.length, 1);
+  const nativeBundledSource = await fs.readFile(path.join(nativeBundledOutput, "src/sdks/swift/Sources/Oliphaunt/OliphauntBundledContrib.swift"), "utf8");
+  assert.ok(nativeBundledSource.includes(`nativeDependencies: ["${nativeDependency.name}"]`));
+  assert.equal((await fs.stat(path.join(nativeBundledOutput, dependencyTargets[0].path, "Info.plist"))).isFile(), true);
+  for (const extension of withNativeDependency.extensions) {
+    assert.ok(nativeBundled.targets.find(target => target.name === extension.cTarget).dependencies.includes(nativeDependency.binaryTarget));
+  }
+
+  const standalone = path.join(root, "standalone-pgtap");
+  run(process.execPath, [generator, "--carrier", carrier, "--extension-carrier", pgtapCarrier,
+    "--extensions", "pgtap", "--release-product", "oliphaunt-extension-pgtap",
+    "--cache-dir", cache, "--allow-file-urls", "--base-package-version", "0.1.0", "--output-dir", standalone]);
+  const standaloneManifest = await fs.readFile(path.join(standalone, "Package.swift"), "utf8");
+  assert.match(standaloneManifest, /name: "OliphauntExtensionPgtap"/u);
+  assert.match(standaloneManifest, /from: "0.1.0"/u);
+  assert.doesNotMatch(standaloneManifest, /OliphauntSelectedExtensions/u);
+
+  const standalonePostgis = path.join(root, "standalone-postgis");
+  run(process.execPath, [generator, "--carrier", carrier,
+    "--extensions", "postgis", "--release-product", "oliphaunt-extension-postgis",
+    "--cache-dir", cache, "--allow-file-urls", "--local-binary-targets",
+    "--base-package-version", "0.1.0", "--output-dir", standalonePostgis]);
+  const standaloneProducts = await fs.readFile(path.join(standalonePostgis, "extension-products.json"), "utf8");
+  assert.doesNotMatch(standaloneProducts, /file:|"localPath"/u);
+  assert.deepEqual(JSON.parse(standaloneProducts).selected[0].nativeDependencies.map(({ name }) => name),
+    postgisNativeDependencies.map(([name]) => name));
 
   const pgtapRuntime = manifest.extensions.find(({ sqlName }) => sqlName === "pgtap").assets[0];
   const cachedPgtap = path.join(cache, "extracted", pgtapRuntime.sha256);
@@ -1206,8 +1269,7 @@ async function main() {
   ], { expectFailure: true });
   assert.match(diagnostic, /checksum mismatch/u);
 
-  // Recreate only the SQL-only archive and leave a buildable consumer package
-  // for check-sdk's clean Swift compile/link lane.
+  // Compile an app against an independent package and the public descriptor API.
   const pgtap = await extension("pgtap", null);
   const sqlOnly = carrierize([pgtap]);
   const sqlCarrier = path.join(root, "sql-only-carrier.json");
@@ -1219,10 +1281,29 @@ async function main() {
   const sqlOutput = path.join(root, "sql-only");
   run(process.execPath, [
     generator, "--carrier", sqlCarrier, "--extensions", "pgtap", "--cache-dir", path.join(root, "sql-cache"),
+    "--release-product", "oliphaunt-extension-pgtap",
     "--allow-file-urls", "--base-package-version", "0.1.0", "--base-package-path", sdk, "--output-dir", sqlOutput,
   ]);
   const sqlPackage = await fs.readFile(path.join(sqlOutput, "Package.swift"), "utf8");
   assert.doesNotMatch(sqlPackage, /binaryTarget/u);
+  const sqlExtensionCarrier = path.join(root, "sql-extension-carrier.json");
+  await fs.writeFile(sqlExtensionCarrier, JSON.stringify(extensionCarrier(
+    manifest.base, sqlOnly.extensions[0], sqlOnly.extensions, sqlOnly.carriers,
+  )));
+  // Published base carriers do not contain external extensions. The consumer
+  // must select the matching standalone carrier rather than falling back to base.
+  const consumerBaseCarrier = path.join(root, "consumer-base-carrier.json");
+  await fs.writeFile(consumerBaseCarrier, JSON.stringify({ ...manifest, carriers: [], extensions: [] }));
+  const consumer = path.join(root, "consumer");
+  prepareExtensionReleaseConsumer({
+    plan: {
+      extensions: ["pgtap"], extensionProducts: ["oliphaunt-extension-pgtap"],
+      finalLink: { kind: "base-runtime", runtimeProduct: "liboliphaunt-native", runtimeVersion: manifest.base.version },
+    },
+    productsFile: path.join(sqlOutput, "extension-products.json"), releasePackage: sdk,
+    carrier: consumerBaseCarrier, extensionCarriers: [sqlExtensionCarrier, earthdistanceCarrier], cache: path.join(root, "sql-cache"), output: consumer,
+  });
+  run("swift", ["build", "--package-path", consumer, "--scratch-path", path.join(root, "../consumer-build")], { timeout: 180_000 });
   console.log(`swift-carrier-resolver.test.mjs: metadata, malicious ZIP, cache-tamper, and consumer checks passed; sql-only-package=${sqlOutput}`);
 }
 

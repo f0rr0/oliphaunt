@@ -112,13 +112,13 @@ oliphaunt-wasix-dump --directory ./.oliphaunt
 ```
 
 Select a non-default database or user with `--database` and `--username`. If
-the root uses installed extensions, repeat `--extension NAME` for every
-extension that must be mounted before PostgreSQL starts:
+the root uses contrib extensions, repeat `--extension NAME` for each required
+contrib member. External descriptors are supplied through the Rust API:
 
 ```sh
 oliphaunt-wasix-dump --directory ./.oliphaunt \
   --database app --username owner \
-  --extension vector --extension pg_trgm
+  --extension hstore --extension pg_trgm
 ```
 
 Pass through normal `pg_dump` shaping flags after `--`:

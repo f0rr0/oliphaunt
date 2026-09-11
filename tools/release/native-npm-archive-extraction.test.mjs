@@ -31,11 +31,11 @@ function writeFixtureFile(root, relativePath, contents) {
   writeFileSync(file, contents);
 }
 
-test("native npm ZIP assembly preserves complete nested runtime trees", () => {
+for (const format of ["zip", "tar.gz"]) test(`native npm ${format} assembly preserves complete nested runtime and ICU trees`, () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-native-npm-zip-tree-"));
   try {
     const source = path.join(root, "source");
-    const archive = path.join(root, "native.zip");
+    const archive = path.join(root, `native.${format}`);
     const runtimeFiles = new Map([
       ["bin/initdb.exe", "initdb\n"],
       ["bin/pg_ctl.exe", "pg_ctl\n"],
@@ -50,6 +50,7 @@ test("native npm ZIP assembly preserves complete nested runtime trees", () => {
     writeFixtureFile(source, "lib/modules/dict_snowball.dll", "embedded dict_snowball\n");
     writeFixtureFile(source, "lib/modules/plpgsql.dll", "embedded plpgsql\n");
     writeFixtureFile(source, "outside/not-packaged.txt", "outside\n");
+    writeFixtureFile(source, "share/icu/icudt76l/root.res", "icu\n");
 
     const packed = spawnSync(process.execPath, [ARCHIVER, source, archive], {
       encoding: "utf8",
@@ -64,6 +65,9 @@ test("native npm ZIP assembly preserves complete nested runtime trees", () => {
       for (const [relativePath, contents] of runtimeFiles) {
         expect(readFileSync(path.join(stage, ...relativePath.split("/")), "utf8")).toBe(contents);
       }
+      const icu = path.join(root, name, "icu");
+      extract(archive, "share/icu", icu);
+      expect(readFileSync(path.join(icu, "icudt76l/root.res"), "utf8")).toBe("icu\n");
       const modules = path.join(root, name, "lib/modules");
       extract(archive, "lib/modules", modules);
       expect(readFileSync(path.join(modules, "dict_snowball.dll"), "utf8")).toBe(
@@ -90,7 +94,8 @@ test("native npm descriptors publish every staged payload root", () => {
     const libraryRoot = packageJson.oliphaunt?.libraryRelativePath?.split("/")[0];
     const runtimeRoot = packageJson.oliphaunt?.runtimeRelativePath?.split("/")[0];
     const clusterSeedRoot = packageJson.oliphaunt?.clusterSeedRelativePath?.split("/")[0];
-    const icuClusterSeedRoot = packageJson.oliphaunt?.icuClusterSeedRelativePath?.split("/")[0];
+    expect(packageJson.oliphaunt?.icuClusterSeedRelativePath).toBeUndefined();
+    expect(packageJson.files).not.toContain("cluster-seed-icu");
     expect(packageJson.oliphaunt?.clusterSeedTarget).toBe(packageJson.oliphaunt?.target);
     const expected = [
       ...new Set([
@@ -98,7 +103,6 @@ test("native npm descriptors publish every staged payload root", () => {
         "lib",
         runtimeRoot,
         clusterSeedRoot,
-        icuClusterSeedRoot,
         "manifest.properties",
         "README.md",
         ...REQUIRED_LEGAL_FILES,

@@ -19,7 +19,7 @@ import {
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import { requiredCoreRuntimePaths } from "./optimize_native_runtime_payload.mjs";
-import { logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
+import { NATIVE_PGDATA_DIRECTORIES, writeNativeSeedDirectories } from "./native-cluster-seed-contract.mjs";
 import { nativeIcuDataManifest } from "./native-icu-data-contract.mjs";
 import { nativeRuntimeCarrierManifest } from "./native-runtime-carrier-contract.mjs";
 
@@ -54,8 +54,9 @@ function sha256(file) {
 
 function stageClusterSeed(root, directory, profile, target, icuDataTreeSha256 = "") {
   const seed = path.join(root, directory);
-  mkdirSync(path.join(seed, "files/global"), { recursive: true });
+  for (const directory of NATIVE_PGDATA_DIRECTORIES) mkdirSync(path.join(seed, "files", directory), { recursive: true });
   mkdirSync(path.join(seed, "files/pg_wal"), { recursive: true });
+  writeNativeSeedDirectories(seed);
   writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
   writeFileSync(path.join(seed, "files/global/pg_control"), `${profile}\n`);
   writeFileSync(path.join(seed, "manifest.properties"), [
@@ -130,9 +131,7 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     mkdirSync(icuData, { recursive: true });
     const icuBytes = Buffer.from("fixture ICU data\n");
     writeFileSync(path.join(icuData, "icudt76l.dat"), icuBytes);
-    const icuDigest = logicalTreeSha256([{ path: "icudt76l.dat", bytes: icuBytes }]);
     stageClusterSeed(runtime, "cluster-seed", "standard", "linux-x64-gnu");
-    stageClusterSeed(runtime, "cluster-seed-icu", "icu", "linux-x64-gnu", icuDigest);
     writeFileSync(path.join(runtime, "manifest.properties"), nativeRuntimeCarrierManifest("linux-x64-gnu"));
     writeFileSync(path.join(runtime, "runtime/manifest.properties"), nativeRuntimeResourceManifestFixture({
       cacheKey: "fixture-runtime",
@@ -146,6 +145,10 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     archiveFixture(runtime, path.join(assets, "liboliphaunt-9.8.7-linux-x64-gnu.tar.gz"));
     archiveFixture(tools, path.join(assets, "oliphaunt-tools-9.8.7-linux-x64-gnu.tar.gz"));
     archiveFixture(icu, path.join(assets, "liboliphaunt-9.8.7-icu-data.tar.gz"));
+    const tree = nativeIcuDataManifest(icuData).toString().match(/icuDataTreeSha256=([a-f0-9]+)/u)[1];
+    stageClusterSeed(root, "icu-seed", "icu", "linux-x64-gnu", tree);
+    stageReleaseNotices(path.join(root, "icu-seed"), { profile: "native-runtime-resources" });
+    archiveFixture(path.join(root, "icu-seed"), path.join(assets, "liboliphaunt-9.8.7-icu-seed-linux-x64-gnu.tar.gz"));
 
     const packageArgs = [
       "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
@@ -166,18 +169,34 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
 
     const manifest = JSON.parse(readFileSync(path.join(output, "packages.json"), "utf8"));
     assert.ok(manifest.packages.length >= 5);
-    assert.deepEqual(new Set(manifest.packages.map(({ role }) => role)), new Set(["part", "aggregator", "facade"]));
+    assert.deepEqual(new Set(manifest.packages.map(({ role }) => role)), new Set(["part", "aggregator", "facade", "artifact"]));
     assert.ok(manifest.packages.every(({ cratePath }) => typeof cratePath === "string" && cratePath.endsWith(".crate")));
     assert.equal(readdirSync(output).filter((name) => name.endsWith(".crate")).length, manifest.packages.length);
+    const icuCarrier = manifest.packages.find(({ name }) => name === "oliphaunt-icu");
+    assert.equal(Bun.TOML.parse(commandOutput("tar", ["-xOzf", path.resolve(ROOT, icuCarrier.cratePath), "oliphaunt-icu-9.8.7/Cargo.toml"])).package.version, "9.8.7");
+    const icuMembers = commandOutput("tar", ["-tzf", path.resolve(ROOT, icuCarrier.cratePath)]);
+    assert.ok(icuMembers.includes("payload/native-seeds/linux-x64-gnu/files/global/pg_control"));
+    assert.ok(!icuMembers.includes("payload/cluster-seeds/icu.tar.zst"));
+    assert.ok(!icuMembers.includes("native-runtime-version"));
     const runtimeParts = manifest.packages.filter(({ role, kind }) => role === "part" && kind === "native-runtime");
-    assert.ok(runtimeParts.some(({ cratePath, name }) => commandOutput("tar", [
+    assert.ok(runtimeParts.every(({ cratePath, name }) => !commandOutput("tar", [
       "-tzf",
       path.resolve(ROOT, cratePath),
     ]).includes(`${name}-9.8.7/payload/files/cluster-seed-icu/manifest.properties`)));
+    for (const seed of ["cluster-seed"]) {
+      const member = `payload/files/${seed}/directories-v1.txt`;
+      const part = runtimeParts.find(({ cratePath, name }) => commandOutput("tar", [
+        "-tzf", path.resolve(ROOT, cratePath),
+      ]).includes(`${name}-9.8.7/${member}`));
+      assert.ok(part, `${seed} directory inventory must survive Cargo packaging`);
+      assert.ok(commandOutput("tar", [
+        "-xOzf", path.resolve(ROOT, part.cratePath), `${part.name}-9.8.7/${member}`,
+      ]).split("\n").includes("pg_notify"));
+    }
     for (const item of manifest.packages) {
-      const expectedProfile = item.role === "part" ? item.kind : "code-facade";
+      const expectedProfile = item.kind === "icu-data" ? "native-icu-data" : item.role === "part" ? item.kind : "code-facade";
       assert.equal(item.noticeProfile, expectedProfile, `${item.name} must freeze its carrier notice profile`);
-      const packedManifest = commandOutput("tar", [
+    const packedManifest = commandOutput("tar", [
         "-xOzf",
         path.resolve(ROOT, item.cratePath),
         `${item.name}-9.8.7/Cargo.toml`,
@@ -207,6 +226,35 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     assert.doesNotThrow(() => assertLockedArtifactSet(lock, records, { product: "fixture", ecosystem: "cargo" }));
 
     const packedAggregator = manifest.packages.find(({ role }) => role === "aggregator");
+    if (process.platform === "linux" && process.arch === "x64") {
+      const consumer = path.join(root, "consumer");
+      mkdirSync(path.join(consumer, "src"), { recursive: true });
+      const runtimeCarrier = manifest.packages.find(row => row.role === "aggregator" && row.kind === "native-runtime");
+      writeFileSync(path.join(consumer, "Cargo.toml"), `[package]
+name = "native-seed-directory-proof"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+${runtimeCarrier.name} = { path = ${JSON.stringify(path.dirname(path.resolve(ROOT, runtimeCarrier.manifestPath)))} }
+oliphaunt-icu = { path = ${JSON.stringify(path.dirname(path.resolve(ROOT, icuCarrier.manifestPath)))} }
+[workspace]
+`);
+      writeFileSync(path.join(consumer, "build.rs"), `fn main() {
+    let manifest = std::env::vars().find(|(key, _)| key.starts_with("DEP_OLIPHAUNT_ARTIFACT_LIBOLIPHAUNT_NATIVE_") && key.ends_with("_MANIFEST")).unwrap().1;
+    let path = std::path::Path::new(&manifest);
+    assert!(path.parent().unwrap().join("payload/cluster-seed/files/pg_wal").is_dir());
+    let text = std::fs::read_to_string(manifest).unwrap();
+    assert!(text.contains("cluster-seed/files/pg_wal"));
+}`);
+      writeFileSync(path.join(consumer, "src/main.rs"), `fn main() {
+    assert_eq!(oliphaunt_icu::ICU.native_runtime_version, "9.8.7");
+    assert!(oliphaunt_icu::ICU.wasix_archive.is_none());
+    assert!(oliphaunt_icu::ICU.resources.iter().any(|file| file.0.ends_with("/files/global/pg_control")));
+}`);
+      run("cargo", ["run", "--offline", "--manifest-path", path.join(consumer, "Cargo.toml")], {
+        env: { ...process.env, CARGO_TARGET_DIR: path.join(root, "consumer-target") },
+      });
+    }
     const packedManifest = commandOutput("tar", [
       "-xOzf",
       path.resolve(ROOT, packedAggregator.cratePath),

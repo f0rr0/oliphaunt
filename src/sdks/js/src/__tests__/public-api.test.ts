@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
+import { directory } from '../storage/node.js';
+
 import {
   array,
   binary,
@@ -25,6 +27,7 @@ import {
   type QueryParam,
   type QueryValue,
   type RawQueryResult,
+  type RestoreDestination,
   type RestoreOptions,
   type TextQueryParameter,
 } from '../index.js';
@@ -132,6 +135,18 @@ function assertPublicDatabaseTypes(
 }
 
 void assertPublicDatabaseTypes;
+
+function assertPublicRestoreTypes(): void {
+  const destination: RestoreDestination = directory(new URL('file:///tmp/restored'));
+  const opened: Promise<OliphauntDatabase> = Oliphaunt.open({ storage: destination });
+  const restored: Promise<void> = Oliphaunt.restore(destination, Uint8Array.of(1));
+  // @ts-expect-error Restore requires persistent storage.
+  Oliphaunt.restore({ kind: 'temporaryDirectory' }, Uint8Array.of(1));
+  // @ts-expect-error Use the same storage descriptor as open, not a raw path.
+  Oliphaunt.restore('/tmp/restored', Uint8Array.of(1));
+  void [opened, restored];
+}
+void assertPublicRestoreTypes;
 
 const publicHelperTypes: [TextQueryParameter, BinaryQueryParameter, NullQueryParameter] = [
   text('value'),

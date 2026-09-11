@@ -37,6 +37,12 @@ import {
   type RawQueryResult,
   type TransactionStatus,
 } from './query';
+import {
+  snapshotNativeExtensions,
+  snapshotNativeIcu,
+  type NativeExtensionDescriptor,
+  type NativeIcuDescriptor,
+} from '@oliphaunt/js-core/resources';
 import { generatedExtensionBySqlName } from './generated/extensions';
 import type { NativeOpenConfig, Spec as NativeOliphauntModule } from './specs/NativeOliphaunt';
 
@@ -46,8 +52,7 @@ type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 
 export type DatabaseStorage =
   | { readonly kind: 'temporaryDirectory' }
-  | { readonly kind: 'directory'; readonly path: string }
-  | { readonly kind: 'applicationData'; readonly name: string };
+  | { readonly kind: 'directory'; readonly path: string };
 
 type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
@@ -58,7 +63,8 @@ export type OpenConfig = {
   startupGUCs?: Readonly<Record<string, string>>;
   username?: string;
   database?: string;
-  extensions?: ReadonlyArray<string>;
+  extensions?: ReadonlyArray<NativeExtensionDescriptor>;
+  icu?: NativeIcuDescriptor;
 };
 
 export type OliphauntClient = {
@@ -1094,19 +1100,12 @@ export function createOliphauntClient(
 }
 
 function normalizeRestoreDestination(destination: RestoreDestination): {
-  storageKind: 'directory' | 'applicationData';
+  storageKind: 'directory';
   storagePath?: string;
-  storageName?: string;
 } {
   if (destination.kind === 'directory') {
     validatePath(destination.path, 'restore destination directory');
     return { storageKind: 'directory', storagePath: destination.path };
-  }
-  if (destination.kind === 'applicationData') {
-    return {
-      storageKind: 'applicationData',
-      storageName: validateApplicationDataName(destination.name),
-    };
   }
   throw new Error(
     `unknown restore destination kind '${String((destination as { kind?: unknown }).kind)}'`,
@@ -1118,12 +1117,16 @@ function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
   validateStartupIdentity(config.database, 'database');
   const startupGUCs = config.startupGUCs ? validateStartupGUCs(config.startupGUCs) : undefined;
   const storage = normalizeDatabaseStorage(config.storage);
+  const descriptors = snapshotNativeExtensions(config.extensions ?? []);
+  validateExtensionIds(descriptors.map((value) => value.sqlName));
+  const icu = snapshotNativeIcu(config.icu);
   return {
     ...storage,
     startupGUCs,
     username: config.username,
     database: config.database,
-    extensions: config.extensions ? validateExtensionIds(config.extensions) : undefined,
+    extensions: descriptors.map(({ sqlName, product, version }) => ({ sqlName, product, version })),
+    icuVersion: icu?.version,
   };
 }
 
@@ -1138,7 +1141,7 @@ function validatePath(value: string, label: string): void {
 
 function normalizeDatabaseStorage(
   storage: DatabaseStorage | undefined,
-): Pick<NativeOpenConfig, 'storageKind' | 'storagePath' | 'storageName'> {
+): Pick<NativeOpenConfig, 'storageKind' | 'storagePath'> {
   if (storage === undefined) {
     return { storageKind: 'temporaryDirectory' };
   }
@@ -1152,23 +1155,7 @@ function normalizeDatabaseStorage(
     validatePath(storage.path, 'database storage directory');
     return { storageKind: 'directory', storagePath: storage.path };
   }
-  if (storage.kind === 'applicationData') {
-    return {
-      storageKind: 'applicationData',
-      storageName: validateApplicationDataName(storage.name),
-    };
-  }
   throw new Error(`unknown database storage kind ${String((storage as { kind?: unknown }).kind)}`);
-}
-
-function validateApplicationDataName(value: string): string {
-  const name = value.trim();
-  if (!/^[A-Za-z0-9._-]{1,128}$/.test(name) || name === '.' || name === '..') {
-    throw new Error(
-      'applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen',
-    );
-  }
-  return name;
 }
 
 function validateStartupIdentity(value: string | undefined, label: string): void {

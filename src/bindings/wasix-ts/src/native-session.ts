@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import {
   WasixStorageError,
   type WasixStorageCommitState,
@@ -27,7 +28,8 @@ import type {
   WasixToolProcessOptions,
   WasixToolProcessResult,
 } from './tool-runtime.js';
-import { validateWasixToolDescriptor } from './tool-runtime.js';
+import { validateWasixToolDescriptor } from './descriptor-validation.js';
+import { nativeExtensionPackages, nativeToolPackage } from './native-extension-packages.js';
 
 /** @internal A synchronous Rust Oliphaunt owned by the importing JavaScript realm. */
 export class NativeWasixSession implements WasixDatabaseSession {
@@ -59,9 +61,9 @@ export class NativeWasixSession implements WasixDatabaseSession {
     const addon = requireCompatibleNativeWasixAddon(options);
     let nativeOptions: NativeWasixOpenOptions;
     if (options.storage.kind === 'memory') {
-      nativeOptions = nativeWasixOpenOptions(options, { kind: 'memory' });
+      nativeOptions = await nativeWasixOpenOptions(options, { kind: 'memory' });
     } else if (options.storage.kind === 'directory') {
-      nativeOptions = nativeWasixOpenOptions(options, {
+      nativeOptions = await nativeWasixOpenOptions(options, {
         kind: 'directory',
         path: options.storage.path,
       });
@@ -135,30 +137,20 @@ export class NativeWasixSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    if (options.runtimeVersion !== '' && options.runtimeVersion !== this.#runtimeVersion) {
-      throw new Error(
-        `WASIX tools runtime ${options.runtimeVersion} is incompatible with database runtime ${this.#runtimeVersion}`,
-      );
-    }
-    validateWasixToolDescriptor(options.tool);
-    const expectedIdentity = `${options.tool.sha256}:${options.tool.size}`;
-    if (this.#addon.toolIdentity(options.tool.name) !== expectedIdentity) {
-      throw new Error(
-        `WASIX ${options.tool.name} descriptor does not match the tool embedded in the native addon`,
-      );
-    }
+    await validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
     if (options.tool.name === 'pg_dump') {
       try {
-        return toolProcessResult(
-          this.#handle.pgDump(userPgDumpArguments(options.args, this.identity)),
-        );
+        return toolProcessResult(this.#handle.pgDump(options.args));
       } catch (error) {
         throw this.#mapFailure(error);
       }
     }
-    const parsed = userPsqlArguments(options.args, options.stdin, this.identity);
+    const script =
+      options.stdin === undefined
+        ? undefined
+        : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
     try {
-      return toolProcessResult(this.#handle.psql(parsed.args, parsed.command, parsed.script));
+      return toolProcessResult(this.#handle.psql(options.args, options.command, script));
     } catch (error) {
       throw this.#mapFailure(error);
     }
@@ -224,7 +216,7 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
     const addon = requireCompatibleNativeWasixAddon(options);
     try {
       const handle = await addon.NativeWasixActorDatabase.open(
-        nativeWasixOpenOptions(options, nativeStorage(options)),
+        await nativeWasixOpenOptions(options, nativeStorage(options)),
       );
       validateActorDatabaseHandle(handle);
       return new NativeWasixActorSession(
@@ -285,15 +277,16 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
 
   async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
     this.#assertOpen();
-    validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
+    await validateNativeToolCall(this.#addon, this.#runtimeVersion, options);
     try {
       if (options.tool.name === 'pg_dump') {
-        return toolProcessResult(
-          await this.#handle.pgDump(userPgDumpArguments(options.args, this.identity)),
-        );
+        return toolProcessResult(await this.#handle.pgDump(options.args));
       }
-      const parsed = userPsqlArguments(options.args, options.stdin, this.identity);
-      return toolProcessResult(await this.#handle.psql(parsed.args, parsed.command, parsed.script));
+      const script =
+        options.stdin === undefined
+          ? undefined
+          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
+      return toolProcessResult(await this.#handle.psql(options.args, options.command, script));
     } catch (error) {
       throw this.#mapFailure(error);
     }
@@ -471,30 +464,11 @@ export function requireCompatibleNativeWasixAddon(
     options.runtime.standardSeedManifest,
     'standard cluster seed manifest',
   );
-  if (options.icu !== undefined) {
-    requireEmbeddedPayloadIdentity(
-      addon,
-      'icuDataArchive',
-      options.icu.dataArchive,
-      'ICU data archive',
-    );
-    requireEmbeddedPayloadIdentity(
-      addon,
-      'icuSeedArchive',
-      options.icu.clusterSeedArchive,
-      'ICU cluster seed archive',
-    );
-    requireEmbeddedPayloadIdentity(
-      addon,
-      'icuSeedManifest',
-      options.icu.clusterSeedManifest,
-      'ICU cluster seed manifest',
-    );
-  }
   for (const [sqlName, carrier] of Object.entries(options.extensionCarriers)) {
     if (carrier.sqlName !== sqlName) {
       throw new Error(`WASIX extension carrier key ${sqlName} does not match ${carrier.sqlName}`);
     }
+    if (carrier.product !== 'oliphaunt-extension-contrib-pg18') continue;
     const expectedIdentity = `${carrier.sha256}:${carrier.size}`;
     if (addon.extensionIdentity(sqlName) !== expectedIdentity) {
       throw new Error(
@@ -517,19 +491,47 @@ function requireEmbeddedPayloadIdentity(
 }
 
 /** @internal Project already-validated TS config onto the narrow native ABI. */
-export function nativeWasixOpenOptions(
+export async function nativeWasixOpenOptions(
   options: SerializedOpenOptions,
   storage: NativeWasixOpenOptions['storage'],
-): NativeWasixOpenOptions {
+): Promise<NativeWasixOpenOptions> {
   const identity = normalizeWasixDatabaseIdentity(options.username, options.database);
   return {
     profile: options.icu === undefined ? 'standard' : 'icu',
+    ...(options.icu === undefined
+      ? {}
+      : {
+          icu: {
+            version: options.icu.version,
+            runtimeVersion: options.icu.compatibility.runtimeVersion,
+            archive: nativeIcuSource(options.icu.dataArchive.source),
+            archiveSha256: options.icu.dataArchive.sha256,
+            dataTreeSha256: options.icu.compatibility.dataTreeSha256,
+            seedArchive: nativeIcuSource(options.icu.clusterSeedArchive.source),
+            seedArchiveSha256: options.icu.clusterSeedArchive.sha256,
+            seedManifest: nativeIcuSource(options.icu.clusterSeedManifest.source),
+            seedManifestSha256: options.icu.clusterSeedManifest.sha256,
+          },
+        }),
     storage,
     username: identity.username,
     database: identity.database,
     startupGucs: { ...options.startupGUCs },
     extensions: [...options.extensions],
+    ...(Object.values(options.extensionCarriers).some(
+      (carrier) => carrier.product !== 'oliphaunt-extension-contrib-pg18',
+    )
+      ? { extensionPackages: await nativeExtensionPackages(options) }
+      : {}),
   };
+}
+
+function nativeIcuSource(source: string | Uint8Array): string | Uint8Array {
+  if (source instanceof Uint8Array)
+    return Buffer.from(source.buffer, source.byteOffset, source.byteLength);
+  if (!source.startsWith('file:'))
+    throw new TypeError('WASIX native ICU data requires an installed file URL or bytes');
+  return fileURLToPath(source);
 }
 
 function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['storage'] {
@@ -541,21 +543,35 @@ function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['
   throw new TypeError(`@oliphaunt/wasix-ts ${provider} storage is browser-only`);
 }
 
-function validateNativeToolCall(
+const registeredTools = new WeakMap<NativeWasixAddon, Set<string>>();
+
+async function validateNativeToolCall(
   addon: NativeWasixAddon,
   runtimeVersion: string,
   options: WasixToolProcessOptions,
-): void {
+): Promise<void> {
   if (options.runtimeVersion !== '' && options.runtimeVersion !== runtimeVersion) {
     throw new Error(
       `WASIX tools runtime ${options.runtimeVersion} is incompatible with database runtime ${runtimeVersion}`,
     );
   }
   validateWasixToolDescriptor(options.tool);
+  const key = `${options.tool.name}:${options.tool.sha256}:${options.tool.source}`;
+  const registered = registeredTools.get(addon) ?? new Set<string>();
+  if (!registered.has(key)) {
+    const packageDescriptor = await nativeToolPackage(options.tool);
+    const packageKey = JSON.stringify(packageDescriptor);
+    if (!registered.has(packageKey)) {
+      await addon.registerTools(packageDescriptor);
+      registered.add(packageKey);
+    }
+    registered.add(key);
+    registeredTools.set(addon, registered);
+  }
   const expectedIdentity = `${options.tool.sha256}:${options.tool.size}`;
   if (addon.toolIdentity(options.tool.name) !== expectedIdentity) {
     throw new Error(
-      `WASIX ${options.tool.name} descriptor does not match the tool embedded in the native addon`,
+      `WASIX ${options.tool.name} descriptor does not match the tool in the installed package`,
     );
   }
 }
@@ -614,70 +630,6 @@ function toolProcessResult(result: NativeWasixToolResult): WasixToolProcessResul
   };
 }
 
-function userPgDumpArguments(args: readonly string[], identity: WasixDatabaseIdentity): string[] {
-  const suffix = [
-    '--encoding=UTF8',
-    '--no-password',
-    `--username=${identity.username}`,
-    '--host=127.0.0.1',
-    '--port=65432',
-    `--dbname=${identity.database}`,
-  ];
-  return stripManagedSuffix('pg_dump', args, suffix);
-}
-
-function userPsqlArguments(
-  args: readonly string[],
-  stdin: Uint8Array | undefined,
-  identity: WasixDatabaseIdentity,
-): Readonly<{ args: string[]; command?: string; script?: string }> {
-  const managed = [
-    '--no-psqlrc',
-    '--no-password',
-    '--set=ON_ERROR_STOP=1',
-    `--username=${identity.username}`,
-    '--host=127.0.0.1',
-    '--port=65432',
-    `--dbname=${identity.database}`,
-  ];
-  const start = findExactSequence(args, managed);
-  if (start < 0) throw new Error('Oliphaunt WASIX psql call has an invalid managed argument set');
-  const user = args.slice(0, start);
-  const input = args.slice(start + managed.length);
-  if (input.length === 0) return { args: user };
-  if (input.length === 2 && input[0] === '--command' && input[1] !== undefined) {
-    return { args: user, command: input[1] };
-  }
-  if (input.length === 1 && input[0] === '--file=-' && stdin !== undefined) {
-    return {
-      args: user,
-      script: new TextDecoder('utf-8', { fatal: true }).decode(stdin),
-    };
-  }
-  throw new Error('Oliphaunt WASIX psql call has invalid managed input arguments');
-}
-
-function stripManagedSuffix(
-  tool: string,
-  args: readonly string[],
-  suffix: readonly string[],
-): string[] {
-  if (
-    args.length < suffix.length ||
-    !suffix.every((argument, index) => args[args.length - suffix.length + index] === argument)
-  ) {
-    throw new Error(`Oliphaunt WASIX ${tool} call has an invalid managed argument set`);
-  }
-  return args.slice(0, -suffix.length);
-}
-
-function findExactSequence(values: readonly string[], expected: readonly string[]): number {
-  for (let start = values.length - expected.length; start >= 0; start -= 1) {
-    if (expected.every((value, offset) => values[start + offset] === value)) return start;
-  }
-  return -1;
-}
-
 /** @internal Translate only the exact tagged native storage contract. */
 export function mapNativeError(error: unknown): unknown {
   if (error instanceof WasixStorageError) return error;
@@ -724,7 +676,7 @@ function nativeStorageError(error: unknown): NativeStorageError | undefined {
   const candidate = error as Record<string, unknown>;
   if (
     candidate.oliphauntWasixError !== 'storage' ||
-    candidate.oliphauntWasixAddonAbi !== 1 ||
+    candidate.oliphauntWasixAddonAbi !== 2 ||
     !memberOf(candidate.code, STORAGE_CODES) ||
     !memberOf(candidate.commitState, STORAGE_COMMIT_STATES) ||
     !memberOf(candidate.phase, STORAGE_PHASES)

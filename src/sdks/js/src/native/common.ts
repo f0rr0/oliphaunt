@@ -16,16 +16,6 @@ export type NativePackageTarget = {
   runtimeRelativePath: string;
 };
 
-export function resolveLibraryPath(libraryPath?: string): string {
-  const resolved = resolveExplicitLibraryPath(libraryPath);
-  if (resolved === undefined || resolved.trim().length === 0) {
-    throw new Error(
-      'no liboliphaunt native asset is available; pass libraryPath, set LIBOLIPHAUNT_PATH, or install the compatible @oliphaunt/liboliphaunt-* package',
-    );
-  }
-  return resolved;
-}
-
 export function resolveExplicitLibraryPath(libraryPath?: string): string | undefined {
   const resolved = libraryPath ?? envVar('LIBOLIPHAUNT_PATH');
   if (resolved === undefined || resolved.trim().length === 0) {

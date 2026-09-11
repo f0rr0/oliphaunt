@@ -86,6 +86,7 @@ tasks:
       pnpm --dir src/bindings/wasix-ts build
       node src/bindings/wasix-ts/tools/stage-host.mjs
       node src/bindings/wasix-ts/tools/package.mjs target/oliphaunt-wasix-ts/package
+      node src/shared/js-core/tools/check-typescript-consumer.mjs target/oliphaunt-wasix-ts/package src/bindings/wasix-ts/tools/entrypoint-consumer.ts
     deps:
       - "oliphaunt-wasix-ts:browser-host"
       - "shared-js-core:build"
@@ -95,6 +96,7 @@ tasks:
       - project: "shared-js-core"
         group: "sources"
       - "**/*"
+      - "/src/shared/js-core/tools/check-typescript-consumer.mjs"
     outputs:
       - "/target/oliphaunt-wasix-ts/package/**/*"
       - "/src/bindings/wasix-ts/lib/**/*"

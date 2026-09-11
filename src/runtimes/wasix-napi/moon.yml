@@ -51,8 +51,8 @@ tasks:
     tags: ["quality", "static", "requires-rust"]
     script: |
       set -e
-      node --check tools/smoke-packaged-addon.mjs
-      cargo check --manifest-path Cargo.toml --locked --no-default-features
+      for file in tools/*.mjs; do node --check "$file"; done
+      cargo check --manifest-path Cargo.toml --locked --no-default-features --features extensions,tools
     env:
       CARGO_TARGET_DIR: "../../../target/moon/oliphaunt-wasix-napi/compile"
     inputs:
@@ -61,11 +61,10 @@ tasks:
         group: "code"
       - project: "liboliphaunt-wasix"
         group: "crates"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
       - "Cargo.toml"
       - "build.rs"
       - "src/**/*"
-      - "tools/smoke-packaged-addon.mjs"
+      - "tools/*.mjs"
     options:
       cache: true
 
@@ -73,8 +72,8 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
-      bun test tools/detect-linux-libc.test.mjs tools/portable-command.test.mjs
-      cargo test --manifest-path Cargo.toml --locked --no-default-features --features test-noop --lib
+      bun test tools/detect-linux-libc.test.mjs tools/portable-command.test.mjs tools/check-build-inputs.test.mjs
+      cargo test --manifest-path Cargo.toml --locked --no-default-features --features extensions,tools,test-noop --lib
     env:
       CARGO_TARGET_DIR: "../../../target/moon/oliphaunt-wasix-napi/unit"
     inputs:

@@ -40,6 +40,13 @@ owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/extensions.rs"
+reason = "generated const descriptors contain no executable lines for LLVM instrumentation"
+evidence = "extensions:lint validates the generated model; sdk_extensions tests validate descriptor selection"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-rust.waivers]]
 path = "src/sdks/rust/src/lib.rs"
 reason = "crate root is a re-export surface with no durable executable behavior to line-cover"
 evidence = "cargo doctests and SDK package-shape checks"
@@ -75,6 +82,13 @@ exclude_globs = [
   "target/**",
 ]
 per_file_line_warning = 50.0
+
+[[products.oliphaunt-swift.waivers]]
+path = "src/sdks/swift/Sources/Oliphaunt/OliphauntExtensions.swift"
+reason = "generated static descriptor and dependency tables have no Swift coverage instrumentation"
+evidence = "extensions:lint validates generated metadata; explicit resource selection tests cover dependency closure"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
 
 [[products.oliphaunt-swift.waivers]]
 path = "src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift"
@@ -143,7 +157,6 @@ exclude_globs = [
   "src/sdks/js/src/__tests__/**",
   "src/sdks/js/src/**/*.d.ts",
   "src/sdks/js/src/**/types.ts",
-  "src/sdks/js/src/protocol.ts",
   "src/sdks/js/src/query.ts",
   "src/sdks/js/lib/**",
   "src/sdks/js/node_modules/**",
@@ -175,13 +188,6 @@ expires = "before-0.2.0"
 path = "src/sdks/js/src/native/node-addon.ts"
 reason = "Node native addon loader is validated by package-shape, artifact-resolution, and native smoke lanes"
 evidence = "native-bindings tests, package checks, and TypeScript native smoke"
-owner = "@oliphaunt/core"
-expires = "before-0.2.0"
-
-[[products.oliphaunt-js.waivers]]
-path = "src/sdks/js/src/native/tar.ts"
-reason = "tar extraction helpers are covered through asset resolver tests and release artifact checks"
-evidence = "asset-resolver.test.ts and release artifact validation"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
@@ -229,7 +235,6 @@ source_globs = [
 exclude_globs = [
   "src/sdks/react-native/src/__tests__/**",
   "src/sdks/react-native/src/generated/**",
-  "src/sdks/react-native/src/protocol.ts",
   "src/sdks/react-native/src/query.ts",
   "src/sdks/react-native/lib/**",
   "src/sdks/react-native/node_modules/**",

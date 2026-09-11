@@ -55,6 +55,7 @@ function packageManifest(profile) {
       Object.keys(profile.optionalDependencyVersions).map((name) => [name, "workspace:*"]),
     );
   }
+  manifest.oliphaunt = { ...manifest.oliphaunt, liboliphauntVersion: "1.2.0" };
   return manifest;
 }
 

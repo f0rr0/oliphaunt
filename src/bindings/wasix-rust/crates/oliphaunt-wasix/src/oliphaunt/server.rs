@@ -7,7 +7,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+#[cfg(any(unix, test))]
+use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -51,9 +54,9 @@ pub struct OliphauntServer {
     active_connection: Arc<ActiveConnection>,
     handle: Option<JoinHandle<Result<()>>>,
     close_result: Option<TerminalCloseResult>,
-    #[cfg(all(test, feature = "icu"))]
+    #[cfg(test)]
     catalog_profile: CatalogProfile,
-    #[cfg(all(test, feature = "icu"))]
+    #[cfg(test)]
     runtime_root: PathBuf,
     #[cfg(unix)]
     owned_unix_socket: Option<OwnedUnixSocket>,
@@ -195,9 +198,7 @@ pub(crate) fn server_with_worker_result_for_test(
         active_connection: Arc::new(ActiveConnection::default()),
         handle: Some(thread::spawn(move || result)),
         close_result: None,
-        #[cfg(feature = "icu")]
         catalog_profile: CatalogProfile::default(),
-        #[cfg(feature = "icu")]
         runtime_root: PathBuf::new(),
         #[cfg(unix)]
         owned_unix_socket: None,
@@ -209,6 +210,7 @@ pub(crate) fn server_with_worker_result_for_test(
 pub struct OliphauntServerBuilder {
     storage: DatabaseStorage,
     catalog_profile: CatalogProfile,
+    icu: Option<oliphaunt_resources::IcuData>,
     listen: ServerListen,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
@@ -273,6 +275,7 @@ impl Default for OliphauntServerBuilder {
         Self {
             storage: DatabaseStorage::Memory,
             catalog_profile: default_catalog_profile(),
+            icu: None,
             listen: ServerListen::tcp(),
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
@@ -310,6 +313,13 @@ impl OliphauntServerBuilder {
         self
     }
 
+    /// Select ICU data from the optional `oliphaunt-wasix-icu` package.
+    pub fn icu(mut self, data: oliphaunt_resources::IcuData) -> Self {
+        self.icu = Some(data);
+        self.catalog_profile = CatalogProfile::Icu;
+        self
+    }
+
     /// Set a PostgreSQL startup GUC for the embedded backend used by this
     /// server.
     pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
@@ -342,19 +352,23 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Make one explicitly selected PostgreSQL extension artifact available to clients.
     /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
-    pub fn extension(mut self, extension: Extension) -> Self {
-        self.extensions.push(extension);
+    pub fn extension(mut self, extension: impl Into<Extension>) -> Self {
+        self.extensions.push(extension.into());
         self
     }
 
-    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Make explicitly selected PostgreSQL extension artifacts available to clients.
     /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
-        self.extensions.extend(extensions);
+    pub fn extensions<E: Into<Extension>>(
+        mut self,
+        extensions: impl IntoIterator<Item = E>,
+    ) -> Self {
+        self.extensions
+            .extend(extensions.into_iter().map(Into::into));
         self
     }
 
@@ -383,6 +397,9 @@ impl OliphauntServerBuilder {
         let postgres_config = self.postgres_config.clone();
         postgres_config.validate()?;
         self.storage.validate()?;
+        if let Some(data) = self.icu {
+            crate::oliphaunt::assets::register_icu(data)?;
+        }
         self.startup_config.validate()?;
         let startup_config = self.startup_config.clone();
 
@@ -395,9 +412,9 @@ impl OliphauntServerBuilder {
             directory_lock,
             outcome,
         } = prepared_database;
-        #[cfg(all(test, feature = "icu"))]
+        #[cfg(test)]
         let catalog_profile = outcome.runtime_layout.catalog_profile;
-        #[cfg(all(test, feature = "icu"))]
+        #[cfg(test)]
         let runtime_root = outcome.runtime_layout.module_root.clone();
 
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -450,9 +467,9 @@ impl OliphauntServerBuilder {
             active_connection,
             handle: Some(handle),
             close_result: None,
-            #[cfg(all(test, feature = "icu"))]
+            #[cfg(test)]
             catalog_profile,
-            #[cfg(all(test, feature = "icu"))]
+            #[cfg(test)]
             runtime_root,
             #[cfg(unix)]
             owned_unix_socket,
@@ -785,10 +802,10 @@ fn percent_encode_bytes(value: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "extension-pg-textsearch")]
+
+    #[cfg(feature = "extensions")]
     use crate::oliphaunt::extensions::Extension;
 
-    #[cfg(feature = "icu")]
     fn both_catalog_profiles_are_packaged() -> bool {
         crate::oliphaunt::assets::runtime_archive().is_some()
             && [CatalogProfile::Standard, CatalogProfile::Icu]
@@ -800,7 +817,6 @@ mod tests {
             && crate::oliphaunt::assets::icu_data_archive(CatalogProfile::Icu).is_some()
     }
 
-    #[cfg(feature = "icu")]
     fn assert_server_profile(server: &OliphauntServer, expected: CatalogProfile) {
         assert_eq!(server.catalog_profile, expected);
         assert_eq!(
@@ -996,7 +1012,6 @@ mod tests {
         assert_eq!(builder.catalog_profile, CatalogProfile::default());
     }
 
-    #[cfg(feature = "icu")]
     #[test]
     fn server_profiles_remain_isolated_in_both_construction_orders() -> Result<()> {
         if !both_catalog_profiles_are_packaged() {
@@ -1026,7 +1041,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "icu")]
     #[test]
     fn server_profiles_start_concurrently_without_contamination() -> Result<()> {
         if !both_catalog_profiles_are_packaged() {
@@ -1144,8 +1158,8 @@ mod tests {
         assert!(error.to_string().contains("omit it to allocate one"));
     }
 
-    #[cfg(feature = "extension-pg-textsearch")]
     #[test]
+    #[cfg(feature = "extensions")]
     fn server_path_merges_pg_textsearch_preload_once_before_start() {
         let builder = OliphauntServerBuilder::new()
             .startup_guc("shared_preload_libraries", "auto_explain,pg_textsearch")

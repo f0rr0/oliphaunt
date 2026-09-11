@@ -52,19 +52,17 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    @objc(restoreWithStorageKind:storagePath:storageName:backupData:completion:)
+    @objc(restoreWithStorageKind:storagePath:backupData:completion:)
     public static func restore(
         storageKind: String,
         storagePath: String?,
-        storageName: String?,
         backupData: Data,
         completion: @escaping (NSError?) -> Void
     ) {
         do {
             let destination = try restoreDestination(
                 storageKind: storageKind,
-                storagePath: storagePath,
-                storageName: storageName
+                storagePath: storagePath
             )
             let completionBox = CompletionBox(completion)
             Task(priority: .userInitiated) {
@@ -82,8 +80,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
 
     private static func restoreDestination(
         storageKind: String,
-        storagePath: String?,
-        storageName: String?
+        storagePath: String?
     ) throws -> URL {
         switch storageKind {
         case "directory":
@@ -93,17 +90,6 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                 throw adapterError("restore destination directory must not be empty or contain NUL bytes")
             }
             return URL(fileURLWithPath: storagePath, isDirectory: true)
-        case "applicationData":
-            let name = try applicationDataName(storageName)
-            guard let support = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first else {
-                throw adapterError("failed to resolve application data restore directory")
-            }
-            return support
-                .appendingPathComponent("Oliphaunt", isDirectory: true)
-                .appendingPathComponent(name, isDirectory: true)
         default:
             throw adapterError("unknown restore destination kind '\(storageKind)'")
         }
@@ -212,13 +198,25 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let storage = try parseDatabaseStorage(config)
         let username = try startupIdentity(config, "username")
         let database = try startupIdentity(config, "database")
-        let extensions = try stringArray(config, "extensions")
+        let rawExtensions = config["extensions"] ?? []
+        guard let descriptorValues = rawExtensions as? [NSDictionary] else {
+            throw adapterError("extensions must contain descriptors")
+        }
+        let extensions = try descriptorValues.map { value in
+            guard let sqlName = try string(value, "sqlName"),
+                  let product = try string(value, "product") else {
+                throw adapterError("extension sqlName and product are required")
+            }
+            return OliphauntExtension(sqlName: sqlName, product: product, version: try string(value, "version"))
+        }
+        let icu = try string(config, "icuVersion").map { OliphauntIcuData(version: $0) }
         let configuration = OliphauntConfiguration(
             storage: storage,
             startupGUCs: try startupGUCs(config, "startupGUCs"),
             username: username,
             database: database,
-            extensions: extensions
+            extensions: extensions,
+            icu: icu
         )
         return ParsedOpenConfig(configuration: configuration)
     }
@@ -276,56 +274,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                 throw adapterError("directory storage requires storagePath")
             }
             return .directory(URL(fileURLWithPath: path, isDirectory: true))
-        case "applicationData":
-            guard let name = try nonBlankString(
-                config,
-                "storageName",
-                emptyMessage: "applicationData storage name must not be empty"
-            ) else {
-                throw adapterError("applicationData storage requires storageName")
-            }
-            guard isPortableStorageName(name) else {
-                throw adapterError(
-                    "applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen"
-                )
-            }
-            guard let baseURL = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first else {
-                throw adapterError("failed to resolve application data storage directory")
-            }
-            return .directory(
-                baseURL
-                    .appendingPathComponent("Oliphaunt", isDirectory: true)
-                    .appendingPathComponent(name, isDirectory: true)
-            )
         case let kind:
             throw adapterError("unknown database storage kind '\(kind)'")
         }
-    }
-
-    private static func isPortableStorageName(_ value: String) -> Bool {
-        let bytes = value.utf8
-        guard !bytes.isEmpty, bytes.count <= 128, value != ".", value != ".." else {
-            return false
-        }
-        return bytes.allSatisfy { byte in
-            (byte >= 65 && byte <= 90) ||
-                (byte >= 97 && byte <= 122) ||
-                (byte >= 48 && byte <= 57) ||
-                byte == 46 || byte == 95 || byte == 45
-        }
-    }
-
-    private static func applicationDataName(_ value: String?) throws -> String {
-        let name = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard isPortableStorageName(name) else {
-            throw adapterError(
-                "applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen"
-            )
-        }
-        return name
     }
 
     private static func startupIdentity(_ dictionary: NSDictionary, _ key: String) throws -> String? {
@@ -379,15 +330,15 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    private static func startupGUCs(_ dictionary: NSDictionary, _ key: String) throws -> [OliphauntStartupGUC] {
-        try stringArray(dictionary, key).map { assignment in
+    private static func startupGUCs(_ dictionary: NSDictionary, _ key: String) throws -> [String: String] {
+        try Dictionary(stringArray(dictionary, key).map { assignment in
             guard let separator = assignment.firstIndex(of: "=") else {
                 throw adapterError("PostgreSQL startup GUC string must use name=value")
             }
             let name = String(assignment[..<separator])
             let value = String(assignment[assignment.index(after: separator)...])
-            return OliphauntStartupGUC(name, value)
-        }
+            return (name, value)
+        }, uniquingKeysWith: { _, last in last })
     }
 
     private static func arrayOfStringsMessage(_ key: String) -> String {
@@ -398,22 +349,6 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             return "startupGUCs must be an array of strings"
         }
         return "\(key) must be an array of strings"
-    }
-
-    private static func env(_ key: String) -> String? {
-        guard let value = ProcessInfo.processInfo.environment[key],
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return nil
-        }
-        return value
-    }
-
-    private static func urlFromPath(_ path: String?) -> URL? {
-        guard let path, !path.isEmpty else {
-            return nil
-        }
-        return URL(fileURLWithPath: path)
     }
 
     private static func adapterError(_ message: String) -> NSError {
@@ -455,14 +390,5 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         default:
             return (error as NSError).localizedDescription
         }
-    }
-}
-
-private extension String {
-    func removingPrefix(_ prefix: String) -> String? {
-        guard hasPrefix(prefix) else {
-            return nil
-        }
-        return String(dropFirst(prefix.count))
     }
 }

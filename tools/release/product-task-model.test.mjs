@@ -187,6 +187,7 @@ test("WASIX TypeScript products build packages and root integration consumes the
   assert.deepEqual(
     [...dependencies].sort(),
     [
+      "liboliphaunt-wasix:runtime-aot",
       "liboliphaunt-wasix:runtime-portable",
       "oliphaunt-wasix-tools-ts:package",
       "oliphaunt-wasix-ts:package",

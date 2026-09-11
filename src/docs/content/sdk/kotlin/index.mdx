@@ -20,27 +20,26 @@ Add the Android package to your app:
 ```kotlin
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "0.1.1"
+    id("dev.oliphaunt.android") version "0.2.0"
 }
 
 dependencies {
     implementation("dev.oliphaunt:oliphaunt-android:0.2.0")
+    implementation("dev.oliphaunt.extensions:oliphaunt-extension-vector:0.2.0")
 }
 
-oliphaunt {
-    selectedExtensions.add("vector")
-}
 ```
 
-The Gradle plugin verifies and packages selected native runtime artifacts,
-Android ABIs, and exact extension files. The app ships only the selected
-extensions plus declared dependencies.
+The Gradle plugin reads resolved dependencies for each Android variant. The app
+ships PostgreSQL and contrib with the SDK, plus external packages you install.
 
 ## Open And Query
 
 Open a database from a coroutine:
 
 ```kotlin
+import dev.oliphaunt.Extensions
+import dev.oliphaunt.extensions.vector.Vector
 import dev.oliphaunt.DatabaseStorage
 import dev.oliphaunt.Oliphaunt
 import dev.oliphaunt.OliphauntConfig
@@ -51,7 +50,7 @@ val database = Oliphaunt.open(
         storage = DatabaseStorage.Directory(
             applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
         ),
-        extensions = listOf("vector"),
+        extensions = listOf(Vector.descriptor, Extensions.HSTORE),
     ),
 )
 
@@ -73,8 +72,8 @@ first open.
 
 - Store persistent data in app-private storage unless the app deliberately
   exports a backup.
-- Select exact SQL extension names at build/configuration time so the APK or AAB
-  contains only selected extension artifacts and declared dependencies.
+- Use Gradle dependencies to choose shipped external packages, then select
+  external and contrib descriptors for each database.
 - Use SDK backup and restore APIs for archive validation and destination
   materialization.
 

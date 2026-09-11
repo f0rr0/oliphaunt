@@ -103,8 +103,10 @@ export_mobile_e2e_icu_expectation_from_android_apk() {
     extract_status=$?
   unzip -p "$apk" "assets/oliphaunt/cluster-seed/manifest.properties" >"$extracted/cluster-seed/manifest.properties" ||
     extract_status=$?
-  unzip -p "$apk" "assets/oliphaunt/cluster-seed-icu/manifest.properties" >"$extracted/cluster-seed-icu/manifest.properties" ||
-    extract_status=$?
+  if grep -Eq '^runtimeFeatures=([^,]*,)*icu(,|$)' "$manifest"; then
+    unzip -p "$apk" "assets/oliphaunt/cluster-seed-icu/manifest.properties" >"$extracted/cluster-seed-icu/manifest.properties" ||
+      extract_status=$?
+  fi
   if [ "$extract_status" -ne 0 ]; then
     rm -rf "$extracted"
     echo "$label is missing its runtime or cluster-seed manifest: $apk" >&2

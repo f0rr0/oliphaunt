@@ -215,8 +215,9 @@ lane has already established that correctness evidence. Doctest coverage itself
 requires nightly rustdoc flags, so it is not part of the default stable LCOV gate.
 WASIX library unit coverage intentionally uses `--no-default-features`.
 WASIX doctests run with the `tools` feature because the README contains
-tools-gated examples. The `public_api` lane separately enables one exact leaf
-extension feature to compile-check its root selector. Runtime Postgres/WASIX
+tools-gated examples. The `public_api` lane separately enables descriptor support to compile-check
+explicit contrib selection. External package fixtures compile real consumer
+crates against the generated independently versioned descriptors. Runtime Postgres/WASIX
 execution stays in `smoke` and `regression`, where missing runtime assets must
 fail or skip explicitly according to the lane policy.
 

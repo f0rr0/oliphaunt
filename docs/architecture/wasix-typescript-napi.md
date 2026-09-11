@@ -1,8 +1,7 @@
-# WASIX TypeScript Node-API architecture and implementation checklist
+# WASIX TypeScript Node-API architecture
 
-Status: implemented locally; exact-commit hosted qualification pending
-Reviewed against: `origin/main` at `4384d1bdfafee07e4e1963ac68027b4bcf002a1e`
-Last reviewed: 2026-08-30
+The execution architecture below also reflects explicit resource packages.
+Standard seeds remain bundled; the optional-standard-seed rollout is deferred.
 
 This document is the decision record and delivery checklist for replacing the
 Node, Bun, Deno, and Electron Wasmer-JS execution path in
@@ -118,6 +117,7 @@ string/lifecycle contract; only capability discovery moves to an import.
 The public shape is exactly one host-only conditional subpath:
 
 ```ts
+import { directory } from '@oliphaunt/wasix-ts';
 import { openServer } from '@oliphaunt/wasix-ts/server';
 
 await using server = await openServer({
@@ -307,16 +307,13 @@ Electron versions rather than inventing a Node maximum unrelated to evidence.
 Linux carriers follow the repository's existing glibc build and maximum-symbol
 policy; this project does not redefine that baseline.
 
-The release topology is one addon binary per target. It contains both qualified
-standard and ICU seed/data profiles plus the release's frozen extension and
-tool catalog; opening a database selects the profile without loading a second
-addon. Profile selection is immutable per builder/database, including server
-builders, and every reusable runtime, seed, and materialization cache is keyed
-by profile. This removes duplicate runtime/code/catalog payload while
-preserving the existing descriptor-based application API. Do not redesign
-native extension loading in this migration. Independent native extension
-carriers are a future package-size optimization and need their own measurements
-and threat model.
+The release topology is one addon binary per target, containing the runtime,
+standard seed, and supported contrib. External extensions, ICU data and matching
+seeds, and frontend tools are separate packages. TypeScript resolves installed
+descriptors and passes their payloads to Rust; Rust validates owner, version,
+target, runtime identity, and hashes before loading. Profile and extension
+selection remain immutable per database, and reusable caches include the
+selected resource identities.
 
 `@oliphaunt/wasix-ts` deliberately remains one universal browser-and-server npm
 package. The published tarball includes the patched browser Wasmer host and its
@@ -358,185 +355,12 @@ separate intermediate PRs with knowingly incomplete package contracts:
 6. Review Rust catalog selection and caches as an immutable per-builder
    standard/ICU profile and prove mixed-profile process behavior.
 7. Review the one profile-selecting addon per target, carrier topology,
-   cross-runtime smoke tests, release policy, licenses, and provenance. Keep the
-   frozen extension/tool catalog.
+   cross-runtime smoke tests, release policy, licenses, and provenance. Keep
+   external extensions, ICU resources, and tools in their separate packages.
 
 Public cancellation, wire `CancelRequest`, a multi-client server, and new
 carrier targets remain separate proposals. Feature PRs do not edit versions or
 changelogs; release automation owns those changes.
-
-## Implementation checklist
-
-### Phase 0 — preserve and separate the existing work
-
-- [x] Confirm the implementation base is current `origin/main`.
-- [x] Audit the dirty tree and treat all existing changes as user-owned WIP.
-- [x] Record the final architecture and scope in this document.
-- [x] Keep the integrated change reviewable through the bounded slices above
-  and co-locate each slice's tests, generated contracts, and documentation.
-- [x] Retain useful structured storage errors and exact tool stdout/stderr from
-  the provisional implementation.
-
-### Phase 1 — minimal functional Node-API placements
-
-Rust shared owner and Node-API bridge:
-
-- [x] Extend the existing `AsyncOliphaunt` owner core with immediate
-  callback-completion admission for open, buffered raw protocol, backup, and
-  close. Its bounded FIFO, transaction ownership, terminal close, owner-loss
-  handling, and panic quarantine remain the single source of truth.
-- [x] Gate the completion seam behind an exact-purpose private
-  `__internal-napi` Cargo feature (plus tests). The Node-API crate enables it;
-  ordinary Rust WASIX users and generated public API docs do not gain adapter
-  methods.
-- [x] Retain the Future API's fair, waiting async admission and oneshot replies.
-  Share the typed owner command, execution, close, and owner-loss state machine
-  with immediate callback admission; do not turn Rust Future calls into
-  immediate busy rejection or fork lifecycle semantics for Node-API.
-- [x] Export separate async actor and synchronous direct native classes. Keep
-  creator affinity only on direct.
-- [x] Settle one napi-rs `JsDeferred` directly from each owner callback, giving
-  exactly one cross-thread completion dispatch per non-streaming operation and
-  napi-rs-owned environment cleanup. Streaming additionally uses its bounded
-  per-chunk rendezvous. Do not route replies through `napi_async_work`, a
-  blocking receiver, or a custom runtime.
-- [x] Map structured Rust errors at the ABI boundary. Remove text/source-chain
-  inference once every Rust error carries its classification.
-- [x] Return V8-owned public output bytes; retain external buffers only for
-  proven internal nonescaping use.
-- [x] Add focused Rust unit tests for callback ordering/admission, exact-once
-  rejection, callback panic, queue/owner loss, close cutoff/retry/reentry,
-  shared close, and terminal replay; keep the full Rust library suite green.
-- [x] Add the live Node-API integration roundtrip for actor open, recoverable
-  raw protocol work and reuse, backup, repeated close, and environment cleanup.
-- [x] Remove the rejected standalone N-API actor prototype; do not ship two
-  lifecycle state machines.
-
-TypeScript integration:
-
-- [x] Root Node/Bun/Deno/Electron exports use the actor class while preserving the
-  Promise-shaped database API.
-- [x] Add `/direct` as the explicit synchronous-placement import and wire it to
-  the direct class.
-- [x] Restore/adapt the real Node/Bun/Deno/Electron Worker implementation and load the
-  direct class inside it.
-- [x] Remove `node-child.ts`, child ports/options, liveness watchdogs,
-  `child_process` permissions, fixtures, tests, and documentation after the
-  Worker replacement is proven.
-- [x] Keep the existing logical-operation scheduler and transaction ownership;
-  do not replace `#tail` as part of placement migration.
-- [x] Keep browser root and Worker module graphs byte-for-byte behaviorally on
-  Wasmer-JS and prove that they cannot resolve a native carrier.
-- [x] Add root/direct/Worker parity tests covering query, raw protocol,
-  streaming callback failure, transaction, backup/restore, storage errors,
-  close, and async disposal.
-
-Server surface:
-
-- [x] Replace `/server/{node,bun,deno}` with one conditional `/server` export.
-- [x] Consolidate `ServerListen`, `ServerOpenConfig`, and `OliphauntServer` in
-  one TS module.
-- [x] Adapt the existing Rust `AsyncOliphauntServer` owner and its exact
-  open/close memoization for Node-API lifecycle. Do not create a database-actor
-  command or a second N-API/server owner state machine for this cold path.
-- [x] Run N-API server open/close lifecycle off the importing event loop while
-  Rust continues to own all socket traffic.
-- [x] Remove duplicated JavaScript socket/filesystem policy and TOCTOU checks;
-  snapshot/resolve options in TS and let Rust atomically create and own the
-  listener path.
-- [x] Correct manifest/docs ownership from child process to Rust owner/native
-  listener.
-- [x] Test TCP automatic/fixed port, Unix ownership-safe cleanup, close during
-  an active client, recoverable SQL error, reconnect, exact public shape, and
-  browser export exclusion.
-
-Phase 1 acceptance:
-
-- [x] No Node/Bun/Deno/Electron root or `/worker` import loads Wasmer-JS.
-- [x] No normal host-runtime path spawns a child process.
-- [x] Root heartbeat remains responsive during a long query; `/direct` blocks;
-  `/worker` remains responsive.
-- [x] Add a reproducible direct-versus-actor-versus-Worker harness which reports
-  tiny-operation overhead, p50/p95/p99, event-loop delay, throughput, copies,
-  fan-out, and overload/RSS instead of assuming the result.
-- [x] Repeated close/finalization and environment exit produce no hang, abort,
-  use-after-free, or late Node-API call.
-- [x] Pin the addon image before a direct-only Worker can initialize the
-  process-wide WASIX runtime, and exercise a fresh process whose parent never
-  loads the addon while repeated direct Workers open, query, close, and
-  self-exit.
-- [x] Prove raw direct streaming callback reentry is rejected by napi-rs's
-  generated native borrow guard and leaves the database reusable.
-
-### Phase 2 — safe Worker shutdown
-
-- [x] Make Worker close stop admission, settle the active operation and queue,
-  quiesce stream callbacks, close/release the direct native handle, acknowledge
-  the complete shutdown state, and self-exit.
-- [x] Ensure every error and finalization path tracks that full shutdown state.
-  Treat an observed clean self-exit as final without a redundant terminate;
-  reserve forced termination for startup/fatal cleanup before self-exit and
-  never use an idle native frame alone as proof that active termination is safe.
-- [x] Add regressions for close during a long query, idle termination,
-  environment teardown during open/query/stream/close, and the reproduced
-  active-termination process abort.
-- [x] Document that a hung guest can leave close pending and that `/worker` is
-  scheduling/realm isolation, not process containment.
-
-### Phase 3 — packaging optimization before first release
-
-- [x] Refactor standard/ICU seed selection from compile-time global selection
-  to an immutable per-builder/database profile so one addon binary per target
-  supports both without changing default catalog or storage behavior.
-- [x] Thread that profile through manifest identity, seed selection, runtime
-  materialization, ICU-data installation, database and server builders, and
-  compatibility checks. Key every reusable seed/runtime/materialization cache
-  by profile rather than sharing singleton `OnceLock` state.
-- [x] Test standard and ICU databases/servers in both construction orders and
-  concurrently in one process; prove their receipts, directories, manifests,
-  and extension catalogs cannot contaminate each other.
-- [x] Keep the first release's qualified extension/tool catalog frozen inside
-  that addon. Preserve descriptor identity checks; do not introduce dynamic
-  native extension loading in this migration.
-- [x] Update the private build package, carrier manifests, loader identities,
-  artifact provenance, notices/licenses, checksum aggregation, and publication
-  catalog together.
-- [x] Preserve the exact four-target release matrix and existing Linux ABI
-  policy.
-- [x] Verify clean install, optional-dependency pruning, unsupported target,
-  missing carrier, wrong ABI/version/runtime identity, pnpm/npm, and archive
-  contents without network-time install hooks.
-- [x] Wire packaged Node, Bun, Deno, and Electron smoke tests into every matching
-  carrier job; document and test Deno permissions and the Electron ASAR-unpacked
-  layout, including its missing-companion failure.
-- [ ] Observe those packaged smokes on all four physical hosted carrier jobs for
-  the exact candidate commit.
-
-### Phase 4 — documentation, cleanup, and release qualification
-
-- [x] Update `README.md`, `ARCHITECTURE.md`, API reference, SDK parity/product
-  policies, package surface inventory, examples, and migration notes.
-- [x] Describe root as actor-backed, `/direct` as blocking, `/worker` as a real
-  Worker, and `/server` as a Rust listener. Never call realm isolation crash
-  containment.
-- [x] Remove stale child-process, Wasmer-on-server, external-zero-copy output,
-  duplicate-addon, and runtime-named server-subpath claims.
-- [x] Remove dead modules only after `rg`, TypeScript build output, packed
-  package inspection, browser bundle inspection, and Moon graph checks prove
-  they are unreachable.
-- [x] Update focused CI first; add the full carrier/runtime matrix only with the
-  packaging PR. Avoid duplicating Moon-owned checks in workflows.
-- [x] Run `moon run oliphaunt-wasix-napi:qualify`,
-  `moon run oliphaunt-wasix-napi:qualify`,
-  `moon run oliphaunt-wasix-rust:compile`,
-  `moon run oliphaunt-wasix-ts:unit`,
-  `moon run oliphaunt-wasix-ts:compile`, and the product package checks.
-- [x] Run `moon run sdk-contracts:check` for public-surface changes.
-- [x] Run workflow-policy, release-check, committed-asset, extension-model,
-  WASIX source/patch, portable/AOT, carrier, license, provenance, and Linux ABI
-  checks selected by the repository qualification graph.
-- [ ] Before merge/release, prove the exact commit with the repository
-  `Qualified` gate and all required WASIX lifecycle evidence.
 
 ## Performance proof
 
@@ -575,8 +399,6 @@ These items are not prerequisites for the Node-API migration:
   when undertaken, they reuse the lower cancellation handle and do not add
   `server.cancel()`;
 - extracting the duplicate JavaScript query codec into a new shared package;
-- independently loaded native extension carriers or a user-visible native
-  profile package split;
 - new native carrier targets or a new glibc policy; and
 - unrelated storage, extension-catalog, SDK, or release-system redesigns.
 

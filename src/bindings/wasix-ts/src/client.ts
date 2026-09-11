@@ -1,10 +1,11 @@
-import { restoreWasix, serializeOpenConfig } from './client-common.js';
+import { restoreWasix } from './client-common.js';
+import { requireBrowserStorage, serializeOpenConfig } from './open-config.js';
 import {
   openWasixDirect,
   type DirectWasixEnvironment,
   type DirectWasixHost,
 } from './direct-client-common.js';
-import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
+import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './browser-public.js';
 
 /** Open PostgreSQL in the importing browser realm. Guest execution may block that realm. */
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
@@ -17,6 +18,7 @@ export async function openWasixWithHost(
   loadHost: () => Promise<DirectWasixHost>,
 ): Promise<OliphauntDatabase> {
   const openOptions = serializeOpenConfig(config);
+  requireBrowserStorage(openOptions);
   if (globalThis.crossOriginIsolated !== true) {
     throw new Error(
       '@oliphaunt/wasix-ts requires COOP: same-origin and COEP: require-corp response headers',
@@ -28,7 +30,7 @@ export async function openWasixWithHost(
 
 export const Oliphaunt: OliphauntClient = {
   open: openWasix,
-  restore: restoreWasix,
+  restore: (storage, bytes) => restoreWasix(storage, bytes, requireBrowserStorage),
 };
 
 function browserRealm(): DirectWasixEnvironment {

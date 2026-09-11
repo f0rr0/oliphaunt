@@ -126,7 +126,7 @@ describe('WASIX storage descriptors', () => {
     const original = Object.assign(new Error('pg_dump reported an impossible success error'), {
       name: 'OliphauntWasixToolError',
       oliphauntWasixError: 'tool' as const,
-      oliphauntWasixAddonAbi: 1 as const,
+      oliphauntWasixAddonAbi: 2 as const,
       code: 'tool-error' as const,
       tool: 'pg_dump',
       exitCode: 0,
@@ -139,7 +139,7 @@ describe('WASIX storage descriptors', () => {
     expect(roundTrip).toMatchObject({
       name: 'OliphauntWasixToolError',
       oliphauntWasixError: 'tool',
-      oliphauntWasixAddonAbi: 1,
+      oliphauntWasixAddonAbi: 2,
       code: 'tool-error',
       tool: 'pg_dump',
       exitCode: 0,

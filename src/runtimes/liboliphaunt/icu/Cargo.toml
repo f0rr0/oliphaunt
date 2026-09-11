@@ -3,30 +3,21 @@ name = "oliphaunt-icu"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.93"
-description = "Optional ICU data files for Oliphaunt runtimes."
+description = "Optional ICU data and cluster seeds for the Oliphaunt native runtime."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
 documentation = "https://docs.rs/oliphaunt-icu"
-license = "MIT AND Unicode-3.0"
+license = "MIT AND PostgreSQL AND Unicode-3.0"
 links = "oliphaunt_artifact_oliphaunt_icu"
 build = "build.rs"
-include = [
-  "Cargo.toml",
-  "README.md",
-  "build.rs",
-  "src/**",
-  "payload/**",
-  "LICENSE",
-  "THIRD_PARTY_NOTICES.md",
-  "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
-  "THIRD_PARTY_LICENSES/ICU-LICENSE",
-]
+include = ["Cargo.toml","README.md","build.rs","src/**","payload/**","LICENSE","THIRD_PARTY_NOTICES.md","THIRD_PARTY_NOTICES.liboliphaunt-native.md","THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT","THIRD_PARTY_LICENSES/ICU-LICENSE"]
 
 [lib]
 path = "src/lib.rs"
 
+[dependencies]
+oliphaunt-resources = { version = "0.2.0", path = "../../../sdks/rust/crates/oliphaunt-resources" }
+
 [build-dependencies]
 sha2 = "0.10"
-tar = "0.4"
-zstd = { version = "0.13", default-features = false }

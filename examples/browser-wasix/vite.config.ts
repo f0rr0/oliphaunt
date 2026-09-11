@@ -106,6 +106,7 @@ export default defineConfig({
 function packedBrowserPackageExports(consumerRoot: string): Plugin {
   const expected = new Map([
     ['@oliphaunt/wasix-ts', '/@oliphaunt/wasix-ts/lib/index.js'],
+    ['@oliphaunt/wasix-ts/browser', '/@oliphaunt/wasix-ts/lib/browser.js'],
     ['@oliphaunt/wasix-ts/worker', '/@oliphaunt/wasix-ts/lib/worker-entry.js'],
     ['@oliphaunt/wasix-ts/storage/indexed-db', '/@oliphaunt/wasix-ts/lib/storage/indexed-db.js'],
     ['@oliphaunt/liboliphaunt-wasix', '/@oliphaunt/liboliphaunt-wasix/index.js'],
@@ -147,6 +148,7 @@ function wasixAssets(): Plugin {
     ['@oliphaunt/liboliphaunt-wasix', '\0oliphaunt:liboliphaunt-wasix'],
     ['@oliphaunt/liboliphaunt-wasix-tools', '\0oliphaunt:liboliphaunt-wasix-tools'],
     ['@oliphaunt/extension-pgtap-wasix', '\0oliphaunt:extension-pgtap-wasix'],
+    ['@oliphaunt/extension-contrib-pg18-wasix', '\0oliphaunt:extension-contrib-pg18-wasix'],
     ['@oliphaunt/extension-pg-uuidv7-wasix', '\0oliphaunt:extension-pg-uuidv7-wasix'],
     ['@oliphaunt/extension-postgis-wasix', '\0oliphaunt:extension-postgis-wasix'],
   ]);
@@ -181,6 +183,22 @@ function wasixAssets(): Plugin {
       const packageName = packageByVirtualModule.get(id);
       if (packageName === undefined) {
         return undefined;
+      }
+      if (packageName === '@oliphaunt/extension-contrib-pg18-wasix') {
+        const manifest = JSON.parse(await readFile(resolve(assetRoot, 'manifest.json'), 'utf8'));
+        const members = requireArray(manifest.extensions, 'extension rows')
+          .map((row) => requireRecord(row, 'extension row'))
+          .filter((row) => row['source-kind'] === 'postgres-contrib');
+        return (
+          await Promise.all(
+            members.map(async (row) => {
+              const sqlName = String(row['sql-name']);
+              routes.set(`/extensions/${sqlName}`, resolve(assetRoot, String(row.archive)));
+              const descriptor = await developmentDescriptor(packageName, sqlName);
+              return `export const ${sqlName.replaceAll('-', '_')} = Object.freeze(${JSON.stringify(descriptor)});`;
+            }),
+          )
+        ).join('\n');
       }
       let descriptorPromise = descriptorPromises.get(packageName);
       if (descriptorPromise === undefined) {
@@ -252,7 +270,10 @@ async function developmentWasixIdentity(): Promise<{
   return { postgresMajor: postgresMajor as number, physicalFormat };
 }
 
-async function developmentDescriptor(packageName: string): Promise<Record<string, unknown>> {
+async function developmentDescriptor(
+  packageName: string,
+  contribSqlName?: string,
+): Promise<Record<string, unknown>> {
   const manifestBytes = await readFile(resolve(assetRoot, 'manifest.json'));
   const manifest = JSON.parse(manifestBytes.toString('utf8')) as Record<string, unknown>;
   const versions = JSON.parse(
@@ -324,7 +345,14 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
     };
   }
 
-  const extension = extensionPackage(packageName);
+  const extension =
+    contribSqlName === undefined
+      ? extensionPackage(packageName)
+      : {
+          product: 'oliphaunt-extension-contrib-pg18',
+          releasePath: 'src/runtimes/liboliphaunt/wasix',
+          sqlName: contribSqlName,
+        };
   const rows = manifest.extensions;
   if (!Array.isArray(rows)) {
     throw new Error('canonical development manifest has no extension rows');
@@ -382,6 +410,19 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
       ),
     },
   };
+  const dependencyCarriers =
+    contribSqlName === undefined
+      ? []
+      : (
+          await Promise.all(
+            requireArray(metadata.dependencies, 'extension dependencies').map(
+              async (dependency) => {
+                const descriptor = await developmentDescriptor(packageName, String(dependency));
+                return requireArray(descriptor.carriers, 'dependency carriers');
+              },
+            ),
+          )
+        ).flat();
   return {
     schema: 'oliphaunt-wasix-extension-v1',
     runtime: 'wasix',
@@ -394,7 +435,7 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
       wasixRuntimeVersion: runtimeVersion,
     },
     sqlName: extension.sqlName,
-    carriers: [carrier],
+    carriers: [...dependencyCarriers, carrier],
   };
 }
 

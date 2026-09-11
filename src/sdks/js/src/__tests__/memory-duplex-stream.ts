@@ -1,8 +1,4 @@
-export type ByteStream = {
-  readExactly(length: number): Promise<Uint8Array>;
-  writeAll(bytes: Uint8Array): Promise<void>;
-  close(): Promise<void>;
-};
+import type { ByteStream } from '../runtime/types.js';
 
 export class MemoryDuplexStream implements ByteStream {
   readonly #input: Uint8Array[];

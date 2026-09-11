@@ -159,6 +159,12 @@ test("production audit prefetches the exact locked all-target closure into a cle
 
 test("broker path-package validation follows exact manifests without pinning release versions", () => {
   const sdkManifest = path.join(ROOT, "src/sdks/rust/Cargo.toml");
+  for (const manifest of ["src/sdks/rust/crates/oliphaunt-resources/Cargo.toml", "Cargo.toml"]) {
+    assert.equal(isAllowedBrokerPathPackageMetadataRow({
+      name: "oliphaunt-resources", version: "0.2.0", source: null,
+      manifest_path: path.join(ROOT, manifest),
+    }), manifest !== "Cargo.toml");
+  }
   assert.equal(isAllowedBrokerPathPackageMetadataRow({
     name: "oliphaunt",
     version: "17.23.401",

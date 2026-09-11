@@ -6,6 +6,66 @@ use crate::error::{Error, Result};
 mod generated_extensions;
 pub use generated_extensions::Extension;
 
+pub use oliphaunt_resources::{ExtensionDescriptor, IcuData};
+
+impl From<Extension> for ExtensionDescriptor {
+    fn from(extension: Extension) -> Self {
+        Self {
+            sql_name: extension.sql_name(),
+            product: "",
+            version: None,
+            runtime_version: env!("OLIPHAUNT_NATIVE_RUNTIME_VERSION"),
+            resources: &[],
+        }
+    }
+}
+
+pub(crate) fn prepare_selected_resources(
+    extensions: &[ExtensionDescriptor],
+    icu: Option<IcuData>,
+) -> Result<(Vec<Extension>, Option<std::path::PathBuf>)> {
+    let mut selected = std::collections::BTreeMap::new();
+    let mut files = Vec::new();
+    for value in extensions {
+        let extension = Extension::by_sql_name(value.sql_name).ok_or_else(|| {
+            Error::InvalidConfig(format!("unknown extension '{}'", value.sql_name))
+        })?;
+        if value.runtime_version != env!("OLIPHAUNT_NATIVE_RUNTIME_VERSION") {
+            return Err(Error::InvalidConfig(format!(
+                "extension '{}' requires native runtime {}",
+                value.sql_name, value.runtime_version
+            )));
+        }
+        if let Some(previous) = selected.insert(extension, *value)
+            && previous != *value
+        {
+            return Err(Error::InvalidConfig(format!(
+                "conflicting extension descriptors for '{}'",
+                value.sql_name
+            )));
+        }
+        files.extend_from_slice(value.resources);
+    }
+    if let Some(icu) = icu {
+        if icu.native_runtime_version != env!("OLIPHAUNT_NATIVE_RUNTIME_VERSION")
+            || icu.resources.is_empty()
+        {
+            return Err(Error::InvalidConfig(
+                "ICU descriptor has no compatible runtime resources".to_owned(),
+            ));
+        }
+        files.extend_from_slice(icu.resources);
+    }
+    let resources = if files.is_empty() {
+        None
+    } else {
+        Some(crate::build_resources::materialize_embedded_resources(
+            &files,
+        )?)
+    };
+    Ok((selected.into_keys().collect(), resources))
+}
+
 impl Extension {
     /// SQL extension name used by `CREATE EXTENSION`.
     pub const fn sql_name(self) -> &'static str {

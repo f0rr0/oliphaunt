@@ -1,4 +1,4 @@
-import Oliphaunt, { type OliphauntDatabase } from '@oliphaunt/wasix-ts';
+import Oliphaunt, { type OliphauntDatabase } from '@oliphaunt/wasix-ts/browser';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 
 type ProbeRequest = Readonly<{ name: string }>;

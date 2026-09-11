@@ -77,8 +77,8 @@ Current active artifact:
 - release-host reruns can use the stable PG18 generated asset and AOT paths:
   `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR=.../target/oliphaunt-wasix/assets`,
   and `OLIPHAUNT_WASM_GENERATED_AOT_DIR=.../target/oliphaunt-wasix/aot`.
-  Asset, PGDATA-template, and AOT manifests carry source-fingerprint metadata,
-  so a stale artifact fails with a fingerprint mismatch before measurement.
+  Historical builds recorded source fingerprints in manifests. Current loaders
+  use runtime versions for compatibility and checksums for payload integrity.
 
 Current 37-patch O2 release-host three-run median against same-host PG17.5
 `0.5.0` and the documented PG17.5 release-lane table in

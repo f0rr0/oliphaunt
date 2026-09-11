@@ -88,6 +88,7 @@ tasks:
       rsync -a --exclude node_modules src/sdks/js/ target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
       cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
       node src/shared/js-core/tools/stage-package.mjs target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js src/shared/js-core
+      node src/shared/js-core/tools/check-typescript-consumer.mjs target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js src/sdks/js/tools/entrypoint-consumer.ts
     deps:
       - "oliphaunt-js:compile"
     inputs:
@@ -96,6 +97,7 @@ tasks:
         group: "sources"
       - "@group(pnpm-workspace)"
       - "/src/shared/js-core/tools/stage-package.mjs"
+      - "/src/shared/js-core/tools/check-typescript-consumer.mjs"
       - "**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/**/*"

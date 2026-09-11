@@ -4,7 +4,7 @@ export const WASIX_CARGO_ARTIFACT_SCHEMA = "oliphaunt-liboliphaunt-wasix-cargo-a
 export const EXTENSION_PORTABLE_TARGET = "wasix-portable";
 export const RUNTIME_PACKAGE = "liboliphaunt-wasix-portable";
 export const TOOLS_PACKAGE = "oliphaunt-wasix-tools";
-export const ICU_PACKAGE = "oliphaunt-icu";
+export const ICU_PACKAGE = "oliphaunt-wasix-icu";
 export const ICU_PAYLOAD_ARCHIVE = "icu-data.tar.zst";
 
 export const TOOLS_PAYLOAD_FILES = [

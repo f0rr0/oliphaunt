@@ -18,8 +18,6 @@ pub struct AssetManifest {
     pub format_version: u32,
     #[serde(default)]
     pub source_lane: Option<String>,
-    #[serde(default)]
-    pub source_fingerprint: Option<String>,
     pub runtime: RuntimeAsset,
     #[serde(default)]
     pub runtime_support: Vec<BinaryAsset>,
@@ -75,8 +73,6 @@ pub struct ClusterSeedAsset {
     pub source_pins_sha256: String,
     #[serde(default)]
     pub source_lane: Option<String>,
-    #[serde(default)]
-    pub source_fingerprint: Option<String>,
     pub postgres_version: String,
     pub catalog_version: String,
     pub init_profile: String,
@@ -245,7 +241,6 @@ mod tests {
             r#"{
               "format-version": 2,
               "source-lane": "stable",
-              "source-fingerprint": "postgresql-18.4:patch-stack",
               "runtime": {
                 "archive": "oliphaunt.wasix.tar.zst",
                 "sha256": "runtime-archive",
@@ -266,7 +261,6 @@ mod tests {
                   "initdb-module-sha256": "initdb-module",
                   "source-pins-sha256": "source-pins",
                   "source-lane": "stable",
-                  "source-fingerprint": "postgresql-18.4:patch-stack",
                   "postgres-version": "18",
                   "catalog-version": "202505281",
                   "init-profile": "default",
@@ -282,19 +276,11 @@ mod tests {
         .expect("PG18 asset manifest metadata should parse");
 
         assert_eq!(manifest.source_lane.as_deref(), Some("stable"));
-        assert_eq!(
-            manifest.source_fingerprint.as_deref(),
-            Some("postgresql-18.4:patch-stack")
-        );
         let seed = manifest
             .cluster_seeds
             .get("standard")
             .expect("standard cluster seed asset");
         assert_eq!(seed.catalog_profile, "standard");
         assert_eq!(seed.source_lane.as_deref(), Some("stable"));
-        assert_eq!(
-            seed.source_fingerprint.as_deref(),
-            Some("postgresql-18.4:patch-stack")
-        );
     }
 }

@@ -9,7 +9,7 @@ import type {
   QueryResult,
   RawQueryResult,
 } from './query.js';
-import type { PersistentWasixStorage, WasixStorage } from './storage.js';
+import type { PersistentWasixStorage, WasixStorage, WasixStorageKind } from './storage.js';
 
 type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
@@ -122,7 +122,13 @@ export type WasixExtensionNativeModule = Readonly<{
   size: number;
 }>;
 
-export type WasixExtensionDescriptorInput = Readonly<{
+/**
+ * A package-authored, runtime-validated WASIX extension import. Applications
+ * obtain these from extension packages instead of constructing SQL strings.
+ * The schema and runtime literals discriminate it structurally, so generated
+ * carrier packages do not need a dependency on this binding.
+ */
+export type WasixExtensionDescriptor = Readonly<{
   schema: 'oliphaunt-wasix-extension-v1';
   runtime: 'wasix';
   /** Product and version of the root carrier selected by `sqlName`. */
@@ -134,14 +140,6 @@ export type WasixExtensionDescriptorInput = Readonly<{
   /** Root carrier plus any extension carrier dependencies required by this import. */
   carriers: readonly WasixExtensionCarrier[];
 }>;
-
-/**
- * A package-authored, runtime-validated WASIX extension import. Applications
- * obtain these from extension packages instead of constructing SQL strings.
- * The schema and runtime literals discriminate it structurally, so generated
- * carrier packages do not need a dependency on this binding.
- */
-export type WasixExtensionDescriptor = WasixExtensionDescriptorInput;
 
 /** Lifecycle fields owned by an independently versioned extension carrier. */
 export type WasixExtensionLifecycle = {
@@ -158,7 +156,6 @@ export type WasixExtensionLifecycle = {
 /** Host-relevant subset of the generated liboliphaunt WASIX asset manifest. */
 export type WasixAssetManifest = {
   'format-version': 2;
-  'source-fingerprint': string;
   runtime: {
     archive: string;
     sha256: string;
@@ -189,7 +186,6 @@ export type WasixAssetManifest = {
         sha256: string;
         size: number;
         'runtime-module-sha256': string;
-        'source-fingerprint': string;
         'postgres-version': string;
         'physical-format': 'wasix-pg18-v1';
         'compatibility-key': 'wasix-pg18-datum32-v1';
@@ -201,7 +197,7 @@ export type WasixAssetManifest = {
   extensions: readonly [];
 };
 
-export type OpenConfig = {
+export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
   /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
   username?: string;
   database?: string;
@@ -212,7 +208,7 @@ export type OpenConfig = {
   /** Selectively imported WASIX carriers. SQL strings are intentionally not accepted. */
   extensions?: readonly WasixExtensionDescriptor[];
   /** Fresh memory by default, or an explicitly imported host storage adapter. */
-  storage?: WasixStorage;
+  storage?: WasixStorage<Kind>;
 };
 
 export type OliphauntDatabase = {
@@ -288,7 +284,10 @@ export type OliphauntTransaction = {
   rollback(): Promise<void>;
 };
 
-export type OliphauntClient = {
-  open(config?: OpenConfig): Promise<OliphauntDatabase>;
-  restore(storage: PersistentWasixStorage, bytes: BinaryInput): Promise<void>;
+export type OliphauntClient<Kind extends WasixStorageKind = WasixStorageKind> = {
+  open(config?: OpenConfig<Kind>): Promise<OliphauntDatabase>;
+  restore(
+    storage: PersistentWasixStorage<Exclude<Kind, 'memory'>>,
+    bytes: BinaryInput,
+  ): Promise<void>;
 };

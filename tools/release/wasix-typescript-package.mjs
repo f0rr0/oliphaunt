@@ -16,6 +16,7 @@ import {
 
 const TOOL = 'wasix-typescript-package.mjs';
 const PACKAGE_NAME = '@oliphaunt/wasix-ts';
+const CONTRIB_PACKAGE = '@oliphaunt/extension-contrib-pg18-wasix';
 const RUNTIME_PACKAGE = '@oliphaunt/liboliphaunt-wasix';
 const FZSTD_PACKAGE = 'fzstd';
 const FZSTD_VERSION = '0.1.1';
@@ -58,10 +59,11 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   }
   const dependencies = manifest.dependencies ?? {};
   const optionalDependencies = manifest.optionalDependencies ?? {};
-  const expectedDependencies = [FZSTD_PACKAGE, JS_CORE_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
+  const expectedDependencies = [CONTRIB_PACKAGE, FZSTD_PACKAGE, JS_CORE_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
   const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
   if (
     JSON.stringify(sortedKeys(dependencies)) !== JSON.stringify(expectedDependencies)
+    || dependencies[CONTRIB_PACKAGE] !== dependencies[RUNTIME_PACKAGE]
     || typeof dependencies[RUNTIME_PACKAGE] !== 'string'
     || !/^\d+\.\d+\.\d+$/u.test(dependencies[RUNTIME_PACKAGE])
     || dependencies[FZSTD_PACKAGE] !== FZSTD_VERSION
@@ -83,6 +85,7 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   const root = manifest.exports?.['.'];
   const expectedExports = [
     '.',
+    './browser',
     './direct',
     './worker',
     './package.json',
@@ -99,37 +102,41 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   }
   if (
     JSON.stringify(Object.keys(root ?? {}))
-      !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
-    || root?.types !== './lib/index.d.ts'
-    || root?.deno !== './lib/index.deno.js'
-    || root?.bun !== './lib/index.bun.js'
-    || root?.browser !== './lib/index.js'
-    || root?.node !== './lib/index.node.js'
-    || root?.default !== './lib/index.js'
+      !== JSON.stringify(['deno', 'bun', 'node', 'browser', 'default'])
+    || JSON.stringify(root?.deno) !== JSON.stringify({ types: './lib/index.deno.d.ts', default: './lib/index.deno.js' })
+    || JSON.stringify(root?.bun) !== JSON.stringify({ types: './lib/index.bun.d.ts', default: './lib/index.bun.js' })
+    || JSON.stringify(root?.browser) !== JSON.stringify({ types: './lib/index.d.ts', default: './lib/index.js' })
+    || JSON.stringify(root?.node) !== JSON.stringify({ types: './lib/index.node.d.ts', default: './lib/index.node.js' })
+    || JSON.stringify(root?.default) !== JSON.stringify({ types: './lib/index.d.ts', default: './lib/index.js' })
   ) {
     fail(`${label} must expose exact browser, Node, Bun, and Deno conditional entrypoints`);
+  }
+  if (JSON.stringify(manifest.exports['./browser']) !== JSON.stringify({ types: './lib/browser.d.ts', default: './lib/browser.js' })
+      || JSON.stringify(manifest.sideEffects) !== JSON.stringify(['./lib/browser.js', './lib/native-only.js'])) {
+    fail(`${label} must retain the explicit browser entrypoint and environment guards`);
   }
   const worker = manifest.exports?.['./worker'];
   if (
     JSON.stringify(Object.keys(worker ?? {}))
-      !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
-    || worker?.types !== './lib/worker-entry.d.ts'
-    || worker?.deno !== './lib/worker-entry.deno.js'
-    || worker?.bun !== './lib/worker-entry.bun.js'
-    || worker?.node !== './lib/worker-entry.node.js'
-    || worker?.browser !== './lib/worker-entry.js'
-    || worker?.default !== './lib/worker-entry.js'
+      !== JSON.stringify(['deno', 'bun', 'node', 'browser', 'default'])
+    || JSON.stringify(worker?.deno) !== JSON.stringify({ types: './lib/worker-entry.deno.d.ts', default: './lib/worker-entry.deno.js' })
+    || JSON.stringify(worker?.bun) !== JSON.stringify({ types: './lib/worker-entry.bun.d.ts', default: './lib/worker-entry.bun.js' })
+    || JSON.stringify(worker?.node) !== JSON.stringify({ types: './lib/worker-entry.node.d.ts', default: './lib/worker-entry.node.js' })
+    || JSON.stringify(worker?.browser) !== JSON.stringify({ types: './lib/worker-entry.d.ts', default: './lib/worker-entry.js' })
+    || JSON.stringify(worker?.default) !== JSON.stringify({ types: './lib/worker-entry.d.ts', default: './lib/worker-entry.js' })
   ) {
     fail(`${label} must expose the exact browser, Node, Bun, and Deno worker entrypoint`);
   }
   const direct = manifest.exports?.['./direct'];
   if (
     JSON.stringify(Object.keys(direct ?? {}))
-      !== JSON.stringify(['types', 'deno', 'bun', 'node'])
+      !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
     || direct?.types !== './lib/direct.node.d.ts'
     || direct?.deno !== './lib/direct.node.js'
     || direct?.bun !== './lib/direct.node.js'
     || direct?.node !== './lib/direct.node.js'
+    || direct?.browser !== './lib/native-only.js'
+    || direct?.default !== './lib/native-only.js'
   ) {
     fail(`${label} must expose one exact host-only conditional direct entrypoint`);
   }
@@ -147,11 +154,13 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   const server = manifest.exports?.['./server'];
   if (
     JSON.stringify(Object.keys(server ?? {}))
-      !== JSON.stringify(['types', 'deno', 'bun', 'node'])
+      !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
     || server?.types !== './lib/server.node.d.ts'
     || server?.deno !== './lib/server.node.js'
     || server?.bun !== './lib/server.node.js'
     || server?.node !== './lib/server.node.js'
+    || server?.browser !== './lib/native-only.js'
+    || server?.default !== './lib/native-only.js'
   ) {
     fail(`${label} must expose one exact host-only conditional local-server entrypoint`);
   }
@@ -215,7 +224,7 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix'
     || manifest.oliphaunt?.runtimeVersion !== dependencies[RUNTIME_PACKAGE]
     || manifest.oliphaunt?.wasixNapiProduct !== NATIVE_PRODUCT
-    || manifest.oliphaunt?.wasixAddonAbiVersion !== 1
+    || manifest.oliphaunt?.wasixAddonAbiVersion !== 2
     || manifest.oliphaunt?.nodeApiVersion !== 8
     || manifest.oliphaunt?.browserHost !== 'wasmer-js-patched'
     || manifest.oliphaunt?.serverHost !== 'wasix-rust-napi'

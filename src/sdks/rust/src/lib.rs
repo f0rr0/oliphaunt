@@ -61,7 +61,9 @@ mod session;
 mod storage;
 #[cfg(test)]
 mod test_fixtures;
-pub use build_resources::register_build_resources_dir;
+#[doc(hidden)]
+pub use build_resources::__register_build_resources;
+pub use build_resources::{EmbeddedResource, register_build_resources_dir};
 pub use builder::{AsyncOliphauntBuilder, AsyncOliphauntServerBuilder};
 pub use config::ServerListen;
 pub use database::{AsyncOliphaunt, AsyncOliphauntServer, AsyncSql, AsyncTransaction};
@@ -73,7 +75,9 @@ pub use error::{
     Error, ErrorKind, PostgresError, PostgresErrorField, RawStreamCallbackOutput, RawStreamError,
     RawStreamResult, Result, TransactionError, TransactionResult,
 };
-pub use extension::Extension;
+pub use extension::{Extension, ExtensionDescriptor, IcuData};
+/// Contrib extensions supplied by the base SDK.
+pub mod extensions;
 pub use query::{
     CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresNotice,
     QueryField, QueryFormat, QueryResult, QueryRow, RowIndex, StatementDescription,

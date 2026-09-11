@@ -5,6 +5,7 @@
     "moduleResolution": "Bundler",
     "noEmit": true,
     "paths": {
+      "@oliphaunt/extension-contrib-pg18-wasix": ["../../src/bindings/wasix-ts/src/contrib-carrier-shim.d.ts"],
       "@oliphaunt/liboliphaunt-wasix": ["../../src/bindings/wasix-ts/src/runtime-carrier-shim.d.ts"],
       "@oliphaunt/liboliphaunt-wasix-tools": ["../../src/bindings/wasix-ts/tools-package/src/runtime-carrier-shim.d.ts"],
       "@oliphaunt/wasix-ts": ["../../src/bindings/wasix-ts/src/index.ts"],

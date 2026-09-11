@@ -133,7 +133,9 @@ fn print_usage() {
     eprintln!("  --directory PATH  Use this database root. Defaults to ./.oliphaunt");
     eprintln!("  --database NAME   Select the database to dump. Defaults to postgres");
     eprintln!("  --username NAME   Select the database user. Defaults to postgres");
-    eprintln!("  --extension NAME  Select an extension artifact by SQL name; repeat as needed");
+    eprintln!(
+        "  --extension NAME  Select a bundled contrib extension by SQL name; repeat as needed"
+    );
     eprintln!("Example: oliphaunt-wasix-dump --directory ./.oliphaunt -- --schema-only");
 }
 

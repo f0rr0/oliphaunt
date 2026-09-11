@@ -13,9 +13,9 @@ use tar::{Archive, Builder, EntryType, Header};
 use wasmer_wasix::virtual_fs::FileSystem as VirtualFileSystem;
 
 use super::base::DirectoryLock;
-use super::database_root_descriptor::{
-    PGDATA_DIRECTORY, PHYSICAL_FORMAT, POSTGRES_MAJOR, write_database_root_descriptor,
-};
+use liboliphaunt_wasix_portable::{PHYSICAL_FORMAT, POSTGRES_MAJOR};
+
+use super::database_root_descriptor::{PGDATA_DIRECTORY, write_database_root_descriptor};
 use crate::oliphaunt::storage::{PgDataStorage, vfs_read};
 use crate::{StorageCommitState, StorageErrorCode, StorageErrorPhase};
 
@@ -974,15 +974,15 @@ fn archive_entry_plan<R: Read>(entry: &tar::Entry<'_, R>) -> Result<ArchiveEntry
 }
 
 #[cfg(unix)]
-fn apply_private_permissions(path: &Path, mode: u32) -> Result<()> {
+pub(super) fn apply_private_permissions(path: &Path, mode: u32) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
-        .with_context(|| format!("set restored PGDATA permissions on {}", path.display()))
+        .with_context(|| format!("set PGDATA permissions on {}", path.display()))
 }
 
 #[cfg(not(unix))]
-fn apply_private_permissions(_path: &Path, _mode: u32) -> Result<()> {
+pub(super) fn apply_private_permissions(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
@@ -1388,12 +1388,22 @@ fn should_skip_bulk_backup_entry(relative: &Path) -> bool {
 
 fn archive_path(relative: &Path) -> Result<String> {
     let relative = relative
-        .to_str()
-        .with_context(|| format!("PGDATA archive path is not UTF-8: {}", relative.display()))?;
-    ensure!(
-        !relative.contains('\\'),
-        "PGDATA archive path contains a backslash: {relative:?}"
-    );
+        .components()
+        .map(|component| {
+            let Component::Normal(name) = component else {
+                bail!("unsafe PGDATA archive path: {}", relative.display());
+            };
+            let name = name.to_str().with_context(|| {
+                format!("PGDATA archive path is not UTF-8: {}", relative.display())
+            })?;
+            ensure!(
+                !name.contains('\\'),
+                "PGDATA archive path contains a backslash: {name:?}"
+            );
+            Ok(name)
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("/");
     let path = format!("pgdata/{relative}");
     ensure_ustar_path(&path)?;
     Ok(path)
@@ -2101,6 +2111,15 @@ mod tests {
             error.to_string().contains("unsafe PGDATA archive path"),
             "unexpected error: {error:#}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn backup_paths_use_portable_archive_separators() -> Result<()> {
+        assert_eq!(archive_path(&Path::new("base").join("1"))?, "pgdata/base/1");
+        assert!(archive_path(Path::new("../outside")).is_err());
+        #[cfg(unix)]
+        assert!(archive_path(Path::new("base\\1")).is_err());
         Ok(())
     }
 

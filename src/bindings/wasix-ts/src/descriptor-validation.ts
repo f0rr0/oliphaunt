@@ -1,3 +1,4 @@
+import type { WasixToolDescriptor } from './tool-runtime.js';
 import type { SerializedAssetSource } from './rpc.js';
 import type { WasixAssetSource } from './types.js';
 
@@ -79,7 +80,7 @@ export function serializeAssetSource(source: WasixAssetSource): SerializedAssetS
     return source.href;
   }
   if (source instanceof Uint8Array) {
-    return source.slice();
+    return new Uint8Array(source);
   }
   return new Uint8Array(source.slice(0));
 }
@@ -95,4 +96,16 @@ export function requireSafeRelativeAssetPath(value: unknown, label: string): str
     throw new Error(`${label} must be a safe relative asset path`);
   }
   return path;
+}
+
+export function validateWasixToolDescriptor(tool: WasixToolDescriptor): void {
+  if (tool.name !== 'pg_dump' && tool.name !== 'psql') {
+    throw new TypeError('unsupported Oliphaunt WASIX tool');
+  }
+  if (!/^[0-9a-f]{64}$/u.test(tool.sha256)) {
+    throw new TypeError(`WASIX ${tool.name} SHA-256 is invalid`);
+  }
+  if (!Number.isSafeInteger(tool.size) || tool.size <= 0) {
+    throw new TypeError(`WASIX ${tool.name} size is invalid`);
+  }
 }

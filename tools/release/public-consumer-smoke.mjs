@@ -20,6 +20,7 @@ import process from "node:process";
 
 import {
   DEFAULT_PUBLICATION_LOCK,
+  directoryEnvelope,
   loadPublicationLock,
 } from "./publication-lock.mjs";
 import {
@@ -30,7 +31,7 @@ import { ROOT, compareText, loadGraph } from "./release-graph.mjs";
 import { validateRegistryReceiptEvidence } from "./registry-integrity.mjs";
 import { validateGithubAttestationReceipt } from "./verify_github_release_attestations.mjs";
 
-export const PUBLIC_CONSUMER_EVIDENCE_SCHEMA = "oliphaunt-public-consumer-smoke-v1";
+export const PUBLIC_CONSUMER_EVIDENCE_SCHEMA = "oliphaunt-public-consumer-smoke-v2";
 
 const TOOL = "public-consumer-smoke";
 const REGISTRY_ECOSYSTEMS = ["cargo", "maven", "npm"];
@@ -311,7 +312,14 @@ export function publicConsumerPlan(lock, products, graph, {
     repositoryUrl: repositoryUrl(repository),
     products: productRows.map(({ id }) => id).sort(compareText),
     surfaces,
-    github: { productTags, swift },
+    github: { productTags, swift, swiftPackages: (lock.productArtifacts ?? [])
+      .filter(row => row.kind === "swiftpm-independent-package")
+      .map(row => ({
+        product: row.product, repository: `${repository.split("/")[0]}/${row.identity}`,
+        tag: productRows.find(product => product.id === row.product).version,
+        sha256: row.sha256, size: row.size,
+      })).sort((a, b) => compareText(a.repository, b.repository)) },
+
   };
 }
 
@@ -334,10 +342,13 @@ export function sanitizedPublicEnvironment(overrides = {}, inherited = process.e
   for (const name of Object.keys(env)) {
     if (
       /(?:^|_)(?:AUTH|PASSWORD|PASSPHRASE|SECRET|TOKEN|USERNAME)(?:_|$)/iu.test(name)
-      || /^CARGO_(?:REGISTRIES|REGISTRY|SOURCE)_/iu.test(name)
+      || /^CARGO_/iu.test(name)
+      || /^(?:RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|RUSTFLAGS|RUSTDOC|RUSTDOCFLAGS)$/u.test(name)
       || /^GIT_/iu.test(name)
       || /^NPM_CONFIG_/iu.test(name)
       || /^ORG_GRADLE_PROJECT_/iu.test(name)
+      || /^(?:OLIPHAUNT_|LIBOLIPHAUNT_|DYLD_)/u.test(name)
+      || /^(?:NODE_OPTIONS|NODE_PATH|LD_LIBRARY_PATH)$/u.test(name)
       || /^(?:DENO_CONFIG|DENO_DIR|DENO_IMPORT_MAP|DENO_LOCK|GRADLE_OPTS|JAVA_OPTS|JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS|_JAVA_OPTIONS)$/iu.test(name)
     ) delete env[name];
   }
@@ -824,6 +835,26 @@ export function validateCargoResolution(lockText, carriers, requiredCarrierIds =
   return rows.sort((left, right) => compareText(left.id, right.id));
 }
 
+export function cargoDatabaseSmokeSource() {
+  return `use locked_entry::{DatabaseStorage, Oliphaunt, extensions};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::path::PathBuf::from(std::env::args_os().nth(1).expect("database directory"));
+    for attempt in 0..2 {
+        let mut db = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .extensions([extensions::HSTORE])
+            .open()?;
+        if attempt == 0 { db.exec("CREATE EXTENSION hstore")?; }
+        let result = db.query("SELECT 'answer=>ready'::hstore -> 'answer' AS value")?;
+        assert_eq!(result.get_text(0, "value")?, Some("ready"));
+        db.close()?;
+    }
+    println!("OLIPHAUNT_PUBLIC_DATABASE_PASS");
+    Ok(())
+}
+`;
+}
+
 async function runCargoSurface({ lock, surface, root, deadlineMilliseconds, signal }) {
   const directory = path.join(root, "cargo");
   const home = path.join(root, "cargo-home");
@@ -853,12 +884,29 @@ async function runCargoSurface({ lock, surface, root, deadlineMilliseconds, sign
     rows.push(resolved);
     entries.push({ entryCarrierId, resolvedCarrierIds: resolved.map(({ id }) => id) });
   }
+  // Compile only the native SDK with its public defaults. The all-feature,
+  // all-target lock probes above also cover carriers that cannot run on this host.
+  const executed = [];
+  for (const carrier of carriers.filter(row => row.name === "oliphaunt")) {
+    const consumer = path.join(directory, "native-database");
+    mkdirSync(path.join(consumer, "src"), { recursive: true });
+    writeFileSync(path.join(consumer, "Cargo.toml"),
+      `[package]\nname = "oliphaunt-public-database"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n[dependencies]\nlocked_entry = { package = "oliphaunt", version = ${tomlString(`=${carrier.version}`)} }\n`);
+    writeFileSync(path.join(consumer, "src/main.rs"), cargoDatabaseSmokeSource());
+    await runBoundedCommand("cargo", ["generate-lockfile"], { cwd: consumer, env, deadlineMilliseconds, signal });
+    validateCargoResolution(readFileSync(path.join(consumer, "Cargo.lock"), "utf8"), carriers, [carrier.id]);
+    const output = await runBoundedCommand("cargo", ["run", "--locked", "--", path.join(consumer, "database")],
+      { cwd: consumer, env, deadlineMilliseconds, signal });
+    if (!output.stdout.includes("OLIPHAUNT_PUBLIC_DATABASE_PASS")) throw error(`${carrier.id} did not complete its installed database probe`);
+    executed.push(carrier.id);
+  }
   return {
     surface: "cargo",
-    mode: "anonymous-public-independent-entry-all-feature-resolution-no-compile",
+    mode: "anonymous-public-independent-entry-resolution-and-native-sdk-execution",
     registry: "https://crates.io",
     ...resolvedSurfaceCoverage(surface, entries, rows),
-    receiptCoveredWithoutPayloadFetchCarrierIds: surface.carrierIds,
+    receiptCoveredCarrierIds: surface.carrierIds,
+    executedDatabaseCarrierIds: executed.sort(compareText),
   };
 }
 
@@ -918,6 +966,29 @@ export function validateNpmResolution(packageLock, carriers, requiredEntryIds, n
   return { resolved, installedCarrierIds };
 }
 
+export function npmDatabaseSmokeSource(carrier) {
+  if (!new Set(["@oliphaunt/ts", "@oliphaunt/wasix-ts"]).has(carrier.name)) return null;
+  return `import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import Oliphaunt, { extensions } from ${JSON.stringify(carrier.name)};
+import { directory } from ${JSON.stringify(`${carrier.name}/storage/node`)};
+const root = await mkdtemp(path.join(tmpdir(), 'oliphaunt-public-database-'));
+try {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const db = await Oliphaunt.open({ storage: directory(root), extensions: [extensions.hstore] });
+    try {
+      if (attempt === 0) await db.exec('CREATE EXTENSION hstore');
+      const result = await db.query(\`SELECT 'answer=>ready'::hstore -> 'answer' AS value\`);
+      assert.equal(result.rows[0]?.value, 'ready');
+    } finally { await db.close(); }
+  }
+} finally { await rm(root, { recursive: true, force: true }); }
+console.log('OLIPHAUNT_PUBLIC_DATABASE_PASS');
+`;
+}
+
 async function runNpmSurface({ lock, surface, root, deadlineMilliseconds, signal }) {
   const directory = path.join(root, "npm");
   const home = path.join(root, "npm-home");
@@ -939,6 +1010,7 @@ async function runNpmSurface({ lock, surface, root, deadlineMilliseconds, signal
   const entries = [];
   const rows = [];
   const installed = new Set();
+  const executed = [];
   for (const [index, entryCarrierId] of surface.entryCarrierIds.entries()) {
     const carrier = byId.get(entryCarrierId);
     const consumer = path.join(directory, `entry-${String(index).padStart(3, "0")}`);
@@ -959,6 +1031,15 @@ async function runNpmSurface({ lock, surface, root, deadlineMilliseconds, signal
     ], { cwd: consumer, env, deadlineMilliseconds, signal });
     const lockJson = JSON.parse(readFileSync(path.join(consumer, "package-lock.json"), "utf8"));
     const result = validateNpmResolution(lockJson, carriers, [entryCarrierId], consumer);
+    for (const installedCarrier of carriers.filter(row => result.installedCarrierIds.includes(row.id) && !executed.includes(row.id))) {
+      const smoke = npmDatabaseSmokeSource(installedCarrier);
+      if (smoke === null) continue;
+      const file = path.join(consumer, "database-smoke.mjs");
+      writeFileSync(file, smoke);
+      const output = await runBoundedCommand("node", [file], { cwd: consumer, env, deadlineMilliseconds, signal });
+      if (!output.stdout.includes("OLIPHAUNT_PUBLIC_DATABASE_PASS")) throw error(`${installedCarrier.id} did not complete its installed database probe`);
+      executed.push(installedCarrier.id);
+    }
     rows[index] = result.resolved;
     entries[index] = { entryCarrierId, resolvedCarrierIds: result.resolved.map(({ id }) => id) };
     for (const id of result.installedCarrierIds) installed.add(id);
@@ -970,6 +1051,7 @@ async function runNpmSurface({ lock, surface, root, deadlineMilliseconds, signal
     host: `${process.platform}-${process.arch}`,
     ...resolvedSurfaceCoverage(surface, entries, rows),
     installedCarrierIds: [...installed].sort(compareText),
+    executedDatabaseCarrierIds: executed.sort(compareText),
     receiptCoveredNotHostInstalledCarrierIds: surface.carrierIds.filter((id) => !installed.has(id)).sort(compareText),
   };
 }
@@ -1172,13 +1254,39 @@ async function runGithubSurface({ plan, root, deadlineMilliseconds, signal }) {
       proofScope: "anonymous-source-tag-and-manifest-only",
     };
   }
+  const swiftPackages = [];
+  for (const row of plan.github.swiftPackages) {
+    const packageRoot = path.join(root, row.repository.split("/")[1]);
+    const packageGit = `${packageRoot}.git`;
+    await git(["init", "--bare", packageGit], { cwd: root, env, deadlineMilliseconds, signal });
+    await git(["--git-dir", packageGit, "fetch", "--no-tags", repositoryUrl(row.repository),
+      `refs/tags/${row.tag}:refs/tags/${row.tag}`], { cwd: root, env, deadlineMilliseconds, signal });
+    mkdirSync(packageRoot);
+    await git(["--git-dir", packageGit, "--work-tree", packageRoot, "checkout", row.tag, "--", "."],
+      { cwd: root, env, deadlineMilliseconds, signal });
+    const observed = directoryEnvelope(packageRoot);
+    if (observed.sha256 !== row.sha256 || observed.size !== row.size) {
+      throw error(`SwiftPM ${row.repository}@${row.tag} source differs from the frozen package`);
+    }
+    const manifest = await runBoundedCommand("swift", ["package", "dump-package"], {
+      cwd: packageRoot, env: sanitizedPublicEnvironment({
+        HOME: path.join(root, "swift-home"),
+        SWIFTPM_MODULECACHE_OVERRIDE: path.join(root, "swift-module-cache"),
+        CLANG_MODULE_CACHE_PATH: path.join(root, "swift-module-cache"),
+      }), deadlineMilliseconds, signal,
+    });
+    const description = JSON.parse(manifest.stdout);
+    if (typeof description.name !== "string" || !description.name) throw error(`invalid SwiftPM package ${row.repository}`);
+    swiftPackages.push({ ...row, packageName: description.name, proofScope: "anonymous-source-tag-and-manifest-only" });
+  }
   return {
     surface: "github",
     mode: "anonymous-public-exact-tag-resolution",
     repository: plan.repository,
     productTags: resolvedProductTags,
     swift,
-    limitation: plan.github.swift === null
+    swiftPackages,
+    limitation: plan.github.swift === null && swiftPackages.length === 0
       ? null
       : "Draft GitHub binaryTarget assets are not anonymously public before promotion; their exact bytes are covered by the bound immutable GitHub receipt, not this source-tag probe.",
   };
@@ -1244,11 +1352,22 @@ export function validatePublicConsumerEvidence(evidence, lock, plan) {
         throw error(`${surface.ecosystem} public consumer evidence has non-canonical ${field} coverage`);
       }
     }
+    if (surface.ecosystem === "npm" || surface.ecosystem === "cargo") {
+      const expectedExecuted = lock.carriers.filter(carrier => surface.carrierIds.includes(carrier.id)
+        && (surface.ecosystem === "npm" ? npmDatabaseSmokeSource(carrier) !== null : carrier.name === "oliphaunt"))
+        .map(carrier => carrier.id).sort(compareText);
+      if (!sameStrings(observed?.executedDatabaseCarrierIds ?? [], expectedExecuted)) {
+        throw error(`${surface.ecosystem} evidence omits required installed database execution`);
+      }
+    }
     if (surface.ecosystem === "npm") {
       const installed = sortedUniqueStrings(observed?.installedCarrierIds ?? [], "npm installedCarrierIds");
       const resolved = new Set(coverage.resolved.map(({ id }) => id));
       if (installed.some((id) => !resolved.has(id)) || stableJson(installed) !== stableJson(observed.installedCarrierIds)) {
         throw error("npm host-installed carriers must be a canonical subset of its exact public resolution");
+      }
+      if ((observed.executedDatabaseCarrierIds ?? []).some(id => !installed.includes(id))) {
+        throw error("npm database execution must use a host-installed carrier");
       }
       const notInstalled = surface.carrierIds.filter((id) => !installed.includes(id)).sort(compareText);
       if (stableJson(observed.receiptCoveredNotHostInstalledCarrierIds) !== stableJson(notInstalled)) {
@@ -1257,7 +1376,7 @@ export function validatePublicConsumerEvidence(evidence, lock, plan) {
     }
     if (
       surface.ecosystem === "cargo"
-      && stableJson(observed.receiptCoveredWithoutPayloadFetchCarrierIds) !== stableJson(surface.carrierIds)
+      && stableJson(observed.receiptCoveredCarrierIds) !== stableJson(surface.carrierIds)
     ) {
       throw error("Cargo evidence must explicitly distinguish registry resolution from receipt-proved payload bytes");
     }
@@ -1268,6 +1387,11 @@ export function validatePublicConsumerEvidence(evidence, lock, plan) {
   }
   if (plan.github.swift === null ? github?.swift !== null : github?.swift?.tag !== plan.github.swift.tag) {
     throw error("GitHub public consumer evidence SwiftPM source-tag coverage mismatch");
+  }
+  const observedSwiftPackages = (github?.swiftPackages ?? []).map(({ product, repository, tag, sha256, size }) =>
+    ({ product, repository, tag, sha256, size }));
+  if (stableJson(observedSwiftPackages) !== stableJson(plan.github.swiftPackages)) {
+    throw error("GitHub public consumer evidence independent SwiftPM coverage mismatch");
   }
   const withoutDigest = structuredClone(evidence);
   delete withoutDigest.evidenceDigest;

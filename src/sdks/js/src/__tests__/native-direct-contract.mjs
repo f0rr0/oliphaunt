@@ -20,7 +20,7 @@ export async function assertNativeDatabaseContract(Oliphaunt, config, label) {
     database = undefined;
 
     const restoredRoot = join(root, 'restored');
-    await Oliphaunt.restore(restoredRoot, backup);
+    await Oliphaunt.restore({ kind: 'directory', path: restoredRoot }, backup);
     assert.match(await readFile(join(restoredRoot, 'pgdata', 'PG_VERSION'), 'utf8'), /^18\s*$/u);
     database = await Oliphaunt.open({
       ...config,
@@ -31,7 +31,7 @@ export async function assertNativeDatabaseContract(Oliphaunt, config, label) {
     database = undefined;
 
     await assert.rejects(
-      Oliphaunt.restore(join(root, 'invalid'), backup.subarray(0, 8)),
+      Oliphaunt.restore({ kind: 'directory', path: join(root, 'invalid') }, backup.subarray(0, 8)),
       (error) => error instanceof Error && error.message.length > 0,
     );
   } finally {

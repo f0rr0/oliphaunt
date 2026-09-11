@@ -1,3 +1,4 @@
+export * as extensions from '@oliphaunt/extension-contrib-pg18-wasix';
 export {
   type WasixStorageCommitState,
   WasixStorageError,

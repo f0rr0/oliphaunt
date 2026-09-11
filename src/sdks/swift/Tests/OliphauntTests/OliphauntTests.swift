@@ -1563,7 +1563,7 @@ func configurationForwardsOnlyExplicitPostgresSettings() async throws {
     let engine = TestEngine(session: session)
     _ = try await OliphauntDatabase.open(
         configuration: OliphauntConfiguration(
-            startupGUCs: [.init("shared_buffers", "16MB")],
+            startupGUCs: ["shared_buffers": "16MB"],
             username: "alice",
             database: "app"
         ),
@@ -1586,26 +1586,26 @@ func freshRootAcceptsOnlyFixedBootstrapRole() throws {
 @Test
 func startupGUCNamesUsePortablePostgresGrammar() async throws {
     try validateOliphauntStartupGUCs([
-        .init("_name", ""),
-        .init("ext.name$1", "on"),
+        "_name": "",
+        "ext.name$1": "on",
     ])
     for name in ["1name", ".foo", "a..b", "a.1b", "ext.$name"] {
         #expect(throws: OliphauntError.self) {
-            try validateOliphauntStartupGUCs([.init(name, "1")])
+            try validateOliphauntStartupGUCs([name: "1"])
         }
     }
     #expect(throws: OliphauntError.self) {
-        try validateOliphauntStartupGUCs([.init("good", "bad\0value")])
+        try validateOliphauntStartupGUCs(["good": "bad\0value"])
     }
     for name in ["CONFIG_FILE", "data_directory"] {
         #expect(throws: OliphauntError.self) {
-            try validateOliphauntStartupGUCs([.init(name, "/tmp/other")])
+            try validateOliphauntStartupGUCs([name: "/tmp/other"])
         }
     }
 
     let config = OliphauntConfiguration(startupGUCs: [
-        .init("work_mem", "16MB"),
-        .init("SHARED_PRELOAD_LIBRARIES", "auto_explain, pg_textsearch"),
+        "work_mem": "16MB",
+        "SHARED_PRELOAD_LIBRARIES": "auto_explain, pg_textsearch",
     ])
     #expect(config.postgresStartupArgs(sharedPreloadLibraries: ["pg_textsearch", "z"]) == [
         "-c", "work_mem=16MB",
@@ -2633,4 +2633,42 @@ private func makeCompletePgdata(at pgdata: URL) throws {
     )
     try Data("18\n".utf8).write(to: pgdata.appendingPathComponent("PG_VERSION"))
     try Data("control".utf8).write(to: pgdata.appendingPathComponent("global/pg_control"))
+}
+
+@Test
+func explicitResourceDescriptorsPrepareOnceAndRejectConflictingVersions() throws {
+    let calls = ChunkBox()
+    let vector = OliphauntExtension(
+        sqlName: "vector", product: "oliphaunt-extension-vector", version: "0.8.2",
+        prepare: { calls.append(Data("vector".utf8)) }
+    )
+    let icu = OliphauntIcuData(version: "0.2.0", resourceDirectory: URL(fileURLWithPath: "/resources/icu"))
+    let configuration = OliphauntConfiguration(extensions: [vector, .init(
+        sqlName: "pg_trgm", product: "oliphaunt-extension-contrib-pg18",
+        prepare: { calls.append(Data("pg_trgm".utf8)) }
+    ), vector], icu: icu)
+    try configuration.prepareExtensionResources()
+    #expect(configuration.extensionSqlNames == ["vector", "pg_trgm", "vector"])
+    #expect(configuration.icu == icu)
+    #expect(calls.snapshot() == [Data("pg_trgm".utf8), Data("vector".utf8)])
+    #expect(vector == OliphauntExtension(sqlName: "vector", product: vector.product, version: "0.8.2"))
+    let conflicting = OliphauntExtension(sqlName: "vector", product: vector.product, version: "0.8.3")
+    #expect(vector != conflicting)
+    #expect(throws: OliphauntError.self) {
+        try OliphauntConfiguration(extensions: [vector, conflicting]).prepareExtensionResources()
+    }
+    #expect(calls.snapshot().count == 2)
+    for invalid in [
+        OliphauntExtension(sqlName: "../vector", product: vector.product, version: "0.8.2"),
+        OliphauntExtension(sqlName: "vector", product: "unrelated", version: "0.8.2"),
+        OliphauntExtension(sqlName: "vector", product: vector.product),
+        OliphauntExtension(sqlName: "vector", product: vector.product, version: ""),
+    ] {
+        #expect(throws: OliphauntError.self) { try invalid.prepare() }
+    }
+    let unavailable = OliphauntExtension(sqlName: "vector", product: vector.product, version: "0.8.2") {
+        throw OliphauntError.engine("missing selected package")
+    }
+    #expect(throws: OliphauntError.self) { try unavailable.prepare() }
+    #expect(throws: OliphauntError.self) { try selectedOliphauntExtensions(["unknown"]) }
 }

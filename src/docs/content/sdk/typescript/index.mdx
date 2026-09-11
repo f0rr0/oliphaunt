@@ -24,7 +24,7 @@ delegates through Swift and Kotlin.
 Install the package from npm:
 
 ```sh
-npm install @oliphaunt/ts
+npm install @oliphaunt/ts @oliphaunt/extension-vector
 ```
 
 npm is the native-runtime distribution for Node.js, Bun, and Deno. Deno imports
@@ -39,11 +39,13 @@ delegates through Swift and Kotlin.
 Open a database from TypeScript:
 
 ```ts
-import { Oliphaunt } from '@oliphaunt/ts';
+import { extensions, Oliphaunt } from '@oliphaunt/ts';
+import { directory } from '@oliphaunt/ts/storage/node';
+import vector from '@oliphaunt/extension-vector';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
-  extensions: ['vector'],
+  storage: directory('./app-data/main.oliphaunt'),
+  extensions: [vector, extensions.hstore],
 });
 
 const rows = await db.query('SELECT 1::text AS value');
@@ -83,3 +85,11 @@ Use [Build With TypeScript](/docs/sdk/typescript/guide) for open/query,
 configuration, helper resolution, lifecycle, exact extensions, backup, restore,
 and troubleshooting. Use the [API reference](/docs/sdk/typescript/api-reference)
 for the public API map.
+
+## Select an execution mode by import
+
+`@oliphaunt/ts/direct` and `@oliphaunt/ts/broker` come with the same installation
+and expose the same database, restore, and server APIs as the default import.
+Neither accepts `topology` in `open`; the direct entrypoint also rejects
+`brokerExecutable`, including when options arrive through a variable. The
+default `@oliphaunt/ts` import continues to support runtime topology selection.

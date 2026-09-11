@@ -1,9 +1,47 @@
 # Cluster seeds and ICU
 
-Status: locked architecture and implemented contract, updated 2026-08-24.
+Status: current distribution contract, with an optional-download transition
+deferred below; updated 2026-09-09.
 
 This document is the source of truth for preinitialized PostgreSQL clusters,
 ICU data, their public selection, and their release qualification.
+
+## Optional-download transition
+
+This transition is deferred from the SDK consistency change. Standard seeds
+remain bundled; ICU data and its matching seeds remain optional.
+
+The intended package contract is:
+
+- Ordinary installs download neither seeds nor ICU data. New databases run
+  `initdb`, retaining the caller's storage choice.
+- An explicit standard-seed selection accelerates creation.
+- One language-native ICU selection resolves both the compatible ICU seed and
+  common ICU data. Target-specific carriers may implement that selection.
+- Existing databases are never reseeded. Adding ICU makes its data available;
+  importing collations remains an explicit application migration.
+
+This is not yet the shipped default. The distribution descriptions below remain
+the current implementation until these prerequisites are complete:
+
+1. Native mobile needs seed-free initialization. The C ABI accepts prepared
+   PGDATA; Swift only runs packaged `initdb` on macOS, and Android requires a
+   seed. A shared native initialization implementation must be qualified before
+   mobile seeds can be removed. Calling PostgreSQL bootstrap entry points alone
+   does not provide the process isolation or state cleanup needed by `initdb`.
+2. Browser WASIX needs a seed-free initialization path. Rust WASIX now supports
+   split `initdb` for both memory and directory storage when no seed is supplied.
+3. Standard-seed bytes must leave default runtime archives and Cargo/npm/Maven/
+   mobile resources. ICU data and ICU seeds already have optional carriers;
+   WASIX N-API still embeds the standard seed. Optional dependency declarations
+   alone do not remove downloads from a default carrier.
+4. Separately downloadable standard and ICU seeds need artifact graph rows,
+   carrier identities, compatibility edges, and publication ordering under
+   their native/WASIX release owners. ICU selection must resolve the matching
+   seed plus shared data; a new carrier does not imply a new versioned product.
+5. Fresh installed consumers must prove default download exclusion, seeded and
+   seed-free creation, ICU creation, and adding ICU to an existing database
+   without losing rows. Retain seed compatibility and incomplete-layout checks.
 
 ## Names
 
@@ -62,7 +100,7 @@ There is no public initialization-mode enum and no raw seed/archive injection
 API. Package-managed SDKs resolve the correct seed transitively.
 
 - Installing/selecting the ordinary runtime resolves the `standard` seed.
-- Selecting the language-native ICU package or feature resolves `icu-data` and
+- Selecting the language-native ICU descriptor resolves `icu-data` and
   the matching `icu` seed as one checked closure.
 - Every seed and `initdb` fallback creates PostgreSQL's fixed `postgres`
   bootstrap role. Public `username` options consistently select an existing
@@ -96,12 +134,12 @@ Other SDKs retain language-native package selection:
 
 | SDK | Ordinary selection | ICU selection |
 | --- | --- | --- |
-| Native Rust | target runtime artifact selected by `oliphaunt-build` | Cargo ICU feature/artifact stages `oliphaunt-icu` |
-| Native TypeScript | target runtime npm package | optional `@oliphaunt/icu` package |
-| Swift | ordinary runtime resources | `OliphauntICU` SwiftPM/CocoaPods resources |
-| Kotlin | ordinary Maven runtime resources | Gradle ICU dependency/selection |
-| React Native | ordinary generated native carrier | `@oliphaunt/icu` native resource carrier |
-| Rust WASIX | portable runtime artifact | Cargo ICU feature/artifact |
+| Native Rust | SDK selects its target runtime internally | `oliphaunt-icu` dependency and `.icu(oliphaunt_icu::ICU)` |
+| Native TypeScript | target runtime npm package | import `@oliphaunt/icu`, pass `{ icu }` |
+| Swift | base SwiftPM runtime resources | independent `OliphauntICU` package and `icu: OliphauntICU.descriptor` |
+| Kotlin / Java | ordinary Maven runtime resources | ICU dependency and explicit `ICU.data` configuration |
+| React Native | ordinary generated native resources | import `@oliphaunt/icu`, pass `{ icu }` |
+| Rust WASIX | portable runtime artifact | `oliphaunt-wasix-icu` dependency and `.icu(oliphaunt_wasix_icu::ICU)` |
 | WASIX TypeScript | default runtime descriptor | explicit `@oliphaunt/wasix-icu` descriptor |
 
 This is semantic parity, not identical signatures.
@@ -152,12 +190,11 @@ There is one logical `icu-data` artifact. Ecosystem wrappers may differ:
   data behind WASIX-specific descriptors/archives; and
 - every wrapper must prove the same logical tree digest.
 
-The shared Rust `oliphaunt-icu` crate and other platform-neutral native ICU
-wrappers remain data-only. They cannot safely carry one native physical seed
-for every operating system and architecture. Each target-specific native
-runtime carrier transports its own small matching `icu` seed as
-`cluster-seed-icu`; the runtime resolver pairs it with the independently staged
-`icu-data` artifact.
+Optional native ICU wrappers carry seeds under `native-seeds/<target>` alongside
+the common data. The shared Rust crate embeds only the build target's native
+seed; its WASIX descriptor also carries the WASIX seed. Native release producers
+publish each seed as a separate `liboliphaunt-<version>-icu-seed-<target>.tar.gz`
+asset. Base native runtime packages contain only `cluster-seed`.
 
 The data-only carrier exposes one canonical `manifest.properties` containing
 only its `oliphaunt-icu-data-v1` schema, `icu-data` role, ICU version/form, and
@@ -169,7 +206,8 @@ runtime and ICU seed manifests after both release families have been assembled;
 single-family focused builds do not manufacture a cross-family proof.
 
 The native ICU release asset records only `icu-data`. Each target runtime report
-records `cluster-seed` and `cluster-seed-icu` separately from runtime bytes.
+records the standard seed separately from runtime bytes, with zero ICU seed bytes
+in the base distribution.
 Cargo and npm package limits continue to apply to the final carrier bytes.
 
 ## Seed compatibility
@@ -335,21 +373,13 @@ The repository implementation must keep every item below true:
   emit extension-free, clean-shutdown seeds.
 - [x] WASIX runtime manifests use format v2 and carry both seed descriptors and
   archives under `cluster-seeds/`.
-- [x] Native target release assets carry target-qualified `standard` and `icu`
-  seeds.
-- [x] Target-specific native runtime assets carry their matching `icu` seed;
-  platform-neutral native ICU data assets stay data-only and carry an exact
-  logical tree binding.
-- [x] The WASIX ICU carrier carries shared ICU data plus the WASIX `icu` seed;
-  it never carries a native seed.
-- [x] Every native carrier declares `clusterSeedTarget` and the fixed sibling
-  paths `cluster-seed` and `cluster-seed-icu`. A SwiftPM application receives
-  the closure embedded in its selected XCFramework slice; React Native stages
-  the one app-selected closure and removes embedded copies from its staged base
-  framework.
-- [x] Native Cargo target carriers aggregate both native seeds while the shared
-  `oliphaunt-icu` crate and every other platform-neutral ICU wrapper stay
-  data-only.
+- [x] Native base runtime assets contain the target-qualified standard seed.
+- [x] Optional native ICU wrappers own the data and target-qualified ICU seeds.
+- [x] The WASIX npm ICU carrier owns the WASIX ICU seed and shared data.
+- [x] Native producer seed sidecars have independent byte hashes, target identities,
+  and exact ICU data tree bindings.
+- [x] SwiftPM loads the selected ICU package's seed. React Native merges an ICU
+  sidecar only when the optional package is selected for the app.
 - [x] npm, Cargo, SwiftPM, Maven, Kotlin, React Native, Rust, native TypeScript,
   Rust WASIX, and WASIX TypeScript carrier/resolver paths reject missing or
   wrong-profile closure members.

@@ -27,9 +27,42 @@ private enum OliphauntPackagedExtensionRegistry {
 }
 
 extension OliphauntRuntimeResources {
+    func validateSelectedResources(_ configuration: OliphauntConfiguration) throws {
+        let receiptURL = resourceRoot.appendingPathComponent("sdk-resources.properties")
+        let receipt = FileManager.default.fileExists(atPath: receiptURL.path)
+            ? try packagedExtensionProperties(at: receiptURL) : nil
+        if let receipt, receipt["schema"] != "oliphaunt-sdk-resources-v1" {
+            throw OliphauntError.engine("unsupported SDK resource receipt")
+        }
+        OliphauntPackagedExtensionRegistry.lock.lock()
+        let registered = OliphauntPackagedExtensionRegistry.resources
+        OliphauntPackagedExtensionRegistry.lock.unlock()
+        for descriptor in configuration.extensions {
+            if let receipt {
+                let prefix = "extension.\(descriptor.sqlName)"
+                guard receipt["\(prefix).product"] == descriptor.product,
+                      descriptor.version == nil || receipt["\(prefix).version"] == descriptor.version else {
+                    throw OliphauntError.engine("selected extension '\(descriptor.sqlName)' does not match packaged product/version")
+                }
+            } else if let version = descriptor.version {
+                guard let resource = registered[descriptor.sqlName], resource.product == descriptor.product, resource.version == version else {
+                    throw OliphauntError.engine("selected extension '\(descriptor.sqlName)' has no matching registered package")
+                }
+            }
+        }
+        if let icu = configuration.icu {
+            var icuReceipt = receipt
+            if let directory = icu.resourceDirectory {
+                icuReceipt = try packagedExtensionProperties(at: directory.appendingPathComponent("sdk-resources.properties"))
+            }
+            guard icuReceipt?["icuVersion"] == icu.version else {
+                throw OliphauntError.engine("selected ICU version does not match packaged resources")
+            }
+        }
+    }
+
     /// Registers a generated SwiftPM exact-extension resource fragment.
-    /// Applications normally call the generated `OliphauntExtension*.register()`
-    /// wrapper rather than invoking this packaging API directly.
+    /// The generated extension descriptor invokes registration when opening a database.
     @discardableResult
     @_spi(ExtensionSupport) public static func registerPackagedExtensionResource(
         product: String,
@@ -584,7 +617,7 @@ private func composedCacheKey(
     )
 }
 
-private func packagedExtensionFingerprint(_ values: [String]) -> String {
+func packagedExtensionFingerprint(_ values: [String]) -> String {
     var hash: UInt64 = 14_695_981_039_346_656_037
     for byte in values.joined(separator: "\u{1f}").utf8 {
         hash ^= UInt64(byte)

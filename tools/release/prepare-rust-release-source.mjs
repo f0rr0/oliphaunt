@@ -112,6 +112,7 @@ function renderReleaseCargoToml(source, nativeVersion, brokerVersion, artifactTa
   for (const target of artifactTargets.nativeTargets) {
     const cfg = rustNativeTargetCfg(target);
     addTargetDependency(cfg, `${liboliphauntCargoPackageName(target.target)} = { version = "=${nativeVersion}" }`);
+    addTargetDependency(cfg, `oliphaunt-extension-contrib-pg18-${target.target} = { version = "=${nativeVersion}" }`);
   }
   for (const target of artifactTargets.brokerTargets) {
     const cfg = rustNativeTargetCfg(target);
@@ -198,9 +199,11 @@ export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = t
 export function prepareOliphauntBuildReleaseSource({
   stageDir = DEFAULT_BUILD_STAGE_DIR,
   log = true,
+  packageName = "oliphaunt-build",
 } = {}) {
+  if (!["oliphaunt-build", "oliphaunt-resources"].includes(packageName)) throw new Error(`Unknown Rust helper ${packageName}`);
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
-  const sourceDir = path.join(ROOT, "src/sdks/rust/crates/oliphaunt-build");
+  const sourceDir = path.join(ROOT, "src/sdks/rust/crates", packageName);
   const outputDir = releaseStageDir(stageDir);
   rmSync(outputDir, { recursive: true, force: true });
   cpSync(sourceDir, outputDir, {
@@ -211,7 +214,7 @@ export function prepareOliphauntBuildReleaseSource({
   const rendered = packagedCargoManifestText(readFileSync(cargoToml, "utf8"));
   writeFileSync(cargoToml, rendered, "utf8");
   if (!packageSection(rendered).includes(`version = "${version}"`)) {
-    fail(`generated oliphaunt-build release source must keep SDK version ${version}`);
+    fail(`generated ${packageName} release source must keep SDK version ${version}`);
   }
   stageReleaseNotices(outputDir, SOURCE_NOTICE_OPTIONS);
   assertReleaseNoticesInDirectory(outputDir, SOURCE_NOTICE_OPTIONS);

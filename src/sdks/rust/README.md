@@ -8,15 +8,16 @@ PostgreSQL driver or ORM through their connection string.
 
 ## Installation
 
-Add `oliphaunt` and use `oliphaunt-build` from the build script so the matching
-native runtime, tools, and selected extension artifacts are staged for the
-target platform.
-
-```rust
-fn main() {
-    oliphaunt_build::configure();
-}
+```sh
+cargo add oliphaunt
 ```
+
+The crate selects the matching native runtime and supported PostgreSQL contrib
+artifacts. Ordinary applications need no build script, build dependency, or
+`package.metadata.oliphaunt` block. Installed artifacts are embedded and prepared
+in a validated reusable cache at first use. Preassembled application resources
+remain available for deployments that require platform signing or prohibit
+extracting executable files.
 
 ## Execution placement and database topology
 
@@ -286,14 +287,33 @@ application error.
 
 ## Extensions and platform support
 
-Choose extensions with `.extension(Extension::...)` or `.extensions(...)`.
-Selection uses exact PostgreSQL SQL names and the generated PostgreSQL 18
-catalog. `Extension` is an opaque `Copy + Eq + Hash + Ord` selector with
-uppercase associated constants, `ALL`, `by_sql_name`, and `sql_name`. Selection
-makes artifacts and required pre-start configuration available but never runs
-`CREATE EXTENSION`, `LOAD`, or migration SQL. Build and release tooling owns
-artifact resolution; the runtime API does not expose package manifests, size
-reports, capability profiles, or packaging internals.
+Install an external extension as its own versioned dependency:
+
+```sh
+cargo add oliphaunt-extension-vector
+```
+
+```rust,ignore
+use oliphaunt::{extensions, Oliphaunt};
+use oliphaunt_extension_vector::VECTOR;
+
+let mut db = Oliphaunt::builder()
+    .extensions([VECTOR, extensions::HSTORE])
+    .open()?;
+db.execute("CREATE EXTENSION vector")?;
+db.execute("CREATE EXTENSION hstore")?;
+db.close()?;
+```
+
+Contrib descriptors come from `oliphaunt::extensions`; they require no additional
+application dependency. External descriptors bind the selected package version
+to its resources. Both must be selected explicitly for each database. Selection
+prepares resources and startup requirements; applications run their own SQL
+migrations, including `CREATE EXTENSION`.
+
+For ICU collations, add `oliphaunt-icu` and pass `.icu(oliphaunt_icu::ICU)`
+to the builder. Omit it for standard initialization. Extension and ICU choices
+also apply to the async and server builders.
 
 Supported native products and targets are declared by the repository SDK
 manifest and release packages. WASIX is a separate binding family and is not a

@@ -1,6 +1,5 @@
-import { readPackageAsset } from './asset-source.js';
 import type { SerializedAssetSource } from './rpc.js';
-import { decompressZstd } from './zstd.js';
+import { decompress as decompressZstd } from 'fzstd';
 
 export type DirectoryFiles = Record<string, Uint8Array>;
 
@@ -252,7 +251,7 @@ export async function loadAsset(source: SerializedAssetSource, label: string): P
     return source;
   }
   if (source.startsWith('file:')) {
-    return readPackageAsset(source, label);
+    throw new Error(`cannot read package-relative ${label} URL ${JSON.stringify(source)}`);
   }
   let response: Response;
   try {

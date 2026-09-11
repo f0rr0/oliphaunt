@@ -1,11 +1,9 @@
 import tools from '@oliphaunt/liboliphaunt-wasix-tools';
 import type { OliphauntDatabase } from '@oliphaunt/wasix-ts';
-import { getWasixDatabaseIdentity, runWasixToolProcess } from '@oliphaunt/wasix-ts/internal/tools';
+import { runWasixToolProcess } from '@oliphaunt/wasix-ts/internal/tools';
 
 assertToolsCarrier();
 
-const VIRTUAL_TOOL_HOST = '127.0.0.1';
-const VIRTUAL_TOOL_PORT = '65432';
 // PostgreSQL 18 getopt_long optstrings. A value-taking option owns the rest
 // of its token, so a managed-looking character inside that value stays data.
 const PG_DUMP_SHORT_OPTIONS = 'abBcCd:e:E:f:F:h:j:n:N:Op:RsS:t:T:U:vwWxXZ:';
@@ -90,16 +88,7 @@ export async function pgDump(
     PG_DUMP_SHORT_OPTIONS,
     PG_DUMP_VALUE_OPTIONS,
   );
-  const identity = getWasixDatabaseIdentity(database);
-  return runTool('pg_dump', database, [
-    ...args,
-    '--encoding=UTF8',
-    '--no-password',
-    `--username=${identity.username}`,
-    `--host=${VIRTUAL_TOOL_HOST}`,
-    `--port=${VIRTUAL_TOOL_PORT}`,
-    `--dbname=${identity.database}`,
-  ]);
+  return runTool('pg_dump', database, args);
 }
 
 /**
@@ -125,24 +114,12 @@ export async function psql(
   if (command === undefined && script === undefined && args.length === 0) {
     throw new TypeError('psql requires non-interactive input through command, script, or args');
   }
-  const inputArgs =
-    command !== undefined ? ['--command', command] : script !== undefined ? ['--file=-'] : [];
-  const identity = getWasixDatabaseIdentity(database);
   return runTool(
     'psql',
     database,
-    [
-      ...args,
-      '--no-psqlrc',
-      '--no-password',
-      '--set=ON_ERROR_STOP=1',
-      `--username=${identity.username}`,
-      `--host=${VIRTUAL_TOOL_HOST}`,
-      `--port=${VIRTUAL_TOOL_PORT}`,
-      `--dbname=${identity.database}`,
-      ...inputArgs,
-    ],
+    args,
     script === undefined ? undefined : new TextEncoder().encode(script),
+    command,
   );
 }
 
@@ -151,6 +128,7 @@ async function runTool(
   database: OliphauntDatabase,
   args: string[],
   stdin?: Uint8Array,
+  command?: string,
 ): Promise<string> {
   const descriptor = name === 'pg_dump' ? tools.pgDump : tools.psql;
   let result: Awaited<ReturnType<typeof runWasixToolProcess>>;
@@ -160,6 +138,7 @@ async function runTool(
       tool: descriptor,
       args,
       stdin,
+      command,
     });
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause);

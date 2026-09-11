@@ -72,7 +72,8 @@ pnpm run crash:ios
 The runners choose isolated persistent storage by default. Set
 `OLIPHAUNT_EXPO_ANDROID_CRASH_STORAGE` or
 `OLIPHAUNT_EXPO_IOS_CRASH_STORAGE` to override it; the iOS runner accepts an
-`app-data:<name>` selector for the public `applicationData` storage case.
+`app-directory:<name>` harness selector, resolved with Expo FileSystem under
+`Paths.document` and passed to `directory()`.
 
 The smoke script:
 
@@ -157,9 +158,9 @@ pnpm run bench:ios
 
 Set `OLIPHAUNT_EXPO_IOS_DEVICE_ID` to pick a specific paired device, and
 `OLIPHAUNT_EXPO_IOS_METRO_URL` if the device cannot reach the host address that
-the harness auto-detects. Device crash-recovery runs default to the public
-`{ kind: 'applicationData', name }` storage case, which the platform SDK
-resolves inside the app sandbox and which survives process death.
+the harness auto-detects. Device crash-recovery runs use an Expo FileSystem
+directory under `Paths.document`, passed to `directory()`, which survives
+process death.
 
 Physical-device runs require a working Apple Development signing setup. The
 harness first checks that the paired phone has Developer Mode and Developer Disk

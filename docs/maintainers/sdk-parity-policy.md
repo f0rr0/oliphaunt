@@ -89,12 +89,11 @@ These are language-native deltas, not parity failures:
   failures. `Error::kind()` is the stable category boundary. PostgreSQL,
   structured WASIX storage, and composite transaction detail remains available
   through dedicated accessors without exposing runtime-specific causes.
-- Both Rust products use an opaque root `Extension` with uppercase associated
-  constants, `Extension::ALL`, `Extension::by_sql_name`, and `sql_name`.
-  Native `ALL` is the packaged PostgreSQL 18 catalog; WASIX exposes only
-  Cargo-feature-enabled extensions and gates the type and builder methods on
-  its `extensions` feature. Free/module constants and PascalCase aliases are
-  not public compatibility surfaces.
+- Both Rust products accept explicit descriptors through `.extensions(...)`.
+  Supported contrib ships with the base SDK and uses `extensions::HSTORE`-style
+  constants. External crates own their versions and bytes; native and WASIX
+  have separate external crate names. Installing a crate does not select it
+  for a database. SQL migrations still own `CREATE EXTENSION`.
 - Swift uses actors, `URL`, `Data`, and `OliphauntPostgresDecodable`.
 - Kotlin uses coroutines, sealed storage types, `ByteArray`, and
   `PostgresDecoder<T>`.
@@ -171,6 +170,14 @@ again.
 `storage` means where mutable PostgreSQL files live. It does not choose a
 runtime, archive format, capability profile, initialization mode, or extension
 set.
+
+TypeScript restore destinations reuse the persistent storage descriptors accepted
+by open: `directory(path)` on native hosts and the appropriate persistent adapter
+on WASIX hosts and browsers. React Native uses `directory(pathOrFileUri)` for both.
+Restore excludes temporary and memory storage and does not open a session. Rust
+retains `Into<PathBuf>` destinations in both runtimes; Kotlin uses `File` and
+Swift uses `URL`. These filesystem-only restore APIs do not need an additional
+storage wrapper or the connection options used when opening a database.
 
 Cluster initialization and ICU are separate product concepts. The locked
 convergence target is that ordinary new roots transparently use a runtime-bound

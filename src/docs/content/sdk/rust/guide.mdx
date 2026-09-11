@@ -34,7 +34,8 @@ through configuration:
 
 ```toml
 [dependencies]
-oliphaunt = "0.1"
+oliphaunt = "0.2"
+oliphaunt-extension-vector = "0.2"
 ```
 
 </Step>
@@ -48,13 +49,14 @@ close.
 <!-- oliphaunt-snippet: oliphaunt-rust -->
 
 ```rust
-use oliphaunt::{DatabaseStorage, Extension, Oliphaunt};
+use oliphaunt::{extensions, DatabaseStorage, Oliphaunt};
+use oliphaunt_extension_vector::VECTOR;
 
 fn open_database() -> oliphaunt::Result<()> {
     let mut db = Oliphaunt::builder()
         .storage(DatabaseStorage::Directory(".oliphaunt".into()))
         .direct()
-        .extension(Extension::VECTOR)
+        .extensions([VECTOR, extensions::HSTORE])
         .open()?;
 
     let rows = db.query("SELECT 1::text AS value")?;
@@ -227,9 +229,10 @@ session reusable. Independent transport or recovery failure is
 
 ### Select extensions
 
-Select exact SQL extension names before open. There are no packs, aliases, or
-implicit selectors. If you select `vector`, the generated artifacts include
-`vector` and only its declared dependencies.
+Select explicit extension descriptors before open. There are no selection aliases or
+implicit selectors. Selecting `vector` makes its package resources and declared
+dependencies available to that database. The base SDK also carries supported contrib
+resources; select their descriptors separately when a database needs them.
 
 </Step>
 <Step>

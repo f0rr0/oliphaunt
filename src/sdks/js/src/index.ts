@@ -42,6 +42,7 @@ export type {
   OliphauntTransaction,
   OliphauntServer,
   OpenConfig,
+  RestoreDestination,
   RestoreOptions,
   ServerListen,
   ServerOpenConfig,
@@ -53,3 +54,6 @@ import type { OliphauntClient } from './types.js';
 export const Oliphaunt: OliphauntClient = createOliphauntClient();
 
 export default Oliphaunt;
+
+export { extensions } from './extensions.js';
+export type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';

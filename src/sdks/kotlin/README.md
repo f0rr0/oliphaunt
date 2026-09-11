@@ -6,59 +6,77 @@ the only supported and published application facade.
 
 ## Android setup
 
-Apply `dev.oliphaunt.android` and depend on
-`dev.oliphaunt:oliphaunt-android`. The plugin packages the matching runtime and
-only the selected extension artifacts; applications do not build PostgreSQL at
-runtime.
+Apply the Android plugin and install the SDK. Add vector as an independently
+versioned dependency; contrib ships with the SDK.
 
 ```kotlin
 plugins {
-    id("dev.oliphaunt.android") version "0.1.1"
+    id("dev.oliphaunt.android") version "0.2.0"
 }
 
 dependencies {
     implementation("dev.oliphaunt:oliphaunt-android:0.2.0")
-}
-
-oliphaunt {
-    icu.set(true) // Omit unless PostgreSQL ICU collations are required.
+    implementation("dev.oliphaunt.extensions:oliphaunt-extension-vector:0.2.0")
 }
 ```
 
-The Gradle plugin resolves ICU data together with the matching Android cluster
-seed. This is a build-time package choice, not a database-open mode.
-
-Open with the Android `Oliphaunt` object and an application `Context`.
-
-`username` selects an existing PostgreSQL role. A new root is bootstrapped with
-the fixed `postgres` role, so create additional roles from `postgres` before
-opening that root as them.
+The plugin reads resolved dependencies for each Android variant and packages
+the required native artifacts. No duplicate extension or version list is needed.
+Select resources explicitly when opening each database:
 
 ```kotlin
+import dev.oliphaunt.*
+import dev.oliphaunt.extensions.vector.Vector
+
 val db = Oliphaunt.open(
     context = applicationContext,
     config = OliphauntConfig(
         storage = DatabaseStorage.Directory(filesDir.resolve("database")),
-        startupGucs = listOf(PostgresStartupGuc("application_name", "my-app")),
-        extensions = listOf("vector"),
+        startupGucs = mapOf("application_name" to "my-app"),
+        extensions = listOf(Vector.descriptor, Extensions.HSTORE),
     ),
 )
-
-db.execute(
-    "INSERT INTO widgets(name) VALUES ($1)",
-    listOf(QueryParam.string("ready")),
-)
-val rows = db.query("SELECT name FROM widgets")
-println(rows.rows.first().value("name", PostgresDecoders.string))
-
-val bytes = db.backup()
-db.close()
-Oliphaunt.restore(
-    context = applicationContext,
-    destination = filesDir.resolve("restored-database").path,
-    bytes = bytes,
-)
+try {
+    db.execute("CREATE EXTENSION vector")
+    db.execute("CREATE EXTENSION hstore")
+    val rows = db.query("SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance")
+    println(rows.rows.first().value("distance", PostgresDecoders.double))
+} finally {
+    db.close()
+}
 ```
+
+For ICU collations, add `dev.oliphaunt.runtime:oliphaunt-icu` at the compatible
+native runtime version, import `dev.oliphaunt.icu.ICU`, and pass `icu = ICU.data`.
+Installing resources determines what the app ships; the configuration determines
+what each database selects. Adding native dependencies requires rebuilding the app.
+
+`username` selects an existing PostgreSQL role. New roots start with `postgres`;
+create additional roles before reopening a root as them.
+
+## Java on Android
+
+Java uses the same dependencies and runtime. Call the blocking facade on an
+application worker thread and use try-with-resources:
+
+```java
+import dev.oliphaunt.*;
+import dev.oliphaunt.extensions.vector.Vector;
+import java.io.File;
+
+var config = OliphauntConfig.builder()
+    .storage(new DatabaseStorage.Directory(new File(context.getFilesDir(), "database")))
+    .startupGuc("application_name", "my-app")
+    .extensions(Vector.descriptor, Extensions.HSTORE)
+    .build();
+try (var db = OliphauntJava.open(context, config)) {
+    db.execute("CREATE EXTENSION vector");
+    db.execute("CREATE EXTENSION hstore");
+}
+```
+
+Use `.icu(ICU.data)` for the optional ICU dependency. Kotlin retains its suspend
+API; Java's facade owns the same native session and adapts the calling convention.
 
 ## API contract
 
@@ -144,11 +162,12 @@ and physical format. Initialization validates PGDATA first and publishes the
 descriptor last. Nonempty descriptorless roots and symlink structural
 directories are rejected without mutation.
 
-`PostgresStartupGuc` is the only tuning vocabulary. Values map directly to
+`startupGucs` is a map of PostgreSQL setting names to string values. Values map directly to
 PostgreSQL `-c name=value` settings; the SDK has no durability, memory, runtime,
 or capability profiles.
 
-`OliphauntConfig.extensions` accepts exact generated PostgreSQL SQL names.
+`OliphauntConfig.extensions` accepts imported external descriptors and SDK contrib
+values. Both are explicit selections; applications run `CREATE EXTENSION` in SQL.
 Packaging resolves dependencies and native registration; package manifests and
 size reports remain internal build concerns.
 

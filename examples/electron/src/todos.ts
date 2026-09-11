@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { Oliphaunt, type OliphauntServer } from "@oliphaunt/ts";
+import { Oliphaunt, extensions, type OliphauntServer } from "@oliphaunt/ts";
 import { pgDump, psql } from "@oliphaunt/tools";
 import { Kysely, PostgresDialect, sql, type Generated } from "kysely";
 import pg from "pg";
@@ -68,7 +68,7 @@ export function getDatabase(userData: string) {
 async function openDatabase(userData: string): Promise<Store> {
   const native = await Oliphaunt.openServer({
     storage: { kind: "directory", path: join(userData, "oliphaunt-native-todos") },
-    extensions: ["hstore", "pg_trgm", "unaccent"],
+    extensions: [extensions.hstore, extensions.pg_trgm, extensions.unaccent],
   });
   const connectionString = native.connectionString;
   const db = new Kysely<TodoDatabase>({

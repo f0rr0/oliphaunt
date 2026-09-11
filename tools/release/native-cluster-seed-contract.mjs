@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,32 @@ const CONTRACT = JSON.parse(readFileSync(
 const SHA256 = /^[0-9a-f]{64}$/u;
 const CACHE_KEY = new RegExp(CONTRACT.manifests.native.cacheKeyPattern, "u");
 const DISALLOWED_CACHE_KEYS = new Set(CONTRACT.manifests.native.cacheKeyDisallowedValues);
+
+// PostgreSQL 18 initdb.c: subdirs[], plus its separately created pg_wal.
+export const NATIVE_PGDATA_DIRECTORIES = Object.freeze(CONTRACT.pgdataDirectories);
+
+// A regular file preserves directory metadata through Cargo and npm file inventories.
+function nativeSeedDirectoryInventory(seed) {
+  const directories = [];
+  function visit(relative) {
+    for (const entry of readdirSync(path.join(seed, "files", relative), { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        const child = relative ? `${relative}/${entry.name}` : entry.name;
+        if (child.split("/").some((part) => !/^[A-Za-z0-9_.-]+$/u.test(part) || part === "." || part === "..")) {
+          throw new Error(`unsafe seed directory path: ${JSON.stringify(child)}`);
+        }
+        directories.push(child);
+        visit(child);
+      }
+    }
+  }
+  visit("");
+  return `${directories.sort().join("\n")}\n`;
+}
+
+export function writeNativeSeedDirectories(seed) {
+  writeFileSync(path.join(seed, "directories-v1.txt"), nativeSeedDirectoryInventory(seed));
+}
 
 export function validNativeCacheKey(value) {
   return CACHE_KEY.test(value) && !DISALLOWED_CACHE_KEYS.has(value);
@@ -209,16 +235,14 @@ function visitRegularFileTree(root, label, onFile) {
 export function validateNativeClusterSeedDirectory(seed, profile, options = {}) {
   for (const relative of [
     "files",
-    "files/global",
-    "files/pg_wal",
+    ...NATIVE_PGDATA_DIRECTORIES.map((relative) => `files/${relative}`),
     "files/PG_VERSION",
     "files/global/pg_control",
     "manifest.properties",
   ]) {
     const file = path.join(seed, ...relative.split("/"));
     const expectedDirectory = relative === "files"
-      || relative === "files/global"
-      || relative === "files/pg_wal";
+      || NATIVE_PGDATA_DIRECTORIES.some((directory) => relative === `files/${directory}`);
     const metadata = lstatSync(file);
     if (metadata.isSymbolicLink()
       || (expectedDirectory ? !metadata.isDirectory() : !metadata.isFile())) {
@@ -236,6 +260,11 @@ export function validateNativeClusterSeedDirectory(seed, profile, options = {}) 
     if (rootEntries.has(transient)) throw new Error(`${seed} contains transient ${transient}`);
   }
   visitRegularFileTree(files, "native cluster seed", () => {});
+  const inventory = path.join(seed, "directories-v1.txt");
+  if (!lstatSync(inventory).isFile()
+    || readFileSync(inventory, "utf8") !== nativeSeedDirectoryInventory(seed)) {
+    throw new Error(`${seed} directory inventory does not match its PGDATA tree`);
+  }
   const icuDataTreeSha256 = options.icuData === undefined
     ? undefined
     : logicalTreeSha256(filesystemTreeRows(options.icuData));

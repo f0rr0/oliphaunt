@@ -24,8 +24,7 @@
     "clusterSeedTarget": "linux-arm64-gnu",
     "libraryRelativePath": "lib/liboliphaunt.so",
     "runtimeRelativePath": "runtime",
-    "clusterSeedRelativePath": "cluster-seed",
-    "icuClusterSeedRelativePath": "cluster-seed-icu"
+    "clusterSeedRelativePath": "cluster-seed"
   },
   "publishConfig": {
     "access": "public",
@@ -40,7 +39,6 @@
     "lib",
     "runtime",
     "cluster-seed",
-    "cluster-seed-icu",
     "manifest.properties",
     "README.md",
     "LICENSE",

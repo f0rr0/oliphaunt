@@ -23,5 +23,6 @@ export function runWasixToolProcess(
     }>;
     args: readonly string[];
     stdin?: Uint8Array;
+    command?: string;
   }>,
 ): Promise<WasixToolProcessResult>;

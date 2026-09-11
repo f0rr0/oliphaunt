@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { stageNativeIcuSeeds } from "./native-icu-seeds.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -52,6 +53,7 @@ const DEFAULT_PART_BYTES = 7 * 1024 * 1024;
 export const NATIVE_CARGO_CARRIER_LICENSES = Object.freeze({
   "native-runtime": releaseProfilePackageLicense("native-runtime").spdx,
   "native-tools": releaseProfilePackageLicense("native-tools").spdx,
+  "native-icu-data": releaseProfilePackageLicense("native-icu-data").spdx,
   "code-facade": releaseProfilePackageLicense("code-facade").spdx,
 });
 
@@ -69,6 +71,7 @@ const TARGET: &str = __TARGET__;
 const PART_ROOTS: &[&str] = &[
 __PART_ROOTS__
 ];
+const DIRECTORIES: &[&str] = &[__DIRECTORIES__];
 const FILE_SHA256: &[(&str, &str)] = &[
 __FILE_SHA256__
 ];
@@ -119,13 +122,16 @@ fn emit_manifest() {
         }
     }
 
+    for directory in DIRECTORIES {
+        fs::create_dir_all(payload.join(directory)).expect("restore packaged empty directory");
+    }
     let files = collect_files(&payload).expect("collect reconstructed liboliphaunt payload files");
     if files.is_empty() {
         panic!("liboliphaunt native payload part crates produced no files");
     }
     let manifest = out_dir.join("oliphaunt-artifact.toml");
     let mut text = format!(
-        "schema = {SCHEMA:?}\nproduct = {PRODUCT:?}\nversion = {VERSION:?}\nkind = {KIND:?}\ntarget = {TARGET:?}\n"
+        "schema = {SCHEMA:?}\nproduct = {PRODUCT:?}\nversion = {VERSION:?}\nkind = {KIND:?}\ntarget = {TARGET:?}\ndirectories = {DIRECTORIES:?}\n"
     );
     if files.len() != FILE_SHA256.len() {
         panic!("reconstructed liboliphaunt payload file count does not match the frozen inventory");
@@ -418,6 +424,7 @@ function validateNativePayload(payloadRoot, target, { toolSet }) {
 }
 
 function validateNativeCargoRuntimeClosure(runtimeRoot, target, icuRoot) {
+  if (existsSync(path.join(runtimeRoot, "cluster-seed-icu"))) fail("base Cargo runtime must not bundle the optional ICU seed");
   const icuData = path.join(icuRoot, "share/icu");
   try {
     const { target: actualTarget } = validateNativeRuntimeCarrier(runtimeRoot, { icuData });
@@ -517,6 +524,7 @@ function writeAggregatorCrate(
     artifactKind,
     artifactLabel,
     payloadFiles,
+    payloadDirectories,
   },
 ) {
   rmSync(crateDir, { recursive: true, force: true });
@@ -586,6 +594,7 @@ pub const LIBRARY_RELATIVE_PATH: &str = "${libraryRelativePath}";
       .replace("__KIND__", tomlString(artifactKind))
       .replace("__TARGET__", tomlString(target.triple))
       .replace("__PART_ROOTS__", partRoots.join("\n"))
+      .replace("__DIRECTORIES__", payloadDirectories.map(tomlString).join(", "))
       .replace("__FILE_SHA256__", payloadFiles.map(({ relative, sha256 }) => `    (${tomlString(relative)}, ${tomlString(sha256)}),`).join("\n")),
   );
   stageReleaseNotices(crateDir, { profile: "code-facade" });
@@ -970,6 +979,10 @@ function packagePayload(
     artifactKind,
     artifactLabel,
     payloadFiles: frozenPayloadFiles(payloadRoot),
+    payloadDirectories: readdirSync(payloadRoot, { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => path.relative(payloadRoot, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+      .sort(compareText),
   });
 
   const packages = [];
@@ -1171,6 +1184,28 @@ async function parseArgs(argv) {
   };
 }
 
+async function packageNativeIcu({ sourceRoot, outputDir, assetDir, version, targets, icuRoot }) {
+  const name = "oliphaunt-icu";
+  const crateDir = path.join(sourceRoot, name);
+  cpSync(path.join(ROOT, "src/runtimes/liboliphaunt/icu"), crateDir, { recursive: true });
+  cpSync(path.join(icuRoot, "share/icu"), path.join(crateDir, "payload/share/icu"), { recursive: true });
+  stageNativeIcuSeeds(assetDir, version, path.join(crateDir, "payload/native-seeds"), path.join(icuRoot, "share/icu"), targets.map(target => target.target));
+  const manifestPath = path.join(crateDir, "Cargo.toml");
+  const resourceVersion = await currentProductVersion("oliphaunt-rust", PREFIX);
+  let text = readFileSync(manifestPath, "utf8")
+    .replace(/^version = "[^"]+"$/mu, `version = "${version}"`)
+    .replace(/^oliphaunt-resources = .*$/mu, `oliphaunt-resources = { version = "${resourceVersion}", path = ${JSON.stringify(path.join(ROOT, "src/sdks/rust/crates/oliphaunt-resources"))} }`)
+    .replace(/^include = \[[\s\S]*?^\]$/mu, `include = ${cargoIncludeMembers("native-icu-data", ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"])}`);
+  writeFileSync(manifestPath, `${text.trimEnd()}\n\n[workspace]\n`);
+  stageReleaseNotices(crateDir, { profile: "native-icu-data" });
+  const generated = manualCargoPackageSource(manifestPath, path.join(sourceRoot, "icu-package"), { root: ROOT, fail, rel });
+  validateCrateSize(generated);
+  assertReleaseNoticesInArchive(generated, { prefix: `${name}-${version}`, profile: "native-icu-data" });
+  const cratePath = path.join(outputDir, path.basename(generated));
+  copyFileSync(generated, cratePath);
+  return { name, version, manifestPath, cratePath, target: "portable", product: name, kind: "icu-data", role: "artifact", noticeProfile: "native-icu-data", index: null, links: "oliphaunt_artifact_oliphaunt_icu", localDependencies: [] };
+}
+
 async function main(argv) {
   const args = await parseArgs(argv);
   if (!isDirectory(args.assetDir)) {
@@ -1246,6 +1281,7 @@ async function main(argv) {
     version: args.version,
     toolsTargets: selectedToolsTargets,
   }), args.outputDir, cargoTargetDir, packages));
+  packages.push(await packageNativeIcu({ ...args, sourceRoot, targets, icuRoot }));
   writePackagesManifest(packages, args.outputDir);
   console.log("generated liboliphaunt native Cargo artifact crates:");
   for (const item of packages) {

@@ -1,12 +1,13 @@
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 import Oliphaunt, {
+  extensions as bundledExtensions,
   type OliphauntDatabase,
   PostgresError,
   type QueryParam,
   type WasixExtensionDescriptor,
   type WasixStorage,
   WasixStorageError,
-} from '@oliphaunt/wasix-ts';
+} from '@oliphaunt/wasix-ts/browser';
 import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
@@ -179,8 +180,17 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
     throw new Error('browser worker canary requires a PostGIS side module larger than 8 MiB');
   }
 
-  const database = await WorkerOliphaunt.open({ extensions: [postgis] });
+  const database = await WorkerOliphaunt.open({
+    extensions: [postgis, bundledExtensions.earthdistance],
+  });
   try {
+    await database.execute('CREATE EXTENSION earthdistance CASCADE');
+    const distance = await database.queryRaw(
+      'SELECT earth_distance(ll_to_earth(0, 0), ll_to_earth(0, 0)) AS distance',
+    );
+    if (distance.getText(0, 'distance') !== '0') {
+      throw new Error('bundled contrib dependency closure failed in the browser worker');
+    }
     await database.execute('CREATE EXTENSION postgis');
     const version = await readPostgisVersion(database);
     await database.queryRaw('CREATE TEMP TABLE postgis_nested_error_catch(value integer)');

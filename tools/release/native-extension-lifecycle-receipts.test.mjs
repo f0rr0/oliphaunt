@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -20,6 +21,7 @@ import {
 } from "../graph/ci_plan.mjs";
 import {
   compareText,
+  currentProductVersionSync,
   exactExtensionProducts,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
@@ -27,9 +29,16 @@ import {
   assertExactFiles,
   selectedExtensionDependencies,
   stageExtensionCarrier,
+  stageBaseRuntime,
 } from "./stage-native-extension-lifecycle.mjs";
 import { verifyReceipts } from "./verify-native-extension-lifecycle-receipts.mjs";
 import { writeReceipt } from "./write-native-extension-lifecycle-receipt.mjs";
+
+import { spawnSync } from "node:child_process";
+import { createDeterministicTar } from "../../src/shared/artifact-packaging/archive-directory.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
+import { requiredRuntimeMemberPaths, requiredToolsMemberPaths } from "./optimize_native_runtime_payload.mjs";
+import { nativeIcuSeedAsset } from "./native-icu-seeds.mjs";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const CANDIDATE_TREE = "b".repeat(40);
@@ -348,5 +357,47 @@ test("aggregate verification rejects candidate, shard, and PASS-record drift eve
     } finally {
       rmSync(value.root, { force: true, recursive: true });
     }
+  }
+});
+
+test("native consumers distinguish the runtime from its independently shipped ICU seed", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-native-runtime-inputs-"));
+  try {
+    const version = currentProductVersionSync("liboliphaunt-native", "test");
+    const target = "linux-x64-gnu";
+    const assets = path.join(root, "assets");
+    mkdirSync(assets);
+    for (const [name, members] of [
+      [`liboliphaunt-${version}-${target}.tar.gz`, ["lib/liboliphaunt.so", "lib/modules/dict_snowball.so", "lib/modules/plpgsql.so", ...requiredRuntimeMemberPaths(target, "runtime/bin")]],
+      [`oliphaunt-tools-${version}-${target}.tar.gz`, requiredToolsMemberPaths(target, "runtime/bin")],
+      [nativeIcuSeedAsset(version, target), ["manifest.properties", "files/PG_VERSION"]],
+    ]) {
+      const source = path.join(root, name);
+      for (const member of members) {
+        mkdirSync(path.dirname(path.join(source, member)), { recursive: true });
+        writeFileSync(path.join(source, member), "fixture");
+      }
+      writeFileSync(path.join(assets, name), canonicalGzipSync(await createDeterministicTar(source)));
+    }
+    const output = path.join(root, "staged");
+    const records = stageBaseRuntime(assets, output, []);
+    assert.deepEqual(records.map(row => row.identity), ["native-runtime", "native-tools"]);
+    assert.equal(existsSync(path.join(output, "resources/native-runtime/liboliphaunt-native/cluster-seed-icu")), false);
+    if (process.platform === "linux" && process.arch === "x64") {
+      const consumer = path.join(root, "consumer.sh");
+      writeFileSync(consumer, '#!/bin/sh\nset -eu\ntest -s "$OLIPHAUNT_INSTALL_DIR/bin/postgres"\ntest -s "$OLIPHAUNT_TOOLS_DIR/bin/psql"\necho EXACT_RUNTIME_PASS\n', { mode: 0o755 });
+      const result = spawnSync(process.env.OLIPHAUNT_TEST_BASH || "bash", [
+        "src/sdks/rust/tools/check-release-consumer.sh", "run", consumer, assets,
+      ], { cwd: path.resolve(import.meta.dirname, "../.."), encoding: "utf8" });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /EXACT_RUNTIME_PASS/u);
+    }
+    writeFileSync(path.join(assets, "unindexed.tar.gz"), "unexpected");
+    assert.throws(() => stageBaseRuntime(assets, output, []), /unindexed files/u);
+    rmSync(path.join(assets, "unindexed.tar.gz"));
+    rmSync(path.join(assets, nativeIcuSeedAsset(version, target)));
+    assert.throws(() => stageBaseRuntime(assets, output, []), /must contain exactly one.*icu-seed/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

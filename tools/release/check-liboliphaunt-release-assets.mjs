@@ -322,17 +322,18 @@ function validateNativeRuntimeCarrierEntries(
   for (const required of [
     "manifest.properties",
     "cluster-seed/manifest.properties",
+    "cluster-seed/directories-v1.txt",
     "cluster-seed/files/PG_VERSION",
     "cluster-seed/files/global/pg_control",
-    "cluster-seed-icu/manifest.properties",
-    "cluster-seed-icu/files/PG_VERSION",
-    "cluster-seed-icu/files/global/pg_control",
   ]) {
     if (!entries.get(member(required))?.isFile) {
       fail(`${file} is missing native runtime closure member ${member(required)}`);
     }
   }
-  for (const profile of ["cluster-seed", "cluster-seed-icu"]) {
+  if ([...entries.keys()].some(name => name.startsWith(member("cluster-seed-icu/")))) {
+    fail(`${file} base runtime must not bundle the optional ICU seed`);
+  }
+  for (const profile of ["cluster-seed"]) {
     const filesPrefix = member(`${profile}/files/`);
     const pgVersion = entries.get(`${filesPrefix}PG_VERSION`);
     const control = entries.get(`${filesPrefix}global/pg_control`);
@@ -376,15 +377,7 @@ function validateNativeRuntimeCarrierEntries(
       "standard",
       { label: `${file} ${member("cluster-seed/manifest.properties")}`, target },
     );
-    validateNativeClusterSeedManifest(
-      Buffer.from(archiveText(entries, file, member("cluster-seed-icu/manifest.properties"))),
-      "icu",
-      {
-        label: `${file} ${member("cluster-seed-icu/manifest.properties")}`,
-        target,
-        icuDataTreeSha256,
-      },
-    );
+
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
@@ -495,9 +488,6 @@ function validateRuntimeResourceArtifactContents(
     "oliphaunt/cluster-seed/manifest.properties",
     "oliphaunt/cluster-seed/files/PG_VERSION",
     "oliphaunt/cluster-seed/files/global/pg_control",
-    "oliphaunt/cluster-seed-icu/manifest.properties",
-    "oliphaunt/cluster-seed-icu/files/PG_VERSION",
-    "oliphaunt/cluster-seed-icu/files/global/pg_control",
   ]) {
     if (!names.has(requiredMember)) {
       fail(`${file} must contain ${requiredMember}`);
@@ -632,6 +622,7 @@ const RELEASE_NOTICE_OPTIONS_BY_KIND = new Map([
   ],
   ["runtime-resources", Object.freeze({ profile: "native-runtime-resources" })],
   ["icu-data", Object.freeze({ profile: "native-icu-data" })],
+  ["icu-seed", Object.freeze({ profile: "native-runtime-resources" })],
 ]);
 
 export function assertLiboliphauntArtifactReleaseNotices(file, kind) {
@@ -692,6 +683,21 @@ async function validate(assetDir) {
   const icuDataTreeSha256 = validateIcuDataArtifactContents(
     path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`),
   );
+  for (const row of allArtifactTargets({ product: PRODUCT, surface: "github-release" }).filter(row => row.kind === "icu-seed")) {
+    const file = path.join(assetDir, assetName(row, version));
+    const entries = readArchiveEntries(file);
+    validateNativeClusterSeedManifest(Buffer.from(archiveText(entries, file, "manifest.properties")), "icu", {
+      target: row.target, icuDataTreeSha256, label: file,
+    });
+    for (const required of ["files/PG_VERSION", "files/global/pg_control"]) {
+      if (!entries.get(required)?.isFile || entries.get(required).size === 0) fail(`${file} is missing ${required}`);
+    }
+    if (archiveText(entries, file, "files/PG_VERSION").trim() !== "18") fail(`${file} has wrong PostgreSQL version`);
+    if (!(entries.get("files/pg_wal") ?? entries.get("files/pg_wal/"))?.isDirectory) fail(`${file} is missing files/pg_wal`);
+    for (const transient of ["postmaster.pid", "postmaster.opts"]) {
+      if (entries.has(`files/${transient}`)) fail(`${file} includes transient ${transient}`);
+    }
+  }
   for (const target of ["ios-datum64", "android-datum64"]) {
     validateRuntimeResourceArtifactContents(
       path.join(assetDir, `liboliphaunt-${version}-runtime-resources-${target}.tar.gz`),

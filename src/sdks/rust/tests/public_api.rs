@@ -406,3 +406,41 @@ fn extension_catalog_is_exact_and_sorted() {
         );
     }
 }
+
+#[test]
+fn build_resources_macro_and_library_discovery_work_outside_the_sdk() {
+    let result = oliphaunt::register_build_resources!();
+    match option_env!("OLIPHAUNT_RESOURCES_DIR") {
+        Some(path) if !path.is_empty() => result.unwrap(),
+        _ => assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidConfiguration),
+    }
+    if option_env!("OLIPHAUNT_RESOURCES_DIR").is_none()
+        && std::env::var_os("LIBOLIPHAUNT_PATH").is_none()
+    {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-library-discovery-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let library =
+            root.join("native-runtime/liboliphaunt-native")
+                .join(if cfg!(target_os = "windows") {
+                    "bin/oliphaunt.dll"
+                } else if cfg!(target_os = "macos") {
+                    "lib/liboliphaunt.dylib"
+                } else {
+                    "lib/liboliphaunt.so"
+                });
+        std::fs::create_dir_all(library.parent().unwrap()).unwrap();
+        std::fs::write(&library, "deliberately invalid dynamic library").unwrap();
+        oliphaunt::register_build_resources_dir(&root).unwrap();
+        let error = Oliphaunt::open()
+            .err()
+            .expect("invalid library must fail to load");
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            error.to_string().contains(&library.display().to_string()),
+            "{error}"
+        );
+    }
+}

@@ -396,10 +396,11 @@ database.close()`,
     brand: 'react',
     packageName: '@oliphaunt/react-native',
     language: 'typescript',
-    code: `import { Oliphaunt } from '@oliphaunt/react-native';
+    code: `import { Oliphaunt, directory } from '@oliphaunt/react-native';
+import { Paths } from 'expo-file-system';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'main' },
+  storage: directory(Paths.document.uri + 'main.oliphaunt'),
   extensions: [],
 });
 

@@ -23,7 +23,8 @@ Add the crate to your Rust app:
 
 ```toml
 [dependencies]
-oliphaunt = "0.1"
+oliphaunt = "0.2"
+oliphaunt-extension-vector = "0.2"
 ```
 
 ## Open And Query
@@ -31,13 +32,14 @@ oliphaunt = "0.1"
 Then open a database in app-owned storage:
 
 ```rust
-use oliphaunt::{DatabaseStorage, Extension, Oliphaunt};
+use oliphaunt::{extensions, DatabaseStorage, Oliphaunt};
+use oliphaunt_extension_vector::VECTOR;
 
 fn open_database() -> oliphaunt::Result<()> {
     let mut db = Oliphaunt::builder()
         .storage(DatabaseStorage::Directory("./app-data/main.oliphaunt".into()))
         .direct()
-        .extension(Extension::VECTOR)
+        .extensions([VECTOR, extensions::HSTORE])
         .open()?;
 
     let rows = db.query("SELECT 1::text AS value")?;

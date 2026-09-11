@@ -77,8 +77,10 @@ and changelog.
 An npm WASIX leaf is host-neutral: browser, Node, Bun, Deno, and Electron WASIX
 hosts consume the same descriptor package. Its ESM descriptor selects one exact
 SQL extension and carries the verified browser byte closure required to
-materialize it. Native hosts validate that identity and resolve the SQL name
-against the frozen catalog embedded in their Node-API addon. Contrib
+materialize it. Node-API hosts validate the installed package identity, runtime
+compatibility, payload hashes, and matching host AOT package before passing its
+bytes to Rust. The addon embeds contrib; external payloads come from the
+selected packages. Contrib
 members use exact package subpaths so importing one member does not create an
 implicit selector group. Each extension product freezes its own archive
 identity and `oliphaunt-wasix-extension-install-v1` projection: dependencies,
@@ -487,7 +489,7 @@ an empty one requires `not-required`.
 These are exact identities, not selection aliases or catalog expansions. SDK
 availability checks use `selectedExtensions`; they must never use the narrower
 createable `extensions` field to decide whether module-only resources exist.
-SDKs reject `open(... extensions: ["vector"])` when the selected runtime does
+SDKs reject `open({ extensions: [vector] })` when the selected runtime does
 not advertise `vector` in `selectedExtensions`.
 
 The size report is exact-extension based:

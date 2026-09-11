@@ -11,6 +11,7 @@ import {
   buildPublicationCandidate,
   discoverPublicationArtifacts,
   discoverProductArtifacts,
+  independentSwiftPackageName,
   freezePublicationCandidate,
   lockedCarrierFile,
   projectInternalDependencyIds,
@@ -107,6 +108,7 @@ function selectionNeutralSwiftSourceCarrier(version = "1.2.3") {
     ["base-xcframework", `liboliphaunt-${version}-apple-spm-xcframework.zip`, "zip", "liboliphaunt.xcframework", "1"],
     ["runtime-resources", `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`, "tar.gz", "oliphaunt", "2"],
     ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", ".", "3"],
+    ["icu-seed", `liboliphaunt-${version}-icu-seed-ios-datum64.tar.gz`, "tar.gz", ".", "4"],
   ].map(([role, name, format, member, digestDigit], index) => ({
     bytes: index + 1,
     format,
@@ -188,7 +190,16 @@ function sha256File(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+function independentSwiftFixture(root, product) {
+  const name = independentSwiftPackageName(product);
+  if (name === null) return;
+  const directory = path.join(root, "swift-packages", name);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, "Package.swift"), "// swift-tools-version: 6.0\nimport PackageDescription\n");
+}
+
 function githubReleaseFixture(root, product) {
+  independentSwiftFixture(root, product);
   const directory = path.join(root, product.id, "release-assets");
   mkdirSync(directory, { recursive: true });
   const rows = allArtifactTargets({
@@ -221,6 +232,7 @@ function extensionGithubReleaseFixture(
     bundleFixedFileMode = 0o644,
   } = {},
 ) {
+  independentSwiftFixture(root, product);
   const productRoot = extensionArtifactProductRoot(
     artifactProduct,
     family ?? "native",
@@ -557,13 +569,13 @@ describe("canonical publication catalog", () => {
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
     expect(catalog.products).toHaveLength(20);
-    expect(catalog.carriers).toHaveLength(203);
+    expect(catalog.carriers).toHaveLength(240);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,
       [ecosystem]: (counts[ecosystem] ?? 0) + 1,
-    }), {})).toEqual({ cargo: 103, npm: 77, maven: 23 });
+    }), {})).toEqual({ cargo: 105, npm: 105, maven: 30 });
     expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
-    expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(18);
+    expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(23);
     expect(new Set(catalog.carriers.map((carrier) => carrier.id)).size).toBe(catalog.carriers.length);
     expect(catalog.carriers.every((carrier) => carrier.declared && carrier.product && carrier.version)).toBe(true);
   });
@@ -673,6 +685,7 @@ describe("publication artifact discovery and freezing", () => {
     const catalog = loadPublicationCatalog("publication-lock.test", { products: ["oliphaunt-rust"] });
     const version = catalog.products[0].version;
     cargoFixture(root, "oliphaunt-build", version);
+    cargoFixture(root, "oliphaunt-resources", version);
     cargoFixture(root, "oliphaunt", version, {
       manifestSuffix: [
         "",
@@ -875,7 +888,7 @@ describe("publication artifact discovery and freezing", () => {
     const product = loadPublicationCatalog("publication-lock.test", { products: ["oliphaunt-extension-vector"] }).products[0];
     const { assets, directory, manifestPath, swiftCarrierName } = extensionGithubReleaseFixture(root, product);
     const artifacts = discoverProductArtifacts([root], [product]);
-    expect(artifacts).toHaveLength(assets.length + 4);
+    expect(artifacts).toHaveLength(assets.length + 5);
     expect(new Set(artifacts.filter((artifact) => artifact.role === "github-release-asset").map((artifact) => artifact.target))).toEqual(
       new Set(extensionArtifactTargets({ product: product.id }, "publication-lock.test").map((target) => target.target)),
     );
@@ -929,7 +942,7 @@ describe("publication artifact discovery and freezing", () => {
     const { rows: runtimeAssets } = githubReleaseFixture(root, product);
     const { assets, manifestPath } = extensionGithubReleaseFixture(root, product, fixtureOptions);
     const artifacts = discoverProductArtifacts([root], [product]);
-    expect(artifacts).toHaveLength(runtimeAssets.length + assets.length + 4);
+    expect(artifacts).toHaveLength(runtimeAssets.length + assets.length + 5);
     expect(assets.every(({ name }) => /^oliphaunt-extension-contrib-pg18-[^-]+/u.test(name))).toBe(true);
     const candidate = buildPublicationCandidate({
       products: [product.id],
@@ -1118,12 +1131,12 @@ describe("publication artifact discovery and freezing", () => {
     expect(extensionProduct).toBeDefined();
     const { manifestPath } = extensionGithubReleaseFixture(workspaceRoot, extensionProduct);
     const extensionRoot = path.dirname(manifestPath);
-    const selectedRoots = [sdk, fixture, extensionRoot];
+    const selectedRoots = [sdk, fixture, extensionRoot, path.join(workspaceRoot, "swift-packages")];
 
     expect(() => discoverProductArtifacts([sdk, fixture], [product])).toThrow(
       /selects no extension products and requires no frozen Swift consumer fixture/u,
     );
-    expect(() => discoverProductArtifacts([sdk, extensionRoot], catalog.products)).toThrow(
+    expect(() => discoverProductArtifacts([sdk, extensionRoot, path.join(workspaceRoot, "swift-packages")], catalog.products)).toThrow(
       /selects extension products and requires exactly one frozen Swift consumer fixture/u,
     );
 

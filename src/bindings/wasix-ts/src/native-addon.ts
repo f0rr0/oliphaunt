@@ -17,6 +17,26 @@ export type NativeWasixOpenOptions = Readonly<{
   database: string;
   startupGucs: Record<string, string>;
   extensions: string[];
+  extensionPackages?: NativeExtensionPackage[];
+  icu?: Readonly<{
+    version: string;
+    runtimeVersion: string;
+    archive: string | Uint8Array;
+    archiveSha256: string;
+    dataTreeSha256: string;
+    seedArchive: string | Uint8Array;
+    seedArchiveSha256: string;
+    seedManifest: string | Uint8Array;
+    seedManifestSha256: string;
+  }>;
+}>;
+
+export type NativeExtensionPackage = Readonly<{
+  sqlName: string;
+  product: string;
+  version: string;
+  packageJson: string;
+  aotPackageJson?: string;
 }>;
 
 export type NativeWasixServerListen =
@@ -34,8 +54,8 @@ export type NativeWasixDatabaseHandle = {
     onChunk: (chunk: Uint8Array) => void,
   ): 'complete' | 'callbackAborted';
   backup(): Uint8Array;
-  pgDump(args: string[]): NativeWasixToolResult;
-  psql(args: string[], command?: string, script?: string): NativeWasixToolResult;
+  pgDump(args: readonly string[]): NativeWasixToolResult;
+  psql(args: readonly string[], command?: string, script?: string): NativeWasixToolResult;
   close(): void;
 };
 
@@ -47,8 +67,8 @@ export type NativeWasixActorDatabaseHandle = {
     onChunk: (chunk: Uint8Array) => void,
   ): Promise<'complete' | 'callbackAborted'>;
   backup(): Promise<Uint8Array>;
-  pgDump(args: string[]): Promise<NativeWasixToolResult>;
-  psql(args: string[], command?: string, script?: string): Promise<NativeWasixToolResult>;
+  pgDump(args: readonly string[]): Promise<NativeWasixToolResult>;
+  psql(args: readonly string[], command?: string, script?: string): Promise<NativeWasixToolResult>;
   close(): Promise<void>;
 };
 
@@ -84,16 +104,11 @@ export type NativeWasixAddon = {
   runtimeVersion(): string;
   supportedProfiles(): readonly NativeProfile[];
   payloadIdentity(
-    component:
-      | 'runtimeArchive'
-      | 'standardSeedArchive'
-      | 'standardSeedManifest'
-      | 'icuDataArchive'
-      | 'icuSeedArchive'
-      | 'icuSeedManifest',
+    component: 'runtimeArchive' | 'standardSeedArchive' | 'standardSeedManifest',
   ): string;
   extensionIdentity(sqlName: string): string;
   toolIdentity(name: 'pg_dump' | 'psql'): string;
+  registerTools(options: { packageJson: string; aotPackageJson: string }): Promise<void>;
 };
 
 type WasixPackageMetadata = Readonly<{
@@ -362,12 +377,13 @@ export function validateNativeWasixAddon(
     typeof addon.supportedProfiles !== 'function' ||
     typeof addon.payloadIdentity !== 'function' ||
     typeof addon.extensionIdentity !== 'function' ||
+    typeof addon.registerTools !== 'function' ||
     typeof addon.toolIdentity !== 'function'
   ) {
     throw new Error(`Oliphaunt WASIX native addon ${path} has an invalid export surface`);
   }
   const expectedAbi = metadata.oliphaunt?.wasixAddonAbiVersion;
-  if (expectedAbi !== 1 || addon.addonAbiVersion() !== expectedAbi) {
+  if (expectedAbi !== 2 || addon.addonAbiVersion() !== expectedAbi) {
     throw new Error(`Oliphaunt WASIX native addon ${path} has an incompatible addon ABI`);
   }
   const expectedNodeApi = metadata.oliphaunt?.nodeApiVersion;

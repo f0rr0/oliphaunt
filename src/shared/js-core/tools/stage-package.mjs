@@ -11,11 +11,15 @@ export const JS_CORE_BUNDLE_FILES = Object.freeze([
   "dist/commonjs/protocol.js",
   "dist/commonjs/query.d.ts",
   "dist/commonjs/query.js",
+  "dist/commonjs/resources.d.ts",
+  "dist/commonjs/resources.js",
   "dist/module/package.json",
   "dist/module/protocol.d.ts",
   "dist/module/protocol.js",
   "dist/module/query.d.ts",
   "dist/module/query.js",
+  "dist/module/resources.d.ts",
+  "dist/module/resources.js",
   "package.json",
 ]);
 

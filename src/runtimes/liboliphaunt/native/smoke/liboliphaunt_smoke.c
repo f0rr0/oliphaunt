@@ -1238,11 +1238,25 @@ static int exec_static_extension_registry_smoke(OliphauntHandle *db) {
                 liboliphaunt_smoke_static_init_calls);
         return 1;
     }
+    if (oliphaunt_register_static_extensions(NULL, 0) != 0 ||
+        register_static_extension_fixture() != 0) {
+        fprintf(stderr, "identical static registration after startup failed\n");
+        return 1;
+    }
+    const OliphauntStaticExtension conflicting = {
+        .abi_version = OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION,
+        .name = "liboliphaunt_smoke_static",
+        .magic = (const void *(*)(void))liboliphaunt_smoke_static_magic,
+    };
     if (expect_static_extension_registration_fails(
-            NULL,
-            0,
-            "static extension registry freeze",
-            "static extension registry cannot be changed after backend startup") != 0) {
+            &conflicting,
+            1,
+            "static extension replacement after startup",
+            "conflicting static extension registration") != 0) {
+        return 1;
+    }
+    if (liboliphaunt_smoke_static_init_calls != before + 1) {
+        fprintf(stderr, "repeated static registration reran module initialization\n");
         return 1;
     }
     return 0;

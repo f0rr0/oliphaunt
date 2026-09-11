@@ -345,7 +345,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, "src/run
     mkdirSync(path.join(payload, "bin"), { recursive: true });
     mkdirSync(path.join(payload, "cluster-seeds"), { recursive: true });
     writeFileSync(path.join(payload, "bin/initdb.wasix.wasm"), "initdb-wasm\n");
-    for (const profile of ["standard", "icu"]) {
+    for (const profile of ["standard"]) {
       writeFileSync(path.join(payload, `cluster-seeds/${profile}.tar.zst`), `${profile}\n`);
       writeFileSync(path.join(payload, `cluster-seeds/${profile}.json`), "{}\n");
     }
@@ -360,6 +360,9 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, "src/run
     };
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     expect(() => validateRuntimePayload(payload)).not.toThrow();
+    writeFileSync(path.join(payload, "cluster-seeds/icu.json"), "{}\n");
+    expect(() => validateRuntimePayload(payload)).toThrow(/optional ICU seed/u);
+    rmSync(path.join(payload, "cluster-seeds/icu.json"));
 
     manifest.runtime.sha256 = "0".repeat(64);
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

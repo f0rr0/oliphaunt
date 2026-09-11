@@ -176,6 +176,7 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
       insideMember: false,
       profile: "native-runtime-resources",
     });
+    archive(base, `liboliphaunt-${version}-icu-seed-ios-datum64.tar.gz`, "files", "tar.gz", { insideMember: false, profile: "native-runtime-resources" });
     archive(base, `liboliphaunt-${version}-icu-data.tar.gz`, "share/icu", "tar.gz", {
       insideMember: false,
       profile: "native-icu-data",
@@ -227,12 +228,13 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
       extensionManifests: [postgis, pgtap],
       localUrls: true,
     }));
-    assert.deepEqual(local.base.assets.map(({ role }) => role), ["base-xcframework", "runtime-resources", "icu-data"]);
-    assert.deepEqual(local.legal.base.map(({ assetRole }) => assetRole), ["base-xcframework", "runtime-resources", "icu-data"]);
+    assert.deepEqual(local.base.assets.map(({ role }) => role), ["base-xcframework", "runtime-resources", "icu-data", "icu-seed"]);
+    assert.deepEqual(local.legal.base.map(({ assetRole }) => assetRole), ["base-xcframework", "runtime-resources", "icu-data", "icu-seed"]);
     assert.deepEqual(local.legal.base.map(({ spdx }) => spdx), [
       "MIT AND PostgreSQL AND Unicode-3.0",
       "MIT AND PostgreSQL",
-      "MIT AND Unicode-3.0",
+      "MIT AND PostgreSQL AND Unicode-3.0",
+      "MIT AND PostgreSQL",
     ]);
     assert.deepEqual(local.extensions.map(({ sqlName }) => sqlName), ["pgtap", "postgis"]);
     assert.deepEqual(local.legal.extensions.map(({ sqlName }) => sqlName), ["pgtap", "postgis"]);

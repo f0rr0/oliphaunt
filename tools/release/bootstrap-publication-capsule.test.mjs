@@ -116,6 +116,7 @@ function fixture() {
   const cargo = [
     cargoFixture(stage, artifacts, "oliphaunt", versions.get("oliphaunt-rust")),
     cargoFixture(stage, artifacts, "oliphaunt-build", versions.get("oliphaunt-rust")),
+    cargoFixture(stage, artifacts, "oliphaunt-resources", versions.get("oliphaunt-rust")),
   ];
   const npm = npmFixture(stage, artifacts, "@oliphaunt/ts", versions.get("oliphaunt-js"));
   const lock = freezePublicationCandidate(buildPublicationCandidate({
@@ -231,7 +232,7 @@ test("packs every locked publication file deterministically and atomically insta
     assert.equal(sha256(first), sha256(second), "capsule must be byte-for-byte deterministic");
     assert.equal(manifest.approval.releaseRunId, APPROVAL.approvalRunId);
     assert.equal(manifest.approval.qualificationRunId, APPROVAL.qualificationRunId);
-    assert.equal(manifest.files.length, 3);
+    assert.equal(manifest.files.length, 4);
 
     const installed = verifyExtractBootstrapCapsule({
       transport: first,
@@ -340,7 +341,7 @@ test("the real bootstrap command checkpoints a mixed inventory before a bounded 
     const decision = JSON.parse(readFileSync(resultFile, "utf8"));
     assert.equal(decision.decision, "deferred");
     assert.equal(decision.newlyCompletedIds.length, 0);
-    assert.equal(decision.remainingIds.length, 2);
+    assert.equal(decision.remainingIds.length, 3);
   } finally { rmSync(value.root, { recursive: true, force: true }); }
 });
 

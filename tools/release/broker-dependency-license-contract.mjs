@@ -51,6 +51,7 @@ const PAYLOAD_LICENSE_ATOMS = Object.freeze([
 ]);
 const PATH_PACKAGE_MANIFESTS = new Map([
   ["oliphaunt", path.join(ROOT, "src/sdks/rust/Cargo.toml")],
+  ["oliphaunt-resources", path.join(ROOT, "src/sdks/rust/crates/oliphaunt-resources/Cargo.toml")],
   ["oliphaunt-broker", path.join(ROOT, "src/runtimes/broker/Cargo.toml")],
 ]);
 const LEGAL_BASENAME_PREFIXES = Object.freeze([

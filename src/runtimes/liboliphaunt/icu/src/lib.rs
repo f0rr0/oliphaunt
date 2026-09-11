@@ -1,15 +1,14 @@
 #![deny(unsafe_code)]
 
-include!(concat!(env!("OUT_DIR"), "/generated_icu.rs"));
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn packaged_identities_track_the_embedded_payload() {
-        assert_eq!(HAS_ICU_DATA, icu_data_archive().is_some());
-        assert_eq!(HAS_ICU_DATA, ICU_DATA_ARCHIVE_SHA256.is_some());
-        assert_eq!(HAS_ICU_DATA, ICU_DATA_TREE_SHA256.is_some());
-    }
-}
+/// Optional ICU data and seed for the matching native runtime.
+pub const ICU: oliphaunt_resources::IcuData = oliphaunt_resources::IcuData {
+    version: env!("CARGO_PKG_VERSION"),
+    native_runtime_version: env!("CARGO_PKG_VERSION"),
+    runtime_version: "unavailable",
+    resources: include!(concat!(env!("OUT_DIR"), "/native_icu.rs")),
+    wasix_archive: None,
+    wasix_archive_sha256: None,
+    wasix_data_tree_sha256: None,
+    wasix_seed_archive: None,
+    wasix_seed_manifest: None,
+};

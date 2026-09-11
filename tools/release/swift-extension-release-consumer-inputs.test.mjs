@@ -26,6 +26,7 @@ function sourceCarrier() {
         asset("base-xcframework", `liboliphaunt-${VERSION}-apple-spm-xcframework.zip`, "zip", "liboliphaunt.xcframework", 1),
         asset("runtime-resources", `liboliphaunt-${VERSION}-runtime-resources-ios-datum64.tar.gz`, "tar.gz", "oliphaunt", 2),
         asset("icu-data", `liboliphaunt-${VERSION}-icu-data.tar.gz`, "tar.gz", ".", 3),
+        asset("icu-seed", `liboliphaunt-${VERSION}-icu-seed-ios-datum64.tar.gz`, "tar.gz", ".", 4),
       ],
       product: "liboliphaunt-native",
       tag: BASE_TAG,

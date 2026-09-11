@@ -97,28 +97,16 @@ describe('WASIX tools public validation', () => {
     }
   });
 
-  it('passes the database startup identity through unambiguous managed long options', async () => {
+  it('passes user arguments and input without manufacturing native connection arguments', async () => {
     toolRuntimeCalls.length = 0;
-    await pgDump(database).catch(() => undefined);
+    await pgDump(database, { args: ['--schema-only'] }).catch(() => undefined);
     await psql(database, { command: 'select 1' }).catch(() => undefined);
-
-    expect(toolRuntimeCalls).toHaveLength(2);
-    for (const call of toolRuntimeCalls) {
-      expect(call.args).toContain('--username=-application user');
-      expect(call.args).toContain('--dbname=-application database');
-      expect(call.args).not.toContain('-application database');
-    }
-  });
-
-  it('marks stdin scripts as non-interactive psql files', async () => {
-    toolRuntimeCalls.length = 0;
-    await psql(database, { script: 'select 1' }).catch(() => undefined);
-    await psql(database, { command: 'select 1' }).catch(() => undefined);
-
-    expect(toolRuntimeCalls[0]?.args).toContain('--file=-');
-    expect(toolRuntimeCalls[0]?.args).not.toContain('--command');
-    expect(toolRuntimeCalls[1]?.args).not.toContain('--file=-');
-    expect(toolRuntimeCalls[1]?.args).toContain('--command');
+    await psql(database, { script: 'select 2' }).catch(() => undefined);
+    expect(toolRuntimeCalls[0]?.args).toEqual(['--schema-only']);
+    expect(toolRuntimeCalls[1]?.args).toEqual([]);
+    expect(toolRuntimeCalls[1]?.command).toBe('select 1');
+    expect(toolRuntimeCalls[2]?.args).toEqual([]);
+    expect(new TextDecoder().decode(toolRuntimeCalls[2]?.stdin)).toBe('select 2');
   });
 
   it('strictly decodes successful output once at the public boundary', async () => {

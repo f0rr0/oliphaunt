@@ -15,6 +15,7 @@ import {
   NATIVE_CLUSTER_SEED_TARGETS,
   bindNativeClusterSeedManifest,
   validateNativeClusterSeedDirectory,
+  writeNativeSeedDirectories,
 } from "./native-cluster-seed-contract.mjs";
 
 const TOOL = "stage-native-cluster-seed.mjs";
@@ -131,6 +132,7 @@ export function stageNativeClusterSeed(argv) {
     const manifestPath = path.join(source, "manifest.properties");
     const manifest = bindNativeClusterSeedManifest(readFileSync(manifestPath), args.target, args.profile);
     writeFileSync(manifestPath, manifest);
+    writeNativeSeedDirectories(source);
     validateNativeClusterSeedDirectory(source, args.profile, {
       target: args.target,
       icuData: args.icuData,

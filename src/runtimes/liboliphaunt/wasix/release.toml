@@ -3,7 +3,7 @@ owner = "@oliphaunt/wasix"
 kind = "wasm-runtime"
 publish_targets = ["github-release-assets", "crates-io", "npm"]
 registry_packages = [
-  "crates:oliphaunt-icu",
+  "crates:oliphaunt-wasix-icu",
   "crates:liboliphaunt-wasix-portable",
   "crates:oliphaunt-wasix-tools",
   "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
@@ -16,15 +16,18 @@ registry_packages = [
   "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
   "npm:@oliphaunt/liboliphaunt-wasix",
   "npm:@oliphaunt/liboliphaunt-wasix-tools",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-linux-arm64-gnu",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-linux-x64-gnu",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-macos-arm64",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-windows-x64-msvc",
   "npm:@oliphaunt/wasix-icu",
 ]
 release_artifacts = [
   "release-assets",
 ]
-derived_version_files = ["src/runtimes/liboliphaunt/icu/Cargo.toml"]
-shared_source_paths = ["src/runtimes/liboliphaunt/icu"]
+derived_version_files = ["src/runtimes/liboliphaunt/wasix/crates/icu/Cargo.toml"]
 
 [compatibility_versions.liboliphaunt-wasix-icu]
 source_product = "liboliphaunt-wasix"
-path = "src/runtimes/liboliphaunt/icu/Cargo.toml"
+path = "src/runtimes/liboliphaunt/wasix/crates/icu/Cargo.toml"
 parser = "toml:package.version"

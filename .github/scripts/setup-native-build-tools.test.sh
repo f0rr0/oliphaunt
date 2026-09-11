@@ -118,3 +118,23 @@ fi
 [ "$(cat "$tmp/sleep-calls.log")" = $'15\n30' ] || fail "bounded retry backoff mismatch"
 grep -Fq 'apt tool installation failed after 3 attempts' "$tmp/failure.err" ||
   fail "terminal apt diagnostic missing"
+
+# Runner-provided browser and Microsoft feeds must not block unrelated build
+# packages. Exercise the real source filter against an isolated apt layout.
+mkdir -p "$tmp/apt/sources.list.d" "$tmp/apt-bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' >"$tmp/apt-bin/sudo"
+chmod 0555 "$tmp/apt-bin/sudo"
+printf '%s\n' \
+  'deb https://archive.ubuntu.com/ubuntu noble main' \
+  'deb https://dl.google.com/linux/chrome-stable/deb stable main' \
+  'deb https://packages.microsoft.com/repos/code stable main' >"$tmp/apt/sources.list"
+printf '%s\n' 'deb https://dl.google.com/linux/chrome/deb stable main' >"$tmp/apt/sources.list.d/chrome.list"
+printf '%s\n' 'Types: deb' 'URIs: https://dl.google.com/linux/chrome-stable/deb' 'Suites: stable' 'Components: main' >"$tmp/apt/sources.list.d/chrome.sources"
+printf '%s\n' 'deb https://archive.ubuntu.com/ubuntu noble-updates main' >"$tmp/apt/sources.list.d/ubuntu.list"
+sed "s|/etc/apt|$tmp/apt|g" "$root/.github/scripts/prepare-linux-apt.sh" >"$tmp/prepare-linux-apt.sh"
+PATH="$tmp/apt-bin:$tmp/bin:/usr/bin:/bin" bash "$tmp/prepare-linux-apt.sh"
+[ "$(grep -c '^deb ' "$tmp/apt/sources.list")" = "1" ] || fail "unrelated apt sources remain enabled"
+grep -q '^deb https://archive.ubuntu.com/' "$tmp/apt/sources.list" || fail "Ubuntu source was disabled"
+[ -f "$tmp/apt/sources.list.d/ubuntu.list" ] || fail "Ubuntu source file was disabled"
+[ -f "$tmp/apt/sources.list.d/chrome.list.disabled" ] || fail "Chrome list remains enabled"
+[ -f "$tmp/apt/sources.list.d/chrome.sources.disabled" ] || fail "Chrome deb822 source remains enabled"

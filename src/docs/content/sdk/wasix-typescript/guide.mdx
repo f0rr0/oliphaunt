@@ -176,19 +176,22 @@ database remains open and must be closed after the callback settles.
 
 ### Select extensions
 
-Import exact WASIX extension descriptors and pass them to `open()`:
+Install `@oliphaunt/extension-vector-wasix` separately. Contrib ships with the
+base SDK; select both descriptors explicitly:
 
 ```ts
-import pgtap from '@oliphaunt/extension-pgtap-wasix';
+import { Oliphaunt, extensions } from '@oliphaunt/wasix-ts';
+import vector from '@oliphaunt/extension-vector-wasix';
 
-const database = await Oliphaunt.open({ extensions: [pgtap] });
-await database.execute('CREATE EXTENSION pgtap');
+const database = await Oliphaunt.open({ extensions: [vector, extensions.hstore] });
+await database.execute('CREATE EXTENSION vector; CREATE EXTENSION hstore');
 ```
 
 In browsers, selection materializes only the verified carrier artifacts and
 required startup/preload configuration. On Node.js, Bun, Deno, and Electron,
-the addon embeds the frozen qualified catalog and validates each selected
-descriptor before resolving its SQL name to those exact compiled artifacts.
+the addon receives the installed package payloads and validates their owner,
+runtime compatibility, target, and hashes before loading them. External bytes
+are owned by their packages; the base addon includes the runtime and contrib.
 Reopen persistent data with the same selection. Neither path silently runs
 `CREATE EXTENSION`, `LOAD`, schema, post-create, upgrade, or migration SQL.
 Applications and ORM migrations own that ordinary PostgreSQL lifecycle.

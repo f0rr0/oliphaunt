@@ -23,7 +23,10 @@ vi.mock('../native-session.js', () => ({
   restoreNativeWasixDirect: vi.fn(),
 }));
 
-import { openWasixWithHost } from '../client.js';
+import { openWasixWithHost, Oliphaunt as browser } from '../client.js';
+import { directory } from '../storage/node.js';
+import { indexedDB } from '../storage/indexed-db.js';
+import { restoreNativeWasix, restoreNativeWasixDirect } from '../native-session.js';
 import type { OliphauntDatabase } from '../types.js';
 
 let crossOriginDescriptor: PropertyDescriptor | undefined;
@@ -96,3 +99,29 @@ function restoreGlobal(name: string, descriptor: PropertyDescriptor | undefined)
   if (descriptor === undefined) Reflect.deleteProperty(globalThis, name);
   else Object.defineProperty(globalThis, name, descriptor);
 }
+
+it('rejects host-incompatible storage before loading engines or touching restore bytes', async () => {
+  const load = vi.fn();
+  await expect(openWasixWithHost({ storage: directory('/db') } as never, load)).rejects.toThrow(
+    'native-only',
+  );
+  await expect(browser.restore(directory('/db') as never, [])).rejects.toThrow('native-only');
+  expect(load).not.toHaveBeenCalled();
+  const { Oliphaunt: native } = await import('../node-client.js');
+  await expect(native.open({ storage: indexedDB('db') } as never)).rejects.toThrow('browser-only');
+  await expect(native.restore(indexedDB('db') as never, [])).rejects.toThrow('browser-only');
+});
+
+it('passes the exact restore byte view to N-API without another JavaScript copy', async () => {
+  const bytes = Uint8Array.of(9, 1, 2, 9).subarray(1, 3);
+  const { Oliphaunt: native } = await import('../node-client.js');
+  const { Oliphaunt: direct } = await import('../direct-client.js');
+  await native.restore(directory('/db'), bytes);
+  await direct.restore(directory('/db'), bytes);
+  expect(vi.mocked(restoreNativeWasix).mock.calls.at(-1)?.[1]).toBe(bytes);
+  expect(vi.mocked(restoreNativeWasixDirect).mock.calls.at(-1)?.[1]).toBe(bytes);
+});
+
+it('rejects an explicit browser import in a native host', async () => {
+  await expect(import('../browser.js')).rejects.toThrow('requires a browser');
+});

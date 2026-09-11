@@ -1021,6 +1021,7 @@ function rejectRustRootSymbols(symbols, crateName, names) {
 }
 
 function addFeatureSymbol(featureSymbols, featureGate, symbol) {
+  if (featureGate === '__internal-tools') featureGate = 'tools';
   if (!featureGate) {
     return;
   }
@@ -1139,15 +1140,6 @@ function requireWasixRustFeatureSurface(surface) {
       );
     }
   }
-}
-
-function markdownFeatureList(featureSymbols) {
-  if (featureSymbols.length === 0) {
-    return '- none\n';
-  }
-  return `${featureSymbols
-    .map(([feature, symbol]) => `- \`${feature}\`: \`${symbol}\``)
-    .join('\n')}\n`;
 }
 
 function requireExtractorFixture(label, symbols, required, forbidden) {
@@ -1287,7 +1279,7 @@ function render() {
     'Kotlin SDK',
     kotlinCommon,
     [
-      'PostgresStartupGuc.name',
+      'ExtensionDescriptor.sqlName',
       'QueryField.name',
       'StatementResult.Command.result',
     ],
@@ -1494,16 +1486,6 @@ function render() {
     output += `\n### \`${feature}\` feature\n\n`;
     output += markdownList(wasixRustFeatureSurface.featureSymbols.get(feature) ?? []);
   }
-  output += `\n### Individual \`extension-*\` features\n\n`;
-  output +=
-    `Each leaf feature also enables \`extensions\`; the constant below additionally ` +
-    `requires the feature shown.\n\n`;
-  output += markdownFeatureList(
-    Array.from(wasixRustFeatureSurface.featureSymbols.entries())
-      .filter(([feature]) => feature.startsWith('extension-'))
-      .flatMap(([feature, symbols]) => symbols.map(symbol => [feature, symbol]))
-      .sort(([leftFeature], [rightFeature]) => leftFeature.localeCompare(rightFeature)),
-  );
   output += `\n## Native C ABI: liboliphaunt\n\n`;
   output += `### Types\n\n`;
   output += markdownList(nativeC.types);

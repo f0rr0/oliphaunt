@@ -13,7 +13,6 @@ import dev.oliphaunt.DatabaseStorage
 import dev.oliphaunt.Oliphaunt
 import dev.oliphaunt.OliphauntConfig
 import dev.oliphaunt.OliphauntDatabase
-import dev.oliphaunt.PostgresStartupGuc
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -334,7 +333,6 @@ class OliphauntModule(
   fun restoreBytes(
     storageKind: String,
     storagePath: String?,
-    storageName: String?,
     artifact: ByteArray,
     callback: OliphauntJsiPromiseCallback,
   ) {
@@ -342,10 +340,6 @@ class OliphauntModule(
       runCatching {
         val destination = when (storageKind) {
           "directory" -> File(validatePath(storagePath, "restore destination directory"))
-          "applicationData" -> File(
-            File(reactContext.filesDir, "Oliphaunt"),
-            validateApplicationDataName(storageName),
-          )
           else -> throw IllegalArgumentException("unknown restore destination kind '$storageKind'")
         }
         Oliphaunt.restore(
@@ -392,10 +386,6 @@ class OliphauntModule(
       "directory" -> DatabaseStorage.Directory(
         File(validatePath(config.string("storagePath"), "database storage directory")),
       )
-      "applicationData" -> {
-        val name = validateApplicationDataName(config.string("storageName"))
-        DatabaseStorage.Directory(File(File(reactContext.filesDir, "Oliphaunt"), name))
-      }
       else -> throw IllegalArgumentException("unknown database storage kind '$kind'")
     }
     val runtimeDirectory = reactNativeRuntimeDirectory(null)?.let(::File)
@@ -408,7 +398,8 @@ class OliphauntModule(
         startupGucs = config.startupGucs("startupGUCs"),
         username = username,
         database = database,
-        extensions = config.stringList("extensions"),
+        extensions = config.extensionDescriptors(),
+        icu = config.string("icuVersion")?.let { dev.oliphaunt.IcuData(it) },
       ),
       runtimeDirectory = runtimeDirectory,
       resourceRoot = null,
@@ -454,6 +445,19 @@ class OliphauntModule(
       }
     }
 
+    private fun ReadableMap.extensionDescriptors(): List<dev.oliphaunt.ExtensionDescriptor> {
+      val values = array("extensions") ?: return emptyList()
+      return (0 until values.size()).map { index ->
+        require(values.getType(index) == ReadableType.Map) { "extensions must contain descriptors" }
+        val value = requireNotNull(values.getMap(index))
+        dev.oliphaunt.ExtensionDescriptor(
+          sqlName = requireNotNull(value.string("sqlName")) { "extension sqlName is required" },
+          product = requireNotNull(value.string("product")) { "extension product is required" },
+          version = value.string("version"),
+        )
+      }
+    }
+
     private fun ReadableMap.startupIdentity(name: String): String? {
       val value = string(name) ?: return null
       if (value.isBlank()) {
@@ -465,16 +469,13 @@ class OliphauntModule(
       return value
     }
 
-    private fun ReadableMap.startupGucs(name: String): List<PostgresStartupGuc> =
-      stringList(name).map { assignment ->
+    private fun ReadableMap.startupGucs(name: String): Map<String, String> =
+      stringList(name).associate { assignment ->
         val separator = assignment.indexOf('=')
         if (separator < 0) {
           throw IllegalArgumentException("PostgreSQL startup GUC string must use name=value")
         }
-        PostgresStartupGuc(
-          name = assignment.substring(0, separator),
-          value = assignment.substring(separator + 1),
-        )
+        assignment.substring(0, separator) to assignment.substring(separator + 1)
       }
 
     private fun validatePath(value: String?, label: String): String {
@@ -486,48 +487,6 @@ class OliphauntModule(
       }
       return value
     }
-
-    private fun validateApplicationDataName(value: String?): String {
-      val name = value?.trim().orEmpty()
-      if (name == "." || name == ".." || !PORTABLE_STORAGE_NAME.matches(name)) {
-        throw IllegalArgumentException(
-          "applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen",
-        )
-      }
-      return name
-    }
-
-    private val PORTABLE_STORAGE_NAME = Regex("[A-Za-z0-9._-]{1,128}")
-
-    private fun validatePathOverride(value: String?, name: String): String? {
-      if (value == null) {
-        return null
-      }
-      if (value.isBlank()) {
-        throw IllegalArgumentException(pathOverrideMessage(name, PathOverrideError.Empty))
-      }
-      if (value.any { it.code == 0 }) {
-        throw IllegalArgumentException(pathOverrideMessage(name, PathOverrideError.Nul))
-      }
-      return value
-    }
-
-    private enum class PathOverrideError {
-      Empty,
-      Nul,
-    }
-
-    private fun pathOverrideMessage(name: String, error: PathOverrideError): String =
-      when (name to error) {
-        "runtimeDirectory" to PathOverrideError.Empty -> "runtimeDirectory must not be empty"
-        "runtimeDirectory" to PathOverrideError.Nul -> "runtimeDirectory must not contain NUL bytes"
-        "resourceRoot" to PathOverrideError.Empty -> "resourceRoot must not be empty"
-        "resourceRoot" to PathOverrideError.Nul -> "resourceRoot must not contain NUL bytes"
-        else -> when (error) {
-          PathOverrideError.Empty -> "$name must not be empty"
-          PathOverrideError.Nul -> "$name must not contain NUL bytes"
-        }
-      }
 
     private enum class StartupIdentityError {
       Empty,
