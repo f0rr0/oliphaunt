@@ -1290,6 +1290,10 @@ async function main() {
   await fs.writeFile(sqlExtensionCarrier, JSON.stringify(extensionCarrier(
     manifest.base, sqlOnly.extensions[0], sqlOnly.extensions, sqlOnly.carriers,
   )));
+  // Published base carriers do not contain external extensions. The consumer
+  // must select the matching standalone carrier rather than falling back to base.
+  const consumerBaseCarrier = path.join(root, "consumer-base-carrier.json");
+  await fs.writeFile(consumerBaseCarrier, JSON.stringify({ ...manifest, carriers: [], extensions: [] }));
   const consumer = path.join(root, "consumer");
   prepareExtensionReleaseConsumer({
     plan: {
@@ -1297,7 +1301,7 @@ async function main() {
       finalLink: { kind: "base-runtime", runtimeProduct: "liboliphaunt-native", runtimeVersion: manifest.base.version },
     },
     productsFile: path.join(sqlOutput, "extension-products.json"), releasePackage: sdk,
-    carrier: sqlCarrier, extensionCarriers: [sqlExtensionCarrier, earthdistanceCarrier], cache: path.join(root, "sql-cache"), output: consumer,
+    carrier: consumerBaseCarrier, extensionCarriers: [sqlExtensionCarrier, earthdistanceCarrier], cache: path.join(root, "sql-cache"), output: consumer,
   });
   run("swift", ["build", "--package-path", consumer, "--scratch-path", path.join(root, "../consumer-build")], { timeout: 180_000 });
   console.log(`swift-carrier-resolver.test.mjs: metadata, malicious ZIP, cache-tamper, and consumer checks passed; sql-only-package=${sqlOutput}`);

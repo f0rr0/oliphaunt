@@ -42,7 +42,7 @@ export function prepareExtensionReleaseConsumer({ plan, productsFile, releasePac
         for (const dependency of byName.get(name).dependencies) visit(dependency);
       };
       visit(row.sqlName);
-      const selectedCarriers = carriers.filter(({ document }) => document.entries.some(entry => required.has(entry.sqlName)));
+      const selectedCarriers = carriers.filter(({ document }) => document.entries.some(entry => required.has(entry.extension.sqlName)));
       const directory = path.join(output, "packages", row.product);
       const result = spawnSync(process.execPath, [
         path.join(import.meta.dirname, "render-extension-products.mjs"),
