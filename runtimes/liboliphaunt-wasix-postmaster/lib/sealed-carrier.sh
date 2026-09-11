@@ -79,8 +79,8 @@ fresh_aot_producer_recipe_sha256() {
     "$FRESH_ROOT/lib/publish-directory.c"
     "$FRESH_ROOT/lib/linear-memory-profile.mts"
     "$FRESH_ROOT/lib/linear-memory-transaction.mts"
-    "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts"
-    "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts"
+    "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts"
+    "$FRESH_ROOT/wasmer/bin/verify-postmaster-wasm-import.mts"
     "$REPO_ROOT/tools/packaging/strict-json.mts"
   )
   for guest_input in "${verifier_inputs[@]}"; do

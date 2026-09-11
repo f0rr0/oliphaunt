@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 . "$script_dir/common.sh"
-. "$script_dir/icu.sh"
+. "$script_dir/../../../third-party/icu/tools/build.sh"
 . "$script_dir/mobile-static-extensions.sh"
 . "$script_dir/mobile-postgis-extensions.sh"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"

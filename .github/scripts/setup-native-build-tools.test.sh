@@ -118,3 +118,50 @@ fi
 [ "$(cat "$tmp/sleep-calls.log")" = $'15\n30' ] || fail "bounded retry backoff mismatch"
 grep -Fq 'apt tool installation failed after 3 attempts' "$tmp/failure.err" ||
   fail "terminal apt diagnostic missing"
+
+# Exercise the Windows setup with executable tool shims. The official Windows
+# wheel has a different Kitware suffix from the Linux wheel of the same pin.
+mkdir -p "$tmp/windows/tools/dev" "$tmp/windows/flex" \
+  "$tmp/windows/cache/oliphaunt-native-tools/meson-1.10.0-ninja-1.13.0/Scripts"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$WINDOWS_FIXTURE/flex"\n' \
+  >"$tmp/windows/tools/dev/install-pinned-winflexbison.sh"
+windows_scripts="$tmp/windows/cache/oliphaunt-native-tools/meson-1.10.0-ninja-1.13.0/Scripts"
+for tool in python.exe meson.exe ninja.exe; do
+  printf '#!/usr/bin/env bash\nexit 99\n' >"$windows_scripts/$tool"
+done
+printf '#!/usr/bin/env bash\nprintf "1.10.0\\r\\n"\n' >"$windows_scripts/meson"
+printf '#!/usr/bin/env bash\nprintf "%%s\\r\\n" "$NINJA_FIXTURE_VERSION"\n' >"$windows_scripts/ninja"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2"\n' >"$tmp/bin/cygpath"
+touch "$tmp/windows/flex/win_flex.exe" "$tmp/windows/flex/win_bison.exe"
+chmod +x "$windows_scripts/"* "$tmp/bin/cygpath" "$tmp/windows/flex/"*
+
+# These command shims are invoked indirectly by the sourced installer.
+# shellcheck disable=SC2317
+run_windows_installer() (
+  # Loading the entrypoint on an unrecognized fixture host only defines its
+  # functions. Windows file checks are mocked solely for the fixed Perl path.
+  uname() { printf 'FixtureHost\n'; }
+  export PATH="$tmp/bin:/usr/bin:/bin"
+  unset CCACHE_DIR
+  export CCACHE_CALL_LOG="$tmp/ccache-calls.log"
+  # shellcheck source=.github/scripts/setup-native-build-tools.sh
+  source "$installer"
+  unset -f uname
+  repo_root="$tmp/windows"
+  export RUNNER_TEMP="$repo_root/cache" WINDOWS_FIXTURE="$repo_root"
+  export NINJA_FIXTURE_VERSION="$1"
+  unset GITHUB_PATH
+  function [() {
+    if [[ "${1:-}" == -x && "${2:-}" == /c/Strawberry/perl/bin/perl.exe ]]; then
+      return 0
+    fi
+    builtin [ "$@"
+  }
+  install_windows_tools
+)
+run_windows_installer 1.13.0.git.kitware.jobserver-pipe-1 >"$tmp/windows.out" 2>"$tmp/windows.err" ||
+  fail "official Windows Ninja wheel was rejected: $(cat "$tmp/windows.err")"
+if run_windows_installer 1.14.0 >"$tmp/windows-wrong.out" 2>"$tmp/windows-wrong.err"; then
+  fail "wrong Ninja version was accepted"
+fi
+grep -Fq 'got 1.14.0' "$tmp/windows-wrong.err" || fail "observed Ninja version missing from diagnostic"

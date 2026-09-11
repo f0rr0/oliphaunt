@@ -427,6 +427,14 @@ the resulting evidence in task 30.
   shared patch authority, explicit ordered lane series, no postmaster borrowing
   files from the embedded WASIX product. Preserve the selected deltas and their
   build guards; classification is not permission to drop optimizations.
+  ICU checkpoint: native and WASIX now consume
+  `third-party/icu/tools/build.sh` through the existing ICU source dependency.
+  Native tools retain their configured absolute path and restore the previous
+  build on failure; target installs validate a `DESTDIR` stage before replacing
+  the installed prefix. The owner test proves repeat/changed-input behavior and
+  configure/build/install failure retention; real cached Linux ICU installation
+  preserves library bytes. This does not establish crash-safe concurrent cache
+  publication or replace the remaining platform qualification.
 - [ ] **06b — Consolidate TypeScript tooling on Bun and retire pnpm.** Depends
   04. Follow the Bun migration contract below. Bun is the maintainer TypeScript
   runtime and test runner; target Bun workspaces, one root bun.lock and no pnpm
@@ -462,7 +470,7 @@ the resulting evidence in task 30.
   Use the same behaviour-based query proof contract as 07. Browser/RN adapters
   keep only their conversion and host-specific checks; no duplicate decoder
   suite in every SDK or assertions against implementation source text.
-- [ ] **09 — Extract shared native Rust execution.** Depends 07. Move the
+- [x] **09 — Extract shared native Rust execution.** Depends 07. Move the
   minimal actual native embedded lifecycle/session API out of the public SDK.
   Keep server spawning and broker transport out. Trace config/error/resources
   and cancellation types before extraction to avoid circular dependencies.
@@ -569,7 +577,7 @@ the resulting evidence in task 30.
   SQL/query/chunk/cancel envelopes are removed. Lifecycle control stays separate.
   **Remaining:** final supported-platform packaged consumer qualification; Linux
   and its Node/Bun/Deno host matrix already pass.
-- [ ] **11 — Extract pgwire-server library and CLI.** Depends 07. Move the
+- [x] **11 — Extract pgwire-server library and CLI.** Depends 07. Move the
   existing WASIX proxy and CLI under one independently versioned owner. Remove
   SDK back-dependencies by passing existing public/runtime facilities. Preserve
   the currently supported connection scheduling, protocol and storage behavior.
@@ -3313,3 +3321,30 @@ validates. Maintainer examples inspect affectedness and run explicit owner
 tasks: query-only or wildcard Moon run commands do not safely express the
 intended local selection. This checkpoint does not qualify Windows, Apple or
 mobile artifacts.
+
+### Query and extraction acceptance audit — 2026-09-11
+
+Tasks 09 and 11 satisfy their extraction acceptance: the public native SDK,
+broker and addon consume the shared native bindings without a public-SDK
+backedge; lifecycle, cancellation, generation and persistence checks pass on
+Linux. The separately packaged pgwire-server CLI accepts an ordinary sqlx
+client, and six real socket startup, malformed-input, reconnect and shutdown
+checks pass. These completed boundaries do not close the separate Windows,
+Apple or mobile qualification tasks.
+
+Tasks 07/08 have normal shared dependencies, packed consumer and transitive
+affectedness evidence. A disposable reference comparison now also runs the
+existing PostgreSQL behavior corpus against a separately started PostgreSQL 18
+server through `pg` and the installed native TS SDK through its shared query
+package. Six comparisons cover typed values, arrays/JSON, views and aggregates;
+SQLSTATE 23505, recovery and transaction rollback agree. The same comparator
+rejects an intentionally changed result (42 to 43), then accepts the original.
+No source perturbation or permanent mutation framework remains. A corresponding
+Rust query-owner reference comparison is still unproven; retain that specific
+07 acceptance item instead of repeating the completed extraction.
+
+Hosted Windows broker packaging exposed native child lookup selecting the WSL
+launcher instead of Git Bash. The common Moon setup now publishes Git's real
+`bin` path. Windows addon packaging separately exposed a missing app-local
+VCRUNTIME DLL; its raw and npm carriers now stage the existing verified VC
+closure before validation. Hosted rerun is required to qualify these fixes.

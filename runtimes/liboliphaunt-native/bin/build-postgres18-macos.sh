@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 . "$script_dir/common.sh"
-. "$script_dir/icu.sh"
+. "$script_dir/../../../third-party/icu/tools/build.sh"
 . "$script_dir/postgis-dependency-cache.sh"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
 . "$repo_root/third-party/postgres/fetch-source.sh"
@@ -1219,7 +1219,7 @@ desired_build_hash="$(
     printf 'native_cflags=%s\n' "$native_cflags"
     printf 'apple_toolchain=%s\n' "$apple_toolchain_hash"
     printf 'icu_source=%s\n' "$(oliphaunt_icu_source_commit "$icu_source_dir")"
-    printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
+    printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256)"
     printf 'postgres_configure=with-icu\n'
     printf 'build_script=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
     printf 'backend_objects_makefile=%s\n' "$(shasum -a 256 "$script_dir/postgres-backend-objects.mk" | awk '{print $1}')"
@@ -2343,7 +2343,6 @@ mkdir -p "$out_dir"
 icu_host="$(sh "$icu_source_dir/config.guess")"
 oliphaunt_icu_build_target \
   "$icu_source_dir" \
-  "$script_dir" \
   "$icu_native_build_dir" \
   "$icu_build_dir" \
   "$icu_prefix" \

@@ -45,15 +45,15 @@ case "$family" in
   *) echo 'family must be native or wasix' >&2; exit 2 ;;
 esac
 case "$profile" in
-  standard) icu=""; icu_args=() ;;
-  icu) icu="${icu:-$root/target/database-resources/icu/data/share/icu}"; icu_args=(--icu-data "$icu") ;;
+  standard) icu="" ;;
+  icu) icu="${icu:-$root/target/database-resources/icu/data/share/icu}" ;;
   *) echo 'profile must be standard or icu' >&2; exit 2 ;;
 esac
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 if [ "$family" = native ]; then
   bash database-resources/seeds/native/tools/stage-native-cluster-seed.sh \
-    --runtime "$runtime" --destination "$work/seed" --target "$target" --profile "$profile" "${icu_args[@]}"
+    --runtime "$runtime" --destination "$work/seed" --target "$target" --profile "$profile" ${icu:+--icu-data} ${icu:+"$icu"}
   pgdata="$work/seed/files"
 else
   cargo run -p oliphaunt-wasix-seed-producer --features cluster-seed-runner --locked -- \
@@ -61,4 +61,4 @@ else
   pgdata="$work/seed/pgdata"
 fi
 bash tools/ci/with-projects.sh database-resources/seeds/package.mts --family "$family" --profile "$profile" --target "$target" \
-  --pgdata "$pgdata" --runtime "$runtime" "${icu_args[@]}" "$@"
+  --pgdata "$pgdata" --runtime "$runtime" ${icu:+--icu-data} ${icu:+"$icu"} "$@"

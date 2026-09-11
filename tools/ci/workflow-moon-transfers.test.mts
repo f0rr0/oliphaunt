@@ -26,6 +26,43 @@ const tasks = new Map(
 );
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('artifact production waits for source check and test results without a dependency cycle', () => {
+    const jobs = workflow.jobs;
+    const sourceJobs = new Set([
+      'affected',
+      'release-intent',
+      'check-targets',
+      'policy-targets',
+      'test-targets',
+      'checks',
+      'tests',
+    ]);
+    const ancestors = (id, visiting = new Set()) => {
+      assert(!visiting.has(id), `workflow dependency cycle at ${id}`);
+      const chain = new Set([...visiting, id]);
+      const result = new Set();
+      for (const dependency of [jobs[id].needs ?? []].flat()) {
+        assert(jobs[dependency], `${id} requires unknown job ${dependency}`);
+        result.add(dependency);
+        for (const ancestor of ancestors(dependency, chain)) result.add(ancestor);
+      }
+      return result;
+    };
+    for (const [id, job] of Object.entries(jobs)) {
+      const dependencies = ancestors(id);
+      if (sourceJobs.has(id) || !dependencies.has('affected')) continue;
+      assert(dependencies.has('checks'), `${id} can start before source checks`);
+      assert(dependencies.has('tests'), `${id} can start before source tests`);
+      const direct = [job.needs ?? []].flat();
+      if (direct.includes('checks') && direct.includes('tests') && direct.length === 3)
+        assert(
+          !/always\(|!cancelled\(/u.test(job.if ?? ''),
+          `${id} must require successful source gates`,
+        );
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('cross-workflow artifact gates reference existing producer job names', () => {
     const jobNames = Object.values(workflow.jobs).map((job) => job.name);
     for (const file of ['release.yml', 'mobile-e2e.yml']) {

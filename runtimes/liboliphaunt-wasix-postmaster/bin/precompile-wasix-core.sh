@@ -26,7 +26,7 @@ fresh_require_patched_postmaster_compiler \
 compiler_hash="$(fresh_wasmer_bin_hash "$compiler_bin")"
 compiler_cache_dir="$(fresh_wasmer_cache_dir "$compiler_bin")"
 cache_bucket="$compiler_cache_dir/compiled/$(fresh_wasmer_compiler_cache_bucket llvm aggressive "$FRESH_WASMER_ARTIFACT_ABI_VERSION")"
-side_policy="$FRESH_ROOT/runtime/policies/sealed-side-modules.v1.tsv"
+side_policy="$FRESH_ROOT/wasmer/policies/sealed-side-modules.v1.tsv"
 compiler_threads="${WASMER_COMPILER_THREADS:-$(fresh_jobs)}"
 wasmer_dir="$FRESH_WORK_ROOT/tools/wasmer-home"
 log="$REPORT_DIR/wasix-core-precompile.log"

@@ -523,6 +523,12 @@ impl error::Error for Error {
     }
 }
 
+impl From<oliphaunt_query::Error> for Error {
+    fn from(error: oliphaunt_query::Error) -> Self {
+        Self::from_anyhow(crate::oliphaunt::query::query_core_error(error))
+    }
+}
+
 impl fmt::Display for ClassifiedCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.message.fmt(f)

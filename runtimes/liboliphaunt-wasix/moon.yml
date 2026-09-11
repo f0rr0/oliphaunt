@@ -157,7 +157,9 @@ tasks:
       - /target/oliphaunt-wasix/wasix-build/build/install/**/*
       - /target/oliphaunt-wasix/wasix-build/work/docker-oliphaunt/**/*
     options:
-      cache: local
+      # Container Makefiles link to /work; keep this incremental build tree local
+      # to the compiler. Docker owns its cache; portable artifacts retain Moon CAS.
+      cache: false
       runFromWorkspaceRoot: true
       runInCI: true
   runtime-portable:
@@ -300,29 +302,9 @@ tasks:
       - static
       - format
       - requires-rust
-    command: cargo fmt -p liboliphaunt-wasix-portable -p oliphaunt-wasix-tools -p liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p liboliphaunt-wasix-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p liboliphaunt-wasix-aot-x86_64-pc-windows-msvc -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --check
+    command: cargo fmt -p liboliphaunt-wasix-portable -p liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu -p liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu -p liboliphaunt-wasix-aot-aarch64-apple-darwin -p liboliphaunt-wasix-aot-x86_64-pc-windows-msvc --check
     inputs:
-      - /runtimes/liboliphaunt-wasix/crates/assets/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/assets/Cargo.toml
-      - /postgres-tools/wasix/crates/tools/**/*.rs
-      - /postgres-tools/wasix/crates/tools/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-unknown-linux-gnu/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-unknown-linux-gnu/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/aarch64-unknown-linux-gnu/**/*.rs
-      - /postgres-tools/wasix/crates/aot/aarch64-unknown-linux-gnu/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-unknown-linux-gnu/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-unknown-linux-gnu/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/x86_64-unknown-linux-gnu/**/*.rs
-      - /postgres-tools/wasix/crates/aot/x86_64-unknown-linux-gnu/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-apple-darwin/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-apple-darwin/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/aarch64-apple-darwin/**/*.rs
-      - /postgres-tools/wasix/crates/aot/aarch64-apple-darwin/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-pc-windows-msvc/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-pc-windows-msvc/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/x86_64-pc-windows-msvc/**/*.rs
-      - /postgres-tools/wasix/crates/aot/x86_64-pc-windows-msvc/Cargo.toml
-      - /clippy.toml
+      - "@group(cargo-carrier-sources)"
       - "@group(cargo-workspace)"
     options:
       runFromWorkspaceRoot: true
@@ -331,32 +313,13 @@ tasks:
       - quality
       - static
       - requires-rust
-    command: cargo clippy -p liboliphaunt-wasix-portable -p oliphaunt-wasix-tools -p liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p liboliphaunt-wasix-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p liboliphaunt-wasix-aot-x86_64-pc-windows-msvc -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --all-targets --locked -- -D warnings
+    command: cargo clippy -p liboliphaunt-wasix-portable -p liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu -p liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu -p liboliphaunt-wasix-aot-aarch64-apple-darwin -p liboliphaunt-wasix-aot-x86_64-pc-windows-msvc --all-targets --locked -- -D warnings
     env:
       CARGO_TARGET_DIR: target
     inputs:
-      - /runtimes/liboliphaunt-wasix/crates/assets/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/assets/Cargo.toml
-      - /postgres-tools/wasix/crates/tools/**/*.rs
-      - /postgres-tools/wasix/crates/tools/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-unknown-linux-gnu/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-unknown-linux-gnu/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/aarch64-unknown-linux-gnu/**/*.rs
-      - /postgres-tools/wasix/crates/aot/aarch64-unknown-linux-gnu/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-unknown-linux-gnu/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-unknown-linux-gnu/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/x86_64-unknown-linux-gnu/**/*.rs
-      - /postgres-tools/wasix/crates/aot/x86_64-unknown-linux-gnu/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-apple-darwin/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/aarch64-apple-darwin/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/aarch64-apple-darwin/**/*.rs
-      - /postgres-tools/wasix/crates/aot/aarch64-apple-darwin/Cargo.toml
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-pc-windows-msvc/**/*.rs
-      - /runtimes/liboliphaunt-wasix/crates/aot/x86_64-pc-windows-msvc/Cargo.toml
-      - /postgres-tools/wasix/crates/aot/x86_64-pc-windows-msvc/**/*.rs
-      - /postgres-tools/wasix/crates/aot/x86_64-pc-windows-msvc/Cargo.toml
-      - /clippy.toml
+      - "@group(cargo-carrier-sources)"
       - "@group(cargo-workspace)"
+      - /clippy.toml
     options:
       runFromWorkspaceRoot: true
   packaging-unit:

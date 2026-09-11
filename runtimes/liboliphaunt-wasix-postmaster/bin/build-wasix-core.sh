@@ -135,9 +135,9 @@ compute_source_signature() {
       "$FRESH_ROOT/bin/apply-wasix-core-overlay.sh" \
       "$FRESH_ROOT/lib/common.sh" \
       "$FRESH_ROOT/lib/wasix-build-lock.sh" \
-      "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" \
-      "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
-      "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" \
+      "$FRESH_ROOT/wasmer/bin/verify-postmaster-wasm-import.mts" \
+      "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
+      "$FRESH_ROOT/wasmer/bin/analyze-wasm-concurrency.sh" \
       "$FRESH_ROOT/bin/seal-wasix-core-exports.sh" \
       "$FRESH_ROOT/bin/seal-wasix-linear-memory.sh" \
       "$FRESH_ROOT/lib/guest-build-provenance.mts" \
@@ -145,9 +145,9 @@ compute_source_signature() {
       "$FRESH_ROOT/lib/linear-memory-profile.mts" \
       "$REPO_ROOT/tools/packaging/strict-json.mts" \
       "$FRESH_ROOT/lib/sealed-export-chain.mts" \
-      "$FRESH_ROOT/runtime/policies/sealed-main-runtime-exports.v1.txt" \
-      "$FRESH_ROOT/runtime/policies/sealed-main-dlsym-exports.v1.txt" \
-      "$FRESH_ROOT/runtime/policies/sealed-side-modules.v1.tsv" \
+      "$FRESH_ROOT/wasmer/policies/sealed-main-runtime-exports.v1.txt" \
+      "$FRESH_ROOT/wasmer/policies/sealed-main-dlsym-exports.v1.txt" \
+      "$FRESH_ROOT/wasmer/policies/sealed-side-modules.v1.tsv" \
       "$FRESH_ROOT/tools/sealed-export-closure/Cargo.toml" \
       "$FRESH_ROOT/tools/sealed-export-closure/Cargo.lock" \
       "$FRESH_ROOT/tools/sealed-export-closure/src/main.rs" \
@@ -317,7 +317,7 @@ else
 fi
 
 if ! DOCKER_IMAGE="$FRESH_WASIX_DOCKER_IMAGE" \
-  "$FRESH_ROOT/runtime/bin/validate-runtime-capabilities.sh" --validate-sysroot-only >>"$log" 2>&1; then
+  "$FRESH_ROOT/wasmer/bin/validate-runtime-capabilities.sh" --validate-sysroot-only >>"$log" 2>&1; then
   {
     printf '\n## Result\n\n'
     printf -- '- Status: `fail`\n'
@@ -455,7 +455,7 @@ status=$?
 set -e
 
 if [ "$status" -eq 0 ] && [ "$mode" = build ]; then
-  bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" \
+  bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-wasm-import.mts" \
     "$WASIX_INSTALL_DIR/bin/postgres" >>"$log" 2>&1 || status=$?
 fi
 
@@ -464,7 +464,7 @@ if [ "$status" -eq 0 ] && [ "$mode" = build ]; then
   if [ -n "$expected_atomic_fence_total" ]; then
     concurrency_args+=(--expected-total "$expected_atomic_fence_total")
   fi
-  bash "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
+  bash "$FRESH_ROOT/wasmer/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
     "$WASIX_INSTALL_DIR/bin/postgres" "${concurrency_args[@]}" >>"$log" 2>&1 || status=$?
 fi
 
@@ -489,7 +489,7 @@ then
         --install-dir "$WASIX_INSTALL_DIR" \
         --predecessor-receipt "$sealed_export_receipt"
 
-      bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" \
+      bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-wasm-import.mts" \
         "$WASIX_INSTALL_DIR/bin/postgres"
       fresh_require_start_proof_tool \
         "$FRESH_START_PROOF_BIN" \
@@ -532,7 +532,7 @@ then
           "$final_start_proof_pending" "$final_start_proof"
         bun "$durable_publication" discard-private "$final_start_proof_pending"
         bun \
-          "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
+          "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
           --expected-total "$expected_final_atomic_fence_total" \
           --latch-state-contract packed-atomic-v1 \
           --verified-receipt "$final_concurrency_receipt" \
@@ -585,7 +585,7 @@ then
             "$final_start_proof_size" "$final_start_proof_sha"
         fi
 
-        bash "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
+        bash "$FRESH_ROOT/wasmer/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
           "$WASIX_INSTALL_DIR/bin/postgres" \
           --expected-total "$expected_final_atomic_fence_total" \
           --latch-state-contract packed-atomic-v1 \
@@ -603,7 +603,7 @@ then
           final_concurrency_size final_concurrency_sha \
           <<<"$final_concurrency_identity"
         bun \
-          "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
+          "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
           --expected-total "$expected_final_atomic_fence_total" \
           --latch-state-contract packed-atomic-v1 \
           --verified-receipt "$final_concurrency_receipt_pending" \
@@ -653,7 +653,7 @@ if [ "$status" -eq 0 ]; then
       }
     fi
     concurrency_contract_output="$(
-      bun "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
+      bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
         "${concurrency_args[@]}" "$WASIX_INSTALL_DIR/bin/postgres"
     )" || exit
     atomic_fence_total="$(

@@ -475,7 +475,7 @@ jobs:
         run: bun .github/scripts/check-ci-gate.mts selected
 
   extension-artifacts-native-linux:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
@@ -483,7 +483,7 @@ jobs:
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   extension-artifacts-native-android:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
@@ -491,7 +491,7 @@ jobs:
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   extension-artifacts-native-ios:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_ios).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
@@ -499,7 +499,7 @@ jobs:
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   extension-artifacts-native-other:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_other).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
@@ -665,7 +665,7 @@ jobs:
           esac
 
   liboliphaunt-native-desktop-linux:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/liboliphaunt-native-desktop.yml
     with:
@@ -673,7 +673,7 @@ jobs:
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   liboliphaunt-native-desktop-other:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_other).include[0] != null }}
     uses: ./.github/workflows/liboliphaunt-native-desktop.yml
     with:
@@ -699,6 +699,8 @@ jobs:
     name: Builds / Native Runtime (${{ matrix.target }})
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android') }}
     strategy:
       fail-fast: false
@@ -780,6 +782,8 @@ jobs:
     name: Builds / Native Runtime (${{ matrix.target }})
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios') }}
     strategy:
       fail-fast: false
@@ -1074,6 +1078,8 @@ jobs:
     name: Builds / Rust SDK Package
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'rust-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1145,7 +1151,7 @@ jobs:
           if-no-files-found: error
 
   broker-runtime-linux:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.broker_runtime_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/broker-runtime.yml
     with:
@@ -1153,7 +1159,7 @@ jobs:
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   broker-runtime-other:
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.broker_runtime_matrix_other).include[0] != null }}
     uses: ./.github/workflows/broker-runtime.yml
     with:
@@ -1179,6 +1185,8 @@ jobs:
     name: Builds / Node.js Direct (${{ matrix.target }})
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'node-direct') }}
     strategy:
       fail-fast: false
@@ -1440,7 +1448,7 @@ jobs:
 
   swift-bindings:
     name: Builds / Swift Native Bindings
-    needs: [affected]
+    needs: [affected, checks, tests]
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'swift-bindings') }}
     runs-on: macos-26
     timeout-minutes: 30
@@ -1521,6 +1529,8 @@ jobs:
     name: Builds / Kotlin SDK Package
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'kotlin-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1636,6 +1646,8 @@ jobs:
       producer_receipt: ${{ steps.query_producer_receipt.outputs.receipt }}
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -1712,7 +1724,7 @@ jobs:
         run: |
           PRODUCER_MOON_VERSION="$(moon --version)"
           export PRODUCER_MOON_VERSION
-          bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts
+          bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts sdks/ts-query
 
   native-consumers:
     name: Builds / Native Product Consumers
@@ -1876,6 +1888,8 @@ jobs:
     name: Builds / WASIX Rust Binding Package
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-rust-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1918,6 +1932,8 @@ jobs:
     name: Builds / liboliphaunt WASIX Runtime
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -2263,6 +2279,8 @@ jobs:
     name: Builds / WASIX Postmaster / Portable + qualification
     needs:
       - affected
+      - checks
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240

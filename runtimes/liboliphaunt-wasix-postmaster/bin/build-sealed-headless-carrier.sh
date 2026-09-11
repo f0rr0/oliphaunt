@@ -174,7 +174,7 @@ fresh_is_sha256 "$linear_memory_install_receipt_sha256" ||
 expected_atomic_fence_total="$(
   fresh_manifest_value "$guest_build_receipt_source" atomic_fence_total
 )"
-bun "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
+bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
   --expected-total "$expected_atomic_fence_total" \
   --latch-state-contract packed-atomic-v1 \
   --verified-receipt "$final_wasm_concurrency_receipt_source" \
@@ -226,7 +226,7 @@ expected_cache_bucket="$(cd "$expected_cache_bucket" && pwd -P)"
   fail "AOT cache bucket is not bound to the selected producer: expected $expected_cache_bucket, got $cache_bucket"
 }
 
-side_module_policy="$FRESH_ROOT/runtime/policies/sealed-side-modules.v1.tsv"
+side_module_policy="$FRESH_ROOT/wasmer/policies/sealed-side-modules.v1.tsv"
 [ -f "$side_module_policy" ] && [ ! -L "$side_module_policy" ] || {
   fail "missing regular sealed side-module policy: $side_module_policy"
 }

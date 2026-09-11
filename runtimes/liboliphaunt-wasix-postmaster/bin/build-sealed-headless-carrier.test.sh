@@ -402,8 +402,8 @@ cp "$project_root/lib/verify-sealed-carrier.mts" "$recipe_fixture/lib/"
 cp "$project_root/lib/sealed-export-chain.mts" "$recipe_fixture/lib/"
 cp "$project_root/lib/publish-directory.c" "$project_root/lib/guest-build-provenance.mts" "$project_root/lib/build-sealed-carrier.mts" "$recipe_fixture/lib/"
 cp "$project_root/lib/linear-memory-profile.mts" "$project_root/lib/linear-memory-transaction.mts" "$recipe_fixture/lib/"
-mkdir -p "$recipe_fixture/runtime/bin"
-cp "$project_root/wasmer/bin/verify-postmaster-concurrency-contract.mts" "$project_root/wasmer/bin/verify-postmaster-wasm-import.mts" "$recipe_fixture/runtime/bin/"
+mkdir -p "$recipe_fixture/wasmer/bin"
+cp "$project_root/wasmer/bin/verify-postmaster-concurrency-contract.mts" "$project_root/wasmer/bin/verify-postmaster-wasm-import.mts" "$recipe_fixture/wasmer/bin/"
 fixture_producer_recipe="$(FRESH_ROOT="$recipe_fixture" \
   fresh_aot_producer_recipe_sha256 \
     "$output/wasmer-build.receipt" \

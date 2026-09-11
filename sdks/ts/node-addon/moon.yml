@@ -123,6 +123,7 @@ tasks:
       - "/tools/release/platform-compatibility-policy.mts"
       - "/tools/release/platform-compatibility-policy.test.mts"
       - "/tools/packaging/platform-binary-contract.mts"
+      - "/tools/packaging/windows-vc-runtime-closure.mts"
       - "/tools/packaging/strip-native-binaries.sh"
       - "/tools/packaging/platform-binary-contract.test.mts"
       - "/sdks/ts/node-addon/tools/package-node-direct-runtime.sh"

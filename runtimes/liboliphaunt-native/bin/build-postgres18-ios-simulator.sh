@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/common.sh"
-. "$script_dir/icu.sh"
+. "$script_dir/../../../third-party/icu/tools/build.sh"
 . "$script_dir/mobile-static-extensions.sh"
 . "$script_dir/mobile-postgis-extensions.sh"
 script_path="$script_dir/$(basename "$0")"
@@ -240,7 +240,7 @@ desired_hash() {
     printf 'ar=%s\n' "$ar_path"
     printf 'ranlib=%s\n' "$ranlib_path"
     printf 'icu_source=%s\n' "$(oliphaunt_icu_source_commit "$icu_source_dir")"
-    printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
+    printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256)"
     printf 'native_cflags=%s\n' "$native_cflags"
     printf 'liboliphaunt_cflags=%s\n' "$liboliphaunt_cflags"
     printf 'pg_extension_cflags=%s\n' "$pg_extension_cflags"
@@ -460,7 +460,6 @@ configure_source() {
 build_icu() {
   oliphaunt_icu_build_target \
     "$icu_source_dir" \
-    "$script_dir" \
     "$icu_native_build_dir" \
     "$icu_build_dir" \
     "$icu_prefix" \

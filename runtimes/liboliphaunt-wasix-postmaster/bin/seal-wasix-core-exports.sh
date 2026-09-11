@@ -175,7 +175,7 @@ validate_existing_export_generation() {
     --install-root "$install_dir" \
     --project-root "$FRESH_ROOT" ||
     fail 'installed sealed export proof chain is invalid'
-  bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" "$postgres" >/dev/null ||
+  bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-wasm-import.mts" "$postgres" >/dev/null ||
     fail 'installed sealed export module import contract is invalid'
   fresh_require_start_proof_tool \
     "$FRESH_START_PROOF_BIN" \
@@ -188,7 +188,7 @@ validate_existing_export_generation() {
     fail 'installed sealed export deterministic-start proof differs'
   }
   remove_completion_path "$start_validation_pending"
-  bun "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.mts" \
+  bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
     --expected-total "$expected_total" \
     --latch-state-contract packed-atomic-v1 \
     --verified-receipt "$installed_concurrency_receipt" \
@@ -365,9 +365,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 readonly tool_manifest="$FRESH_ROOT/tools/sealed-export-closure/Cargo.toml"
-readonly mandatory_policy="$FRESH_ROOT/runtime/policies/sealed-main-runtime-exports.v1.txt"
-readonly dlsym_policy="$FRESH_ROOT/runtime/policies/sealed-main-dlsym-exports.v1.txt"
-readonly side_manifest="$FRESH_ROOT/runtime/policies/sealed-side-modules.v1.tsv"
+readonly mandatory_policy="$FRESH_ROOT/wasmer/policies/sealed-main-runtime-exports.v1.txt"
+readonly dlsym_policy="$FRESH_ROOT/wasmer/policies/sealed-main-dlsym-exports.v1.txt"
+readonly side_manifest="$FRESH_ROOT/wasmer/policies/sealed-side-modules.v1.tsv"
 for required in "$tool_manifest" "$mandatory_policy" "$dlsym_policy" "$side_manifest"; do
   [ -f "$required" ] && [ ! -L "$required" ] || fail "missing regular closure input: $required"
 done
@@ -498,11 +498,11 @@ chmod --reference="$postgres" "$stage/bin/postgres"
     "${side_modules[@]}"
 )
 
-bun "$FRESH_ROOT/runtime/bin/verify-postmaster-wasm-import.mts" "$stage/bin/postgres"
+bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-wasm-import.mts" "$stage/bin/postgres"
 fresh_require_start_proof_tool "$FRESH_START_PROOF_BIN" "$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT"
 "$FRESH_START_PROOF_BIN" "$stage/bin/postgres" >"$start_proof"
 
-bash "$FRESH_ROOT/runtime/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
+bash "$FRESH_ROOT/wasmer/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
   "$stage/bin/postgres" \
   --expected-total "$expected_total" \
   --latch-state-contract packed-atomic-v1 \

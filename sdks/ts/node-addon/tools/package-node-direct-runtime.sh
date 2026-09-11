@@ -111,6 +111,10 @@ mkdir -p "$asset_stage"
 cp "$addon_file" "$asset_stage/oliphaunt_node.node"
 tools/dev/bun.sh tools/packaging/release-notices.mts stage "$asset_stage" --profile source-sdk
 tools/dev/bun.sh sdks/ts/node-addon/tools/dependency-license-contract.mts stage "$asset_stage" --target "$target"
+if [ "$platform" = "windows" ]; then
+  tools/dev/bun.sh tools/packaging/windows-vc-runtime-closure.mts stage \
+    --root "$asset_stage" --destination "$asset_stage"
+fi
 tools/dev/bun.sh tools/packaging/platform-binary-contract.mts --target "$target" --root "$asset_stage"
 if [ "$platform" = "linux" ]; then
   tools/packaging/check-linux-consumer-baseline.sh --target "$target" --root "$asset_stage"
@@ -170,6 +174,11 @@ cp -R "$package_source/." "$package_work/"
 rm -rf "$package_work/prebuilds"
 mkdir -p "$package_work/prebuilds"
 cp "$addon_file" "$package_work/prebuilds/oliphaunt_node.node"
+if [ "$platform" = "windows" ]; then
+  tools/dev/bun.sh tools/packaging/windows-vc-runtime-closure.mts stage \
+    --root "$package_work" --source-dir "$asset_stage" \
+    --destination "$package_work/prebuilds"
+fi
 tools/dev/bun.sh tools/packaging/release-notices.mts stage "$package_work" --profile source-sdk
 tools/dev/bun.sh sdks/ts/node-addon/tools/dependency-license-contract.mts stage "$package_work" --target "$target"
 find "$package_work" -type f -exec chmod 0644 {} +

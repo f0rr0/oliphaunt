@@ -158,10 +158,12 @@ install_windows_tools() {
     echo 'setup-native-build-tools.sh: pinned Meson setup failed' >&2
     return 1
   }
-  # The pinned PyPI distribution includes Kitware's jobserver patch suffix.
-  case "$(ninja --version | tr -d '\r')" in
-    1.13.0|1.13.0.gd74ef.kitware.jobserver-pipe-1) ;;
-    *) echo 'setup-native-build-tools.sh: pinned Ninja setup failed' >&2; return 1 ;;
+  # The pinned PyPI wheels report platform-specific Kitware patch suffixes.
+  local ninja_version
+  ninja_version="$(ninja --version | tr -d '\r')"
+  case "$ninja_version" in
+    1.13.0|1.13.0.gd74ef.kitware.jobserver-pipe-1|1.13.0.git.kitware.jobserver-pipe-1) ;;
+    *) echo "setup-native-build-tools.sh: expected Ninja from the pinned 1.13.0 distribution, got $ninja_version" >&2; return 1 ;;
   esac
   if [ -n "${GITHUB_PATH:-}" ]; then
     cygpath -w "$meson_scripts" >>"$GITHUB_PATH"

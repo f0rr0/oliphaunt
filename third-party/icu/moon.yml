@@ -7,5 +7,16 @@ tags:
 fileGroups:
   sources:
     - source.toml
+    - tools/build.sh
+    - /database-resources/icu/tools/data.sh
   legal:
     - LICENSE*
+tasks:
+  test:
+    command: bash third-party/icu/tools/build.test.sh
+    tags: [quality, unit]
+    inputs:
+      - "@group(sources)"
+      - tools/build.test.sh
+    options:
+      runFromWorkspaceRoot: true

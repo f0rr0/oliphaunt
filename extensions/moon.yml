@@ -62,6 +62,7 @@ fileGroups:
     - "!generated/docs/**"
 tasks:
   lint:
+    toolchains: [bun]
     tags:
       - quality
       - static

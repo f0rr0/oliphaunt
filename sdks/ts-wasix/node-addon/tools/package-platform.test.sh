@@ -6,12 +6,12 @@ root="$(git rev-parse --show-toplevel)"
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
 product="$fixture/sdks/ts-wasix/node-addon"
-mkdir -p "$product/tools" "$fixture/src" "$fixture/tools" "$fixture/prebuild"
+mkdir -p "$product/tools" "$fixture/tools" "$fixture/prebuild"
 cp "$root/sdks/ts-wasix/node-addon/tools/package-platform."{sh,mts} "$product/tools/"
 cp "$root/sdks/ts-wasix/node-addon/tools/smoke-packaged-addon."{sh,mts} "$product/tools/"
 cp "$root/sdks/ts-wasix/node-addon/package.json" "$product/"
 ln -s "$root/sdks/ts-wasix/node-addon/packages" "$product/packages"
-ln -s "$root/src/shared" "$fixture/src/shared"
+ln -s "$root/tools/packaging" "$fixture/tools/packaging"
 ln -s "$root/tools/dev" "$fixture/tools/dev"
 git -C "$fixture" init --quiet
 git -C "$fixture" -c user.name=Test -c user.email=test@example.invalid commit --quiet --allow-empty -m fixture

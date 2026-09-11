@@ -381,7 +381,7 @@ fresh_require_patched_wasixcc_sysroot() {
   if [ ! -f "$carrier_manifest" ] || [ ! -f "$variant_manifest" ]; then
     {
       printf 'missing exact patched WASIX libc carrier: %s\n' "$WASIXCC_SYSROOT"
-      printf 'Run %s/runtime/bin/build-patched-wasix-libc-sysroot.sh after preparing the pinned runtime sources.\n' "$FRESH_ROOT"
+      printf 'Run %s/wasmer/bin/build-patched-wasix-libc-sysroot.sh after preparing the pinned runtime sources.\n' "$FRESH_ROOT"
     } >&2
     return 2
   fi
@@ -1127,7 +1127,7 @@ fresh_require_patched_wasmer_receipt() {
 
   [ -f "$manifest" ] && [ ! -L "$manifest" ] || {
     printf 'missing regular Wasmer build receipt: %s\n' "$manifest" >&2
-    printf 'Run %s/runtime/bin/build-runtime.sh, or provide a matching WASMER_BUILD_RECEIPT.\n' "$FRESH_ROOT" >&2
+    printf 'Run %s/wasmer/bin/build-runtime.sh, or provide a matching WASMER_BUILD_RECEIPT.\n' "$FRESH_ROOT" >&2
     return 2
   }
   [ -f "$wasmer_patch" ] && [ ! -L "$wasmer_patch" ] || return 2

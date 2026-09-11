@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT/wasix_third_party.sh"
 
 REPO_ROOT="$(oliphaunt_wasix_repo_root "$ROOT")"
-NATIVE_ICU_HELPER="$REPO_ROOT/runtimes/liboliphaunt-native/bin/icu.sh"
-. "$NATIVE_ICU_HELPER"
+ICU_HELPER="$REPO_ROOT/third-party/icu/tools/build.sh"
+. "$ICU_HELPER"
 ICU_SOURCE_DIR="${ICU_SOURCE_DIR:-$REPO_ROOT/target/oliphaunt-sources/checkouts/icu/icu4c/source}"
 GENERATED_ROOT="$(oliphaunt_wasix_generated_root "$REPO_ROOT")"
 ICU_NATIVE_BUILD_DIR="${ICU_NATIVE_BUILD_DIR:-$GENERATED_ROOT/work/icu-native}"
@@ -26,14 +26,14 @@ oliphaunt_wasix_apply_wasix_profile build
 source_commit="$(oliphaunt_wasix_source_commit "$ICU_SOURCE_DIR/../../")"
 script_sha256="$(oliphaunt_wasix_script_sha256 "$0")"
 helper_sha256="$(oliphaunt_wasix_script_sha256 "$ROOT/wasix_third_party.sh")"
-native_icu_helper_sha256="$(oliphaunt_wasix_script_sha256 "$NATIVE_ICU_HELPER")"
+icu_helper_sha256="$(oliphaunt_wasix_script_sha256 "$ICU_HELPER")"
 wasixcc_version="$(wasixcc --version 2>/dev/null)"
 wasixcc_version="${wasixcc_version%%$'\n'*}"
 stamp="schema=oliphaunt-wasix-icu-v8
 source=$source_commit
 script=$script_sha256
 helper=$helper_sha256
-native-icu-helper=$native_icu_helper_sha256
+icu-helper=$icu_helper_sha256
 profile=$(oliphaunt_wasix_wasix_profile_signature)
 wasixcc=$wasixcc_version
 canonical-data-sha256=$(oliphaunt_icu_canonical_data_sha256)
@@ -60,11 +60,15 @@ if [ -f "$ICU_PREFIX/.oliphaunt-wasix-icu-build" ] &&
 fi
 
 {
-  rm -rf "$ICU_BUILD_DIR" "$ICU_PREFIX"
+  rm -rf "$ICU_BUILD_DIR"
   mkdir -p "$ICU_BUILD_DIR" "$(dirname "$ICU_PREFIX")"
+  install_stage="$(mktemp -d "$ICU_PREFIX.install.XXXXXX")"
+  staged_prefix="$install_stage$ICU_PREFIX"
+  trap 'rm -rf "$install_stage"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   oliphaunt_icu_build_native_tools \
     "$ICU_SOURCE_DIR" \
-    "$(dirname "$NATIVE_ICU_HELPER")" \
     "$ICU_NATIVE_BUILD_DIR" \
     "$JOBS"
   oliphaunt_icu_require_canonical_data "$(oliphaunt_icu_canonical_data_archive "$ICU_SOURCE_DIR")"
@@ -108,18 +112,19 @@ fi
     # file before parallel data generators can map a partially written file.
     make -j1 -C data "out/build/$icu_data_name/cnvalias.icu" PKGDATA_OPTS="$icu_pkgdata_opts"
     make -j"$JOBS" PKGDATA_OPTS="$icu_pkgdata_opts"
-    oliphaunt_icu_prepare_files_data_install_dirs "$ICU_BUILD_DIR" "$ICU_PREFIX"
-    make install PKGDATA_OPTS="$icu_pkgdata_opts"
+    oliphaunt_icu_prepare_files_data_install_dirs "$ICU_BUILD_DIR" "$staged_prefix"
+    make install DESTDIR="$install_stage" PKGDATA_OPTS="$icu_pkgdata_opts"
     make -j"$JOBS" -C data packagedata PKGDATA_OPTS="$icu_pkgdata_opts"
-    oliphaunt_icu_install_canonical_data "$(oliphaunt_icu_canonical_data_archive "$ICU_SOURCE_DIR")" "$ICU_PREFIX/share/icu"
-    oliphaunt_icu_install_stub_data_archive "$ICU_BUILD_DIR" "$ICU_PREFIX"
+    oliphaunt_icu_install_canonical_data "$(oliphaunt_icu_canonical_data_archive "$ICU_SOURCE_DIR")" "$staged_prefix/share/icu"
+    oliphaunt_icu_install_stub_data_archive "$ICU_BUILD_DIR" "$staged_prefix"
   )
 } >&2
 
-test -f "$ICU_PREFIX/include/unicode/ucol.h"
-test -f "$ICU_PREFIX/lib/libicui18n.a"
-test -f "$ICU_PREFIX/lib/libicuuc.a"
-oliphaunt_icu_stub_data_archive_ready "$ICU_PREFIX/lib/libicudata.a"
-oliphaunt_icu_files_data_ready "$ICU_PREFIX/share/icu"
-printf '%s\n' "$stamp" > "$ICU_PREFIX/.oliphaunt-wasix-icu-build"
+test -f "$staged_prefix/include/unicode/ucol.h"
+test -f "$staged_prefix/lib/libicui18n.a"
+test -f "$staged_prefix/lib/libicuuc.a"
+oliphaunt_icu_stub_data_archive_ready "$staged_prefix/lib/libicudata.a"
+oliphaunt_icu_files_data_ready "$staged_prefix/share/icu"
+printf '%s\n' "$stamp" > "$staged_prefix/.oliphaunt-wasix-icu-build"
+oliphaunt_icu_publish_prefix "$staged_prefix" "$ICU_PREFIX"
 echo "$ICU_PREFIX"

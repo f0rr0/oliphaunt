@@ -95,7 +95,7 @@ export function snapshot(sha256: string, bytes: number) {
   };
 }
 export function makeSealedExportFixture(root: string, projectRoot: string) {
-  const policyRoot = join(projectRoot, 'runtime/policies');
+  const policyRoot = join(projectRoot, 'wasmer/policies');
   const sideManifest = readFileSync(join(policyRoot, 'sealed-side-modules.v1.tsv'));
   const sidePaths = sideManifest
     .toString('utf8')

@@ -46,7 +46,11 @@ fn emit_expected_artifact_inputs(target: &str) {
         env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
     if let Some(repo_root) = repo_root_from_manifest_dir(&manifest_dir) {
-        emit_manifest_probe(&repo_root.join("target/postgres-tools/wasix/aot").join(target));
+        emit_manifest_probe(
+            &repo_root
+                .join("target/postgres-tools/wasix/aot")
+                .join(target),
+        );
     }
     emit_manifest_probe(&manifest_dir.join("artifacts"));
 }
@@ -81,7 +85,9 @@ fn find_artifact_dir(target: &str) -> Option<PathBuf> {
     }
 
     if let Some(repo_root) = repo_root_from_manifest_dir(&manifest_dir) {
-        let target_artifacts = repo_root.join("target/postgres-tools/wasix/aot").join(target);
+        let target_artifacts = repo_root
+            .join("target/postgres-tools/wasix/aot")
+            .join(target);
         if target_artifacts.join("manifest.json").is_file() {
             return Some(target_artifacts);
         }
@@ -93,9 +99,7 @@ fn find_artifact_dir(target: &str) -> Option<PathBuf> {
 fn repo_root_from_manifest_dir(manifest_dir: &Path) -> Option<&Path> {
     manifest_dir.ancestors().find(|candidate| {
         candidate.join("Cargo.toml").is_file()
-            && candidate
-                .join("sdks/rust-wasix/Cargo.toml")
-                .is_file()
+            && candidate.join("sdks/rust-wasix/Cargo.toml").is_file()
     })
 }
 

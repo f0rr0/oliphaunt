@@ -1,9 +1,15 @@
 import { readFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { requestGithubRepositoryJson } from '../../tools/release/github-read.mts';
 
 const HASH = /^[0-9a-f]{64}$/u;
+
+export function producerTypescriptVersion(packageDirectory) {
+  const require = createRequire(path.resolve(packageDirectory, 'package.json'));
+  return require('typescript/package.json').version;
+}
 
 /** Moon owns input hashing. A receipt only records a complete, observed chain. */
 export function producerHashes(report, cacheRoot, target) {
@@ -52,8 +58,11 @@ export function producerHashes(report, cacheRoot, target) {
 }
 
 if (import.meta.main) {
-  const [target, artifactName] = process.argv.slice(2);
-  assert(target && artifactName, 'usage: moon-producer-receipt.mts TARGET ARTIFACT_NAME');
+  const [target, artifactName, packageDirectory] = process.argv.slice(2);
+  assert(
+    target && artifactName && packageDirectory,
+    'usage: moon-producer-receipt.mts TARGET ARTIFACT_NAME PACKAGE_DIRECTORY',
+  );
   const artifactId = Number(process.env.PRODUCER_ARTIFACT_ID);
   assert(Number.isSafeInteger(artifactId) && artifactId > 0, 'immutable artifact ID is required');
   const artifact = await requestGithubRepositoryJson(
@@ -80,7 +89,7 @@ if (import.meta.main) {
     toolchain: {
       moon: process.env.PRODUCER_MOON_VERSION,
       bun: Bun.version,
-      typescript: JSON.parse(readFileSync('node_modules/typescript/package.json', 'utf8')).version,
+      typescript: producerTypescriptVersion(packageDirectory),
       target: 'portable-typescript',
     },
     artifact: {

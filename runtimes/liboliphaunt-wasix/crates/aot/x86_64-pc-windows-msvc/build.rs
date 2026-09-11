@@ -93,9 +93,7 @@ fn find_artifact_dir(target: &str) -> Option<PathBuf> {
 fn repo_root_from_manifest_dir(manifest_dir: &Path) -> Option<&Path> {
     manifest_dir.ancestors().find(|candidate| {
         candidate.join("Cargo.toml").is_file()
-            && candidate
-                .join("sdks/rust-wasix/Cargo.toml")
-                .is_file()
+            && candidate.join("sdks/rust-wasix/Cargo.toml").is_file()
     })
 }
 

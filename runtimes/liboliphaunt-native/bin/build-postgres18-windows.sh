@@ -100,9 +100,11 @@ configure_tools() {
   export CC=cl.exe CXX=cl.exe AR=lib.exe CCACHE_DISABLE=1
   for tool in git bun perl.exe meson ninja; do command -v "$tool" >/dev/null || fail "missing build tool: $tool"; done
   [ "$(meson --version | tr -d '\r')" = 1.10.0 ] || fail 'expected Meson 1.10.0'
-  case "$(ninja --version | tr -d '\r')" in
-    1.13.0 | 1.13.0.gd74ef.kitware.jobserver-pipe-1) ;;
-    *) fail 'expected Ninja from the pinned 1.13.0 distribution' ;;
+  local ninja_version
+  ninja_version="$(ninja --version | tr -d '\r')"
+  case "$ninja_version" in
+    1.13.0 | 1.13.0.gd74ef.kitware.jobserver-pipe-1 | 1.13.0.git.kitware.jobserver-pipe-1) ;;
+    *) fail "expected Ninja from the pinned 1.13.0 distribution, got $ninja_version" ;;
   esac
   export ICU_ROOT
   ICU_ROOT="$(native_path "$icu_windows_root")"

@@ -17,7 +17,7 @@ fn query_core_result<T>(result: query_core::Result<T>) -> Result<T> {
     result.map_err(query_core_error)
 }
 
-fn query_core_error(error: query_core::Error) -> anyhow::Error {
+pub(crate) fn query_core_error(error: query_core::Error) -> anyhow::Error {
     match error {
         query_core::Error::Protocol(message) => anyhow!(message),
         query_core::Error::Postgres {

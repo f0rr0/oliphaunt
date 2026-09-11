@@ -93,7 +93,7 @@ build job and its output is tied to:
 - the exact installed guest closure.
 
 The complete loadable side-module closure is declared once in
-`runtime/policies/sealed-side-modules.v1.tsv`. The builder, guest provenance,
+`wasmer/policies/sealed-side-modules.v1.tsv`. The builder, guest provenance,
 linear-memory receipt, manifest, test fixture, and independent verifier all
 consume that policy. Do not reintroduce a hard-coded shortlist in any of those
 layers. Aliases are regular byte-identical carrier files because sealed path

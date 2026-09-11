@@ -3,7 +3,24 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { producerHashes } from '../../.github/scripts/moon-producer-receipt.mts';
+import {
+  producerHashes,
+  producerTypescriptVersion,
+} from '../../.github/scripts/moon-producer-receipt.mts';
+
+test('producer compiler identity resolves from its isolated workspace dependencies', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'moon-producer-toolchain-'));
+  try {
+    const owner = path.join(root, 'sdks', 'query');
+    const compiler = path.join(owner, 'node_modules', 'typescript');
+    mkdirSync(compiler, { recursive: true });
+    writeFileSync(path.join(owner, 'package.json'), '{"name":"query"}');
+    writeFileSync(path.join(compiler, 'package.json'), '{"name":"typescript","version":"6.0.3"}');
+    assert.equal(producerTypescriptVersion(owner), '6.0.3');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('producer receipts require complete Moon ancestry and retain actual cache behavior', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'moon-producer-receipt-'));

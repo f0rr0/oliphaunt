@@ -20,16 +20,16 @@ use napi::bindgen_prelude::{
 use napi::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunctionCallMode};
 use napi::{Error, Result, Status};
 use napi_derive::napi;
+use oliphaunt_pgwire_server::{AsyncOliphauntServer, AsyncOliphauntServerBuilder, ServerListen};
 #[cfg(feature = "extensions")]
 use oliphaunt_wasix::Extension;
 #[cfg(feature = "tools")]
 use oliphaunt_wasix::tools::{PgDumpOptions, PostgresToolOutput, PsqlOptions, ToolAssets};
 use oliphaunt_wasix::{
-    AsyncOliphaunt, AsyncOliphauntBuilder, ClusterSeed, IcuData,
-    CatalogProfile, DatabaseStorage, ErrorKind, Oliphaunt, OliphauntBuilder, RawStreamError,
-    StorageCommitState, StorageErrorCode, StorageErrorPhase,
+    AsyncOliphaunt, AsyncOliphauntBuilder, CatalogProfile, ClusterSeed, DatabaseStorage, ErrorKind,
+    IcuData, Oliphaunt, OliphauntBuilder, RawStreamError, StorageCommitState, StorageErrorCode,
+    StorageErrorPhase,
 };
-use oliphaunt_pgwire_server::{AsyncOliphauntServer, AsyncOliphauntServerBuilder, ServerListen};
 
 const ADDON_ABI_VERSION: u32 = 2;
 const NODE_API_VERSION: u32 = 8;
@@ -664,7 +664,10 @@ fn configure_direct_database(options: NativeOpenOptions) -> Result<OliphauntBuil
         .database(database)
         .startup_gucs(startup_gucs);
     if let Some(seed) = seed {
-        builder = builder.seed(ClusterSeed::new(seed.archive.to_vec(), seed.manifest.as_ref()));
+        builder = builder.seed(ClusterSeed::new(
+            seed.archive.to_vec(),
+            seed.manifest.as_ref(),
+        ));
     }
     if let Some(icu) = icu_data {
         let data = IcuData::new(icu.data.to_vec(), icu.manifest.as_ref())
@@ -693,7 +696,10 @@ fn configure_actor_database(options: NativeOpenOptions) -> Result<AsyncOliphaunt
         .database(database)
         .startup_gucs(startup_gucs);
     if let Some(seed) = seed {
-        builder = builder.seed(ClusterSeed::new(seed.archive.to_vec(), seed.manifest.as_ref()));
+        builder = builder.seed(ClusterSeed::new(
+            seed.archive.to_vec(),
+            seed.manifest.as_ref(),
+        ));
     }
     if let Some(icu) = icu_data {
         let data = IcuData::new(icu.data.to_vec(), icu.manifest.as_ref())
@@ -724,7 +730,10 @@ fn configure_async_server(options: NativeServerOpenOptions) -> Result<AsyncOliph
         .startup_gucs(startup_gucs)
         .listen(resolve_listen(listen)?);
     if let Some(seed) = seed {
-        builder = builder.seed(ClusterSeed::new(seed.archive.to_vec(), seed.manifest.as_ref()));
+        builder = builder.seed(ClusterSeed::new(
+            seed.archive.to_vec(),
+            seed.manifest.as_ref(),
+        ));
     }
     if let Some(icu) = icu_data {
         let data = IcuData::new(icu.data.to_vec(), icu.manifest.as_ref())

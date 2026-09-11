@@ -75,3 +75,29 @@ tasks:
     deps: ["oliphaunt-wasix-tools-ts:package", "oliphaunt-wasix-ts:package", "postgres-tools-wasix:package-portable"]
     inputs: ["ts/tests/**/*", "/sdks/ts-wasix/sdk/tools/integration/{packed-node-fixture.mts,smoke-browser.*}", "/test-fixtures/postgres/**/*", "tools/*.mts"]
     options: {cache: false, runFromWorkspaceRoot: true}
+  format-check:
+    tags:
+      - quality
+      - static
+      - format
+      - requires-rust
+    command: cargo fmt -p oliphaunt-wasix-tools -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --check
+    inputs:
+      - "@group(cargo-carrier-sources)"
+      - "@group(cargo-workspace)"
+    options:
+      runFromWorkspaceRoot: true
+  lint:
+    tags:
+      - quality
+      - static
+      - requires-rust
+    command: cargo clippy -p oliphaunt-wasix-tools -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --all-targets --locked -- -D warnings
+    env:
+      CARGO_TARGET_DIR: target
+    inputs:
+      - "@group(cargo-carrier-sources)"
+      - "@group(cargo-workspace)"
+      - /clippy.toml
+    options:
+      runFromWorkspaceRoot: true

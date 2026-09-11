@@ -150,7 +150,9 @@ impl NativeSymbols {
         type Selected = unsafe extern "C" fn(*mut usize) -> *const c_void;
         type Register = unsafe extern "C" fn(*const c_void, usize) -> c_int;
         const NAME: &[u8] = b"liboliphaunt_selected_static_extensions\0";
-        let mut selected = unsafe { self._library.get::<Selected>(NAME).ok().map(|s| *s) };
+        let selected = unsafe { self._library.get::<Selected>(NAME).ok().map(|s| *s) };
+        #[cfg(unix)]
+        let mut selected = selected;
         #[cfg(target_os = "android")]
         if selected.is_none() {
             // Android packages its selected static archives in this companion

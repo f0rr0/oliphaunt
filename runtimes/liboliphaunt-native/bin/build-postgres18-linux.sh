@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/common.sh"
-. "$script_dir/icu.sh"
+. "$script_dir/../../../third-party/icu/tools/build.sh"
 . "$script_dir/postgis-dependency-cache.sh"
 
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
@@ -400,7 +400,7 @@ desired_hash() {
     printf 'cc=%s\n' "$cc_string"
     printf 'cxx=%s\n' "$cxx_string"
     printf 'icu_source=%s\n' "$(oliphaunt_icu_source_commit "$icu_source_dir")"
-    printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
+    printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256)"
     printf 'native_cflags=%s\n' "$native_cflags"
     printf 'postgres_embedded_copt=%s\n' "$postgres_embedded_copt"
     printf 'liboliphaunt_cflags=%s\n' "$liboliphaunt_cflags"
@@ -566,7 +566,6 @@ prepare_source() {
 build_icu() {
   oliphaunt_icu_build_target \
     "$icu_source_dir" \
-    "$script_dir" \
     "$icu_native_build_dir" \
     "$icu_build_dir" \
     "$icu_prefix" \

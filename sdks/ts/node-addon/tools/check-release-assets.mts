@@ -145,6 +145,12 @@ export function assertNodeDirectNpmArchive(file, targets, version) {
       `${label} is missing a non-empty regular package/prebuilds/oliphaunt_node.node`,
     );
   }
+  if (target.target === 'windows-x64-msvc') {
+    inspectPlatformBinaryEntries(
+      [...entries].map(([name, entry]) => ({ name, ...entry })),
+      { target: target.target, rootLabel: label },
+    );
+  }
   return manifest;
 }
 

@@ -82,7 +82,7 @@ function trackedHash(path: string) {
   return hash.digest('hex');
 }
 export function sideManifestPaths(projectRoot: string) {
-  const policy = readRegular(projectRoot, 'runtime/policies/sealed-side-modules.v1.tsv');
+  const policy = readRegular(projectRoot, 'wasmer/policies/sealed-side-modules.v1.tsv');
   const lines = new TextDecoder('utf8', { fatal: true }).decode(policy).split(/\r?\n/);
   assert.equal(
     lines[0],
@@ -160,7 +160,7 @@ export function validateExportChain(
   ])
     assert.equal(
       receipt[key],
-      trackedHash(join(projectRoot, 'runtime/policies', file)),
+      trackedHash(join(projectRoot, 'wasmer/policies', file)),
       `tracked policy differs: ${file}`,
     );
   exactKeys(receipt.seed, snapshotKeys, 'seed snapshot');

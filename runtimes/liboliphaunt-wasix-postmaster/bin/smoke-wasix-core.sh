@@ -20,7 +20,7 @@ if [ "$wasmer_status" -ne 0 ]; then
     printf '## Result\n\n'
     printf -- '- Status: `blocked`\n'
     printf -- '- Blocker: Wasmer CLI is missing or failed pinned-build validation.\n\n'
-    printf 'Run `%s/runtime/bin/build-runtime.sh`, or set `WASMER_BIN` and `WASMER_BUILD_RECEIPT` to a matching pinned build.\n' "$FRESH_ROOT"
+    printf 'Run `%s/wasmer/bin/build-runtime.sh`, or set `WASMER_BIN` and `WASMER_BUILD_RECEIPT` to a matching pinned build.\n' "$FRESH_ROOT"
   } >>"$report"
   echo "blocked: Wasmer CLI is missing or failed pinned-build validation; see $report" >&2
   exit 2

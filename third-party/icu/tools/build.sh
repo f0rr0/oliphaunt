@@ -14,37 +14,34 @@ oliphaunt_icu_source_commit() {
 }
 
 oliphaunt_icu_script_sha256() {
-  local script_dir="${1:?script dir is required}"
-  cat "$script_dir/icu.sh" "$script_dir/../../../database-resources/icu/tools/data.sh" | shasum -a 256 | awk '{print $1}'
+  cat "${BASH_SOURCE[0]}" "$(dirname "${BASH_SOURCE[0]}")/../../../database-resources/icu/tools/data.sh" | shasum -a 256 | awk '{print $1}'
 }
 
 oliphaunt_icu_native_tools_stamp() {
   local source_dir="$1"
-  local script_dir="$2"
   {
     printf 'schema=oliphaunt-icu-native-tools-v4\n'
     printf 'source=%s\n' "$(oliphaunt_icu_source_commit "$source_dir")"
-    printf 'script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
+    printf 'script=%s\n' "$(oliphaunt_icu_script_sha256)"
     printf 'configure=static-no-tests-no-samples-no-extras-no-icuio-no-layoutex-tools-only\n'
   } | shasum -a 256 | awk '{print $1}'
 }
 
 oliphaunt_icu_target_stamp() {
   local source_dir="$1"
-  local script_dir="$2"
-  local target_label="$3"
-  local host="$4"
-  local cc="$5"
-  local cxx="$6"
-  local ar="$7"
-  local ranlib="$8"
-  local cflags="$9"
-  local cxxflags="${10}"
-  local ldflags="${11}"
+  local target_label="$2"
+  local host="$3"
+  local cc="$4"
+  local cxx="$5"
+  local ar="$6"
+  local ranlib="$7"
+  local cflags="$8"
+  local cxxflags="${9}"
+  local ldflags="${10}"
   {
     printf 'schema=oliphaunt-icu-target-v8\n'
     printf 'source=%s\n' "$(oliphaunt_icu_source_commit "$source_dir")"
-    printf 'script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
+    printf 'script=%s\n' "$(oliphaunt_icu_script_sha256)"
     printf 'target=%s\n' "$target_label"
     printf 'host=%s\n' "$host"
     printf 'cc=%s\n' "$cc"
@@ -173,24 +170,33 @@ oliphaunt_icu_prepare_files_data_install_dirs() {
   done < <(find "$build_data_root" -type d -print)
 }
 
-oliphaunt_icu_build_native_tools() {
+oliphaunt_icu_build_native_tools() (
+  set -e
   local source_dir="${1:?ICU source dir is required}"
-  local script_dir="${2:?script dir is required}"
-  local native_build_dir="${3:?native build dir is required}"
-  local jobs="${4:?jobs is required}"
+  local native_build_dir="${2:?native build dir is required}"
+  local jobs="${3:?jobs is required}"
 
   oliphaunt_icu_require_source "$source_dir"
 
   local stamp_file="$native_build_dir/.oliphaunt-icu-native-tools"
   local stamp
-  stamp="$(oliphaunt_icu_native_tools_stamp "$source_dir" "$script_dir")"
+  stamp="$(oliphaunt_icu_native_tools_stamp "$source_dir")"
   if [ -f "$stamp_file" ] &&
      [ "$(cat "$stamp_file")" = "$stamp" ] &&
      oliphaunt_icu_native_tools_ready "$native_build_dir"; then
     return 0
   fi
 
-  rm -rf "$native_build_dir"
+  # ICU records this absolute build directory in its cross-build makefiles.
+  # Restore the previous complete build at the same path if rebuilding fails.
+  local backup rebuilding=0
+  mkdir -p "$(dirname "$native_build_dir")"
+  backup="$(mktemp -d "$native_build_dir.previous.XXXXXX")"
+  trap 'status=$?; if [ "$status" -ne 0 ] && [ "$rebuilding" = 1 ]; then rm -rf "$native_build_dir"; if [ -d "$backup/build" ]; then mv "$backup/build" "$native_build_dir" || exit "$status"; fi; fi; rm -rf "$backup"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [ -e "$native_build_dir" ]; then mv "$native_build_dir" "$backup/build"; fi
+  rebuilding=1
   mkdir -p "$native_build_dir"
   (
     cd "$native_build_dir"
@@ -215,39 +221,56 @@ oliphaunt_icu_build_native_tools() {
   )
   oliphaunt_icu_native_tools_ready "$native_build_dir"
   printf '%s\n' "$stamp" > "$stamp_file"
-}
+)
 
-oliphaunt_icu_build_target() {
+oliphaunt_icu_publish_prefix() (
+  set -e
+  local staged="$1" prefix="$2" backup
+  backup="$(mktemp -d "$prefix.previous.XXXXXX")"
+  trap 'status=$?; if [ "$status" -ne 0 ] && [ ! -e "$prefix" ] && [ -d "$backup/prefix" ]; then mv "$backup/prefix" "$prefix" || exit "$status"; fi; rm -rf "$backup"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [ -e "$prefix" ]; then mv "$prefix" "$backup/prefix"; fi
+  mv "$staged" "$prefix"
+)
+
+oliphaunt_icu_build_target() (
+  set -e
   local source_dir="${1:?ICU source dir is required}"
-  local script_dir="${2:?script dir is required}"
-  local native_build_dir="${3:?native build dir is required}"
-  local target_build_dir="${4:?target build dir is required}"
-  local prefix="${5:?prefix is required}"
-  local jobs="${6:?jobs is required}"
-  local target_label="${7:?target label is required}"
-  local host="${8:?host is required}"
-  local cc="${9:?cc is required}"
-  local cxx="${10:?cxx is required}"
-  local ar="${11:?ar is required}"
-  local ranlib="${12:?ranlib is required}"
-  local cflags="${13:-}"
-  local cxxflags="${14:-}"
-  local ldflags="${15:-}"
+  local native_build_dir="${2:?native build dir is required}"
+  local target_build_dir="${3:?target build dir is required}"
+  local prefix="${4:?prefix is required}"
+  local jobs="${5:?jobs is required}"
+  local target_label="${6:?target label is required}"
+  local host="${7:?host is required}"
+  local cc="${8:?cc is required}"
+  local cxx="${9:?cxx is required}"
+  local ar="${10:?ar is required}"
+  local ranlib="${11:?ranlib is required}"
+  local cflags="${12:-}"
+  local cxxflags="${13:-}"
+  local ldflags="${14:-}"
 
-  oliphaunt_icu_build_native_tools "$source_dir" "$script_dir" "$native_build_dir" "$jobs"
+  oliphaunt_icu_build_native_tools "$source_dir" "$native_build_dir" "$jobs"
   oliphaunt_icu_require_canonical_data "$(oliphaunt_icu_canonical_data_archive "$source_dir")"
 
   local stamp_file="$prefix/.oliphaunt-icu-build"
   local stamp
-  stamp="$(oliphaunt_icu_target_stamp "$source_dir" "$script_dir" "$target_label" "$host" "$cc" "$cxx" "$ar" "$ranlib" "$cflags" "$cxxflags" "$ldflags")"
+  stamp="$(oliphaunt_icu_target_stamp "$source_dir" "$target_label" "$host" "$cc" "$cxx" "$ar" "$ranlib" "$cflags" "$cxxflags" "$ldflags")"
   if [ -f "$stamp_file" ] &&
      [ "$(cat "$stamp_file")" = "$stamp" ] &&
      oliphaunt_icu_artifacts_ready "$prefix"; then
     return 0
   fi
 
-  rm -rf "$target_build_dir" "$prefix"
+  rm -rf "$target_build_dir"
   mkdir -p "$target_build_dir" "$(dirname "$prefix")"
+  local install_stage staged_prefix
+  install_stage="$(mktemp -d "$prefix.install.XXXXXX")"
+  staged_prefix="$install_stage$prefix"
+  trap 'rm -rf "$install_stage"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   (
     cd "$target_build_dir"
     CC="$cc" \
@@ -284,20 +307,17 @@ oliphaunt_icu_build_target() {
     # file before parallel data generators can map a partially written file.
     make -j1 -C data "out/build/$icu_data_name/cnvalias.icu" PKGDATA_OPTS="$icu_pkgdata_opts"
     make -j"$jobs" PKGDATA_OPTS="$icu_pkgdata_opts"
-    oliphaunt_icu_prepare_files_data_install_dirs "$target_build_dir" "$prefix"
-    make install PKGDATA_OPTS="$icu_pkgdata_opts"
+    oliphaunt_icu_prepare_files_data_install_dirs "$target_build_dir" "$staged_prefix"
+    make install DESTDIR="$install_stage" PKGDATA_OPTS="$icu_pkgdata_opts"
     make -j"$jobs" -C data packagedata PKGDATA_OPTS="$icu_pkgdata_opts"
-    oliphaunt_icu_install_canonical_data "$(oliphaunt_icu_canonical_data_archive "$source_dir")" "$prefix/share/icu"
-    oliphaunt_icu_install_stub_data_archive "$target_build_dir" "$prefix"
+    oliphaunt_icu_install_canonical_data "$(oliphaunt_icu_canonical_data_archive "$source_dir")" "$staged_prefix/share/icu"
+    oliphaunt_icu_install_stub_data_archive "$target_build_dir" "$staged_prefix"
   )
 
-  test -f "$prefix/include/unicode/ucol.h"
-  test -f "$prefix/lib/libicui18n.a"
-  test -f "$prefix/lib/libicuuc.a"
-  oliphaunt_icu_stub_data_archive_ready "$prefix/lib/libicudata.a"
-  oliphaunt_icu_files_data_ready "$prefix/share/icu"
-  printf '%s\n' "$stamp" > "$stamp_file"
-}
+  printf '%s\n' "$stamp" > "$staged_prefix/.oliphaunt-icu-build"
+  oliphaunt_icu_artifacts_ready "$staged_prefix"
+  oliphaunt_icu_publish_prefix "$staged_prefix" "$prefix"
+)
 
 oliphaunt_icu_cflags() {
   local prefix="${1:?prefix is required}"

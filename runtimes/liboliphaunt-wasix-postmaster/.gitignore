@@ -3,7 +3,6 @@
 /install/
 /reports/
 /run/
-/sources/
 /tools/sealed-export-closure/target/
 /work/
 *.a

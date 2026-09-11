@@ -1,0 +1,4 @@
+name = "wasmer-postmaster-napi"
+url = "https://github.com/wasmerio/napi.git"
+branch = "main"
+commit = "706383f42391cb4e4e82e5fd5e63a0ebf81ae19d"

@@ -1,0 +1,4 @@
+name = "wasix-libc-postmaster"
+url = "https://github.com/wasix-org/wasix-libc.git"
+branch = "main"
+commit = "34178a6272804f90448b5bd08dc7bcf0d85438e3"

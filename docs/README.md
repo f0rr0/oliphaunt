@@ -41,9 +41,24 @@ is unverified. A failed refresh does not rerun registry publication. Retry only
 the docs job after inspecting Vercel; an ambiguous HTTP failure may already have
 queued a deployment, so the command does not automatically retry POST requests.
 
-Read-only GitHub inspection on 2026-09-11 confirmed Vercel-managed Preview and
+Read-only inspection on 2026-09-11 confirmed Vercel-managed Preview and
 Production deployments. Neither the repository nor its Production environment
-had a docs hook secret. The Vercel project settings were not accessible.
+had a docs hook secret. The `oliphaunt-docs` project still used `src/docs` as its
+root, causing PR 209's deployment of `c29415855b654402a2694524d2869887b1bf9834`
+to fail before installation: `The specified Root Directory "src/docs" does not exist.`
+The project otherwise selected Next.js, Node 24, automatic build/install/output
+settings, access to source files outside the root, and production branch `main`.
+
+Coordinate the project root change to `docs` with the directory migration on
+`main`; changing it beforehand would break builds of the old main tree.
+For hosted verification before that cutover, use an explicitly authorized,
+isolated preview project with the exact PR commit and the settings below,
+without attaching production domains. Do not change the live project's root
+temporarily or add an old-path compatibility tree. A preview must prove the
+pinned Bun installation, build, exported routes, and published-version lookup;
+the failed deployment did not reach any of these steps. No such preview or
+project-setting change has been performed as part of this inspection.
+
 External prerequisites still required:
 
 - Create/select one deploy hook for the oliphaunt.dev project targeting `main`;

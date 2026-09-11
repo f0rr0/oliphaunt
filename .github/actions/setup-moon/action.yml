@@ -48,6 +48,13 @@ runs:
           command -v cygpath >/dev/null 2>&1
           toolchain_bin="$(cygpath -w "$toolchain_bin")"
           moon_bin="$(cygpath -w "${moon_bin}.exe")"
+          # Native executables do not inherit Git Bash's virtual /usr/bin
+          # lookup. Keep their bare `bash` commands away from System32's WSL
+          # launcher. Git's bin directory has no competing GNU link.exe.
+          git_root="$(cygpath -w /)"
+          git_bin="${git_root%\\}\\bin"
+          [[ -x "$(cygpath -u "$git_bin")/bash.exe" ]]
+          echo "$git_bin" >> "$GITHUB_PATH"
         fi
         echo "$toolchain_bin" >> "$GITHUB_PATH"
         echo "MOON_HOME=$moon_home_env" >> "$GITHUB_ENV"
@@ -61,6 +68,11 @@ runs:
         [[ "$(moon --version)" == "moon 2.5.4" ]]
         [[ "$(node --version)" == "v22.22.3" ]]
         [[ "$(bun --version)" == "1.4.2" ]]
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          # Exercise native Windows child lookup, not Bash's own lookup.
+          bash_version="$(MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /c 'bash --version')"
+          [[ "$bash_version" == 'GNU bash,'* ]]
+        fi
 
     - name: Save verified tool archives
       if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_verified_moon_toolchain.outputs.cache-hit != 'true' }}
