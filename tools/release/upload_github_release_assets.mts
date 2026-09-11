@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { loadProducts } from '../../src/shared/product-metadata/release-graph.mts';
+import { loadProducts } from './release-graph.mts';
 import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from './github-content-write-pacer.mts';
 import { RetryableReadError, redactGitHubReadDetail, retryReadOperation } from './github-read.mts';
 import {

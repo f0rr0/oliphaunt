@@ -7,12 +7,9 @@ import { electronReleaseDependencies } from '../../examples/tools/example-releas
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import {
-  compatibilityVersionEntries,
-  loadProducts,
-} from '../../src/shared/product-metadata/release-graph.mts';
-import { exampleCargoReleaseVersionBindings } from './example-cargo-policy.mts';
+} from './release-artifact-targets.mts';
+import { compatibilityVersionEntries, loadProducts } from './release-graph.mts';
+import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
 import { releaseDerivedPathInventory, SDK_INSTALL_VERSION_RULES } from './sync-release-pr.mts';
 
@@ -216,9 +213,11 @@ function parseStructured(text, type, file, commit) {
     const value =
       type === 'json'
         ? JSON.parse(text)
-        : type === 'toml'
-          ? Bun.TOML.parse(text)
-          : Bun.YAML.parse(text);
+        : type === 'jsonc'
+          ? Bun.JSONC.parse(text)
+          : type === 'toml'
+            ? Bun.TOML.parse(text)
+            : Bun.YAML.parse(text);
     if (value === null || typeof value !== 'object') {
       throw new TypeError('root must be an object or array');
     }
@@ -258,6 +257,22 @@ function derivedVersionRules() {
       throw error(`conflicting derived version rules for ${file}:${parts.join('.')}`);
     }
     structured.set(key, { sourceProduct, wrapped });
+    if (
+      type === 'json' &&
+      file.endsWith('/package.json') &&
+      [
+        'version',
+        'dependencies',
+        'devDependencies',
+        'optionalDependencies',
+        'peerDependencies',
+      ].includes(parts[0])
+    ) {
+      structured.set(
+        structuredRuleKey('jsonc', 'bun.lock', ['workspaces', path.posix.dirname(file), ...parts]),
+        { sourceProduct, wrapped },
+      );
+    }
   };
   const addText = (file, rule) => {
     const prior = text.get(file);
@@ -309,21 +324,8 @@ function derivedVersionRules() {
   for (const { packageName, product } of nativeToolsOptionalPackageProducts(TOOL)) {
     addStructured(
       'json',
-      'src/runtimes/liboliphaunt/native/tools-npm/package.json',
+      'postgres-tools/native/npm/package.json',
       ['optionalDependencies', packageName],
-      product,
-      true,
-    );
-    addStructured(
-      'yaml',
-      'pnpm-lock.yaml',
-      [
-        'importers',
-        'src/runtimes/liboliphaunt/native/tools-npm',
-        'optionalDependencies',
-        packageName,
-        'specifier',
-      ],
       product,
       true,
     );
@@ -548,7 +550,7 @@ function authorizedDerivedStructuredChange(context, rules) {
 function structuredType(file) {
   const basename = path.posix.basename(file);
   if (file === 'release-please-config.json' || basename === 'package.json') return 'json';
-  if (basename === 'pnpm-lock.yaml') return 'yaml';
+  if (basename === 'bun.lock') return 'jsonc';
   if (basename === 'Cargo.toml' || basename === 'Cargo.lock' || file.endsWith('.toml'))
     return 'toml';
   return undefined;
@@ -738,6 +740,16 @@ export function deriveReleaseProducts({ repo = ROOT, headRef = 'HEAD' } = {}) {
   }
   const parent = ancestry[1];
   const config = showJson(repo, commit, 'release-please-config.json');
+  const before = showJson(repo, parent, '.release-please-manifest.json');
+  const after = showJson(repo, commit, '.release-please-manifest.json');
+  return { commit, parent, products: releaseProductsFromManifests(config, before, after) };
+}
+
+export function releaseProductsFromManifests(config, before, after) {
+  for (const [name, value] of Object.entries({ config, before, after })) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
+      throw error(`${name} must contain a JSON object`);
+  }
   const packageConfigs = config.packages;
   if (
     packageConfigs === null ||
@@ -763,8 +775,6 @@ export function deriveReleaseProducts({ repo = ROOT, headRef = 'HEAD' } = {}) {
     products.add(product);
     byPath.set(packagePath, product);
   }
-  const before = showJson(repo, parent, '.release-please-manifest.json');
-  const after = showJson(repo, commit, '.release-please-manifest.json');
   const changedProducts = [...new Set([...Object.keys(before), ...Object.keys(after)])]
     .filter((packagePath) => before[packagePath] !== after[packagePath])
     .map((packagePath) => {
@@ -778,7 +788,7 @@ export function deriveReleaseProducts({ repo = ROOT, headRef = 'HEAD' } = {}) {
   if (changedProducts.length === 0) {
     throw error('release commit must advance at least one release-please manifest version');
   }
-  return { commit, parent, products: changedProducts };
+  return changedProducts;
 }
 
 export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products }) {
@@ -903,6 +913,14 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
     changelogs.add(changelogFile);
     transitions.push({ product, before: priorVersion, after: version });
     if (packageConfig['release-type'] === 'node' || packageConfig['release-type'] === 'expo') {
+      if (changed.has('bun.lock'))
+        addField('bun.lock', {
+          type: 'jsonc',
+          parts: ['workspaces', packagePath, 'version'],
+          before: priorVersion,
+          after: version,
+          role: 'workspace lock version',
+        });
       addField(versionFile, {
         type: 'json',
         parts: ['version'],
@@ -1031,6 +1049,18 @@ function parseArgs(argv) {
 
 if (import.meta.main) {
   try {
+    if (process.argv[2] === '--manifest-transition') {
+      if (process.argv.length !== 6)
+        throw error('usage: verify-release-commit.mts --manifest-transition CONFIG BEFORE AFTER');
+      console.log(
+        JSON.stringify(
+          releaseProductsFromManifests(
+            ...process.argv.slice(3).map((file) => JSON.parse(readFileSync(file, 'utf8'))),
+          ),
+        ),
+      );
+      process.exit(0);
+    }
     if (process.argv[2] === '--snapshot-paths') {
       snapshotPaths();
       process.exit(0);

@@ -5,19 +5,19 @@ import { pathToFileURL } from 'node:url';
 const ELECTRON_RELEASE_DEPENDENCIES = [
   {
     packageName: '@oliphaunt/ts',
-    versionSource: { type: 'json', path: 'src/sdks/js/package.json', keys: ['version'] },
+    versionSource: { type: 'json', path: 'sdks/ts/sdk/package.json', keys: ['version'] },
   },
   {
     packageName: '@oliphaunt/tools',
     versionSource: {
       type: 'json',
-      path: 'src/runtimes/liboliphaunt/native/tools-npm/package.json',
+      path: 'postgres-tools/native/npm/package.json',
       keys: ['version'],
     },
   },
   {
     packageName: '@oliphaunt/extension-contrib-pg18',
-    versionSource: { type: 'text', path: 'src/runtimes/liboliphaunt/native/VERSION' },
+    versionSource: { type: 'text', path: 'runtimes/liboliphaunt-native/VERSION' },
   },
 ];
 
@@ -26,7 +26,7 @@ const ELECTRON_SMOKE_PACKAGES = [
     packageName: '@oliphaunt/liboliphaunt-linux-x64-gnu',
     versionSource: {
       type: 'json',
-      path: 'src/runtimes/liboliphaunt/native/packages/linux-x64-gnu/package.json',
+      path: 'runtimes/liboliphaunt-native/packages/linux-x64-gnu/package.json',
       keys: ['version'],
     },
   },

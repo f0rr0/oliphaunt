@@ -14,7 +14,7 @@ cat > "$scratch/driver" <<'DRIVER'
 set -euo pipefail
 sleep 300 &
 echo "$!" > "$TAURI_DRIVER_PROOF/descendant"
-exec node "$TAURI_DRIVER_PROOF/driver.mts" "$@"
+exec bun "$TAURI_DRIVER_PROOF/driver.mts" "$@"
 DRIVER
 chmod +x "$scratch/driver"
 cat > "$scratch/driver.mts" <<'DRIVER'

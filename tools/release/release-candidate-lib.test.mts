@@ -8,6 +8,7 @@ import {
   assertBindingMatches,
   assertCandidateBindingShape,
   candidateQualificationMode,
+  assertQualificationProductCoverage,
   wasixEvidenceBinding,
 } from '../../.github/scripts/release-candidate-lib.mts';
 
@@ -17,10 +18,69 @@ function fixture() {
   return { root, cleanup };
 }
 
+test('selected-product evidence binds scope and candidate SHA and rejects uncovered publication', () => {
+  const { root, cleanup } = fixture();
+  try {
+    const planPath = path.join(root, 'plan.json');
+    const sha = 'a'.repeat(40);
+    writeFileSync(
+      planPath,
+      JSON.stringify({
+        qualification_mode: 'selected-products',
+        qualification_base_sha: null,
+        qualification_head_sha: sha,
+        qualification_products: ['oliphaunt-js'],
+        tasks: ['oliphaunt-js:package', 'oliphaunt-query-ts:package'],
+        projects: ['oliphaunt-js'],
+        jobs: ['affected', 'js-sdk-package'],
+        extension_package_products: [],
+      }),
+    );
+    const candidate = {
+      schemaVersion: 2,
+      sha,
+      affectedPlan: affectedPlanBinding(planPath, false),
+      evidenceRequirements: { wasixReleaseRegression: false, artifacts: [] },
+      evidence: { wasixReleaseRegression: null },
+    };
+    expect(() => assertCandidateBindingShape(candidate)).not.toThrow();
+    expect(() => assertQualificationProductCoverage(candidate, ['oliphaunt-js'])).not.toThrow();
+    expect(() => assertQualificationProductCoverage(candidate, ['liboliphaunt-native'])).toThrow(
+      /missing qualification/,
+    );
+    expect(() => assertQualificationProductCoverage(candidate, [])).toThrow(/non-empty/);
+    expect(() => assertCandidateBindingShape({ ...candidate, sha: 'b'.repeat(40) })).toThrow(
+      /candidate SHA/,
+    );
+    const receipt = {
+      target: 'oliphaunt-query-ts:package',
+      eligible: true,
+      cacheHit: true,
+      taskHash: 'c'.repeat(64),
+      hashes: [{ target: 'oliphaunt-query-ts:package', hash: 'c'.repeat(64), dependencies: {} }],
+      producer: { sha, runId: '77', runAttempt: 2 },
+      artifact: { id: 901, name: 'query', size: 42, digest: `sha256:${'d'.repeat(64)}` },
+      toolchain: {
+        moon: 'moon 2.5.4',
+        bun: '1.4.2',
+        typescript: '6.0.3',
+        target: 'portable-typescript',
+      },
+    };
+    const recorded = { ...candidate, runId: '77', runAttempt: 2, producers: [receipt] };
+    expect(() => assertCandidateBindingShape(recorded)).not.toThrow();
+    expect(() => assertCandidateBindingShape({ ...recorded, runAttempt: 3 })).toThrow(
+      /qualification run and attempt/,
+    );
+    receipt.hashes[0].dependencies = { 'query:build': 'passthrough' };
+    expect(() => assertCandidateBindingShape(recorded)).toThrow(/dependency hash is incomplete/);
+  } finally {
+    cleanup();
+  }
+});
+
 function publicExtensions() {
-  const catalog = JSON.parse(
-    readFileSync('src/extensions/generated/extensions.catalog.json', 'utf8'),
-  );
+  const catalog = JSON.parse(readFileSync('extensions/generated/extensions.catalog.json', 'utf8'));
   return catalog.extensions.map((extension) => extension.id).sort();
 }
 
@@ -38,7 +98,7 @@ function writeEvidence(
     },
   } = {},
 ) {
-  const runDirectory = path.join(root, 'src/extensions/evidence/runs');
+  const runDirectory = path.join(root, 'extensions/evidence/runs');
   mkdirSync(runDirectory, { recursive: true });
   const run = {
     schema: 'oliphaunt-extension-evidence-v1',
@@ -50,7 +110,7 @@ function writeEvidence(
     sourceCommit: 'a'.repeat(40),
     sourceTree: 'c'.repeat(40),
     observedAt: '2026-07-14T12:00:00Z',
-    collector: 'src/extensions/tools/collect-wasix-evidence.sh',
+    collector: 'extensions/tools/collect-wasix-evidence.sh',
     github: {
       repository: 'f0rr0/oliphaunt',
       workflow: 'CI',
@@ -340,78 +400,6 @@ test('keeps legacy F4 qualification plans backward-compatible as full-payload', 
     expect(affectedPlan.qualification).toBeUndefined();
     expect(candidateQualificationMode(candidate)).toBe('full-payload');
     expect(() => assertCandidateBindingShape(candidate)).not.toThrow();
-  } finally {
-    cleanup();
-  }
-});
-
-test('candidate commands bind the actual Git checkout and reject changed plans or commits', async () => {
-  const { spawnSync } = await import('node:child_process');
-  const script = path.resolve('.github/scripts/release-candidate.sh');
-  const { root, cleanup } = fixture();
-  try {
-    const git = (...args) => {
-      const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-      expect(result.status, result.stderr).toBe(0);
-      return result.stdout.trim();
-    };
-    git('init', '--quiet');
-    git(
-      '-c',
-      'user.name=Fixture',
-      '-c',
-      'user.email=fixture@example.invalid',
-      'commit',
-      '--quiet',
-      '--allow-empty',
-      '-m',
-      'fixture',
-    );
-    const sha = git('rev-parse', 'HEAD');
-    const tree = git('rev-parse', 'HEAD^{tree}');
-    const plan = path.join(root, 'plan.json'),
-      candidate = path.join(root, 'candidate.json');
-    writeFileSync(
-      plan,
-      JSON.stringify({ projects: [], jobs: ['affected'], extension_package_products: [] }),
-    );
-    const env = {
-      ...process.env,
-      CI_HEAD_SHA: sha,
-      RELEASE_HEAD_SHA: sha,
-      CI_PLAN_PATH: plan,
-      CI_QUALIFICATION_MODE: 'full-payload',
-      WASIX_RELEASE_REGRESSION_REQUIRED: 'false',
-      GITHUB_REPOSITORY: 'f0rr0/oliphaunt',
-      GITHUB_WORKFLOW: 'CI',
-      GITHUB_WORKFLOW_REF: 'f0rr0/oliphaunt/.github/workflows/ci.yml@refs/heads/main',
-      GITHUB_RUN_ID: '123',
-      CI_RUN_ID: '123',
-      GITHUB_RUN_ATTEMPT: '1',
-      GITHUB_EVENT_NAME: 'push',
-      GITHUB_REF: 'refs/heads/main',
-      CI_CHECKED_OUT_SHA: 'b'.repeat(40),
-      CI_SOURCE_TREE: 'c'.repeat(40),
-    };
-    const run = (args, overrides = {}) =>
-      spawnSync('bash', [script, ...args], {
-        cwd: root,
-        env: { ...env, ...overrides },
-        encoding: 'utf8',
-      });
-    const written = run(['write', candidate]);
-    expect(written.status, written.stderr).toBe(0);
-    expect(JSON.parse(readFileSync(candidate, 'utf8'))).toMatchObject({ sha, tree });
-    const verify = ['verify', candidate, '--plan', plan, '--wasix-evidence-required', 'false'];
-    const verified = run(verify);
-    expect(verified.status, verified.stderr).toBe(0);
-    expect(run(['write', candidate], { CI_HEAD_SHA: 'a'.repeat(40) }).status).not.toBe(0);
-    expect(run(verify, { RELEASE_HEAD_SHA: 'a'.repeat(40) }).status).not.toBe(0);
-    writeFileSync(
-      plan,
-      JSON.stringify({ projects: ['changed'], jobs: ['affected'], extension_package_products: [] }),
-    );
-    expect(run(verify).status).not.toBe(0);
   } finally {
     cleanup();
   }

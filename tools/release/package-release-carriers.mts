@@ -1,35 +1,46 @@
 #!/usr/bin/env bun
+import { packageBrokerCargoArtifacts } from '../../broker/tools/package_broker_cargo_artifacts.mts';
+import { BROKER_PRODUCT, packageBrokerCarriers } from '../../broker/tools/package-carriers.mts';
+import { packageDatabaseResourceCarriers } from '../../database-resources/tools/package-carriers.mts';
+import { packageExtensionCarriers } from '../../extensions/artifacts/packages/tools/package-carriers.mts';
+import { packageNativeToolsCarriers } from '../../postgres-tools/native/tools/package-carriers.mts';
+import { packageWasixToolsCarriers } from '../../postgres-tools/wasix/tools/package-carriers.mts';
 import {
   LIBOLIPHAUNT_NATIVE_PRODUCT,
   packageLiboliphauntNativeCarriers,
-} from '../../src/runtimes/liboliphaunt/native/tools/package-carriers.mts';
+} from '../../runtimes/liboliphaunt-native/tools/package-carriers.mts';
 import {
-  BROKER_PRODUCT,
-  packageBrokerCarriers,
-} from '../../src/runtimes/broker/tools/package-carriers.mts';
-import {
-  WASIX_PRODUCT,
   packageWasixRuntimeCarriers,
-} from '../../src/runtimes/liboliphaunt/wasix/tools/package-carriers.mts';
+  WASIX_PRODUCT,
+} from '../../runtimes/liboliphaunt-wasix/tools/package-carriers.mts';
 import {
   NODE_DIRECT_PRODUCT,
   packageNodeDirectCarriers,
-} from '../../src/runtimes/node-direct/tools/check-carriers.mts';
+} from '../../sdks/ts/node-addon/tools/check-carriers.mts';
 import {
-  WASIX_NAPI_PRODUCT,
   packageWasixNapiCarriers,
-} from '../../src/runtimes/wasix-napi/tools/check-carriers.mts';
-import { exactExtensionReleaseProducts } from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import { TOOL, fail } from '../../src/shared/artifact-packaging/release-carrier.mts';
-import { packageExtensionCarriers } from '../../src/extensions/artifacts/packages/tools/package-carriers.mts';
+  WASIX_NAPI_PRODUCT,
+} from '../../sdks/ts-wasix/node-addon/tools/check-carriers.mts';
+import { fail, TOOL } from '../packaging/release-carrier.mts';
+import { exactExtensionReleaseProducts } from './release-artifact-targets.mts';
 
 async function packageReleaseCarriers(products) {
   const selected = new Set(products);
+  if (selected.has('database-resources')) {
+    await packageDatabaseResourceCarriers();
+  }
+  if (selected.has('postgres-tools-native')) {
+    await packageNativeToolsCarriers();
+  }
+  if (selected.has('postgres-tools-wasix')) {
+    await packageWasixToolsCarriers();
+  }
   if (selected.has(LIBOLIPHAUNT_NATIVE_PRODUCT)) {
     await packageLiboliphauntNativeCarriers();
   }
   if (selected.has(BROKER_PRODUCT)) {
     await packageBrokerCarriers();
+    await packageBrokerCargoArtifacts();
   }
   if (selected.has(WASIX_PRODUCT)) {
     await packageWasixRuntimeCarriers();

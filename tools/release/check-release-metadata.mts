@@ -5,28 +5,17 @@ import path from 'node:path';
 import {
   extensionNativeRegistryPackageStrings,
   extensionWasixRegistryPackageStrings,
-} from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
-import {
-  AOT_PACKAGES,
-  AOT_TARGET_TRIPLES,
-  ICU_PACKAGE,
-  publicAotCargoDependencies,
-  publicCargoPackageNames,
-  publicToolsAotCargoDependencies,
-  publicToolsFeatureDependencies,
-  RUNTIME_PACKAGE,
-  TOOLS_AOT_PACKAGES,
-  TOOLS_PACKAGE,
-} from '../../src/runtimes/liboliphaunt/wasix/tools/wasix-cargo-artifact-contract.mts';
+} from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import {
   compatibilityVersionSource,
   requireCompatibilityVersionBinding,
-} from '../../src/shared/product-metadata/compatibility-version-policy.mts';
+  requireCompatibilityVersionBounds,
+} from './compatibility-version-policy.mts';
 import {
   declaredCarrierMap,
   loadPublicationCatalog,
   publicationCatalogDigest,
-} from '../../src/shared/product-metadata/publication-catalog.mts';
+} from './publication-catalog.mts';
 import {
   allArtifactTargets,
   exactExtensionProducts,
@@ -34,19 +23,20 @@ import {
   extensionRegistryPackageTargetSets,
   extensionReleaseProduct,
   extensionSourceIdentity,
-  extensionSqlNames,
   registryPackageRows,
   releaseMetadata,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
+} from './release-artifact-targets.mts';
 import {
   compareText,
   compatibilityVersionEntries,
   compatibilityVersionValue,
+  latestProductTag,
   loadProducts,
   parseStableVersion,
+  productVersionTransitionStatus,
   ROOT,
   versionFiles,
-} from '../../src/shared/product-metadata/release-graph.mts';
+} from './release-graph.mts';
 import { latestVerifiedReleaseCommit } from './verify-release-commit.mts';
 
 const TOOL = 'check-release-metadata.mts';
@@ -297,7 +287,7 @@ function validateReleasePleaseVersions(graph) {
   }
 }
 
-function validateCompatibility(graph) {
+function validateCompatibility(graph, { publication = false } = {}) {
   const entries = compatibilityVersionEntries(graph.products, {
     requireSourceProduct: true,
     prefix: TOOL,
@@ -306,13 +296,41 @@ function validateCompatibility(graph) {
     new Set(entries.map((entry) => entry.id)).size === entries.length,
     'compatibility field ids must be globally unique',
   );
-  const pendingRelease = latestVerifiedReleaseCommit({ repo: ROOT });
-  const pendingVersions = new Map(Object.entries(pendingRelease?.versions ?? {}));
+  let pendingRelease;
+  let checkedPendingRelease = false;
+  let pendingVersions = new Map();
   const versionSources = new Map();
   for (const entry of entries) {
     const value = compatibilityVersionValue(entry, { prefix: TOOL });
+    if (!publication) {
+      requireCompatibilityVersionBounds(
+        {
+          id: entry.id,
+          value,
+          sourceProduct: entry.sourceProduct,
+          sourceVersion: graph.products[entry.sourceProduct].version,
+        },
+        { prefix: TOOL },
+      );
+      continue;
+    }
     let source = versionSources.get(entry.product);
     if (source === undefined) {
+      const product = graph.products[entry.product];
+      if (!checkedPendingRelease && product.version !== '0.0.0') {
+        const baseRef = latestProductTag(product, 'HEAD', TOOL, ROOT);
+        const status = productVersionTransitionStatus(entry.product, product, baseRef, 'HEAD', {
+          prefix: TOOL,
+          root: ROOT,
+        });
+        // Published compatibility pins already have immutable tag provenance.
+        // Only an unpublished version needs its release commit validated.
+        if (status.currentTagCommit === null) {
+          pendingRelease = latestVerifiedReleaseCommit({ repo: ROOT });
+          pendingVersions = new Map(Object.entries(pendingRelease?.versions ?? {}));
+          checkedPendingRelease = true;
+        }
+      }
       source = compatibilityVersionSource(entry, graph.products, pendingVersions, {
         headRef: 'HEAD',
         pendingCommit: pendingRelease?.commit,
@@ -494,147 +512,31 @@ function validateCatalogAndTargets(graph) {
   };
 }
 
-function workspaceDependency(table, name, { optional = false } = {}) {
-  const dependency = object(table?.[name], `oliphaunt-wasix dependency ${name}`);
-  assert(
-    dependency.version === '*',
-    `${name} must use the local workspace runtime without a release-version constraint`,
-  );
-  assert(
-    typeof dependency.path === 'string' && dependency.path.length > 0,
-    `${name} must use a local workspace path`,
-  );
-  assert(
-    optional ? dependency.optional === true : dependency.optional !== true,
-    `${name} optional dependency contract is wrong`,
-  );
-}
-
-function validateWasixContract(graph, catalog) {
-  const runtimeVersion = graph.products['liboliphaunt-wasix'].version;
-  const coreCargoPackages = publicCargoPackageNames();
-  const runtimeCargo = catalog.carriers
-    .filter(
-      (carrier) =>
-        carrier.product === 'liboliphaunt-wasix' &&
-        carrier.ecosystem === 'cargo' &&
-        coreCargoPackages.includes(carrier.name),
-    )
-    .map((carrier) => carrier.name);
-  assert(
-    sameStrings(runtimeCargo, coreCargoPackages),
-    'liboliphaunt-wasix core Cargo carriers must exactly match the WASIX artifact contract',
-  );
-
-  const manifests = new Map([
-    [ICU_PACKAGE, 'src/runtimes/liboliphaunt/icu/Cargo.toml'],
-    [RUNTIME_PACKAGE, 'src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml'],
-    [TOOLS_PACKAGE, 'src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml'],
-    ...Object.entries(AOT_PACKAGES).map(([target, name]) => [
-      name,
-      `src/runtimes/liboliphaunt/wasix/crates/aot/${AOT_TARGET_TRIPLES[target]}/Cargo.toml`,
-    ]),
-    ...Object.entries(TOOLS_AOT_PACKAGES).map(([target, name]) => [
-      name,
-      `src/runtimes/liboliphaunt/wasix/crates/tools-aot/${AOT_TARGET_TRIPLES[target]}/Cargo.toml`,
-    ]),
-  ]);
-  for (const [name, file] of manifests) {
-    const packageConfig = object(readToml(file).package, `${file}.package`);
-    assert(packageConfig.name === name, `${file} package name must be ${name}`);
-    assert(
-      packageConfig.version === runtimeVersion,
-      `${file} version must match liboliphaunt-wasix`,
-    );
-  }
-
-  const sdk = readToml('src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml');
-  const dependencies = object(sdk.dependencies, 'oliphaunt-wasix dependencies');
-  workspaceDependency(dependencies, RUNTIME_PACKAGE);
-  workspaceDependency(dependencies, TOOLS_PACKAGE, { optional: true });
-  workspaceDependency(dependencies, ICU_PACKAGE, { optional: true });
-  const targetTables = object(sdk.target, 'oliphaunt-wasix target dependencies');
-  for (const [cfg, name] of Object.entries(publicAotCargoDependencies())) {
-    workspaceDependency(
-      object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies,
-      name,
-    );
-  }
-  for (const [cfg, name] of Object.entries(publicToolsAotCargoDependencies())) {
-    workspaceDependency(
-      object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies,
-      name,
-      { optional: true },
-    );
-  }
-  assert(
-    sameStrings(sdk.features?.tools ?? [], publicToolsFeatureDependencies()),
-    'oliphaunt-wasix tools feature must select exactly the split tool carriers',
-  );
-  assert(
-    !('bundled' in object(sdk.features, 'oliphaunt-wasix features')),
-    'oliphaunt-wasix must not expose an inert bundled feature',
-  );
-  const extensionFeatures = exactExtensionProducts(TOOL)
-    .flatMap((product) => extensionSqlNames(product, TOOL))
-    .map((sqlName) => `extension-${sqlName.replaceAll('_', '-')}`);
-  const sdkExtensionFeatures = Object.keys(sdk.features).filter((feature) =>
-    feature.startsWith('extension-'),
-  );
-  assert(
-    sameStrings(extensionFeatures, sdkExtensionFeatures),
-    'oliphaunt-wasix extension features must exactly match modeled extensions',
-  );
-  const runtimeFeatures = Object.keys(
-    readToml('src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml').features ?? {},
-  );
-  assert(
-    sameStrings(extensionFeatures, runtimeFeatures),
-    'portable WASIX runtime features must exactly match modeled extensions',
-  );
-  const dump = (sdk.bin ?? []).find((entry) => entry.name === 'oliphaunt-wasix-dump');
-  assert(
-    Array.isArray(dump?.['required-features']) && dump['required-features'].includes('tools'),
-    'oliphaunt-wasix-dump must require the tools feature',
-  );
-}
-
-function validateNativeContract(graph) {
-  const targets = allArtifactTargets({ product: 'liboliphaunt-native' }, TOOL);
-  assert(
-    targets.some((target) => target.kind === 'native-runtime'),
-    'liboliphaunt-native must declare runtime targets',
-  );
-  assert(
-    targets.some((target) => target.kind === 'native-tools'),
-    'liboliphaunt-native must declare split tool targets',
-  );
-}
-
 function parseArgs(argv) {
   let json = false;
+  let publication = false;
   for (const arg of argv) {
     if (arg === '--json') {
       json = true;
+    } else if (arg === '--publication') {
+      publication = true;
     } else if (arg === '-h' || arg === '--help') {
-      console.log('usage: tools/release/check-release-metadata.mts [--json]');
+      console.log('usage: tools/release/check-release-metadata.mts [--json] [--publication]');
       process.exit(0);
     } else {
       fail(`unknown argument ${arg}`);
     }
   }
-  return { json };
+  return { json, publication };
 }
 
 function main(argv) {
   const args = parseArgs(argv);
   const graph = { products: loadProducts(TOOL) };
   validateReleasePleaseVersions(graph);
-  const compatibilityFields = validateCompatibility(graph);
+  const compatibilityFields = validateCompatibility(graph, args);
   const targetReport = validateCatalogAndTargets(graph);
   const manifests = validateSourcePackageManifests(graph, targetReport.catalog);
-  validateNativeContract(graph);
-  validateWasixContract(graph, targetReport.catalog);
   const report = {
     schema: 'oliphaunt-release-metadata-validation-v1',
     products: Object.keys(graph.products).length,

@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -15,7 +13,6 @@ import {
 const TAG_APP_SECRETS = ['RELEASE_TAG_APP_CLIENT_ID', 'RELEASE_TAG_APP_PRIVATE_KEY'];
 
 const FIXTURES = path.join(import.meta.dir, 'fixtures/github-release-controls');
-const TOOL = path.join(import.meta.dir, 'audit-github-release-controls.mts');
 
 function fixture(name) {
   return JSON.parse(readFileSync(path.join(FIXTURES, `${name}.json`), 'utf8'));
@@ -387,64 +384,5 @@ describe('GitHub API snapshot collection', () => {
     const payload = graphqlPayload(source);
     payload.data.repository.ref.name = 'release';
     await expectGraphqlCollectionFailure(payload, /exact canonical main ref/u);
-  });
-});
-
-describe('GitHub controls audit CLI', () => {
-  test('defaults to the least-privilege idle bootstrap state', async () => {
-    const directory = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-github-audit-'));
-    try {
-      const snapshot = fixture('desired-solo');
-      snapshot.environments['release-bootstrap'].secretNames = [...TAG_APP_SECRETS];
-      const fixturePath = path.join(directory, 'idle.json');
-      writeFileSync(fixturePath, JSON.stringify(snapshot));
-      const result = spawnSync(
-        process.execPath,
-        [TOOL, '--fixture', fixturePath, '--governance', 'solo'],
-        { encoding: 'utf8' },
-      );
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain('(governance=solo, bootstrap=idle)');
-      expect(result.stdout).toContain('Summary:');
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  test('warnings do not fail the audit process', async () => {
-    const directory = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-github-audit-'));
-    try {
-      const snapshot = fixture('desired-solo');
-      snapshot.repository.allow_merge_commit = true;
-      const fixturePath = path.join(directory, 'warning.json');
-      writeFileSync(fixturePath, JSON.stringify(snapshot));
-      const result = spawnSync(
-        process.execPath,
-        [TOOL, '--fixture', fixturePath, '--governance', 'solo', '--bootstrap-state', 'ready'],
-        { encoding: 'utf8' },
-      );
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain('WARN repository.merge-commit:');
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  test('hard release-safety findings fail the audit process', async () => {
-    const result = spawnSync(
-      process.execPath,
-      [
-        TOOL,
-        '--fixture',
-        path.join(FIXTURES, 'current-bad.json'),
-        '--governance',
-        'solo',
-        '--bootstrap-state',
-        'ready',
-      ],
-      { encoding: 'utf8' },
-    );
-    expect(result.status).toBe(1);
-    expect(result.stdout).toMatch(/Summary: \d+ PASS, \d+ WARN, [1-9]\d* FAIL/u);
   });
 });

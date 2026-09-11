@@ -1,51 +1,66 @@
-$schema: "https://moonrepo.dev/schemas/project.json"
-
-id: "dev-tools"
-language: "bash"
-layer: "tool"
-stack: "infrastructure"
-tags: ["javascript-quality", "tools", "developer-experience"]
-
+$schema: https://moonrepo.dev/schemas/project.json
+id: dev-tools
+language: bash
+layer: tool
+stack: infrastructure
+tags:
+  - javascript-quality
+  - tools
+  - developer-experience
 project:
-  title: "Developer Tools"
+  title: Developer Tools
   description: "Local bootstrap, hook installation, and smoke helpers."
-  owner: "oliphaunt"
-
+  owner: oliphaunt
 owners:
   defaultOwner: "@oliphaunt/core"
   paths:
-    "**/*": ["@oliphaunt/core"]
-
+    "**/*":
+      - "@oliphaunt/core"
 tasks:
-  unit:
-    tags: ["quality", "unit"]
-    script: |
-      set -eu
-      for test in tools/dev/extract-pinned-zip.test.sh tools/dev/install-pinned-js-runtime.test.sh tools/dev/install-pinned-winflexbison.test.sh .github/actions/setup-moon/install-pinned-node.test.sh .github/actions/setup-moon/install-pinned-toolchain.test.sh .github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh .github/actions/setup-npm-publisher/install.test.sh .github/scripts/setup-native-build-tools.test.sh; do
-        bash "$test"
-      done
-      bun test --timeout=30000 ./tools/dev/maintainer-tool-install.test.mts
+  test-mobile-setup:
+    tags:
+      - quality
+      - unit
+    script: "set -e\nbash tools/dev/setup-android-sdk.test.sh\nbash tools/dev/setup-maestro.test.sh\n"
     inputs:
-      - "install-pinned*"
-      - "install-actionlint.sh"
-      - "bootstrap-tools.sh"
-      - "maintainer-tool-install.test.mts"
-      - "extract-pinned*"
-      - "winflexbison-identity.mts"
-      - "bun.sh"
-      - "node-info.mts"
-      - "curl-platform-flags.sh"
-      - "/.prototools"
-      - "/.moon/toolchains.yml"
-      - "/.github/actions/setup-moon/**"
-      - "/.github/actions/setup-node-pnpm/**"
-      - "/.github/actions/setup-node-runtime/**"
-      - "/.github/actions/setup-npm-publisher/**"
-      - "/.github/scripts/setup-native-build-tools*"
-      - "/src/sources/toolchains/{bun,deno,moon-cli,moon-plugins,node-runtime,npm-publisher,pnpm,proto,winflexbison}.toml"
-      - "/src/sources/toolchains/maintainer-tools.toml"
-      - "/src/shared/artifact-packaging/portable-archive.mts"
-      - "/tools/test/{zip,tar}-fixture.mts"
-      - "/tools/test/package-manager-fixture.mts"
+      - setup-android-sdk*
+      - setup-maestro*
+      - extract-maestro.mts
+      - bun.sh
+      - node-info.mts
+      - extract-pinned-zip.*
+      - /tools/packaging/testdata/zip-fixture.mts
+      - /tools/packaging/portable-archive.mts
+      - "/tools/dev/{android-sdk,maestro}.toml"
+    options:
+      runFromWorkspaceRoot: true
+  test:
+    tags:
+      - quality
+      - unit
+    script: "set -eu\nfor test in tools/dev/extract-pinned-zip.test.sh tools/dev/install-pinned-js-runtime.test.sh tools/dev/install-pinned-winflexbison.test.sh .github/actions/setup-moon/install-pinned-node.test.sh .github/actions/setup-moon/install-pinned-toolchain.test.sh .github/actions/setup-npm-publisher/install.test.sh .github/scripts/setup-native-build-tools.test.sh; do\n  bash \"$test\"\ndone\nbash tools/dev/maintainer-tool-install.test.sh\n"
+    inputs:
+      - install-pinned*
+      - install-actionlint.sh
+      - bootstrap-tools.sh
+      - maintainer-tool-install.test.sh
+      - extract-pinned*
+      - winflexbison-identity.mts
+      - bun.sh
+      - node-info.mts
+      - curl-platform-flags.sh
+      - /.prototools
+      - /.moon/toolchains.yml
+      - /.github/actions/setup-moon/**
+      - /.github/actions/setup-node-bun/**
+      - /.github/actions/setup-node-runtime/**
+      - /.github/actions/setup-npm-publisher/**
+      - /.github/scripts/setup-native-build-tools*
+      - "/tools/dev/{bun,deno,moon-cli,moon-plugins,node-runtime,proto,winflexbison}.toml"
+      - /tools/release/npm-publisher.toml
+      - /tools/dev/maintainer-tools.toml
+      - /tools/packaging/portable-archive.mts
+      - "/tools/packaging/testdata/{zip,tar}-fixture.mts"
+      - /.github/actions/setup-npm-publisher/testdata/package-manager-fixture.mts
     options:
       runFromWorkspaceRoot: true

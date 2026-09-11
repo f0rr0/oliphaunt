@@ -2,10 +2,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  promoteDirectory,
-  removeTemporaryPath,
-} from '../../src/shared/artifact-packaging/atomic-directory.mts';
+import { promoteDirectory, removeTemporaryPath } from '../../tools/packaging/atomic-directory.mts';
 import { loadBootstrapLedger } from '../../tools/release/bootstrap-ledger.mts';
 import { requestGithubPages } from '../../tools/release/github-read.mts';
 import { assertPublicationChanges } from '../../tools/release/publication-controller.mts';

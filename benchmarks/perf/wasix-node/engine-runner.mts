@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -173,6 +173,10 @@ async function openCandidate(plan, candidateRoot, surfaceName) {
   }
   const instance = await client.open({
     storage: module.memory(),
+    seed: {
+      archive: await readFile(require.resolve('@oliphaunt/seed-wasix-standard/seed.tar.zst')),
+      manifest: await readFile(require.resolve('@oliphaunt/seed-wasix-standard/manifest.json')),
+    },
   });
   return {
     identity: {

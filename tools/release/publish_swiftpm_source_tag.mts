@@ -1,10 +1,11 @@
 import { lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readSelectedRemoteTagMap } from '../../.github/scripts/manage-release-drafts.mts';
-import { currentVersion } from '../../src/shared/product-metadata/product-version.mts';
+import { currentVersion } from './product-version.mts';
 import { reserveGitHubContentWrite } from './github-content-write-pacer.mts';
 import { createGitHubOperationBudget } from './github-release-mutations.mts';
 import { loadPublicationLock, lockedProductArtifactPaths } from './publication-lock.mts';
+import { extractPortableArchiveTree } from '../packaging/portable-archive.mts';
 
 const SEMVER = /^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$/u;
 const SHA = /^[0-9a-f]{40}$/u;
@@ -20,6 +21,7 @@ async function prepare(scratch, argv) {
     includeTrees: [],
     preflight: false,
     push: false,
+    product: 'oliphaunt-swift',
   };
   const seen = new Set();
   for (let index = 0; index < argv.length; index++) {
@@ -40,6 +42,9 @@ async function prepare(scratch, argv) {
       '--publication-lock': 'lock',
       '--manifest': 'manifest',
       '--include-tree': 'includeTrees',
+      '--product': 'product',
+      '--repository': 'repository',
+      '--source-archive': 'sourceArchive',
     }[flag];
     const value = argv[++index];
     if (!key || !value || value.startsWith('--'))
@@ -52,38 +57,68 @@ async function prepare(scratch, argv) {
     }
   }
   if (args.preflight && args.push) throw new Error('--preflight and --push are mutually exclusive');
-  const version = await currentVersion('oliphaunt-swift');
+  if (!['oliphaunt-swift', 'database-resources'].includes(args.product))
+    throw new Error('unsupported SwiftPM product');
+  if (args.repository && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(args.repository))
+    throw new Error('SwiftPM repository must be an owner/name');
+  const resource = args.product === 'database-resources';
+  if (
+    resource &&
+    (!args.repository || args.repository === (process.env.GITHUB_REPOSITORY ?? 'f0rr0/oliphaunt'))
+  )
+    throw new Error('SwiftPM resources require a distinct distribution repository identity');
+  args.remote = args.repository ? `https://github.com/${args.repository}.git` : 'origin';
+  args.projectSourceOnly = resource;
+  const version = await currentVersion(args.product);
   const core = SEMVER.exec(version);
-  if (!core || (Number(core[1]) === 0 && Number(core[2]) < 6))
+  if (!core || (!resource && Number(core[1]) === 0 && Number(core[2]) < 6))
     throw new Error(
       'SwiftPM requires a semantic version at least 0.6.0; older unscoped tags belong to legacy releases',
     );
   if (args.lock) {
-    if (args.manifest || args.includeTrees.length)
+    if (args.manifest || args.includeTrees.length || args.sourceArchive)
       throw new Error('locked SwiftPM inputs cannot be overridden');
     const lock = loadPublicationLock(path.resolve(args.lock));
-    if (lock.products.find((row) => row.id === 'oliphaunt-swift')?.version !== version)
+    if (lock.products.find((row) => row.id === args.product)?.version !== version)
       throw new Error('SwiftPM version differs from the frozen lock');
     args.source = lock.source;
-    const inputs = lockedProductArtifactPaths(lock, 'oliphaunt-swift');
-    const manifests = inputs.filter(
-      ({ artifact, type }) => artifact.kind === 'swiftpm-release-manifest' && type === 'file',
-    );
-    const trees = inputs.filter(
-      ({ artifact, type }) => artifact.kind === 'swiftpm-release-tree' && type === 'directory',
-    );
-    if (manifests.length !== 1 || trees.length !== 1)
-      throw new Error(
-        'publication lock must contain exactly one SwiftPM release manifest and tree',
+    const inputs = lockedProductArtifactPaths(lock, args.product);
+    if (resource) {
+      const archives = inputs.filter(
+        ({ artifact, type }) => artifact.kind === 'swift-source' && type === 'file',
       );
-    args.manifest = manifests[0].path;
-    args.includeTrees = [trees[0].path];
+      if (archives.length !== 1)
+        throw new Error('resource publication lock must contain exactly one Swift source archive');
+      args.sourceArchive = archives[0].path;
+    } else {
+      const manifests = inputs.filter(
+        ({ artifact, type }) => artifact.kind === 'swiftpm-release-manifest' && type === 'file',
+      );
+      const trees = inputs.filter(
+        ({ artifact, type }) => artifact.kind === 'swiftpm-release-tree' && type === 'directory',
+      );
+      if (manifests.length !== 1 || trees.length !== 1)
+        throw new Error(
+          'publication lock must contain exactly one SwiftPM release manifest and tree',
+        );
+      args.manifest = manifests[0].path;
+      args.includeTrees = [trees[0].path];
+    }
   }
+  if (resource) {
+    if (!args.sourceArchive || args.manifest || args.includeTrees.length)
+      throw new Error('resource SwiftPM publication requires one frozen source archive');
+    const tree = path.join(scratch, 'resource-source');
+    extractPortableArchiveTree(path.resolve(args.sourceArchive), tree);
+    args.manifest = path.join(tree, 'Package.swift');
+    args.includeTrees = [tree];
+  } else if (args.sourceArchive)
+    throw new Error('--source-archive is only for the resource product');
   const files = [];
   if (args.manifest) {
     const manifest = path.resolve(args.manifest);
     const text = readFileSync(manifest, 'utf8');
-    if (!text.includes('binaryTarget(') || !text.includes('liboliphaunt-native-v'))
+    if (!resource && (!text.includes('binaryTarget(') || !text.includes('liboliphaunt-native-v')))
       throw new Error(
         'SwiftPM release manifest must contain a checksum-pinned liboliphaunt binaryTarget',
       );
@@ -98,6 +133,7 @@ async function prepare(scratch, argv) {
         )) {
           const file = path.join(directory, entry.name);
           const relative = path.relative(root, file).split(path.sep).join('/');
+          if (resource && relative === 'Package.swift') continue;
           if (relative === 'Package.swift' || relative.split('/').includes('.git'))
             throw new Error('forbidden SwiftPM generated path: ' + relative);
           if (entry.isDirectory()) visit(file);
@@ -155,7 +191,7 @@ async function main([phase, scratch, ...argv]) {
       now: Date.now,
     });
     if (context.source) {
-      const tag = 'oliphaunt-swift-v' + context.version;
+      const tag = context.product + '-v' + context.version;
       const tags = await readSelectedRemoteTagMap(process.env.GITHUB_REPOSITORY, [{ tag }], {
         environment: process.env,
         budget,

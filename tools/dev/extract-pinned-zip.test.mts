@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { zipArchive } from '../test/zip-fixture.mts';
+import { zipArchive } from '../packaging/testdata/zip-fixture.mts';
 import { extractPinnedZip } from './extract-pinned-zip.mts';
 
 const root = mkdtempSync(path.join(tmpdir(), 'pinned-zip-'));

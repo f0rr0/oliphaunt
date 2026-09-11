@@ -52,7 +52,12 @@ if [[ "${#transferred_dependencies[@]}" -gt 0 ]]; then
   if [[ "${#local_dependencies[@]}" -gt 0 ]]; then
     .github/scripts/run-moon-targets.sh "${local_dependencies[@]}"
   fi
-  exec .github/scripts/run-moon-targets.sh --upstream none "${targets[@]}"
+  for target in "${targets[@]}"; do
+    # Omitting transferred producers also omits their source hashes in Moon.
+    # Execute the consumer against the downloaded bytes instead of caching it.
+    MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none "$target"
+  done
+  exit 0
 fi
 
 if [[ "${#moon_args[@]}" -gt 0 ]]; then

@@ -169,7 +169,8 @@ The rerun retains the original workflow SHA and explicit candidate identity,
 then verifies the exact `oliphaunt-release-transport/<full-sha>` tag instead of
 resolving moving `main`.
 
-Audit the live controls without changing them:
+Audit the live controls without changing them for release setup or an actual
+public registry/tag/asset mutation:
 
 ```sh
 tools/dev/bun.sh tools/release/audit-github-release-controls.mts \
@@ -181,9 +182,8 @@ Use `--governance team` only when an independent maintainer is actually
 available. Bootstrap state is an explicit credential lifecycle, not an
 authorization shortcut:
 
-- `idle` is the default before first-identity bootstrap, including
-  qualification, release-PR preparation, and dry-run; it requires both
-  bootstrap tokens to be absent;
+- `idle` is the default when bootstrap tokens are absent; it requires both
+  token names to be absent and does not describe whether source CI may run;
 - `ready` is valid only after every reviewed short-lived Cargo/npm token
   required by the approved lock has been installed for an imminent
   `publish` dispatch that will bootstrap missing identities; it accepts either registry token or both, and
@@ -193,6 +193,13 @@ authorization shortcut:
 - `retired` is valid only after bootstrap sealed, trusted publishers were
   configured, and both tokens were revoked and removed; it also requires the
   token names to be absent.
+
+This audit is not an ordinary branch-push, release-PR or source-qualification
+gate. Those jobs do not select `release-bootstrap` and cannot receive its
+environment secrets. A bootstrap lifecycle finding does not justify blocking
+unrelated source work, changing credentials, or claiming a different lifecycle.
+It remains a release setup finding to resolve before the affected public
+mutation. No remote settings or secrets are changed by this diagnostic.
 
 The conditional bootstrap job independently derives the registries required
 by the approved lock and rejects each missing credential immediately before

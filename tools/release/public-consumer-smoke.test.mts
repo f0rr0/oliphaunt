@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,6 +59,82 @@ function graph(products) {
       ]),
     ),
   };
+}
+
+const [fixtureMode, fixtureRoot, scenario] = process.argv.slice(2);
+if (fixtureMode === 'prepare-cargo') {
+  const environment = publicCargoEnvironment(fixtureRoot, {
+    ...process.env,
+    CARGO_REGISTRY_TOKEN: 'must-not-survive',
+    CARGO_SOURCE_CRATES_IO_REPLACE_WITH: 'must-not-survive',
+    RUSTUP_TOOLCHAIN: 'nightly',
+  });
+  assert.equal(environment.CARGO_HOME, path.join(fixtureRoot, 'cargo-home'));
+  assert.equal(environment.HOME, path.join(fixtureRoot, 'cargo-user-home'));
+  assert.equal(
+    environment.RUSTUP_TOOLCHAIN,
+    Bun.TOML.parse(readFileSync('rust-toolchain.toml', 'utf8')).toolchain.channel,
+  );
+  assert.notEqual(environment.RUSTUP_HOME, path.join(environment.HOME, '.rustup'));
+  assert.equal(environment.CARGO_REGISTRY_TOKEN, undefined);
+  assert.equal(environment.CARGO_SOURCE_CRATES_IO_REPLACE_WITH, undefined);
+  writeFileSync(
+    path.join(fixtureRoot, 'environment'),
+    Object.entries(environment)
+      .map(([key, value]) => `${key}=${value}\0`)
+      .join(''),
+  );
+  writeFileSync(
+    path.join(fixtureRoot, 'Cargo.toml'),
+    '[package]\nname="clean-cargo-toolchain-probe"\nversion="0.0.0"\nedition="2021"\n',
+  );
+  mkdirSync(path.join(fixtureRoot, 'src'));
+  writeFileSync(path.join(fixtureRoot, 'src/lib.rs'), '');
+  process.exit(0);
+}
+if (fixtureMode === 'prepare-npm') {
+  const products = [product('sdk', ['npm'])];
+  const frozen = lock(products, [carrier('npm:@example/sdk', 'sdk', 0)]);
+  writeFileSync(
+    path.join(fixtureRoot, 'context.json'),
+    JSON.stringify({
+      lock: frozen,
+      plan: publicConsumerPlan(frozen, ['sdk'], graph(products)),
+      deadlineMilliseconds: Date.now() + (scenario === 'timeout' ? 2000 : 30000),
+    }),
+  );
+  process.exit(0);
+}
+if (fixtureMode === 'install-npm') {
+  const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  const [[name, version]] = Object.entries(manifest.dependencies);
+  mkdirSync(`node_modules/${name}`, { recursive: true });
+  writeFileSync(`node_modules/${name}/package.json`, JSON.stringify({ name, version }));
+  writeFileSync(
+    'package-lock.json',
+    JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        [`node_modules/${name}`]: {
+          version,
+          resolved: `https://registry.npmjs.org/${name}/-/sdk.tgz`,
+          integrity: 'sha512-smoke',
+        },
+      },
+    }),
+  );
+  process.exit(0);
+}
+if (fixtureMode === 'assert-npm') {
+  if (scenario === 'success') {
+    const result = JSON.parse(readFileSync(path.join(fixtureRoot, 'npm.json'), 'utf8'));
+    assert.deepEqual(result.installedCarrierIds, ['npm:@example/sdk']);
+    assert.deepEqual(
+      result.resolved.map(({ id }) => id),
+      ['npm:@example/sdk'],
+    );
+  } else assert.equal(existsSync(path.join(fixtureRoot, 'npm.json')), false);
+  process.exit(0);
 }
 
 test('derives every registry surface and graph-root entry from the exact selected lock', () => {
@@ -463,50 +538,6 @@ test('public probes discard inherited credentials and package-manager substituti
   });
 });
 
-test('clean Cargo consumers retain only the exact installed Rust toolchain context', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-public-cargo-toolchain-test-'));
-  try {
-    const consumerHome = path.join(root, 'consumer-home');
-    const cargoHome = path.join(root, 'cargo-home');
-    mkdirSync(consumerHome, { recursive: true });
-    mkdirSync(cargoHome, { recursive: true });
-    const env = publicCargoEnvironment(root, {
-      ...process.env,
-      CARGO_REGISTRY_TOKEN: 'must-not-survive',
-      CARGO_SOURCE_CRATES_IO_REPLACE_WITH: 'must-not-survive',
-      RUSTUP_TOOLCHAIN: 'nightly',
-    });
-    assert.equal(env.CARGO_HOME, cargoHome);
-    assert.equal(env.HOME, path.join(root, 'cargo-user-home'));
-    assert.equal(env.RUSTUP_TOOLCHAIN, '1.93.1');
-    assert.notEqual(env.RUSTUP_HOME, path.join(env.HOME, '.rustup'));
-    assert.equal(env.CARGO_REGISTRY_TOKEN, undefined);
-    assert.equal(env.CARGO_SOURCE_CRATES_IO_REPLACE_WITH, undefined);
-    writeFileSync(
-      path.join(root, 'Cargo.toml'),
-      '[package]\nname = "clean-cargo-toolchain-probe"\nversion = "0.0.0"\nedition = "2021"\n',
-    );
-    mkdirSync(path.join(root, 'src'));
-    writeFileSync(path.join(root, 'src', 'lib.rs'), '');
-    execFileSync('cargo', ['generate-lockfile'], {
-      cwd: root,
-      env,
-      timeout: 30_000,
-      encoding: 'utf8',
-    });
-    assert.equal(existsSync(path.join(root, 'Cargo.lock')), true);
-    const version = execFileSync('cargo', ['--version'], {
-      cwd: root,
-      env,
-      timeout: 30_000,
-      encoding: 'utf8',
-    });
-    assert.match(version, /^cargo 1\.93\.1\b/u);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test('Cargo consumer toolchain context fails closed on unpinned or unavailable inputs', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-public-cargo-toolchain-policy-test-'));
   try {
@@ -641,89 +672,4 @@ test('cannot silently relabel a frozen entry dependency as receipt-only', () => 
     () => validatePublicConsumerEvidence(evidence, frozen, plan),
     /omitted frozen platform-independent lock dependencies/u,
   );
-});
-
-test('Shell public npm consumer sanitizes credentials, validates installs, and bounds failures and descendants', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-public-shell-test-'));
-  try {
-    const bin = path.join(root, 'bin');
-    mkdirSync(bin);
-    writeFileSync(
-      path.join(bin, 'npm'),
-      `#!/usr/bin/env bun
-import {mkdirSync,readFileSync,writeFileSync,appendFileSync} from 'node:fs';
-if(process.env.SENSITIVE_TOKEN || process.env.CARGO_REGISTRY_TOKEN) throw Error('credentials leaked');
-appendFileSync(process.env.PUBLIC_PROBE_COUNTER, 'attempt\\n');
-if(process.env.FAIL_PUBLIC_PROBE) process.exit(7);
-if(process.env.HANG_PUBLIC_PROBE) { const child=Bun.spawn(['sleep','30']); writeFileSync(process.env.PUBLIC_PROBE_CHILD, String(child.pid)); await child.exited; }
-const manifest=JSON.parse(readFileSync('package.json','utf8'));
-const [[name,version]]=Object.entries(manifest.dependencies);
-mkdirSync('node_modules/'+name,{recursive:true});
-writeFileSync('node_modules/'+name+'/package.json',JSON.stringify({name,version}));
-writeFileSync('package-lock.json',JSON.stringify({lockfileVersion:3,packages:{['node_modules/'+name]:{version,resolved:'https://registry.npmjs.org/'+name+'/-/sdk.tgz',integrity:'sha512-smoke'}}}));
-`,
-      { mode: 0o755 },
-    );
-    const products = [product('sdk', ['npm'])];
-    const frozen = lock(products, [carrier('npm:@example/sdk', 'sdk', 0)]);
-    const plan = publicConsumerPlan(frozen, ['sdk'], graph(products));
-    const counter = path.join(root, 'attempts');
-    const env = {
-      ...process.env,
-      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      SENSITIVE_TOKEN: 'must-not-survive',
-      CARGO_REGISTRY_TOKEN: 'must-not-survive',
-      PUBLIC_PROBE_COUNTER: counter,
-    };
-    for (const mode of ['success', 'fail', 'timeout']) {
-      const scratch = path.join(root, mode);
-      mkdirSync(scratch);
-      writeFileSync(
-        path.join(scratch, 'context.json'),
-        JSON.stringify({
-          lock: frozen,
-          plan,
-          deadlineMilliseconds: Date.now() + (mode === 'timeout' ? 2000 : 30_000),
-        }),
-      );
-      const run = () =>
-        execFileSync(
-          'bash',
-          ['tools/release/public-consumer-smoke.sh', '--surface', scratch, 'npm'],
-          {
-            env: {
-              ...env,
-              ...(mode === 'fail' ? { FAIL_PUBLIC_PROBE: '1' } : {}),
-              ...(mode === 'timeout'
-                ? { HANG_PUBLIC_PROBE: '1', PUBLIC_PROBE_CHILD: path.join(root, 'child-pid') }
-                : {}),
-            },
-            timeout: 30_000,
-            stdio: 'pipe',
-          },
-        );
-      if (mode !== 'success') {
-        assert.throws(run, (cause) => cause.status === (mode === 'timeout' ? 124 : 7));
-        assert.equal(existsSync(path.join(scratch, 'npm.json')), false);
-      } else {
-        run();
-        const result = JSON.parse(readFileSync(path.join(scratch, 'npm.json'), 'utf8'));
-        assert.deepEqual(result.installedCarrierIds, ['npm:@example/sdk']);
-        assert.deepEqual(
-          result.resolved.map(({ id }) => id),
-          ['npm:@example/sdk'],
-        );
-      }
-    }
-    assert.equal(readFileSync(counter, 'utf8'), 'attempt\nattempt\nattempt\n');
-    const pid = readFileSync(path.join(root, 'child-pid'), 'utf8');
-    try {
-      const state = execFileSync('ps', ['-o', 'stat=', '-p', pid], { encoding: 'utf8' }).trim();
-      assert.match(state, /^Z|^$/);
-    } catch (cause) {
-      if (cause.status !== 1) throw cause;
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });

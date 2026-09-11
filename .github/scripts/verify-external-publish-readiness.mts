@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import process from 'node:process';
 
-import { loadPublicationCatalog } from '../../src/shared/product-metadata/publication-catalog.mts';
+import { loadPublicationCatalog } from '../../tools/release/publication-catalog.mts';
 import { mavenCentralAuthorization } from '../../tools/release/maven-central-auth.mts';
 
 const MAVEN_CENTRAL_API_BASE = 'https://central.sonatype.com';

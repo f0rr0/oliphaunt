@@ -1,13 +1,11 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { isolatedGitHubTestEnvironment } from '../test/isolated-github-test-environment.mts';
 import { readGitHubCoreRequestJournal } from './github-core-request-journal.mts';
 import {
   GitHubReadError,
@@ -362,34 +360,6 @@ test('environment and override settings enforce fixed retry, timeout, and memory
     () => githubReadOptionsFromEnv({}, { deadlineMs: 60 * 60_000 + 1 }),
     /deadlineMs must be between/u,
   );
-});
-
-test('HTTP CLI completes under both supported script runtimes', (t) => {
-  const temporary = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-github-read-cli-'));
-  t.after(() => rmSync(temporary, { force: true, recursive: true }));
-  const preload = path.join(temporary, 'fetch.mts');
-  writeFileSync(preload, 'globalThis.fetch = async () => Response.json([{id: 42}]);');
-  for (const [runtime, flag] of [
-    ['node', '--import'],
-    ['bun', '--preload'],
-  ]) {
-    const result = spawnSync(
-      runtime,
-      [
-        flag,
-        preload,
-        'tools/release/github-read.mts',
-        '--',
-        'repos/f0rr0/oliphaunt/actions/runs/42',
-      ],
-      {
-        encoding: 'utf8',
-        env: isolatedGitHubTestEnvironment(),
-      },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), '[{"id":42}]');
-  }
 });
 
 test('native HTTP pagination retains exact page queries, link validation, and one deadline', async () => {

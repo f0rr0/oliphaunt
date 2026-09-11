@@ -26,8 +26,8 @@ case "$tool" in
 esac
 
 case "$tool" in
-  bun) manifest="${OLIPHAUNT_BUN_TOOLCHAIN_MANIFEST:-$root/src/sources/toolchains/bun.toml}" ;;
-  deno) manifest="${OLIPHAUNT_DENO_TOOLCHAIN_MANIFEST:-$root/src/sources/toolchains/deno.toml}" ;;
+  bun) manifest="${OLIPHAUNT_BUN_TOOLCHAIN_MANIFEST:-$root/tools/dev/bun.toml}" ;;
+  deno) manifest="${OLIPHAUNT_DENO_TOOLCHAIN_MANIFEST:-$root/tools/dev/deno.toml}" ;;
 esac
 proto_file="${OLIPHAUNT_PINNED_TOOL_PROTO_FILE:-$root/.prototools}"
 extractor="$script_dir/extract-pinned-binary.sh"

@@ -1,6 +1,5 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
 import { resolveExecution } from './resolve-planned-moon-execution.mts';
@@ -8,12 +7,23 @@ import { resolveExecution } from './resolve-planned-moon-execution.mts';
 const tasks = new Map([
   [
     'release:package',
-    { target: 'release:package', deps: [{ target: 'sdk:package' }, { target: 'native:ios' }] },
+    {
+      target: 'release:package',
+      deps: [
+        { target: 'sdk:package', cacheStrategy: 'hash' },
+        { target: 'native:ios', cacheStrategy: 'hash' },
+        { target: 'sdk:cargo-sources', cacheStrategy: 'hash' },
+      ],
+    },
   ],
   ['sdk:package', { target: 'sdk:package', deps: [{ target: 'sdk:compile' }] }],
   ['sdk:compile', { target: 'sdk:compile', deps: [] }],
   ['native:ios', { target: 'native:ios', deps: [{ target: 'source:fetch' }] }],
   ['source:fetch', { target: 'source:fetch', deps: [] }],
+  [
+    'sdk:cargo-sources',
+    { target: 'sdk:cargo-sources', command: 'noop', deps: [], options: { internal: true } },
+  ],
 ]);
 
 test('leaves ordinary Moon execution intact when no dependency was transferred', () => {
@@ -58,67 +68,11 @@ test('fails closed when the task graph is incomplete', () => {
   );
 });
 
-test('resolves a real multi-root job with downloaded dependencies', () => {
-  const result = spawnSync(
-    process.execPath,
-    ['.github/scripts/resolve-planned-moon-execution.mts', 'wasix-ts-sdk-package'],
-    {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        OLIPHAUNT_CI_JOB_TARGETS_JSON: JSON.stringify({
-          'wasix-ts-sdk-package': [
-            'oliphaunt-wasix-ts:release-package',
-            'wasix-ts-integration:runtime',
-          ],
-        }),
-        OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: JSON.stringify([
-          'liboliphaunt-wasix:runtime-portable',
-          'oliphaunt-wasix-napi:build-release-assets',
-        ]),
-      },
-    },
+test('rejects cycles between selected roots instead of running an arbitrary order', () => {
+  const cyclic = new Map(tasks);
+  cyclic.set('sdk:package', { deps: ['release:package'] });
+  assert.throws(
+    () => resolveExecution(['sdk:package', 'release:package'], ['native:ios'], cyclic),
+    /dependency cycle/u,
   );
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^local\toliphaunt-wasix-ts:package$/mu);
-  assert.match(result.stdout, /^target\twasix-ts-integration:runtime$/mu);
-  assert.match(result.stdout, /^transferred\tliboliphaunt-wasix:runtime-portable$/mu);
-});
-
-test('runs one exact matrix target and rejects targets outside the plan', () => {
-  const env = {
-    ...process.env,
-    OLIPHAUNT_CI_JOB_TARGETS_JSON: JSON.stringify({
-      'liboliphaunt-native-android': [
-        'liboliphaunt-native:package-runtime-android-arm64-v8a',
-        'liboliphaunt-native:package-runtime-android-x86_64',
-      ],
-    }),
-  };
-  const selected = spawnSync(
-    process.execPath,
-    [
-      '.github/scripts/resolve-planned-moon-execution.mts',
-      'liboliphaunt-native-android',
-      'liboliphaunt-native:package-runtime-android-x86_64',
-    ],
-    { encoding: 'utf8', env },
-  );
-  assert.equal(selected.status, 0, selected.stderr);
-  assert.equal(
-    selected.stdout.trim(),
-    'target\tliboliphaunt-native:package-runtime-android-x86_64',
-  );
-
-  const rejected = spawnSync(
-    process.execPath,
-    [
-      '.github/scripts/resolve-planned-moon-execution.mts',
-      'liboliphaunt-native-android',
-      'liboliphaunt-native:package-runtime-ios-xcframework',
-    ],
-    { encoding: 'utf8', env },
-  );
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /is not planned/u);
 });

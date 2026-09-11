@@ -8,7 +8,7 @@ import {
   loadPublicationLock,
   lockedProductArtifactPaths,
 } from './publication-lock.mts';
-import { ROOT, compareText } from '../../src/shared/product-metadata/release-graph.mts';
+import { ROOT, compareText } from './release-graph.mts';
 
 const ATTESTED_ROLES = Object.freeze(['github-release-asset', 'github-release-metadata']);
 export const EXTENSION_ATTESTATION_SHARD_COUNT = 2;

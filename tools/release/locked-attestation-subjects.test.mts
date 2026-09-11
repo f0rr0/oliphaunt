@@ -11,7 +11,7 @@ import {
   lockedAttestationSubjects,
   lockedAttestationSubjectShards,
 } from './locked-attestation-subjects.mts';
-import { ROOT, compareText } from '../../src/shared/product-metadata/release-graph.mts';
+import { ROOT, compareText } from './release-graph.mts';
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex');

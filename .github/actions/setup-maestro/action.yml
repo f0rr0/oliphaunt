@@ -12,4 +12,4 @@ runs:
 
     - name: Install Maestro CLI
       shell: bash
-      run: src/shared/mobile-tools/setup-maestro.sh
+      run: tools/dev/setup-maestro.sh

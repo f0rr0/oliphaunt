@@ -1,0 +1,47 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: artifact-packaging
+language: typescript
+layer: library
+stack: systems
+tags:
+  - javascript-quality
+  - shared
+  - artifacts
+  - packaging
+project:
+  title: Artifact Packaging
+  description: "Deterministic archive creation, reading, and safe staging shared by product packagers."
+  owner: oliphaunt
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*":
+      - "@oliphaunt/core"
+fileGroups:
+  source:
+    - "*.{mjs,mts}"
+    - "!*.test.{mjs,mts}"
+tasks:
+  test:
+    tags:
+      - quality
+      - unit
+      - requires-rust
+    command: "bash tools/packaging/test.sh"
+    inputs:
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "@group(legal-files)"
+      - /extensions/tools/extension-upstream-licenses.mts
+      - /extensions/external/**/upstream-license-data.json
+      - "@group(upstream-licenses)"
+      - "/runtimes/liboliphaunt-{native,wasix}/THIRD_PARTY_NOTICES.md"
+      - "/third-party/{icu,openssl}/source.toml"
+      - "**/*.mts"
+      - "**/*.sh"
+      - /database-resources/contracts/*.mts
+      - /tools/release/**/*.mts
+      - /runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

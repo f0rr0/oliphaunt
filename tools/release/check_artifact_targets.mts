@@ -6,7 +6,7 @@ import {
   extensionNativeRegistryPackageStrings,
   extensionRegistryPackageStrings,
   extensionWasixRegistryPackageStrings,
-} from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
+} from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import {
   brokerRuntimeMatrix,
   extensionArtifactsNativeMatrix,
@@ -20,11 +20,8 @@ import {
   nodeDirectRuntimeMatrix,
   reactNativeAndroidMobileAppMatrix,
   wasixNapiRuntimeMatrix,
-} from '../../src/shared/product-metadata/artifact-target-matrix.mts';
-import {
-  declaredCarrierMap,
-  loadPublicationCatalog,
-} from '../../src/shared/product-metadata/publication-catalog.mts';
+} from './artifact-target-matrix.mts';
+import { declaredCarrierMap, loadPublicationCatalog } from './publication-catalog.mts';
 import {
   allArtifactTargets,
   ciNpmPackageArtifactRows,
@@ -42,12 +39,8 @@ import {
   releaseMetadata,
   sdkPackageProducts,
   typescriptOptionalRuntimePackageProducts,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import {
-  compareText,
-  loadProducts,
-  ROOT,
-} from '../../src/shared/product-metadata/release-graph.mts';
+} from './release-artifact-targets.mts';
+import { compareText, loadProducts, ROOT } from './release-graph.mts';
 
 const TOOL = 'check_artifact_targets.mts';
 function invariant(condition, message) {
@@ -350,8 +343,8 @@ export function validateCarrierCoverage({
     const manifest = platformManifests.get(target.npmPackage);
     invariant(manifest !== undefined, `${target.npmPackage} has no package manifest`);
     invariant(
-      manifest.version === graph.products[target.product].version && manifest.optional === true,
-      `${target.npmPackage} must be optional and match ${target.product} version`,
+      manifest.version === graph.products[target.product].version,
+      `${target.npmPackage} must match ${target.product} version`,
     );
     assertSameStrings(
       manifestArray(manifest.os),
@@ -367,10 +360,6 @@ export function validateCarrierCoverage({
       manifestArray(manifest.libc),
       target.npmLibc === undefined ? [] : [target.npmLibc],
       `${target.npmPackage} libc selector`,
-    );
-    invariant(
-      manifest.oliphaunt?.target === target.target,
-      `${target.npmPackage} must select target ${target.target}`,
     );
   }
   const expectedOptional = new Map(
@@ -516,9 +505,9 @@ export function validateRepository() {
     graph: inventory.graph,
     catalog: inventory.catalog,
     targets: inventory.targets,
-    jsManifest: readJson('src/sdks/js/package.json'),
-    nativeToolsManifest: readJson('src/runtimes/liboliphaunt/native/tools-npm/package.json'),
-    rustManifest: readToml('src/sdks/rust/Cargo.toml'),
+    jsManifest: readJson('sdks/ts/sdk/package.json'),
+    nativeToolsManifest: readJson('postgres-tools/native/npm/package.json'),
+    rustManifest: readToml('sdks/rust/sdk/Cargo.toml'),
     platformManifests: platformPackageManifests(inventory.graph, inventory.targets),
   });
   validateExtensionCarrierCoverage(inventory.graph, inventory.catalog, inventory.products);

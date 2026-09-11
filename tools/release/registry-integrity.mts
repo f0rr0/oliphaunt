@@ -14,7 +14,7 @@ import process from 'node:process';
 
 import { createCratesIoReadGate } from './registry-http-retry.mts';
 import { loadPublicationLock } from './publication-lock.mts';
-import { ROOT, compareText } from '../../src/shared/product-metadata/release-graph.mts';
+import { ROOT, compareText } from './release-graph.mts';
 const CRATES_IO_API = process.env.CRATES_IO_API || 'https://crates.io/api/v1';
 const DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org';
 const MAVEN_CENTRAL_BASE = process.env.MAVEN_CENTRAL_BASE || 'https://repo1.maven.org/maven2';

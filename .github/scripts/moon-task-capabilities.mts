@@ -1,6 +1,7 @@
 const RUST_CAPABILITY_TAG = 'requires-rust';
 const MAINTAINER_TOOLS_CAPABILITY_TAG = 'requires-maintainer-tools';
 const ANDROID_SDK_CAPABILITY_TAG = 'requires-android-sdk';
+const SWIFT_CAPABILITY_TAG = 'requires-swift';
 const APPLE_CAPABILITY_TAG = 'requires-apple';
 const WASMER_LLVM_CAPABILITY_TAG = 'requires-wasmer-llvm';
 
@@ -69,9 +70,10 @@ export function taskCapabilities(task, taskMap, state = {}) {
   let requiresMaintainerTools = tags.has(MAINTAINER_TOOLS_CAPABILITY_TAG);
   let requiresRust = tags.has(RUST_CAPABILITY_TAG) || requiresMaintainerTools;
   let requiresAndroidSdk = tags.has(ANDROID_SDK_CAPABILITY_TAG);
+  let requiresSwift = tags.has(SWIFT_CAPABILITY_TAG);
   let requiresApple = tags.has(APPLE_CAPABILITY_TAG);
   let requiresWasmerLlvm = tags.has(WASMER_LLVM_CAPABILITY_TAG);
-  let requiresWorkspace = Array.isArray(task.toolchains) && task.toolchains.includes('pnpm');
+  let requiresWorkspace = Array.isArray(task.toolchains) && task.toolchains.includes('bun');
 
   for (const dependency of taskDependencies(task)) {
     const dependencyTask = taskMap.get(dependency);
@@ -84,6 +86,7 @@ export function taskCapabilities(task, taskMap, state = {}) {
     requiresMaintainerTools ||= capabilities.requires_maintainer_tools;
     requiresRust ||= capabilities.requires_rust;
     requiresAndroidSdk ||= capabilities.requires_android_sdk;
+    requiresSwift ||= capabilities.requires_swift;
     requiresApple ||= capabilities.requires_apple;
     requiresWasmerLlvm ||= capabilities.requires_wasmer_llvm;
     requiresWorkspace ||= capabilities.requires_workspace;
@@ -95,6 +98,7 @@ export function taskCapabilities(task, taskMap, state = {}) {
     requires_maintainer_tools: requiresMaintainerTools,
     requires_android_sdk: requiresAndroidSdk,
     requires_apple: requiresApple,
+    requires_swift: requiresSwift,
     requires_wasmer_llvm: requiresWasmerLlvm,
     requires_workspace: requiresWorkspace,
   });
@@ -138,6 +142,7 @@ function groupRow(targets) {
     requires_maintainer_tools: first.requires_maintainer_tools,
     requires_android_sdk: first.requires_android_sdk,
     requires_apple: first.requires_apple,
+    requires_swift: first.requires_swift,
     requires_wasmer_llvm: first.requires_wasmer_llvm,
     requires_workspace: first.requires_workspace,
     runner: first.requires_apple ? 'macos-26' : 'ubuntu-24.04',
@@ -164,6 +169,7 @@ export function groupTargets(targets, { maxTargets = MAX_TARGETS_PER_JOB } = {})
       target.requires_maintainer_tools,
       target.requires_android_sdk,
       target.requires_apple,
+      target.requires_swift,
       target.requires_wasmer_llvm,
       target.requires_workspace,
     ]

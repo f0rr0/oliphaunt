@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": false,
+    "lib": ["ES2023", "DOM", "WebWorker"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "outDir": "lib",
+    "paths": {
+      "@oliphaunt/liboliphaunt-wasix-tools": ["../npm/index.d.ts"]
+    },
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "bun"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["lib", "node_modules"]
+}

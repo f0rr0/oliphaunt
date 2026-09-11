@@ -55,14 +55,6 @@
       "matchStrings": ["node = \"(?<currentValue>[^\"]+)\""],
       "datasourceTemplate": "node-version",
       "depNameTemplate": "node"
-    },
-    {
-      "customType": "regex",
-      "description": "Pinned pnpm runtime",
-      "managerFilePatterns": ["/^\\.prototools$/"],
-      "matchStrings": ["pnpm = \"(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "npm",
-      "depNameTemplate": "pnpm"
     }
   ]
 }

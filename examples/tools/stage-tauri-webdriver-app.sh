@@ -27,7 +27,7 @@ else
   source_app_path="$(realpath -m "$root/$source_app_dir")"
 fi
 case "$source_app_path" in
-  "$root/examples/"*) ;;
+  "$root/examples"*) ;;
   *) fail "Tauri webdriver examples must live under $root/examples: $source_app_dir" ;;
 esac
 [[ -f "$source_app_path/package.json" && -f "$source_app_path/src-tauri/Cargo.toml" ]] ||
@@ -40,7 +40,7 @@ esac
 
 destination_root="$(realpath -m "$destination_root")"
 case "$destination_root" in
-  / | "$root" | "$root/examples" | "$root/examples/"*)
+  / | "$root" | "$root/examples" | "$root/examples"*)
     fail "destination must not overlap the checkout or its example sources: $destination_root"
     ;;
 esac
@@ -66,7 +66,7 @@ done
 # the scratch build has no symlink or live-checkout dependency.
 config="$source_app_path/src-tauri/tauri.conf.json"
 if [[ -f "$config" ]]; then
-  icons="$(node "$root/examples/tools/tauri-icons.mts" "$config" "$root")"
+  icons="$(bun "$root/examples/tools/tauri-icons.mts" "$config" "$root")"
   while IFS= read -r asset_relative; do
     [[ -n "$asset_relative" ]] || continue
     mkdir -p "$worktree/$(dirname "$asset_relative")"

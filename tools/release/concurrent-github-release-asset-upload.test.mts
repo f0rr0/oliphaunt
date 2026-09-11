@@ -1,16 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-
 import {
   ConcurrentGithubReleaseAssetUploadError,
   executeConcurrentGithubReleaseAssetUploadPlan,
   githubReleaseAssetUploadEnvironment,
   writeConcurrentGithubReleaseAssetUploadReport,
 } from './concurrent-github-release-asset-upload.mts';
+import { reserveGitHubContentWrite } from './github-content-write-pacer.mts';
+import { reserveGitHubCoreRequest } from './github-core-request-journal.mts';
 
 function plan(waves) {
   const rows = waves.flat();
@@ -25,6 +23,61 @@ function plan(waves) {
       windowMs: 1_000,
     })),
   };
+}
+
+if (['worker', 'verify'].includes(process.argv[2])) {
+  const root = process.argv[3];
+  const environment = githubReleaseAssetUploadEnvironment(
+    {
+      GITHUB_ACTIONS: 'false',
+      GITHUB_REPOSITORY: 'f0rr0/oliphaunt',
+      GITHUB_RUN_ATTEMPT: '1',
+      GITHUB_RUN_ID: '789',
+      GITHUB_SHA: 'e'.repeat(40),
+      OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: path.join(root, 'pacer.json'),
+      OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE: 'true',
+      OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: path.join(root, 'core.json'),
+      OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL: 'true',
+    },
+    { abortPath: path.join(root, 'abort.json'), windowMs: 1000 },
+  );
+  if (process.argv[2] === 'worker') {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const label = `upload-${process.argv[4]}-${attempt}`;
+      await reserveGitHubContentWrite({
+        environment,
+        label,
+        timing: { intervalMs: 5, maxLockWaitMs: 1000 },
+      });
+      await reserveGitHubCoreRequest({ environment, label });
+    }
+  } else {
+    const pacer = JSON.parse(readFileSync(path.join(root, 'pacer.json'), 'utf8'));
+    const core = JSON.parse(readFileSync(path.join(root, 'core.json'), 'utf8'));
+    expect(pacer.sequence).toBe(10);
+    expect(pacer.lastReservedAtMs).toBeGreaterThan(0);
+    expect(core.sequence).toBe(10);
+    expect(core.attempts).toHaveLength(10);
+    const exactPlan = plan([
+      Array.from({ length: 5 }, (_, i) => ({ assetCount: 2, product: `product-${i}` })),
+    ]);
+    const execution = await executeConcurrentGithubReleaseAssetUploadPlan(exactPlan, {
+      uploadProduct: async ({ product }) => ({ product }),
+    });
+    const reportPath = path.join(root, 'report.json');
+    writeConcurrentGithubReleaseAssetUploadReport(reportPath, {
+      execution,
+      plan: exactPlan,
+      sourceCommit: 'e'.repeat(40),
+    });
+    expect(JSON.parse(readFileSync(reportPath, 'utf8'))).toEqual({
+      execution,
+      plan: exactPlan,
+      schema: 'oliphaunt-concurrent-github-release-asset-upload-report-v1',
+      sourceCommit: 'e'.repeat(40),
+    });
+  }
+  process.exit(0);
 }
 
 describe('concurrent GitHub release asset upload execution', () => {
@@ -166,95 +219,5 @@ describe('concurrent GitHub release asset upload execution', () => {
       status: 'success',
       waveCount: 0,
     });
-  });
-
-  test('subprocess lanes preserve every shared journal reservation and emit one exact report', async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-concurrent-upload-report-'));
-    try {
-      const pacerPath = path.join(root, 'pacer.json');
-      const corePath = path.join(root, 'core.json');
-      const reportPath = path.join(root, 'report.json');
-      const workerPath = path.join(root, 'worker.mjs');
-      writeFileSync(
-        workerPath,
-        `
-import { reserveGitHubContentWrite } from ${JSON.stringify(pathToFileURL(path.resolve('tools/release/github-content-write-pacer.mts')).href)};
-import { reserveGitHubCoreRequest } from ${JSON.stringify(pathToFileURL(path.resolve('tools/release/github-core-request-journal.mts')).href)};
-for (let attempt = 0; attempt < 2; attempt += 1) {
-  const label = \`upload-\${process.argv[2]}-\${attempt}\`;
-  await reserveGitHubContentWrite({
-    environment: process.env,
-    label,
-    timing: { intervalMs: 5, maxLockWaitMs: 1_000 },
-  });
-  await reserveGitHubCoreRequest({ environment: process.env, label });
-}
-`,
-      );
-      const sourceCommit = 'e'.repeat(40);
-      const environment = githubReleaseAssetUploadEnvironment(
-        {
-          ...process.env,
-          GITHUB_ACTIONS: 'false',
-          GITHUB_REPOSITORY: 'f0rr0/oliphaunt',
-          GITHUB_RUN_ATTEMPT: '1',
-          GITHUB_RUN_ID: '789',
-          GITHUB_SHA: sourceCommit,
-          OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: pacerPath,
-          OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE: 'true',
-          OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: corePath,
-          OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL: 'true',
-        },
-        {
-          abortPath: path.join(root, 'abort.json'),
-          windowMs: 1_000,
-        },
-      );
-      const rows = Array.from({ length: 5 }, (_, index) => ({
-        assetCount: 2,
-        product: `product-${index}`,
-      }));
-      const exactPlan = plan([rows]);
-      const runWorker = (product) =>
-        new Promise((resolve, reject) => {
-          const child = spawn(process.execPath, [workerPath, product], {
-            env: environment,
-            stdio: ['ignore', 'ignore', 'pipe'],
-          });
-          let stderr = '';
-          child.stderr.on('data', (chunk) => {
-            stderr += String(chunk);
-          });
-          child.once('error', reject);
-          child.once('close', (code, signal) => {
-            if (code === 0 && signal === null) resolve({ product });
-            else reject(new Error(`${product} worker failed (${code}/${signal}): ${stderr}`));
-          });
-        });
-      const execution = await executeConcurrentGithubReleaseAssetUploadPlan(exactPlan, {
-        uploadProduct: ({ product }) => runWorker(product),
-      });
-      writeConcurrentGithubReleaseAssetUploadReport(reportPath, {
-        execution,
-        plan: exactPlan,
-        sourceCommit,
-      });
-
-      const pacer = JSON.parse(readFileSync(pacerPath, 'utf8'));
-      const core = JSON.parse(readFileSync(corePath, 'utf8'));
-      const report = JSON.parse(readFileSync(reportPath, 'utf8'));
-      expect(pacer.sequence).toBe(10);
-      expect(pacer.reservations).toHaveLength(10);
-      expect(core.sequence).toBe(10);
-      expect(core.attempts).toHaveLength(10);
-      expect(report).toEqual({
-        execution,
-        plan: exactPlan,
-        schema: 'oliphaunt-concurrent-github-release-asset-upload-report-v1',
-        sourceCommit,
-      });
-    } finally {
-      rmSync(root, { force: true, recursive: true });
-    }
   });
 });

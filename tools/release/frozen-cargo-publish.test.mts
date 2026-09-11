@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
 
 import {
   cargoPublishMetadataFromCrate,
@@ -73,14 +73,19 @@ status = "actively-developed"
     writeFileSync(path.join(packageRoot, 'examples', 'nested-crate', 'src', 'lib.rs'), '');
   }
   const cratePath = path.join(root, 'fixture-crate-1.2.3.crate');
-  const archiveOperands = [archiveRoot];
-  if (duplicateManifest) archiveOperands.push(`${archiveRoot}/Cargo.toml`);
-  const result = spawnSync('tar', ['-czf', cratePath, '-C', root, ...archiveOperands], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || `tar exited ${result.status}`);
-  }
+  const files = ['Cargo.toml', 'README.md', 'src/lib.rs'];
+  if (nestedManifest)
+    files.push('examples/nested-crate/Cargo.toml', 'examples/nested-crate/src/lib.rs');
+  if (duplicateManifest) files.push('Cargo.toml');
+  writeFileSync(
+    cratePath,
+    tarArchive(
+      files.map((file) => ({
+        name: archiveRoot + '/' + file,
+        data: readFileSync(path.join(packageRoot, file)),
+      })),
+    ),
+  );
   return cratePath;
 }
 
@@ -135,7 +140,7 @@ describe('frozen Cargo registry publication', () => {
 
   test('rejects ambiguous members and a top-level crate root that disagrees with package identity', () => {
     expect(() => cargoPublishMetadataFromCrate(cargoFixture({ duplicateManifest: true }))).toThrow(
-      /link or special ustar entry|duplicate.*Cargo[.]toml/u,
+      /repeats archive member.*Cargo[.]toml/u,
     );
     expect(() =>
       cargoPublishMetadataFromCrate(cargoFixture({ archiveRoot: 'substituted-root' })),

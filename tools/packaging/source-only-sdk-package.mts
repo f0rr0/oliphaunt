@@ -1,0 +1,295 @@
+#!/usr/bin/env bun
+
+import { chmodSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { readPortableArchiveEntries } from './portable-archive.mts';
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  releasePackageLicense,
+  stageReleaseNotices,
+} from './release-notices.mts';
+import { requireSafeDirectoryChain } from './release-directory-safety.mts';
+
+const TOOL = 'source-only-sdk-package.mts';
+const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
+const SOURCE_LICENSE = releasePackageLicense().spdx;
+const NOTICE_FILES = Object.freeze(['LICENSE', 'THIRD_PARTY_NOTICES.md']);
+
+export const SOURCE_ONLY_NPM_PROFILES = Object.freeze({
+  js: Object.freeze({
+    name: '@oliphaunt/ts',
+    scripts: Object.freeze({}),
+    optionalDependencyVersions: Object.freeze({
+      '@oliphaunt/broker-darwin-arm64': 'brokerVersion',
+      '@oliphaunt/broker-linux-arm64-gnu': 'brokerVersion',
+      '@oliphaunt/broker-linux-x64-gnu': 'brokerVersion',
+      '@oliphaunt/broker-win32-x64-msvc': 'brokerVersion',
+      '@oliphaunt/liboliphaunt-darwin-arm64': 'liboliphauntVersion',
+      '@oliphaunt/liboliphaunt-linux-arm64-gnu': 'liboliphauntVersion',
+      '@oliphaunt/liboliphaunt-linux-x64-gnu': 'liboliphauntVersion',
+      '@oliphaunt/liboliphaunt-win32-x64-msvc': 'liboliphauntVersion',
+      '@oliphaunt/node-direct-darwin-arm64': 'nodeDirectAddonVersion',
+      '@oliphaunt/node-direct-linux-arm64-gnu': 'nodeDirectAddonVersion',
+      '@oliphaunt/node-direct-linux-x64-gnu': 'nodeDirectAddonVersion',
+      '@oliphaunt/node-direct-win32-x64-msvc': 'nodeDirectAddonVersion',
+    }),
+  }),
+  'react-native': Object.freeze({
+    name: '@oliphaunt/react-native',
+    scripts: Object.freeze({
+      'package:verify-ios': 'node ./tools/verify-ios-package.mjs --package-dir .',
+    }),
+  }),
+});
+
+function requireRegularFile(file, label) {
+  let stat;
+  try {
+    stat = lstatSync(file);
+  } catch (cause) {
+    throw new Error(`${label} cannot be inspected: ${cause.message}`);
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`${label} must be a regular non-symlink file: ${file}`);
+  }
+  return stat;
+}
+
+function readJson(file, label) {
+  requireRegularFile(file, label);
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (cause) {
+    throw new Error(`${label} must contain valid JSON: ${cause.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${label} must contain a JSON object`);
+  }
+  return parsed;
+}
+
+function checkedScripts(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} scripts contract must be an object`);
+  }
+  const scripts = {};
+  for (const name of Object.keys(value).sort()) {
+    const command = value[name];
+    if (typeof command !== 'string' || command.length === 0) {
+      throw new Error(`${label} script ${JSON.stringify(name)} must be a non-empty string`);
+    }
+    scripts[name] = command;
+  }
+  return scripts;
+}
+
+function exactOptionalDependencies(manifest, fields, label) {
+  if (fields === undefined) return undefined;
+  const metadata = manifest.oliphaunt;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error(`${label} must declare oliphaunt compatibility metadata`);
+  }
+  const dependencies = {};
+  for (const [name, field] of Object.entries(fields)) {
+    const version = metadata[field];
+    if (typeof version !== 'string' || !/^\d+[.]\d+[.]\d+$/u.test(version)) {
+      throw new Error(`${label} oliphaunt.${field} must be an exact stable version`);
+    }
+    dependencies[name] = version;
+  }
+  return dependencies;
+}
+
+function sameStringMap(left, right) {
+  const entries = Object.entries(left ?? {});
+  return (
+    entries.length === Object.keys(right).length &&
+    entries.every(([name, version]) => right[name] === version)
+  );
+}
+
+function assertManifestContract(manifest, { name, scripts, optionalDependencyVersions }, label) {
+  if (manifest.name !== name) {
+    throw new Error(`${label} must identify ${name}, got ${JSON.stringify(manifest.name)}`);
+  }
+  if (manifest.license !== SOURCE_LICENSE) {
+    throw new Error(
+      `${label} must declare the source-only license ${SOURCE_LICENSE}, got ${JSON.stringify(manifest.license)}`,
+    );
+  }
+  const expectedScripts = checkedScripts(scripts, label);
+  const actualScripts = manifest.scripts ?? {};
+  if (
+    !actualScripts ||
+    typeof actualScripts !== 'object' ||
+    Array.isArray(actualScripts) ||
+    JSON.stringify(actualScripts) !== JSON.stringify(expectedScripts)
+  ) {
+    throw new Error(
+      `${label} must contain only the publish-safe scripts ${JSON.stringify(expectedScripts)}, got ${JSON.stringify(actualScripts)}`,
+    );
+  }
+  if (Object.hasOwn(manifest, 'devDependencies')) {
+    throw new Error(`${label} must not publish development-only dependencies`);
+  }
+  const expectedOptional = exactOptionalDependencies(manifest, optionalDependencyVersions, label);
+  if (
+    expectedOptional !== undefined &&
+    !sameStringMap(manifest.optionalDependencies, expectedOptional)
+  ) {
+    throw new Error(
+      `${label} must pin its optional runtime packages to its compatibility versions`,
+    );
+  }
+}
+
+function requireNoticeAllowlist(manifest, label) {
+  if (!Array.isArray(manifest.files)) {
+    throw new Error(`${label} must declare an npm files allowlist`);
+  }
+  for (const member of NOTICE_FILES) {
+    if (!manifest.files.includes(member)) {
+      throw new Error(`${label} npm files allowlist must include ${member}`);
+    }
+  }
+}
+
+function writeManifest(file, manifest) {
+  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  chmodSync(file, 0o644);
+}
+
+export function prepareSourceOnlyNpmPackage(packageDir, contract) {
+  // Validate the complete lexical path before reading or rewriting package.json.
+  // Notice staging enforces the same boundary, but it runs after sanitation.
+  const directory = requireSafeDirectoryChain(packageDir, {
+    label: 'source-only npm package directory',
+  });
+  const packageJsonFile = path.join(directory, 'package.json');
+  const manifest = readJson(packageJsonFile, 'source-only npm package manifest');
+  const expectedScripts = checkedScripts(contract.scripts, contract.name);
+  if (manifest.name !== contract.name) {
+    throw new Error(
+      `source-only npm package manifest must identify ${contract.name}, got ${JSON.stringify(manifest.name)}`,
+    );
+  }
+  if (manifest.license !== SOURCE_LICENSE) {
+    throw new Error(
+      `source-only npm package manifest must declare ${SOURCE_LICENSE}, got ${JSON.stringify(manifest.license)}`,
+    );
+  }
+  requireNoticeAllowlist(manifest, 'source-only npm package manifest');
+  for (const [name, command] of Object.entries(expectedScripts)) {
+    if (manifest.scripts?.[name] !== command) {
+      throw new Error(
+        `source-only npm package manifest is missing publish-safe script ${name}=${JSON.stringify(command)}`,
+      );
+    }
+  }
+  if (Object.keys(expectedScripts).length === 0) {
+    delete manifest.scripts;
+  } else {
+    manifest.scripts = expectedScripts;
+  }
+  const exactOptional = exactOptionalDependencies(
+    manifest,
+    contract.optionalDependencyVersions,
+    'source-only npm package manifest',
+  );
+  if (exactOptional !== undefined) {
+    const sourceOptional = manifest.optionalDependencies ?? {};
+    const sameNames =
+      Object.keys(sourceOptional).length === Object.keys(exactOptional).length &&
+      Object.keys(sourceOptional).every((name) => Object.hasOwn(exactOptional, name));
+    const local = Object.values(sourceOptional).every((version) => version === 'workspace:*');
+    const staged = Object.entries(exactOptional).every(
+      ([name, version]) => sourceOptional[name] === version,
+    );
+    if (!sameNames || (!local && !staged)) {
+      throw new Error(
+        'source-only npm package manifest optional runtime packages must use workspace:* locally or exact compatibility versions when staged',
+      );
+    }
+    manifest.optionalDependencies = exactOptional;
+  }
+  delete manifest.devDependencies;
+  writeManifest(packageJsonFile, manifest);
+  stageReleaseNotices(directory, SOURCE_NOTICE_OPTIONS);
+  assertReleaseNoticesInDirectory(directory, SOURCE_NOTICE_OPTIONS);
+  assertManifestContract(manifest, contract, 'staged source-only npm package manifest');
+  return packageJsonFile;
+}
+
+function archiveJson(entries, member, label) {
+  const entry = entries.get(member);
+  if (!entry?.isFile || entry.isSymbolicLink) {
+    throw new Error(`${label} is missing regular member ${member}`);
+  }
+  if ((entry.mode & 0o777) !== 0o644) {
+    throw new Error(`${label} member ${member} must have mode 0644`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(entry.data()).toString('utf8'));
+  } catch (cause) {
+    throw new Error(`${label} member ${member} must contain valid JSON: ${cause.message}`);
+  }
+  return parsed;
+}
+
+export function assertSourceOnlyNpmArchive(archive, contract) {
+  const file = path.resolve(archive);
+  const label = path.basename(file);
+  assertReleaseNoticesInArchive(file, {
+    ...SOURCE_NOTICE_OPTIONS,
+    prefix: 'package',
+    label,
+  });
+  const entries = readPortableArchiveEntries(file);
+  const manifest = archiveJson(entries, 'package/package.json', label);
+  assertManifestContract(manifest, contract, `${label} package.json`);
+  requireNoticeAllowlist(manifest, `${label} package.json`);
+  return manifest;
+}
+
+function usage() {
+  return [
+    'usage:',
+    `  ${TOOL} prepare-npm <js|react-native> <package-directory>`,
+    `  ${TOOL} check-npm-archive <js|react-native> <package.tgz>`,
+  ].join('\n');
+}
+
+function profile(name) {
+  const selected = SOURCE_ONLY_NPM_PROFILES[name];
+  if (!selected) {
+    throw new Error(`unsupported source-only npm package profile ${JSON.stringify(name)}`);
+  }
+  return selected;
+}
+
+function main(argv) {
+  const [command, first, second, ...extra] = argv;
+  if (command === 'prepare-npm' && first && second && extra.length === 0) {
+    prepareSourceOnlyNpmPackage(second, profile(first));
+  } else if (command === 'check-npm-archive' && first && second && extra.length === 0) {
+    assertSourceOnlyNpmArchive(second, profile(first));
+  } else {
+    throw new Error(usage());
+  }
+  console.log(`${TOOL}: ${command} passed`);
+}
+
+const invoked = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (invoked === fileURLToPath(import.meta.url)) {
+  try {
+    main(process.argv.slice(2));
+  } catch (error) {
+    console.error(`${TOOL}: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+}

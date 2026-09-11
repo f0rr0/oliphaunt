@@ -7,24 +7,20 @@ exact extension artifact selection, cluster-seed hydration, and
 language-native errors.
 `liboliphaunt` remains the compiled direct/broker boundary.
 
-The public crate stays application focused. Native resource construction,
-extension artifact/index creation and signing, package size reporting, and
-release-policy generation belong to the unpublished workspace crate
-`oliphaunt-native-packaging`, not to `oliphaunt`.
+The public crate stays application focused. Selectable seeds and ICU data are
+produced by `database-resources`; extension products own extension carriers.
+The remaining private `oliphaunt-native-packaging` tool composes mobile runtime
+and static-extension resources. It depends directly on
+`liboliphaunt-native-bindings` with `internal-native-packaging`, without exposing
+a packaging feature or private packaging API through the public SDK.
 
-That workspace tool enables `internal-native-packaging` and consumes the
-version-locked `oliphaunt::__private::packaging` seam. The seam is absent from
-default builds, is inventoried separately, and may change only together with
-the unpublished tool; its symbols are not application API.
-
-The separately built, unpublished `oliphaunt-broker` executable consumes one
-exact-version internal seam. It enables the non-default
-`__internal-broker-helper` feature and accesses `oliphaunt::__private`; the
-module is absent from default builds, is not application API, and may change
-only in lockstep with that executable. Keeping the seam in-process avoids an
-extra owner-thread hop inside the process whose sole job is to own PostgreSQL.
-Its symbols are still listed separately in the generated API inventory so a
-review cannot accidentally widen it.
+`broker/` now owns the independently versioned `oliphaunt-broker` library and
+executable. Both the broker and the native SDK depend on
+`liboliphaunt-native-bindings` in `sdks/rust/liboliphaunt-native`; the broker no
+longer reaches back into a private SDK broker feature. SQL and cancellation use
+PostgreSQL wire framing. Backup and shutdown use a separate authenticated
+management connection. Swift and Kotlin reach the same native implementation
+through the private `sdks/rust/mobile-bindings` UniFFI adapter.
 
 Current public concepts are:
 
@@ -36,6 +32,8 @@ Current public concepts are:
 - a fluent `Sql` statement builder, typed query/command results, raw protocol,
   callback transactions without transaction-level raw protocol, root
   `CancelHandle` or async-handle cancellation, and close;
+- explicit optional seed and ICU-data inputs; reopening an existing database
+  does not require an initialization seed;
 - one physical backup for direct and broker, plus static restore into a new or
   empty destination; and
 - dedicated synchronous and asynchronous server builders whose handles expose
@@ -74,7 +72,8 @@ different execution owners:
 
 - blocking native `Oliphaunt` is `Send` but not `Sync`; blocking WASIX
   `Oliphaunt` is neither `Send` nor `Sync`;
-- blocking `OliphauntServer` is `Send` but not `Sync` in both products;
+- blocking `OliphauntServer` is `Send` but not `Sync`; the WASIX endpoint now
+  belongs to the separate `oliphaunt-pgwire-server` package;
 - `AsyncOliphaunt` and `AsyncOliphauntServer` are cloneable, `Send + Sync`
   owner handles; and
 - `AsyncTransaction` is `Send` but not `Sync`, and its operations require
@@ -145,18 +144,15 @@ enums, tuning profiles, background lifecycle modes, or replacement switches.
 Unsupported operations return a direct mode-specific error. Fixed support is
 documented in the shared parity matrix.
 
-Internal packaging commands use the workspace tool explicitly, for example:
-
-```sh
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- ...
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-artifact -- ...
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-index -- ...
-```
+The unpublished native packaging crate assembles local runtime and extension
+resources for mobile producers through `oliphaunt-resources`. It depends on the
+shared native bindings directly. Use `database-resources` tasks for selectable
+seed/ICU assets and extension owner tasks for release artifacts.
 
 Validate the application crate with:
 
 ```sh
-moon run oliphaunt-rust:compile
-moon run oliphaunt-rust:unit
+moon run oliphaunt-rust:build
+moon run oliphaunt-rust:test
 moon run oliphaunt-rust:package
 ```

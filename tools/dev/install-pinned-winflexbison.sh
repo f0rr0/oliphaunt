@@ -11,7 +11,7 @@ if [ -z "$root" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "must run inside the Oliphaunt checkout"
 fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-manifest="${OLIPHAUNT_WINFLEXBISON_MANIFEST:-$root/src/sources/toolchains/winflexbison.toml}"
+manifest="${OLIPHAUNT_WINFLEXBISON_MANIFEST:-$root/tools/dev/winflexbison.toml}"
 extractor="${OLIPHAUNT_PINNED_ZIP_EXTRACTOR:-$root/tools/dev/extract-pinned-zip.sh}"
 curl_platform_flags="$script_dir/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_PINNED_NATIVE_TOOL_CACHE_ROOT:-$root/target/oliphaunt-native-tools}"

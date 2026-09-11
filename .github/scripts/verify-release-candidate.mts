@@ -8,6 +8,8 @@ import {
   assertCandidateBindingShape,
   candidateQualificationMode,
   FULL_PAYLOAD_QUALIFICATION_MODE,
+  PRODUCT_QUALIFICATION_MODE,
+  assertQualificationProductCoverage,
   wasixEvidenceBinding,
 } from './release-candidate-lib.mts';
 
@@ -33,6 +35,7 @@ function parseArgs(argv) {
       ![
         '--plan',
         '--qualification-mode',
+        '--products-json',
         '--wasix-evidence-required',
         '--wasix-evidence-root',
       ].includes(name)
@@ -60,15 +63,25 @@ function parseArgs(argv) {
     fail('--wasix-evidence-root is required when WASIX evidence is required');
   }
   const qualificationMode = values.get('qualification-mode') ?? FULL_PAYLOAD_QUALIFICATION_MODE;
-  if (qualificationMode !== FULL_PAYLOAD_QUALIFICATION_MODE) {
-    fail('--qualification-mode must be full-payload');
+  if (
+    ![FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE, 'release'].includes(
+      qualificationMode,
+    )
+  ) {
+    fail('--qualification-mode must be full-payload, selected-products, or release');
   }
+  const products = values.has('products-json')
+    ? JSON.parse(values.get('products-json'))
+    : undefined;
+  if (qualificationMode !== FULL_PAYLOAD_QUALIFICATION_MODE && products === undefined)
+    fail('--products-json is required for product qualification');
   return {
     candidatePath,
     planPath: values.get('plan'),
     wasixEvidenceRequired: required === 'true',
     wasixEvidenceRoot: values.get('wasix-evidence-root'),
     qualificationMode,
+    products,
   };
 }
 
@@ -86,11 +99,21 @@ try {
 } catch (error) {
   fail(error.message);
 }
-if (candidateQualificationMode(candidate) !== args.qualificationMode) {
+if (
+  args.qualificationMode !== 'release' &&
+  candidateQualificationMode(candidate) !== args.qualificationMode
+) {
   fail(
     `release candidate qualification mode mismatch: expected ${args.qualificationMode}, ` +
       `got ${candidateQualificationMode(candidate)}`,
   );
+}
+if (args.products !== undefined) {
+  try {
+    assertQualificationProductCoverage(candidate, args.products);
+  } catch (error) {
+    fail(error.message);
+  }
 }
 
 const expected = {

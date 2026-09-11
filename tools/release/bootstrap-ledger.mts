@@ -18,7 +18,7 @@ import process from 'node:process';
 
 import { loadPublicationLock, lockedCarriers } from './publication-lock.mts';
 import { verifyLockedRegistryIntegrity } from './registry-integrity.mts';
-import { ROOT, compareText } from '../../src/shared/product-metadata/release-graph.mts';
+import { ROOT, compareText } from './release-graph.mts';
 
 export const BOOTSTRAP_LEDGER_SCHEMA = 'oliphaunt-bootstrap-ledger-checkpoint-v1';
 export const DEFAULT_BOOTSTRAP_LEDGER = path.join(ROOT, 'target/release/bootstrap-ledger');

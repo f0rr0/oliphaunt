@@ -1,0 +1,22 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "wasix-browser-host"
+language: "rust"
+layer: "library"
+stack: "frontend"
+
+tasks:
+  build:
+    tags: ["artifact", "build", "requires-rust"]
+    command: "bash runtimes/wasix-browser-host/build-sdk.sh"
+    env:
+      WASM_PACK_VERSION: "0.15.0"
+    inputs:
+      - "**/*"
+      - "/tools/dev/node-info.mts"
+      - "@group(cargo-workspace)"
+    outputs:
+      - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

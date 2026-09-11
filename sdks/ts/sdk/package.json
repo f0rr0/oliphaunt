@@ -1,0 +1,89 @@
+{
+  "name": "@oliphaunt/ts",
+  "version": "0.2.0",
+  "description": "TypeScript SDK for Oliphaunt on Node.js, Bun, and Deno.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "sdks/ts/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "homepage": "https://oliphaunt.dev",
+  "oliphaunt": {
+    "liboliphauntVersion": "0.2.0",
+    "brokerVersion": "0.2.0",
+    "nodeDirectAddonVersion": "0.2.0",
+    "nodeDirectAddon": "oliphaunt-node-direct",
+    "brokerHelper": "oliphaunt-broker"
+  },
+  "dependencies": {
+    "@oliphaunt/ts-query": "0.1.0"
+  },
+  "optionalDependencies": {
+    "@oliphaunt/broker-darwin-arm64": "workspace:*",
+    "@oliphaunt/broker-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/broker-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/broker-win32-x64-msvc": "workspace:*",
+    "@oliphaunt/liboliphaunt-darwin-arm64": "workspace:*",
+    "@oliphaunt/liboliphaunt-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/liboliphaunt-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/liboliphaunt-win32-x64-msvc": "workspace:*",
+    "@oliphaunt/node-direct-darwin-arm64": "workspace:*",
+    "@oliphaunt/node-direct-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/node-direct-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": {
+      "default": "./package.json"
+    }
+  },
+  "main": "lib/index.js",
+  "module": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "src",
+    "README.md",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "!src/__tests__"
+  ],
+  "scripts": {
+    "build": "rm -rf lib && tsc -p tsconfig.build.json",
+    "test": "bun test --isolate --timeout=30000 ./src/__tests__",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf lib",
+    "coverage": "bun test --isolate --timeout=30000 ./src/__tests__ --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../../target/coverage/oliphaunt-js",
+    "format": "bun x --no-install biome format --write --no-errors-on-unmatched .",
+    "format-check": "bun x --no-install biome format --no-errors-on-unmatched .",
+    "lint": "bun x --no-install biome lint --diagnostic-level=error --no-errors-on-unmatched .",
+    "package": "bash tools/package.sh",
+    "test-native": "bash tools/test-native.sh",
+    "test-consumer": "bash tools/test-consumer.sh"
+  },
+  "engines": {
+    "node": ">=22.13 <25"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "catalog:",
+    "pg": "^8.16.3",
+    "@types/pg": "^8.15.6",
+    "@types/bun": "catalog:"
+  }
+}

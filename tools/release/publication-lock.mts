@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { parseMavenArtifactManifest } from '../../src/shared/artifact-packaging/maven-artifact-manifest.mts';
+import { parseMavenArtifactManifest } from '../packaging/maven-artifact-manifest.mts';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -11,33 +11,33 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { extensionRuntimeAssetContract } from '../../src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
+import { extensionRuntimeAssetContract } from '../../extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
 import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
-} from '../../src/extensions/tools/extension-upstream-licenses.mts';
+} from '../../extensions/tools/extension-upstream-licenses.mts';
 import {
   validateSelectionNeutralSwiftSourceCarrier,
   validateSwiftSourceReleaseContract,
-} from '../../src/sdks/swift/tools/swift-source-carrier-contract.mts';
-import { releaseJavaScript } from '../../src/shared/artifact-packaging/emit-javascript.mts';
+} from '../../sdks/swift/tools/swift-source-carrier-contract.mts';
+import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   swiftExtensionCarrierAssetName,
-} from '../../src/shared/artifact-packaging/ios-carrier-manifest.mts';
-import { validateMavenCentralPublication } from '../../src/shared/artifact-packaging/maven-central-contract.mts';
-import { validateNpmTrustedPublishingManifest } from '../../src/shared/artifact-packaging/npm-trusted-publishing.mts';
+} from '../../sdks/swift/tools/ios-carrier-manifest.mts';
+import { validateMavenCentralPublication } from '../packaging/maven-central-contract.mts';
+import { validateNpmTrustedPublishingManifest } from '../packaging/npm-trusted-publishing.mts';
 import {
   readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
-} from '../../src/shared/artifact-packaging/portable-archive.mts';
-import { assertWasixExtensionMemberInstall } from '../../src/shared/extension-runtime-contract/wasix-extension-install.mts';
+} from '../packaging/portable-archive.mts';
+import { assertWasixExtensionMemberInstall } from '../../extensions/contracts/wasix-extension-install.mts';
 import {
   loadPublicationCatalog,
   PUBLICATION_CATALOG_SCHEMA,
   publicationCatalogDigest,
   resolveActualCarrier,
-} from '../../src/shared/product-metadata/publication-catalog.mts';
+} from './publication-catalog.mts';
 import {
   allArtifactTargets,
   contribCarrierDescriptor,
@@ -46,12 +46,8 @@ import {
   extensionMetadata,
   extensionSourceIdentity,
   extensionSqlNames,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import {
-  compareText,
-  productCompatibilityVersion,
-  ROOT,
-} from '../../src/shared/product-metadata/release-graph.mts';
+} from './release-artifact-targets.mts';
+import { compareText, productCompatibilityVersion, ROOT } from './release-graph.mts';
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 
@@ -680,7 +676,7 @@ function exactExtensionIosContract(product, sqlName) {
     throw error(`${product} does not own extension SQL name ${sqlName}`);
   }
   const generated = JSON.parse(
-    readFileSync(path.join(ROOT, 'src/extensions/generated/sdk/extensions.json'), 'utf8'),
+    readFileSync(path.join(ROOT, 'extensions/generated/sdk/extensions.json'), 'utf8'),
   );
   const row = generated.extensions?.find((item) => item?.['sql-name'] === sqlName);
   if (row === undefined) {
@@ -693,9 +689,7 @@ function exactExtensionIosContract(product, sqlName) {
   if (nativeModuleStem === null) {
     return { sqlName, nativeModuleStem, dependencies: [], metadata: row };
   }
-  const staticRows = parseTsv(
-    path.join(ROOT, 'src/extensions/generated/mobile/static-extensions.tsv'),
-  );
+  const staticRows = parseTsv(path.join(ROOT, 'extensions/generated/mobile/static-extensions.tsv'));
   const staticRow = staticRows.find((item) => item['sql-name'] === sqlName);
   if (staticRow === undefined || staticRow['native-module-stem'] !== nativeModuleStem) {
     throw error(
@@ -1630,7 +1624,7 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
   const ownerCatalogArtifact = artifacts.find(
     ({ kind }) => kind === 'swiftpm-extension-owner-catalog',
   );
-  const canonicalOwnerCatalog = path.join(ROOT, 'src/extensions/generated/sdk/extensions.json');
+  const canonicalOwnerCatalog = path.join(ROOT, 'extensions/generated/sdk/extensions.json');
   if (
     ownerCatalogArtifact === undefined ||
     !readFileSync(path.resolve(ROOT, ownerCatalogArtifact.path)).equals(
@@ -1638,7 +1632,7 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
     )
   ) {
     throw error(
-      `${product.id} frozen extension-owner-catalog.json must exactly match src/extensions/generated/sdk/extensions.json`,
+      `${product.id} frozen extension-owner-catalog.json must exactly match extensions/generated/sdk/extensions.json`,
     );
   }
   const resourceInventoryArtifact = artifacts.find(
@@ -1646,7 +1640,7 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
   );
   const canonicalResourceInventory = path.join(
     ROOT,
-    'src/sdks/swift/tools/extension-resource-inventory.mts',
+    'sdks/swift/tools/extension-resource-inventory.mts',
   );
   if (
     resourceInventoryArtifact === undefined ||
@@ -1655,14 +1649,14 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
     )
   ) {
     throw error(
-      `${product.id} frozen extension-resource-inventory.mjs must exactly match src/sdks/swift/tools/extension-resource-inventory.mjs`,
+      `${product.id} frozen extension-resource-inventory.mjs must exactly match sdks/swift/tools/extension-resource-inventory.mjs`,
     );
   }
   const carrierName = 'oliphaunt-react-native-ios-carriers.json';
   const carrierMatches = files.filter(
     (file) =>
       path.basename(file) === carrierName &&
-      rel(file).includes('/release-tree/src/sdks/swift/Carriers/'),
+      rel(file).includes('/release-tree/sdks/swift/Carriers/'),
   );
   if (carrierMatches.length !== 1) {
     throw error(

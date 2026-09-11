@@ -8,6 +8,22 @@ Status: normative operation guide. Last verified: 2026-07-30. Owner: repository 
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
+CI can qualify selected products using the `release_products_json` dispatch
+input, for example `["oliphaunt-js"]`. Leave all platform selectors at `all`.
+Moon selects those owners' tasks, downstream compatibility checks and required
+producer dependencies. An empty product array retains the exhaustive audit.
+Publication accepts this record only for covered products at the exact candidate
+SHA; it still verifies the immutable artifacts and any required WASIX evidence.
+Generated release PRs and their main merge automatically select the products
+whose Release Please manifest versions advance. Exact main pushes and eligible
+main dispatches can produce publishable qualification; PR checks use the same
+scope but cannot authorize publication. Publication reuses covering successful
+CI, waits for active matching CI, or requests one missing run while main still
+equals the candidate SHA. Failed causal runs require recovery; ambiguous
+dispatches are not automatically repeated. Cross-commit producer reuse remains
+an explicit acceptance item rather than permission to substitute arbitrary
+older artifacts.
+
 ## Model
 
 A product owns its SemVer, changelog, source identity, Release Please component,
@@ -22,7 +38,7 @@ The canonical model is composed from:
   versions, changelogs, components, and tag naming;
 - the protected release workflow for exact-SHA tag and draft-release creation;
 - product `release.toml` and explicit target manifests for publish surfaces;
-- `src/shared/product-metadata/publication-catalog.mts` for the normalized Product → Carrier inventory;
+- `tools/release/publication-catalog.mts` for the normalized Product → Carrier inventory;
 - the frozen publication lock for the actual files produced by one candidate.
 
 Do not maintain a second hand-written package matrix. Query the catalog and inspect the lock. Dynamic package identities are forbidden except crates.io payload `part-N` carriers whose parent is declared and whose size requires splitting.
@@ -93,7 +109,7 @@ and participates in the same carrier checks as other public products.
   first bump.
 
 `bash tools/release/sync-release-pr.sh` closes the generated
-candidate metadata: shared-source candidates, compatibility values for selected
+candidate metadata: compatibility values for selected
 consumers, package pins, locks, and deterministic evidence. It never creates a
 consumer release merely because one of its dependencies changed. Its `--check`
 mode proves that the same state is already closed. Pure version/changelog
@@ -103,10 +119,9 @@ PR CI runs `sync-release-pr.sh --check-generated-release` only for the
 same-repository `release-please--branches--main` head, before artifact planning.
 That cheap barrier checks the dependency/compatibility/lock fixed point and the
 exact structured release commit without compiling the asset
-verifier. It prevents Release Please's transient raw PR commit from launching
-the native and mobile matrices while the prepare job is still normalizing it.
-It is an admission optimization, not a substitute for the full write/check,
-metadata, asset, extension, and package gates on the normalized head.
+verifier. The prepare workflow generates and validates the candidate locally
+before its first push. This admission check verifies the already-closed pushed
+head before expensive matrices begin.
 
 Release Please selects changes under each configured product path. Shared code
 that changes published bytes must therefore live in, or be represented by, the
@@ -195,11 +210,11 @@ Run local metadata gates before dispatching:
 
 ```sh
 bash tools/release/release-check.sh
-tools/dev/bun.sh src/extensions/tools/check-extension-model.mts --check
+tools/dev/bun.sh extensions/tools/check-extension-model.mts --check
 ```
 
 If the candidate changes a GitHub workflow or local action, also run
-`bash tools/policy/check-workflows.sh`. That conditional gate runs the pinned
+`bash tools/ci/check-workflows.sh`. That conditional gate runs the pinned
 `actionlint` and `zizmor` configuration, focused workflow security checks, and
 helper behavior tests;
 `actionlint` by itself is not equivalent.
@@ -270,7 +285,7 @@ creation requires both `--apply` and confirmation of the exact lock digest.
 Wrong or extra configurations are blockers and are never automatically
 replaced.
 
-Dry-run assembly installs the full workspace; normal publish and bootstrap
+Candidate assembly installs the full workspace; normal publish and bootstrap
 install only the verified command-line tools required for signing, uploading,
 and public verification. Neither path relies on Corepack. When the selected
 carrier set includes npm, both normal and bootstrap jobs use
@@ -289,11 +304,20 @@ and rollback suites again. Release-PR preparation runs the live metadata checker
 once after structured commit verification. The candidate preparation job verifies the
 same-SHA `Qualified` record before freezing the candidate; slim publishers do
 not replay that source-only validation.
-`bash tools/release/release-dry-run.sh` runs local validation. Its
-`--qualified-ci` mode rejects dirty
-or non-hosted use, binds HEAD to `RELEASE_HEAD_SHA`, and reruns the fixed
-candidate/plan/WASIX-evidence verifier before omitting mutation tests. Workflow
-policy rejects extra full invocations or replay before candidate verification.
+For local read-only validation, run `bash tools/release/release-check.sh` for
+source metadata and release-tool tests. Check selected public version state with
+`bash tools/release/release-check-registries.sh --products-json '["oliphaunt-js"]' --head-ref HEAD`
+(replace the example selection with the actual products). Neither command
+assembles release packages; the retired dry-run wrapper did not assemble them
+either. Use the selected products' package and artifact/consumer test tasks for
+local package rehearsal.
+
+Candidate preparation verifies its exact-SHA qualification record once and
+performs registry preflight once. Immediately before assembly,
+`qualified-release-replay.sh` still rejects source modifications, suppressed
+index entries and a mismatched checkout SHA. This source check runs locally as
+well as in GitHub Actions. Publication rechecks live registry state at its
+mutation boundary, where a race can still change the result.
 
 Preparation binds `release_commit` to the workflow commit. For
 `publish` with `approval_run_id`, it may instead identify an approved ancestor

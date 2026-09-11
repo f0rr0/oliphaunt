@@ -1,0 +1,57 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "xtask"
+language: "rust"
+layer: "tool"
+stack: "systems"
+tags: ["tools", "rust", "xtask", "wasix"]
+
+project:
+  title: "WASIX and Extension Asset Tooling"
+  description: "Rust checks and generators shared by WASIX runtime and extension assets."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/wasix"
+  paths:
+    "**/*.rs": ["@oliphaunt/wasix"]
+    "Cargo.toml": ["@oliphaunt/wasix"]
+
+tasks:
+  test:
+    tags: ["quality", "unit", "requires-rust"]
+    command: "cargo test -p xtask --locked"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  aot-serializer-typecheck:
+    tags: ["quality", "static", "requires-rust", "requires-wasmer-llvm"]
+    command: "cargo check -p xtask --features aot-serializer --locked"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  rust-format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p xtask --check"
+    inputs: ["/runtimes/liboliphaunt-wasix/tools/xtask/**/*.rs","/runtimes/liboliphaunt-wasix/tools/xtask/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  rust-lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p xtask --all-targets --locked -- -D warnings"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs: ["/runtimes/liboliphaunt-wasix/tools/xtask/**/*.rs","/runtimes/liboliphaunt-wasix/tools/xtask/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true

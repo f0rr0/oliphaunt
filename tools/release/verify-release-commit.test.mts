@@ -1,729 +1,267 @@
-#!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import test from 'node:test';
 import {
   deriveReleaseProducts,
   latestVerifiedReleaseCommit,
   verifyReleaseCommit,
-} from '../test/release-history-fixture.mts';
+} from './verify-release-commit.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
-
-const RELEASE_PRODUCT = 'oliphaunt-broker';
-const KNOWN_DERIVED_PACKAGE = '@oliphaunt/broker-linux-x64-gnu';
-const UNRELATED_DERIVED_PACKAGE = '@oliphaunt/unrelated';
-
-function git(repo, ...args) {
-  return execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
-}
-
-function write(repo, file, contents) {
+const [phase, repo, family, scenario, headRef, releaseRef] = process.argv.slice(2);
+const broker = 'oliphaunt-broker';
+const native = 'liboliphaunt-native';
+const nativePath = 'runtimes/liboliphaunt-native';
+const exampleManifest = 'examples/tauri/src-tauri/Cargo.toml';
+function write(file, contents) {
   const target = path.join(repo, file);
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, contents);
 }
-
-function commit(repo, subject) {
-  git(repo, 'add', '.');
-  git(repo, 'commit', '-m', subject);
-  return git(repo, 'rev-parse', 'HEAD');
+function json(file, data) {
+  write(file, JSON.stringify(data) + '\n');
 }
-
-test('permits only the exact one-time bootstrap-sha removal in a release commit', {
-  timeout: 20_000,
-}, () => {
-  const repo = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-bootstrap-'));
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Release Test');
-  git(repo, 'config', 'user.email', 'release@example.invalid');
-  const config = (bootstrapSha) =>
-    `${JSON.stringify(
-      {
-        ...(bootstrapSha === undefined ? {} : { 'bootstrap-sha': bootstrapSha }),
-        packages: {
-          'packages/alpha': {
-            'release-type': 'simple',
-            component: RELEASE_PRODUCT,
-            'version-file': 'VERSION',
-            'changelog-path': 'CHANGELOG.md',
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`;
-  write(repo, 'release-please-config.json', config(RELEASE_PLEASE_BOOTSTRAP_SHA));
-  write(repo, '.release-please-manifest.json', '{"packages/alpha":"0.0.0"}\n');
-  write(repo, 'packages/alpha/VERSION', '0.0.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n');
-  const base = commit(repo, 'feat: introduce bootstrap fixture');
-  assert.equal(latestVerifiedReleaseCommit({ repo, headRef: base }), null);
-
-  const writeRelease = (bootstrapSha) => {
-    write(repo, 'release-please-config.json', config(bootstrapSha));
-    write(repo, '.release-please-manifest.json', '{"packages/alpha":"0.1.0"}\n');
-    write(repo, 'packages/alpha/VERSION', '0.1.0\n');
-    write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
+function simple(component) {
+  return {
+    'release-type': 'simple',
+    component,
+    'version-file': 'VERSION',
+    'changelog-path': 'CHANGELOG.md',
   };
-
-  writeRelease(undefined);
-  const clean = commit(repo, 'chore(release): prepare bootstrap release');
-  assert.deepEqual(
-    verifyReleaseCommit({ repo, headRef: clean, products: [RELEASE_PRODUCT] }).products,
-    [RELEASE_PRODUCT],
-  );
-
-  git(repo, 'switch', '-q', '-c', 'mutated-bootstrap', base);
-  writeRelease('1111111111111111111111111111111111111111');
-  const mutated = commit(repo, 'chore(release): prepare mutated bootstrap release');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: mutated, products: [RELEASE_PRODUCT] }),
-    /release-please-config[.]json contains a non-version semantic change/u,
-  );
-});
-
-test('accepts the exact one-parent release-bump commit and exact selected product set', {
-  timeout: 20_000,
-}, () => {
-  const repo = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-commit-'));
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Release Test');
-  git(repo, 'config', 'user.email', 'release@example.invalid');
-  write(
-    repo,
-    'release-please-config.json',
-    `${JSON.stringify(
-      {
-        packages: {
-          'packages/alpha': {
-            'release-type': 'simple',
-            component: RELEASE_PRODUCT,
-            'version-file': 'VERSION',
-            'changelog-path': 'CHANGELOG.md',
-          },
-          'packages/beta': {
-            'release-type': 'node',
-            component: 'beta',
-            'changelog-path': 'CHANGELOG.md',
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.0.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.0.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n');
-  write(repo, 'packages/beta/package.json', '{"name":"beta","version":"0.0.0"}\n');
-  write(repo, 'packages/beta/CHANGELOG.md', '# Changelog\n');
-  write(repo, 'src/removable.rs', 'pub fn must_not_disappear() {}\n');
-  write(repo, 'src/future-version.txt', '0.1.0\n');
-  write(
-    repo,
-    'src/sdks/js/package.json',
-    `${JSON.stringify({
+}
+function changelog(folder, version) {
+  write(`${folder}/CHANGELOG.md`, `# Changelog\n\n## ${version} (2026-07-14)\n`);
+}
+function cargo(name, version) {
+  return `[package]\nname = "${name}"\nversion = "${version}"\n`;
+}
+function prepareBasic(base) {
+  const bootstrap = family === 'bootstrap';
+  const config = { packages: { 'packages/alpha': simple(broker) } };
+  if (bootstrap && base) config['bootstrap-sha'] = RELEASE_PLEASE_BOOTSTRAP_SHA;
+  if (bootstrap && scenario === 'mutated')
+    config['bootstrap-sha'] = '1111111111111111111111111111111111111111';
+  if (!bootstrap)
+    config.packages['packages/beta'] = {
+      'release-type': 'node',
+      component: 'beta',
+      'changelog-path': 'CHANGELOG.md',
+    };
+  json('release-please-config.json', config);
+  const alpha =
+    base || ['downgrade', 'hidden-version-config'].includes(scenario) ? '0.0.0' : '0.1.0';
+  const beta = scenario === 'hidden-version-config' ? '0.1.0' : '0.0.0';
+  json('.release-please-manifest.json', {
+    'packages/alpha': alpha,
+    ...(!bootstrap ? { 'packages/beta': beta } : {}),
+  });
+  write('packages/alpha/VERSION', `${alpha}\n`);
+  if (base) write('packages/alpha/CHANGELOG.md', '# Changelog\n');
+  else if (scenario !== 'hidden-version-config') changelog('packages/alpha', alpha);
+  if (bootstrap) return;
+  json('packages/beta/package.json', {
+    name: 'beta',
+    version: beta,
+    ...(scenario === 'hidden-version-config' ? { scripts: { postinstall: 'hidden-code' } } : {}),
+  });
+  if (base) {
+    write('packages/beta/CHANGELOG.md', '# Changelog\n');
+    write('src/removable.rs', 'pub fn must_not_disappear() {}\n');
+    write('src/future-version.txt', '0.1.0\n');
+  } else if (scenario === 'hidden-version-config') changelog('packages/beta', beta);
+  if (
+    base ||
+    ['hidden-derived-config', 'derived-version-only', 'unrelated-derived-dependency'].includes(
+      scenario,
+    )
+  )
+    json('sdks/ts/sdk/package.json', {
       name: 'shadow-derived',
-      oliphaunt: { brokerVersion: '0.0.0' },
+      oliphaunt: { brokerVersion: scenario === 'derived-version-only' ? '0.1.0' : '0.0.0' },
       optionalDependencies: {
-        [KNOWN_DERIVED_PACKAGE]: 'workspace:*',
-        [UNRELATED_DERIVED_PACKAGE]: 'workspace:*',
+        '@oliphaunt/broker-linux-x64-gnu': 'workspace:*',
+        '@oliphaunt/unrelated':
+          scenario === 'unrelated-derived-dependency' ? 'workspace:0.1.0' : 'workspace:*',
       },
-      dangerous: false,
-    })}\n`,
-  );
-  const base = commit(repo, 'feat: introduce fixture');
-
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.1.0\n');
-  write(
-    repo,
-    'packages/alpha/CHANGELOG.md',
-    '# Changelog\n\n## 0.1.0 (2026-07-14)\n\n- Initial release.\n',
-  );
-  const release = commit(repo, 'chore(release): prepare alpha release');
-
-  assert.deepEqual(deriveReleaseProducts({ repo, headRef: release }).products, [RELEASE_PRODUCT]);
-
-  const verified = verifyReleaseCommit({ repo, headRef: release, products: [RELEASE_PRODUCT] });
-  assert.deepEqual(verified.products, [RELEASE_PRODUCT]);
-  assert.equal(verified.versions[RELEASE_PRODUCT], '0.1.0');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: release, products: [RELEASE_PRODUCT, 'beta'] }),
-    /do not exactly match/u,
-  );
-
-  write(repo, 'fix.txt', 'post-release fix\n');
-  const laterFix = commit(repo, 'fix(tools): repair publication');
-  assert.equal(latestVerifiedReleaseCommit({ repo, headRef: laterFix }).commit, release);
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: laterFix, products: [RELEASE_PRODUCT] }),
-    /subject must start/u,
-    'a bb7c release-bump followed by an a51c fix must be rejected before tag mutation',
-  );
-
-  git(repo, 'switch', '-q', '-c', 'release-downgrade', release);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.0.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.0.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.0.0 (2026-07-14)\n');
-  const releaseDowngrade = commit(repo, 'chore(release): prepare alpha downgrade');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: releaseDowngrade, products: [RELEASE_PRODUCT] }),
-    /must advance to a semver version/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'tainted-release', `${release}^`);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.1.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  write(repo, 'src/fix.rs', 'pub fn hidden_fix() {}\n');
-  const tainted = commit(repo, 'chore(release): prepare alpha release with hidden fix');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: tainted, products: [RELEASE_PRODUCT] }),
-    /non-release-derived path.*src\/fix[.]rs/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'release-with-deletion', base);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.1.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  git(repo, 'rm', 'src/removable.rs');
-  const releaseWithDeletion = commit(repo, 'chore(release): prepare alpha release with deletion');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: releaseWithDeletion, products: [RELEASE_PRODUCT] }),
-    /non-release-derived path.*src\/removable[.]rs/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'release-with-hidden-rename', base);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  git(repo, 'rm', 'packages/alpha/VERSION');
-  git(repo, 'mv', 'src/future-version.txt', 'packages/alpha/VERSION');
-  const releaseWithHiddenRename = commit(
-    repo,
-    'chore(release): prepare alpha release with hidden rename',
-  );
-  assert.throws(
-    () =>
-      verifyReleaseCommit({ repo, headRef: releaseWithHiddenRename, products: [RELEASE_PRODUCT] }),
-    /non-release-derived path.*src\/future-version[.]txt/u,
-    'a rename into an allowed release-derived path must still expose the renamed-away source',
-  );
-
-  git(repo, 'switch', '-q', '-c', 'hidden-version-config', base);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.0.0","packages/beta":"0.1.0"}\n',
-  );
-  write(
-    repo,
-    'packages/beta/package.json',
-    '{"name":"beta","version":"0.1.0","scripts":{"postinstall":"hidden-code"}}\n',
-  );
-  write(repo, 'packages/beta/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  const hiddenVersionConfig = commit(repo, 'chore(release): prepare beta release');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: hiddenVersionConfig, products: ['beta'] }),
-    /canonical version file.*non-version semantic change/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'hidden-derived-config', base);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.1.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  write(
-    repo,
-    'src/sdks/js/package.json',
-    `${JSON.stringify({
-      name: 'shadow-derived',
-      oliphaunt: { brokerVersion: '0.0.0' },
-      optionalDependencies: {
-        [KNOWN_DERIVED_PACKAGE]: 'workspace:*',
-        [UNRELATED_DERIVED_PACKAGE]: 'workspace:*',
-      },
-      dangerous: true,
-    })}\n`,
-  );
-  const hiddenDerivedConfig = commit(repo, 'chore(release): prepare alpha release');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: hiddenDerivedConfig, products: [RELEASE_PRODUCT] }),
-    /derived file.*non-version semantic change/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'derived-version-only', base);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.1.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  write(
-    repo,
-    'src/sdks/js/package.json',
-    `${JSON.stringify({
-      name: 'shadow-derived',
-      oliphaunt: { brokerVersion: '0.1.0' },
-      optionalDependencies: {
-        [KNOWN_DERIVED_PACKAGE]: 'workspace:*',
-        [UNRELATED_DERIVED_PACKAGE]: 'workspace:*',
-      },
-      dangerous: false,
-    })}\n`,
-  );
-  const derivedVersionOnly = commit(repo, 'chore(release): prepare alpha release');
-  assert.deepEqual(
-    verifyReleaseCommit({ repo, headRef: derivedVersionOnly, products: [RELEASE_PRODUCT] })
-      .products,
-    [RELEASE_PRODUCT],
-  );
-
-  git(repo, 'switch', '-q', '-c', 'unrelated-derived-dependency', base);
-  write(
-    repo,
-    '.release-please-manifest.json',
-    '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n',
-  );
-  write(repo, 'packages/alpha/VERSION', '0.1.0\n');
-  write(repo, 'packages/alpha/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  write(
-    repo,
-    'src/sdks/js/package.json',
-    `${JSON.stringify({
-      name: 'shadow-derived',
-      oliphaunt: { brokerVersion: '0.0.0' },
-      optionalDependencies: {
-        [KNOWN_DERIVED_PACKAGE]: 'workspace:*',
-        [UNRELATED_DERIVED_PACKAGE]: 'workspace:0.1.0',
-      },
-      dangerous: false,
-    })}\n`,
-  );
-  const unrelatedDerivedDependency = commit(repo, 'chore(release): prepare alpha release');
-  assert.throws(
-    () =>
-      verifyReleaseCommit({
-        repo,
-        headRef: unrelatedDerivedDependency,
-        products: [RELEASE_PRODUCT],
-      }),
-    /derived file.*optionalDependencies[.]@oliphaunt\/unrelated/u,
-    "an unrelated dependency cannot borrow another product's coincident old/new version transition",
-  );
-});
-
-test('binds derived Cargo pins and lock entries to the referenced local package', {
-  timeout: 20_000,
-}, () => {
-  const repo = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-cargo-'));
-  const lockfile = 'Cargo.lock';
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Release Test');
-  git(repo, 'config', 'user.email', 'release@example.invalid');
-  write(
-    repo,
-    'release-please-config.json',
-    `${JSON.stringify(
-      {
-        packages: {
-          'src/runtimes/broker': {
-            'release-type': 'rust',
-            component: RELEASE_PRODUCT,
-            'changelog-path': 'CHANGELOG.md',
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  write(repo, '.release-please-manifest.json', '{"src/runtimes/broker":"0.0.0"}\n');
-  write(
-    repo,
-    'src/runtimes/broker/Cargo.toml',
-    '[package]\nname = "oliphaunt-broker"\nversion = "0.0.0"\n',
-  );
-  write(repo, 'src/runtimes/broker/CHANGELOG.md', '# Changelog\n');
-  write(
-    repo,
-    'src/shared/unrelated/Cargo.toml',
-    '[package]\nname = "unrelated"\nversion = "0.0.0"\n',
-  );
-  write(
-    repo,
-    'src/sdks/rust/Cargo.toml',
-    '[package]\nname = "shadow-sdk"\nversion = "0.0.0"\n\n[dependencies]\noliphaunt-broker = { path = "../../runtimes/broker", version = "0.0.0" }\nunrelated = { path = "../../shared/unrelated", version = "0.0.0" }\n',
-  );
-  write(
-    repo,
-    lockfile,
-    'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.0.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.0.0"\n',
-  );
-  const base = commit(repo, 'feat: introduce Cargo fixture');
-
-  const writeRelease = () => {
-    write(repo, '.release-please-manifest.json', '{"src/runtimes/broker":"0.1.0"}\n');
+      dangerous: scenario === 'hidden-derived-config',
+    });
+  if (scenario === 'tainted') write('src/fix.rs', 'pub fn hidden_fix() {}\n');
+}
+function prepareCargo(base) {
+  json('release-please-config.json', {
+    packages: {
+      broker: { 'release-type': 'rust', component: broker, 'changelog-path': 'CHANGELOG.md' },
+    },
+  });
+  const version = base ? '0.0.0' : '0.1.0';
+  json('.release-please-manifest.json', { broker: version });
+  write('broker/Cargo.toml', cargo(broker, version));
+  if (base) {
+    write('broker/CHANGELOG.md', '# Changelog\n');
+    write('src/shared/unrelated/Cargo.toml', cargo('unrelated', '0.0.0'));
+  } else changelog('broker', version);
+  if (base || scenario !== 'unrelated-lock')
     write(
-      repo,
-      'src/runtimes/broker/Cargo.toml',
-      '[package]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n',
+      'sdks/rust/sdk/Cargo.toml',
+      cargo('shadow-sdk', scenario === 'unrelated-package' ? '0.1.0' : '0.0.0') +
+        `\n[dependencies]\noliphaunt-broker = { path = "../../../broker", version = "${version}" }\nunrelated = { path = "../../../src/shared/unrelated", version = "${scenario === 'unrelated-pin' ? '0.1.0' : '0.0.0'}" }\n`,
     );
-    write(repo, 'src/runtimes/broker/CHANGELOG.md', '# Changelog\n\n## 0.1.0 (2026-07-14)\n');
-  };
-
-  writeRelease();
-  write(
-    repo,
-    'src/sdks/rust/Cargo.toml',
-    '[package]\nname = "shadow-sdk"\nversion = "0.0.0"\n\n[dependencies]\noliphaunt-broker = { path = "../../runtimes/broker", version = "0.1.0" }\nunrelated = { path = "../../shared/unrelated", version = "0.0.0" }\n',
-  );
-  write(
-    repo,
-    lockfile,
-    'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.0.0"\n',
-  );
-  const exactCargoRelease = commit(repo, 'chore(release): prepare broker release');
-  assert.deepEqual(
-    verifyReleaseCommit({ repo, headRef: exactCargoRelease, products: [RELEASE_PRODUCT] }).products,
-    [RELEASE_PRODUCT],
-  );
-
-  git(repo, 'switch', '-q', '-c', 'unrelated-cargo-pin', base);
-  writeRelease();
-  write(
-    repo,
-    'src/sdks/rust/Cargo.toml',
-    '[package]\nname = "shadow-sdk"\nversion = "0.0.0"\n\n[dependencies]\noliphaunt-broker = { path = "../../runtimes/broker", version = "0.1.0" }\nunrelated = { path = "../../shared/unrelated", version = "0.1.0" }\n',
-  );
-  const unrelatedCargoPin = commit(repo, 'chore(release): prepare broker release');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: unrelatedCargoPin, products: [RELEASE_PRODUCT] }),
-    /derived file.*dependencies[.]unrelated[.]version/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'unrelated-cargo-package-version', base);
-  writeRelease();
-  write(
-    repo,
-    'src/sdks/rust/Cargo.toml',
-    '[package]\nname = "shadow-sdk"\nversion = "0.1.0"\n\n[dependencies]\noliphaunt-broker = { path = "../../runtimes/broker", version = "0.1.0" }\nunrelated = { path = "../../shared/unrelated", version = "0.0.0" }\n',
-  );
-  const unrelatedCargoPackageVersion = commit(repo, 'chore(release): prepare broker release');
-  assert.throws(
-    () =>
-      verifyReleaseCommit({
-        repo,
-        headRef: unrelatedCargoPackageVersion,
-        products: [RELEASE_PRODUCT],
-      }),
-    /derived file.*package[.]version/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'unrelated-cargo-lock', base);
-  writeRelease();
-  write(
-    repo,
-    lockfile,
-    'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.1.0"\n',
-  );
-  const unrelatedCargoLock = commit(repo, 'chore(release): prepare broker release');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: unrelatedCargoLock, products: [RELEASE_PRODUCT] }),
-    /derived file.*package[.]1[.]version/u,
-  );
-});
-
-test('keeps wildcard Cargo pins independent of release versions', { timeout: 20_000 }, (t) => {
-  const repo = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-cargo-wildcard-'));
-  t.after(() => rmSync(repo, { recursive: true, force: true }));
-  const packagePath = 'src/runtimes/broker';
-  const dependency = 'oliphaunt = { path = "../../sdks/rust", version = "*", features = [] }';
-  const cargo = (version, entry) =>
-    `[package]\nname = "oliphaunt-broker"\nversion = "${version}"\n` +
-    ['dependencies', 'dev-dependencies', 'build-dependencies']
-      .flatMap((table) => [
-        `\n[${table}]\n${entry}\n`,
-        `\n[target.'cfg(unix)'.${table}]\n${entry}\n`,
-      ])
-      .join('');
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Release Test');
-  git(repo, 'config', 'user.email', 'release@example.invalid');
-  write(
-    repo,
-    'release-please-config.json',
-    JSON.stringify({
-      packages: { [packagePath]: { 'release-type': 'rust', component: RELEASE_PRODUCT } },
-    }),
-  );
-  write(repo, '.release-please-manifest.json', JSON.stringify({ [packagePath]: '0.1.0' }));
-  write(repo, `${packagePath}/Cargo.toml`, cargo('0.1.0', dependency));
-  write(repo, `${packagePath}/CHANGELOG.md`, '# Changelog\n');
-  write(repo, 'src/sdks/rust/Cargo.toml', '[package]\nname = "oliphaunt"\nversion = "0.2.0"\n');
-  const base = commit(repo, 'feat: introduce wildcard Cargo fixture');
-
-  const pinned = dependency.replace('"*"', '"0.2.0"');
-  for (const [name, entry] of [
-    ['workspace-wildcard', dependency],
-    ['local-version', pinned],
-    ['wrong-version', pinned.replace('"0.2.0"', '"0.3.0"')],
-    ['changed-path', pinned.replace('../../sdks/rust', '../../sdks/other')],
-    ['removed-path', pinned.replace('path = "../../sdks/rust", ', '')],
-    ['changed-features', pinned.replace('features = []', 'features = ["extra"]')],
-  ]) {
-    git(repo, 'switch', '-q', '-c', name, base);
-    write(repo, '.release-please-manifest.json', JSON.stringify({ [packagePath]: '0.2.0' }));
-    write(repo, `${packagePath}/Cargo.toml`, cargo('0.2.0', entry));
-    write(repo, `${packagePath}/CHANGELOG.md`, '# Changelog\n\n## 0.2.0\n');
-    const headRef = commit(repo, 'chore(release): prepare broker release');
-    const verify = () => verifyReleaseCommit({ repo, headRef, products: [RELEASE_PRODUCT] });
-    if (name === 'workspace-wildcard') {
-      assert.deepEqual(verify().products, [RELEASE_PRODUCT]);
-    } else {
-      assert.throws(verify, /canonical version file.*non-version semantic change/u, name);
-    }
+  if (base || ['exact', 'unrelated-lock'].includes(scenario))
+    write(
+      'Cargo.lock',
+      `version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "${version}"\n\n[[package]]\nname = "unrelated"\nversion = "${scenario === 'unrelated-lock' ? '0.1.0' : '0.0.0'}"\n`,
+    );
+}
+function prepareWildcard(base) {
+  json('release-please-config.json', {
+    packages: { broker: { 'release-type': 'rust', component: broker } },
+  });
+  const version = base ? '0.1.0' : '0.2.0';
+  json('.release-please-manifest.json', { broker: version });
+  let entry = 'oliphaunt = { path = "../../sdks/rust", version = "*", features = [] }';
+  if (!base && scenario !== 'workspace-wildcard') {
+    entry = entry.replace('"*"', scenario === 'wrong-version' ? '"0.3.0"' : '"0.2.0"');
+    if (scenario === 'changed-path') entry = entry.replace('../../sdks/rust', '../../sdks/other');
+    if (scenario === 'removed-path') entry = entry.replace('path = "../../sdks/rust", ', '');
+    if (scenario === 'changed-features')
+      entry = entry.replace('features = []', 'features = ["extra"]');
   }
-});
-
-test('keeps WASIX tools workspace links independent of release versions', {
-  timeout: 20_000,
-}, () => {
-  const repo = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-wasix-tools-'));
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Release Test');
-  git(repo, 'config', 'user.email', 'release@example.invalid');
   write(
-    repo,
-    'release-please-config.json',
-    `${JSON.stringify(
-      {
-        packages: {
-          'src/runtimes/liboliphaunt/wasix': {
-            'release-type': 'simple',
-            component: 'liboliphaunt-wasix',
-            'version-file': 'VERSION',
-            'changelog-path': 'CHANGELOG.md',
-          },
-          'src/bindings/wasix-ts': {
-            'release-type': 'node',
-            component: 'oliphaunt-wasix-ts',
-            'changelog-path': 'CHANGELOG.md',
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
+    'broker/Cargo.toml',
+    cargo(broker, version) +
+      ['dependencies', 'dev-dependencies', 'build-dependencies']
+        .flatMap((table) => [
+          `\n[${table}]\n${entry}\n`,
+          `\n[target.'cfg(unix)'.${table}]\n${entry}\n`,
+        ])
+        .join(''),
   );
-  const writeVersion = (version) => {
-    write(
-      repo,
-      '.release-please-manifest.json',
-      `${JSON.stringify({
-        'src/runtimes/liboliphaunt/wasix': version,
-        'src/bindings/wasix-ts': version,
-      })}\n`,
-    );
-    write(repo, 'src/runtimes/liboliphaunt/wasix/VERSION', `${version}\n`);
-    write(repo, 'src/runtimes/liboliphaunt/wasix/CHANGELOG.md', `# Changelog\n\n## ${version}\n`);
-    write(
-      repo,
-      'src/bindings/wasix-ts/package.json',
-      `${JSON.stringify({
-        name: '@oliphaunt/wasix-ts',
-        version,
-      })}\n`,
-    );
-    write(repo, 'src/bindings/wasix-ts/CHANGELOG.md', `# Changelog\n\n## ${version}\n`);
-    write(
-      repo,
-      'src/bindings/wasix-ts/tools-package/package.json',
-      `${JSON.stringify({
-        dependencies: { '@oliphaunt/liboliphaunt-wasix-tools': 'workspace:*' },
-        peerDependencies: { '@oliphaunt/wasix-ts': 'workspace:*' },
-        devDependencies: { '@oliphaunt/wasix-ts': 'workspace:*' },
-      })}\n`,
-    );
-    write(
-      repo,
-      'pnpm-lock.yaml',
-      `lockfileVersion: '9.0'\nimporters:\n  src/bindings/wasix-ts/tools-package:\n    dependencies:\n      '@oliphaunt/liboliphaunt-wasix-tools':\n        specifier: workspace:*\n        version: link:../../../runtimes/liboliphaunt/wasix/tools-npm\n    devDependencies:\n      '@oliphaunt/wasix-ts':\n        specifier: workspace:*\n        version: link:..\n`,
-    );
-  };
-  writeVersion('0.1.0');
-  commit(repo, 'feat: introduce WASIX tools fixture');
-  writeVersion('0.2.0');
-  const release = commit(repo, 'chore(release): prepare WASIX releases');
-
-  assert.deepEqual(
-    verifyReleaseCommit({
-      repo,
-      headRef: release,
-      products: ['liboliphaunt-wasix', 'oliphaunt-wasix-ts'],
-    }).products,
-    ['liboliphaunt-wasix', 'oliphaunt-wasix-ts'],
-  );
-});
-
-test('binds example Cargo registry pins and runtime metadata to their release product', {
-  timeout: 20_000,
-}, () => {
-  const repo = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-example-cargo-'));
-  const nativeProduct = 'liboliphaunt-native';
-  const nativePath = 'src/runtimes/liboliphaunt/native';
-  const brokerProduct = 'oliphaunt-broker';
-  const brokerPath = 'src/runtimes/broker';
-  const exampleManifest = 'examples/tauri/src-tauri/Cargo.toml';
-  const target = 'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))';
-
-  const releaseConfig = `${JSON.stringify(
-    {
-      packages: {
-        [nativePath]: {
-          'release-type': 'simple',
-          component: nativeProduct,
-          'version-file': 'VERSION',
-          'changelog-path': 'CHANGELOG.md',
-        },
-        [brokerPath]: {
-          'release-type': 'simple',
-          component: brokerProduct,
-          'version-file': 'VERSION',
-          'changelog-path': 'CHANGELOG.md',
-        },
+  if (base) {
+    write('broker/CHANGELOG.md', '# Changelog\n');
+    write('sdks/rust/sdk/Cargo.toml', cargo('oliphaunt', '0.2.0'));
+  } else changelog('broker', version);
+}
+function prepareWasix(base) {
+  const runtime = 'runtimes/liboliphaunt-wasix',
+    sdk = 'sdks/ts-wasix/sdk',
+    tools = 'postgres-tools/wasix/ts';
+  const version = base ? '0.1.0' : '0.2.0';
+  json('release-please-config.json', {
+    packages: {
+      [runtime]: simple('liboliphaunt-wasix'),
+      [sdk]: {
+        'release-type': 'node',
+        component: 'oliphaunt-wasix-ts',
+        'changelog-path': 'CHANGELOG.md',
       },
     },
-    null,
-    2,
-  )}\n`;
-  const releaseManifest = (nativeVersion, brokerVersion) =>
-    `${JSON.stringify({
-      [nativePath]: nativeVersion,
-      [brokerPath]: brokerVersion,
-    })}\n`;
-  const exampleCargo = ({
-    carrierVersion,
-    runtimeVersion = carrierVersion,
-    unrelatedVersion = '9.0.0',
-  }) => `[package]
-name = "release-example"
-version = "0.0.0"
-
-[package.metadata.oliphaunt]
-runtime = "liboliphaunt-native"
-runtime-version = "${runtimeVersion}"
-
-[target.'${target}'.dependencies]
-liboliphaunt-native-linux-x64-gnu = { version = "=${carrierVersion}" }
-unrelated = { version = "${unrelatedVersion}" }
-`;
-
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Release Test');
-  git(repo, 'config', 'user.email', 'release@example.invalid');
-  write(repo, 'release-please-config.json', releaseConfig);
-  write(repo, '.release-please-manifest.json', releaseManifest('0.1.0', '0.1.0'));
-  write(repo, `${nativePath}/VERSION`, '0.1.0\n');
-  write(repo, `${nativePath}/CHANGELOG.md`, '# Changelog\n');
-  write(repo, `${brokerPath}/VERSION`, '0.1.0\n');
-  write(repo, `${brokerPath}/CHANGELOG.md`, '# Changelog\n');
-  write(repo, exampleManifest, exampleCargo({ carrierVersion: '0.1.0' }));
-  const base = commit(repo, 'feat: introduce registry example fixture');
-
-  const writeNativeRelease = ({
-    carrierVersion = '0.1.1',
-    runtimeVersion = '0.1.1',
-    unrelatedVersion = '9.0.0',
-  } = {}) => {
-    write(repo, '.release-please-manifest.json', releaseManifest('0.1.1', '0.1.0'));
-    write(repo, `${nativePath}/VERSION`, '0.1.1\n');
-    write(repo, `${nativePath}/CHANGELOG.md`, '# Changelog\n\n## 0.1.1 (2026-08-08)\n');
-    write(
-      repo,
-      exampleManifest,
-      exampleCargo({ carrierVersion, runtimeVersion, unrelatedVersion }),
-    );
-  };
-
-  writeNativeRelease();
-  const exact = commit(repo, 'chore(release): prepare exact registry example release');
-  assert.deepEqual(
-    verifyReleaseCommit({ repo, headRef: exact, products: [nativeProduct] }).products,
-    [nativeProduct],
+  });
+  json('.release-please-manifest.json', { [runtime]: version, [sdk]: version });
+  write(`${runtime}/VERSION`, `${version}\n`);
+  changelog(runtime, version);
+  json(`${sdk}/package.json`, { name: '@oliphaunt/wasix-ts', version });
+  changelog(sdk, version);
+  const dependencies = { '@oliphaunt/liboliphaunt-wasix-tools': 'workspace:*' },
+    devDependencies = { '@oliphaunt/wasix-ts': 'workspace:*' };
+  json(`${tools}/package.json`, {
+    dependencies,
+    peerDependencies: devDependencies,
+    devDependencies,
+  });
+  json('bun.lock', {
+    lockfileVersion: 2,
+    workspaces: {
+      [sdk]: { name: '@oliphaunt/wasix-ts', version },
+      [tools]: { dependencies, devDependencies },
+    },
+  });
+}
+function prepareExample(base) {
+  json('release-please-config.json', {
+    packages: { [nativePath]: simple(native), broker: simple(broker) },
+  });
+  const missing = scenario === 'missing-native-transition';
+  const nativeVersion = base || missing ? '0.1.0' : '0.1.1',
+    brokerVersion = !base && missing ? '0.1.1' : '0.1.0';
+  json('.release-please-manifest.json', { [nativePath]: nativeVersion, broker: brokerVersion });
+  write(`${nativePath}/VERSION`, `${nativeVersion}\n`);
+  write('broker/VERSION', `${brokerVersion}\n`);
+  if (base) {
+    write(`${nativePath}/CHANGELOG.md`, '# Changelog\n');
+    write('broker/CHANGELOG.md', '# Changelog\n');
+  } else changelog(missing ? 'broker' : nativePath, missing ? brokerVersion : nativeVersion);
+  const carrierVersion = base ? '0.1.0' : scenario === 'wrong-registry-version' ? '0.1.2' : '0.1.1';
+  const runtimeVersion = base ? '0.1.0' : scenario === 'wrong-runtime-version' ? '0.1.2' : '0.1.1';
+  const unrelatedVersion = scenario === 'unrelated-registry-version' ? '9.0.1' : '9.0.0';
+  write(
+    exampleManifest,
+    `[package]\nname = "release-example"\nversion = "0.0.0"\n\n[package.metadata.oliphaunt]\nruntime = "liboliphaunt-native"\nruntime-version = "${runtimeVersion}"\n\n[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]\nliboliphaunt-native-linux-x64-gnu = { version = "=${carrierVersion}" }\nunrelated = { version = "${unrelatedVersion}" }\n`,
   );
-
-  git(repo, 'switch', '-q', '-c', 'wrong-registry-version', base);
-  writeNativeRelease({ carrierVersion: '0.1.2' });
-  const wrongRegistryVersion = commit(
-    repo,
-    'chore(release): prepare wrong registry example release',
-  );
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: wrongRegistryVersion, products: [nativeProduct] }),
-    /derived file.*liboliphaunt-native-linux-x64-gnu[.]version/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'wrong-runtime-version', base);
-  writeNativeRelease({ runtimeVersion: '0.1.2' });
-  const wrongRuntimeVersion = commit(repo, 'chore(release): prepare wrong runtime example release');
-  assert.throws(
-    () => verifyReleaseCommit({ repo, headRef: wrongRuntimeVersion, products: [nativeProduct] }),
-    /derived file.*runtime-version/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'unrelated-registry-version', base);
-  writeNativeRelease({ unrelatedVersion: '9.0.1' });
-  const unrelatedRegistryVersion = commit(
-    repo,
-    'chore(release): prepare unrelated registry example release',
-  );
-  assert.throws(
-    () =>
-      verifyReleaseCommit({ repo, headRef: unrelatedRegistryVersion, products: [nativeProduct] }),
-    /derived file.*unrelated[.]version/u,
-  );
-
-  git(repo, 'switch', '-q', '-c', 'missing-native-transition', base);
-  write(repo, '.release-please-manifest.json', releaseManifest('0.1.0', '0.1.1'));
-  write(repo, `${brokerPath}/VERSION`, '0.1.1\n');
-  write(repo, `${brokerPath}/CHANGELOG.md`, '# Changelog\n\n## 0.1.1 (2026-08-08)\n');
-  write(repo, exampleManifest, exampleCargo({ carrierVersion: '0.1.1' }));
-  const missingNativeTransition = commit(repo, 'chore(release): prepare unrelated product release');
-  assert.throws(
-    () =>
-      verifyReleaseCommit({ repo, headRef: missingNativeTransition, products: [brokerProduct] }),
-    /derived file examples\/tauri\/src-tauri\/Cargo[.]toml contains a non-version semantic change/u,
-  );
-});
+}
+if (phase === 'write') {
+  if (scenario === 'later-fix') write('fix.txt', 'post-release fix\n');
+  else {
+    const prepare = {
+      bootstrap: prepareBasic,
+      basic: prepareBasic,
+      cargo: prepareCargo,
+      wildcard: prepareWildcard,
+      wasix: prepareWasix,
+      example: prepareExample,
+    }[family];
+    if (!prepare) throw new Error('unknown release fixture family');
+    prepare(scenario === 'base');
+  }
+} else if (phase === 'assert') {
+  const products =
+    family === 'wasix'
+      ? ['liboliphaunt-wasix', 'oliphaunt-wasix-ts']
+      : family === 'example' && scenario !== 'missing-native-transition'
+        ? [native]
+        : scenario === 'hidden-version-config'
+          ? ['beta']
+          : [broker];
+  const verify = () => verifyReleaseCommit({ repo, headRef, products });
+  if (scenario === 'base') assert.equal(latestVerifiedReleaseCommit({ repo, headRef }), null);
+  else if (scenario === 'later-fix') {
+    assert.equal(latestVerifiedReleaseCommit({ repo, headRef }).commit, releaseRef);
+    assert.throws(verify, /subject must start/u);
+  } else {
+    const rejected =
+      {
+        mutated: /release-please-config[.]json contains a non-version semantic change/u,
+        downgrade: /must advance to a semver version/u,
+        tainted: /non-release-derived path.*src\/fix[.]rs/u,
+        deletion: /non-release-derived path.*src\/removable[.]rs/u,
+        rename: /non-release-derived path.*src\/future-version[.]txt/u,
+        'hidden-version-config': /canonical version file.*non-version semantic change/u,
+        'hidden-derived-config': /derived file.*non-version semantic change/u,
+        'unrelated-derived-dependency':
+          /derived file.*optionalDependencies[.]@oliphaunt\/unrelated/u,
+        'unrelated-pin': /derived file.*dependencies[.]unrelated[.]version/u,
+        'unrelated-package': /derived file.*package[.]version/u,
+        'unrelated-lock': /derived file.*package[.]1[.]version/u,
+        'wrong-registry-version': /derived file.*liboliphaunt-native-linux-x64-gnu[.]version/u,
+        'wrong-runtime-version': /derived file.*runtime-version/u,
+        'unrelated-registry-version': /derived file.*unrelated[.]version/u,
+        'missing-native-transition':
+          /derived file examples\/tauri\/src-tauri\/Cargo[.]toml contains a non-version semantic change/u,
+      }[scenario] ??
+      (family === 'wildcard' && scenario !== 'workspace-wildcard'
+        ? /canonical version file.*non-version semantic change/u
+        : undefined);
+    if (rejected) assert.throws(verify, rejected);
+    else {
+      const result = verify();
+      assert.deepEqual(result.products, products);
+      if (family === 'basic' && scenario === 'clean') {
+        assert.deepEqual(deriveReleaseProducts({ repo, headRef }).products, [broker]);
+        assert.equal(result.versions[broker], '0.1.0');
+        assert.throws(
+          () => verifyReleaseCommit({ repo, headRef, products: [broker, 'beta'] }),
+          /do not exactly match/u,
+        );
+      }
+    }
+  }
+  console.log(`release commit ${family}/${scenario}: passed`);
+} else throw new Error('run through verify-release-commit.test.sh');

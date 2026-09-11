@@ -1,0 +1,19 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-vector"
+language: "unknown"
+layer: "library"
+stack: "systems"
+tags: ["extensions", "external", "vector", "release-product"]
+dependsOn:
+  - id: "extension-runtime-contract"
+    scope: "build"
+  - id: "liboliphaunt-native"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+
+project:
+  release:
+    component: "oliphaunt-extension-vector"
+    packagePath: "extensions/external/vector"

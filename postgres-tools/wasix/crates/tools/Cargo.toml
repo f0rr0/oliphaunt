@@ -1,0 +1,30 @@
+[package]
+name = "oliphaunt-wasix-tools"
+version = "0.2.1"
+edition = "2024"
+rust-version = "1.93"
+description = "WASIX pg_dump and psql assets for oliphaunt-wasix"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+documentation = "https://docs.rs/oliphaunt-wasix-tools"
+license = "MIT AND PostgreSQL AND Unicode-3.0"
+publish = false
+links = "oliphaunt_artifact_oliphaunt_wasix_tools"
+include = [
+  "Cargo.toml",
+  "build.rs",
+  "README.md",
+  "src/**",
+  "payload/**",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
+  "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+  "THIRD_PARTY_LICENSES/ICU-LICENSE",
+]
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+sha2 = "0.10"

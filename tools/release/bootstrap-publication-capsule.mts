@@ -27,7 +27,7 @@ import {
   loadPublicationLock,
   lockedPublicationFiles,
 } from './publication-lock.mts';
-import { ROOT, compareText } from '../../src/shared/product-metadata/release-graph.mts';
+import { ROOT, compareText } from './release-graph.mts';
 
 export const PUBLICATION_CANDIDATE_SCHEMA = 'oliphaunt-frozen-publication-candidate-v1';
 export const PUBLICATION_CANDIDATE_MANIFEST_PATH =

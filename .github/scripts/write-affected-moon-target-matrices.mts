@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { appendFileSync, readFileSync } from 'node:fs';
 import process from 'node:process';
 
@@ -43,6 +43,15 @@ function selectedScopeTaskMap() {
       }
     }
   }
+  if (process.env.CI_PLAN_PATH) {
+    const plan = readQuery(process.env.CI_PLAN_PATH, 'CI plan');
+    if (plan.qualification_mode === 'selected-products') {
+      if (!Array.isArray(plan.tasks) || plan.tasks.length === 0)
+        fail('product qualification plan is missing tasks');
+      const selected = new Set(plan.tasks);
+      return new Map([...tasks].filter(([target]) => selected.has(target)));
+    }
+  }
   return tasks;
 }
 
@@ -76,21 +85,9 @@ function tags(task) {
   return new Set(Array.isArray(task?.tags) ? task.tags : []);
 }
 
-const policyProjectIds = new Set(['dev-tools', 'perf-tools', 'policy-tools', 'release-tools']);
-function projectId(target) {
-  return target.split(':', 1)[0] ?? '';
-}
-
 function isPolicyTarget(task) {
   const taskTags = tags(task);
-  const command = commandText(task);
-  return (
-    taskTags.has('policy') ||
-    taskTags.has('assertion') ||
-    command.includes('tools/policy/assertions/assert-') ||
-    command.includes('src/extensions/tools/check-extension-') ||
-    policyProjectIds.has(projectId(task.target))
-  );
+  return taskTags.has('policy') || taskTags.has('assertion');
 }
 
 function isNoopTask(task) {
@@ -102,20 +99,12 @@ function runsInCI(task) {
   return value !== false && value !== 'skip';
 }
 
-function addMatrixTarget(targets, task, upstream, allTasks) {
-  const target = task.target;
-  const existing = targets.get(target);
-  if (!existing || existing.upstream !== 'none') {
-    targets.set(target, matrixTarget(task, upstream, allTasks));
-  }
-}
-
 function classifyTarget(task, targets, allTasks) {
   if (!runsInCI(task)) return;
   if (isPolicyTarget(task)) {
-    addMatrixTarget(targets.policy, task, 'none', allTasks);
+    targets.policy.set(task.target, matrixTarget(task, 'deep', allTasks));
   } else if (!isNoopTask(task)) {
-    addMatrixTarget(targets.check, task, 'deep', allTasks);
+    targets.check.set(task.target, matrixTarget(task, 'deep', allTasks));
   }
 }
 
@@ -188,6 +177,10 @@ output('check_job_count', String(checkGroups.length));
 output('check_matrix', matrix(checkGroups));
 output('policy_count', String(policyTargets.size));
 output('policy_matrix', matrix([...policyTargets.values()]));
+output(
+  'policy_requires_swift',
+  String([...policyTargets.values()].some((target) => target.requires_swift)),
+);
 output(
   'policy_requires_android_sdk',
   String([...policyTargets.values()].some((target) => target.requires_android_sdk)),

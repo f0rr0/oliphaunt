@@ -3,9 +3,9 @@
 This page is maintainer documentation for packaged runtime assets, generated
 payloads, and release provenance. It is not end-user product documentation.
 Native application users should start with
-`src/docs/content/learn/native-runtime.mdx` and the SDK README for their
+`docs/content/learn/native-runtime.mdx` and the SDK README for their
 platform. WASIX users should use the public Rust WASIX or WASIX TypeScript
-guide under `src/docs/content/sdk/`.
+guide under `docs/content/sdk/`.
 
 `oliphaunt-wasix` does not embed the database runtime in the SDK crate. Runtime,
 cluster-seed, extension, and AOT payloads are package-manager-resolved
@@ -104,18 +104,18 @@ hardlinks, device nodes, and unsupported entry types.
 ## Provenance
 
 Asset provenance is recorded in runtime source pins under
-`src/sources/third-party/**`, extension-owned source pins under
-`src/extensions/external/**/source.toml` and
-`src/extensions/external/**/dependencies/**/source.toml`,
-`src/sources/toolchains/**`, the exact producer commit, and the generated
+`third-party/**`, extension-owned source pins under
+`extensions/external/**/source.toml` and
+`extensions/external/**/dependencies/**/source.toml`,
+`tools/dev/*.toml`, the exact producer commit, and the generated
 runtime/AOT manifests produced by the
 `CI` workflow's WASIX runtime lane. Generated manifests record source pins,
 runtime hashes, `initdb` hashes, cluster-seed hashes, extension archive
 hashes, target information, and Wasmer engine identity. PostgreSQL ICU support
 uses the same provenance path: ICU code is source-pinned in
-`src/sources/third-party/shared/icu.toml`, while the canonical official
+`third-party/icu/source.toml`, while the canonical official
 little-endian data archive is independently pinned in
-`src/sources/third-party/shared/icu-data.toml`. Native and WASIX builders compile
+`database-resources/icu/source.toml`. Native and WASIX builders compile
 target-specific ICU code but expand that one data archive into the shared
 files-data identity. ICU data is packaged as a separate `oliphaunt-icu`
 payload; standard native and WASIX runtime artifacts do not carry `share/icu`.
@@ -131,7 +131,7 @@ Maintainer source trees are fetched on demand into ignored
 `target/oliphaunt-sources/checkouts/**` directories:
 
 ```sh
-bash src/sources/tools/fetch-sources.sh production-all --force
+bash third-party/tools/fetch-sources.sh production-all --force
 ```
 
 A Git source may declare one manually reviewed `mirror_url` when upstream
@@ -146,7 +146,7 @@ validation, and a live exact-commit fetch from every newly declared endpoint.
 
 WASIX build and work trees are generated under
 `target/oliphaunt-wasix/wasix-build/**`. The source tree
-`src/runtimes/liboliphaunt/wasix/assets/build/**` is reserved for scripts, patches,
+`runtimes/liboliphaunt-wasix/assets/build/**` is reserved for scripts, patches,
 Docker inputs, and shims that define the build at the exact producer commit.
 
 Local packaging tests do not clone upstream repositories or run Docker:
@@ -172,7 +172,7 @@ expectations belong to the publication envelope/lock and do not alter those
 runtime bytes.
 
 The WASIX builder declares its immutable bootstrap inputs in
-`src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile`: the Ubuntu base image digest, Dockerfile
+`runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile`: the Ubuntu base image digest, Dockerfile
 frontend digest, Ubuntu snapshot timestamp, and the committed TLS root used to
 reach `snapshot.ubuntu.com`. The APT helper writes one isolated deb822 source
 containing only `noble`, `noble-updates`, and `noble-security` with the `main`
@@ -205,7 +205,7 @@ authenticated archival mirror.
 
 The `CI` workflow's WASIX runtime/AOT build lane mirrors the release topology on
 trusted producer runs: one Linux/Docker job builds portable WASIX modules from
-`src/runtimes/liboliphaunt/wasix/assets/build` into `target/oliphaunt-wasix/assets`,
+`runtimes/liboliphaunt-wasix/assets/build` into `target/oliphaunt-wasix/assets`,
 then native matrix jobs generate and package target-specific Wasmer AOT crates
 into `target/oliphaunt-wasix/aot/<target>`. Artifacts are uploaded with
 checksums and manifests.
@@ -246,7 +246,7 @@ For workflow artifacts, select one exact run or full commit SHA; all three modes
 validate checksums and packaged manifests before installation:
 
 ```sh
-bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --run-id <id> --target-triple <triple>
-bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --sha <full-40-character-sha> --target-triple <triple>
-bash src/runtimes/liboliphaunt/wasix/tools/download-assets.sh --release <tag> --target-triple <triple>
+bash runtimes/liboliphaunt-wasix/tools/download-assets.sh --run-id <id> --target-triple <triple>
+bash runtimes/liboliphaunt-wasix/tools/download-assets.sh --sha <full-40-character-sha> --target-triple <triple>
+bash runtimes/liboliphaunt-wasix/tools/download-assets.sh --release <tag> --target-triple <triple>
 ```

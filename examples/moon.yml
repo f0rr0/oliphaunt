@@ -31,39 +31,22 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
-  js-sdk-smoke:
-    tags: ["runtime", "smoke", "node", "bun", "deno"]
-    command: "sh examples/tools/smoke-js-sdk.sh"
-    deps:
-      - "liboliphaunt-native:build-runtime-desktop-target"
-      - "oliphaunt-broker:build"
-      - "oliphaunt-node-direct:build-release-assets"
-    inputs:
-      - project: "oliphaunt-js"
-        group: "code"
-      - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
-      - "tools/smoke-js-sdk.sh"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-      runInCI: false
-
-  browser-wasix-compile:
+  browser-wasix-typecheck:
     tags: ["quality", "static", "browser", "wasix"]
-    command: "pnpm --dir examples/browser-wasix typecheck"
+    command: "bun run --cwd examples/browser-wasix typecheck"
     deps:
-      - "shared-js-core:build"
+      - "oliphaunt-query-ts:build"
     inputs:
       - "browser-wasix/**/*"
       - project: "oliphaunt-wasix-ts"
         group: "code"
-      - "@group(pnpm-workspace)"
+      - "@group(bun-workspace)"
     options:
       cache: true
       runFromWorkspaceRoot: true
 
-  check:
-    tags: ["quality", "static"]
+  test:
+    tags: ["quality", "unit"]
     script: |
       set -e
       bash examples/tools/stage-tauri-webdriver-app.test.sh
@@ -71,7 +54,7 @@ tasks:
       bun test examples/react-native-expo/tools/smoke-pass-receipt.test.mts examples/react-native-expo/tools/mobile-extension-proof.test.mts
     inputs:
       - "**/*"
-      - "@group(pnpm-workspace)"
+      - "@group(bun-workspace)"
       - "!/examples/**/node_modules"
       - "!/examples/**/node_modules/**"
     options:
@@ -81,12 +64,15 @@ tasks:
     tags: ["mobile", "build", "android", "ci-mobile-build-android"]
     script: |
       export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
-      exec pnpm --dir examples/react-native-expo run mobile-build:android
+      exec bun run --cwd examples/react-native-expo mobile-build:android
     deps:
+      - "database-resources:build-native-android-icu"
+      - "database-resources:package-icu"
       - "extension-packages:package-mobile"
       - "liboliphaunt-native:package-runtime-android-x86_64"
-      - "oliphaunt-kotlin:release-package"
-      - "oliphaunt-react-native:release-package"
+      - "liboliphaunt-native:finalize-runtime-android-abi"
+      - "oliphaunt-kotlin:package"
+      - "oliphaunt-react-native:package"
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-kotlin"
@@ -98,7 +84,7 @@ tasks:
       - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
-      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
+      - "/runtimes/liboliphaunt-native/packaging/**/*"
     outputs:
       - "/target/mobile-build/react-native/android/**/*"
     options:
@@ -106,7 +92,7 @@ tasks:
       runFromWorkspaceRoot: true
   react-native-android-e2e:
     tags: ["mobile", "e2e", "android"]
-    command: "pnpm --dir examples/react-native-expo run mobile-e2e:android"
+    command: "bun run --cwd examples/react-native-expo mobile-e2e:android"
     deps:
       - "integration-examples:react-native-android-build"
     inputs:
@@ -115,9 +101,8 @@ tasks:
       - "react-native-expo/package.json"
       - project: "oliphaunt-react-native"
         group: "code"
-      - "/src/sources/toolchains/android-emulator-runner.toml"
-      - "/src/sources/toolchains/maestro.toml"
-      - "/src/shared/mobile-tools/setup-maestro.sh"
+      - "/tools/dev/maestro.toml"
+      - "/tools/dev/setup-maestro.sh"
       - "/target/mobile-build/react-native/android/**/*"
     options:
       cache: false
@@ -125,7 +110,7 @@ tasks:
       runInCI: skip
   react-native-android-drill:
     tags: ["mobile", "drill", "android"]
-    command: "pnpm --dir examples/react-native-expo run mobile-drill:android"
+    command: "bun run --cwd examples/react-native-expo mobile-drill:android"
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-kotlin"
@@ -134,7 +119,7 @@ tasks:
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
+      - "/runtimes/liboliphaunt-native/packaging/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -143,12 +128,14 @@ tasks:
     tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
     script: |
       export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
-      exec pnpm --dir examples/react-native-expo run mobile-build:ios
+      exec bun run --cwd examples/react-native-expo mobile-build:ios
     deps:
+      - "database-resources:build-native-ios-icu"
+      - "database-resources:package-icu"
       - "extension-packages:package-mobile"
       - "liboliphaunt-native:package-runtime-ios-xcframework"
-      - "oliphaunt-react-native:release-package"
-      - "oliphaunt-swift:release-package"
+      - "oliphaunt-react-native:package"
+      - "oliphaunt-swift:package"
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-react-native"
@@ -160,7 +147,7 @@ tasks:
       - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"
-      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
+      - "/runtimes/liboliphaunt-native/packaging/**/*"
     outputs:
       - "/target/mobile-build/react-native/ios/**/*"
     options:
@@ -168,7 +155,7 @@ tasks:
       runFromWorkspaceRoot: true
   react-native-ios-e2e:
     tags: ["mobile", "e2e", "ios"]
-    command: "pnpm --dir examples/react-native-expo run mobile-e2e:ios"
+    command: "bun run --cwd examples/react-native-expo mobile-e2e:ios"
     deps:
       - "integration-examples:react-native-ios-build"
     inputs:
@@ -177,8 +164,8 @@ tasks:
       - "react-native-expo/package.json"
       - project: "oliphaunt-react-native"
         group: "code"
-      - "/src/sources/toolchains/maestro.toml"
-      - "/src/shared/mobile-tools/setup-maestro.sh"
+      - "/tools/dev/maestro.toml"
+      - "/tools/dev/setup-maestro.sh"
       - "/target/mobile-build/react-native/ios/**/*"
     options:
       cache: false
@@ -186,7 +173,7 @@ tasks:
       runInCI: skip
   react-native-ios-drill:
     tags: ["mobile", "drill", "ios"]
-    command: "pnpm --dir examples/react-native-expo run mobile-drill:ios"
+    command: "bun run --cwd examples/react-native-expo mobile-drill:ios"
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-react-native"
@@ -195,7 +182,7 @@ tasks:
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/src/runtimes/liboliphaunt/native/packaging/**/*"
+      - "/runtimes/liboliphaunt-native/packaging/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true

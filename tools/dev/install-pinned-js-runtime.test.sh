@@ -13,7 +13,7 @@ mkdir -p "$tmp/fixtures" "$tmp/config" "$tmp/bin"
 bash "$root/tools/dev/bun.sh" - "$tmp" <<'TS'
 import {createHash} from 'node:crypto';
 import {writeFileSync} from 'node:fs';
-import {zipArchive} from './tools/test/zip-fixture.mts';
+import {zipArchive} from './tools/packaging/testdata/zip-fixture.mts';
 const root = process.argv[2];
 const sha = data => createHash('sha256').update(data).digest('hex');
 const write = (name, data) => writeFileSync(root + '/' + name, data);

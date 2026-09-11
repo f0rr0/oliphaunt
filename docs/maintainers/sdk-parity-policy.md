@@ -125,14 +125,14 @@ These are language-native deltas, not parity failures:
   support product directly. It may evolve only in lockstep with the carrier
   products that consume it. The public `COliphaunt` product is governed by the
   documented C ABI contract rather than the Swift application API.
-- Native Rust's non-default `__internal-broker-helper` feature similarly exposes
-  `oliphaunt::__private` only to the exact-version, unpublished
-  `oliphaunt-broker` executable. It is absent from normal builds, is inventoried
-  separately, and is not part of the stable application contract.
+- The native broker is an independent library and executable built on the
+  shared native binding. The SDK depends on it; the broker does not import a
+  private SDK feature. SQL uses PostgreSQL wire messages, with lifecycle and
+  physical-resource operations on the separate control boundary.
 - Native tools are endpoint-oriented optional products. `oliphaunt-tools` and
   `@oliphaunt/tools` accept a PostgreSQL connection string and do not become
   dependencies or methods of the embedded database SDKs.
-- Server handles in native/WASIX Rust, desktop TypeScript, and WASIX TypeScript
+- Server handles in native Rust, `pgwire-server`, desktop TypeScript, and WASIX TypeScript
   own only the process/listener, connection string, and lifecycle. Applications
   use an ordinary PostgreSQL ORM, driver, or tool for SQL, transactions, and
   connection lifecycle; a server handle never controls independent client
@@ -266,18 +266,13 @@ rows below are likewise not hidden modes or partly supported capabilities.
 ## Review and release rule
 
 A public SDK change is complete when all affected language surfaces, C/header
-copies, generated API inventory, docs route, package shape, and behavioral tests
+copies, authored documentation, package shape, and behavioral tests
 agree. A deliberate delta must appear above with current behavior. A new idea
 needs a concrete cross-runtime contract and executable evidence; only the
 repository-enforced deferrals listed above require one of their existing exact
 IDs.
 
-The lightweight contract checks are:
-
-```sh
-moon run liboliphaunt-native:headers
-moon run extensions:lint
-```
-
-Product-owned compile, package, smoke, and release tasks remain the authority
-for executable behavior.
+Product-owned build, test, package, and consumer tasks are the authority for
+executable behavior. The runtime owns the canonical C header; carrier producers
+copy it and real consumers compile against it. There is no separate header
+layout gate or generated documentation inventory to maintain.

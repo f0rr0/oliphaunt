@@ -1,8 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import Oliphaunt from '@oliphaunt/wasix-ts';
-import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
+import { standardSeed } from './resources.js';
 
 type QueryParameters = readonly (null | string | number | boolean)[];
 
@@ -599,6 +600,7 @@ async function openWasix(executionSurface: OliphauntExecutionSurface): Promise<O
   const started = performance.now();
   const client = executionSurface === 'direct' ? Oliphaunt : WorkerOliphaunt;
   const database = await client.open({
+    seed: standardSeed,
     ...(persistentWorkerStorage && executionSurface === 'worker'
       ? { storage: opfs(nextPersistentDatabase('wasix')) }
       : {}),

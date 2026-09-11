@@ -8,13 +8,22 @@ import { defineConfig, type Plugin } from 'vite';
 
 const exampleRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleRoot, '../..');
-const bindingRoot = resolve(repositoryRoot, 'src/bindings/wasix-ts');
+const bindingRoot = resolve(repositoryRoot, 'sdks/ts-wasix/sdk');
 const bindingLibRoot = resolve(bindingRoot, 'lib');
 const assetRoot = resolve(repositoryRoot, 'target/oliphaunt-wasix/assets');
+const extensionAssetRoot = resolve(repositoryRoot, 'target/extensions/wasix/assets');
+const resourceVersion = (
+  await readFile(resolve(repositoryRoot, 'database-resources/VERSION'), 'utf8')
+).trim();
+const seedBase = resolve(
+  repositoryRoot,
+  'target/database-resources/release-assets',
+  `database-resources-${resourceVersion}-seed-wasix-standard`,
+);
 const pgliteAssetRoot = resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist');
 const databaseRootContractFile = resolve(
   repositoryRoot,
-  'src/shared/fixtures/storage/database-root.json',
+  'test-fixtures/storage/database-root.json',
 );
 const packedConsumerRoot = process.env.OLIPHAUNT_WASIX_BROWSER_PACKAGE_ROOT;
 const packedConsumer = packedConsumerRoot === undefined ? undefined : resolve(packedConsumerRoot);
@@ -24,17 +33,6 @@ export default defineConfig({
     ...(packedConsumer === undefined
       ? {
           alias: [
-            {
-              find: /^@oliphaunt\/wasix-tools$/,
-              replacement: resolve(
-                repositoryRoot,
-                'src/bindings/wasix-ts/tools-package/src/index.ts',
-              ),
-            },
-            {
-              find: /^@oliphaunt\/wasix-ts\/internal\/tools$/,
-              replacement: resolve(bindingLibRoot, 'internal.js'),
-            },
             {
               find: /^@oliphaunt\/wasix-ts$/,
               replacement: resolve(bindingLibRoot, 'index.js'),
@@ -145,7 +143,6 @@ function packedBrowserPackageExports(consumerRoot: string): Plugin {
 function wasixAssets(): Plugin {
   const virtualModules = new Map([
     ['@oliphaunt/liboliphaunt-wasix', '\0oliphaunt:liboliphaunt-wasix'],
-    ['@oliphaunt/liboliphaunt-wasix-tools', '\0oliphaunt:liboliphaunt-wasix-tools'],
     ['@oliphaunt/extension-pgtap-wasix', '\0oliphaunt:extension-pgtap-wasix'],
     ['@oliphaunt/extension-pg-uuidv7-wasix', '\0oliphaunt:extension-pg-uuidv7-wasix'],
     ['@oliphaunt/extension-postgis-wasix', '\0oliphaunt:extension-postgis-wasix'],
@@ -159,14 +156,12 @@ function wasixAssets(): Plugin {
     | undefined;
   const routes = new Map([
     ['/runtime', resolve(assetRoot, 'oliphaunt.wasix.tar.zst')],
-    ['/cluster-seed-standard', resolve(assetRoot, 'cluster-seeds/standard.tar.zst')],
-    ['/cluster-seed-standard-manifest', resolve(assetRoot, 'cluster-seeds/standard.json')],
+    ['/cluster-seed-standard', `${seedBase}.tar.zst`],
+    ['/cluster-seed-standard-manifest', `${seedBase}.json`],
     ['/manifest', resolve(assetRoot, 'manifest.json')],
-    ['/tools/pg_dump', resolve(assetRoot, 'bin/pg_dump.wasix.wasm')],
-    ['/tools/psql', resolve(assetRoot, 'bin/psql.wasix.wasm')],
-    ['/extensions/pgtap', resolve(assetRoot, 'extensions/pgtap.tar.zst')],
-    ['/extensions/pg_uuidv7', resolve(assetRoot, 'extensions/pg_uuidv7.tar.zst')],
-    ['/extensions/postgis', resolve(assetRoot, 'extensions/postgis.tar.zst')],
+    ['/extensions/pgtap', resolve(extensionAssetRoot, 'extensions/pgtap.tar.zst')],
+    ['/extensions/pg_uuidv7', resolve(extensionAssetRoot, 'extensions/pg_uuidv7.tar.zst')],
+    ['/extensions/postgis', resolve(extensionAssetRoot, 'extensions/postgis.tar.zst')],
     ['/pglite.data', resolve(pgliteAssetRoot, 'pglite.data')],
     ['/pglite.wasm', resolve(pgliteAssetRoot, 'pglite.wasm')],
     ['/initdb.wasm', resolve(pgliteAssetRoot, 'initdb.wasm')],
@@ -226,7 +221,7 @@ function wasixAssets(): Plugin {
         } catch (error) {
           response.statusCode = 500;
           response.end(
-            `Missing WASIX assets. Run liboliphaunt-wasix:runtime-portable first.\n${String(error)}`,
+            `Missing WASIX assets. Run liboliphaunt-wasix:runtime-portable and database-resources:build-wasix-standard first.\n${String(error)}`,
           );
         }
       });
@@ -258,17 +253,11 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
   const versions = JSON.parse(
     await readFile(resolve(repositoryRoot, '.release-please-manifest.json'), 'utf8'),
   ) as Record<string, string>;
-  const runtimeVersion = requireVersion(versions, 'src/runtimes/liboliphaunt/wasix');
+  const runtimeVersion = requireVersion(versions, 'runtimes/liboliphaunt-wasix');
 
   if (packageName === '@oliphaunt/liboliphaunt-wasix') {
     const runtime = requireRecord(manifest.runtime, 'runtime manifest entry');
-    const clusterSeeds = requireRecord(manifest['cluster-seeds'], 'cluster seed manifest entry');
-    const standardSeed = requireRecord(clusterSeeds.standard, 'standard cluster seed entry');
     const runtimeBytes = await readFile(resolve(assetRoot, String(runtime.archive)));
-    const standardSeedBytes = await readFile(resolve(assetRoot, String(standardSeed.archive)));
-    const standardSeedManifestBytes = await readFile(
-      resolve(assetRoot, String(standardSeed.manifest)),
-    );
     const projectedManifest = coreManifest(manifestBytes);
     return {
       schema: 'oliphaunt-wasix-runtime-v2',
@@ -281,17 +270,6 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
         size: runtimeBytes.length,
         source: '/wasix-assets/runtime',
       },
-      standardSeedArchive: {
-        archive: standardSeed.archive,
-        sha256: sha256(standardSeedBytes),
-        size: standardSeedBytes.length,
-        source: '/wasix-assets/cluster-seed-standard',
-      },
-      standardSeedManifest: {
-        sha256: sha256(standardSeedManifestBytes),
-        size: standardSeedManifestBytes.length,
-        source: '/wasix-assets/cluster-seed-standard-manifest',
-      },
       manifest: {
         sha256: sha256(projectedManifest),
         size: projectedManifest.length,
@@ -300,32 +278,11 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
     };
   }
 
-  if (packageName === '@oliphaunt/liboliphaunt-wasix-tools') {
-    const pgDump = requireRecord(manifest['pg-dump'], 'pg_dump manifest entry');
-    const psql = requireRecord(manifest.psql, 'psql manifest entry');
-    return {
-      schema: 'oliphaunt-wasix-tools-v1',
-      product: 'oliphaunt-wasix-tools',
-      version: runtimeVersion,
-      runtimeProduct: 'liboliphaunt-wasix',
-      runtimeVersion,
-      pgDump: {
-        name: 'pg_dump',
-        sha256: pgDump.sha256,
-        size: pgDump.size,
-        source: '/wasix-assets/tools/pg_dump',
-      },
-      psql: {
-        name: 'psql',
-        sha256: psql.sha256,
-        size: psql.size,
-        source: '/wasix-assets/tools/psql',
-      },
-    };
-  }
-
   const extension = extensionPackage(packageName);
-  const rows = manifest.extensions;
+  const extensionManifest = JSON.parse(
+    await readFile(resolve(extensionAssetRoot, 'manifest.json'), 'utf8'),
+  );
+  const rows = extensionManifest.extensions;
   if (!Array.isArray(rows)) {
     throw new Error('canonical development manifest has no extension rows');
   }
@@ -407,19 +364,19 @@ function extensionPackage(packageName: string): {
     case '@oliphaunt/extension-pgtap-wasix':
       return {
         product: 'oliphaunt-extension-pgtap',
-        releasePath: 'src/extensions/external/pgtap',
+        releasePath: 'extensions/external/pgtap',
         sqlName: 'pgtap',
       };
     case '@oliphaunt/extension-pg-uuidv7-wasix':
       return {
         product: 'oliphaunt-extension-pg-uuidv7',
-        releasePath: 'src/extensions/external/pg_uuidv7',
+        releasePath: 'extensions/external/pg_uuidv7',
         sqlName: 'pg_uuidv7',
       };
     case '@oliphaunt/extension-postgis-wasix':
       return {
         product: 'oliphaunt-extension-postgis',
-        releasePath: 'src/extensions/external/postgis',
+        releasePath: 'extensions/external/postgis',
         sqlName: 'postgis',
       };
     default:
@@ -456,6 +413,7 @@ function sha256(bytes: Uint8Array): string {
 function coreManifest(bytes: Uint8Array): Uint8Array {
   const manifest = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
   manifest.extensions = [];
+  delete manifest['cluster-seeds'];
   delete manifest['pg-dump'];
   delete manifest.psql;
   return new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);

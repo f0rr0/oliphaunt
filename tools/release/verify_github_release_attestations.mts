@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { currentVersion } from '../../src/shared/product-metadata/product-version.mts';
+import { currentVersion } from './product-version.mts';
 import {
   contribCarrierDescriptor,
   expectedAssets as expectedDesktopAssets,
@@ -16,7 +16,7 @@ import {
   extensionSourceIdentity,
   extensionSqlNames,
   releaseMetadata,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
+} from './release-artifact-targets.mts';
 import { reserveGitHubCoreRequest } from './github-core-request-journal.mts';
 import {
   authHeaders,
@@ -30,8 +30,8 @@ import { assertPublicationLockSource, loadPublicationLock } from './publication-
 
 export { requestBoundedGithubJson, requestGithubJsonWithRetry } from './github-read.mts';
 
-import { swiftExtensionCarrierAssetName } from '../../src/shared/artifact-packaging/ios-carrier-manifest.mts';
-import { assertWasixExtensionMemberInstall } from '../../src/shared/extension-runtime-contract/wasix-extension-install.mts';
+import { swiftExtensionCarrierAssetName } from '../../sdks/swift/tools/ios-carrier-manifest.mts';
+import { assertWasixExtensionMemberInstall } from '../../extensions/contracts/wasix-extension-install.mts';
 import { assertPublicationController } from './publication-controller.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -60,13 +60,6 @@ const BASE_ASSET_BACKED_PRODUCTS = new Set([
   'oliphaunt-broker',
   'oliphaunt-node-direct',
   'oliphaunt-wasix-napi',
-]);
-
-const DESKTOP_TARGETS = new Set([
-  'linux-arm64-gnu',
-  'linux-x64-gnu',
-  'macos-arm64',
-  'windows-x64-msvc',
 ]);
 
 const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
@@ -306,14 +299,10 @@ function liboliphauntNativeAssets(version) {
   const assets = targets.map(
     (target) => `liboliphaunt-${version}-${target}.${archiveSuffix(target)}`,
   );
-  for (const target of targets.filter((target) => DESKTOP_TARGETS.has(target))) {
-    assets.push(`oliphaunt-tools-${version}-${target}.${archiveSuffix(target)}`);
-  }
   assets.push(
     `liboliphaunt-${version}-apple-spm-xcframework.zip`,
     `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`,
     `liboliphaunt-${version}-runtime-resources-android-datum64.tar.gz`,
-    `liboliphaunt-${version}-icu-data.tar.gz`,
     `liboliphaunt-${version}-release-assets.sha256`,
   );
   return [...new Set(assets)].sort(compareText);
@@ -326,7 +315,6 @@ function liboliphauntWasixAssets(version) {
   }
   const assets = [
     `liboliphaunt-wasix-${version}-runtime-portable.tar.zst`,
-    `liboliphaunt-wasix-${version}-icu-data.tar.zst`,
     `liboliphaunt-wasix-${version}-release-assets.sha256`,
   ];
   for (const target of targets.filter((target) => target !== 'portable')) {
@@ -732,7 +720,7 @@ let canonicalIosDependenciesCache;
 
 function canonicalExtensionRows() {
   canonicalExtensionRowsCache ??= JSON.parse(
-    readFileSync(path.join(ROOT, 'src/extensions/generated/sdk/extensions.json'), 'utf8'),
+    readFileSync(path.join(ROOT, 'extensions/generated/sdk/extensions.json'), 'utf8'),
   ).extensions;
   if (!Array.isArray(canonicalExtensionRowsCache)) {
     throw new Error('generated React Native extension catalog has no extensions array');
@@ -743,7 +731,7 @@ function canonicalExtensionRows() {
 function canonicalIosDependencies() {
   if (canonicalIosDependenciesCache !== undefined) return canonicalIosDependenciesCache;
   const lines = readFileSync(
-    path.join(ROOT, 'src/extensions/generated/mobile/static-extensions.tsv'),
+    path.join(ROOT, 'extensions/generated/mobile/static-extensions.tsv'),
     'utf8',
   )
     .split(/\r?\n/u)

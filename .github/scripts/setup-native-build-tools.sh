@@ -132,7 +132,7 @@ install_windows_tools() {
     return 1
   }
   local winflex_dir cache_root
-  cache_root="${RUNNER_TEMP:-$repo_root/target}/oliphaunt-native-tools"
+  cache_root="$(cygpath -u "${RUNNER_TEMP:-$repo_root/target}")/oliphaunt-native-tools"
   winflex_dir="$(
     OLIPHAUNT_PINNED_NATIVE_TOOL_CACHE_ROOT="$cache_root" \
       bash "$repo_root/tools/dev/install-pinned-winflexbison.sh"
@@ -142,7 +142,29 @@ install_windows_tools() {
     return 1
   }
   export PATH="$winflex_dir:$PATH"
+  local meson_root meson_scripts
+  meson_root="$cache_root/meson-1.10.0-ninja-1.13.0"
+  meson_scripts="$meson_root/Scripts"
+  if [ ! -x "$meson_scripts/python.exe" ]; then
+    local python=(python.exe)
+    command -v python.exe >/dev/null || python=(py.exe -3)
+    "${python[@]}" -m venv "$(cygpath -m "$meson_root")"
+  fi
+  if [ ! -x "$meson_scripts/meson.exe" ] || [ ! -x "$meson_scripts/ninja.exe" ]; then
+    "$meson_scripts/python.exe" -m pip install --disable-pip-version-check --retries 8 --timeout 60 meson==1.10.0 ninja==1.13.0
+  fi
+  export PATH="$meson_scripts:$PATH"
+  [ "$(meson --version | tr -d '\r')" = 1.10.0 ] || {
+    echo 'setup-native-build-tools.sh: pinned Meson setup failed' >&2
+    return 1
+  }
+  # The pinned PyPI distribution includes Kitware's jobserver patch suffix.
+  case "$(ninja --version | tr -d '\r')" in
+    1.13.0|1.13.0.gd74ef.kitware.jobserver-pipe-1) ;;
+    *) echo 'setup-native-build-tools.sh: pinned Ninja setup failed' >&2; return 1 ;;
+  esac
   if [ -n "${GITHUB_PATH:-}" ]; then
+    cygpath -w "$meson_scripts" >>"$GITHUB_PATH"
     if command -v cygpath >/dev/null 2>&1; then
       cygpath -w "$winflex_dir" >>"$GITHUB_PATH"
     else

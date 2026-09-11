@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import {
   closeSync,
@@ -21,7 +21,7 @@ export const GITHUB_CORE_REQUEST_ROLLING_WINDOW_MS = 60 * 60_000;
 export const GITHUB_CORE_REQUEST_ROLLING_CEILING = 900;
 export const GITHUB_CORE_REQUEST_RETRY_RESERVE = 100;
 
-const SCHEMA = 'oliphaunt-github-core-request-journal-v3';
+const SCHEMA = 'oliphaunt-github-core-request-journal-v4';
 const MAX_LOCK_WAIT_MS = 60_000;
 
 export class GitHubCoreRequestJournalError extends Error {
@@ -84,30 +84,22 @@ function validateState(state, expectedIdentity) {
   if (!Number.isSafeInteger(state.sequence) || state.sequence < 0) {
     fail('core-request journal sequence must be a non-negative safe integer');
   }
-  if (!Array.isArray(state.attempts) || state.attempts.length !== state.sequence) {
+  if (
+    !Array.isArray(state.attempts) ||
+    state.attempts.length > GITHUB_CORE_REQUEST_ROLLING_CEILING ||
+    state.attempts.length > state.sequence ||
+    (state.sequence > 0 && state.attempts.length === 0)
+  ) {
     fail('core-request journal attempts do not match its sequence');
   }
   let previous = -1;
-  const attempts = state.attempts.map((attempt, index) => {
-    if (
-      attempt === null ||
-      Array.isArray(attempt) ||
-      typeof attempt !== 'object' ||
-      JSON.stringify(Object.keys(attempt).sort()) !==
-        JSON.stringify(['label', 'reservedAtMs', 'sequence'])
-    ) {
-      fail(`core-request attempt ${index + 1} has invalid fields`);
-    }
-    validateLabel(attempt.label);
-    if (!Number.isSafeInteger(attempt.reservedAtMs) || attempt.reservedAtMs < previous) {
+  for (const timestamp of state.attempts) {
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp < previous) {
       fail('core-request journal attempts are not timestamp ordered');
     }
-    if (attempt.sequence !== index + 1) {
-      fail('core-request journal attempt sequences are not contiguous');
-    }
-    previous = attempt.reservedAtMs;
-    return { ...attempt };
-  });
+    previous = timestamp;
+  }
+  const attempts = state.attempts;
   return { ...expectedIdentity, attempts, schema: SCHEMA, sequence: state.sequence };
 }
 
@@ -178,7 +170,7 @@ function validateLabel(label) {
 
 function rollingAttempts(state, nowMs) {
   const boundary = nowMs - GITHUB_CORE_REQUEST_ROLLING_WINDOW_MS;
-  return state.attempts.filter(({ reservedAtMs }) => reservedAtMs >= boundary);
+  return state.attempts.filter((reservedAtMs) => reservedAtMs >= boundary);
 }
 
 export function readGitHubCoreRequestJournal({ environment = process.env, now = Date.now } = {}) {
@@ -187,8 +179,7 @@ export function readGitHubCoreRequestJournal({ environment = process.env, now = 
   const nowMs = now();
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) fail('clock returned an invalid timestamp');
   const state = parseState(file, githubReleaseLineageIdentity(environment));
-  if (state.attempts.at(-1)?.reservedAtMs > nowMs)
-    fail('clock moved backwards behind the request journal');
+  if (state.attempts.at(-1) > nowMs) fail('clock moved backwards behind the request journal');
   return {
     enabled: true,
     rollingCount: rollingAttempts(state, nowMs).length,
@@ -213,10 +204,11 @@ export async function reserveGitHubCoreRequest({
     const reservedAtMs = now();
     if (!Number.isSafeInteger(reservedAtMs) || reservedAtMs < 0)
       fail('clock returned an invalid timestamp');
-    if (state.attempts.at(-1)?.reservedAtMs > reservedAtMs) {
+    if (state.attempts.at(-1) > reservedAtMs) {
       fail('clock moved backwards behind the request journal');
     }
-    const rollingCount = rollingAttempts(state, reservedAtMs).length;
+    const attempts = rollingAttempts(state, reservedAtMs);
+    const rollingCount = attempts.length;
     if (rollingCount >= GITHUB_CORE_REQUEST_ROLLING_CEILING) {
       fail(
         `refusing request ${JSON.stringify(label)} because ${rollingCount} attempts already occupy the ` +
@@ -224,10 +216,11 @@ export async function reserveGitHubCoreRequest({
       );
     }
     const sequence = state.sequence + 1;
+    if (!Number.isSafeInteger(sequence)) fail('request sequence exceeds the safe integer range');
     const next = {
       ...state,
       sequence,
-      attempts: [...state.attempts, { label, reservedAtMs, sequence }],
+      attempts: [...attempts, reservedAtMs],
     };
     writeState(file, next);
     return { enabled: true, rollingCount: rollingCount + 1, sequence };

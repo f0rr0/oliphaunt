@@ -10,12 +10,9 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readSelectedRemoteTagMap } from '../../.github/scripts/manage-release-drafts.mts';
-import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from '../../src/sdks/kotlin/tools/kotlin-maven-staging.mts';
-import {
-  compareText,
-  currentProductVersionSync,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import { loadProducts, releaseOrder } from '../../src/shared/product-metadata/release-graph.mts';
+import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from '../../sdks/kotlin/tools/kotlin-maven-staging.mts';
+import { compareText, currentProductVersionSync } from './release-artifact-targets.mts';
+import { loadProducts, releaseOrder } from './release-graph.mts';
 import { loadBootstrapLedger } from './bootstrap-ledger.mts';
 import { uploadCargoOnceAndReconcileExactVersion } from './cargo-upload-reconciliation.mts';
 import { queryRegistryPackages } from './check_registry_publication.mts';
@@ -73,7 +70,7 @@ const MAVEN_PUBLISH_MINIMUM_WINDOW_MS = 35 * 60_000;
 function usage() {
   console.log(`usage: tools/release/release-publish.mts publish [publish args] [--publication-lock FILE]
 
-Runs protected publication. Read-only validation uses bash tools/release/release-dry-run.sh.
+Runs protected publication. Read-only registry preflight uses bash tools/release/release-check-registries.sh.
 
 Every real publish requires an exact-SHA frozen publication lock. Repeatable
 identity bootstrap for newly generated Cargo/npm identities uses:
@@ -162,7 +159,9 @@ if (registryPhases.has(command) && BOOTSTRAP_IDENTITIES)
   fail('normal registry phases are forbidden during identity bootstrap');
 if (command !== 'publish' && !registryPhases.has(command) && !bootstrapPhases.has(command)) {
   usage();
-  fail(`expected publish (read-only checks use release-dry-run.sh), got ${command ?? '<missing>'}`);
+  fail(
+    `expected publish (read-only registry checks use release-check-registries.sh), got ${command ?? '<missing>'}`,
+  );
 }
 
 for (const valueFlag of ['--carrier-id', '--head-ref', '--product', '--products-json', '--step']) {

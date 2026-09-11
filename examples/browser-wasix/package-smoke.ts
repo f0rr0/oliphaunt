@@ -1,25 +1,15 @@
+import seedArchive from '@oliphaunt/seed-wasix-standard/seed.tar.zst?url';
+import seedManifest from '@oliphaunt/seed-wasix-standard/manifest.json?url';
+import icuSeedArchive from '@oliphaunt/seed-wasix-icu/seed.tar.zst?url';
+import icuSeedManifest from '@oliphaunt/seed-wasix-icu/manifest.json?url';
+import icuData from '@oliphaunt/icu/data?url';
+import icuManifest from '@oliphaunt/icu/manifest?url';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 import Oliphaunt, { type OliphauntDatabase } from '@oliphaunt/wasix-ts';
 import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
-import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
-import logicalToolsFixtureJson from './logical-tools.json?raw';
-import logicalToolsSeed from './logical-tools-seed.sql?raw';
-import logicalToolsVerify from './logical-tools-verify.sql?raw';
-import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
 import { expectStructuredApi } from './structured-api-smoke.js';
-
-const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
-  expected: {
-    rows: number;
-    sum: number;
-    sequenceLastValue: number;
-    quotedValue: string;
-    normalizedMatches: number;
-    extensionLoaded: boolean;
-  };
-};
 
 const status = requireElement<HTMLParagraphElement>('status');
 const output = requireElement<HTMLPreElement>('output');
@@ -28,6 +18,7 @@ try {
   const storage = indexedDB('packed-browser-smoke');
   let database = await Oliphaunt.open({
     storage,
+    seed: { archive: seedArchive, manifest: seedManifest },
     extensions: [pgtap],
   });
   let pgtapVersion: string;
@@ -41,7 +32,6 @@ try {
       await transaction.execute('INSERT INTO packed_reopen_probe VALUES ($1)', [42]);
     });
     await database.execute('CHECKPOINT');
-    await expectDirectPgDump(database);
   } finally {
     await database.close();
   }
@@ -71,16 +61,26 @@ try {
       throw new Error(`packed browser worker transaction produced ${count} rows`);
     }
     await database.execute('CHECKPOINT');
-    const logicalTools = await expectLogicalTools();
+    const icuDatabase = await Oliphaunt.open({
+      seed: { archive: icuSeedArchive, manifest: icuSeedManifest },
+      icu: { data: icuData, manifest: icuManifest },
+    });
+    try {
+      const ordered = await icuDatabase.queryRaw(
+        `SELECT string_agg(value, ',' ORDER BY value COLLATE "en-x-icu") AS value FROM (VALUES ('z'), ('a'), (chr(228))) AS input(value)`,
+      );
+      if (ordered.getText(0, 'value') !== 'a,ä,z')
+        throw new Error('selected ICU resources did not provide ICU collation');
+    } finally {
+      await icuDatabase.close();
+    }
     status.textContent = 'Packed browser package smoke passed.';
     output.textContent = JSON.stringify({
       direct: 42,
-      directPgDump: true,
       worker: 42,
       indexedDB: answer,
       transactionRows: count,
       pgtap: pgtapVersion,
-      logicalTools,
     });
     document.documentElement.dataset.oliphauntSmoke = 'passed';
   } finally {
@@ -90,42 +90,6 @@ try {
   status.textContent = 'Packed browser package smoke failed.';
   output.textContent = error instanceof Error ? (error.stack ?? error.message) : String(error);
   document.documentElement.dataset.oliphauntSmoke = 'failed';
-}
-
-async function expectLogicalTools(): Promise<string> {
-  const source = await WorkerOliphaunt.open({ extensions: [pgtap] });
-  let sql: string;
-  try {
-    await psql(source, { script: logicalToolsSeed });
-    sql = await pgDump(source);
-    if (!sql.includes('COPY public.logical_items') || sql.includes('--inserts')) {
-      throw new Error('packed browser pg_dump did not preserve standard plain COPY output');
-    }
-  } finally {
-    await source.close();
-  }
-
-  const target = await WorkerOliphaunt.open({ extensions: [pgtap] });
-  try {
-    await psql(target, { script: sql });
-    const result = await target.queryRaw(logicalToolsVerify);
-    const actual = {
-      rows: Number(result.getText(0, 'rows')),
-      sum: Number(result.getText(0, 'sum')),
-      sequenceLastValue: Number(result.getText(0, 'sequence_last_value')),
-      quotedValue: result.getText(0, 'quoted_value'),
-      normalizedMatches: Number(result.getText(0, 'normalized_matches')),
-      extensionLoaded: result.getText(0, 'extension_loaded') === 't',
-    };
-    if (JSON.stringify(actual) !== JSON.stringify(logicalToolsFixture.expected)) {
-      throw new Error(
-        `packed browser logical tool round trip differed from the shared fixture: ${JSON.stringify(actual)}`,
-      );
-    }
-    return `${actual.rows}:${actual.sum}:${actual.sequenceLastValue}`;
-  } finally {
-    await target.close();
-  }
 }
 
 async function expectAnswer(database: OliphauntDatabase): Promise<void> {

@@ -3,25 +3,22 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-  releaseNoticeRows,
-  releaseProfilePackageLicense,
-} from '../../src/shared/artifact-packaging/release-notices.mts';
+import { releaseNoticeRows, releaseProfilePackageLicense } from '../packaging/release-notices.mts';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
 const CORE_TEMPLATES = [
-  ['src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml', 'wasix-runtime'],
-  ['src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml', 'wasix-tools'],
-  ['src/runtimes/liboliphaunt/icu/Cargo.toml', 'wasix-icu-data-crate'],
+  ['runtimes/liboliphaunt-wasix/crates/assets/Cargo.toml', 'wasix-runtime'],
+  ['postgres-tools/wasix/crates/tools/Cargo.toml', 'wasix-tools'],
+  ['database-resources/icu/cargo/Cargo.toml', 'wasix-icu-data-crate'],
   ...[
     'aarch64-apple-darwin',
     'aarch64-unknown-linux-gnu',
     'x86_64-pc-windows-msvc',
     'x86_64-unknown-linux-gnu',
   ].flatMap((target) => [
-    [`src/runtimes/liboliphaunt/wasix/crates/aot/${target}/Cargo.toml`, 'wasix-aot'],
-    [`src/runtimes/liboliphaunt/wasix/crates/tools-aot/${target}/Cargo.toml`, 'wasix-aot'],
+    [`runtimes/liboliphaunt-wasix/crates/aot/${target}/Cargo.toml`, 'wasix-aot'],
+    [`postgres-tools/wasix/crates/aot/${target}/Cargo.toml`, 'wasix-aot'],
   ]),
 ];
 
@@ -38,7 +35,7 @@ function manifest(relative) {
 
 test('oliphaunt-wasix source SDK remains an MIT-only facade', () => {
   assert.equal(manifest('Cargo.toml').workspace.package.license, 'MIT');
-  const source = manifest('src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml');
+  const source = manifest('sdks/rust-wasix/Cargo.toml');
   assert.equal(source.package.license, 'MIT');
 });
 

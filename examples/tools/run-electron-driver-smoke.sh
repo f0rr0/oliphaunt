@@ -22,18 +22,18 @@ fi
 
 command -v node >/dev/null 2>&1 || fail "missing node"
 command -v timeout >/dev/null 2>&1 || fail "missing GNU timeout"
-command -v pnpm >/dev/null 2>&1 || fail "missing pnpm"
+command -v bun >/dev/null 2>&1 || fail "missing bun"
 
 assert_npm_package() {
   local package_name="$1"
   local expected_version="$2"
   local resolver_package="${3:-}"
-  pnpm --dir "$app_dir" exec node "$root/examples/tools/assert-installed-package.mts" "$package_name" "$expected_version" "$resolver_package"
+  (cd "$app_dir" && bun "$root/examples/tools/assert-installed-package.mts" "$package_name" "$expected_version" "$resolver_package")
 }
 
 example_package_version() {
   local package_name="$1"
-  node "$root/examples/tools/example-release-dependencies.mts" electron-package-version "$package_name"
+  bun "$root/examples/tools/example-release-dependencies.mts" electron-package-version "$package_name"
 }
 
 electron_relative_path() {
@@ -96,7 +96,7 @@ prepare_wasix_sidecar() {
     return
   fi
 
-  local scratch="$root/target/e2e/electron-sidecars/${app_dir//\//-}"
+  local scratch="$root/target/e2e/electron-sidecars${app_dir//\//-}"
   rm -rf "$scratch"
   mkdir -p "$scratch"
   cp -R "$root/$app_dir/src-wasix/." "$scratch/"
@@ -125,7 +125,7 @@ prepare_wasix_sidecar() {
   wasix_sidecar_env=("OLIPHAUNT_WASIX_TODO_SIDECAR=$sidecar")
 }
 
-pnpm --dir "$app_dir" install --no-frozen-lockfile
+bun install --cwd "$app_dir"
 electron_pkg="$root/$app_dir/node_modules/electron"
 electron_platform="$(node "$root/tools/dev/node-info.mts" platform)"
 electron_arch="$(node "$root/tools/dev/node-info.mts" arch)"
@@ -144,7 +144,7 @@ if [ "$app_dir" = "examples/electron" ]; then
   assert_npm_package "@oliphaunt/liboliphaunt-linux-x64-gnu" "$liboliphaunt_linux_version" "@oliphaunt/ts"
   assert_npm_package "@oliphaunt/extension-contrib-pg18" "$contrib_version"
 fi
-pnpm --dir "$app_dir" build
+bun run --cwd "$app_dir" build
 prepare_wasix_sidecar
 
 user_data="$(mktemp -d)"

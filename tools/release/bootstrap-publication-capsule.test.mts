@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
@@ -17,16 +16,17 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { loadPublicationCatalog } from '../../src/shared/product-metadata/publication-catalog.mts';
-import { ROOT } from '../../src/shared/product-metadata/release-graph.mts';
-import { isolatedGitHubTestEnvironment } from '../test/isolated-github-test-environment.mts';
+import { gzipSync } from 'node:zlib';
+import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import {
   PUBLICATION_CANDIDATE_LOCK_PATH as BOOTSTRAP_CAPSULE_LOCK_PATH,
   PUBLICATION_CANDIDATE_MANIFEST_PATH as BOOTSTRAP_CAPSULE_MANIFEST_PATH,
   verifyExtractBootstrapCapsule as extractCandidate,
   packBootstrapCapsule as packCandidate,
 } from './bootstrap-publication-capsule.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
 import { buildPublicationCandidate, freezePublicationCandidate } from './publication-lock.mts';
+import { ROOT } from './release-graph.mts';
 
 const PRODUCTS = ['oliphaunt-rust', 'oliphaunt-js'];
 const APPROVAL = { approvalRunId: '123', qualificationRunId: '456' };
@@ -44,8 +44,10 @@ function sha256(file) {
 }
 
 function tarGzip(output, cwd, member) {
-  const result = spawnSync('tar', ['-czf', output, '-C', cwd, member], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
+  writeFileSync(
+    output,
+    gzipSync(createDeterministicTar(path.join(cwd, member), member, {}), { mtime: 0 }),
+  );
 }
 
 function cargoFixture(stageRoot, artifacts, name, version) {
@@ -237,6 +239,35 @@ function writeTar(destination, records) {
   writeFileSync(destination, Buffer.concat([...records, Buffer.alloc(1024)]));
 }
 
+if (process.argv[2] === 'prepare') {
+  const value = fixture();
+  writeFileSync(path.join(value.root, 'fixture.json'), JSON.stringify(value));
+  writeFileSync(
+    path.join(value.root, 'registry-fixture.mts'),
+    `
+globalThis.fetch = async (input, options = {}) => {
+  if (options.method && options.method !== 'GET') throw new Error('unexpected registry mutation');
+  const url = new URL(String(input));
+  if (!['crates.io', 'registry.npmjs.org'].includes(url.hostname)) throw new Error('unexpected registry');
+  return new Response('{}', {status: url.hostname === 'crates.io' && url.pathname.startsWith('/api/v1/crates/oliphaunt-build/') ? 200 : 404});
+};
+`,
+  );
+  writeFileSync(
+    path.join(value.root, 'npmrc'),
+    '//registry.npmjs.org/:_authToken=fixture-not-a-credential\n',
+  );
+  console.log(value.root);
+  process.exit(0);
+}
+if (process.argv[2] === 'verify') {
+  const result = JSON.parse(readFileSync(path.join(process.argv[3], 'execution.json'), 'utf8'));
+  assert.equal(result.decision, 'deferred');
+  assert.equal(result.newlyCompletedIds.length, 0);
+  assert.equal(result.remainingIds.length, 2);
+  process.exit(0);
+}
+
 test('packs every locked publication file deterministically and atomically installs it', () => {
   const value = fixture();
   const first = path.join(value.root, 'first.tar');
@@ -277,109 +308,6 @@ test('packs every locked publication file deterministically and atomically insta
   } finally {
     rmSync(value.root, { recursive: true, force: true });
     rmSync(output, { recursive: true, force: true });
-  }
-});
-
-test('publish and bootstrap workflow commands install the same approved candidate and reject approval drift', () => {
-  const value = fixture();
-  const workflow = Bun.YAML.parse(
-    readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
-  );
-  const destinations = [];
-  try {
-    for (const operation of ['publish', 'publish-bootstrap']) {
-      const approved = path.join(
-        value.root,
-        operation === 'publish' ? 'approved-publication' : 'approved-bootstrap',
-      );
-      mkdirSync(approved);
-      copyFileSync(value.lockFile, path.join(approved, 'publication-lock.json'));
-      packBootstrapCapsule({
-        lockFile: value.lockFile,
-        products: PRODUCTS,
-        output: path.join(approved, 'oliphaunt-publication-candidate.tar'),
-      });
-      const output = workspace();
-      destinations.push(output);
-      const step = workflow.jobs[operation].steps.find(({ run }) =>
-        run?.includes('bootstrap-publication-capsule.mts verify-extract'),
-      );
-      assert.ok(step, `${operation} must install the approved candidate`);
-      const environment = isolatedGitHubTestEnvironment({
-        APPROVAL_RUN_ID: APPROVAL.approvalRunId,
-        PRODUCTS_JSON: JSON.stringify(PRODUCTS),
-        RELEASE_HEAD_SHA: value.lock.source.commit,
-        RUNNER_TEMP: value.root,
-        GITHUB_WORKSPACE: output,
-      });
-      const invoke = (approval) =>
-        spawnSync(
-          process.env.OLIPHAUNT_TEST_BASH || 'bash',
-          ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step.run],
-          { cwd: ROOT, encoding: 'utf8', env: { ...environment, APPROVAL_RUN_ID: approval } },
-        );
-      const rejected = invoke('999');
-      assert.notEqual(rejected.status, 0, `${operation} must reject a different approval`);
-      assert.match(`${rejected.stdout}${rejected.stderr}`, /approval/iu);
-      const accepted = invoke(APPROVAL.approvalRunId);
-      assert.equal(accepted.status, 0, `${operation}: ${accepted.stdout}${accepted.stderr}`);
-      assert.equal(
-        sha256(path.join(output, ...BOOTSTRAP_CAPSULE_LOCK_PATH.split('/'))),
-        sha256(value.lockFile),
-      );
-    }
-  } finally {
-    rmSync(value.root, { recursive: true, force: true });
-    for (const output of destinations) rmSync(output, { recursive: true, force: true });
-  }
-});
-
-test('the real bootstrap command checkpoints a mixed inventory before a bounded deferral without uploading', () => {
-  const value = fixture();
-  try {
-    const preload = path.join(value.root, 'registry-fixture.mjs');
-    writeFileSync(
-      preload,
-      `
-      globalThis.fetch = async (input, options = {}) => {
-        if (options.method && options.method !== "GET") throw new Error("unexpected registry mutation");
-        const url = new URL(String(input));
-        if (!["crates.io", "registry.npmjs.org"].includes(url.hostname)) throw new Error("unexpected registry");
-        return new Response("{}", { status: url.hostname === "crates.io" && url.pathname.startsWith("/api/v1/crates/oliphaunt-build/") ? 200 : 404 });
-      };
-    `,
-    );
-    const npmrc = path.join(value.root, 'npmrc');
-    writeFileSync(npmrc, '//registry.npmjs.org/:_authToken=fixture-not-a-credential\n');
-    const resultFile = path.join(value.root, 'execution.json');
-    const result = spawnSync(
-      process.env.OLIPHAUNT_TEST_BASH || 'bash',
-      ['.github/scripts/bootstrap-registry-identities.sh'],
-      {
-        cwd: ROOT,
-        encoding: 'utf8',
-        env: {
-          ...isolatedGitHubTestEnvironment(),
-          BUN_OPTIONS: '--preload ' + preload,
-          PRODUCTS_JSON: JSON.stringify(PRODUCTS),
-          RELEASE_HEAD_SHA: value.lock.source.commit,
-          PUBLICATION_LOCK_PATH: value.lockFile,
-          BOOTSTRAP_LEDGER_PATH: path.join(value.root, 'ledger'),
-          REGISTRY_MUTATION_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 60),
-          REGISTRY_JOB_HARD_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 600),
-          CARGO_REGISTRY_TOKEN: 'fixture-not-a-credential',
-          NPM_CONFIG_USERCONFIG: npmrc,
-          OLIPHAUNT_BOOTSTRAP_EXECUTION_RESULT: resultFile,
-        },
-      },
-    );
-    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
-    const decision = JSON.parse(readFileSync(resultFile, 'utf8'));
-    assert.equal(decision.decision, 'deferred');
-    assert.equal(decision.newlyCompletedIds.length, 0);
-    assert.equal(decision.remainingIds.length, 2);
-  } finally {
-    rmSync(value.root, { recursive: true, force: true });
   }
 });
 

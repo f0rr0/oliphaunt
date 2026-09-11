@@ -1,7 +1,77 @@
 import * as fs from 'node:fs';
+import {
+  assertCandidateBindingShape,
+  assertQualificationProductCoverage,
+  qualificationRequestKey,
+} from './release-candidate-lib.mts';
 
 const [command, ...args] = Bun.argv.slice(2);
 switch (command) {
+  case 'qualification-request': {
+    const products = JSON.parse(process.env.PRODUCTS_JSON);
+    const key = qualificationRequestKey(process.env.EXPECTED_SHA, products);
+    console.log(
+      JSON.stringify({
+        ref: 'main',
+        inputs: {
+          release_products_json: JSON.stringify([...products].sort()),
+          qualification_request: key,
+          wasm_target: 'all',
+          native_target: 'all',
+          mobile_target: 'all',
+        },
+      }),
+    );
+    break;
+  }
+  case 'qualification-key': {
+    console.log(
+      qualificationRequestKey(process.env.EXPECTED_SHA, JSON.parse(process.env.PRODUCTS_JSON)),
+    );
+    break;
+  }
+  case 'dispatch-run-id': {
+    const response = await Bun.stdin.json();
+    if (!Number.isSafeInteger(response.workflow_run_id) || response.workflow_run_id <= 0)
+      throw new Error(
+        'dispatch response is missing its workflow run ID; do not repeat an ambiguous request',
+      );
+    console.log(response.workflow_run_id);
+    break;
+  }
+  case 'main-sha': {
+    const response = await Bun.stdin.json();
+    if (!/^[0-9a-f]{40}$/.test(response.object?.sha ?? ''))
+      throw new Error('main ref is missing its commit SHA');
+    console.log(response.object.sha);
+    break;
+  }
+  case 'qualification-coverage': {
+    const candidate = JSON.parse(fs.readFileSync(args[0], 'utf8'));
+    assertCandidateBindingShape(candidate);
+    for (const [key, expected] of Object.entries({
+      sha: process.env.EXPECTED_SHA,
+      runId: process.env.EXPECTED_RUN_ID,
+      repository: process.env.GH_REPO,
+      workflow: 'CI',
+      ref: 'refs/heads/main',
+    })) {
+      if (candidate[key] !== expected)
+        throw new Error(`qualification ${key} does not match the requested run`);
+    }
+    if (
+      candidate.runAttempt !== Number(process.env.EXPECTED_RUN_ATTEMPT) ||
+      !['push', 'workflow_dispatch'].includes(candidate.eventName)
+    )
+      throw new Error('qualification attempt/event mismatch');
+    try {
+      assertQualificationProductCoverage(candidate, JSON.parse(process.env.PRODUCTS_JSON));
+    } catch (error) {
+      if (error.message.includes('missing qualification for product')) process.exit(3);
+      throw error;
+    }
+    break;
+  }
   case 'run-row': {
     const run = await Bun.stdin.json();
     if (
@@ -209,6 +279,13 @@ switch (command) {
       }
       ids.add(row.id);
       rendered.push([row.id, row.status, conclusion, row.html_url, row.event].join('\t'));
+      if (process.env.QUALIFICATION_REQUEST_KEY) {
+        const requested =
+          row.display_title === `CI / qualification / ${process.env.QUALIFICATION_REQUEST_KEY}`;
+        const causal = (row.event === 'push' && row.head_branch === 'main') || requested;
+        rendered[rendered.length - 1] +=
+          `\t${causal ? 'causal' : 'other'}\t${requested ? 'requested' : 'other'}`;
+      }
     }
     process.stdout.write(rendered.join('\n'));
     break;

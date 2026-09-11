@@ -1,0 +1,64 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "docs"
+language: "typescript"
+layer: "application"
+stack: "frontend"
+tags: ["javascript-quality", "docs", "fumadocs", "next", "public"]
+dependsOn:
+  - id: "extensions"
+    scope: "build"
+
+project:
+  title: "Oliphaunt Docs"
+  description: "Latest public guides and completed product releases."
+  owner: "oliphaunt"
+
+tasks:
+  dev:
+    command: "bun run dev"
+    options:
+      cache: false
+      runInCI: false
+  check:
+    command: "bun run check"
+    inputs:
+      - "**/*"
+      - "/extensions/generated/extensions.catalog.json"
+      - "/release-please-config.json"
+      - "/bun.lock"
+    options:
+      cache: false
+      mutex: "docs-generated-files"
+      runInCI: false
+  test:
+    command: "bun run test"
+    inputs:
+      - "tools/published-products*"
+      - "tools/request-refresh*"
+      - "/bun.lock"
+  build:
+    command: "bun run build"
+    inputs:
+      - "**/*"
+      - "/extensions/generated/extensions.catalog.json"
+      - "/release-please-config.json"
+      - "/bun.lock"
+    outputs:
+      - "/target/docs/build/**/*"
+      - "/target/docs/generated/routes.json"
+    options:
+      # Published release metadata must refresh even when source inputs are unchanged.
+      cache: false
+      mutex: "docs-generated-files"
+  test-package:
+    command: "bun run smoke"
+    deps:
+      - target: "docs:build"
+        cacheStrategy: "outputs"
+    inputs:
+      - "/target/docs/build/**/*"
+      - "/target/docs/generated/routes.json"
+      - "tools/smoke-built-site.mts"
+    options:
+      cache: false

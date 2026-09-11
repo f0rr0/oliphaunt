@@ -6,12 +6,12 @@ trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 script=.github/scripts/download-build-artifacts.mts
-node "$script" download "$scratch" "$@"
+bun "$script" download "$scratch" "$@"
 while IFS= read -r -d '' directory; do
   archive="$directory/.artifact.zip"
   unzip -Z1 "$archive" > "$scratch/members"
-  node "$script" validate-zip "$archive" "$scratch/members"
+  bun "$script" validate-zip "$archive" "$scratch/members"
   unzip -q "$archive" -d "$directory"
   rm "$archive"
 done < "$scratch/archives"
-node "$script" merge "$scratch"
+bun "$script" merge "$scratch"

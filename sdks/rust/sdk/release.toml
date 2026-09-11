@@ -1,0 +1,36 @@
+id = "oliphaunt-rust"
+owner = "@oliphaunt/sdk-rust"
+kind = "sdk"
+publish_targets = ["crates-io"]
+registry_packages = ["crates:oliphaunt", "crates:oliphaunt-build"]
+release_artifacts = ["cargo-crate", "runtime-resource-cli"]
+
+[compatibility_versions.native_runtime]
+source_product = "liboliphaunt-native"
+path = "sdks/rust/sdk/Cargo.toml"
+parser = "toml:package.metadata.oliphaunt.native-version"
+
+[compatibility_versions.broker_runtime]
+source_product = "oliphaunt-broker"
+path = "sdks/rust/sdk/Cargo.toml"
+parser = "toml:package.metadata.oliphaunt.broker-version"
+
+[compatibility_versions.broker_runtime_constant]
+source_product = "oliphaunt-broker"
+path = "sdks/rust/sdk/src/broker.rs"
+parser = "rust-const:BROKER_RELEASE_VERSION"
+
+[compatibility_versions.oliphaunt-rust-query]
+source_product = "oliphaunt-query"
+path = "sdks/rust/sdk/Cargo.toml"
+parser = "toml:dependencies.oliphaunt-query.version"
+
+[compatibility_versions.rust_native_bindings]
+source_product = "liboliphaunt-native-bindings"
+path = "sdks/rust/sdk/Cargo.toml"
+parser = "toml:dependencies.liboliphaunt-native-bindings.version"
+
+[compatibility_versions.broker_library]
+source_product = "oliphaunt-broker"
+path = "sdks/rust/sdk/Cargo.toml"
+parser = "toml:dependencies.oliphaunt-broker.version"

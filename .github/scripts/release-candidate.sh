@@ -15,4 +15,4 @@ case "$mode" in
   *) echo 'usage: release-candidate.sh write|verify [arguments]' >&2; exit 2 ;;
 esac
 export CI_SOURCE_TREE
-exec node "$script_dir/$mode-release-candidate.mts" "$@"
+exec bun "$script_dir/$mode-release-candidate.mts" "$@"

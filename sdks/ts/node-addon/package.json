@@ -1,0 +1,38 @@
+{
+  "name": "@oliphaunt/node-direct",
+  "version": "0.2.0",
+  "description": "Node-API native direct adapter for Oliphaunt.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "sdks/ts/node-addon"
+  },
+  "oliphaunt": {
+    "liboliphauntVersion": "0.2.0"
+  },
+  "files": [
+    "native",
+    "packages",
+    "tools",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=22.13 <25"
+  },
+  "scripts": {
+    "format": "cargo fmt",
+    "format-check": "cargo fmt --check",
+    "typecheck": "cargo check --locked",
+    "lint": "cargo clippy --all-targets --locked -- -D warnings",
+    "test": "bun test tools/check-release-assets.test.mts",
+    "build": "bash tools/build-native.sh",
+    "test-built": "bash tools/test-node-addon-cleanup-lifecycle.sh target/oliphaunt-node-direct/native/oliphaunt_node.node",
+    "dependency-license-audit": "bash ../../../tools/packaging/audit-rust-dependency-licenses.sh sdks/ts/node-addon/tools/dependency-license-contract.mts oliphaunt-node-direct"
+  }
+}

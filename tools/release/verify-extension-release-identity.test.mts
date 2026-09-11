@@ -8,15 +8,15 @@ import {
   extensionReleaseProduct,
   extensionSourceIdentity,
   extensionSqlNames,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
+} from './release-artifact-targets.mts';
 import { assertCanonicalExtensionReleaseIdentity } from './verify_github_release_attestations.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const generated = JSON.parse(
-  readFileSync(path.join(ROOT, 'src/extensions/generated/sdk/extensions.json'), 'utf8'),
+  readFileSync(path.join(ROOT, 'extensions/generated/sdk/extensions.json'), 'utf8'),
 );
 const staticLines = readFileSync(
-  path.join(ROOT, 'src/extensions/generated/mobile/static-extensions.tsv'),
+  path.join(ROOT, 'extensions/generated/mobile/static-extensions.tsv'),
   'utf8',
 )
   .split(/\r?\n/u)

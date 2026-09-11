@@ -1,0 +1,46 @@
+{
+  "extensions": [
+    {
+      "sql-name": "pgcrypto",
+      "static-dependencies": [
+        "openssl"
+      ]
+    },
+    {
+      "sql-name": "postgis",
+      "static-dependencies": [
+        "geos",
+        "geos-c",
+        "json-c",
+        "libxml2",
+        "proj",
+        "sqlite"
+      ]
+    },
+    {
+      "sql-name": "uuid-ossp",
+      "static-dependencies": [
+        "uuid"
+      ]
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "native-components",
+      "path": "extensions/catalog/native-components.toml"
+    },
+    {
+      "name": "contrib-recipe",
+      "path": "extensions/contrib/postgres18.toml"
+    },
+    {
+      "name": "external-static-targets",
+      "path": "extensions/external"
+    }
+  ]
+}

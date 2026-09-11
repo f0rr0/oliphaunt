@@ -3,8 +3,8 @@ import { createRequire } from 'node:module';
 import { arch, cpus, freemem, homedir, hostname, platform, release, totalmem } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stagePackedWasixConsumer } from '../../../src/bindings/wasix-ts/tools/integration/packed-node-fixture.mts';
-import { readPortableArchiveEntries } from '../../../src/shared/artifact-packaging/portable-archive.mts';
+import { stagePackedWasixConsumer } from '../../../sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts';
+import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
 import { installedPackageClosure } from './installed-closure.mts';
 import {
   assertNativeArtifactProvenance,
@@ -169,7 +169,7 @@ async function requireAbsent(path, label) {
 
 async function createBenchmarkFixture(options) {
   try {
-    return await stagePackedWasixConsumer(options);
+    return await stagePackedWasixConsumer({ ...options, includeSeed: true });
   } catch (cause) {
     throwNativeCarrierPreflight(cause, 'measured WASIX Node benchmark');
     throw cause;
@@ -186,7 +186,7 @@ function throwNativeCarrierPreflight(cause, consumer) {
     throw new Error(
       `${consumer} requires one optimized current-host WASIX Node-API carrier. ` +
         'After staging the portable/AOT runtime, ICU, and extension inputs, run ' +
-        '`bash src/runtimes/wasix-napi/tools/build-native.sh`, then retry. ' +
+        '`bash sdks/ts-wasix/node-addon/tools/build-native.sh`, then retry. ' +
         `Carrier preflight: ${detail}`,
       { cause },
     );
@@ -434,9 +434,9 @@ async function comparisonProvenance(plan) {
       `installed ${manifest.name}@${manifest.version}, expected ${plan.engines.comparison.version}`,
     );
   }
-  const lock = await readFile(resolve(repositoryRoot, 'pnpm-lock.yaml'), 'utf8');
+  const lock = await readFile(resolve(repositoryRoot, 'bun.lock'), 'utf8');
   if (!lock.includes(plan.engines.comparison.integrity)) {
-    throw new Error('pnpm-lock.yaml does not contain the comparator integrity from the plan');
+    throw new Error('bun.lock does not contain the comparator integrity from the plan');
   }
   const closure = await installedPackageClosure(
     require.resolve(plan.engines.comparison.package),
@@ -494,19 +494,10 @@ async function candidateClosureProvenance(
     require.resolve(plan.engines.candidate.package),
     plan.engines.candidate.package,
   );
-  const expectedPackages = [
-    '@oliphaunt/js-core',
-    '@oliphaunt/liboliphaunt-wasix',
-    '@oliphaunt/wasix-ts',
-    nativeCarrier.name,
-    'fzstd',
-  ].sort();
-  const installedPackages = installedClosure.packages.map((candidate) => candidate.name).sort();
-  if (JSON.stringify(installedPackages) !== JSON.stringify(expectedPackages)) {
-    throw new Error(
-      `packed candidate installed closure is ${JSON.stringify(installedPackages)}, expected ${JSON.stringify(expectedPackages)}`,
-    );
-  }
+  const seedClosure = await installedPackageClosure(
+    require.resolve('@oliphaunt/seed-wasix-standard/manifest.json'),
+    '@oliphaunt/seed-wasix-standard',
+  );
   if (manifest.dependencies?.fzstd !== '0.1.1') {
     throw new Error(`packed candidate fzstd dependency is ${manifest.dependencies?.fzstd}`);
   }
@@ -539,6 +530,7 @@ async function candidateClosureProvenance(
     nativeAddon,
     runtimeBuild: build,
     installedClosure,
+    seedClosure,
   };
 }
 
@@ -550,8 +542,8 @@ async function toolProvenance(planFile) {
     resolve(toolRoot, 'installed-closure.mts'),
     resolve(toolRoot, 'plan.mts'),
     resolve(toolRoot, 'pglite-node-worker.mts'),
-    resolve(repositoryRoot, 'src/bindings/wasix-ts/tools/integration/packed-node-fixture.mts'),
-    resolve(repositoryRoot, 'src/bindings/wasix-ts/tools/wasix-typescript-package.mts'),
+    resolve(repositoryRoot, 'sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts'),
+    resolve(repositoryRoot, 'sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts'),
     planFile,
   ];
   const records = [];

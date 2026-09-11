@@ -25,7 +25,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-npm-publisher
-        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'src/sources/toolchains/npm-publisher.toml', 'src/shared/artifact-packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/release/npm-publisher.toml', 'tools/packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}
 
     - name: Install exact npm publisher
       id: install
@@ -98,4 +98,4 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-npm-publisher
-        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'src/sources/toolchains/npm-publisher.toml', 'src/shared/artifact-packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/release/npm-publisher.toml', 'tools/packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}

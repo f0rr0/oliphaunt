@@ -1,0 +1,132 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: source-inputs
+language: unknown
+layer: configuration
+stack: systems
+tags:
+  - javascript-quality
+  - sources
+project:
+  title: Source Inputs
+  description: "Neutral source checkout materialization for PostgreSQL, runtime dependencies, toolchains, and extension-owned sources."
+  owner: oliphaunt
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*":
+      - "@oliphaunt/core"
+tasks:
+  test:
+    tags:
+      - quality
+      - unit
+    script: "set -e\nbash third-party/tools/fetch-sources.sh production-all --validate-only\nbash third-party/tools/source-fetch-core.test.sh\nbun test ./third-party/tools/source-fetch-scopes.test.mts\nbash third-party/postgres/fetch-source.test.sh\n"
+    inputs:
+      - /third-party/postgres/**/*
+      - "/third-party/{icu,openssl}/source.toml"
+      - /runtimes/liboliphaunt-native/sources/*.toml
+      - /runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
+      - /extensions/external/**/source.toml
+      - /extensions/external/**/dependencies/**/source.toml
+      - /extensions/external/*/upstream-license-data.json
+      - "**/*"
+      - /tools/packaging/portable-archive.mts
+      - "/tools/packaging/testdata/{zip,tar}-fixture.mts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  fetch-all:
+    tags:
+      - source
+      - fetch
+    command: bash third-party/tools/fetch-sources.sh production-all --force
+    inputs:
+      - "/third-party/{icu,openssl}/source.toml"
+      - /runtimes/liboliphaunt-native/sources/*.toml
+      - /runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
+      - /extensions/external/**/source.toml
+      - /extensions/external/**/dependencies/**/source.toml
+      - /extensions/external/*/upstream-license-data.json
+      - "**/*"
+      - "!**/*.test.*"
+      - "!verify-source-tree.mts"
+      - /tools/dev/curl-platform-flags.sh
+      - /extensions/tools/extension-upstream-licenses.mts
+      - "@group(release-archive-contract)"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  source-fetch-native-runtime:
+    tags:
+      - source
+      - fetch
+    command: bash third-party/tools/fetch-sources.sh native-runtime --force
+    inputs:
+      - "/third-party/{icu,openssl}/source.toml"
+      - /runtimes/liboliphaunt-native/sources/*.toml
+      - /extensions/external/**/source.toml
+      - /extensions/external/**/dependencies/**/source.toml
+      - /extensions/external/*/upstream-license-data.json
+      - "**/*"
+      - "!**/*.test.*"
+      - "!verify-source-tree.mts"
+      - /tools/dev/curl-platform-flags.sh
+      - "@group(release-archive-contract)"
+    options:
+      cache: false
+      internal: true
+      runFromWorkspaceRoot: true
+  source-fetch-wasix-runtime:
+    tags:
+      - source
+      - fetch
+    command: bash third-party/tools/fetch-sources.sh wasix-runtime --force
+    inputs:
+      - "/third-party/{icu,openssl}/source.toml"
+      - /extensions/external/**/source.toml
+      - /extensions/external/**/dependencies/**/source.toml
+      - /extensions/external/*/upstream-license-data.json
+      - "**/*"
+      - "!**/*.test.*"
+      - "!verify-source-tree.mts"
+      - /tools/dev/curl-platform-flags.sh
+      - "@group(release-archive-contract)"
+    options:
+      cache: false
+      internal: true
+      runFromWorkspaceRoot: true
+  source-fetch-wasix-postmaster-runtime:
+    tags:
+      - source
+      - fetch
+    command: bash third-party/tools/fetch-sources.sh wasix-postmaster-runtime --force
+    inputs:
+      - "/third-party/{icu,openssl}/source.toml"
+      - /runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
+      - "**/*"
+      - "!**/*.test.*"
+      - "!verify-source-tree.mts"
+      - /tools/dev/curl-platform-flags.sh
+    options:
+      cache: false
+      internal: true
+      runFromWorkspaceRoot: true
+  source-fetch-extensions:
+    tags:
+      - source
+      - fetch
+    command: bash third-party/tools/fetch-sources.sh extensions --force
+    inputs:
+      - /extensions/external/**/source.toml
+      - /extensions/external/**/dependencies/**/source.toml
+      - /extensions/external/*/upstream-license-data.json
+      - "**/*"
+      - "!**/*.test.*"
+      - "!verify-source-tree.mts"
+      - /tools/dev/curl-platform-flags.sh
+      - /extensions/tools/extension-upstream-licenses.mts
+      - "@group(release-archive-contract)"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

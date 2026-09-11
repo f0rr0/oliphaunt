@@ -6,17 +6,18 @@ There is no separately maintained source parser or generated symbol-list gate.
 
 | Product | Reference |
 | --- | --- |
-| Native C ABI | [Canonical header](../../src/runtimes/liboliphaunt/native/include/oliphaunt.h) |
-| Rust SDK | [SDK guide](../../src/sdks/rust/README.md); `cargo doc -p oliphaunt --no-deps --open` |
-| Rust build support | [Build crate guide](../../src/sdks/rust/crates/oliphaunt-build/README.md) |
-| TypeScript SDK | [SDK guide](../../src/sdks/js/README.md) |
-| Swift SDK | [SDK guide](../../src/sdks/swift/README.md) |
-| Kotlin SDK and Gradle plugin | [SDK guide](../../src/sdks/kotlin/README.md) |
-| React Native SDK and Expo plugin | [SDK guide](../../src/sdks/react-native/README.md) |
-| WASIX Rust binding | [Binding guide](../../src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md) |
-| WASIX TypeScript binding | [Binding guide](../../src/bindings/wasix-ts/README.md) |
-| WASIX logical tools | [Tools guide](../../src/bindings/wasix-ts/tools-package/README.md) |
+| Native C ABI | [Canonical header](../../runtimes/liboliphaunt-native/include/oliphaunt.h) |
+| Rust SDK | [SDK guide](../../sdks/rust/sdk/README.md); `cargo doc -p oliphaunt --no-deps --open` |
+| Rust build support | [Build crate guide](../../sdks/rust/sdk/crates/oliphaunt-build/README.md) |
+| TypeScript SDK | [SDK guide](../../sdks/ts/sdk/README.md) |
+| Swift SDK | [SDK guide](../../sdks/swift/README.md) |
+| Kotlin SDK and Gradle plugin | [SDK guide](../../sdks/kotlin/README.md) |
+| React Native SDK and Expo plugin | [SDK guide](../../sdks/react-native/README.md) |
+| WASIX Rust binding | [Binding guide](../../sdks/rust-wasix/README.md) |
+| WASIX TypeScript binding | [Binding guide](../../sdks/ts-wasix/sdk/README.md) |
+| WASIX logical tools | [Tools guide](../../postgres-tools/wasix/ts/README.md) |
 
-Run the affected project's `compile`, `unit`, and `package` Moon tasks when
-changing its API. Published C-header copies must match the canonical header;
-`moon run liboliphaunt-native:headers` checks that boundary.
+Run the affected project's `build`, `test`, and `package` tasks when changing
+its API, plus the relevant installed-consumer or runtime test. Package producers
+copy the canonical C header into distributables; consumer compilation and
+package checks exercise that boundary. There is no separate header-layout gate.

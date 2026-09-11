@@ -7,7 +7,7 @@ extractor="$root/.github/actions/setup-moon/toolchain-archive.mts"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/payload/package/bin" "$work/bin" "$work/blockers"
-bash "$root/tools/dev/bun.sh" build "$root/tools/test/package-manager-fixture.mts" \
+bash "$root/tools/dev/bun.sh" build "$root/.github/actions/setup-npm-publisher/testdata/package-manager-fixture.mts" \
   --target=node --define 'FIXTURE_VERSION="11.18.0"' --outfile "$work/payload/package/bin/npm-cli.js" >/dev/null
 cp "$work/payload/package/bin/npm-cli.js" "$work/payload/package/bin/npx-cli.js"
 printf '{"name":"npm","version":"11.18.0"}\n' >"$work/payload/package/package.json"

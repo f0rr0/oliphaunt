@@ -7,7 +7,7 @@ import {
 import {
   contribCarrierDescriptor,
   exactExtensionReleaseProducts,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
+} from './release-artifact-targets.mts';
 
 test('no-lock exact-extension registry inventory is explicit, complete, and unique', async () => {
   expect(process.env.OLIPHAUNT_PUBLICATION_LOCK).toBeUndefined();

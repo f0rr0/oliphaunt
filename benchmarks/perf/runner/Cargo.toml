@@ -13,7 +13,7 @@ default = []
 [dependencies]
 anyhow = "1"
 futures-util = "0.3"
-oliphaunt = { path = "../../../src/sdks/rust" }
+oliphaunt = { path = "../../../sdks/rust/sdk" }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

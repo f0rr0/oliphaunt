@@ -1,9 +1,9 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isolatedGitHubTestEnvironment } from '../test/isolated-github-test-environment.mts';
+import { isolatedGitHubTestEnvironment } from './testdata/isolated-github-test-environment.mts';
 
 test('synthetic GitHub fixtures discard hostile credentials, state, lineage, and tuning', () => {
   const inherited = {

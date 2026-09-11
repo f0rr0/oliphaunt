@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { currentProductVersionSync } from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import { loadProducts, ROOT, readJson } from '../../src/shared/product-metadata/release-graph.mts';
+import { currentProductVersionSync } from './release-artifact-targets.mts';
+import { loadProducts, ROOT, readJson } from './release-graph.mts';
 import { releasePleaseBootstrapLifecycleError } from './release-please-bootstrap.mts';
 import { assertReleasePleasePackageIdentity } from './release-please-package-identity.mts';
 

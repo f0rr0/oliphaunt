@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  parseMoonProjects,
-  releaseOrder,
-} from '../../src/shared/product-metadata/release-graph.mts';
+import { parseMoonProjects, releaseOrder } from './release-graph.mts';
 
 test('release planning consumes resolved dependency scopes independently of published compatibility', () => {
   const graph = Object.fromEntries(

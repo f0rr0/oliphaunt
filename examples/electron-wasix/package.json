@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.main.json && vite build",
-    "start": "pnpm run build && electron dist/main/main-process.js",
+    "start": "bun run build && electron dist/main/main-process.js",
     "dev:renderer": "vite"
   },
   "dependencies": {

@@ -2,6 +2,10 @@ name: Set up Apple
 description: Select and verify the supported Xcode toolchain for Apple SDK jobs.
 
 inputs:
+  install-build-dependencies:
+    description: Install PostgreSQL build utilities when the job compiles the runtime.
+    required: false
+    default: "true"
   xcode-minor:
     description: Supported Xcode minor version installed on the pinned macOS runner image.
     required: false
@@ -90,6 +94,7 @@ runs:
         gem --version
 
     - name: Install Apple build dependencies
+      if: ${{ inputs.install-build-dependencies == 'true' }}
       shell: bash
       run: |
         .github/scripts/prepare-macos-homebrew.sh

@@ -16,11 +16,20 @@ required_jobs=()
 required_events=()
 expected_run_id=""
 release_candidate=false
+qualification_products=''
+qualification_plan=false
+qualification_dispatch=false
+qualification_wait=false
 selected_artifacts_json='[]'
 selected_gate_artifacts_json='[]'
 selected_run_attempt=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --plan-qualification | --dispatch-qualification | --qualification-products)
+      case "$1" in --plan-qualification) qualification_plan=true ;; --dispatch-qualification) qualification_dispatch=true ;; --qualification-products) qualification_wait=true ;; esac
+      qualification_products="${2:?qualification scope requires product JSON}"
+      shift 2
+      ;;
     --release-candidate)
       release_candidate=true
       shift
@@ -66,11 +75,22 @@ if [[ ! "$sha" =~ ^[0-9A-Fa-f]{40}$ ]]; then
   echo "workflow gate SHA must be a full hexadecimal commit SHA" >&2
   exit 2
 fi
+if [[ -n "$qualification_products" ]]; then
+  [[ "$workflow" == CI && -z "$expected_run_id" ]] || {
+    echo 'qualification selection requires CI without --run-id' >&2
+    exit 2
+  }
+  qualification_scratch="$(mktemp -d)"
+  trap 'rm -rf "$qualification_scratch"' EXIT
+  QUALIFICATION_REQUEST_KEY="$(EXPECTED_SHA="$sha" PRODUCTS_JSON="$qualification_products" bun .github/scripts/workflow-run-metadata.mts qualification-key)"
+  export QUALIFICATION_REQUEST_KEY
+  required_events=(push workflow_dispatch)
+fi
 
 github_read() {
   local label="${1:?GitHub read label is required}"
   local response
-  response="$(node tools/release/github-read.mts --label "$label" -- "$2")" || return $?
+  response="$(bun tools/release/github-read.mts --label "$label" -- "$2")" || return $?
   bun .github/scripts/workflow-run-metadata.mts "$3" <<<"$response"
 }
 
@@ -78,7 +98,7 @@ github_paginated_json() {
   local label="${1:?GitHub paginated read label is required}"
   local field="${2:?GitHub paginated read field is required}"
   local endpoint="${3:?GitHub paginated read endpoint is required}"
-  node tools/release/github-read.mts \
+  bun tools/release/github-read.mts \
     --label "$label" \
     --paginate-field "$field" \
     -- "$endpoint"
@@ -102,6 +122,7 @@ emit_run_id() {
     } >>"$GITHUB_OUTPUT"
   fi
   echo "selected $workflow run $run_id"
+  if [[ "$qualification_plan" == true ]]; then echo 'qualification_request_required=false' >>"$GITHUB_OUTPUT"; fi
 }
 
 run_matches_request() {
@@ -264,6 +285,59 @@ candidate_satisfies_gate() {
     status=$?
     return "$status"
   fi
+  if [[ -n "$qualification_products" ]]; then
+    local directory="$qualification_scratch/run-$run_id"
+    bash .github/scripts/download-build-artifacts.sh CI "$sha" "$directory" --run-id "$run_id" --job Qualified --artifact oliphaunt-release-candidate || return 64
+    EXPECTED_SHA="$sha" EXPECTED_RUN_ID="$run_id" EXPECTED_RUN_ATTEMPT="$selected_run_attempt" PRODUCTS_JSON="$qualification_products" \
+      bun .github/scripts/workflow-run-metadata.mts qualification-coverage "$directory/oliphaunt-release-candidate.json" || {
+      status=$?
+      [[ "$status" == 3 ]] && return 1
+      return 64
+    }
+  fi
+}
+
+request_missing_qualification() {
+  # Active work may become a covering proof; never dispatch beside it.
+  if awk -F '\t' '$2 != "completed" && $6 == "causal" { found=1 } END { exit found ? 0 : 1 }' <<<"$runs"; then
+    if [[ "$qualification_plan" == true ]]; then
+      echo 'qualification_request_required=false' >>"$GITHUB_OUTPUT"
+      exit 0
+    fi
+    return
+  fi
+  local failed
+  failed="$(awk -F '\t' '$2 == "completed" && $3 != "success" && $6 == "causal" { print $4; exit }' <<<"$runs")"
+  if [[ -n "$failed" ]]; then
+    echo "candidate qualification failed: $failed; fix the cause or rerun that run, rather than dispatching another qualification" >&2
+    exit 1
+  fi
+  if [[ "$qualification_plan" == true ]]; then
+    echo 'qualification_request_required=true' >>"$GITHUB_OUTPUT"
+    exit 0
+  fi
+  if [[ "$qualification_wait" == true ]]; then return; fi
+  if [[ "$qualification_dispatch" == true ]] && awk -F '\t' '$2 == "completed" && $3 == "success" && $7 == "requested" { found=1 } END { exit found ? 0 : 1 }' <<<"$runs"; then return; fi
+  local main_sha response requested_id row run_sha run_workflow rest
+  main_sha="$(github_read 'main ref before qualification request' "repos/$GH_REPO/git/ref/heads/main" main-sha)" || exit $?
+  if [[ "$main_sha" != "$sha" ]]; then
+    echo "cannot request missing qualification for $sha: main is $main_sha; reuse or rerun an existing exact-source CI run" >&2
+    exit 1
+  fi
+  EXPECTED_SHA="$sha" PRODUCTS_JSON="$qualification_products" bun .github/scripts/workflow-run-metadata.mts qualification-request >"$qualification_scratch/request.json"
+  # Dispatch is a mutation: never apply the read retry policy to an ambiguous POST.
+  if ! response="$(gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GH_REPO/actions/workflows/$workflow_id/dispatches" --input "$qualification_scratch/request.json")"; then
+    echo "qualification dispatch outcome is unknown; inspect CI request $QUALIFICATION_REQUEST_KEY before resuming" >&2
+    exit 1
+  fi
+  requested_id="$(bun .github/scripts/workflow-run-metadata.mts dispatch-run-id <<<"$response")" || exit 1
+  echo "requested qualification: https://github.com/$GH_REPO/actions/runs/$requested_id"
+  row="$(github_read "requested qualification run $requested_id" "repos/$GH_REPO/actions/runs/$requested_id" run-row)" || exit $?
+  IFS=$'\t' read -r run_sha run_workflow rest <<<"$row"
+  if [[ "$run_sha" != "$sha" || "$run_workflow" != "$workflow_id" ]]; then
+    echo "qualification dispatch source changed; refusing run $requested_id for $run_sha" >&2
+    exit 1
+  fi
 }
 
 resolve_workflow_id() {
@@ -324,8 +398,9 @@ while true; do
       workflow_id=""
     fi
   fi
+  inventory_ready=false
   if [[ -n "$workflow_id" ]] && runs="$(exact_sha_workflow_runs "$workflow_id")"; then
-    :
+    inventory_ready=true
   else
     status=$?
     if [[ "$status" -eq 64 ]]; then
@@ -339,6 +414,7 @@ while true; do
     echo "$runs"
     candidate_run_ids="$(echo "$runs" | awk -F '\t' '$2 == "completed" && $3 == "success" { print $1 }')"
     for run_id in $candidate_run_ids; do
+      [[ "$qualification_dispatch" == false ]] || break
       if candidate_satisfies_gate "$run_id"; then
         emit_run_id "$run_id"
         exit 0
@@ -365,6 +441,10 @@ while true; do
     fi
   else
     echo "waiting for $workflow workflow for $sha"
+  fi
+  if [[ -n "$qualification_products" && "$inventory_ready" == true ]]; then
+    request_missing_qualification
+    [[ "$qualification_dispatch" == false ]] || exit 0
   fi
   if [ "$SECONDS" -ge "$deadline" ]; then
     echo "timed out waiting for successful $workflow workflow for $sha" >&2

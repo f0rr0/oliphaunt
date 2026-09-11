@@ -299,7 +299,7 @@ intentionally not maintained here.
   `react-native-mobile-android-app-android-x86_64` and
   `react-native-mobile-ios-app`, run the pinned Maestro path through
   `src/sdks/react-native/tools/mobile-e2e.sh`, start Android with
-  `src/shared/mobile-tools/start-android-emulator-ci.sh`, and do not invoke
+  `tools/ci/start-android-emulator-ci.sh`, and do not invoke
   `run-planned-moon-job.sh`, `mobile-build:*`, or native/source-build fallback
   paths. `tools/policy/check-release-policy.py` enforces these invariants.
 - [x] React Native mobile task semantics match the Moon CI model. Evidence:
@@ -682,7 +682,7 @@ Run before claiming this architecture complete:
   `MOBILE_TARGET=android NATIVE_TARGET=ios-xcframework` fail closed in the
   planner instead of producing a partial compatibility-domain proof.
 - [x] Android SDK provisioning is shared and reproducible. Evidence:
-  `.github/actions/setup-android` calls `src/shared/mobile-tools/setup-android-sdk.sh`; the
+  `.github/actions/setup-android` calls `tools/dev/setup-android-sdk.sh`; the
   script bootstraps Android command-line tools when `sdkmanager` is absent,
   installs the pinned platform-tools/platform/build-tools/CMake/NDK packages
   through `sdkmanager`, and passes idempotently on the local Android SDK with
@@ -963,11 +963,11 @@ Run before claiming this architecture complete:
   during `.github/actions/setup-android` while `sdkmanager` downloaded NDK
   `27.0.12077973`, ending with `Error on ZipFile unknown archive` at 21%
   download/unzip progress. The follow-up hardens the shared
-  `src/shared/mobile-tools/setup-android-sdk.sh` package install with bounded sdkmanager
+  `tools/dev/setup-android-sdk.sh` package install with bounded sdkmanager
   retries and cleanup of partial selected platform/build-tools/CMake/NDK
   directories before retrying, and pins that invariant in
   `tools/policy/check-tooling-stack.sh`. Local evidence after this patch passed:
-  `bash -n src/shared/mobile-tools/setup-android-sdk.sh tools/policy/check-tooling-stack.sh`,
+  `bash -n tools/dev/setup-android-sdk.sh tools/policy/check-tooling-stack.sh`,
   `bash tools/policy/check-tooling-stack.sh`, and `git diff --check`. A
   replacement `Builds` run is required because `27420575821` cannot be the green
   builder evidence.

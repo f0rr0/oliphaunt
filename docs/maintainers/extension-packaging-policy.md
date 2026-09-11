@@ -31,7 +31,7 @@ boundary, not general build metadata. Experimental extension work belongs on a
 branch; an extension merged into the public catalog has a complete package
 identity and only claims targets it supports.
 
-`src/shared/extension-runtime-contract/extension-target-profiles.toml` is the single exact-extension
+`extensions/contracts/extension-target-profiles.toml` is the single exact-extension
 target contract. Every extension merged to main ships on every target in that
 contract; incomplete target work stays on a branch. This keeps target coverage
 fail-closed without 39 identical member manifests or status fields. The
@@ -40,7 +40,7 @@ the runtime artifact inventory, so a target absent from either source cannot
 be packaged accidentally.
 
 Native library relationships are declared once in
-`src/extensions/catalog/native-components.toml`. A requirement is keyed by
+`extensions/catalog/native-components.toml`. A requirement is keyed by
 exact SQL name, artifact family, artifact kind, and target. Its
 transitive closure supplies component build order, static link units, runtime
 files, and source identities to native mobile, desktop packaging, and WASIX
@@ -129,7 +129,7 @@ for an exact target whose selected `pgcrypto` member embeds OpenSSL bytes. An
 external payload carries the exact upstream license and notice files whose
 source identities, paths, URLs, SHA-256 digests, and content-addressed bytes are
 frozen in that product's canonical
-`src/extensions/external/<sql_name>/upstream-license-data.json`. Keeping this
+`extensions/external/<sql_name>/upstream-license-data.json`. Keeping this
 closure product-local preserves independent extension versioning: a legal-data
 change for one extension cannot bump unrelated external products. Final
 packaging verifies every digest and never depends on ambient source checkouts
@@ -212,42 +212,15 @@ cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension vector \
   --prebuilt-extension vendor/acme_ext.tar.zst \
-  --liboliphaunt-native-version 0.1.0 \
+  --liboliphaunt-native-version "$(cat runtimes/liboliphaunt-native/VERSION)" \
   --force
 ```
 
-Artifacts are produced from already-built PostgreSQL runtime files with the
-unpublished native-packaging tool:
-
-```sh
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-artifact -- \
-  --runtime target/acme-pg18-runtime/files \
-  --sql-name acme_ext \
-  --native-module-stem acme_ext \
-  --native-module-file acme_ext.so \
-  --native-target linux-x64-gnu \
-  --embedded-module-root target/acme-pg18-embedded/modules \
-  --native-runtime-version 0.1.0 \
-  --data-file data/acme_ext.rules \
-  --license-profile external-native \
-  --legal-files-root vendor/acme_ext-legal \
-  --license-file share/licenses/acme_ext/LICENSE \
-  --output vendor/acme_ext.tar.zst \
-  --format tar-zst \
-  --force
-```
-
-For desktop module extensions, `--runtime` supplies the standalone PostgreSQL
-module under `lib/postgresql`, while `--embedded-module-root` supplies the
-native-direct module. The artifact preserves both profile paths under
-`files/lib/postgresql` and `files/lib/modules`; native server consumers select
-the former, while native-direct and native-broker consumers select the latter.
-Both paths are mandatory, even when their files are byte-identical.
-
-`--legal-files-root` is a source tree, not an output directory. For the command
-above it contains `LICENSE`, `THIRD_PARTY_NOTICES.md`, and
-`share/licenses/acme_ext/LICENSE`; the producer places the first two at the
-carrier root and the declared upstream license below `files/`.
+Extension products produce their own artifacts through
+`extensions/artifacts/native/tools/extension-artifact-packager.mts` and their
+owner package tasks. The private resource assembler only consumes explicit local
+artifacts. Desktop module artifacts retain separate server and embedded module
+paths under `files/lib/postgresql` and `files/lib/modules`.
 
 Binary qualification derives each profile's backend binding from the binary's
 actual import inventory, never from the extension name. On Windows, a
@@ -257,93 +230,6 @@ Crossed provider bindings are always packaging errors. Host-bound profile copies
 must also have distinct bytes. A profile that imports neither backend provider
 is host-neutral; server and embedded copies may be byte-identical only when both
 are host-neutral. Omitting either desktop profile remains a packaging error.
-
-The command does not build PostgreSQL or extension source. The producer and
-consumer share the same schema validation, so the generated artifact is
-immediately consumable by `oliphaunt-resources --prebuilt-extension`.
-
-For release distribution, publish an exact artifact index next to the binary
-artifacts:
-
-```sh
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-index -- \
-  --output vendor/oliphaunt-extensions.toml \
-  --target macos-arm64 \
-  --artifact vendor/acme_ext-macos-arm64.tar.zst \
-  --base-url https://cdn.example.com/oliphaunt/extensions/macos-arm64 \
-  --signing-key-file acme-release-2026q2:keys/acme-extension-index.ed25519 \
-  --force
-```
-
-The index producer validates each artifact manifest, rejects built-in extension
-name overrides, computes byte counts and SHA-256 digests, and records relative
-artifact paths plus catalog metadata such as dependencies, native module stem,
-preload requirements, and mobile-prebuilt readiness. That metadata lets app
-tooling list exact external extension names from the index without downloading
-or building extension source. `--base-url` additionally records a URL for each
-exact artifact row so release tooling can fetch missing artifacts into a cache
-before verification. Release indexes should also publish a detached Ed25519
-sidecar signature at `<index>.sig`; `--signing-key-file <key-id>:<path>` signs
-the exact index bytes after writing the TOML. The signing key file contains a
-hex-encoded 32-byte Ed25519 signing key.
-
-```toml
-schema = "oliphaunt-extension-artifact-index-v1"
-pg_major = 18
-
-[[artifacts]]
-sql_name = "acme_ext"
-target = "macos-arm64"
-creates_extension = true
-native_module_stem = "acme_ext"
-dependencies = []
-shared_preload_libraries = []
-mobile_prebuilt = true
-mobile_static_archive_targets = ["ios-simulator", "ios-device", "arm64-v8a"]
-path = "acme_ext-macos-arm64.tar.zst"
-url = "https://cdn.example.com/oliphaunt/extensions/macos-arm64/acme_ext-macos-arm64.tar.zst"
-sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-bytes = 123456
-```
-
-Developers can inspect built-in plus signed external availability without a
-native build:
-
-```sh
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
-  --list-extensions \
-  --extension-index vendor/oliphaunt-extensions.toml \
-  --extension-target macos-arm64 \
-  --trusted-extension-index-key-file acme-release-2026q2:keys/acme-extension-index.ed25519.pub
-```
-
-Then app/package tooling can select the external extension by exact SQL name:
-
-```sh
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
-  --output target/oliphaunt-resources \
-  --extension acme_ext \
-  --extension-index vendor/oliphaunt-extensions.toml \
-  --extension-target macos-arm64 \
-  --extension-cache ~/.cache/oliphaunt/extensions \
-  --trusted-extension-index-key-file acme-release-2026q2:keys/acme-extension-index.ed25519.pub \
-  --force
-```
-
-`oliphaunt-resources` verifies the artifact byte count, SHA-256 digest, PG major,
-target, and artifact manifest before consuming it. It also follows exact
-extension dependencies from the index. Built-in extension names
-cannot be overridden by index entries. Local sidecar artifacts next to the index
-are preferred. If a URL-backed artifact is missing locally, `--extension-cache`
-downloads it to a target-scoped cache and verifies bytes, SHA-256, and manifest
-before packaging. HTTPS artifact downloads are available only when maintainer
-packaging tool builds enable the `extension-download` feature; the published SDK
-does not expose or compile this HTTP/TLS implementation. Signed index verification
-uses `--trusted-extension-index-key-file <key-id>:<path>`, which requires a
-matching `<index>.sig` sidecar before any indexed artifact can be used. The key
-file contains a hex-encoded 32-byte Ed25519 public key. Signing and verification
-are maintainer packaging-tool operations behind the `extension-signing`
-feature. They are not application SDK capabilities.
 
 `--prebuilt-extension` accepts an unpacked artifact directory, `.tar`,
 `.tar.gz`, or `.tar.zst`. The artifact root must contain
@@ -588,7 +474,7 @@ selected target can actually package and run.
 PostgreSQL 18.4 can build `uuid-ossp` only with
 `--with-uuid=bsd`, `--with-uuid=e2fs`, or `--with-uuid=ossp`. Oliphaunt carries
 a first-party portable UUID compatibility source for the e2fs API under
-`src/runtimes/liboliphaunt/native/portable-uuid`; the WASIX, Linux/macOS native,
+`runtimes/liboliphaunt-native/portable-uuid`; the WASIX, Linux/macOS native,
 iOS, Android, and Windows native build scripts compile and link it for
 `uuid-ossp`. `uuid-ossp` is stable in the generated WASIX plan; WASIX side-module builds and packages with matching archive
 and module hashes, has host AOT metadata, and has direct, server, restart, and

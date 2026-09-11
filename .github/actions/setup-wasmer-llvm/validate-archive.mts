@@ -3,7 +3,7 @@ import { posix } from 'node:path';
 import {
   portableMemberName,
   readPortableTarStream,
-} from '../../../src/shared/artifact-packaging/portable-archive.mts';
+} from '../../../tools/packaging/portable-archive.mts';
 
 // Shell verifies the compressed pin and feeds xz's output; no file contents are buffered here.
 const bytes = Number(process.argv[2]);

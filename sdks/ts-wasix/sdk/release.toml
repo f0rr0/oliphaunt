@@ -1,0 +1,29 @@
+id = "oliphaunt-wasix-ts"
+owner = "@oliphaunt/sdk-js"
+kind = "sdk"
+publish_targets = ["npm"]
+registry_packages = [
+  "npm:@oliphaunt/wasix-ts",
+]
+release_artifacts = [
+  "npm-package",
+  "browser-worker",
+  "node-bun-deno-electron-node-api",
+  "node-bun-deno-electron-native-actor",
+  "node-bun-deno-electron-worker",
+]
+
+[compatibility_versions.oliphaunt-wasix-ts-runtime]
+source_product = "liboliphaunt-wasix"
+path = "sdks/ts-wasix/sdk/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-ts-napi]
+source_product = "oliphaunt-wasix-napi"
+path = "sdks/ts-wasix/sdk/package.json"
+parser = "json:oliphaunt.wasixNapiVersion"
+
+[compatibility_versions.oliphaunt-wasix-ts-query]
+source_product = "oliphaunt-query-ts"
+path = "sdks/ts-wasix/sdk/package.json"
+parser = "json:dependencies.@oliphaunt/ts-query"

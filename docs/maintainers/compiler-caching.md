@@ -5,7 +5,7 @@ Status: normative cache policy. Last verified: 2026-07-21. Owner: repository mai
 Oliphaunt uses three separate cache layers. Keep them separate:
 
 - Moon caches deterministic task outputs.
-- Cargo, Gradle, pnpm, SwiftPM, and Xcode cache their own dependency/build
+- Cargo, Gradle, Bun, SwiftPM, and Xcode cache their own dependency/build
   state through their native tools.
 - Compiler caches reuse object-code compilation when a native lane has to run.
 
@@ -24,7 +24,7 @@ Use Cargo cache actions for Rust dependencies and `target` reuse only in the
 bounded primary WASIX producer. Do not enable `sccache` by default yet.
 
 Gradle consumers may restore the one Kotlin package-producer cache; only that
-producer may write it. Use normal local SwiftPM, pnpm, and Moon caches, but do
+producer may write it. Use normal local SwiftPM, Bun, and Moon caches, but do
 not add repository-wide GitHub cache writers for them without measured evidence
 and an explicit storage budget. Do not put simulator state, device state,
 registry responses, PostgreSQL source checkouts, or release artifacts into
@@ -41,7 +41,7 @@ The liboliphaunt build scripts automatically use `ccache` when it is on `PATH`.
 
 ```sh
 brew install ccache
-src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
+runtimes/liboliphaunt-native/bin/build-postgres18-macos.sh
 ccache --show-stats
 ```
 
@@ -49,7 +49,7 @@ On Linux, provision GCC/G++ 12 and optional `ccache` before running the build.
 The build itself does not install system packages or elevate privileges:
 
 ```sh
-src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh
+runtimes/liboliphaunt-native/bin/build-postgres18-linux.sh
 ccache --show-stats
 ```
 
@@ -67,8 +67,8 @@ contract because they are clang-based cross-builds launched from macOS.
 Override or disable it with:
 
 ```sh
-OLIPHAUNT_CCACHE=/opt/homebrew/bin/ccache src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
-OLIPHAUNT_CCACHE=off src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
+OLIPHAUNT_CCACHE=/opt/homebrew/bin/ccache runtimes/liboliphaunt-native/bin/build-postgres18-macos.sh
+OLIPHAUNT_CCACHE=off runtimes/liboliphaunt-native/bin/build-postgres18-macos.sh
 ```
 
 The build scripts use prefix mode (`CC="ccache cc"` style). Keep cache
@@ -86,7 +86,7 @@ ccache --set-config=compression=true
 Use a per-workstation cache directory only when you need to isolate experiments:
 
 ```sh
-CCACHE_DIR="$HOME/.cache/oliphaunt-ccache" src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
+CCACHE_DIR="$HOME/.cache/oliphaunt-ccache" runtimes/liboliphaunt-native/bin/build-postgres18-macos.sh
 ```
 
 ## CI Cache Writer Budget

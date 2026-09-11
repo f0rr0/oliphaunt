@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -168,6 +167,94 @@ function bundleFor(subjects) {
     mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
     verificationMaterial: {},
   };
+}
+
+if (
+  [
+    'prepare-verifier',
+    'verify-success',
+    'verify-unavailable',
+    'prepare-tampered',
+    'verify-tampered',
+  ].includes(process.argv[2])
+) {
+  if (process.argv[2] === 'prepare-verifier') {
+    const root = process.argv[3];
+    const local = path.join(root, 'product-a-1.2.3.tar.zst');
+    await fs.writeFile(local, 'asset bytes\n');
+    const lock = lockFixture();
+    lock.productArtifacts[0].path = path.relative(process.cwd(), local).split(path.sep).join('/');
+    const subjects = [{ name: 'product-a-1.2.3.tar.zst', sha256: ASSET_SHA }];
+    const bundlePath = path.join(root, 'attestation.json');
+    await fs.writeFile(bundlePath, JSON.stringify(bundleFor(subjects)));
+    const records = await verifyAttestationBundles(lock, [bundlePath], {
+      repo: REPO,
+      verifyBundleImpl: async (options) => {
+        await prepareBundleVerification(options, root);
+        return subjects;
+      },
+    });
+    const response = path.join(root, 'gh-output.json');
+    const bundle = bundleFor(subjects);
+    const verified = [
+      {
+        attestation: { bundle },
+        verificationResult: {
+          statement: JSON.parse(Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString()),
+        },
+      },
+    ];
+    await fs.writeFile(response, JSON.stringify(verified));
+    await fs.writeFile(
+      path.join(root, 'state.json'),
+      JSON.stringify({ lock, bundlePath, local, records }),
+    );
+  } else {
+    const root = process.argv[3];
+    const { lock, bundlePath, local, records } = JSON.parse(
+      await fs.readFile(path.join(root, 'state.json'), 'utf8'),
+    );
+    const log = path.join(root, 'gh-args');
+    const publisherSha = '4'.repeat(40);
+    if (process.argv[2] === 'verify-success') {
+      expect((await fs.readFile(log, 'utf8')).split('\0').slice(0, -1)).toEqual([
+        'attestation',
+        'verify',
+        local,
+        '--repo',
+        REPO,
+        '--bundle',
+        bundlePath,
+        '--format',
+        'json',
+        '--predicate-type',
+        'https://slsa.dev/provenance/v1',
+        '--signer-workflow',
+        REPO + '/.github/workflows/release.yml',
+        '--signer-digest',
+        COMMIT,
+        '--source-ref',
+        'refs/heads/main',
+        '--source-digest',
+        COMMIT,
+        '--deny-self-hosted-runners',
+      ]);
+      expect(await verifyAttestationBundles(lock, [bundlePath], { repo: REPO })).toEqual(records);
+      await expect(
+        verifyAttestationBundles(lock, [bundlePath], { repo: REPO, publisherSha }),
+      ).rejects.toThrow('unavailable');
+    } else if (process.argv[2] === 'prepare-tampered') {
+      const response = path.join(root, 'gh-output.json');
+      const verified = JSON.parse(await fs.readFile(response, 'utf8'));
+      verified[0].attestation.bundle.dsseEnvelope.signatures[0].sig = 'different';
+      await fs.writeFile(response, JSON.stringify(verified));
+    } else {
+      await expect(verifyAttestationBundles(lock, [bundlePath], { repo: REPO })).rejects.toThrow(
+        process.argv[2] === 'verify-unavailable' ? 'unavailable' : 'supplied',
+      );
+    }
+  }
+  process.exit(0);
 }
 
 afterAll(async () => {
@@ -1009,91 +1096,6 @@ describe('GitHub release attestation receipt', () => {
         verifyBundleImpl: async () => [{ name: 'different.bin', sha256: ASSET_SHA }],
       }),
     ).rejects.toThrow('differ from its DSSE statement');
-    await prepareBundleVerification(calls[0], root);
-    const bin = path.join(root, 'bin');
-    await fs.mkdir(bin);
-    const response = path.join(root, 'gh-output.json');
-    const bundle = bundleFor(subjects);
-    const verified = [
-      {
-        attestation: { bundle },
-        verificationResult: {
-          statement: JSON.parse(Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString()),
-        },
-      },
-    ];
-    await fs.writeFile(response, JSON.stringify(verified));
-    const log = path.join(root, 'gh-args');
-    await fs.writeFile(
-      path.join(bin, 'gh'),
-      `#!/usr/bin/env bash
-printf '%s\\0' "$@" > "$TEST_ARGS"
-cat "$TEST_RESPONSE"
-exit "\${TEST_STATUS:-0}"
-`,
-      { mode: 0o755 },
-    );
-    const run = (status = '0') =>
-      spawnSync(
-        'bash',
-        ['tools/release/verify-github-release-attestations.sh', '--verify-prepared', root],
-        {
-          encoding: 'utf8',
-          timeout: 10000,
-          env: {
-            ...process.env,
-            PATH: bin + path.delimiter + process.env.PATH,
-            TEST_ARGS: log,
-            TEST_RESPONSE: response,
-            TEST_STATUS: status,
-          },
-        },
-      );
-    const saved = process.env.OLIPHAUNT_ATTESTATION_VERIFICATION_DIR;
-    process.env.OLIPHAUNT_ATTESTATION_VERIFICATION_DIR = root;
-    try {
-      const result = run();
-      expect(result.status).toBe(0);
-      expect((await fs.readFile(log, 'utf8')).split('\0').slice(0, -1)).toEqual([
-        'attestation',
-        'verify',
-        local,
-        '--repo',
-        REPO,
-        '--bundle',
-        bundlePath,
-        '--format',
-        'json',
-        '--predicate-type',
-        'https://slsa.dev/provenance/v1',
-        '--signer-workflow',
-        REPO + '/.github/workflows/release.yml',
-        '--signer-digest',
-        COMMIT,
-        '--source-ref',
-        'refs/heads/main',
-        '--source-digest',
-        COMMIT,
-        '--deny-self-hosted-runners',
-      ]);
-      expect(await verifyAttestationBundles(lock, [bundlePath], { repo: REPO })).toEqual(records);
-      await expect(
-        verifyAttestationBundles(lock, [bundlePath], { repo: REPO, publisherSha }),
-      ).rejects.toThrow('unavailable');
-      expect(run('7').status).toBe(7);
-      await expect(verifyAttestationBundles(lock, [bundlePath], { repo: REPO })).rejects.toThrow(
-        'unavailable',
-      );
-      verified[0].attestation.bundle.dsseEnvelope.signatures[0].sig = 'different';
-      await fs.writeFile(response, JSON.stringify(verified));
-      expect(run().status).toBe(0);
-      await expect(verifyAttestationBundles(lock, [bundlePath], { repo: REPO })).rejects.toThrow(
-        'supplied',
-      );
-    } finally {
-      if (saved === undefined) delete process.env.OLIPHAUNT_ATTESTATION_VERIFICATION_DIR;
-      else process.env.OLIPHAUNT_ATTESTATION_VERIFICATION_DIR = saved;
-    }
   });
 
   test("accepts only gh's known empty signature key ID and RFC3161 protobuf defaults", () => {

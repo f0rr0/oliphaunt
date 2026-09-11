@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import {
   closeSync,
@@ -23,7 +23,7 @@ export const GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR =
 export const GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE =
   Math.floor(60_000 / GITHUB_CONTENT_WRITE_INTERVAL_MS) + 1;
 
-const SCHEMA = 'oliphaunt-github-content-write-pacer-v4';
+const SCHEMA = 'oliphaunt-github-content-write-pacer-v5';
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
 const MAX_LOCK_WAIT_MS = 60_000;
 const TEST_TIMING_ENV = 'OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE';
@@ -71,6 +71,8 @@ function parseState(file, expectedIdentity, timing) {
     state === null ||
     Array.isArray(state) ||
     typeof state !== 'object' ||
+    Object.keys(state).sort().join(',') !==
+      'headSha,intervalMs,lastLabel,lastReservedAtMs,repository,runId,schema,sequence' ||
     state.schema !== SCHEMA ||
     state.intervalMs !== timing.intervalMs ||
     !Number.isSafeInteger(state.sequence) ||
@@ -79,9 +81,8 @@ function parseState(file, expectedIdentity, timing) {
     state.lastReservedAtMs < 0 ||
     typeof state.lastLabel !== 'string' ||
     state.lastLabel.length === 0 ||
-    /[\u0000-\u001f\u007f]/u.test(state.lastLabel) ||
-    !Array.isArray(state.reservations) ||
-    state.reservations.length !== state.sequence
+    state.lastLabel.length > 200 ||
+    /[\u0000-\u001f\u007f]/u.test(state.lastLabel)
   ) {
     fail('pacer state has a malformed envelope');
   }
@@ -89,30 +90,6 @@ function parseState(file, expectedIdentity, timing) {
     if (state[field] !== expectedIdentity[field]) {
       fail(`pacer state ${field} does not match the current release lineage`);
     }
-  }
-  let previousReservedAtMs = null;
-  for (const [index, reservation] of state.reservations.entries()) {
-    if (
-      reservation === null ||
-      Array.isArray(reservation) ||
-      typeof reservation !== 'object' ||
-      reservation.sequence !== index + 1 ||
-      !Number.isSafeInteger(reservation.reservedAtMs) ||
-      reservation.reservedAtMs < 0 ||
-      typeof reservation.label !== 'string' ||
-      reservation.label.length === 0 ||
-      reservation.label.length > 200 ||
-      /[\u0000-\u001f\u007f]/u.test(reservation.label) ||
-      (previousReservedAtMs !== null &&
-        reservation.reservedAtMs < previousReservedAtMs + timing.intervalMs)
-    ) {
-      fail('pacer state contains a malformed or insufficiently paced reservation journal');
-    }
-    previousReservedAtMs = reservation.reservedAtMs;
-  }
-  const last = state.reservations.at(-1);
-  if (last.reservedAtMs !== state.lastReservedAtMs || last.label !== state.lastLabel) {
-    fail('pacer state summary does not match its complete reservation journal');
   }
   return state;
 }
@@ -230,7 +207,8 @@ export async function reserveGitHubContentWrite({
       fail('the next content-write reservation would reach the hard release deadline');
     }
     sequence = (previous?.sequence ?? 0) + 1;
-    const reservation = { label, reservedAtMs: reservedAt, sequence };
+    if (!Number.isSafeInteger(sequence) || !Number.isSafeInteger(reservedAt))
+      fail('reservation exceeds the safe integer range');
     const state = {
       schema: SCHEMA,
       ...expectedIdentity,
@@ -238,7 +216,6 @@ export async function reserveGitHubContentWrite({
       sequence,
       lastReservedAtMs: reservedAt,
       lastLabel: label,
-      reservations: [...(previous?.reservations ?? []), reservation],
     };
     writeState(file, state);
   } finally {
@@ -254,7 +231,7 @@ export async function reserveGitHubContentWrite({
   if (deadline !== null && observedAfterWait >= deadline) {
     fail('the content-write reservation reached the hard release deadline while waiting');
   }
-  return { enabled: true, sequence, waitedMs: waitMs };
+  return { enabled: true, sequence, waitedMs: waitMs, reservedAtMs: reservedAt };
 }
 
 async function main(argv) {

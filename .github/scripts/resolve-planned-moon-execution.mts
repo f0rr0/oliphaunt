@@ -9,10 +9,16 @@ function fail(message) {
   process.exit(1);
 }
 
-function dependencyTargets(task) {
+function dependencyTargets(task, tasks) {
   return (task?.deps ?? [])
     .map((dependency) => (typeof dependency === 'string' ? dependency : dependency?.target))
-    .filter((target) => typeof target === 'string');
+    .filter((target) => {
+      const dependency = tasks.get(target);
+      return (
+        typeof target === 'string' &&
+        !(dependency?.options?.internal && dependency.command === 'noop' && !dependency.script)
+      );
+    });
 }
 
 export function resolveExecution(targets, transferred, tasks) {
@@ -26,7 +32,7 @@ export function resolveExecution(targets, transferred, tasks) {
     return { localDependencies: [], targets: [...roots].sort(), transferred: [] };
   }
   const directDependencies = new Set(
-    targets.flatMap((target) => dependencyTargets(tasks.get(target))),
+    targets.flatMap((target) => dependencyTargets(tasks.get(target), tasks)),
   );
   for (const target of transferredSet) {
     if (!directDependencies.has(target)) {
@@ -36,7 +42,25 @@ export function resolveExecution(targets, transferred, tasks) {
     }
   }
 
-  const localDependencies = [...directDependencies].filter((target) => !transferredSet.has(target));
+  const orderedRoots = [];
+  const visiting = new Set();
+  const ordered = new Set();
+  function visit(target) {
+    if (transferredSet.has(target) || ordered.has(target)) return;
+    if (visiting.has(target)) throw new Error(`task dependency cycle at ${target}`);
+    if (!tasks.has(target))
+      throw new Error(`dependency ${target} is missing from the Moon task graph`);
+    visiting.add(target);
+    for (const dependency of dependencyTargets(tasks.get(target), tasks)) visit(dependency);
+    visiting.delete(target);
+    ordered.add(target);
+    if (roots.has(target)) orderedRoots.push(target);
+  }
+  for (const target of [...roots].sort()) visit(target);
+
+  const localDependencies = [...directDependencies].filter(
+    (target) => !transferredSet.has(target) && !roots.has(target),
+  );
   const pending = [...localDependencies];
   const visited = new Set();
   while (pending.length > 0) {
@@ -48,12 +72,15 @@ export function resolveExecution(targets, transferred, tasks) {
     if (transferredSet.has(target)) {
       throw new Error(`transferred dependency ${target} is still required by a local prerequisite`);
     }
-    pending.push(...dependencyTargets(tasks.get(target)));
+    if (roots.has(target)) {
+      throw new Error(`selected root ${target} is still required by a local prerequisite`);
+    }
+    pending.push(...dependencyTargets(tasks.get(target), tasks));
   }
 
   return {
     localDependencies: localDependencies.sort(),
-    targets: [...roots].sort(),
+    targets: orderedRoots,
     transferred: [...transferredSet].sort(),
   };
 }
@@ -90,7 +117,13 @@ if (import.meta.main) {
       throw new Error(`Moon target ${selectedTarget} is not planned for CI job ${job}`);
     }
     const targets = selectedTarget === undefined ? planned : [selectedTarget];
-    const execution = resolveExecution(targets, parseTransferred(), taskMap());
+    const tasks = taskMap();
+    const direct = new Set(
+      targets.flatMap((target) => dependencyTargets(tasks.get(target), tasks)),
+    );
+    // Workflows declare available artifacts; a narrowed plan consumes only its own inputs.
+    const transferred = parseTransferred().filter((target) => direct.has(target));
+    const execution = resolveExecution(targets, transferred, tasks);
     for (const target of execution.localDependencies) console.log(`local\t${target}`);
     for (const target of execution.targets) console.log(`target\t${target}`);
     for (const target of execution.transferred) console.log(`transferred\t${target}`);

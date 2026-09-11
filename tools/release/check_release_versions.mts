@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { parseTagCommits, parseTagRefs } from '../../src/shared/product-metadata/git-tag-state.mts';
-import { currentVersion } from '../../src/shared/product-metadata/product-version.mts';
+import { parseTagCommits, parseTagRefs } from './git-tag-state.mts';
+import { currentVersion } from './product-version.mts';
 import {
   compareVersion,
   compatibilityVersionEntries,
@@ -13,7 +13,7 @@ import {
   tagPrefixes as graphTagPrefixes,
   loadProducts,
   ROOT,
-} from '../../src/shared/product-metadata/release-graph.mts';
+} from './release-graph.mts';
 import {
   checkRegistryPublication,
   queryProductPublication,

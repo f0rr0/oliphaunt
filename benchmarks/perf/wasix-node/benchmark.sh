@@ -17,8 +17,8 @@ git status --porcelain=v1 --untracked-files=all > "$scratch/git-status"
 node "$tool" --prepare "$scratch" "$@"
 (
   cd "$scratch/consumer"
-  NPM_CONFIG_IGNORE_SCRIPTS=true PNPM_CONFIG_IGNORE_SCRIPTS=true \
-    "$deadline" --kill-after=3s 120s pnpm install --ignore-scripts --no-frozen-lockfile
+  NPM_CONFIG_IGNORE_SCRIPTS=true \
+    "$deadline" --kill-after=3s 120s bun install --ignore-scripts
 )
 node "$tool" --inspect "$scratch" "$@"
 plan="$(jq -r '.planSource.file' "$scratch/measurement.json")"

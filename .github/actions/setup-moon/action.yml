@@ -1,20 +1,15 @@
 name: Set up Moon
-description: Install verified Node.js, Moon, pnpm, and Bun binaries and optionally hydrate JavaScript workspace dependencies.
+description: Install verified Node.js, Moon, and Bun binaries and optionally hydrate JavaScript workspace dependencies.
 
 inputs:
   install-workspace:
-    description: Install pnpm workspace dependencies for JavaScript-family tasks.
+    description: Install Bun workspace dependencies for JavaScript-family tasks.
     required: false
     default: "false"
 
 runs:
   using: composite
   steps:
-    - name: Set up exact Node.js
-      uses: ./.github/actions/setup-node-runtime
-      with:
-        node-version: "22.22.3"
-
     - name: Restore verified tool archives
       id: restore_verified_moon_toolchain
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -22,9 +17,14 @@ runs:
         path: |
           ${{ runner.temp }}/oliphaunt-moon-toolchain
           ${{ runner.temp }}/oliphaunt-pinned-tools
-        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'src/sources/toolchains/moon-cli.toml', 'src/sources/toolchains/moon-plugins.toml', 'src/sources/toolchains/pnpm.toml', 'src/sources/toolchains/proto.toml', 'src/sources/toolchains/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'src/shared/artifact-packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-node-bun/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/dev/moon-cli.toml', 'tools/dev/moon-plugins.toml', 'tools/dev/proto.toml', 'tools/dev/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'tools/packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}
 
-    - name: Install verified Moon and pnpm
+    - name: Set up exact Node.js and Bun
+      uses: ./.github/actions/setup-node-bun
+      with:
+        node-version: "22.22.3"
+
+    - name: Install verified Moon
       shell: bash
       env:
         OLIPHAUNT_MOON_TOOLCHAIN_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-moon-toolchain
@@ -54,34 +54,12 @@ runs:
         echo "MOON_BIN=$moon_bin" >> "$GITHUB_ENV"
         echo "MOON_TOOLCHAIN_FORCE_GLOBALS=true" >> "$GITHUB_ENV"
 
-    - name: Install verified Bun
-      shell: bash
-      env:
-        OLIPHAUNT_PINNED_TOOL_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-pinned-tools
-      run: | # zizmor: ignore[github-env] the installer returns a digest- and version-verified runner-temp path.
-        set -euo pipefail
-        binary="$(bash tools/dev/install-pinned-js-runtime.sh bun --expected-version 1.4.2)"
-        export_dir="$RUNNER_TEMP/oliphaunt-bun-path"
-        export_dir_fs="$export_dir"
-        github_path_entry="$export_dir"
-        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
-          command -v cygpath >/dev/null 2>&1
-          export_dir_fs="$(cygpath -u "$export_dir")"
-          github_path_entry="$(cygpath -w "$export_dir_fs")"
-        fi
-        rm -rf "$export_dir_fs"
-        mkdir -p "$export_dir_fs"
-        cp "$binary" "$export_dir_fs/$(basename "$binary")"
-        chmod 0555 "$export_dir_fs/$(basename "$binary")"
-        echo "$github_path_entry" >> "$GITHUB_PATH"
-
     - name: Verify toolchain
       shell: bash
       run: |
         set -euo pipefail
         [[ "$(moon --version)" == "moon 2.5.4" ]]
         [[ "$(node --version)" == "v22.22.3" ]]
-        [[ "$(pnpm --version)" == "11.5.0" ]]
         [[ "$(bun --version)" == "1.4.2" ]]
 
     - name: Save verified tool archives
@@ -92,12 +70,12 @@ runs:
         path: |
           ${{ runner.temp }}/oliphaunt-moon-toolchain
           ${{ runner.temp }}/oliphaunt-pinned-tools
-        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'src/sources/toolchains/moon-cli.toml', 'src/sources/toolchains/moon-plugins.toml', 'src/sources/toolchains/pnpm.toml', 'src/sources/toolchains/proto.toml', 'src/sources/toolchains/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'src/shared/artifact-packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-node-bun/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/dev/moon-cli.toml', 'tools/dev/moon-plugins.toml', 'tools/dev/proto.toml', 'tools/dev/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'tools/packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}
 
     - name: Install workspace dependencies
       if: ${{ inputs.install-workspace == 'true' }}
       shell: bash
-      run: pnpm install --frozen-lockfile
+      run: bun install --frozen-lockfile
 
     - name: Restore Moon task outputs
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

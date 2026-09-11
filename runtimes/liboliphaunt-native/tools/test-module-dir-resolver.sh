@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo "liboliphaunt module-dir resolver test is covered by the Linux/macOS C lanes"
+    exit 0
+    ;;
+esac
+
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-module-dir-test.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+
+compiler=${CC:-cc}
+linker_arg=
+if [[ "$(uname -s)" == Linux ]]; then
+  linker_arg=-ldl
+fi
+
+"$compiler" \
+  -std=c11 \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -I "$root/runtimes/liboliphaunt-native/include" \
+  -I "$root/runtimes/liboliphaunt-native/src" \
+  "$root/runtimes/liboliphaunt-native/smoke/liboliphaunt_module_dir_resolver.c" \
+  "$root/runtimes/liboliphaunt-native/src/liboliphaunt_fs.c" \
+  ${linker_arg:+"$linker_arg"} \
+  -o "$scratch/liboliphaunt_module_dir_resolver"
+
+mkdir "$scratch/fixture"
+"$scratch/liboliphaunt_module_dir_resolver" "$scratch/fixture"

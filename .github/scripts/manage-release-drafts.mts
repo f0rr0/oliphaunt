@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as sleepAsync } from 'node:timers/promises';
-import { loadProducts } from '../../src/shared/product-metadata/release-graph.mts';
+import { loadProducts } from '../../tools/release/release-graph.mts';
 import { redactGitHubReadDetail, requestGithubGraphql } from '../../tools/release/github-read.mts';
 import {
   assertResumableReleaseMetadata,

@@ -1,0 +1,6 @@
+id = "oliphaunt-query"
+owner = "@oliphaunt/core"
+kind = "sdk"
+publish_targets = ["crates-io"]
+registry_packages = ["crates:oliphaunt-query"]
+release_artifacts = ["cargo-crate"]

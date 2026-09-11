@@ -2,13 +2,11 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-scope=all
 metadata=1
 for argument in "$@"; do
   case "$argument" in
     --mutation-tests-only) metadata=0 ;;
-    --mutation-scope=all|--mutation-scope=policy|--mutation-scope=release) scope="${argument#*=}" ;;
-    -h|--help) echo 'usage: release-check.sh [--mutation-tests-only] [--mutation-scope=all|policy|release]'; exit 0 ;;
+    -h|--help) echo 'usage: release-check.sh [--mutation-tests-only]'; exit 0 ;;
     *) echo "unexpected argument: $argument" >&2; exit 2 ;;
   esac
 done
@@ -22,21 +20,28 @@ while IFS= read -r name; do
   esac
 done < <(compgen -e)
 
-roots=(tools/policy tools/release)
-if [ "$scope" != all ]; then roots=("tools/$scope"); fi
 inventory="$(mktemp)"
 trap 'rm -f "$inventory"' EXIT
-git ls-files -z --cached --others --exclude-standard -- "${roots[@]}" > "$inventory"
+git ls-files -z --cached --others --exclude-standard -- tools/release > "$inventory"
 test_files=()
+shell_tests=()
 while IFS= read -r -d '' test_file; do
   case "$test_file" in
-    tools/policy/assertions/workflow-security.test.*|tools/policy/ci-plan-*.test.*|tools/policy/workflow-moon-transfers.test.*|tools/release/release-candidate-sync.test.*) continue ;;
-    *.test.mjs|*.test.mts) ;;
+    tools/release/prepare-release-candidate.test.*) continue ;;
+    *.test.sh|*.test.mjs|*.test.mts) ;;
     *) continue ;;
   esac
   if [ ! -f "$test_file" ] || [ -L "$test_file" ]; then continue; fi
+  if [[ "$test_file" == *.test.sh ]]; then
+    shell_tests+=("$test_file")
+    continue
+  fi
+  if [[ -f "${test_file%.*}.sh" ]]; then
+    continue
+  fi
   test_files+=("./$test_file")
 done < "$inventory"
 [ "${#test_files[@]}" -gt 0 ] || { echo 'No release tests found' >&2; exit 1; }
 
-bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-source.sh HEAD bash tools/graph/with-projects.sh test --timeout=30000 "${test_files[@]}"
+bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-source.sh HEAD bash tools/ci/with-projects.sh test --timeout=30000 "${test_files[@]}"
+for shell_test in "${shell_tests[@]}"; do bash "$shell_test"; done

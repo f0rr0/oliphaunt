@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Verify product-scoped GitHub release assets without requiring attestations.
 
-import { currentVersion } from '../../src/shared/product-metadata/product-version.mts';
+import { currentVersion } from './product-version.mts';
 import { expectedAssets, verifyReleaseAssets } from './verify_github_release_attestations.mts';
 
 function fail(message) {

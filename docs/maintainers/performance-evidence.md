@@ -42,7 +42,7 @@ WASIX Node and browser measurements retain their own specs and runners:
 ```sh
 moon run perf-tools:wasix-node-measure
 moon run perf-tools:wasix-browser-measure
-pnpm --dir benchmarks/perf/wasix-node bench:streaming
+bun run --cwd benchmarks/perf/wasix-node bench:streaming
 ```
 
 The browser runner uses an installed browser and the same isolated host headers

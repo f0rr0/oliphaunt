@@ -2,7 +2,7 @@
 import { appendFileSync } from 'node:fs';
 import process from 'node:process';
 
-import { loadPublicationCatalog } from '../../src/shared/product-metadata/publication-catalog.mts';
+import { loadPublicationCatalog } from '../../tools/release/publication-catalog.mts';
 
 function fail(message) {
   console.error(`selected-registry-needs: ${message}`);

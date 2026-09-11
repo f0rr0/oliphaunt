@@ -1,11 +1,8 @@
 #!/usr/bin/env bun
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { currentVersion } from '../../src/shared/product-metadata/product-version.mts';
-import {
-  loadPublicationCatalog,
-  REGISTRY_KIND_TO_ECOSYSTEM,
-} from '../../src/shared/product-metadata/publication-catalog.mts';
+import { currentVersion } from './product-version.mts';
+import { loadPublicationCatalog, REGISTRY_KIND_TO_ECOSYSTEM } from './publication-catalog.mts';
 import { loadPublicationLock, lockedCarriers } from './publication-lock.mts';
 import {
   retryAfterSeconds,

@@ -1,98 +1,113 @@
-$schema: "https://moonrepo.dev/schemas/project.json"
-
-id: "release-tools"
-language: "typescript"
-layer: "tool"
-stack: "infrastructure"
-tags: ["javascript-quality", "tools", "release"]
+$schema: https://moonrepo.dev/schemas/project.json
+id: release-tools
+language: typescript
+layer: tool
+stack: infrastructure
+tags:
+  - javascript-quality
+  - tools
+  - release
 dependsOn:
-  - id: "shared-test-fixtures"
-    scope: "development"
-  - id: "extension-runtime-contract"
-    scope: "build"
-  - id: "extensions"
-    scope: "build"
-  - id: "extension-artifacts-wasix"
-    scope: "build"
-  - id: "extension-artifacts-native"
-    scope: "build"
-  - id: "liboliphaunt-native"
-    scope: "build"
-  - id: "liboliphaunt-wasix"
-    scope: "build"
-  - "oliphaunt-broker"
-  - "oliphaunt-js"
-  - "oliphaunt-kotlin"
-  - "oliphaunt-node-direct"
-  - "oliphaunt-react-native"
-  - "oliphaunt-rust"
-  - "oliphaunt-swift"
-  - "oliphaunt-wasix-rust"
-  - "oliphaunt-wasix-ts"
-  - "oliphaunt-wasix-tools-ts"
-  - "oliphaunt-wasix-napi"
-
+  - id: shared-test-fixtures
+    scope: development
+  - id: extension-runtime-contract
+    scope: build
+  - id: extensions
+    scope: build
+  - id: extension-artifacts-wasix
+    scope: build
+  - id: extension-artifacts-native
+    scope: build
+  - id: liboliphaunt-native
+    scope: build
+  - id: liboliphaunt-wasix
+    scope: build
+  - oliphaunt-broker
+  - oliphaunt-js
+  - oliphaunt-kotlin
+  - oliphaunt-node-direct
+  - oliphaunt-react-native
+  - oliphaunt-rust
+  - oliphaunt-query
+  - liboliphaunt-native-bindings
+  - oliphaunt-query-ts
+  - oliphaunt-swift
+  - oliphaunt-wasix-rust
+  - oliphaunt-wasix-ts
+  - oliphaunt-wasix-tools-ts
+  - oliphaunt-wasix-napi
 project:
-  title: "Release Tools"
+  title: Release Tools
   description: "Release-please identity, product-local metadata, packaging gates, and release workflow helpers."
-  owner: "oliphaunt"
-
+  owner: oliphaunt
 owners:
   defaultOwner: "@oliphaunt/core"
   paths:
-    "**/*": ["@oliphaunt/core"]
-
+    "**/*":
+      - "@oliphaunt/core"
+fileGroups:
+  source:
+    - "*.{mts,sh}"
+    - "!*.test.mts"
 tasks:
   metadata:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "bash tools/release/release-metadata-check.sh"
+    tags:
+      - policy
+      - assertion
+      - quality
+      - static
+    command: bash tools/release/release-metadata-check.sh
     inputs:
-      - "/src/shared/artifact-packaging/**/*"
-      - "/src/shared/cluster-seed-contract/**/*"
-      - "/src/shared/product-metadata/**/*"
-      - "/.moon/workspace.yml"
-      - "/.moon/toolchains.yml"
-      - "/.github/workflows/ci.yml"
-      - "/.github/workflows/release.yml"
-      - "/.release-please-manifest.json"
-      - "/benchmarks/moon.yml"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/examples/moon.yml"
-      - "/examples/**/Cargo.toml"
-      - "/moon.yml"
-      - "/Package.swift"
-      - "@group(pnpm-workspace)"
-      - "/release-please-config.json"
-      - "/src/**/CHANGELOG.md"
-      - "/src/**/Cargo.toml"
-      - "/src/**/LIBOLIPHAUNT_VERSION"
-      - "/src/**/Package.swift"
-      - "/src/**/VERSION"
-      - "/src/**/gradle.properties"
-      - "/src/**/moon.yml"
-      - "/src/**/package.json"
-      - "/src/**/release.toml"
-      - "/src/**/targets/**/*.toml"
-      - "/src/extensions/catalog/**/*"
-      - "/src/extensions/contrib/*.toml"
-      - "/src/extensions/evidence/**/*.toml"
-      - "/src/extensions/external/**/recipe.toml"
-      - "/src/extensions/external/**/source.toml"
-      - "/src/extensions/external/**/tools/**/*"
-      - "/src/extensions/external/**/upstream-license-data.json"
-      - "/src/extensions/generated/**/*"
-      - "/src/extensions/model/**/*"
-      - "/src/extensions/schemas/**/*"
-      - "/src/extensions/tools/**/*"
-      - "/src/postgres/versions/*/source.toml"
-      - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "/src/runtimes/wasix-napi/tools/build-native.sh"
-      - project: "shared-test-fixtures"
-        group: "fixtures"
-      - "/src/sources/**/*.toml"
-      - "/tools/**/moon.yml"
-      - "/tools/graph/**/*"
+      - /tools/packaging/**/*
+      - /database-resources/contracts/**/*
+      - /tools/release/**/*
+      - /.moon/workspace.yml
+      - /.moon/toolchains.yml
+      - /.github/workflows/ci.yml
+      - /.github/workflows/release.yml
+      - /.release-please-manifest.json
+      - /benchmarks/moon.yml
+      - /Cargo.lock
+      - /Cargo.toml
+      - /examples/moon.yml
+      - /examples/**/Cargo.toml
+      - /moon.yml
+      - /Package.swift
+      - "@group(bun-workspace)"
+      - /release-please-config.json
+      - /**/CHANGELOG.md
+      - /**/Cargo.toml
+      - /**/LIBOLIPHAUNT_VERSION
+      - /**/Package.swift
+      - /**/VERSION
+      - /**/gradle.properties
+      - /**/moon.yml
+      - /**/package.json
+      - /**/release.toml
+      - /**/targets/**/*.toml
+      - /extensions/catalog/**/*
+      - /extensions/contrib/*.toml
+      - /extensions/evidence/**/*.toml
+      - /extensions/external/**/recipe.toml
+      - /extensions/external/**/source.toml
+      - /extensions/external/**/tools/**/*
+      - /extensions/external/**/upstream-license-data.json
+      - /extensions/generated/**/*
+      - /extensions/model/**/*
+      - /extensions/schemas/**/*
+      - /extensions/tools/**/*
+      - /third-party/postgres/source.toml
+      - "@group(upstream-licenses)"
+      - /sdks/ts-wasix/node-addon/tools/build-native.sh
+      - project: shared-test-fixtures
+        group: fixtures
+      - /third-party/**/source.toml
+      - /runtimes/*/sources/*.toml
+      - /runtimes/*/toolchain.toml
+      - /tools/dev/*.toml
+      - /tools/release/npm-publisher.toml
+      - /tools/**/moon.yml
+      - /tools/ci/**/*
       - "**/*"
       - "!/tools/release/**/*.test.{mjs,mts}"
       - "!/tools/release/**/*.md"
@@ -100,97 +115,99 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
-  unit:
-    tags: ["quality", "unit", "requires-rust"]
-    command: "bash tools/release/release-check.sh --mutation-tests-only --mutation-scope=release"
+  test:
+    tags:
+      - quality
+      - unit
+      - requires-rust
+    command: bash tools/release/release-check.sh --mutation-tests-only
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix/tools/download-assets.sh"
-      - "/src/runtimes/liboliphaunt/wasix/tools/wasix-cargo-artifact-contract.mts"
-      - "/src/shared/artifact-packaging/**/*"
-      - "/src/shared/cluster-seed-contract/**/*"
-      - "/src/shared/product-metadata/**/*"
-      - "/.github/scripts/bootstrap-registry-*"
-      - "/.github/scripts/bootstrap-ledger-github-fixture.mts"
-      - "/.github/scripts/download-bootstrap-*"
-      - "/.github/scripts/download-completed-bootstrap*"
-      - "/.github/scripts/download-build-artifacts*"
-      - "/.github/scripts/download-wasix-runtime-*"
-      - "/.github/scripts/manage-release-*"
-      - "/.github/scripts/merge-checksum-*"
-      - "/.github/scripts/normalize-release-*"
-      - "/.github/scripts/registry-bootstrap-*"
+      - /runtimes/liboliphaunt-wasix/tools/download-assets.sh
+      - /runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
+      - /tools/packaging/**/*
+      - /database-resources/contracts/**/*
+      - /tools/release/**/*
+      - /.github/scripts/bootstrap-registry-*
+      - /.github/scripts/download-bootstrap-*
+      - /.github/scripts/download-completed-bootstrap*
+      - /.github/scripts/download-build-artifacts*
+      - /.github/scripts/download-wasix-runtime-*
+      - /.github/scripts/manage-release-*
+      - /.github/scripts/merge-checksum-*
+      - /.github/scripts/normalize-release-*
+      - /.github/scripts/registry-bootstrap-*
       - "/.github/scripts/*release*.{mts,sh}"
-      - "/.github/scripts/require-workflow-success*"
-      - "/.github/scripts/workflow-run-metadata.mts"
-      - "/.github/scripts/setup-native-build-tools*"
-      - "/.github/scripts/verify-github-oidc-*"
-      - "/tools/graph/with-projects.sh"
-      - "/.prototools"
-      - "/tools/dev/bun.sh"
-      - "/src/sdks/kotlin/tools/kotlin-maven-staging.mts"
+      - /.github/scripts/require-workflow-success*
+      - /.github/scripts/workflow-run-metadata.mts
+      - /.github/scripts/setup-native-build-tools*
+      - /.github/scripts/verify-github-oidc-*
+      - /tools/ci/with-projects.sh
+      - /.prototools
+      - /tools/dev/bun.sh
+      - /sdks/kotlin/tools/kotlin-maven-staging.mts
       - "**/*"
       - "!/tools/release/**/*.md"
-      - "/tools/test/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
   graph-unit:
-    tags: ["quality", "unit"]
-    script: |
-      set -e
-      graph_file="$(mktemp)"
-      trap 'rm -f "$graph_file"' EXIT
-      export OLIPHAUNT_MOON_TASK_GRAPH_FILE="$graph_file"
-      "${MOON_BIN:-moon}" task-graph --json > "$graph_file"
-      tools/dev/bun.sh test --isolate --max-concurrency=1 --timeout=30000 ./tools/release/release-candidate-sync.test.mts
+    tags:
+      - quality
+      - unit
     inputs:
-      - "/.moon/tasks/**/*"
-      - "/.moon/toolchains.yml"
-      - "/.moon/workspace.yml"
-      - "/benchmarks/moon.yml"
-      - "/examples/moon.yml"
-      - "/moon.yml"
-      - "/.release-please-manifest.json"
-      - "/Cargo.toml"
-      - "/Package.swift"
-      - "/package.json"
-      - "/release-please-config.json"
-      - "/src/**/release.toml"
-      - "/src/**/targets/**/*.toml"
-      - "/src/**/moon.yml"
-      - "/tools/graph/**/*"
-      - "/tools/**/moon.yml"
-      - "/src/sources/tools/source-fetch-core.mts"
-      - "/src/shared/product-metadata/artifact-target-matrix.mts"
-      - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
-      - "/src/shared/artifact-packaging/extension-artifact-archive-policy.mts"
-      - project: "extension-runtime-contract"
-        group: "contract"
-      - "/src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts"
-      - "/src/extensions/artifacts/packages/tools/extension-registry-packages.mts"
-      - "/src/shared/extension-runtime-contract/extension-target-profiles.mts"
-      - "/src/extensions/tools/extension-upstream-licenses.mts"
-      - "/src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts"
-      - "/src/runtimes/liboliphaunt/native/tools/native-runtime-payload.mts"
-      - "/src/shared/product-metadata/platform-compatibility-policy.mts"
-      - "/src/shared/product-metadata/release-artifact-targets.mts"
-      - "/tools/release/release-candidate-sync.mts"
-      - "/tools/release/release-candidate-sync.test.mts"
+      - /.moon/tasks/**/*
+      - /.moon/toolchains.yml
+      - /.moon/workspace.yml
+      - /benchmarks/moon.yml
+      - /examples/moon.yml
+      - /moon.yml
+      - /.release-please-manifest.json
+      - /Cargo.toml
+      - /Package.swift
+      - /package.json
+      - /release-please-config.json
+      - /**/release.toml
+      - /**/targets/**/*.toml
+      - /**/moon.yml
+      - /tools/ci/**/*
+      - /tools/**/moon.yml
+      - /third-party/tools/source-fetch-core.mts
+      - /tools/release/artifact-target-matrix.mts
+      - /extensions/artifacts/packages/tools/contrib-carriers.mts
+      - /extensions/tools/extension-artifact-archive-policy.mts
+      - project: extension-runtime-contract
+        group: contract
+      - /extensions/artifacts/packages/tools/extension-artifact-inventory.mts
+      - /extensions/artifacts/packages/tools/extension-registry-packages.mts
+      - /extensions/contracts/extension-target-profiles.mts
+      - /extensions/tools/extension-upstream-licenses.mts
+      - /extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
+      - /runtimes/liboliphaunt-native/tools/native-runtime-payload.mts
+      - /tools/release/platform-compatibility-policy.mts
+      - /tools/release/release-artifact-targets.mts
+      - /tools/release/prepare-release-candidate.mts
+      - /tools/release/prepare-release-candidate.test.mts
       - "@group(release-archive-contract)"
-      - "/src/shared/product-metadata/release-graph.mts"
-      - "/src/runtimes/liboliphaunt/wasix/tools/wasix-cargo-artifact-contract.mts"
-      - "/src/shared/artifact-packaging/windows-vc-runtime-closure.mts"
+      - /tools/release/release-graph.mts
+      - /runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
+      - /tools/packaging/windows-vc-runtime-closure.mts
+      - package.json
+      - /bun.lock
     options:
       cache: true
       runFromWorkspaceRoot: true
+    command: bash tools/ci/with-projects.sh test --timeout=30000 ./tools/release/prepare-release-candidate.test.mts
   check:
-    tags: ["policy", "aggregate", "quality"]
-    command: "true"
+    tags:
+      - policy
+      - aggregate
+      - quality
     deps:
-      - "release-tools:metadata"
-      - "release-tools:unit"
-      - "policy-tools:unit"
-    inputs: []
+      - release-tools:metadata
+      - release-tools:test
+      - release-tools:graph-unit
+    inputs:
+      []
     options:
       cache: false
       runFromWorkspaceRoot: true

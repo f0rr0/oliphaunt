@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { electronReleaseDependencies } from '../../examples/tools/example-release-dependencies.mts';
-import { extensionRegistryPackageStrings } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
-import { currentEvidenceTable } from '../../src/extensions/tools/extension-evidence.mts';
-import { catalogPath, readJson } from '../../src/extensions/tools/extension-projections.mts';
+import { extensionRegistryPackageStrings } from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
+import { currentEvidenceTable } from '../../extensions/tools/extension-evidence.mts';
+import { catalogPath, readJson } from '../../extensions/tools/extension-projections.mts';
 import {
   compareText,
   currentProductVersion,
@@ -12,77 +12,46 @@ import {
   extensionRegistryPackageTargetSets,
   nativeToolsOptionalPackageProducts,
   ROOT,
-  typescriptOptionalRuntimePackageProducts,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
+} from './release-artifact-targets.mts';
+import { compatibilityVersionEntries, loadGraph, loadProducts } from './release-graph.mts';
 import {
-  compatibilityVersionEntries,
-  loadGraph,
-  loadProducts,
-} from '../../src/shared/product-metadata/release-graph.mts';
-import {
-  EXAMPLE_CARGO_POLICIES,
+  exampleCargoPolicies,
   exampleCargoReleaseVersionBindings,
-} from './example-cargo-policy.mts';
-import { synchronizeReleaseCandidates } from './release-candidate-sync.mts';
+} from './example-cargo-versions.mts';
 import { releasePleaseConfigAfterBootstrapConsumption } from './release-please-bootstrap.mts';
 import {
+  cargoManifestPaths,
   compatibilityEntriesForBumpedProducts,
   releasePleaseState,
   releasePleaseWorktreeTransitions,
-  sharedContribReleaseCandidates,
 } from './release-please-transition.mts';
+
+export { cargoManifestPaths } from './release-please-transition.mts';
 
 const PREFIX = 'sync-release-pr.mts';
 const DEPENDENCY_TABLES = ['dependencies', 'dev-dependencies', 'build-dependencies'];
 const LOCKFILES = [path.join(ROOT, 'Cargo.lock')];
-const PNPM_LOCKFILE = path.join(ROOT, 'pnpm-lock.yaml');
+const BUN_LOCKFILE = path.join(ROOT, 'bun.lock');
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, 'release-please-config.json');
 const RELEASE_PLEASE_MANIFEST = path.join(ROOT, '.release-please-manifest.json');
 const ELECTRON_EXAMPLE_PACKAGE = path.join(ROOT, 'examples/electron/package.json');
-const NATIVE_TOOLS_FACADE_PACKAGE = path.join(
-  ROOT,
-  'src/runtimes/liboliphaunt/native/tools-npm/package.json',
-);
-const WASIX_TOOLS_FACADE_PACKAGE = path.join(
-  ROOT,
-  'src/bindings/wasix-ts/tools-package/package.json',
-);
-const WASIX_TOOLS_CARRIER_PACKAGE = '@oliphaunt/liboliphaunt-wasix-tools';
-const WASIX_TYPESCRIPT_BINDING_PACKAGE = '@oliphaunt/wasix-ts';
+const NATIVE_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'postgres-tools/native/npm/package.json');
+const WASIX_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'postgres-tools/wasix/ts/package.json');
 const PACKAGE_START_RE = /^\s*\[\[package\]\]\s*$/u;
 const STRING_KEY_RE = /^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$/u;
 const VERSION_LINE_RE = /^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$/u;
-const PNPM_TYPESCRIPT_OPTIONAL_RUNTIME_KEY_RE =
-  /^(\s*)'(@oliphaunt\/(?:(?:broker|liboliphaunt|node-direct|tools)-[^']+|wasix-ts))':\s*$/u;
-const PNPM_SPECIFIER_RE = /^(\s*specifier:\s*)(\S+)(\s*)$/u;
 const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
   ROOT,
-  'src/extensions/generated/docs/extension-evidence.json',
+  'extensions/generated/docs/extension-evidence.json',
 );
 export const SDK_INSTALL_VERSION_RULES = Object.freeze([
   {
     product: 'oliphaunt-swift',
-    file: 'src/docs/content/sdk/swift/index.mdx',
-    prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "',
-    suffix: '")',
-  },
-  {
-    product: 'oliphaunt-swift',
-    file: 'src/docs/content/sdk/swift/guide.mdx',
-    prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "',
-    suffix: '")',
-  },
-  {
-    product: 'oliphaunt-swift',
-    file: 'src/sdks/swift/README.md',
+    file: 'sdks/swift/README.md',
     prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "',
     suffix: '")',
   },
-  ...[
-    'src/docs/content/sdk/kotlin/index.mdx',
-    'src/docs/content/sdk/kotlin/guide.mdx',
-    'src/sdks/kotlin/README.md',
-  ].map((file) => ({
+  ...['sdks/kotlin/README.md'].map((file) => ({
     product: 'oliphaunt-kotlin',
     file,
     prefix: 'implementation("dev.oliphaunt:oliphaunt-android:',
@@ -105,10 +74,6 @@ function rel(file) {
 
 function readText(file) {
   return readFileSync(file, 'utf8');
-}
-
-function readOptionalText(file) {
-  return existsSync(file) ? readText(file) : undefined;
 }
 
 function readJsonObject(file) {
@@ -196,12 +161,20 @@ function setJsonPath(data, dotted, expected, context) {
   return `${context} ${JSON.stringify(actual)} -> ${JSON.stringify(expected)}`;
 }
 
+export function syncTomlStringPath(text, dotted, expected, context) {
+  const entryParts = dotted.split('.');
+  if (entryParts.at(-1) === 'version' && DEPENDENCY_TABLES.includes(entryParts.at(-3))) {
+    return replaceUniqueDependencyVersion(
+      text,
+      { entryParts: entryParts.slice(0, -1), expected, name: context },
+      context,
+    );
+  }
+  return replaceUniqueStringAssignment(text, { entryParts, expected, name: context }, context);
+}
+
 function setTomlStringPath(file, dotted, expected, context) {
-  const result = replaceUniqueStringAssignment(
-    readText(file),
-    { entryParts: dotted.split('.'), expected, name: context },
-    rel(file),
-  );
+  const result = syncTomlStringPath(readText(file), dotted, expected, `${rel(file)} ${context}`);
   return [result.detail === undefined ? undefined : result.text, result.detail];
 }
 
@@ -360,79 +333,11 @@ async function expectedNativeToolsOptionalVersions() {
   return versions;
 }
 
-function typescriptOptionalRuntimePackages() {
-  return typescriptOptionalRuntimePackageProducts(PREFIX).map(({ packageName }) => packageName);
-}
-
-function typescriptOptionalRuntimeVersionsFromPackage() {
-  return optionalRuntimeVersionsFromPackage(
-    path.join(ROOT, 'src/sdks/js/package.json'),
-    typescriptOptionalRuntimePackages(),
-  );
-}
-
-function nativeToolsOptionalVersionsFromPackage() {
-  return optionalRuntimeVersionsFromPackage(
-    NATIVE_TOOLS_FACADE_PACKAGE,
-    nativeToolsOptionalPackageProducts(PREFIX).map(({ packageName }) => packageName),
-  );
-}
-
-function wasixToolsDependencyVersionsFromPackage() {
-  const data = readJsonObject(WASIX_TOOLS_FACADE_PACKAGE);
-  const dependencies = data.dependencies;
-  const peerDependencies = data.peerDependencies;
-  const devDependencies = data.devDependencies;
-  if (
-    dependencies === null ||
-    Array.isArray(dependencies) ||
-    typeof dependencies !== 'object' ||
-    !setsEqual(new Set(Object.keys(dependencies)), new Set([WASIX_TOOLS_CARRIER_PACKAGE])) ||
-    peerDependencies === null ||
-    Array.isArray(peerDependencies) ||
-    typeof peerDependencies !== 'object' ||
-    !setsEqual(
-      new Set(Object.keys(peerDependencies)),
-      new Set([WASIX_TYPESCRIPT_BINDING_PACKAGE]),
-    ) ||
-    devDependencies === null ||
-    Array.isArray(devDependencies) ||
-    typeof devDependencies !== 'object' ||
-    dependencies[WASIX_TOOLS_CARRIER_PACKAGE] !== 'workspace:*' ||
-    peerDependencies[WASIX_TYPESCRIPT_BINDING_PACKAGE] !== 'workspace:*' ||
-    devDependencies[WASIX_TYPESCRIPT_BINDING_PACKAGE] !== 'workspace:*'
-  ) {
-    fail(
-      `${rel(WASIX_TOOLS_FACADE_PACKAGE)} must depend only on ${WASIX_TOOLS_CARRIER_PACKAGE}, peer only with ${WASIX_TYPESCRIPT_BINDING_PACKAGE}, and develop against that peer version`,
-    );
-  }
-  return {
-    [WASIX_TOOLS_CARRIER_PACKAGE]: dependencies[WASIX_TOOLS_CARRIER_PACKAGE],
-    [WASIX_TYPESCRIPT_BINDING_PACKAGE]: peerDependencies[WASIX_TYPESCRIPT_BINDING_PACKAGE],
-  };
-}
-
-function optionalRuntimeVersionsFromPackage(file, expectedPackages) {
-  const data = readJsonObject(file);
-  const optional = data.optionalDependencies;
-  if (optional === null || Array.isArray(optional) || typeof optional !== 'object') {
-    fail(`${rel(file)} must declare optionalDependencies`);
-  }
-  const expectedKeys = new Set(expectedPackages);
-  const actualKeys = new Set(Object.keys(optional));
-  if (!setsEqual(actualKeys, expectedKeys)) {
-    fail(`${rel(file)} optionalDependencies must be exactly ${expectedPackages.join(', ')}`);
-  }
-  return Object.fromEntries(
-    expectedPackages.map((packageName) => [packageName, optional[packageName]]),
-  );
-}
-
 async function syncNativeToolsOptionalDependencies(changes, { write, transitions }) {
   return syncOptionalRuntimeDependencies(changes, {
     write,
     transitions,
-    ownerProduct: 'liboliphaunt-native',
+    ownerProduct: 'postgres-tools-native',
     packageFile: NATIVE_TOOLS_FACADE_PACKAGE,
     runtimeVersions: await expectedNativeToolsOptionalVersions(),
   });
@@ -523,83 +428,6 @@ export function syncSdkInstallDocs(changes, { root = ROOT, write, transitions })
       { write },
     );
   }
-}
-
-async function syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write }) {
-  const expectedVersions = {
-    ...typescriptOptionalRuntimeVersionsFromPackage(),
-    ...nativeToolsOptionalVersionsFromPackage(),
-    ...wasixToolsDependencyVersionsFromPackage(),
-  };
-  const lines = readText(PNPM_LOCKFILE).split(/(?<=\n)/u);
-  const expectedPackages = new Set(Object.keys(expectedVersions));
-  const seen = new Set();
-  const fileChanges = [];
-
-  for (const [index, line] of lines.entries()) {
-    const [body] = stripNewline(line);
-    const packageMatch = PNPM_TYPESCRIPT_OPTIONAL_RUNTIME_KEY_RE.exec(body);
-    if (!packageMatch) {
-      continue;
-    }
-    const packageName = packageMatch[2];
-    if (!expectedPackages.has(packageName)) {
-      fail(
-        `${rel(PNPM_LOCKFILE)} contains unexpected managed TypeScript runtime dependency ${packageName}`,
-      );
-    }
-    seen.add(packageName);
-    const packageIndent = packageMatch[1].length;
-    const expectedVersion = expectedVersions[packageName];
-
-    let found = false;
-    for (let specifierIndex = index + 1; specifierIndex < lines.length; specifierIndex += 1) {
-      const [specifierBody, specifierNewline] = stripNewline(lines[specifierIndex]);
-      if (specifierBody.trim()) {
-        const specifierIndent = specifierBody.length - specifierBody.trimStart().length;
-        if (specifierIndent <= packageIndent) {
-          break;
-        }
-      }
-      const specifierMatch = PNPM_SPECIFIER_RE.exec(specifierBody);
-      if (!specifierMatch) {
-        continue;
-      }
-      found = true;
-      const actual = specifierMatch[2];
-      if (actual !== expectedVersion) {
-        lines[specifierIndex] =
-          `${specifierMatch[1]}${expectedVersion}${specifierMatch[3]}${specifierNewline}`;
-        fileChanges.push(
-          `${packageName} ${JSON.stringify(actual)} -> ${JSON.stringify(expectedVersion)}`,
-        );
-      }
-      break;
-    }
-    if (!found) {
-      fail(`${rel(PNPM_LOCKFILE)} is missing a specifier for ${packageName}`);
-    }
-  }
-
-  const missing = [...expectedPackages].filter((name) => !seen.has(name)).sort(compareText);
-  if (missing.length > 0) {
-    fail(
-      `${rel(PNPM_LOCKFILE)} is missing managed TypeScript runtime dependency specifiers: ${missing.join(', ')}`,
-    );
-  }
-  if (fileChanges.length > 0) {
-    writeTextIfChanged(PNPM_LOCKFILE, lines.join(''), changes, fileChanges.join('; '), { write });
-  }
-}
-
-export function cargoManifestPaths({ root = ROOT } = {}) {
-  const state = releasePleaseState(root, 'HEAD');
-  const inventory = readFileSync(path.join(state, 'cargo-files'), 'utf8');
-  if (!inventory || !inventory.endsWith('\0')) fail('could not enumerate tracked Cargo manifests');
-  return [...new Set(inventory.split('\0').filter(Boolean))]
-    .map((file) => path.join(root, file))
-    .filter((file) => existsSync(file))
-    .sort(compareText);
 }
 
 function localCargoPackagesByManifest() {
@@ -774,7 +602,7 @@ function tomlAssignmentMatchesAtPath(text, entryParts) {
 
   for (const line of text.split(/(?<=\n)/u)) {
     const [body] = stripNewline(line);
-    const tableMatch = /^\s*\[([^\[\]]+)\]\s*(?:#.*)?$/u.exec(body);
+    const tableMatch = /^\s*\[([^[\]]+)\]\s*(?:#.*)?$/u.exec(body);
     if (tableMatch !== null) {
       const parsed = Bun.TOML.parse(`[${tableMatch[1]}]\n${marker} = true\n`);
       inTable = valueAt(parsed, [...tableParts, marker]) === true;
@@ -940,7 +768,7 @@ export function syncExampleCargoManifestText(
 
 function syncExampleCargoRegistryPins(changes, { write }) {
   const bindings = exampleCargoReleaseVersionBindings();
-  for (const policy of EXAMPLE_CARGO_POLICIES) {
+  for (const policy of exampleCargoPolicies()) {
     const file = path.join(ROOT, policy.crateDir, 'Cargo.toml');
     let result;
     try {
@@ -1052,11 +880,9 @@ function syncExtensionEvidenceSummary(changes, { write }) {
 
 function parseArgs(argv) {
   const args = {
-    bootstrapSharedContrib: false,
     check: false,
     generatedReleaseCheck: false,
     normalCheck: false,
-    sharedContribStatus: false,
   };
   for (const arg of argv) {
     if (arg === '--check') {
@@ -1071,91 +897,31 @@ function parseArgs(argv) {
       }
       args.check = true;
       args.generatedReleaseCheck = true;
-    } else if (arg === '--bootstrap-shared-contrib') {
-      args.bootstrapSharedContrib = true;
-    } else if (arg === '--shared-contrib-status') {
-      args.check = true;
-      args.sharedContribStatus = true;
     } else if (arg === '--help' || arg === '-h') {
       console.log(
-        'usage: tools/release/sync-release-pr.mts ' +
-          '[--check|--check-generated-release|--bootstrap-shared-contrib|--shared-contrib-status]',
+        'usage: tools/release/sync-release-pr.mts ' + '[--check|--check-generated-release]',
       );
       process.exit(0);
     } else {
       fail(`unknown argument ${arg}`);
     }
   }
-  const modes = [
-    args.generatedReleaseCheck,
-    args.bootstrapSharedContrib,
-    args.sharedContribStatus,
-    args.normalCheck,
-  ].filter(Boolean);
+  const modes = [args.generatedReleaseCheck, args.normalCheck].filter(Boolean);
   if (modes.length > 1) fail('release sync modes are mutually exclusive');
   return args;
-}
-
-export function sharedContribBootstrapRequired(transitions, discoverCandidates) {
-  if (transitions.length > 0) return false;
-  return discoverCandidates().length > 0;
 }
 
 async function main(argv) {
   const args = parseArgs(argv);
   const changes = [];
   const write = !args.check;
-  let transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
-  let graph = loadGraph(PREFIX);
-  if (args.bootstrapSharedContrib && transitions.length > 0) {
-    fail(
-      '--bootstrap-shared-contrib requires main release state with no existing manifest transition',
-    );
-  }
-  if (args.sharedContribStatus) {
-    const required = sharedContribBootstrapRequired(transitions, () =>
-      sharedContribReleaseCandidates(ROOT, graph, [], {
-        headRef: 'HEAD',
-        prefix: PREFIX,
-      }),
-    );
-    console.log(`required=${String(required)}`);
-    return;
-  }
-  const bridgeSharedContrib = transitions.length > 0 || args.bootstrapSharedContrib;
-  const sharedContribCandidates = bridgeSharedContrib
-    ? sharedContribReleaseCandidates(ROOT, graph, transitions, {
-        headRef: transitions.length > 0 ? 'HEAD^' : 'HEAD',
-        prefix: PREFIX,
-      })
-    : [];
-  if (args.bootstrapSharedContrib && sharedContribCandidates.length === 0) {
-    fail('--bootstrap-shared-contrib found no unreleased shared contrib source change');
-  }
-  if (sharedContribCandidates.length > 0) {
-    changes.push(
-      ...synchronizeReleaseCandidates({
-        root: ROOT,
-        graph,
-        candidates: sharedContribCandidates,
-        releasePleaseConfig: readJsonObject(RELEASE_PLEASE_CONFIG),
-        manifest: readJsonObject(RELEASE_PLEASE_MANIFEST),
-        write,
-        prefix: PREFIX,
-      }),
-    );
-    if (write) {
-      transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
-      graph = loadGraph(PREFIX);
-    }
-  }
+  const transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
   syncReleasePleaseBootstrapBoundary(changes, { write });
   await syncCompatibilityVersions(changes, { write, transitions });
   syncExtensionRegistryMetadata(changes, { write });
   await syncNativeToolsOptionalDependencies(changes, { write, transitions });
   syncElectronExampleDependencies(changes, { write });
   syncSdkInstallDocs(changes, { write, transitions });
-  await syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write });
   syncCargoPathDependencyPins(changes, { write, transitions });
   syncExampleCargoRegistryPins(changes, { write });
   syncLockfiles(changes, { write });
@@ -1180,14 +946,6 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
-function arraysEqual(left, right) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function setsEqual(left, right) {
-  return left.size === right.size && [...left].every((value) => right.has(value));
-}
-
 function realpathIfExists(file) {
   try {
     return realpathSync(file);
@@ -1201,7 +959,7 @@ export function releaseDerivedPathInventory() {
     ...new Set(
       [
         ...LOCKFILES,
-        PNPM_LOCKFILE,
+        BUN_LOCKFILE,
         RELEASE_PLEASE_CONFIG,
         ELECTRON_EXAMPLE_PACKAGE,
         EXTENSION_EVIDENCE_SUMMARY_PATH,
@@ -1212,7 +970,7 @@ export function releaseDerivedPathInventory() {
         ...exactExtensionReleaseProducts(PREFIX).map((product) =>
           path.join(ROOT, packagePath(product), 'release.toml'),
         ),
-        path.join(ROOT, 'src/sdks/js/package.json'),
+        path.join(ROOT, 'sdks/ts/sdk/package.json'),
         ...cargoManifestPaths(),
       ].map(rel),
     ),

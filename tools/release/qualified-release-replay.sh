@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 fail() { echo "$*" >&2; exit 2; }
-if [[ "${1:-}" == --qualified-ci ]]; then
-  shift
-  [[ "${GITHUB_ACTIONS:-}" == true ]] || fail '--qualified-ci is valid only inside GitHub Actions'
-  [[ "${CI_RUN_ID:-}" =~ ^[1-9][0-9]*$ ]] || fail '--qualified-ci requires a positive CI_RUN_ID'
-  [[ "${GITHUB_REPOSITORY:-}" =~ [^[:space:]] ]] || fail '--qualified-ci requires GITHUB_REPOSITORY'
-  [[ "${WASIX_EVIDENCE_REQUIRED:-}" == true || "${WASIX_EVIDENCE_REQUIRED:-}" == false ]] || fail '--qualified-ci requires WASIX_EVIDENCE_REQUIRED to be true or false'
-fi
-[[ "$#" == 2 ]] || fail 'usage: qualified-release-replay.sh [--qualified-ci] HEAD_REF EXPECTED_SHA'
+[[ "$#" == 2 ]] || fail 'usage: qualified-release-replay.sh HEAD_REF EXPECTED_SHA'
 head_ref="$1"
 expected="$2"
 [[ "$expected" =~ ^[0-9a-f]{40}$ ]] || fail 'qualified release replay requires an exact 40-character RELEASE_HEAD_SHA'

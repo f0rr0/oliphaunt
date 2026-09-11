@@ -1,7 +1,9 @@
 # Native PostgreSQL patch stack
 
-The ordered patches and source pin live in
-[`source.toml`](../../src/runtimes/liboliphaunt/native/postgres18/source.toml).
+The ordered native recipe lives in
+[`postgres/series`](../../src/runtimes/liboliphaunt/native/postgres/series),
+and the shared source pin lives in
+[`source.toml`](../../src/postgres/versions/18/source.toml).
 Each patch header explains its change. Platform builders apply that series with
 `git apply --whitespace=error-all` before compiling PostgreSQL.
 

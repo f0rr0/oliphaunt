@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { link, lstat, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { ROOT } from '../../src/shared/product-metadata/release-graph.mts';
+import { ROOT } from './release-graph.mts';
 import { validateNpmTrustCliRuntime } from './npm-trusted-publishing-runtime.mts';
 import {
   DEFAULT_PUBLICATION_LOCK,

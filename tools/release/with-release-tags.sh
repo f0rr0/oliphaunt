@@ -16,7 +16,7 @@ while read -r _ ref; do
   case "$ref" in
     *'^{}') continue ;;
     refs/tags/liboliphaunt-native-v*|refs/tags/liboliphaunt-wasix-v*)
-      git ls-tree --name-only -z "$ref" -- src/extensions/contrib/carriers.toml > "$scratch/entry"
+      git ls-tree --name-only -z "$ref" -- extensions/contrib/carriers.toml > "$scratch/entry"
       present=false
       [[ ! -s "$scratch/entry" ]] || present=true
       printf '%s\0%s\0' "${ref#refs/tags/}" "$present" >> "$RELEASE_TAG_CONTRIB" ;;

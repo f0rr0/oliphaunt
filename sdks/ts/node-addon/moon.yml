@@ -1,0 +1,180 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-node-direct"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["cargo-package", "rust", "runtime", "node", "native", "node-api", "release-product"]
+dependsOn:
+  - "liboliphaunt-native"
+  - "liboliphaunt-native-bindings"
+
+project:
+  title: "Oliphaunt Node Direct Runtime"
+  description: "Node-API native direct addon runtime consumed by the TypeScript SDK."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-node-direct"
+    packagePath: "sdks/ts/node-addon"
+    artifactTargets:
+      preset: "node-direct-addon"
+      targets:
+        - "linux-arm64-gnu"
+        - "linux-x64-gnu"
+        - "macos-arm64"
+        - "windows-x64-msvc"
+
+owners:
+  defaultOwner: "@oliphaunt/node-direct"
+
+fileGroups:
+  code:
+    - "src/**/*"
+    - "native/**/*"
+    - "Cargo.toml"
+    - "build.rs"
+    - "tools/**/*"
+    - "package.json"
+    - "packages/**/package.json"
+    - "dependency-licenses.json"
+    - "dependency-license-blobs/**/*"
+    - "/tools/packaging/rust-dependency-license-contract.mts"
+
+tasks:
+  dependency-license-audit:
+    tags: ["quality", "static", "requires-rust"]
+    command: "bash tools/packaging/audit-rust-dependency-licenses.sh sdks/ts/node-addon/tools/dependency-license-contract.mts oliphaunt-node-direct"
+    inputs:
+      - "@group(code)"
+      - "/Cargo.lock"
+      - "/**/Cargo.toml"
+      - "/tools/packaging/audit-rust-dependency-licenses.sh"
+      - "/tools/packaging/release-directory-safety.mts"
+    options:
+      runFromWorkspaceRoot: true
+
+  format:
+    command: "cargo fmt"
+    options:
+      cache: false
+      runInCI: false
+  format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt --check"
+    inputs: ["src/**/*", "build.rs"]
+  typecheck:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo check --locked"
+    inputs: ["@group(code)", "/Cargo.lock", "/Cargo.toml"]
+  lint:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy --all-targets --locked -- -D warnings"
+    inputs: ["@group(code)", "/Cargo.lock", "/Cargo.toml"]
+  test:
+    tags: ["quality", "unit"]
+    command: "bun test tools/check-release-assets.test.mts"
+    inputs:
+      - "@group(code)"
+      - "/tools/packaging/testdata/tar-fixture.mts"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+  build:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["build", "requires-rust"]
+    command: "bash tools/build-native.sh"
+    inputs: ["@group(code)", "/Cargo.lock", "/Cargo.toml"]
+    outputs: ["/target/oliphaunt-node-direct/native/oliphaunt_node.node"]
+    options:
+      cache: false
+  test-built:
+    tags: ["quality", "integration", "requires-rust"]
+    command: "bash tools/test-node-addon-cleanup-lifecycle.sh target/oliphaunt-node-direct/native/oliphaunt_node.node"
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "build"]
+    inputs: ["@group(code)", "/runtimes/liboliphaunt-native/include/oliphaunt.h"]
+    options:
+      cache: false
+
+  build-release-assets:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-node-direct"]
+    command: "bash sdks/ts/node-addon/tools/package-node-direct-runtime.sh"
+    inputs:
+      - "@group(code)"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/tools/dev/node-info.mts"
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/tools/release/artifact-target-matrix.mts"
+      - "/sdks/ts/node-addon/tools/check-release-assets.mts"
+      - "/tools/packaging/check-linux-consumer-baseline.sh"
+      - "/tools/packaging/linux-abi-baseline.test.sh"
+      - "/tools/release/platform-compatibility-policy.mts"
+      - "/tools/release/platform-compatibility-policy.test.mts"
+      - "/tools/packaging/platform-binary-contract.mts"
+      - "/tools/packaging/strip-native-binaries.sh"
+      - "/tools/packaging/platform-binary-contract.test.mts"
+      - "/sdks/ts/node-addon/tools/package-node-direct-runtime.sh"
+      - "/tools/packaging/release-asset-validation.mts"
+      - "/extensions/contracts/extension-target-profiles.mts"
+      - "/tools/release/release-artifact-targets.mts"
+      - "/tools/release/query.mts"
+      - "/release-please-config.json"
+    outputs:
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+
+  finalize-release-assets:
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-node-direct-release-assets"]
+    command: "tools/dev/bun.sh sdks/ts/node-addon/tools/check-release-assets.mts --aggregate"
+    deps:
+      - "oliphaunt-node-direct:build-release-assets"
+    inputs:
+      - "@group(legal-files)"
+      - "/bunfig.toml"
+      - "@group(code)"
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - "/tools/release/artifact-target-matrix.mts"
+      - "/tools/packaging/check-linux-consumer-baseline.sh"
+      - "/tools/packaging/finalize-helper-assets.mts"
+      - "/sdks/ts/node-addon/tools/check-release-assets.mts"
+      - "/tools/packaging/linux-abi-baseline.test.sh"
+      - "/tools/release/platform-compatibility-policy.mts"
+      - "/tools/release/platform-compatibility-policy.test.mts"
+      - "/tools/packaging/platform-binary-contract.mts"
+      - "/tools/packaging/strip-native-binaries.sh"
+      - "/tools/packaging/platform-binary-contract.test.mts"
+      - "/tools/packaging/release-asset-validation.mts"
+      - "/extensions/contracts/extension-target-profiles.mts"
+      - "/tools/release/release-artifact-targets.mts"
+      - "@group(release-archive-contract)"
+      - "/tools/release/query.mts"
+      - "/tools/packaging/write-checksum-manifest.mts"
+      - "/release-please-config.json"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  qualify:
+    tags: ["ci-node-direct"]
+    deps: ["build-release-assets", "test-built"]

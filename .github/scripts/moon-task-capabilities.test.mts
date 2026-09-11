@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { describe, test } from 'node:test';
+import { describe, test } from 'bun:test';
 
 import {
   groupTargets,
@@ -18,15 +18,15 @@ describe('Moon task capabilities', () => {
       taskLabel('oliphaunt-wasix-napi:format-check'),
       'Oliphaunt WASIX Node-API / Format Check',
     );
-    assert.equal(taskLabel('extension-artifacts-native:unit'), 'Native Extension Artifacts / Unit');
+    assert.equal(taskLabel('extension-artifacts-native:test'), 'Native Extension Artifacts / Test');
   });
 
   test('propagates capabilities through dependencies and makes maintainer tools imply Rust', () => {
     const taskMap = tasks(
       {
         target: 'repo:leaf',
-        tags: ['requires-maintainer-tools', 'requires-wasmer-llvm'],
-        toolchains: ['pnpm'],
+        tags: ['requires-maintainer-tools', 'requires-wasmer-llvm', 'requires-swift'],
+        toolchains: ['bun'],
       },
       { target: 'repo:middle', tags: ['requires-android-sdk'], deps: [{ target: 'repo:leaf' }] },
       { target: 'repo:root', tags: [], deps: ['repo:middle'] },
@@ -37,6 +37,7 @@ describe('Moon task capabilities', () => {
       requires_maintainer_tools: true,
       requires_android_sdk: true,
       requires_apple: false,
+      requires_swift: true,
       requires_wasmer_llvm: true,
       requires_workspace: true,
     });
@@ -60,7 +61,7 @@ describe('Moon task capabilities', () => {
       { target: 'rust:second', tags: ['requires-rust'] },
       { target: 'android:check', tags: ['requires-android-sdk'] },
       { target: 'apple:check', tags: ['requires-apple'] },
-      { target: 'workspace:check', tags: [], toolchains: ['pnpm'] },
+      { target: 'workspace:check', tags: [], toolchains: ['bun'] },
       { target: 'aot:check', tags: ['requires-wasmer-llvm'] },
     );
     const targets = [...taskMap.values()].map((task) => matrixTarget(task, 'deep', taskMap));

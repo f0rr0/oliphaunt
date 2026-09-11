@@ -13,7 +13,7 @@ if [ -z "$root" ]; then
 fi
 
 action_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-manifest="${OLIPHAUNT_NODE_RUNTIME_MANIFEST:-$root/src/sources/toolchains/node-runtime.toml}"
+manifest="${OLIPHAUNT_NODE_RUNTIME_MANIFEST:-$root/tools/dev/node-runtime.toml}"
 proto_file="${OLIPHAUNT_NODE_RUNTIME_PROTO_FILE:-$root/.prototools}"
 extractor="$action_dir/../../../tools/dev/extract-pinned-binary.sh"
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"

@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "must run inside the Oliphaunt git checkout" >&2
+  exit 1
+}
+cd "$root"
+
+fail() {
+  echo "package-liboliphaunt-mobile-assets.sh: $*" >&2
+  exit 1
+}
+
+require() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+source "$root/runtimes/liboliphaunt-native/tools/liboliphaunt-extension-guard.sh"
+
+require cargo
+require bun
+require rsync
+
+target_id="${1:-}"
+case "$target_id" in
+  android-arm64-v8a|android-x86_64|ios-xcframework)
+    ;;
+  *)
+    fail "usage: runtimes/liboliphaunt-native/tools/package-liboliphaunt-mobile-assets.sh [android-arm64-v8a|android-x86_64|ios-xcframework]"
+    ;;
+esac
+
+version="$(tools/dev/bun.sh tools/release/product-version.mts version liboliphaunt-native)"
+out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
+stage_root="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_STAGE_ROOT:-$root/target/liboliphaunt/release-stage-$target_id}"
+headers_dir="$root/runtimes/liboliphaunt-native/include"
+
+rm -rf "$stage_root"
+mkdir -p "$out_dir" "$stage_root"
+
+archive_staged_dir() {
+  local staged="$1"
+  local profile="$2"
+  local name
+  name="$(basename "$staged")"
+  tools/packaging/archive-directory.mts "$staged" "$out_dir/${name}.tar.gz"
+  tools/dev/bun.sh tools/packaging/release-notices.mts check-archive \
+    "$out_dir/${name}.tar.gz" \
+    --profile "$profile"
+}
+
+archive_swiftpm_xcframework() {
+  local xcframework="$1"
+  local output="$2"
+  [ -d "$xcframework" ] || fail "missing SwiftPM XCFramework input at $xcframework"
+  rm -f "$output"
+  tools/dev/bun.sh tools/packaging/archive-directory.mts --keep-parent "$xcframework" "$output"
+}
+
+stage_runtime_resource_closure() {
+  local runtime="$1"
+  local seed_target="$2"
+  local stage="$3"
+
+  env \
+    OLIPHAUNT_INSTALL_DIR="$runtime" \
+    cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- \
+      --output "$stage" \
+      --force >/tmp/liboliphaunt-release-mobile-runtime-resources.log
+  local closure="$stage/oliphaunt"
+  [ -d "$closure/runtime/files" ] || fail "runtime-resource package did not create $closure/runtime/files"
+  tools/dev/bun.sh runtimes/liboliphaunt-native/tools/finalize-native-runtime-carrier.mts \
+    --root "$closure" \
+    --target "$seed_target"
+}
+
+package_android() {
+  local abi="$1"
+  local work_root="$2"
+  local lib="$work_root/out/liboliphaunt.so"
+  local static_registry="$work_root/out/liboliphaunt_mobile_static_registry.c"
+  local stage="$stage_root/liboliphaunt-${version}-android-${abi}"
+  local host_work_root="${OLIPHAUNT_LINUX_X64_ROOT:-$root/target/liboliphaunt-pg18-linux-x64-gnu}"
+  local host_runtime="$host_work_root/install"
+  local runtime_stage="$stage_root/liboliphaunt-${version}-runtime-resources-android-datum64"
+
+  [ -f "$lib" ] || fail "missing Android $abi liboliphaunt shared library at $lib"
+  [ ! -f "$static_registry" ] ||
+    fail "base Android $abi release asset must not include mobile static extension registry $static_registry"
+  [ -d "$host_runtime" ] || fail "missing native host runtime at $host_runtime"
+
+  tools/dev/bun.sh runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts write \
+    --build-root "$work_root/postgresql-18.4" \
+    --target "$target_id" \
+    --output "$work_root/out/native-mobile-abi.properties"
+
+  mkdir -p "$stage/include" "$stage/jni/$abi"
+  rsync -a --delete "$headers_dir/" "$stage/include/"
+  cp "$lib" "$stage/jni/$abi/"
+  echo "==> Stripping staged liboliphaunt Android $abi release binaries"
+  bash tools/packaging/strip-native-binaries.sh --target "$target_id" "$stage"
+  echo "==> Verifying staged liboliphaunt Android $abi binary compatibility"
+  tools/dev/bun.sh tools/packaging/platform-binary-contract.mts --target "$target_id" --root "$stage"
+  tools/dev/bun.sh tools/packaging/release-notices.mts stage \
+    "$stage" \
+    --profile native-runtime
+  archive_staged_dir "$stage" native-runtime
+  if [ "$target_id" = "android-x86_64" ]; then
+    stage_runtime_resource_closure \
+      "$host_runtime" \
+      android-datum64 \
+      "$runtime_stage"
+    tools/dev/bun.sh tools/packaging/release-notices.mts stage \
+      "$runtime_stage" \
+      --profile native-runtime-resources
+    archive_staged_dir "$runtime_stage" native-runtime-resources
+  fi
+}
+
+package_ios() {
+  local ios_work_root="${OLIPHAUNT_IOS_XCFRAMEWORK_ROOT:-$root/target/liboliphaunt-ios-xcframework}"
+  local macos_work_root="${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18}"
+  local ios_xcframework="$ios_work_root/out/liboliphaunt.xcframework"
+  local packaged_ios_work_root="$stage_root/packaged-ios-xcframework"
+  local packaged_ios_xcframework="$packaged_ios_work_root/out/liboliphaunt.xcframework"
+  local macos_runtime="$macos_work_root/install"
+  local catalog_file="$stage_root/extension-catalog.tsv"
+  local macos_runtime_stage="$stage_root/liboliphaunt-${version}-runtime-resources-macos-arm64"
+  local ios_runtime_stage="$stage_root/liboliphaunt-${version}-runtime-resources-ios-datum64"
+  local stage_ios="$stage_root/liboliphaunt-${version}-ios-xcframework"
+  local static_registry="$ios_work_root/out/liboliphaunt_mobile_static_registry.c"
+  local ios_device_receipt="${OLIPHAUNT_IOS_DEVICE_ROOT:-$root/target/liboliphaunt-ios-device}/out/native-mobile-abi.properties"
+  local ios_simulator_receipt="${OLIPHAUNT_IOS_SIMULATOR_ROOT:-$root/target/liboliphaunt-ios-simulator}/out/native-mobile-abi.properties"
+  local macos_producer_receipt="$ios_work_root/out/native-mobile-abi-producer.properties"
+
+  [ -d "$ios_xcframework" ] || fail "missing iOS XCFramework at $ios_xcframework"
+  [ -d "$macos_runtime" ] || fail "missing macOS PostgreSQL runtime at $macos_runtime"
+  [ ! -f "$static_registry" ] ||
+    fail "base iOS release asset must not include mobile static extension registry $static_registry"
+
+  bun extensions/tools/native-extension-files.mts >"$catalog_file"
+  oliphaunt_assert_base_runtime_has_no_optional_extensions "$catalog_file" "$macos_runtime" ||
+    fail "base iOS release runtime must not ship optional extension assets; selected extensions belong in exact extension artifacts"
+
+  tools/dev/bun.sh runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts write \
+    --build-root "${OLIPHAUNT_IOS_DEVICE_ROOT:-$root/target/liboliphaunt-ios-device}/postgresql-18.4" \
+    --target ios-arm64 \
+    --output "$ios_device_receipt"
+  tools/dev/bun.sh runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts write \
+    --build-root "${OLIPHAUNT_IOS_SIMULATOR_ROOT:-$root/target/liboliphaunt-ios-simulator}/postgresql-18.4" \
+    --target ios-arm64-simulator \
+    --output "$ios_simulator_receipt"
+  tools/dev/bun.sh runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts write \
+    --build-root "$macos_work_root/postgresql-18.4" \
+    --target macos-arm64 \
+    --output "$macos_producer_receipt"
+  tools/dev/bun.sh runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts compare \
+    --domain ios-datum64 \
+    --receipt "$ios_device_receipt" \
+    --receipt "$ios_simulator_receipt" \
+    --receipt "$macos_producer_receipt"
+
+  stage_runtime_resource_closure "$macos_runtime" macos-arm64 "$macos_runtime_stage"
+  stage_runtime_resource_closure "$macos_runtime" "$icu_source" ios-datum64 "$ios_runtime_stage"
+  local ios_proof="$ios_runtime_stage/oliphaunt/provenance/native-mobile-abi"
+  mkdir -p "$ios_proof"
+  cp "$ios_device_receipt" "$ios_proof/ios-arm64.properties"
+  cp "$ios_simulator_receipt" "$ios_proof/ios-arm64-simulator.properties"
+  cp "$macos_producer_receipt" "$ios_proof/macos-arm64.properties"
+  OLIPHAUNT_MACOS_RUNTIME_RESOURCES_ROOT="$macos_runtime_stage/oliphaunt" \
+    OLIPHAUNT_IOS_RUNTIME_RESOURCES_ROOT="$ios_runtime_stage/oliphaunt" \
+    OLIPHAUNT_IOS_XCFRAMEWORK_ROOT="$packaged_ios_work_root" \
+    runtimes/liboliphaunt-native/bin/build-ios-xcframework.sh >/tmp/liboliphaunt-release-ios-xcframework-resources.log
+  mkdir -p "$stage_ios"
+  rsync -a --delete "$packaged_ios_xcframework" "$stage_ios/"
+  echo "==> Stripping staged liboliphaunt iOS release binaries"
+  bash tools/packaging/strip-native-binaries.sh --target "$target_id" "$stage_ios"
+  echo "==> Verifying staged liboliphaunt iOS binary compatibility"
+  tools/dev/bun.sh tools/packaging/platform-binary-contract.mts --target "$target_id" --root "$stage_ios"
+
+  tools/dev/bun.sh tools/packaging/release-notices.mts stage \
+    "$stage_ios" \
+    --profile native-runtime
+  tools/dev/bun.sh tools/packaging/release-notices.mts stage \
+    "$stage_ios/liboliphaunt.xcframework" \
+    --profile native-runtime
+
+  archive_staged_dir "$stage_ios" native-runtime
+  archive_swiftpm_xcframework \
+    "$stage_ios/liboliphaunt.xcframework" \
+    "$out_dir/liboliphaunt-${version}-apple-spm-xcframework.zip"
+  tools/dev/bun.sh tools/packaging/release-notices.mts check-archive \
+    "$out_dir/liboliphaunt-${version}-apple-spm-xcframework.zip" \
+    --prefix liboliphaunt.xcframework \
+    --profile native-runtime
+  tools/dev/bun.sh tools/packaging/release-notices.mts stage \
+    "$ios_runtime_stage" \
+    --profile native-runtime-resources
+  archive_staged_dir "$ios_runtime_stage" native-runtime-resources
+}
+
+case "$target_id" in
+  android-arm64-v8a)
+    package_android arm64-v8a "${OLIPHAUNT_ANDROID_ARM64_ROOT:-$root/target/liboliphaunt-pg18-android-arm64}"
+    ;;
+  android-x86_64)
+    package_android x86_64 "${OLIPHAUNT_ANDROID_X86_64_ROOT:-$root/target/liboliphaunt-pg18-android-x86_64}"
+    ;;
+  ios-xcframework)
+    package_ios
+    ;;
+esac
+
+echo "liboliphauntMobileReleaseAssetDir=$out_dir"

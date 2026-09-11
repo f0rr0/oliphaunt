@@ -73,6 +73,21 @@ function uniqueStrings(value, context) {
 }
 
 export const FULL_PAYLOAD_QUALIFICATION_MODE = 'full-payload';
+export const PRODUCT_QUALIFICATION_MODE = 'selected-products';
+
+export function qualificationRequestKey(sha, products) {
+  assert(/^[0-9a-f]{40}$/.test(sha ?? ''), 'qualification request requires an exact SHA');
+  assert(
+    Array.isArray(products) &&
+      products.length > 0 &&
+      products.every((product) => typeof product === 'string' && product.length > 0) &&
+      new Set(products).size === products.length,
+    'qualification request requires unique non-empty products',
+  );
+  return `${sha}-${createHash('sha256')
+    .update(JSON.stringify([...products].sort()))
+    .digest('hex')}`;
+}
 
 function qualificationBinding(plan) {
   const fields = ['qualification_mode', 'qualification_base_sha', 'qualification_head_sha'];
@@ -83,9 +98,22 @@ function qualificationBinding(plan) {
   const baseSha = plan.qualification_base_sha;
   const headSha = plan.qualification_head_sha;
   assert(
-    mode === FULL_PAYLOAD_QUALIFICATION_MODE,
+    [FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE].includes(mode),
     `affected CI plan qualification mode is invalid: ${mode}`,
   );
+  if (mode === PRODUCT_QUALIFICATION_MODE) {
+    assert(
+      baseSha === null && /^[0-9a-f]{40}$/.test(headSha ?? ''),
+      'selected-products plan requires exact candidate SHA without an affected base',
+    );
+    const products = sortedUniqueStrings(plan.qualification_products, 'qualification products');
+    const tasks = sortedUniqueStrings(plan.tasks, 'qualification tasks');
+    assert(
+      products.length > 0 && tasks.length > 0,
+      'product qualification requires products and tasks',
+    );
+    return { mode, baseSha, headSha, products, tasks };
+  }
   assert(
     baseSha === null && headSha === null,
     'full-payload CI plan must not carry an affected range',
@@ -191,7 +219,7 @@ export function wasixEvidenceBinding(
     runAttempt,
     sha,
     tree,
-    catalogPath = 'src/extensions/generated/extensions.catalog.json',
+    catalogPath = 'extensions/generated/extensions.catalog.json',
   },
 ) {
   const expectedRunId = Number.parseInt(String(runId), 10);
@@ -277,6 +305,60 @@ export function assertCandidateBindingShape(candidate) {
     candidate?.schemaVersion === 2,
     `release candidate schemaVersion must be 2, got ${candidate?.schemaVersion}`,
   );
+  if (candidate.producers !== undefined) {
+    assert(Array.isArray(candidate.producers), 'candidate producers must be a list');
+    const targets = new Set();
+    for (const receipt of candidate.producers) {
+      assert(
+        typeof receipt.target === 'string' && !targets.has(receipt.target),
+        'duplicate or invalid producer',
+      );
+      targets.add(receipt.target);
+      assert(
+        receipt.producer?.sha === candidate.sha &&
+          receipt.producer?.runId === candidate.runId &&
+          receipt.producer?.runAttempt === candidate.runAttempt,
+        'producer receipt is not from the qualification run and attempt',
+      );
+      assert(
+        Number.isSafeInteger(receipt.artifact?.id) &&
+          receipt.artifact.id > 0 &&
+          Number.isSafeInteger(receipt.artifact.size) &&
+          receipt.artifact.size > 0 &&
+          /^sha256:[0-9a-f]{64}$/.test(receipt.artifact.digest),
+        'producer artifact identity is invalid',
+      );
+      assert(
+        receipt.toolchain?.moon &&
+          receipt.toolchain?.bun &&
+          receipt.toolchain?.typescript &&
+          receipt.toolchain.target === 'portable-typescript',
+        'producer toolchain identity is incomplete',
+      );
+      assert(typeof receipt.eligible === 'boolean', 'producer eligibility is missing');
+      if (!receipt.eligible) {
+        assert(
+          typeof receipt.reason === 'string' && receipt.reason.length > 0,
+          'ineligible producer requires a reason',
+        );
+        continue;
+      }
+      assert(
+        typeof receipt.cacheHit === 'boolean' && Array.isArray(receipt.hashes),
+        'producer execution evidence is missing',
+      );
+      const hashes = new Map(receipt.hashes.map((entry) => [entry.target, entry.hash]));
+      assert(
+        hashes.size === receipt.hashes.length && hashes.get(receipt.target) === receipt.taskHash,
+        'producer hash chain is inconsistent',
+      );
+      for (const entry of receipt.hashes) {
+        assert(/^[0-9a-f]{64}$/.test(entry.hash), 'producer hash is invalid');
+        for (const [dependency, hash] of Object.entries(entry.dependencies))
+          assert(hashes.get(dependency) === hash, 'producer dependency hash is incomplete');
+      }
+    }
+  }
   assert(
     candidate.affectedPlan !== null && typeof candidate.affectedPlan === 'object',
     'release candidate affectedPlan is missing',
@@ -311,17 +393,35 @@ export function assertCandidateBindingShape(candidate) {
     );
     assert(
       JSON.stringify(Object.keys(qualification).sort()) ===
-        JSON.stringify(['baseSha', 'headSha', 'mode']),
+        JSON.stringify(
+          qualification.mode === PRODUCT_QUALIFICATION_MODE
+            ? ['baseSha', 'headSha', 'mode', 'products', 'tasks']
+            : ['baseSha', 'headSha', 'mode'],
+        ),
       'release candidate affectedPlan qualification fields are invalid',
     );
     assert(
-      qualification.mode === FULL_PAYLOAD_QUALIFICATION_MODE,
+      [FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE].includes(qualification.mode),
       'release candidate qualification mode is invalid',
     );
-    assert(
-      qualification.baseSha === null && qualification.headSha === null,
-      'full-payload release candidate must not carry an affected range',
-    );
+    if (qualification.mode === PRODUCT_QUALIFICATION_MODE) {
+      assert(
+        qualification.baseSha === null && qualification.headSha === candidate.sha,
+        'selected-products qualification must bind the candidate SHA',
+      );
+      assert(
+        sortedUniqueStrings(qualification.products, 'qualification products').length > 0,
+        'qualification products must not be empty',
+      );
+      assert(
+        sortedUniqueStrings(qualification.tasks, 'qualification tasks').length > 0,
+        'qualification tasks must not be empty',
+      );
+    } else
+      assert(
+        qualification.baseSha === null && qualification.headSha === null,
+        'full-payload release candidate must not carry an affected range',
+      );
   }
   const requirements = candidate.evidenceRequirements;
   assert(
@@ -369,4 +469,21 @@ export function assertBindingMatches(actual, expected, context) {
     JSON.stringify(actual) === JSON.stringify(expected),
     `${context} binding does not match the recomputed same-run content`,
   );
+}
+
+export function assertQualificationProductCoverage(candidate, products) {
+  assert(
+    Array.isArray(products) &&
+      products.length > 0 &&
+      products.every((product) => typeof product === 'string' && product.length > 0) &&
+      new Set(products).size === products.length,
+    'publication products must be a non-empty unique string list',
+  );
+  if (candidateQualificationMode(candidate) === FULL_PAYLOAD_QUALIFICATION_MODE) return;
+  const qualified = new Set(candidate.affectedPlan.qualification.products);
+  for (const product of products)
+    assert(
+      qualified.has(product),
+      `release candidate is missing qualification for product ${product}`,
+    );
 }

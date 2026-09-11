@@ -11,7 +11,7 @@ if [ -z "$root" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
     fail "must run inside the Oliphaunt checkout"
 fi
-manifest="${OLIPHAUNT_NPM_PUBLISHER_MANIFEST:-$root/src/sources/toolchains/npm-publisher.toml}"
+manifest="${OLIPHAUNT_NPM_PUBLISHER_MANIFEST:-$root/tools/release/npm-publisher.toml}"
 extractor="${OLIPHAUNT_NPM_PUBLISHER_ARCHIVE_EXTRACTOR:-$root/.github/actions/setup-moon/toolchain-archive.mts}"
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_NPM_PUBLISHER_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-npm-publisher}"

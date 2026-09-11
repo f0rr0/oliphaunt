@@ -1,0 +1,62 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "oliphaunt-query"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["cargo-package", "shared", "rust", "sdk", "release-product"]
+project:
+  title: "Rust query"
+  description: "PostgreSQL query encoding, decoding and shared types."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-query"
+    packagePath: "sdks/rust-query"
+fileGroups:
+  sources: ["src/**/*", "Cargo.toml"]
+tasks:
+  format:
+    command: "cargo fmt"
+    options:
+      cache: false
+      runInCI: false
+
+  format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt --check"
+    inputs: ["@group(sources)"]
+  lint:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy --all-targets --locked -- -D warnings"
+    inputs: ["@group(sources)", "/Cargo.lock", "/Cargo.toml"]
+  build:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["build", "requires-rust"]
+    command: "cargo build --locked"
+    outputs: ["/target/debug/liboliphaunt_query.rlib"]
+    inputs: ["@group(sources)", "/Cargo.lock", "/Cargo.toml"]
+  test:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "unit", "requires-rust"]
+    command: "cargo test --locked"
+    inputs: ["@group(sources)", "/Cargo.lock", "/Cargo.toml"]
+
+  package:
+    tags: ["release", "artifact-package", "ci-rust-sdk-package"]
+    script: |
+      set -eu
+      version="$(bun ../../tools/release/product-version.mts version oliphaunt-query)"
+      rm -f "../../target/package/oliphaunt-query-$version.crate"
+      cargo package --locked --allow-dirty --no-verify
+      rm -rf ../../target/sdk-artifacts/oliphaunt-query
+      mkdir -p ../../target/sdk-artifacts/oliphaunt-query
+      cp "../../target/package/oliphaunt-query-$version.crate" ../../target/sdk-artifacts/oliphaunt-query/
+      bun ../../tools/packaging/staging.mts ../../target/sdk-artifacts/oliphaunt-query
+    inputs: ["**/*", "/Cargo.lock", "/Cargo.toml", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
+    outputs: ["/target/sdk-artifacts/oliphaunt-query/**/*"]

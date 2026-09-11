@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
-import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -19,10 +18,9 @@ import {
   reconcileTrustedPublishersToFile,
   reserveJsonFile,
   selectTrustedPublisherIdentities,
+  writeJson,
   writeJsonFile,
 } from './trusted-publisher-config.mts';
-
-const MODULE_URL = new URL('trusted-publisher-config.mts', import.meta.url).href;
 
 function carrier(ecosystem, name, product = 'one') {
   return {
@@ -67,6 +65,66 @@ function exactCrates(name) {
     workflow_filename: EXPECTED_TRUSTED_PUBLISHER.workflowFilename,
     environment: EXPECTED_TRUSTED_PUBLISHER.environment,
   };
+}
+
+const [fixtureMode, fixtureRoot, scenario] = process.argv.slice(2);
+if (fixtureMode === 'pipe') {
+  await writeJson({ payload: 'x'.repeat(90000), tail: 'complete' });
+  process.exit(0);
+}
+if (fixtureMode === 'assert-pipe') {
+  const output = await readFile(fixtureRoot);
+  assert(output.length > 80 * 1024);
+  assert.equal(output.at(-1), 0x0a);
+  assert.deepEqual(JSON.parse(output.toString('utf8')), {
+    payload: 'x'.repeat(90000),
+    tail: 'complete',
+  });
+  process.exit(0);
+}
+if (fixtureMode === 'prepare') {
+  const plan = buildTrustedPublisherPlan(lock([carrier('npm', '@oliphaunt/example')]));
+  const selection = selectTrustedPublisherIdentities(plan, 'npm', 1);
+  await writeFile(
+    path.join(fixtureRoot, 'context.json'),
+    JSON.stringify({
+      plan,
+      selection,
+      apply: true,
+      output: path.join(fixtureRoot, scenario + '.json'),
+    }),
+  );
+  await writeFile(path.join(fixtureRoot, 'exact.json'), JSON.stringify([exactNpm()]));
+  await writeFile(
+    path.join(fixtureRoot, 'conflicting.json'),
+    JSON.stringify([{ ...exactNpm(), repository: 'wrong/repo' }]),
+  );
+  if (scenario === 'rerun')
+    await writeFile(path.join(fixtureRoot, scenario + '.state'), 'published');
+  process.exit(0);
+}
+if (fixtureMode === 'assert') {
+  const output = path.join(fixtureRoot, scenario + '.json');
+  const log = await readFile(path.join(fixtureRoot, scenario + '.events'), 'utf8');
+  assert.equal(
+    log.split('\n').filter((line) => line.startsWith('github ')).length,
+    ['ambiguous', 'missing'].includes(scenario) ? 1 : 0,
+  );
+  assert(
+    !(await readdir(fixtureRoot)).some(
+      (name) =>
+        name.endsWith('.oliphaunt-reservation') || name.startsWith('.trusted-publisher-report.'),
+    ),
+  );
+  if (scenario === 'missing')
+    await assert.rejects(stat(output), (cause) => cause.code === 'ENOENT');
+  else {
+    const report = JSON.parse(await readFile(output, 'utf8'));
+    assert.equal((await stat(output)).mode & 0o777, 0o600);
+    assert.deepEqual(report.created, scenario === 'ambiguous' ? ['npm:@oliphaunt/example'] : []);
+    assert.equal(report.conflicts.length, scenario === 'conflict' ? 1 : 0);
+  }
+  process.exit(0);
 }
 
 test('derives exact npm/Cargo identities and bounded npm batches from the lock', () => {
@@ -148,39 +206,6 @@ test('classifies crates.io configuration strictly and treats extras as conflicts
     ).state,
     'conflict',
   );
-});
-
-test("awaited JSON output remains complete through a pipe beyond Bun's 64 KiB console boundary", async () => {
-  const script = [
-    `const { writeJson } = await import(${JSON.stringify(MODULE_URL)});`,
-    'await writeJson({ payload: "x".repeat(90_000), tail: "complete" });',
-  ].join('\n');
-  const result = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--eval', script], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
-    child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
-    child.once('error', reject);
-    child.once('close', (status, signal) =>
-      resolve({
-        signal,
-        status,
-        stderr: Buffer.concat(stderr).toString('utf8'),
-        stdout: Buffer.concat(stdout),
-      }),
-    );
-  });
-  assert.equal(result.signal, null);
-  assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.stdout.length > 80 * 1024);
-  assert.equal(result.stdout.at(-1), 0x0a);
-  assert.deepEqual(JSON.parse(result.stdout.toString('utf8')), {
-    payload: 'x'.repeat(90_000),
-    tail: 'complete',
-  });
 });
 
 test('file reports are atomically created as mode 0600, complete, and never overwritten', async () => {
@@ -450,102 +475,4 @@ test('any conflicting configuration blocks every mutation in the selected batch'
   assert.equal(report.mode, 'apply-blocked');
   assert.equal(report.conflicts.length, 1);
   assert.equal(creates, 0);
-});
-
-test('npm Shell owns authentication, blocks conflicts, and reconciles one mutation without replay', {
-  skip: process.platform !== 'linux',
-}, async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'oliphaunt-npm-trust-shell-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const npm = path.join(root, 'npm');
-  const sleep = path.join(root, 'sleep');
-  await writeFile(sleep, '#!/usr/bin/env bash\n[ "$1" = 2 ]\n');
-  await writeFile(
-    npm,
-    String.raw`#!/usr/bin/env bash
-set -eu
-if [ "$1" = --version ]; then echo 11.15.0; exit; fi
-[ "$1" = trust ]
-printf '%s %s %s\n' "$2" "$3" "$NPM_CONFIG_FETCH_RETRIES" >> "$TEST_EVENTS"
-if [ "$2" = list ]; then
-  [ "$#" = 6 ] && [ "$4" = --json ] && [ "$5" = --registry ] && [ "$6" = https://registry.npmjs.org/ ]
-  [ "$NPM_CONFIG_FETCH_RETRIES" = 3 ]
-  if [ -t 1 ]; then [ -t 0 ]; echo 'discard this authentication display'; exit; fi
-  if [ "$TEST_SCENARIO" = conflict ]; then echo "$TEST_CONFLICT"; exit; fi
-  if [ -f "$TEST_STATE" ]; then echo "$TEST_EXACT"; else echo '[]'; fi
-elif [ "$2" = github ]; then
-  [ -t 0 ] && [ -t 1 ]
-  [ "$NPM_CONFIG_FETCH_RETRIES" = 0 ]
-  [ "$*" = 'trust github @oliphaunt/example --file release.yml --repo f0rr0/oliphaunt --env release-publish --allow-publish --yes --json --registry https://registry.npmjs.org/' ]
-  if [ "$TEST_SCENARIO" != missing ]; then touch "$TEST_STATE"; fi
-  exit 7
-else exit 91; fi
-`,
-  );
-  await chmod(npm, 0o755);
-  await chmod(sleep, 0o755);
-  const plan = buildTrustedPublisherPlan(lock([carrier('npm', '@oliphaunt/example')]));
-  const selection = selectTrustedPublisherIdentities(plan, 'npm', 1);
-  const shell = path.resolve(import.meta.dirname, 'trusted-publisher-config.sh');
-  for (const scenario of ['ambiguous', 'rerun', 'conflict', 'missing']) {
-    const output = path.join(root, scenario + '.json');
-    const events = path.join(root, scenario + '.events');
-    const state = path.join(root, scenario + '.state');
-    if (scenario === 'rerun') await writeFile(state, 'published');
-    await writeFile(
-      path.join(root, 'context.json'),
-      JSON.stringify({ plan, selection, apply: true, output }),
-    );
-    const env = {
-      ...process.env,
-      PATH: root + path.delimiter + process.env.PATH,
-      TEST_EVENTS: events,
-      TEST_STATE: state,
-      TEST_SCENARIO: scenario,
-      TEST_EXACT: JSON.stringify([exactNpm()]),
-      TEST_CONFLICT: JSON.stringify([{ ...exactNpm(), repository: 'wrong/repo' }]),
-      TEST_SHELL: shell,
-      TEST_ROOT: root,
-    };
-    const command = 'bash "$TEST_SHELL" --npm "$TEST_ROOT"';
-    const run = () =>
-      spawnSync('script', ['--return', '--quiet', '--command', command, '/dev/null'], {
-        encoding: 'utf8',
-        env,
-        timeout: 15000,
-      });
-    const result = run();
-    assert.equal(
-      result.status,
-      scenario === 'conflict' ? 1 : scenario === 'missing' ? 2 : 0,
-      result.stdout + result.stderr,
-    );
-    const log = await readFile(events, 'utf8');
-    assert.equal(
-      log.split('\n').filter((line) => line.startsWith('github ')).length,
-      ['ambiguous', 'missing'].includes(scenario) ? 1 : 0,
-    );
-    assert.ok(
-      !(await readdir(root)).some(
-        (name) =>
-          name.endsWith('.oliphaunt-reservation') || name.startsWith('.trusted-publisher-report.'),
-      ),
-    );
-    if (scenario === 'missing') {
-      await assert.rejects(stat(output), (cause) => cause.code === 'ENOENT');
-      continue;
-    }
-    const report = JSON.parse(await readFile(output, 'utf8'));
-    assert.equal((await stat(output)).mode & 0o777, 0o600);
-    assert.deepEqual(report.created, scenario === 'ambiguous' ? ['npm:@oliphaunt/example'] : []);
-    assert.equal(report.conflicts.length, scenario === 'conflict' ? 1 : 0);
-    const before = await readFile(output, 'utf8');
-    assert.notEqual(run().status, 0);
-    assert.equal(await readFile(output, 'utf8'), before);
-    assert.equal(
-      await readFile(events, 'utf8'),
-      log,
-      'output collision must precede every npm command',
-    );
-  }
 });

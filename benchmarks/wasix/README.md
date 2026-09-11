@@ -16,8 +16,8 @@ and `sdk-worker` ownership values, so Promise shape is not mistaken for
 main-thread safety.
 
 ```sh
-pnpm --dir src/bindings/wasix-ts package:build
-bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --benchmark
+bun run --cwd sdks/ts-wasix/sdk package:build
+bash sdks/ts-wasix/sdk/tools/integration/smoke-browser.sh --benchmark
 # or: moon run perf-tools:wasix-browser-measure
 ```
 
@@ -43,8 +43,8 @@ the built SDK tree, every harness source, and the installed PGlite closure.
 For a harness smoke check without a full sample set, run:
 
 ```sh
-pnpm --dir src/bindings/wasix-ts package:build
-bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --benchmark --quick
+bun run --cwd sdks/ts-wasix/sdk package:build
+bash sdks/ts-wasix/sdk/tools/integration/smoke-browser.sh --benchmark --quick
 ```
 
 Quick mode still requires every workload assertion and durability/WAL parity,
@@ -54,7 +54,7 @@ The explicit `/worker` OPFS path has a separate advisory comparison against
 PGlite's OPFS access-handle-pool Worker path:
 
 ```sh
-bash src/bindings/wasix-ts/tools/integration/smoke-browser.sh --diagnostic-opfs --quick
+bash sdks/ts-wasix/sdk/tools/integration/smoke-browser.sh --diagnostic-opfs --quick
 ```
 
 It uses durable PostgreSQL settings on both Worker engines and prints the raw
@@ -107,7 +107,7 @@ and extension inputs, then build and smoke the optimized carrier for the
 current host before running it:
 
 ```sh
-bash src/runtimes/wasix-napi/tools/build-native.sh
+bash sdks/ts-wasix/node-addon/tools/build-native.sh
 moon run perf-tools:wasix-node-measure
 # Or, after building the TypeScript SDK:
 bash benchmarks/perf/wasix-node/benchmark.sh --run

@@ -2,15 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import {
-  PostgresToolError,
-  pgDump,
-  psql,
-} from '../../src/runtimes/liboliphaunt/native/tools-npm/index.mts';
+import { PostgresToolError, pgDump, psql } from '../../postgres-tools/native/npm/index.mts';
 
 const fixture = JSON.parse(
   await readFile(
-    new URL('../../src/shared/fixtures/postgres/logical-tools.json', import.meta.url),
+    new URL('../../test-fixtures/postgres/logical-tools.json', import.meta.url),
     'utf8',
   ),
 );

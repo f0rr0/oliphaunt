@@ -6,6 +6,6 @@ the persistent storage lives under the app data directory, and the exact extensi
 set is declared in `src-tauri/Cargo.toml`.
 
 ```sh
-pnpm --dir examples/tauri install
-pnpm --dir examples/tauri tauri dev
+bun install --cwd examples/tauri
+bun run --cwd examples/tauri tauri dev
 ```

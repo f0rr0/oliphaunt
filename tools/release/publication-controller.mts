@@ -10,12 +10,8 @@ const CONTROL_FILES = new Set([
   '.github/scripts/validate-release-workflow-inputs.sh',
   '.github/scripts/release-transport-ref.mts',
   '.github/scripts/download-bootstrap-ledger.mts',
-  '.github/scripts/download-bootstrap-ledger.test.mts',
   '.github/scripts/download-completed-bootstrap.mts',
   '.github/scripts/download-completed-bootstrap.sh',
-  '.github/scripts/normalize-release-please-pr.mts',
-  '.github/scripts/normalize-release-please-pr.sh',
-  '.github/scripts/release-pr-identity.mts',
   'tools/release/publication-controller.mts',
   'tools/release/publication-controller.sh',
   'tools/release/release-bot.json',
@@ -65,7 +61,7 @@ function validateChanges(source, controller, mode, diff) {
   const rejected = changed.filter(
     (file) =>
       !CONTROL_FILES.has(file) &&
-      !/^tools\/(?:release|policy)\/[^/]+[.]test[.]m(?:j|t)s$/u.test(file) &&
+      !/^tools\/release\/[^/]+[.]test[.](?:mts|sh)$/u.test(file) &&
       !/^docs\/maintainers\/release(?:-setup)?[.]md$/u.test(file),
   );
   if (rejected.length)

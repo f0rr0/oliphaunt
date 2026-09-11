@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -16,21 +16,18 @@ import { gunzipSync } from 'node:zlib';
 import {
   extensionCarrierLegalContract,
   stageExtensionUpstreamLicenses,
-} from '../../src/extensions/tools/extension-upstream-licenses.mts';
-import { extensionDependencyRequirement } from '../../src/runtimes/liboliphaunt/wasix/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
-import { createDeterministicTar } from '../../src/shared/artifact-packaging/cargo-source-package.mts';
-import { releaseJavaScript } from '../../src/shared/artifact-packaging/emit-javascript.mts';
+} from '../../extensions/tools/extension-upstream-licenses.mts';
+import { extensionDependencyRequirement } from '../../runtimes/liboliphaunt-wasix/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
+import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
+import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
-} from '../../src/shared/artifact-packaging/ios-carrier-manifest.mts';
-import { canonicalGzipSync } from '../../src/shared/artifact-packaging/portable-archive.mts';
-import { stageReleaseNotices } from '../../src/shared/artifact-packaging/release-notices.mts';
-import {
-  loadPublicationCatalog,
-  resolveActualCarrier,
-} from '../../src/shared/product-metadata/publication-catalog.mts';
+} from '../../sdks/swift/tools/ios-carrier-manifest.mts';
+import { canonicalGzipSync } from '../packaging/portable-archive.mts';
+import { stageReleaseNotices } from '../packaging/release-notices.mts';
+import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   allArtifactTargets,
   currentProductVersionSync,
@@ -39,11 +36,12 @@ import {
   extensionMetadata,
   extensionSourceIdentity,
   extensionSqlNames,
-} from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import { productCompatibilityVersion } from '../../src/shared/product-metadata/release-graph.mts';
+} from './release-artifact-targets.mts';
+import { productCompatibilityVersion } from './release-graph.mts';
 import {
   assertLockedProductArtifacts,
   assertLockedArtifactSet,
+  assertPublicationLockSource,
   buildPublicationCandidate,
   discoverProductArtifacts,
   discoverPublicationArtifacts,
@@ -56,6 +54,38 @@ import {
 } from './publication-lock.mts';
 
 const temporaryDirectories = [];
+
+if (process.argv[2] === 'prepare-handoff') {
+  const root = process.argv[3];
+  const catalog = loadPublicationCatalog('publication-lock.test', { products: ['oliphaunt-js'] });
+  const npm = npmFixture(root, '@oliphaunt/ts', catalog.products[0].version);
+  const lock = freezePublicationCandidate(
+    buildPublicationCandidate({ products: ['oliphaunt-js'], artifactRoots: [root] }),
+  );
+  writeFileSync(path.join(root, 'publication-lock.json'), `${JSON.stringify(lock, null, 2)}\n`);
+  rmSync(npm);
+  process.exit(0);
+}
+if (process.argv[2] === 'assert-source') {
+  const snapshot = JSON.parse(process.env.OLIPHAUNT_GIT_SOURCE_JSON);
+  const lock = { source: { commit: snapshot.commit, tree: snapshot.tree } };
+  assert.deepEqual(assertPublicationLockSource(lock, snapshot.ref), lock.source);
+  assert.deepEqual(assertPublicationLockSource(lock, snapshot.commit), lock.source);
+  assert.throws(
+    () =>
+      assertPublicationLockSource(
+        { source: { ...lock.source, tree: 'f'.repeat(40) } },
+        snapshot.ref,
+      ),
+    /does not match/,
+  );
+  if (snapshot.checkout === snapshot.commit) {
+    assert.deepEqual(assertPublicationLockSource(lock, 'HEAD'), lock.source);
+  } else {
+    assert.throws(() => assertPublicationLockSource(lock, 'HEAD'), /matching Git snapshot/);
+  }
+  process.exit(0);
+}
 
 test('frozen Cargo bytes reject a changed archive header with unchanged package identity', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-frozen-cargo-'));
@@ -148,7 +178,6 @@ function selectionNeutralSwiftSourceCarrier(version = '1.2.3') {
       'oliphaunt',
       '2',
     ],
-    ['icu-data', `liboliphaunt-${version}-icu-data.tar.gz`, 'tar.gz', '.', '3'],
   ].map(([role, name, format, member, digestDigit], index) => ({
     bytes: index + 1,
     format,
@@ -168,12 +197,10 @@ function selectionNeutralSwiftSourceCarrier(version = '1.2.3') {
 }
 
 function tarGzip(output, cwd, member) {
-  const result = spawnSync('tar', ['--format=ustar', '-czf', output, '-C', cwd, member], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || `tar exited ${result.status}`);
-  }
+  writeFileSync(
+    output,
+    canonicalGzipSync(createDeterministicTar(path.join(cwd, member), member, {})),
+  );
 }
 
 function npmFixture(root, name, version, overrides = {}, bundledManifest = null) {
@@ -297,12 +324,12 @@ function extensionGithubReleaseFixture(
   const compatibility = releaseMetadata.compatibility;
   const generated = JSON.parse(
     readFileSync(
-      path.join(import.meta.dir, '../../src/extensions/generated/sdk/extensions.json'),
+      path.join(import.meta.dir, '../../extensions/generated/sdk/extensions.json'),
       'utf8',
     ),
   );
   const staticLines = readFileSync(
-    path.join(import.meta.dir, '../../src/extensions/generated/mobile/static-extensions.tsv'),
+    path.join(import.meta.dir, '../../extensions/generated/mobile/static-extensions.tsv'),
     'utf8',
   )
     .split(/\r?\n/u)
@@ -487,6 +514,7 @@ function extensionGithubReleaseFixture(
       });
       const output = path.join(directory, `${archiveRoot}.tar.gz`);
       const tarOptions = {
+        includeDirectories: false,
         fail(message) {
           throw new Error(`publication lock fixture: ${message}`);
         },
@@ -875,7 +903,7 @@ describe('publication artifact discovery and freezing', () => {
       '1.2.3',
       {},
       {
-        name: '@oliphaunt/js-core',
+        name: '@oliphaunt/ts-query',
         version: '0.0.0',
       },
     );
@@ -915,30 +943,6 @@ describe('publication artifact discovery and freezing', () => {
     expect(() => validatePublicationLock(tampered)).toThrow(
       /Digest mismatch|digest mismatch|packageEnvelopeDigest/u,
     );
-  });
-
-  test('structural lock verification remains valid after registry payload handoff cleanup', () => {
-    const root = temporaryDirectory();
-    const catalog = loadPublicationCatalog('publication-lock.test', { products: ['oliphaunt-js'] });
-    const version = catalog.products[0].version;
-    const npm = npmFixture(root, '@oliphaunt/ts', version);
-    const lock = freezePublicationCandidate(
-      buildPublicationCandidate({
-        products: ['oliphaunt-js'],
-        artifactRoots: [root],
-      }),
-    );
-    const lockFile = path.join(root, 'publication-lock.json');
-    writeFileSync(lockFile, `${JSON.stringify(lock, null, 2)}\n`);
-    rmSync(npm, { force: true });
-
-    const result = spawnSync(
-      process.execPath,
-      ['tools/release/publication-lock.mts', 'verify', '--lock', lockFile, '--head-ref', 'HEAD'],
-      { cwd: path.resolve(import.meta.dir, '../..'), encoding: 'utf8' },
-    );
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('publication lock verified');
   });
 
   test('projects broad artifact roots through the full catalog onto selected products', () => {
@@ -1322,7 +1326,7 @@ describe('publication artifact discovery and freezing', () => {
     const sdk = path.join(workspaceRoot, 'sdk-artifacts/oliphaunt-swift');
     const fixture = path.join(workspaceRoot, 'release/swiftpm-extension-consumer-fixture');
     mkdirSync(path.join(sdk, 'extension-generator'), { recursive: true });
-    mkdirSync(path.join(sdk, 'release-tree/src/sdks/swift/Carriers'), { recursive: true });
+    mkdirSync(path.join(sdk, 'release-tree/sdks/swift/Carriers'), { recursive: true });
     mkdirSync(path.join(fixture, 'Sources/OliphauntExtensionPgtap/Resources/extension-artifact'), {
       recursive: true,
     });
@@ -1339,13 +1343,13 @@ describe('publication artifact discovery and freezing', () => {
         path.join(sdk, 'extension-generator', name),
         name === 'extension-owner-catalog.json'
           ? readFileSync(
-              path.join(import.meta.dir, '../../src/extensions/generated/sdk/extensions.json'),
+              path.join(import.meta.dir, '../../extensions/generated/sdk/extensions.json'),
             )
           : name === 'extension-resource-inventory.mjs'
             ? releaseJavaScript(
                 path.join(
                   import.meta.dir,
-                  '../../src/sdks/swift/tools/extension-resource-inventory.mts',
+                  '../../sdks/swift/tools/extension-resource-inventory.mts',
                 ),
               )
             : `${name}\n`,
@@ -1353,7 +1357,7 @@ describe('publication artifact discovery and freezing', () => {
     }
     const sourceCarrier = path.join(
       sdk,
-      'release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+      'release-tree/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
     );
     const canonicalSourceCarrier = selectionNeutralSwiftSourceCarrier(
       productCompatibilityVersion(
@@ -1390,6 +1394,16 @@ describe('publication artifact discovery and freezing', () => {
     const extensionProduct = catalog.products.find(({ id }) => id === 'oliphaunt-extension-pgtap');
     expect(product).toBeDefined();
     expect(extensionProduct).toBeDefined();
+    const bindingsName = `oliphaunt-swift-${product.version}-bindings.xcframework.zip`;
+    const checksumName = `oliphaunt-swift-${product.version}-release-assets.sha256`;
+    const releaseAssets = path.join(sdk, 'release-assets');
+    mkdirSync(releaseAssets);
+    const bindingsBytes = Buffer.from('Swift bindings artifact fixture\n');
+    writeFileSync(path.join(releaseAssets, bindingsName), bindingsBytes);
+    writeFileSync(
+      path.join(releaseAssets, checksumName),
+      `${createHash('sha256').update(bindingsBytes).digest('hex')}  ./${bindingsName}\n`,
+    );
     const { manifestPath } = extensionGithubReleaseFixture(workspaceRoot, extensionProduct);
     const extensionRoot = path.dirname(manifestPath);
     const selectedRoots = [sdk, fixture, extensionRoot];
@@ -1404,6 +1418,8 @@ describe('publication artifact discovery and freezing', () => {
     const artifacts = discoverProductArtifacts(selectedRoots, catalog.products);
     const swiftArtifacts = artifacts.filter((artifact) => artifact.product === product.id);
     expect(swiftArtifacts.map(({ id }) => id).sort()).toEqual([
+      `github-release:${bindingsName}`,
+      `github-release:${checksumName}`,
       'release-input:Oliphaunt-source.zip',
       'release-input:Package.swift.release',
       'release-input:extension-owner-catalog.json',
@@ -1460,32 +1476,4 @@ describe('publication artifact discovery and freezing', () => {
       /frozen extension-resource-inventory\.mjs must exactly match/u,
     );
   });
-});
-
-test('real Git source snapshots bind the requested ref and tree without confusing historical source with HEAD', () => {
-  const directory = temporaryDirectory();
-  const probe = path.join(directory, 'source-probe.mts');
-  writeFileSync(
-    probe,
-    `
-    import assert from 'node:assert/strict';
-    import { assertPublicationLockSource } from ${JSON.stringify(path.join(import.meta.dir, 'publication-lock.mts'))};
-    const snapshot = JSON.parse(process.env.OLIPHAUNT_GIT_SOURCE_JSON);
-    const lock = {source:{commit:snapshot.commit,tree:snapshot.tree}};
-    assert.deepEqual(assertPublicationLockSource(lock,snapshot.ref),lock.source);
-    assert.deepEqual(assertPublicationLockSource(lock,snapshot.commit),lock.source);
-    assert.throws(() => assertPublicationLockSource({source:{...lock.source,tree:'f'.repeat(40)}},snapshot.ref),/does not match/);
-    if (snapshot.checkout === snapshot.commit) assert.deepEqual(assertPublicationLockSource(lock,'HEAD'),lock.source);
-    else assert.throws(() => assertPublicationLockSource(lock,'HEAD'),/matching Git snapshot/);
-  `,
-  );
-  for (const ref of ['HEAD', 'HEAD^']) {
-    const result = spawnSync(
-      'bash',
-      [path.join(import.meta.dir, 'with-source.sh'), ref, process.execPath, probe],
-      { encoding: 'utf8' },
-    );
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
-  }
 });

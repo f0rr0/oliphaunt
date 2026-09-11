@@ -1,17 +1,16 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
 
 import {
   GITHUB_CONTENT_WRITE_INTERVAL_MS,
   reserveGitHubContentWrite,
 } from './github-content-write-pacer.mts';
+import { reserveGitHubCoreRequest } from './github-core-request-journal.mts';
 import { requestGithubMutation } from './github-release-mutations.mts';
 
 const SHA = 'a'.repeat(40);
@@ -45,6 +44,76 @@ function fixture(t) {
   };
 }
 
+const [mode, lane] = process.argv.slice(2);
+if (mode === 'seed') {
+  await reserveGitHubContentWrite({
+    environment: process.env,
+    label: 'seed future slot',
+    timing: { intervalMs: 50, maxLockWaitMs: 2000 },
+    now: () => Date.now() + 500,
+    sleep: async () => {},
+  });
+  process.exit(0);
+}
+if (mode === 'worker') {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const label = `asset-${lane}-${attempt}`;
+    const reservation = await reserveGitHubContentWrite({
+      environment: process.env,
+      label,
+      timing: { intervalMs: 50, maxLockWaitMs: 2000 },
+    });
+    await reserveGitHubCoreRequest({ environment: process.env, label });
+    console.log(JSON.stringify({ label, ...reservation }));
+  }
+  process.exit(0);
+}
+if (mode === 'assert') {
+  const pacer = process.env.OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH;
+  const core = process.env.OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH;
+  const pacerState = JSON.parse(readFileSync(pacer, 'utf8'));
+  const coreState = JSON.parse(readFileSync(core, 'utf8'));
+  assert.equal(pacerState.sequence, 21);
+  const laneReservations = Array.from({ length: 5 }, (_, lane) =>
+    readFileSync(path.join(path.dirname(pacer), `${lane}.log`), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+  )
+    .flat()
+    .sort((a, b) => a.sequence - b.sequence);
+  assert.deepEqual(
+    laneReservations.map(({ sequence }) => sequence),
+    Array.from({ length: 20 }, (_, i) => i + 2),
+  );
+  assert.deepEqual(
+    new Set(laneReservations.map(({ label }) => label)),
+    new Set(
+      Array.from({ length: 5 }, (_, index) =>
+        Array.from({ length: 4 }, (__, attempt) => `asset-${index}-${attempt}`),
+      ).flat(),
+    ),
+  );
+  for (let index = 0; index < 5; index += 1) {
+    assert.deepEqual(
+      laneReservations
+        .map(({ label }) => label)
+        .filter((label) => label.startsWith(`asset-${index}-`)),
+      Array.from({ length: 4 }, (_, attempt) => `asset-${index}-${attempt}`),
+    );
+  }
+  for (let index = 1; index < laneReservations.length; index++) {
+    assert.ok(
+      laneReservations[index].reservedAtMs >= laneReservations[index - 1].reservedAtMs + 50,
+    );
+  }
+  assert.equal(pacerState.lastReservedAtMs, laneReservations.at(-1).reservedAtMs);
+  assert.equal(coreState.sequence, 20);
+  assert.equal(coreState.attempts.length, 20);
+
+  process.exit(0);
+}
+
 test('a new runner reserves immediately and persists each subsequent request slot', async (t) => {
   const f = fixture(t);
   const first = await reserveGitHubContentWrite({
@@ -68,13 +137,11 @@ test('a new runner reserves immediately and persists each subsequent request slo
   );
   assert.equal(state.sequence, 2);
   assert.equal(state.lastLabel, 'second');
-  assert.deepEqual(state.reservations, [
-    { label: 'first', reservedAtMs: 1_010_000, sequence: 1 },
-    { label: 'second', reservedAtMs: 1_020_000, sequence: 2 },
-  ]);
+  assert.equal(state.lastReservedAtMs, 1_020_000);
+  assert.equal(state.reservations, undefined);
 });
 
-test('a malformed or identity-replaced durable journal fails closed', async (t) => {
+test('malformed or identity-replaced reservation state fails closed', async (t) => {
   const f = fixture(t);
   await reserveGitHubContentWrite({
     environment: f.environment,
@@ -83,132 +150,24 @@ test('a malformed or identity-replaced durable journal fails closed', async (t) 
     sleep: f.sleep,
   });
   const file = f.environment.OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH;
-  const state = JSON.parse(readFileSync(file, 'utf8'));
-  state.reservations[0].reservedAtMs += 1;
-  writeFileSync(file, `${JSON.stringify(state)}\n`);
-  await assert.rejects(
-    async () =>
-      await reserveGitHubContentWrite({
+  const valid = JSON.parse(readFileSync(file, 'utf8'));
+  for (const change of [
+    { lastReservedAtMs: -1 },
+    { headSha: 'b'.repeat(40) },
+    { sequence: Number.MAX_SAFE_INTEGER },
+  ]) {
+    writeFileSync(file, JSON.stringify({ ...valid, ...change }));
+    const before = readFileSync(file, 'utf8');
+    await assert.rejects(() =>
+      reserveGitHubContentWrite({
         environment: f.environment,
         label: 'second',
         now: f.now,
         sleep: f.sleep,
       }),
-    /summary does not match.*journal/u,
-  );
-});
-
-test('five concurrent product lanes serialize repeated shared pacer and core-request reservations without loss', async (t) => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-github-journal-processes-'));
-  t.after(() => rmSync(root, { force: true, recursive: true }));
-  const pacer = path.join(root, 'pacer.json');
-  const core = path.join(root, 'core.json');
-  const worker = path.join(root, 'reserve-worker.mjs');
-  writeFileSync(
-    worker,
-    `
-import { reserveGitHubContentWrite } from ${JSON.stringify(pathToFileURL(path.resolve('tools/release/github-content-write-pacer.mts')).href)};
-import { reserveGitHubCoreRequest } from ${JSON.stringify(pathToFileURL(path.resolve('tools/release/github-core-request-journal.mts')).href)};
-for (let attempt = 0; attempt < 4; attempt += 1) {
-  const label = \`asset-\${process.argv[2]}-\${attempt}\`;
-  await reserveGitHubContentWrite({
-    environment: process.env,
-    label,
-    timing: { intervalMs: 50, maxLockWaitMs: 2_000 },
-  });
-  await reserveGitHubCoreRequest({ environment: process.env, label });
-}
-`,
-  );
-  const environment = {
-    ...process.env,
-    GITHUB_ACTIONS: 'false',
-    GITHUB_REPOSITORY: 'f0rr0/oliphaunt',
-    GITHUB_RUN_ATTEMPT: '1',
-    GITHUB_RUN_ID: '456',
-    GITHUB_SHA: SHA,
-    OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: pacer,
-    OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE: 'true',
-    OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: core,
-    OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL: 'true',
-  };
-  const seedReservedAtMs = Date.now() + 500;
-  writeFileSync(
-    pacer,
-    `${JSON.stringify({
-      schema: 'oliphaunt-github-content-write-pacer-v4',
-      headSha: SHA,
-      repository: 'f0rr0/oliphaunt',
-      runId: '456',
-      intervalMs: 50,
-      sequence: 1,
-      lastReservedAtMs: seedReservedAtMs,
-      lastLabel: 'seed future slot',
-      reservations: [
-        {
-          label: 'seed future slot',
-          reservedAtMs: seedReservedAtMs,
-          sequence: 1,
-        },
-      ],
-    })}\n`,
-  );
-  const run = (index) =>
-    new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [worker, String(index)], {
-        env: environment,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stderr = '';
-      child.stderr.on('data', (chunk) => {
-        stderr += String(chunk);
-      });
-      child.once('error', reject);
-      child.once('close', (code, signal) => {
-        if (code === 0 && signal === null) resolve();
-        else reject(new Error(`journal worker ${index} failed (${code}/${signal}): ${stderr}`));
-      });
-    });
-  await Promise.all(Array.from({ length: 5 }, (_, index) => run(index)));
-  const pacerState = JSON.parse(readFileSync(pacer, 'utf8'));
-  const coreState = JSON.parse(readFileSync(core, 'utf8'));
-  assert.equal(pacerState.sequence, 21);
-  assert.equal(pacerState.reservations.length, 21);
-  assert.deepEqual(
-    pacerState.reservations.map(({ sequence }) => sequence),
-    Array.from({ length: 21 }, (_, index) => index + 1),
-  );
-  const laneReservations = pacerState.reservations.slice(1);
-  assert.deepEqual(
-    new Set(laneReservations.map(({ label }) => label)),
-    new Set(
-      Array.from({ length: 5 }, (_, index) =>
-        Array.from({ length: 4 }, (__, attempt) => `asset-${index}-${attempt}`),
-      ).flat(),
-    ),
-  );
-  for (let index = 0; index < 5; index += 1) {
-    assert.deepEqual(
-      laneReservations
-        .map(({ label }) => label)
-        .filter((label) => label.startsWith(`asset-${index}-`)),
-      Array.from({ length: 4 }, (_, attempt) => `asset-${index}-${attempt}`),
     );
+    assert.equal(readFileSync(file, 'utf8'), before);
   }
-  for (const [index, reservation] of pacerState.reservations.entries()) {
-    if (index === 0) continue;
-    assert.ok(reservation.reservedAtMs >= pacerState.reservations[index - 1].reservedAtMs + 50);
-  }
-  assert.equal(coreState.sequence, 20);
-  assert.equal(coreState.attempts.length, 20);
-  assert.deepEqual(
-    new Set(coreState.attempts.map(({ label }) => label)),
-    new Set(
-      Array.from({ length: 5 }, (_, index) =>
-        Array.from({ length: 4 }, (__, attempt) => `asset-${index}-${attempt}`),
-      ).flat(),
-    ),
-  );
 });
 
 test('GitHub Actions cannot weaken production pacer timing', async (t) => {

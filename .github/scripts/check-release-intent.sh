@@ -74,46 +74,6 @@ if [[ "${subject}" =~ ${release_pr_pattern} ]]; then
   fi
 fi
 
-package_versions_from_ref() {
-  local ref="${1:?package_versions_from_ref requires a git ref}"
-  local files
-
-  files="$(
-    git ls-tree -r --name-only "${ref}" |
-      grep -E '(^Cargo.toml$|^src/.*/Cargo.toml$|^src/runtimes/liboliphaunt/wasix/tools/xtask/Cargo.toml$)' || true
-  )"
-
-  while IFS= read -r file; do
-    [[ -z "${file}" ]] && continue
-    git show "${ref}:${file}" | awk -v file="${file}" '
-    /^\[package\][[:space:]]*$/ {
-      in_package = 1
-      next
-    }
-    /^\[/ && in_package {
-      exit
-    }
-    in_package && $0 ~ /^[[:space:]]*name[[:space:]]*=/ {
-      name = $0
-      sub(/^[^=]*=[[:space:]]*"/, "", name)
-      sub(/".*$/, "", name)
-    }
-    in_package && $0 ~ /^[[:space:]]*version[[:space:]]*=/ {
-      line = $0
-      sub(/^[^=]*=[[:space:]]*"/, "", line)
-      sub(/".*$/, "", line)
-      if (name == "") {
-        name = file
-      }
-      print name "=" line
-      exit
-    }
-  '
-  done <<<"${files}" | sort
-}
-
-base_versions="$(package_versions_from_ref "${base_ref}")"
-head_versions="$(package_versions_from_ref "${head_ref}")"
 release_manifest_versions_from_ref() {
   local ref="${1:?release_manifest_versions_from_ref requires a git ref}"
   local manifest
@@ -127,17 +87,11 @@ release_manifest_versions_from_ref() {
 base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref}")"
 head_release_manifest_versions="$(release_manifest_versions_from_ref "${head_ref}")"
 
-if [[ -z "${base_versions}" || -z "${head_versions}" || -z "${head_release_manifest_versions}" ]]; then
-  echo "could not read package versions or release-please manifest versions" >&2
+if [[ -z "${head_release_manifest_versions}" ]]; then
+  echo "could not read release-please manifest versions" >&2
   exit 1
 fi
 
-changed_existing_versions="$(
-  join -t $'\t' \
-    <(printf '%s\n' "${base_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) \
-    <(printf '%s\n' "${head_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) |
-    awk -F '\t' '$2 != $3 { print $1 "=" $2 " -> " $3 }'
-)"
 if [[ -n "${base_release_manifest_versions}" ]]; then
   changed_existing_release_manifest_versions="$(
     join -t $'\t' \
@@ -149,13 +103,12 @@ else
   changed_existing_release_manifest_versions=""
 fi
 
-if [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" ]] &&
+if [[ -n "${changed_existing_release_manifest_versions}" ]] &&
   [[ "${is_release_pr}" != true ]]; then
   cat >&2 <<EOF
-This PR changes one or more workspace package versions or release-please
-manifest versions.
+This PR changes one or more Release Please manifest versions.
 
-Package and release-please manifest version bumps are release owned. Run the
+Release Please manifest version bumps are release owned. Run the
 Release workflow with prepare-release-pr and merge the generated release PR
 instead of changing versions in a feature/fix PR.
 
@@ -165,15 +118,6 @@ chore(release):.
 
 Received:
   ${subject}
-
-Base package versions:
-${base_versions}
-
-Head package versions:
-${head_versions}
-
-Changed existing package versions:
-${changed_existing_versions}
 
 Base release-please manifest versions:
 ${base_release_manifest_versions}
@@ -196,11 +140,11 @@ if [[ "${is_release_pr}" == true ]]; then
     exit 1
   fi
   release_products_json="$(
-    bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
+    bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
       --derive-products \
       --head-ref "${head_ref}"
   )"
-  bash tools/release/release-please-state.sh "$PWD" HEAD '' bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
+  bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
     --products-json "${release_products_json}" \
     --head-ref "${head_ref}"
 fi

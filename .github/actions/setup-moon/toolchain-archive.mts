@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util';
 import {
   portableMemberName,
   readPortableArchiveEntries,
-} from '../../../src/shared/artifact-packaging/portable-archive.mts';
+} from '../../../tools/packaging/portable-archive.mts';
 
 const MAX_BYTES = 750 * 1024 * 1024;
 function requireValue(condition, message) {
@@ -89,7 +89,7 @@ function extract(values, executables) {
     stat.isFile() && stat.size === number(values['expected-bytes'], 250 * 1024 * 1024),
     'archive byte-size mismatch',
   );
-  requireValue(values.format === 'tar.gz', 'pnpm archive must be tar.gz');
+  requireValue(values.format === 'tar.gz', 'package archive must be tar.gz');
   const count = number(values['entry-count'], 4096);
   const expanded = number(values['expanded-bytes'], MAX_BYTES);
   const prefix = safeName(values.prefix);

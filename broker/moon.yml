@@ -1,0 +1,262 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-broker"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["cargo-package", "javascript-quality", "runtime", "broker", "native", "postgres", "release-product"]
+dependsOn:
+  - id: "oliphaunt-query"
+    scope: "build"
+  - id: "liboliphaunt-native-bindings"
+    scope: "build"
+  - "liboliphaunt-native"
+
+project:
+  title: "Oliphaunt Broker"
+  description: "Process-isolated broker helper runtime used by Rust and TypeScript SDKs."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-broker"
+    packagePath: "broker"
+    artifactTargets:
+      preset: "broker-helper"
+      targets:
+        - "linux-arm64-gnu"
+        - "linux-x64-gnu"
+        - "macos-arm64"
+        - "windows-x64-msvc"
+
+owners:
+  defaultOwner: "@oliphaunt/broker"
+
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+    - "!tools/*.test.mts"
+    - "!tools/create-release-fixture.mts"
+
+tasks:
+  test-consumer:
+    tags: [consumer, integration, ci-native-consumers, platform-linux-x64-gnu]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-native:package-runtime-desktop-target", "build-release-assets"]
+    command: "bash broker/tools/test-consumer.sh"
+    inputs:
+      - "tests/postgres_client.rs"
+      - "tools/test-consumer.sh"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  test-integration:
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-native:build-runtime-desktop-target"]
+    script: |
+      set -eu
+      . runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+      oliphaunt_runtime_native_host_require basic
+      cargo test -p oliphaunt-broker --locked --test postgres_client -- --ignored
+    inputs:
+      - "@group(code)"
+      - "/Cargo.toml"
+      - "/Cargo.lock"
+      - "/runtimes/liboliphaunt-native/tools/runtime-preflight.sh"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+
+  format:
+    command: "cargo fmt -p oliphaunt-broker"
+    options:
+      cache: false
+      runInCI: false
+      runFromWorkspaceRoot: true
+
+  package:
+    deps: ["liboliphaunt-native-bindings:package", "oliphaunt-query:package"]
+    tags: ["release", "artifact-package", "ci-rust-sdk-package"]
+    script: |
+      set -eu
+      version="$(bun tools/release/product-version.mts version oliphaunt-broker)"
+      bindings_version="$(bun tools/release/product-version.mts version liboliphaunt-native-bindings)"
+      query_version="$(bun tools/release/product-version.mts version oliphaunt-query)"
+      rm -f "target/package/oliphaunt-broker-$version.crate" "target/package/liboliphaunt-native-bindings-$bindings_version.crate" "target/package/oliphaunt-query-$query_version.crate"
+      cargo package -p oliphaunt-query -p liboliphaunt-native-bindings -p oliphaunt-broker --locked --allow-dirty --no-verify
+      rm -rf target/sdk-artifacts/oliphaunt-broker
+      mkdir -p target/sdk-artifacts/oliphaunt-broker
+      cp "target/package/oliphaunt-broker-$version.crate" target/sdk-artifacts/oliphaunt-broker/
+      bun tools/packaging/staging.mts target/sdk-artifacts/oliphaunt-broker
+    inputs: ["@group(code)", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
+    outputs: ["/target/sdk-artifacts/oliphaunt-broker/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+
+  build:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["build", "requires-rust"]
+    command: "cargo build -p oliphaunt-broker --locked"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(code)"
+    outputs:
+      - "/target/debug/oliphaunt-broker*"
+      - "/target/debug/liboliphaunt_broker.rlib"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  test:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "unit", "requires-rust"]
+    command: "cargo test -p oliphaunt-broker --locked"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(code)"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p oliphaunt-broker --check"
+    inputs: ["/broker/**/*.rs","/broker/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  lint:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p oliphaunt-broker --all-targets --locked -- -D warnings"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs: ["/broker/**/*.rs","/broker/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+
+  dependency-license-audit:
+    tags: ["policy", "assertion", "quality", "static", "requires-rust"]
+    command: "bash broker/tools/audit-dependency-licenses.sh"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "/benchmarks/**/Cargo.toml"
+      - "/examples/**/Cargo.toml"
+      - "/**/Cargo.toml"
+      - "/tools/**/Cargo.toml"
+      - "/broker/dependency-licenses.json"
+      - "/broker/dependency-license-blobs/**/*"
+      - "/broker/tools/broker-dependency-license-contract.mts"
+      - "/tools/packaging/rust-dependency-license-contract.mts"
+      - "/broker/tools/audit-dependency-licenses.sh"
+      - "/tools/packaging/audit-rust-dependency-licenses.sh"
+      - "/tools/packaging/release-directory-safety.mts"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+
+  build-release-assets:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-broker-runtime"]
+    command: "bash broker/tools/package-broker-assets.sh"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/build-release-assets"
+      OLIPHAUNT_RELEASE_ASSET_PARTIAL: "1"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "@group(code)"
+      - "/broker/tools/build-linux-broker-baseline.sh"
+      - "/broker/tools/broker-dependency-license-contract.mts"
+      - "/tools/packaging/rust-dependency-license-contract.mts"
+      - "/tools/packaging/check-linux-consumer-baseline.sh"
+      - "/tools/packaging/linux-abi-baseline.test.sh"
+      - "/broker/tools/package-broker-assets.sh"
+      - "/broker/tools/check-release-assets.mts"
+      - "/tools/release/platform-compatibility-policy.mts"
+      - "/tools/release/platform-compatibility-policy.test.mts"
+      - "/tools/packaging/platform-binary-contract.mts"
+      - "/tools/packaging/strip-native-binaries.sh"
+      - "/tools/packaging/platform-binary-contract.test.mts"
+      - "/tools/packaging/release-asset-validation.mts"
+      - "/extensions/contracts/extension-target-profiles.mts"
+      - "/tools/release/release-artifact-targets.mts"
+      - "@group(release-archive-contract)"
+      - "/tools/release/artifact-target-matrix.mts"
+      - "/release-please-config.json"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+
+  finalize-release-assets:
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-broker-release-assets"]
+    command: "tools/dev/bun.sh broker/tools/check-release-assets.mts --aggregate"
+    deps:
+      - "oliphaunt-broker:build-release-assets"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "@group(code)"
+      - project: "liboliphaunt-native-bindings"
+        group: "code"
+      - "/tools/release/artifact-target-matrix.mts"
+      - "/broker/tools/broker-dependency-license-contract.mts"
+      - "/tools/packaging/rust-dependency-license-contract.mts"
+      - "/broker/tools/build-linux-broker-baseline.sh"
+      - "/broker/tools/check-release-assets.mts"
+      - "/tools/packaging/check-linux-consumer-baseline.sh"
+      - "/tools/packaging/finalize-helper-assets.mts"
+      - "/tools/packaging/linux-abi-baseline.test.sh"
+      - "/broker/tools/package-broker-assets.sh"
+      - "/tools/release/platform-compatibility-policy.mts"
+      - "/tools/release/platform-compatibility-policy.test.mts"
+      - "/tools/packaging/platform-binary-contract.mts"
+      - "/tools/packaging/strip-native-binaries.sh"
+      - "/tools/packaging/platform-binary-contract.test.mts"
+      - "/tools/packaging/release-asset-validation.mts"
+      - "/extensions/contracts/extension-target-profiles.mts"
+      - "/tools/release/release-artifact-targets.mts"
+      - "@group(release-archive-contract)"
+      - "/tools/packaging/write-checksum-manifest.mts"
+      - "/release-please-config.json"
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+
+  packaging-unit:
+    tags: ["quality", "unit", "requires-rust"]
+    command: "bash broker/tools/broker-dependency-license-contract.test.sh"
+    inputs:
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "@group(code)"
+      - "tools/broker-dependency-license-contract.test.mts"
+      - "tools/broker-dependency-license-contract.test.sh"
+      - "tools/create-release-fixture.mts"
+      - "/tools/packaging/testdata/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/packaging/*.{mts,sh}"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

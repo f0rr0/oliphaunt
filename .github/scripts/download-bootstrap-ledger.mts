@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
@@ -19,8 +19,8 @@ import {
   promoteDirectory,
   removeTemporaryPath,
   stageExistingDirectory,
-} from '../../src/shared/artifact-packaging/atomic-directory.mts';
-import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mts';
+} from '../../tools/packaging/atomic-directory.mts';
+import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import {
   boundedResponseBytes,
   GitHubReadError,

@@ -1074,18 +1074,18 @@ Users should need to learn only three Oliphaunt-specific facts:
 
 ## Repository evidence
 
-- [Native TypeScript database state machine](../../src/sdks/js/src/client.ts)
-- [Native TypeScript query codec](../../src/sdks/js/src/query.ts)
-- [Native broker runtime](../../src/sdks/js/src/runtime/broker.ts)
-- [Native Rust executor](../../src/sdks/rust/src/executor.rs)
-- [Native Rust database API](../../src/sdks/rust/src/database.rs)
-- [Native C protocol ABI](../../src/runtimes/liboliphaunt/native/include/oliphaunt.h)
-- [WASIX TypeScript database](../../src/bindings/wasix-ts/src/database.ts)
-- [WASIX TypeScript query codec](../../src/bindings/wasix-ts/src/query.ts)
-- [WASIX TypeScript architecture](../../src/bindings/wasix-ts/ARCHITECTURE.md)
-- [WASIX Rust one-client proxy](../../src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/proxy.rs)
-- [WASIX Rust wire framing](../../src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/wire.rs)
-- [Public capability matrix](../../src/docs/content/reference/capabilities.mdx)
+- [Native TypeScript database state machine](../../sdks/ts/sdk/src/client.ts)
+- [Native TypeScript query codec](../../sdks/ts/sdk/src/query.ts)
+- [Native broker runtime](../../sdks/ts/sdk/src/runtime/broker.ts)
+- [Native Rust executor](../../sdks/rust/sdk/src/executor.rs)
+- [Native Rust database API](../../sdks/rust/sdk/src/database.rs)
+- [Native C protocol ABI](../../runtimes/liboliphaunt-native/include/oliphaunt.h)
+- [WASIX TypeScript database](../../sdks/ts-wasix/sdk/src/database.ts)
+- [WASIX TypeScript query codec](../../sdks/ts-wasix/sdk/src/query.ts)
+- [WASIX TypeScript architecture](../../sdks/ts-wasix/sdk/ARCHITECTURE.md)
+- [WASIX Rust one-client proxy](../../sdks/rust-wasix/src/oliphaunt/proxy.rs)
+- [WASIX Rust wire framing](../../sdks/rust-wasix/src/oliphaunt/wire.rs)
+- [Public capability matrix](../content/reference/capabilities.mdx)
 
 ## Primary upstream sources
 

@@ -1,0 +1,21 @@
+$schema: "https://moonrepo.dev/schemas/tasks.json"
+
+inheritedBy:
+  tags: ["cargo-package"]
+
+fileGroups:
+  cargo-sources:
+    - "src/**/*"
+    - "{Cargo.toml,build.rs}"
+
+tasks:
+  # Cargo owns compilation. This command-free node only carries source hashes
+  # through Moon's Cargo-derived project dependency graph, including transitives.
+  cargo-sources:
+    inputs: ["@group(cargo-sources)", "@group(cargo-workspace)"]
+    deps:
+      - target: "^:cargo-sources"
+        optional: true
+        cacheStrategy: hash
+    options:
+      internal: true

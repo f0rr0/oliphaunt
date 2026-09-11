@@ -1,0 +1,14 @@
+# PostgreSQL 18.4. Ordered repository-relative patch paths.
+# Retain concurrent atomics/spinlocks; do not select embedded patches 0035/0036.
+runtimes/liboliphaunt-wasix-postmaster/postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch
+runtimes/liboliphaunt-wasix-postmaster/postgres/patches/0003-wasix-libpq-static-encoding-shim.patch
+runtimes/liboliphaunt-wasix-postmaster/postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch
+runtimes/liboliphaunt-wasix-postmaster/postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch
+runtimes/liboliphaunt-wasix-postmaster/postgres/patches/0008-wasix-packed-atomic-latch-state.patch
+third-party/postgres/patches/wasix/0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch
+third-party/postgres/patches/wasix/0015-oliphaunt-wasix-add-top-xid-current-transaction-fast-path.patch
+third-party/postgres/patches/wasix/0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch
+third-party/postgres/patches/wasix/0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch
+third-party/postgres/patches/wasix/0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch
+third-party/postgres/patches/wasix/0026-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch
+third-party/postgres/patches/wasix/0037-oliphaunt-wasix-buffer-strong-random.patch

@@ -1,0 +1,82 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "oliphaunt-pgwire-server"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["cargo-package", "rust", "wasix", "release-product"]
+dependsOn: ["oliphaunt-wasix-rust", "oliphaunt-query"]
+project:
+  title: "PostgreSQL socket server"
+  description: "Sequential PostgreSQL socket server and CLI over the WASIX SDK."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-pgwire-server"
+    packagePath: "pgwire-server"
+fileGroups:
+  sources: ["src/**/*", "tests/**/*", "Cargo.toml"]
+tasks:
+  format:
+    command: "cargo fmt"
+    options:
+      cache: false
+      runInCI: false
+  format-check:
+    command: "cargo fmt --check"
+    tags: ["quality", "static", "format", "requires-rust"]
+    inputs: ["@group(sources)"]
+  lint:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    command: "cargo clippy --all-targets --locked -- -D warnings"
+    tags: ["quality", "static", "requires-rust"]
+    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+  build:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    command: "cargo build --locked"
+    tags: ["build", "requires-rust"]
+    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+    outputs: ["/target/debug/oliphaunt-pgwire-server*", "/target/debug/liboliphaunt_pgwire_server.rlib"]
+  test:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    command: "cargo test --locked"
+    tags: ["quality", "unit", "requires-rust"]
+    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+  test-integration:
+    command: "cargo test --locked -- --ignored --test-threads=1"
+    tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-runtime"]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-portable"]
+    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+    options:
+      cache: false
+  test-aot:
+    command: "bash pgwire-server/tools/test-aot.sh"
+    tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot"]
+    inputs: ["@group(sources)", "tools/test-aot.sh", "/Cargo.toml", "/Cargo.lock"]
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package:
+    command: "bash pgwire-server/tools/package.sh"
+    tags: ["release", "artifact-package", "ci-wasix-rust-package"]
+    inputs: ["**/*", "/Cargo.toml", "/Cargo.lock", "/tools/packaging/*.{mts,sh}"]
+    outputs: ["/target/sdk-artifacts/oliphaunt-pgwire-server/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+  test-consumer:
+    tags: ["release", "consumer", "ci-wasix-rust-package"]
+    deps: ["oliphaunt-pgwire-server:package", "oliphaunt-wasix-rust:package", "oliphaunt-query:package"]
+    script: |
+      set -eu
+      version="$(bun tools/release/product-version.mts version oliphaunt-pgwire-server)"
+      sdk_version="$(bun tools/release/product-version.mts version oliphaunt-wasix-rust)"
+      query_version="$(bun tools/release/product-version.mts version oliphaunt-query)"
+      bash tools/packaging/check-cargo-package-tests.sh --crate "target/sdk-artifacts/oliphaunt-pgwire-server/oliphaunt-pgwire-server-$version.crate" --dependency-crate "target/sdk-artifacts/oliphaunt-wasix-rust/oliphaunt-wasix-$sdk_version.crate" --dependency-crate "target/sdk-artifacts/oliphaunt-query/oliphaunt-query-$query_version.crate" --path-dependencies-from sdks/rust-wasix/Cargo.toml
+    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock", "/tools/packaging/*.{mts,sh}"]
+    options:
+      runFromWorkspaceRoot: true

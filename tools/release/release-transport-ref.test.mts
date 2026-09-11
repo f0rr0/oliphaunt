@@ -1,8 +1,4 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
 import {
   ensureReleaseTransportRef,
@@ -15,7 +11,6 @@ import {
   validateReleaseTransportRef,
   verifyReleaseTransportRef,
 } from '../../.github/scripts/release-transport-ref.mts';
-import { isolatedGitHubTestEnvironment } from '../test/isolated-github-test-environment.mts';
 
 const SHA = '84d90b9853530ab72e48a1aa6fb616aaed7a0dc6';
 const OTHER_SHA = '1111111111111111111111111111111111111111';
@@ -408,32 +403,4 @@ test('current-main proof checks the authenticated exact branch ref and fails clo
     /dispatched from main/u,
   );
   assert.equal(observed.length, before);
-});
-
-test('transport CLI returns success after an exact read and handles a rejected read', (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-transport-cli-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const preload = path.join(root, 'fetch.mts');
-  writeFileSync(
-    preload,
-    'globalThis.fetch = async () => Response.json(JSON.parse(process.env.TEST_REF));',
-  );
-  for (const [ref, status, message] of [
-    [exactRef(), 0, /verified refs\/tags/u],
-    [{}, 1, /does not point directly/u],
-  ]) {
-    const result = spawnSync(
-      'node',
-      ['--import', preload, '.github/scripts/release-transport-ref.mts', 'verify', SHA],
-      {
-        cwd: path.resolve(import.meta.dirname, '../..'),
-        encoding: 'utf8',
-        timeout: 10000,
-        env: isolatedGitHubTestEnvironment({ ...environment(), TEST_REF: JSON.stringify(ref) }),
-      },
-    );
-    assert.equal(result.status, status, result.stderr);
-    assert.match(result.stdout + result.stderr, message);
-    assert.doesNotMatch(result.stderr, /TypeError|Unhandled/u);
-  }
 });

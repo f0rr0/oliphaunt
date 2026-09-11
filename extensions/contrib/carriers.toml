@@ -1,0 +1,6 @@
+logical_product = "oliphaunt-extension-contrib-pg18"
+member_manifest = "extensions/contrib/postgres18.toml"
+source = "third-party/postgres/source.toml"
+contract = "extensions/contracts/contract.toml"
+native_owner = "liboliphaunt-native"
+wasix_owner = "liboliphaunt-wasix"

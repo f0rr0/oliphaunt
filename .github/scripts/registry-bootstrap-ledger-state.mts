@@ -2,8 +2,8 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { parseTagRefs } from '../../src/shared/product-metadata/git-tag-state.mts';
-export { parseTagRefs } from '../../src/shared/product-metadata/git-tag-state.mts';
+import { parseTagRefs } from '../../tools/release/git-tag-state.mts';
+export { parseTagRefs } from '../../tools/release/git-tag-state.mts';
 
 import { loadPublicationLock, lockedCarriers } from '../../tools/release/publication-lock.mts';
 import {

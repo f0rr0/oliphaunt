@@ -1,7 +1,8 @@
 # SDK Products
 
-SDK source lives under `src/` with the product it releases. This document is
-the cross-SDK policy and parity contract.
+SDK source lives under `sdks/`, with language manifests and local build/test
+entrypoints. This document describes the development checkout; newly introduced
+carriers and bindings are not assumed to be publicly released.
 
 These are product SDKs, not auxiliary bindings. Native Rust, Rust WASIX, Swift,
 Kotlin, React Native, native TypeScript, and WASIX TypeScript should expose the
@@ -20,40 +21,48 @@ same product concepts where the target platform can do so honestly:
   applications. Browser root is caller-owned; the native-host root uses a Rust actor,
   with explicit `/direct` and package-Worker placements.
 
-`src/shared/product-metadata/sdk-manifest.toml` supplies SDK descriptions for the
-documentation. Product dependencies and release identities live in each product's
+`tools/release/sdk-manifest.toml` records the SDK inventory. The documentation
+site does not build SDK API references. Product dependencies and release identities live in each product's
 Moon and package manifests. Product tests and package checks verify runtime
 delegation and consumer behavior.
 
-- `src/sdks/rust/`: canonical native Rust SDK for Tauri and Rust desktop apps.
-- `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: Rust SDK over the portable
+- `sdks/rust/sdk/`: canonical native Rust SDK for Tauri and Rust desktop apps.
+- `sdks/rust-wasix/`: Rust SDK over the portable
   and host-AOT `liboliphaunt-wasix` runtime products.
-- `src/bindings/wasix-ts/`: TypeScript SDK over the browser portable WASIX
+- `sdks/ts-wasix/sdk/`: TypeScript SDK over the browser portable WASIX
   carrier and the Node/Bun/Deno/Electron Rust Node-API carrier. Its native-host root
   uses a Rust owner actor, `/direct` opts into caller-realm execution, and
-  `/worker` owns a JavaScript Worker on every runtime. `tools-package/` owns the optional
-  TypeScript facade for `pg_dump` against root, direct, or Worker handles and
-  non-interactive `psql` against browser Worker or any native-host placement. Browser tool
-  modules are a separate `liboliphaunt-wasix` carrier; native tools are embedded
-  in the Node-API carrier.
-- `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
-  native-direct C ABI product boundary over `liboliphaunt`; it can materialize
-  packaged runtime/cluster-seed resources for iOS and macOS apps.
-- `src/sdks/kotlin/`: Android SDK with a suspend-first common implementation,
-  JVM contract tests, and the Android native-direct JNI engine. Maven
+  `/worker` owns a JavaScript Worker on every runtime. Optional `pg_dump` and
+  `psql` belong to `postgres-tools/wasix`, including its TypeScript facade in
+  `postgres-tools/wasix/ts`. Portable and AOT tool inputs are supplied explicitly
+  to the adapter; the database addon does not embed the frontend tool payloads.
+- `sdks/swift/`: Swift package with an actor-first `Oliphaunt` API, platform
+  resource composition, and generated UniFFI bindings to the shared Rust native
+  database implementation.
+- `sdks/kotlin/`: Android SDK with a suspend-first common implementation,
+  JVM contract tests, and generated bindings to that same Rust implementation. Maven
   publication is deliberately limited to the Android consumer surface.
-- `src/sdks/react-native/`: React Native New Architecture package. Its product contract
+- `sdks/react-native/`: React Native New Architecture package. Its product contract
   is a typed TypeScript/TurboModule layer over the Swift and Kotlin SDKs, with
   no independent database semantics.
-- `src/sdks/js/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
+- `sdks/ts/sdk/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
   Tauri apps expose narrow app-owned commands from the Rust SDK. Direct topology
   is the default across supported JavaScript
-  runtimes; Node.js and Bun use the package-owned prebuilt Node direct adapter,
-  while Deno uses nonblocking runtime FFI. TypeScript broker mode consumes the
-  published `oliphaunt-broker` runtime and the shared `PGOB` protocol
-  instead of inventing another broker runtime; app developers get verified
-  release assets by default instead of building Rust locally. The npm package
-  is the native-runtime distribution for Node, Bun, and Deno.
+  runtimes; Node.js and Bun use the prebuilt Rust napi-rs addon. Deno retains its
+  nonblocking FFI adapter until the addon passes Worker teardown with queued
+  stream delivery; ordinary SQL success alone does not establish that parity.
+  TypeScript broker mode consumes the published `oliphaunt-broker` executable
+  and PostgreSQL wire protocol for SQL and cancellation. A separate authenticated
+  management connection owns backup and shutdown. App developers consume
+  verified release assets without building Rust locally. Runtime, addon, and
+  optional database resources have separate packages.
+
+`sdks/rust/liboliphaunt-native` owns native runtime loading and direct execution.
+`sdks/rust/mobile-bindings` is the private UniFFI adapter consumed by Swift and
+Kotlin. It does not own a second PostgreSQL runtime. `broker/` is an independent
+process owner over the shared native implementation. `pgwire-server/` owns the
+WASIX socket library and CLI. Browser host implementation and its Wasmer patches
+live under `runtimes/wasix-browser-host`, outside the TypeScript SDK.
 
 The native Rust SDK is canonical for native mode and resource terminology;
 Swift, Kotlin, React Native, and native TypeScript mirror it unless a platform
@@ -72,15 +81,14 @@ runtime error. Silent drift between SDKs is a release blocker.
 Validation is package-native:
 
 ```sh
-moon run oliphaunt-rust:compile
-moon run oliphaunt-wasix-rust:compile
-moon run oliphaunt-wasix-ts:compile
-moon run oliphaunt-wasix-tools-ts:compile
-moon run oliphaunt-swift:compile
-moon run oliphaunt-kotlin:check
-moon run oliphaunt-react-native:compile
-moon run oliphaunt-js:compile
-moon run liboliphaunt-native:headers
+moon run oliphaunt-rust:build
+moon run oliphaunt-wasix-rust:build
+moon run oliphaunt-wasix-ts:typecheck
+moon run oliphaunt-wasix-tools-ts:typecheck
+moon run oliphaunt-swift:build
+moon run oliphaunt-kotlin:format-check oliphaunt-kotlin:lint oliphaunt-kotlin:build
+moon run oliphaunt-react-native:build
+moon run oliphaunt-js:build
 moon run extensions:lint
 ```
 
@@ -88,27 +96,35 @@ The Kotlin and React Native Android validation scripts opt into Gradle
 configuration cache by default. Set `OLIPHAUNT_GRADLE_CONFIGURATION_CACHE=0`
 when debugging Gradle task configuration itself.
 
-When a local `target/liboliphaunt-pg18` build exists, the Swift and Kotlin lanes
-automatically run their native-direct C ABI tests against that library and
-runtime tree.
+Source compilation and runtime integration are separate. Swift's
+`test-native` and Kotlin's native binding tests require a real compatible native
+library; the mobile packaging lanes additionally build the required Rust target
+libraries. The canonical C header is copied by its consuming package producers
+and compiled by those consumers, rather than checked by a separate header-copy
+layout task.
 
-Build app-bundle resources from the Rust/native track with:
+Initialization data belongs to the independently versioned `database-resources`
+product. It provides native and WASIX seeds, each with standard and ICU profiles,
+and one canonical ICU data family. Native seeds additionally bind their physical
+target; Android and iOS use their explicitly produced datum64 variants. For
+example, the owner commands are:
 
 ```sh
-cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
-  --output target/oliphaunt-resources \
-  --extension vector \
-  --force
+moon run database-resources:package-icu
+moon run database-resources:package-wasix
+moon run database-resources:package-android
 ```
 
 Extension selection is exact-name only. SDKs accept exact PostgreSQL extension
 names; `vector` means only the SQL extension `vector`, and names like `core`,
 `search`, or `geo` must not resolve to hidden extension sets.
 
-The generated `target/oliphaunt-resources/oliphaunt` directory is the resource
-root consumed by Swift bundles, Android assets, and React Native apps. Android
-Gradle builds also accept the parent directory through
-`-PoliphauntRuntimeResourcesDir=target/oliphaunt-resources`.
+Select seed and ICU carriers explicitly. Browser creation of new storage needs
+a seed; an existing database can reopen without one. Native desktop and native
+WASIX hosts retain their supported `initdb` fallback. Writable PGDATA is separate
+from immutable installed resources. Swift, Gradle, and the Expo plugin compose
+the selected mobile carriers during the application build; ordinary applications
+do not run the internal `oliphaunt-resources` maintainer CLI.
 
 For iOS and Android release artifacts, build runtime resources with
 `--require-mobile-static-registry` once the selected extension modules have

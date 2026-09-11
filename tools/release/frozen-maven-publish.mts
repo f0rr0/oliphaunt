@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { validateMavenCentralPublication } from '../../src/shared/artifact-packaging/maven-central-contract.mts';
+import { validateMavenCentralPublication } from '../packaging/maven-central-contract.mts';
 
 import { mavenCentralAuthorization } from './maven-central-auth.mts';
 import { lockedCarrierFiles, lockedCarriers } from './publication-lock.mts';

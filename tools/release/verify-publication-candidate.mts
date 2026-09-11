@@ -2,7 +2,7 @@
 
 import { appendFileSync } from 'node:fs';
 
-import { ROOT } from '../../src/shared/product-metadata/release-graph.mts';
+import { ROOT } from './release-graph.mts';
 import {
   deriveReleaseProducts,
   latestVerifiedReleaseCommit,

@@ -13,11 +13,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import {
-  compareText,
-  loadProducts,
-  ROOT,
-} from '../../src/shared/product-metadata/release-graph.mts';
+import { compareText, loadProducts, ROOT } from './release-graph.mts';
 import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
 import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
 import { validateRegistryReceiptEvidence } from './registry-integrity.mts';

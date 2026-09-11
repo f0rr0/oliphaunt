@@ -1,0 +1,229 @@
+---
+title: Build With React Native
+description: Install the React Native package, build a native app binary, configure exact extensions, use JSI transport, and own app lifecycle policy.
+---
+
+# Build With React Native
+
+Use the React Native SDK in Expo and New Architecture React Native apps. The JS
+package owns TypeScript DX, config plugin behavior, TurboModule/JSI transport,
+and installed-app integration. Runtime behavior is delegated to Swift on Apple
+platforms and Kotlin on Android.
+
+<Callout type="info" title="React Native needs a native app binary">
+Oliphaunt includes Swift and Kotlin runtime code. Use an Expo development build
+or a React Native app binary so the native runtime is present when JavaScript
+loads.
+</Callout>
+
+<ReactNativeApproachTable />
+
+<Steps>
+<Step>
+
+### Install
+
+Install the package for the app path you own, then build the native app binary.
+The runtime uses Swift and Kotlin code, so package installation alone is not the
+last step. The installed app must contain the native module and selected runtime
+resources before JavaScript calls `Oliphaunt.open()`.
+
+Expo apps:
+
+```sh
+npx expo install @oliphaunt/react-native@{{release:oliphaunt-react-native}}
+npx expo prebuild
+npx expo run:ios
+npx expo run:android
+```
+
+Expo apps use the config plugin so selected native runtime and extension
+artifacts are included in the app build.
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@oliphaunt/react-native",
+        {
+          "extensions": ["vector"]
+        }
+      ]
+    ]
+  }
+}
+```
+
+React Native apps without Expo still use the same package, but native projects
+own the equivalent Pod, Gradle, and resource configuration. Rebuild after
+changing native runtime or extension selection because those choices affect the
+installed app binary.
+
+</Step>
+<Step>
+
+### Open and query
+
+Open a database from TypeScript, run SQL, and close it when the app no longer
+needs the handle.
+
+```ts
+import Oliphaunt from '@oliphaunt/react-native';
+
+const db = await Oliphaunt.open({
+  storage: { kind: 'applicationData', name: 'main' },
+  extensions: ['vector'],
+});
+
+const rows = await db.query('SELECT 1::text AS value');
+const value = rows.rows[0]?.value;
+
+await db.close();
+```
+
+Keep the database object in app state or a service object and share references
+to that object. A second `Oliphaunt.open()` is rejected while the native direct
+session is opening, active, or closing; call it again only after `close()`
+completes.
+
+</Step>
+<Step>
+
+### Create app data
+
+Use the SQL helpers for application queries. This keeps most React Native code
+away from PostgreSQL protocol details:
+
+```ts
+await db.execute(`
+  CREATE TABLE IF NOT EXISTS notes (
+    id bigserial PRIMARY KEY,
+    title text NOT NULL,
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )
+`);
+
+await db.query(
+  'INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id',
+  ['First note', 'Stored by embedded PostgreSQL'],
+);
+
+const notes = await db.query(
+  'SELECT id, title FROM notes ORDER BY id DESC LIMIT 20',
+);
+const firstTitle = notes.rows[0]?.title;
+```
+
+For callback transactions, a callback failure is rethrown unchanged after
+automatic rollback succeeds. If rollback also fails, `AggregateError.errors`
+contains the callback failure followed by the rollback failure. If the callback
+throws a different value after an earlier independent database or protocol
+failure poisoned or expired transaction ownership, the aggregate instead
+contains the callback failure followed by that database failure and the database
+is close-only. This independent-failure case does not include an ordinary
+PostgreSQL statement error that remains safely rollbackable.
+
+Reach for the buffered raw protocol API only when building adapters that need
+PostgreSQL wire messages directly.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure storage, selected exact extensions, PostgreSQL startup GUCs, and
+startup identity through the JS API and config plugin. Build-time extension selection
+controls what ships in the app bundle; runtime storage controls where app data
+lives.
+
+Keep build-time and runtime settings separate. The config plugin controls native
+artifacts in the installed app. `Oliphaunt.open()` controls storage, startup
+identity, GUCs, and extension activation for that app run. Omit `storage` for an
+SDK-owned temporary directory. Use
+`{ kind: 'applicationData', name: 'main' }` for normal persistent mobile data,
+or `{ kind: 'directory', path }` when the app already owns a platform path.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+React Native uses native direct on mobile. Database work is delegated to Swift
+on Apple platforms and Kotlin on Android.
+
+</Step>
+<Step>
+
+### Use binary transport
+
+New Architecture builds use binary ArrayBuffer/JSI transport for buffered raw
+protocol bytes. Bulk payloads stay in binary buffers.
+
+Treat JSI transport as the bulk-byte boundary. Small configuration and lifecycle
+calls use the TurboModule API; buffered protocol payloads stay in binary
+buffers.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Use `cancel()` and `close()` explicitly from app lifecycle policy. `cancel()`
+remains available while a close cutoff drains earlier admitted work and stops
+when native teardown begins. Forgotten JavaScript handles schedule
+generation-bound best-effort cleanup, but explicit close remains deterministic.
+Direct mobile mode can logically reopen inside one resident app process.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Select exact SQL extension names in configuration. The native app packages
+include only selected extensions plus declared dependencies. `CREATE EXTENSION`
+succeeds when the selected runtime resources contain that extension for the
+target platform.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+Use the React Native backup and restore APIs instead of copying platform storage
+directories from JavaScript. The SDK delegates archive validation and destination
+materialization to Swift or Kotlin, so platform storage rules stay native.
+Restore accepts a new or existing-empty destination and rejects nonempty data
+without mutation.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="react-native" />
+
+## Troubleshooting
+
+Check the development build, Expo config plugin output, autolinking,
+TurboModule codegen, native module availability, selected extension artifacts,
+and platform SDK errors. For database runtime behavior, follow the Swift or
+Kotlin SDK page for the target platform.
+
+## Development resource packaging
+
+These resource-package changes are unreleased. The published installation
+versions above do not include this new package arrangement; use a coordinated
+checkout for this section.
+
+For Android, the Expo plugin selects one resource profile at build time:
+
+```json
+{ "plugins": [["@oliphaunt/react-native", { "seedProfile": "icu", "icu": true }]] }
+```
+
+For iOS, select exactly one development npm carrier:
+`@oliphaunt/seed-native-ios-datum64-standard` or
+`@oliphaunt/seed-native-ios-datum64-icu`. Its resource-only CocoaPod autolinks;
+keep `icu: true` for an ICU database. These are app packaging choices, not
+JavaScript database-open modes. Existing storage does not require a seed.
+Mobile device qualification of the new seed carriers remains pending.

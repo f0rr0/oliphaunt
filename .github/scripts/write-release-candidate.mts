@@ -8,6 +8,7 @@ import {
   assertCandidateBindingShape,
   candidateQualificationMode,
   FULL_PAYLOAD_QUALIFICATION_MODE,
+  PRODUCT_QUALIFICATION_MODE,
   wasixEvidenceBinding,
 } from './release-candidate-lib.mts';
 
@@ -48,7 +49,9 @@ try {
   fail(error.message);
 }
 const expectedQualificationMode = requiredEnv('CI_QUALIFICATION_MODE');
-if (expectedQualificationMode !== FULL_PAYLOAD_QUALIFICATION_MODE) {
+if (
+  ![FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE].includes(expectedQualificationMode)
+) {
   fail(`CI_QUALIFICATION_MODE is invalid: ${expectedQualificationMode}`);
 }
 if (candidateQualificationMode({ affectedPlan }) !== expectedQualificationMode) {
@@ -89,6 +92,7 @@ const candidate = {
   ref: requiredEnv('GITHUB_REF'),
   sha: checkedOutSha,
   tree,
+  producers: JSON.parse(process.env.PRODUCER_RECEIPTS_JSON || '[]'),
   affectedPlan,
   evidenceRequirements: {
     wasixReleaseRegression: wasixRequired,

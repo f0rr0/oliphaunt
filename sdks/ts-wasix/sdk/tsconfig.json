@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": false,
+    "lib": ["ES2023", "ESNext.Disposable", "DOM", "DOM.Iterable", "WebWorker"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "outDir": "lib",
+    "paths": {
+      "@oliphaunt/liboliphaunt-wasix": ["./src/runtime-carrier-shim.d.ts"]
+    },
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "bun"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["lib", "node_modules"]
+}

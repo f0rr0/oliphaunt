@@ -62,7 +62,7 @@ if [ "${1:-}" = --surface ]; then
         capture "$consumer/command-output" "$consumer" "$environment" npm install --ignore-scripts --no-audit --no-fund --omit=peer --registry=https://registry.npmjs.org/
       done ;;
     maven)
-      capture "$surface/gradle-output" "$surface/maven" "$environment" "$root/src/sdks/kotlin/gradlew" --no-daemon --console=plain --project-dir "$surface/maven" resolveOliphauntPublicConsumers ;;
+      capture "$surface/gradle-output" "$surface/maven" "$environment" "$root/sdks/kotlin/gradlew" --no-daemon --console=plain --project-dir "$surface/maven" resolveOliphauntPublicConsumers ;;
     github)
       git_args=(git -c credential.helper= -c http.extraHeader= --git-dir "$surface/github.git")
       capture "$surface/init.log" "$surface" "$environment" git -c credential.helper= -c http.extraHeader= init --bare "$surface/github.git"

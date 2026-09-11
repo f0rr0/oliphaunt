@@ -59,7 +59,7 @@ the boundary.
 
 Exact-extension support is target-specific too. An extension is publishable
 for a target only when its own target manifest and evidence declare that row.
-The public [release reference](src/docs/content/reference/releases.mdx)
+The public [release reference](docs/content/reference/releases.mdx)
 publishes the enforced OS/API/ABI floors and distinguishes built package
 coverage from installed-app execution evidence, including the Android arm64
 and physical-iOS boundaries.
@@ -112,7 +112,7 @@ proto upgrade 0.61.3
 proto install
 tools/dev/bootstrap-tools.sh
 moon query tasks --project oliphaunt-rust
-moon run oliphaunt-rust:compile oliphaunt-rust:unit oliphaunt-rust:package
+moon run oliphaunt-rust:build oliphaunt-rust:test oliphaunt-rust:package
 ```
 
 Choose the project you are changing; its tasks own the required checks and
@@ -125,7 +125,7 @@ For a product metadata change, also run the metadata gate:
 moon run release-tools:metadata
 ```
 
-Use `release-tools:unit`, `policy-tools:unit`, or `ci-workflows:check` when its
+Use `release-tools:test` or `ci-workflows:check` when its
 corresponding machinery changes. Reserve `release-tools:check` for an exact
 release candidate.
 
@@ -135,9 +135,9 @@ promote releases.
 
 ## Documentation
 
-- [Public SDK documentation](src/docs/content/sdk/index.mdx)
-- [Runtime support](src/docs/content/reference/capabilities.mdx)
-- [Exact extension model](src/docs/content/reference/extensions.mdx)
+- [Public SDK documentation](docs/content/sdk/index.mdx)
+- [Runtime support](docs/content/reference/capabilities.mdx)
+- [Exact extension model](docs/content/reference/extensions.mdx)
 - [Source architecture](docs/architecture/final-product-source-architecture.md)
 - [Maintainer documentation index](docs/maintainers/README.md)
 - [Release process](docs/maintainers/release.md)

@@ -67,28 +67,28 @@ jobs:
           OLIPHAUNT_CI_TARGET: ${{ matrix.target }}
         run: .github/scripts/run-planned-moon-job.sh liboliphaunt-native-desktop
 
-      - name: Package portable ICU data for exact consumers
-        if: ${{ matrix.target == 'macos-arm64' }}
-        env:
-          NATIVE_BUILD_ROOT: ${{ matrix.build-root }}
-        run: |
-          src/runtimes/liboliphaunt/native/tools/package-liboliphaunt-icu-data.sh \
-            "$NATIVE_BUILD_ROOT/icu/share/icu" \
-            target/liboliphaunt/portable-icu-assets
-
       - name: Upload liboliphaunt release assets
+        if: ${{ contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'liboliphaunt-native:package-runtime-desktop-target') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: liboliphaunt-native-release-assets-${{ matrix.target }}
           path: target/liboliphaunt/desktop-release-assets/${{ matrix.target }}
           if-no-files-found: error
 
-      - name: Upload portable ICU data for exact consumers
-        if: ${{ matrix.target == 'macos-arm64' }}
+      - name: Upload PostgreSQL tools release assets
+        if: ${{ contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'postgres-tools-native:package-assets') || contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'postgres-tools-native:test-assets') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: liboliphaunt-native-icu-data
-          path: target/liboliphaunt/portable-icu-assets
+          name: postgres-tools-native-release-assets-${{ matrix.target }}
+          path: target/postgres-tools/native/release-assets
+          if-no-files-found: error
+
+      - name: Upload independent native cluster seeds
+        if: ${{ contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'database-resources:build-native-standard') || contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'database-resources:build-native-icu') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: database-resources-native-seeds-${{ matrix.target }}
+          path: target/database-resources/release-assets/*-seed-native-${{ matrix.target }}-*
           if-no-files-found: error
 
       - name: Show native compiler cache stats
@@ -109,4 +109,3 @@ jobs:
             ${{ matrix.build-root }}/*.log
             target/liboliphaunt/**/*.log
           if-no-files-found: ignore
-

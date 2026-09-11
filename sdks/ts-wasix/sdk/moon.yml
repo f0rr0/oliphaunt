@@ -1,0 +1,200 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: oliphaunt-wasix-ts
+language: typescript
+layer: library
+stack: frontend
+tags:
+  - javascript-quality
+  - binding
+  - wasix
+  - wasm
+  - typescript
+  - browser
+  - node
+  - bun
+  - deno
+  - sdk
+  - release-product
+dependsOn:
+  - id: wasix-browser-host
+    scope: build
+  - id: oliphaunt-query-ts
+    scope: build
+  - id: cluster-seed-contract
+    scope: development
+  - id: shared-test-fixtures
+    scope: development
+  - liboliphaunt-wasix
+  - oliphaunt-wasix-napi
+project:
+  title: Oliphaunt WASIX TypeScript binding
+  description: Universal WASIX TypeScript binding with browser and native host placements.
+  owner: oliphaunt
+  release:
+    component: oliphaunt-wasix-ts
+    packagePath: sdks/ts-wasix/sdk
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+tasks:
+  build:
+    tags:
+      - build
+    command: bun run --cwd sdks/ts-wasix/sdk build
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "@group(bun-workspace)"
+      - "@group(code)"
+      - project: oliphaunt-query-ts
+        group: sources
+    outputs:
+      - lib/**/*
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  typecheck:
+    tags:
+      - quality
+      - static
+    command: bun run --cwd sdks/ts-wasix/sdk typecheck
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "@group(bun-workspace)"
+      - project: oliphaunt-query-ts
+        group: sources
+      - "@group(code)"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package:
+    tags:
+      - package
+      - release
+      - artifact-package
+      - ci-wasix-ts-sdk-package
+    script: bun run --cwd sdks/ts-wasix/sdk package
+    deps:
+      - wasix-browser-host:build
+      - oliphaunt-wasix-ts:build
+    inputs:
+      - "@group(legal-files)"
+      - "@group(bun-workspace)"
+      - "@group(release-archive-contract)"
+      - /sdks/ts-wasix/sdk/tools/check-package.mts
+      - /tools/packaging/npm-trusted-publishing.mts
+      - /tools/packaging/staging.mts
+      - /sdks/ts-wasix/sdk/tools/stage-release-artifacts.mts
+      - /sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts
+      - /tools/dev/bun.sh
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "@group(bun-workspace)"
+      - project: oliphaunt-query-ts
+        group: sources
+      - "**/*"
+    outputs:
+      - /target/sdk-artifacts/oliphaunt-wasix-ts/**/*
+      - /target/oliphaunt-wasix-ts/package/**/*
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  coverage:
+    tags:
+      - coverage
+    command: bun run coverage
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "@group(code)"
+      - "@group(bun-workspace)"
+      - project: oliphaunt-query-ts
+        group: sources
+      - project: shared-test-fixtures
+        group: fixtures
+    outputs:
+      - /target/coverage/oliphaunt-wasix-ts/**/*
+    options:
+      cache: false
+      runInCI: false
+  test:
+    tags:
+      - quality
+      - unit
+    command: bun run --cwd sdks/ts-wasix/sdk test
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "@group(bun-workspace)"
+      - project: oliphaunt-query-ts
+        group: sources
+      - project: shared-test-fixtures
+        group: fixtures
+      - project: cluster-seed-contract
+        group: contract
+      - "@group(code)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - /tools/packaging/testdata/**/*
+      - /tools/dev/bun.sh
+      - "/tools/packaging/*.{mts,sh}"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test-consumer:
+    tags:
+      - integration
+      - consumer
+      - ci-wasix-ts-sdk-package
+    deps:
+      - extension-artifacts-wasix:compiler-output
+      - liboliphaunt-wasix:runtime-portable
+      - oliphaunt-wasix-ts:package
+      - oliphaunt-wasix-napi:build-release-assets
+    inputs:
+      &inputs
+      - "@group(legal-files)"
+      - "@group(bun-workspace)"
+      - /examples/browser-wasix/**/*
+      - project: shared-test-fixtures
+        group: fixtures
+      - "**/*"
+      - /tools/dev/bun.sh
+      - /tools/dev/deno.sh
+      - /runtimes/liboliphaunt-wasix/tools/wasix-*.mts
+    options:
+      &options
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+    command: bun run --cwd sdks/ts-wasix/sdk test-consumer
+  test-browser:
+    tags:
+      - integration
+      - browser
+      - ci-wasix-ts-sdk-package
+    deps:
+      - extension-artifacts-wasix:compiler-output
+      - database-resources:package-wasix
+      - database-resources:package-icu
+      - liboliphaunt-wasix:runtime-portable
+      - oliphaunt-wasix-ts:package
+    inputs:
+      *inputs
+    options:
+      *options
+    command: bun run --cwd sdks/ts-wasix/sdk test-browser
+workspace:
+  inheritedTasks:
+    rename:
+      js-format: format
+      js-format-check: format-check
+      js-lint: lint

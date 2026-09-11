@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{Context, Result, bail};
-use oliphaunt_wasix::{AsyncOliphauntServer, DatabaseStorage, Extension};
+use oliphaunt_pgwire_server::AsyncOliphauntServer;
+use oliphaunt_wasix::{DatabaseStorage, Extension};
 #[cfg(test)]
 use oliphaunt_wasix::{Oliphaunt, tools};
 use serde_json::json;

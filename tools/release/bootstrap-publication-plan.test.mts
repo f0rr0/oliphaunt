@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  loadPublicationCatalog,
-  resolveActualCarrier,
-} from '../../src/shared/product-metadata/publication-catalog.mts';
+import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   bootstrapPublicationPlan,
   bootstrapPublicationSchedule,

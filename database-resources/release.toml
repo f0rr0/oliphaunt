@@ -1,0 +1,40 @@
+id = "database-resources"
+owner = "@oliphaunt/core"
+kind = "database-resources"
+publish_targets = ["github-release-assets", "npm", "crates-io", "maven-central"]
+registry_packages = [
+  "npm:@oliphaunt/icu",
+  "crates:oliphaunt-icu",
+  "maven:dev.oliphaunt.runtime:oliphaunt-icu",
+  "maven:dev.oliphaunt.runtime:oliphaunt-seed-native-android-datum64-standard",
+  "maven:dev.oliphaunt.runtime:oliphaunt-seed-native-android-datum64-icu",
+  "npm:@oliphaunt/seed-native-android-datum64-standard",
+  "crates:oliphaunt-seed-native-android-datum64-standard",
+  "npm:@oliphaunt/seed-native-android-datum64-icu",
+  "crates:oliphaunt-seed-native-android-datum64-icu",
+  "npm:@oliphaunt/seed-native-ios-datum64-standard",
+  "crates:oliphaunt-seed-native-ios-datum64-standard",
+  "npm:@oliphaunt/seed-native-ios-datum64-icu",
+  "crates:oliphaunt-seed-native-ios-datum64-icu",
+  "npm:@oliphaunt/seed-native-linux-arm64-gnu-standard",
+  "crates:oliphaunt-seed-native-linux-arm64-gnu-standard",
+  "npm:@oliphaunt/seed-native-linux-arm64-gnu-icu",
+  "crates:oliphaunt-seed-native-linux-arm64-gnu-icu",
+  "npm:@oliphaunt/seed-native-linux-x64-gnu-standard",
+  "crates:oliphaunt-seed-native-linux-x64-gnu-standard",
+  "npm:@oliphaunt/seed-native-linux-x64-gnu-icu",
+  "crates:oliphaunt-seed-native-linux-x64-gnu-icu",
+  "npm:@oliphaunt/seed-native-macos-arm64-standard",
+  "crates:oliphaunt-seed-native-macos-arm64-standard",
+  "npm:@oliphaunt/seed-native-macos-arm64-icu",
+  "crates:oliphaunt-seed-native-macos-arm64-icu",
+  "npm:@oliphaunt/seed-native-windows-x64-msvc-standard",
+  "crates:oliphaunt-seed-native-windows-x64-msvc-standard",
+  "npm:@oliphaunt/seed-native-windows-x64-msvc-icu",
+  "crates:oliphaunt-seed-native-windows-x64-msvc-icu",
+  "npm:@oliphaunt/seed-wasix-standard",
+  "crates:oliphaunt-seed-wasix-standard",
+  "npm:@oliphaunt/seed-wasix-icu",
+  "crates:oliphaunt-seed-wasix-icu",
+]
+release_artifacts = ["icu-data", "cluster-seeds"]

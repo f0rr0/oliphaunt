@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mts';
+import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import { retryAfterSeconds } from './registry-http-retry.mts';
 import { RegistryPublicationDeferredError } from './registry-publication-deferral.mts';
 

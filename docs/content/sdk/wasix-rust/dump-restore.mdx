@@ -1,0 +1,180 @@
+---
+title: Rust WASIX Dump, Restore, And Upgrade
+description: Use the Rust binding's logical dumps, physical archives, CLI exports, and restore flows.
+---
+
+# Rust WASIX Dump, Restore, And Upgrade
+
+<Callout type="info" title="Development checkout APIs">
+The resource and package separation shown below is unreleased. Installation
+versions on this site come from completed public releases; they do not make the
+new seed, resource, or pgwire packages available. Use a coordinated source
+checkout for these examples until those products are published.
+</Callout>
+
+`oliphaunt-wasix` uses the WASIX `pg_dump` binary from the separately owned
+PostgreSQL tools product for portable SQL exports, restores, and version-to-version
+upgrades.
+
+<WasmDataMovement />
+
+## Choose The Right Export Format
+
+Use logical dumps when you need:
+
+- a portable SQL export;
+- an upgrade path between `oliphaunt-wasix` releases;
+- a way to move data between different stores safely.
+
+Use physical archives when you need:
+
+- a same-version clone;
+- a same-runtime restore into another `oliphaunt-wasix` store;
+- a fast local backup of the current cluster state.
+
+Use logical dumps for cross-version upgrades. Keep physical archives for
+same-version clones and restores.
+
+## Tool API
+
+Enable the `tools` feature for fluent database tool methods and the optional
+`tools` options/error namespace:
+
+```toml
+[dependencies]
+oliphaunt-wasix = { version = "={{release:oliphaunt-wasix-rust}}", features = ["tools"] }
+```
+
+Run the tools directly against an open database:
+
+```rust,no_run
+use oliphaunt_wasix::{Oliphaunt, tools};
+
+fn run() -> oliphaunt_wasix::Result<()> {
+    let mut database = Oliphaunt::open()?;
+    let sql = database.pg_dump(tools::PgDumpOptions::new().arg("--schema-only"))?;
+    assert!(!sql.is_empty());
+    database.close()?;
+    Ok(())
+}
+```
+
+The methods are available on database handles, not server or transaction
+handles. On root `Oliphaunt` they take `&mut self` and run synchronously against
+the caller-owned session. They cannot run inside a callback transaction. The tool connection resets PostgreSQL
+session state before and after it runs, so
+prepared statements and session settings on the direct handle do not survive.
+`database.pg_dump()` returns UTF-8 SQL text and `database.psql()` returns UTF-8
+standard output. Use `PsqlOptions::command(...)` for one
+command or `PsqlOptions::script(...)` for a complete SQL script. `pg_dump()`
+returns standard PostgreSQL 18 plain-text output unchanged, including its
+`COPY` data and `\\restrict`/`\\unrestrict` security delimiters.
+
+Use the same fluent methods on `AsyncOliphaunt` to run the operation through a
+dedicated database owner thread:
+
+```rust,no_run
+use oliphaunt_wasix::{AsyncOliphaunt, tools};
+
+async fn run_asynchronously() -> oliphaunt_wasix::Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    let sql = database.pg_dump(tools::PgDumpOptions::new()).await?;
+    assert!(!sql.is_empty());
+    database.close().await
+}
+```
+
+## `PgDumpOptions`
+
+`PgDumpOptions` controls the managed parts of the dump command:
+
+```rust,no_run
+use oliphaunt_wasix::tools::PgDumpOptions;
+
+let options = PgDumpOptions::new()
+    .args(["--schema-only", "--quote-all-identifiers"]);
+```
+
+Useful passthrough flags include dump-shaping options such as:
+
+- `--schema-only`
+- `--quote-all-identifiers`
+- `-n <schema>`
+- `-t <table>`
+
+Managed connection and output flags are reserved by the API:
+`--file`, `--format`, `--compress`, `--encoding`, `--host`, `--port`,
+`--username`, `--dbname`, and `--jobs` are configured by Oliphaunt instead of
+`arg(...)` or `args(...)`. The returned script is always uncompressed UTF-8
+plain text.
+
+## CLI
+
+The CLI is also part of the crate's `tools` feature.
+
+Dump a persistent directory:
+
+```sh
+oliphaunt-wasix-dump --directory ./.oliphaunt
+```
+
+Select a non-default database or user with `--database` and `--username`. If
+the root uses installed extensions, repeat `--extension NAME` for every
+extension that must be mounted before PostgreSQL starts:
+
+```sh
+oliphaunt-wasix-dump --directory ./.oliphaunt \
+  --database app --username owner \
+  --extension vector --extension pg_trgm
+```
+
+Pass through normal `pg_dump` shaping flags after `--`:
+
+```sh
+oliphaunt-wasix-dump --directory ./.oliphaunt -- --schema-only
+oliphaunt-wasix-dump --directory ./.oliphaunt -- --quote-all-identifiers
+```
+
+## Restore
+
+For same-version physical copies, use direct `backup()` and static
+`Oliphaunt::restore(destination, bytes)`; both are synchronous on the root API:
+
+```rust,no_run
+use oliphaunt_wasix::Oliphaunt;
+
+fn clone_database() -> oliphaunt_wasix::Result<()> {
+    let mut source = Oliphaunt::open()?;
+    let archive = source.backup()?;
+    source.close()?;
+    Oliphaunt::restore("./restored", archive)
+}
+```
+
+Physical restore accepts an absent or empty managed-root directory and
+publishes a new root only after validating and staging the complete archive.
+The root call runs to completion or returns an error. The async
+`AsyncOliphaunt::restore` uses a temporary owner thread; once publication
+starts, abandoning its future does not promise cancellation.
+
+For a logical restore, run
+`database.psql(PsqlOptions::new().script(sql))`. Do not pass the
+script to `database.execute(...)`: plain `pg_dump` output can include `psql`
+meta commands. Oliphaunt does not expose a second logical-restore abstraction.
+With an async handle, await the corresponding
+`database.psql(...).await` call.
+
+## Upgrade Guidance
+
+Use logical dump and restore when upgrading between `oliphaunt-wasix` versions or
+changing shipped runtime assets:
+
+1. Open the old database with the old crate/runtime.
+2. Create a logical dump with `database.pg_dump(...)`, or use
+   `oliphaunt-wasix-dump`.
+3. Open a fresh database with the new crate/runtime.
+4. Feed the script through
+   `database.psql(PsqlOptions::new().script(sql))`.
+
+Use logical dumps for general upgrades. Physical data-dir archives are for the
+same runtime family and database format.

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -54,6 +54,43 @@ test('durable core-request journal refuses the operational ceiling before attemp
     });
     expect(admitted.sequence).toBe(901);
     expect(admitted.rollingCount).toBe(1);
+    const state = JSON.parse(
+      readFileSync(environment.OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH, 'utf8'),
+    );
+    expect(state.attempts).toEqual([nowMs]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('rolling timestamps preserve the boundary and reject clock reversal or corrupt lineage', async () => {
+  const { environment, root } = fixture();
+  const file = environment.OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH;
+  try {
+    await reserveGitHubCoreRequest({ environment, label: 'first', now: () => 1000 });
+    const boundary = 1000 + GITHUB_CORE_REQUEST_ROLLING_WINDOW_MS;
+    expect(readGitHubCoreRequestJournal({ environment, now: () => boundary }).rollingCount).toBe(1);
+    expect(
+      readGitHubCoreRequestJournal({ environment, now: () => boundary + 1 }).rollingCount,
+    ).toBe(0);
+    await expect(
+      reserveGitHubCoreRequest({ environment, label: 'backwards', now: () => 999 }),
+    ).rejects.toThrow('clock moved backwards');
+    const valid = readFileSync(file, 'utf8');
+    for (const change of [
+      { headSha: 'b'.repeat(40) },
+      { attempts: [-1] },
+      { attempts: [1001, 1000], sequence: 2 },
+      { attempts: [], sequence: 1 },
+      { sequence: Number.MAX_SAFE_INTEGER },
+    ]) {
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(valid), ...change }));
+      const before = readFileSync(file, 'utf8');
+      await expect(
+        reserveGitHubCoreRequest({ environment, label: 'invalid', now: () => 2000 }),
+      ).rejects.toThrow();
+      expect(readFileSync(file, 'utf8')).toBe(before);
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

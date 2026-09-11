@@ -62,8 +62,7 @@
   "overrides": [
     {
       "includes": [
-        "src/runtimes/broker/dependency-licenses.json",
-        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
+        "sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
       ],
       "formatter": {
         "enabled": false

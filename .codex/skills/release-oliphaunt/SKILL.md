@@ -11,6 +11,30 @@ The `publish` operation prepares the complete candidate once, conditionally
 bootstraps missing names, and publishes it. Dependent jobs install the same
 immutable candidate and verify its complete contents against the lock.
 
+Qualification may be exhaustive or selected through CI's
+`release_products_json` input with every platform selector at `all`. The
+existing candidate record binds product scope, required tasks and exact SHA;
+publication rejects a product outside that scope. Generated release PRs and
+their main merge derive scope automatically from the actual manifest transition;
+only main push or eligible main dispatch can produce publishable evidence.
+Publication first reuses covering completed CI or awaits an active main/requested
+run. If none exists, a separate dispatch-only job requests CI for the selected
+products, provided main still equals the exact candidate SHA. Failed causal
+runs stop with their URL; resume by rerunning that run. An ambiguous dispatch
+is never retried automatically. Cross-commit binary reuse remains pending.
+
+Local checks use `bash tools/release/release-check.sh` for source
+metadata/release-tool tests and `bash tools/release/release-check-registries.sh
+--products-json JSON --head-ref REF` for selected registry state. These commands
+do not publish or assemble a release candidate; test fixtures may create local
+packages. Product rehearsal uses the selected owners' package and artifact/consumer
+tasks. Candidate preparation runs on Ubuntu, consuming qualified outputs without
+product compilers. Publication uses macOS for its actual public Swift consumer,
+not for portable release metadata. Candidate preparation verifies qualification once,
+checks registry state once, and checks that the source is still clean at its
+exact SHA immediately before assembly. Publication retains its live registry
+recheck at the mutation boundary.
+
 Select release products and versions from the publication catalog and
 product-local metadata. PostgreSQL 18 contrib SQL members belong to the logical
 `oliphaunt-extension-contrib-pg18` distribution, not an independently versioned
@@ -31,15 +55,36 @@ and do not treat target/ecosystem carriers as additional products.
    product change requires fresh qualification. A narrowly permitted
    publication-only controller fix may reuse the unchanged approved candidate.
 5. Inspect `git status`, product versions, existing product tags/releases, registry identities, and the latest exact-SHA CI run. Report any public collision before attempting a mutation.
-6. Run `tools/dev/bun.sh tools/release/audit-github-release-controls.mts` with the truthful credential lifecycle before any external mutation. Use `--governance solo --bootstrap-state idle` for qualification, release-PR preparation, and dry-run while bootstrap tokens are absent. Rerun with `--bootstrap-state ready` only for an imminent first-identity bootstrap after every reviewed short-lived token required by the approved lock is installed (one registry or both). If exact inventory proves that all selected Cargo/npm identities already match, keep the credential lifecycle `idle` and provision neither token. Use `retired` after trusted publishers are configured and every provisioned token is revoked. Select `team` only with an independent maintainer. Treat `FAIL` as a blocker; report but do not promote `WARN` to a solo-release blocker.
+6. Use `bash tools/dev/bun.sh tools/release/audit-github-release-controls.mts`
+   for release setup and before public registry/tag/asset mutation, with the
+   truthful credential lifecycle. It is not a gate for ordinary branch pushes,
+   release-PR preparation or CI qualification: those jobs do not receive the
+   protected `release-bootstrap` secrets. Record unrelated setup findings
+   without stopping source work or changing credentials. For publication, use
+   `--governance solo --bootstrap-state idle` only when bootstrap tokens are
+   absent. Use `ready` only for imminent first-identity bootstrap after every
+   reviewed short-lived token required by the approved lock is installed.
+   Provision neither token when the exact scope needs neither registry; use
+   `retired` after trusted publishers are configured and provisioned tokens
+   revoked. Select `team` only with an independent maintainer. Release-safety
+   `FAIL` findings block the affected public mutation; `WARN` does not become a
+   solo-release blocker. The bootstrap job still checks required credentials
+   against the approved lock immediately before it publishes.
 7. Generate trusted-publisher work from the approved publication lock with `bash tools/release/trusted-publisher-config.sh`. Its default mode is offline/read-only. Use authenticated `--audit` before considering `--apply`; mutation additionally requires the exact printed lock digest. Run npm audit and apply directly in a terminal because each classification pass starts with a discarded read-only TTY authentication warm-up before the bounded captured reads, and supply a fresh `--output` path for the atomically created mode-`0600` JSON evidence. Configure the direct workflow `release.yml` and `release-publish` environment. Keep release credentials only in their protected environments; do not add repository-level copies or a reusable-workflow secret bridge.
 8. On a generated release PR, treat Release Please as the candidate authority
    and `sync-release-pr.mts` as the deterministic selected-candidate metadata
-   closer. It may add a shared-source candidate only when the same source bytes
-   are bundled by multiple products; it never creates a downstream release from
-   a Moon dependency edge. Before preparation, require
-   `release-please-pr-lifecycle.mts assert-clean` to report no merged `main` PR
-   still pending. Before bootstrap or normal publication mutates public state,
+   closer. The pinned Release Please library selects shared-contrib candidates
+   through the declared release-ownership graph; sync chooses no new versions
+   or changelogs. Ordinary task dependencies are not automatic release bumps.
+   In an isolated clean checkout, `bash tools/release/prepare-release-pr.sh OUTPUT_DIR`
+   generates locally. If `OUTPUT_DIR/required` is `true`,
+   `bash tools/release/close-release-candidate.sh OUTPUT_DIR` commits locally,
+   closes manifests and locks, and verifies the candidate. These commands read
+   GitHub metadata but do not push. Only the workflow
+   `.github/scripts/publish-release-pr.sh OUTPUT_DIR` mutates the remote PR,
+   after local validation succeeds. The preparation entrypoint already checks
+   that no merged `main` release PR is still pending; do not repeat that check
+   as a separate preparation phase. Before bootstrap or normal publication mutates public state,
    require `assert-markable` for the exact release SHA. Reassert it immediately
    before promotion; after promotion, require the exact release PR to be
    `autorelease: tagged` with `autorelease: pending` absent.
@@ -111,17 +156,18 @@ Run these from the repository root:
 
 ```sh
 bash tools/release/release-check.sh
-bash src/extensions/tools/check-extension-model.sh --check
+bash extensions/tools/check-extension-model.sh --check
 ```
 
-Release Please selects direct candidates from configured product paths. Review
-that selection against the shipped behavior; if shared code changes bytes for a
-product outside the selected paths, move or represent the change under the
-owner before releasing. Do not add repository-meta fingerprints to force a
-candidate.
+Release Please selects direct candidates from configured product paths. The
+ownership plugin also supplies commits affecting declared shared shipped sources,
+bounded by each product's published history. Review that selection against the
+actual changed behavior; correct missing ownership in the graph rather than
+copying source or adding repository-meta fingerprints to force a candidate.
 
-For a normalized generated release PR, Moon edges affect qualification, not
-candidate selection. Native, WASIX, SDKs, bindings, and external extensions are
+For a normalized generated release PR, ordinary Moon task dependencies affect
+qualification; declared release ownership controls shared-source candidate
+selection. Native, WASIX, SDKs, bindings, resources, tools and external extensions are
 independently versioned. Sync updates compatibility pins only for consumers
 already selected by Release Please, using the dependency versions qualified at
 that commit; unselected consumers retain their older published pins. A selected

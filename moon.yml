@@ -17,60 +17,11 @@ owners:
     "*": ["@oliphaunt/core"]
 
 tasks:
-  release-metadata:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/dev/bun.sh tools/release/check-release-metadata.mts"
-    inputs:
-      - "/README.md"
-      - "/docs/**/*"
-      - "/Package.swift"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-      # The macOS publication-host job owns this exact proof in hosted CI.
-      runInCI: skip
   prek:
     tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools"]
-    command: "bash tools/policy/check-prek.sh"
+    command: "bash tools/dev/check-prek.sh"
     inputs:
-      - "/.config/nextest.toml"
-      - "/.markdownlint-cli2.jsonc"
-      - "/biome.json"
-      - "/deny.toml"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/prek.toml"
-      - "/renovate.json"
-      - "/rust-toolchain.toml"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/policy/check-prek.sh"
+      - "/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -78,13 +29,13 @@ tasks:
       # and policy tasks without bootstrapping every maintainer binary.
       runInCI: false
   js-format-check:
-    command: "pnpm exec biome format package.json biome.json renovate.json .markdownlint-cli2.jsonc"
+    command: "bun x --no-install biome format package.json biome.json renovate.json .markdownlint-cli2.jsonc"
     inputs: ["/package.json", "/biome.json", "/renovate.json", "/.markdownlint-cli2.jsonc"]
     options:
       mergeArgs: replace
       mergeInputs: replace
   js-lint:
-    command: "pnpm exec biome lint --diagnostic-level=error package.json biome.json renovate.json .markdownlint-cli2.jsonc"
+    command: "bun x --no-install biome lint --diagnostic-level=error package.json biome.json renovate.json .markdownlint-cli2.jsonc"
     inputs: ["/package.json", "/biome.json", "/renovate.json", "/.markdownlint-cli2.jsonc"]
     options:
       mergeArgs: replace

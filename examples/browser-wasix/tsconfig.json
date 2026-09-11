@@ -1,21 +1,14 @@
 {
-  "extends": "../../src/bindings/wasix-ts/tsconfig.json",
+  "extends": "../../sdks/ts-wasix/sdk/tsconfig.json",
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
     "paths": {
-      "@oliphaunt/liboliphaunt-wasix": [
-        "../../src/bindings/wasix-ts/src/runtime-carrier-shim.d.ts"
-      ],
-      "@oliphaunt/liboliphaunt-wasix-tools": [
-        "../../src/bindings/wasix-ts/tools-package/src/runtime-carrier-shim.d.ts"
-      ],
-      "@oliphaunt/wasix-ts": ["../../src/bindings/wasix-ts/src/index.ts"],
-      "@oliphaunt/wasix-ts/worker": ["../../src/bindings/wasix-ts/src/worker-entry.ts"],
-      "@oliphaunt/wasix-ts/internal/tools": ["../../src/bindings/wasix-ts/src/internal.ts"],
-      "@oliphaunt/wasix-tools": ["../../src/bindings/wasix-ts/tools-package/src/index.ts"],
-      "@oliphaunt/wasix-ts/*": ["../../src/bindings/wasix-ts/src/*"]
+      "@oliphaunt/liboliphaunt-wasix": ["../../sdks/ts-wasix/sdk/src/runtime-carrier-shim.d.ts"],
+      "@oliphaunt/wasix-ts": ["../../sdks/ts-wasix/sdk/src/index.ts"],
+      "@oliphaunt/wasix-ts/worker": ["../../sdks/ts-wasix/sdk/src/worker-entry.ts"],
+      "@oliphaunt/wasix-ts/*": ["../../sdks/ts-wasix/sdk/src/*"]
     },
     "rootDir": "../..",
     "types": ["node", "vite/client"]

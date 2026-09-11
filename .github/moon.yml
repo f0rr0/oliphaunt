@@ -22,15 +22,15 @@ tasks:
     command: "bash .github/actions/setup-wasmer-llvm/install.test.sh"
     inputs:
       - "actions/setup-wasmer-llvm/**/*"
-      - "/src/shared/artifact-packaging/portable-archive.mts"
+      - "/tools/packaging/portable-archive.mts"
       - "/tools/dev/curl-platform-flags.sh"
-      - "/tools/test/tar-fixture.mts"
+      - "/tools/packaging/testdata/tar-fixture.mts"
     options:
       cache: true
       runFromWorkspaceRoot: true
   check:
     tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools"]
-    command: "bash tools/policy/check-workflows.sh"
+    command: "bash tools/ci/check-workflows.sh"
     inputs:
       - "/.moon/toolchains.yml"
       - "/.prototools"
@@ -38,21 +38,23 @@ tasks:
       - "/.github/scripts/**/*"
       - "/.github/workflows/**/*"
       - "/.github/zizmor.yml"
-      - "/src/sources/toolchains/**/*"
-      - "/tools/graph/with-projects.sh"
+      - "/tools/dev/*.toml"
+      - "/tools/ci/with-projects.sh"
       - "/tools/dev/bun.sh"
       - "/tools/dev/curl-platform-flags.sh"
-      - "/tools/test/moon-command.mts"
-      - "/tools/policy/assertions/workflow-security.mts"
-      - "/tools/policy/assertions/workflow-security.test.mts"
-      - "/tools/policy/ci-plan-node-products.test.mts"
-      - "/tools/policy/ci-plan-wasix-postmaster-release.test.mts"
-      - "/tools/policy/workflow-moon-transfers.test.mts"
-      - "/tools/policy/check-workflows.sh"
-      - "/tools/graph/affected.mts"
-      - "/tools/graph/ci_plan.mts"
-      - "/tools/graph/ci-plan.sh"
-      - "/src/shared/product-metadata/release-graph.mts"
+      - "/tools/ci/workflow-security.mts"
+      - "/tools/ci/workflow-security.test.mts"
+      - "/tools/ci/ci-plan-node-products.test.mts"
+      - "/tools/ci/ci-plan-wasix-postmaster-release.test.mts"
+      - "/tools/ci/ci-plan-test-*.mts"
+      - "/tools/ci/capture-ci-test-observations.sh"
+      - "/tools/ci/ci-release-scope.test.*"
+      - "/tools/ci/workflow-moon-transfers.test.mts"
+      - "/tools/ci/check-workflows.sh"
+      - "/tools/ci/affected.mts"
+      - "/tools/ci/ci_plan.mts"
+      - "/tools/ci/ci-plan.sh"
+      - "/tools/release/release-graph.mts"
     options:
       cache: true
       runFromWorkspaceRoot: true

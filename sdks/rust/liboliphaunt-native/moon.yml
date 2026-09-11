@@ -1,0 +1,67 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "liboliphaunt-native-bindings"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["cargo-package", "rust", "sdk", "native", "release-product"]
+dependsOn:
+  - id: "extensions"
+    scope: "build"
+  - id: "shared-test-fixtures"
+    scope: "development"
+project:
+  title: "Native liboliphaunt Rust bindings"
+  description: "Shared native sessions and database resource preparation."
+  owner: "oliphaunt"
+  release:
+    component: "liboliphaunt-native-bindings"
+    packagePath: "sdks/rust/liboliphaunt-native"
+fileGroups:
+  sources: ["src/**/*", "Cargo.toml"]
+  code: ["src/**/*", "tests/**/*", "Cargo.toml"]
+tasks:
+  format:
+    command: "cargo fmt"
+    options:
+      cache: false
+      runInCI: false
+
+  format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt --check"
+    inputs: ["@group(code)"]
+  lint:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy --all-targets --locked -- -D warnings"
+    inputs: ["@group(code)", "/Cargo.lock", "/Cargo.toml"]
+  build:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["build", "requires-rust"]
+    command: "cargo build --locked"
+    outputs: ["/target/debug/libliboliphaunt_native_bindings.rlib"]
+    inputs: ["@group(code)", "/Cargo.lock", "/Cargo.toml"]
+  test:
+    deps:
+      - target: cargo-sources
+        cacheStrategy: hash
+    tags: ["quality", "unit", "requires-rust"]
+    command: "cargo test --locked"
+    inputs: ["@group(code)", "testdata/**/*", "/Cargo.lock", "/Cargo.toml"]
+  package:
+    tags: ["release", "artifact-package", "ci-rust-sdk-package"]
+    script: |
+      set -eu
+      version="$(bun ../../../tools/release/product-version.mts version liboliphaunt-native-bindings)"
+      rm -f "../../../target/package/liboliphaunt-native-bindings-$version.crate"
+      cargo package --locked --allow-dirty --no-verify
+      rm -rf ../../../target/sdk-artifacts/liboliphaunt-native-bindings
+      mkdir -p ../../../target/sdk-artifacts/liboliphaunt-native-bindings
+      cp "../../../target/package/liboliphaunt-native-bindings-$version.crate" ../../../target/sdk-artifacts/liboliphaunt-native-bindings/
+      bun ../../../tools/packaging/staging.mts ../../../target/sdk-artifacts/liboliphaunt-native-bindings
+    inputs: ["**/*", "/Cargo.lock", "/Cargo.toml", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
+    outputs: ["/target/sdk-artifacts/liboliphaunt-native-bindings/**/*"]

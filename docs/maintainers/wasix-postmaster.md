@@ -56,8 +56,9 @@ must not consume the single-backend-only patches that disable workers or guest
 process creation.
 
 Algorithmic optimizations can be shared when their guards and semantics are
-topology-neutral. `postgres/main-optimizations.series` references those
-canonical decisions. Postmaster-specific patches cover POSIX dynamic shared
+topology-neutral. The complete ordered `postgres/series` references shared
+patches in `third-party/postgres/patches/wasix` and product-owned patches.
+Postmaster-specific patches cover POSIX dynamic shared
 memory, EXEC_BACKEND handoff, process join reliability, packed latch ordering,
 and other concurrency contracts. Every local patch must be explained by
 `postgres/product-patch-provenance.toml`; experiment disposition files are not

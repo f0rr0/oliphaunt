@@ -9,6 +9,6 @@ also exercises the optional `@oliphaunt/tools` facade with a schema-only
 not run PostgreSQL client tools.
 
 ```sh
-pnpm --dir examples/electron install
-pnpm --dir examples/electron start
+bun install --cwd examples/electron
+bun run --cwd examples/electron start
 ```

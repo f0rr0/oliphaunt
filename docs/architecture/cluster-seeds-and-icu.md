@@ -254,7 +254,7 @@ The implementation has four layers:
    than pretending that multiple filesystem entries are one atomic operation.
 
 The cross-language contract lives in
-`src/shared/cluster-seed-contract/contract.json`. It owns profile names,
+`database-resources/contracts/contract.json`. It owns profile names,
 artifact roles, ICU form/version, readiness signal, physical formats,
 compatibility keys, and the logical digest algorithm. The independently
 product tests validate canonical fixtures through the real seed readers. Release tools

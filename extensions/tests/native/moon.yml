@@ -1,0 +1,51 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "native-extension-lifecycle"
+language: "rust"
+layer: "tool"
+tags: ["javascript-quality"]
+dependsOn:
+  - id: "oliphaunt-rust"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
+tasks:
+  test:
+    tags: ["quality", "unit", "requires-rust"]
+    script: |
+      set -e
+      bun test ./extensions/tests/native/tools
+      cargo test --locked -p oliphaunt-native-extension-proof
+    inputs:
+      - "Cargo.toml"
+      - "src/**/*.rs"
+      - "@group(cargo-workspace)"
+      - "/sdks/rust-query/src/lib.rs"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "tools/**/*.mts"
+      - "/tools/release/**/*.mts"
+      - "/extensions/artifacts/native/tools/**/*.mts"
+      - "/extensions/artifacts/packages/tools/**/*.mts"
+      - "/runtimes/liboliphaunt-native/tools/native-runtime-payload.mts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  lifecycle:
+    tags: ["release", "integration", "ci-native-extension-lifecycle"]
+    command: "extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh"
+    deps:
+      - "extension-artifacts-native:build-target"
+      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "oliphaunt-broker:build-release-assets"
+      - "oliphaunt-rust:package"
+    inputs:
+      - "/runtimes/liboliphaunt-wasix-postmaster/lib/process-supervision.sh"
+      - "/extensions/tests/native/**/*"
+      - "/extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh"
+      - "/postgres-tools/native/tools/smoke-packed-tools-npm.sh"
+      - "/postgres-tools/native/tools/smoke-packed-tools-npm.mts"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

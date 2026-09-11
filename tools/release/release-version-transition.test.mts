@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import test from 'node:test';
 
-import { buildPlanFromProductTags } from '../test/product-history-fixture.mts';
+import { buildPlanFromProductTags } from './release-graph.mts';
 import { selectedDependencySatisfiesPin } from './check_release_versions.mts';
 
 const PRODUCTS = {
@@ -13,10 +10,6 @@ const PRODUCTS = {
   'liboliphaunt-wasix': 'packages/wasix',
   'oliphaunt-extension-vector': 'packages/vector',
 };
-
-function git(root, ...args) {
-  return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
-}
 
 function writeSnapshot(
   root,
@@ -50,23 +43,6 @@ function writeSnapshot(
         : `id = ${JSON.stringify(product)}\n`;
     writeFileSync(path.join(directory, 'release.toml'), body);
   }
-}
-
-function commit(root, subject) {
-  git(root, 'add', '.');
-  git(root, 'commit', '-m', subject);
-  return git(root, 'rev-parse', 'HEAD');
-}
-
-function fixture(t, versions) {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-release-transition-'));
-  t.after(() => rmSync(root, { force: true, recursive: true }));
-  git(root, 'init', '-q');
-  git(root, 'config', 'user.email', 'release-test@example.invalid');
-  git(root, 'config', 'user.name', 'Release Test');
-  writeSnapshot(root, versions);
-  const head = commit(root, 'initial products');
-  return { root, head };
 }
 
 function graph(versions) {
@@ -128,314 +104,164 @@ function graph(versions) {
   };
 }
 
-function tagVersions(root, versions) {
-  for (const product of Object.keys(PRODUCTS)) {
-    git(root, 'tag', `${product}-v${versions[product]}`);
-  }
-}
-
 const V1 = {
   'liboliphaunt-native': '1.0.0',
   'liboliphaunt-wasix': '1.0.0',
   'oliphaunt-extension-vector': '1.0.0',
 };
 
-test('a selected dependency satisfies only its exact consumer pin', () => {
-  const selected = new Set(['liboliphaunt-native']);
-  assert.equal(
-    selectedDependencySatisfiesPin(selected, 'liboliphaunt-native', '1.0.0', '1.0.0'),
-    true,
-  );
-  assert.equal(
-    selectedDependencySatisfiesPin(selected, 'liboliphaunt-native', '1.0.0', '2.0.0'),
-    false,
-  );
-});
-
-test('compatibility-only external sink edits cannot select its unchanged release identity', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const versions = { ...V1, 'liboliphaunt-native': '2.0.0', 'liboliphaunt-wasix': '2.0.0' };
-  writeSnapshot(f.root, versions, { vectorCompatibility: 'native=2.0.0,wasix=2.0.0' });
-  commit(f.root, 'release runtimes');
-
-  const plan = buildPlanFromProductTags(graph(versions), 'HEAD', {
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(plan.releaseProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
-  assert.equal(plan.changedFiles.includes('packages/vector/release.toml'), true);
-  assert.equal(plan.releaseProducts.includes('oliphaunt-extension-vector'), false);
-});
-
-test('an unchanged external product cannot hide a source edit beside compatibility fields', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const versions = { ...V1, 'liboliphaunt-native': '2.0.0', 'liboliphaunt-wasix': '2.0.0' };
-  writeSnapshot(f.root, versions, {
-    vectorCompatibility: 'native=2.0.0,wasix=2.0.0',
-    vectorSource: 'vector-v2',
-  });
-  commit(f.root, 'runtime release with omitted vector bump');
-
-  assert.throws(
-    () =>
-      buildPlanFromProductTags(graph(versions), 'HEAD', {
-        prefix: 'transition-test',
-        root: f.root,
-      }),
-    /oliphaunt-extension-vector has release-affecting changes .* manifest version remains 1[.]0[.]0.*packages\/vector\/release[.]toml/u,
-  );
-});
-
-test('an unchanged external product cannot hide a changed source file', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const versions = { ...V1, 'liboliphaunt-native': '2.0.0', 'liboliphaunt-wasix': '2.0.0' };
-  writeSnapshot(f.root, versions, { vectorCompatibility: 'native=2.0.0,wasix=2.0.0' });
-  writeFileSync(
-    path.join(f.root, PRODUCTS['oliphaunt-extension-vector'], 'source.toml'),
-    'rev = "v2"\n',
-  );
-  commit(f.root, 'runtime release with changed vector source');
-
-  assert.throws(
-    () =>
-      buildPlanFromProductTags(graph(versions), 'HEAD', {
-        prefix: 'transition-test',
-        root: f.root,
-      }),
-    /oliphaunt-extension-vector has release-affecting changes .*packages\/vector\/source[.]toml/u,
-  );
-});
-
-test('a compatibility edit with the wrong source-product version cannot be ignored', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const versions = { ...V1, 'liboliphaunt-native': '2.0.0', 'liboliphaunt-wasix': '2.0.0' };
-  writeSnapshot(f.root, versions, { vectorCompatibility: 'native=9.9.9,wasix=2.0.0' });
-  commit(f.root, 'runtime release with invalid vector compatibility');
-
-  assert.throws(
-    () =>
-      buildPlanFromProductTags(graph(versions), 'HEAD', {
-        prefix: 'transition-test',
-        root: f.root,
-      }),
-    /oliphaunt-extension-vector has release-affecting changes .*packages\/vector\/release[.]toml/u,
-  );
-});
-
-test('a native release does not require WASIX to advance', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const versions = { ...V1, 'liboliphaunt-native': '2.0.0' };
-  writeSnapshot(f.root, versions, { vectorCompatibility: 'native=2.0.0,wasix=1.0.0' });
-  commit(f.root, 'incomplete runtime release');
-
-  const plan = buildPlanFromProductTags(graph(versions), 'HEAD', {
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(plan.releaseProducts, ['liboliphaunt-native']);
-  assert.equal(plan.changedFiles.includes('packages/vector/release.toml'), true);
-});
-
-test('production dependencies do not version an unchanged downstream product', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const versions = { ...V1, 'liboliphaunt-native': '2.0.0', 'liboliphaunt-wasix': '2.0.0' };
-  writeSnapshot(f.root, versions, { vectorCompatibility: 'native=2.0.0,wasix=2.0.0' });
-  commit(f.root, 'release runtimes');
-  const releaseGraph = graph(versions);
-  releaseGraph.moon_projects['oliphaunt-extension-vector'].dependencies =
-    releaseGraph.moon_projects['oliphaunt-extension-vector'].dependencies.map((dependency) => ({
-      ...dependency,
-      scope: 'production',
-    }));
-
-  assert.deepEqual(
-    buildPlanFromProductTags(releaseGraph, 'HEAD', { prefix: 'transition-test', root: f.root })
-      .releaseProducts,
-    ['liboliphaunt-native', 'liboliphaunt-wasix'],
-  );
-});
-
-test('a real external manifest version bump selects the independent product', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const runtimeVersions = { ...V1, 'liboliphaunt-native': '2.0.0', 'liboliphaunt-wasix': '2.0.0' };
-  writeSnapshot(f.root, runtimeVersions, { vectorCompatibility: 'native=2.0.0,wasix=2.0.0' });
-  commit(f.root, 'release runtimes');
-  git(f.root, 'tag', 'liboliphaunt-native-v2.0.0');
-  git(f.root, 'tag', 'liboliphaunt-wasix-v2.0.0');
-
-  const versions = { ...runtimeVersions, 'oliphaunt-extension-vector': '1.1.0' };
-  writeSnapshot(f.root, versions, {
-    vectorCompatibility: 'native=2.0.0,wasix=2.0.0',
-    vectorSource: 'vector-v1.1',
-  });
-  commit(f.root, 'release vector');
-
-  const plan = buildPlanFromProductTags(graph(versions), 'HEAD', {
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(plan.directProducts, ['oliphaunt-extension-vector']);
-  assert.deepEqual(plan.releaseProducts, ['oliphaunt-extension-vector']);
-});
-
-test('products without tags retain first-release selection', (t) => {
-  const versions = {
-    'liboliphaunt-native': '0.1.0',
-    'liboliphaunt-wasix': '0.1.0',
-    'oliphaunt-extension-vector': '0.1.0',
-  };
-  const f = fixture(t, versions);
-  const plan = buildPlanFromProductTags(graph(versions), f.head, {
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(plan.releaseProducts, [
-    'liboliphaunt-native',
-    'liboliphaunt-wasix',
-    'oliphaunt-extension-vector',
-  ]);
-});
-
-test('untagged bootstrap 0.0.0 products are not first-release candidates', (t) => {
-  const versions = {
-    'liboliphaunt-native': '0.0.0',
-    'liboliphaunt-wasix': '0.0.0',
-    'oliphaunt-extension-vector': '0.0.0',
-  };
-  const f = fixture(t, versions);
-  const plan = buildPlanFromProductTags(graph(versions), f.head, {
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(plan.releaseProducts, []);
-});
-
-test('an exact existing current-version tag is selected only for an explicit rerun', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const excluded = buildPlanFromProductTags(graph(V1), f.head, {
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(excluded.releaseProducts, []);
-
-  const rerun = buildPlanFromProductTags(graph(V1), f.head, {
-    includeCurrentTags: true,
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(rerun.releaseProducts, [
-    'liboliphaunt-native',
-    'liboliphaunt-wasix',
-    'oliphaunt-extension-vector',
-  ]);
-  assert.deepEqual(rerun.currentTaggedProducts, rerun.releaseProducts);
-});
-
-test('a tooling-only descendant cannot rerun an older same-version tag', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  mkdirSync(path.join(f.root, 'tools/release'), { recursive: true });
-  writeFileSync(path.join(f.root, 'tools/release/rerun-note.mjs'), 'export const rerun = true;\n');
-  commit(f.root, 'repair release tooling');
-
-  const plan = buildPlanFromProductTags(graph(V1), 'HEAD', {
-    includeCurrentTags: true,
-    prefix: 'transition-test',
-    root: f.root,
-  });
-  assert.deepEqual(plan.releaseProducts, []);
-  assert.deepEqual(plan.currentTaggedProducts, []);
-});
-
-test('a regressed head manifest cannot rerun through an older current-version tag', (t) => {
-  const f = fixture(t, V1);
-  tagVersions(f.root, V1);
-  const v2 = { ...V1, 'liboliphaunt-native': '2.0.0', 'liboliphaunt-wasix': '2.0.0' };
-  writeSnapshot(f.root, v2);
-  commit(f.root, 'release runtimes v2');
-  git(f.root, 'tag', 'liboliphaunt-native-v2.0.0');
-  git(f.root, 'tag', 'liboliphaunt-wasix-v2.0.0');
-  const regressed = { ...v2, 'liboliphaunt-native': '1.0.0' };
-  writeSnapshot(f.root, regressed);
-  commit(f.root, 'regress native manifest');
-
-  assert.throws(
-    () =>
-      buildPlanFromProductTags(graph(regressed), 'HEAD', {
-        includeCurrentTags: true,
-        prefix: 'transition-test',
-        root: f.root,
-      }),
-    /manifest version 1[.]0[.]0 is older than tagged version 2[.]0[.]0/u,
-  );
-});
-
-test('a tag whose canonical version file disagrees with its identity fails closed', (t) => {
-  const f = fixture(t, V1);
-  writeFileSync(path.join(f.root, PRODUCTS['oliphaunt-extension-vector'], 'VERSION'), '9.9.9\n');
-  commit(f.root, 'corrupt tagged canonical version');
-  tagVersions(f.root, V1);
-
-  assert.throws(
-    () =>
-      buildPlanFromProductTags(graph(V1), 'HEAD', {
-        includeCurrentTags: true,
-        prefix: 'transition-test',
-        root: f.root,
-      }),
-    /canonical version "9[.]9[.]9" does not match its manifest version "1[.]0[.]0"/u,
-  );
-});
-
-test('an eligible transition with no owning changed path fails instead of disappearing', (t) => {
-  const f = fixture(t, V1);
-  mkdirSync(path.join(f.root, 'metadata'), { recursive: true });
-  writeFileSync(path.join(f.root, 'metadata/vector-version'), '1.0.0\n');
-  commit(f.root, 'add detached version metadata');
-  tagVersions(f.root, V1);
-
-  const versions = { ...V1, 'oliphaunt-extension-vector': '1.1.0' };
-  writeFileSync(
-    path.join(f.root, '.release-please-manifest.json'),
-    `${JSON.stringify(Object.fromEntries(Object.entries(PRODUCTS).map(([product, packagePath]) => [packagePath, versions[product]])), null, 2)}\n`,
-  );
-  writeFileSync(path.join(f.root, 'metadata/vector-version'), '1.1.0\n');
-  commit(f.root, 'detached vector version bump');
-  const releaseGraph = graph(versions);
-  releaseGraph.products['oliphaunt-extension-vector'].version_files = ['metadata/vector-version'];
-
-  assert.throws(
-    () =>
-      buildPlanFromProductTags(releaseGraph, 'HEAD', { prefix: 'transition-test', root: f.root }),
-    /manifest advanced .* changed paths do not select the product/u,
-  );
-});
-
-test('a current-version tag on a mismatched tree fails closed', (t) => {
-  const f = fixture(t, V1);
-  const candidate = f.head;
-  git(f.root, 'checkout', '-q', '--orphan', 'collision');
-  git(f.root, 'rm', '-q', '-rf', '.');
-  writeSnapshot(f.root, V1, { vectorSource: 'different-tree' });
-  commit(f.root, 'conflicting vector identity');
-  git(f.root, 'tag', 'oliphaunt-extension-vector-v1.0.0');
-  git(f.root, 'checkout', '-q', '--detach', candidate);
-
-  assert.throws(
-    () =>
-      buildPlanFromProductTags(graph(V1), candidate, {
-        includeCurrentTags: true,
-        prefix: 'transition-test',
-        root: f.root,
-      }),
-    /current-version tag .* is not an ancestor of release candidate/u,
-  );
-});
+const [phase, root, scenario, stage, graphPath] = process.argv.slice(2);
+const native = 'liboliphaunt-native';
+const wasix = 'liboliphaunt-wasix';
+const vector = 'oliphaunt-extension-vector';
+const runtimeVersions = { ...V1, [native]: '2.0.0', [wasix]: '2.0.0' };
+const runtimeCases = ['compatible', 'inline-source', 'source', 'invalid-pin', 'production'];
+const versions = runtimeCases.includes(scenario)
+  ? runtimeVersions
+  : scenario === 'native'
+    ? { ...V1, [native]: '2.0.0' }
+    : scenario === 'external'
+      ? { ...runtimeVersions, [vector]: '1.1.0' }
+      : scenario === 'regressed'
+        ? { ...runtimeVersions, [native]: '1.0.0' }
+        : scenario === 'detached'
+          ? { ...V1, [vector]: '1.1.0' }
+          : ['first', 'zero'].includes(scenario)
+            ? Object.fromEntries(
+                Object.keys(PRODUCTS).map((id) => [id, scenario === 'first' ? '0.1.0' : '0.0.0']),
+              )
+            : V1;
+const releaseGraph = graph(versions);
+if (scenario === 'production')
+  releaseGraph.moon_projects[vector].dependencies = releaseGraph.moon_projects[
+    vector
+  ].dependencies.map((dependency) => ({ ...dependency, scope: 'production' }));
+if (scenario === 'detached')
+  releaseGraph.products[vector].version_files = ['metadata/vector-version'];
+if (phase === 'write') {
+  if (scenario === 'detached' && stage === 'release') {
+    writeFileSync(
+      path.join(root, '.release-please-manifest.json'),
+      JSON.stringify(
+        Object.fromEntries(Object.entries(PRODUCTS).map(([id, folder]) => [folder, versions[id]])),
+      ),
+    );
+    writeFileSync(path.join(root, 'metadata/vector-version'), '1.1.0\n');
+  } else {
+    const selected =
+      stage === 'base'
+        ? ['first', 'zero'].includes(scenario)
+          ? versions
+          : V1
+        : stage === 'runtime'
+          ? runtimeVersions
+          : versions;
+    const options = {};
+    if (
+      stage !== 'base' &&
+      (runtimeCases.includes(scenario) || ['native', 'external'].includes(scenario))
+    ) {
+      options.vectorCompatibility = `native=${scenario === 'invalid-pin' ? '9.9.9' : selected[native]},wasix=${selected[wasix]}`;
+    }
+    if (stage === 'release' && scenario === 'inline-source') options.vectorSource = 'vector-v2';
+    if (stage === 'release' && scenario === 'external') options.vectorSource = 'vector-v1.1';
+    if (stage === 'different') options.vectorSource = 'different-tree';
+    writeSnapshot(root, selected, options);
+  }
+  writeFileSync(graphPath, JSON.stringify(releaseGraph));
+} else if (phase === 'assert') {
+  const plan = (includeCurrentTags = false) =>
+    buildPlanFromProductTags(releaseGraph, 'HEAD', {
+      prefix: 'transition-test',
+      root,
+      includeCurrentTags,
+    });
+  switch (scenario) {
+    case 'compatible': {
+      const result = plan();
+      assert.deepEqual(result.releaseProducts, [native, wasix]);
+      assert.equal(result.changedFiles.includes('packages/vector/release.toml'), true);
+      break;
+    }
+    case 'inline-source':
+      assert.throws(
+        () => plan(),
+        /oliphaunt-extension-vector has release-affecting changes .* manifest version remains 1[.]0[.]0.*packages\/vector\/release[.]toml/u,
+      );
+      break;
+    case 'source':
+      assert.throws(
+        () => plan(),
+        /oliphaunt-extension-vector has release-affecting changes .*packages\/vector\/source[.]toml/u,
+      );
+      break;
+    case 'invalid-pin':
+      assert.throws(
+        () => plan(),
+        /oliphaunt-extension-vector has release-affecting changes .*packages\/vector\/release[.]toml/u,
+      );
+      break;
+    case 'native': {
+      const result = plan();
+      assert.deepEqual(result.releaseProducts, [native]);
+      assert.equal(result.changedFiles.includes('packages/vector/release.toml'), true);
+      break;
+    }
+    case 'production':
+      assert.deepEqual(plan().releaseProducts, [native, wasix]);
+      break;
+    case 'external': {
+      const result = plan();
+      assert.deepEqual(result.directProducts, [vector]);
+      assert.deepEqual(result.releaseProducts, [vector]);
+      break;
+    }
+    case 'first':
+      assert.deepEqual(plan().releaseProducts, [native, wasix, vector]);
+      break;
+    case 'zero':
+      assert.deepEqual(plan().releaseProducts, []);
+      break;
+    case 'rerun': {
+      assert.deepEqual(plan().releaseProducts, []);
+      const result = plan(true);
+      assert.deepEqual(result.releaseProducts, [native, wasix, vector]);
+      assert.deepEqual(result.currentTaggedProducts, result.releaseProducts);
+      break;
+    }
+    case 'tooling': {
+      const result = plan(true);
+      assert.deepEqual(result.releaseProducts, []);
+      assert.deepEqual(result.currentTaggedProducts, []);
+      break;
+    }
+    case 'regressed':
+      assert.throws(
+        () => plan(true),
+        /manifest version 1[.]0[.]0 is older than tagged version 2[.]0[.]0/u,
+      );
+      break;
+    case 'canonical':
+      assert.throws(
+        () => plan(true),
+        /canonical version "9[.]9[.]9" does not match its manifest version "1[.]0[.]0"/u,
+      );
+      break;
+    case 'detached':
+      assert.throws(() => plan(), /manifest advanced .* changed paths do not select the product/u);
+      break;
+    case 'unrelated':
+      assert.throws(
+        () => plan(true),
+        /current-version tag .* is not an ancestor of release candidate/u,
+      );
+      break;
+    default:
+      throw new Error('unknown transition scenario');
+  }
+  console.log(`release transition ${scenario}: passed`);
+} else if (phase === 'pins') {
+  assert.equal(selectedDependencySatisfiesPin(new Set([native]), native, '1.0.0', '1.0.0'), true);
+  assert.equal(selectedDependencySatisfiesPin(new Set([native]), native, '1.0.0', '2.0.0'), false);
+  console.log('selected dependency requires exact pin: passed');
+} else throw new Error('run through release-version-transition.test.sh');

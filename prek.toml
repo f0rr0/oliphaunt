@@ -29,10 +29,3 @@ rev = "v1.1.11"
 hooks = [
   { id = "committed", args = ["--fixup", "--commit-file"], stages = ["commit-msg"] },
 ]
-
-[[repos]]
-repo = "local"
-hooks = [
-  { id = "cargo-fmt", name = "cargo fmt", language = "system", entry = "cargo fmt --check", pass_filenames = false, files = "\\.(rs|toml)$", stages = ["pre-commit"] },
-  { id = "tauri-rustfmt", name = "Tauri rustfmt", language = "system", entry = "rustfmt --edition 2021 --check", pass_filenames = true, files = "^examples/(tauri|tauri-wasix)/src-tauri/.*\\.rs$", stages = ["pre-commit"] },
-]

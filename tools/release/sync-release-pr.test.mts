@@ -1,25 +1,56 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  EXAMPLE_CARGO_POLICIES,
-  exampleCargoReleaseVersionBindings,
-} from './example-cargo-policy.mts';
-import {
+  cargoManifestPaths,
   cargoPathDependencyBindings,
   desiredCargoPathDependencyVersion,
+  priorCargoPathDependencyVersions,
   SDK_INSTALL_VERSION_RULES,
-  sharedContribBootstrapRequired,
   syncExampleCargoManifestText,
   syncLockfile,
   syncSdkInstallDocs,
+  syncTomlStringPath,
 } from './sync-release-pr.mts';
 
-const ROOT = path.resolve(import.meta.dir, '../..');
+const [mode, root, stage] = process.argv.slice(2);
+if (mode === 'inventory') {
+  const existing = path.join(root, 'Cargo.toml'),
+    nested = path.join(root, 'nested/Cargo.toml'),
+    untracked = path.join(root, 'untracked/Cargo.toml');
+  assert.deepEqual(
+    cargoManifestPaths({ root }),
+    stage === 'deleted' ? [existing, untracked] : [existing, nested, untracked],
+  );
+  assert.equal(
+    priorCargoPathDependencyVersions(existing, { root }).get(
+      JSON.stringify(['dependencies', 'local']),
+    ),
+    '*',
+  );
+  assert.deepEqual([...priorCargoPathDependencyVersions(nested, { root })], []);
+  assert.deepEqual([...priorCargoPathDependencyVersions(untracked, { root })], []);
+  process.exit(0);
+}
+
+test('compatibility sync handles inline and table Cargo dependencies without changing other fields', () => {
+  for (const source of [
+    `[dependencies]\nquery = { path = '../query', version = '0.1.0', features = ['one'] }\n`,
+    `[dependencies.query]\npath = '../query'\nversion = '0.1.0'\nfeatures = ['one']\n`,
+  ]) {
+    const result = syncTomlStringPath(source, 'dependencies.query.version', '0.2.0', 'consumer');
+    const expected = Bun.TOML.parse(source);
+    expected.dependencies.query.version = '0.2.0';
+    assert.deepEqual(Bun.TOML.parse(result.text), expected);
+    assert.equal(
+      syncTomlStringPath(result.text, 'dependencies.query.version', '0.2.0', 'consumer').detail,
+      undefined,
+    );
+  }
+});
 
 test('release sync preserves wildcard Cargo path dependencies', () => {
   assert.equal(desiredCargoPathDependencyVersion('*', '0.2.0'), '*');
@@ -86,95 +117,6 @@ test('release sync advances every SDK install contract with its product', (t) =>
   const checkChanges = [];
   syncSdkInstallDocs(checkChanges, { root, write: false, transitions });
   assert.deepEqual(checkChanges, []);
-});
-
-test('shared contrib bootstrap is allowed only from unreleased main state', () => {
-  assert.equal(
-    sharedContribBootstrapRequired([], () => [{ product: 'liboliphaunt-native' }]),
-    true,
-  );
-  assert.equal(
-    sharedContribBootstrapRequired([], () => []),
-    false,
-  );
-  let discoveries = 0;
-  assert.equal(
-    sharedContribBootstrapRequired(
-      [{ product: 'liboliphaunt-native', before: '0.1.0', after: '0.1.1' }],
-      () => {
-        discoveries += 1;
-        throw new Error('released main must not run shared candidate discovery');
-      },
-    ),
-    false,
-    'a released or pending main transition must not seed another release PR',
-  );
-  assert.equal(discoveries, 0);
-});
-
-test('Cargo release inventory includes new manifests and preserves prior dependency constraints', (t) => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-cargo-inventory-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const git = (...args) => {
-    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-  };
-  git('init', '-q');
-  git('config', 'user.name', 'Release Test');
-  git('config', 'user.email', 'release-test@example.invalid');
-  writeFileSync(path.join(root, '.gitignore'), 'ignored/\n');
-  const existing = path.join(root, 'Cargo.toml');
-  writeFileSync(
-    existing,
-    '[package]\nname = "root"\nversion = "0.1.0"\n[dependencies]\nlocal = { path = "nested", version = "*" }\n',
-  );
-  git('add', '.');
-  git('commit', '-qm', 'initial');
-  for (const name of ['nested', 'ignored']) {
-    mkdirSync(path.join(root, name));
-    writeFileSync(
-      path.join(root, name, 'Cargo.toml'),
-      '[package]\nname = "nested"\nversion = "0.2.0"\n',
-    );
-  }
-  git('add', 'nested');
-  git('commit', '-qm', 'new package');
-  mkdirSync(path.join(root, 'untracked'));
-  const untracked = path.join(root, 'untracked', 'Cargo.toml');
-  writeFileSync(untracked, '[package]\nname = "untracked"\nversion = "0.1.0"\n');
-  const nested = path.join(root, 'nested', 'Cargo.toml');
-  const probe = path.join(root, 'probe.mts');
-  writeFileSync(
-    probe,
-    `import * as api from ${JSON.stringify(path.resolve(import.meta.dirname, 'sync-release-pr.mts'))};
-const root = process.argv[2];
-console.log(JSON.stringify({ paths: api.cargoManifestPaths({ root }), prior: ${JSON.stringify([existing, nested, untracked])}.map(file => [...api.priorCargoPathDependencyVersions(file, { root })]) }));
-`,
-  );
-  const snapshot = () => {
-    const result = spawnSync(
-      'bash',
-      [
-        path.resolve(import.meta.dirname, 'release-please-state.sh'),
-        root,
-        'HEAD',
-        '',
-        process.execPath,
-        probe,
-        root,
-      ],
-      { encoding: 'utf8' },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    return JSON.parse(result.stdout);
-  };
-  const captured = snapshot();
-  assert.deepEqual(captured.paths, [existing, nested, untracked]);
-  assert.equal(new Map(captured.prior[0]).get(JSON.stringify(['dependencies', 'local'])), '*');
-  assert.deepEqual(captured.prior[1], []);
-  assert.deepEqual(captured.prior[2], []);
-  rmSync(nested);
-  assert.deepEqual(snapshot().paths, [existing, untracked]);
 });
 
 test('release sync updates only unsourced local packages in a nested Cargo lock', () => {
@@ -277,7 +219,7 @@ oliphaunt-target = { version = "=0.1.0", features = [
   assert.equal(first.details.length, 5);
   assert.equal((first.text.match(/0[.]1[.]1/gu) ?? []).length, 5);
   assert.equal(first.text.includes('0.1.0'), false);
-  assert.match(first.text, /features = \[\n  "preserved-feature",\n\]/u);
+  assert.match(first.text, /features = \[\n {2}"preserved-feature",\n\]/u);
   assert.match(first.text, /runtime-version = "0[.]1[.]1" # exact native payload contract/u);
 
   const second = syncExampleCargoManifestText(first.text, {
@@ -294,44 +236,4 @@ oliphaunt-target = { version = "=0.1.0", features = [
       syncExampleCargoManifestText(unsupported, { policy, bindings, label: 'fixture/Cargo.toml' }),
     /must use a string or inline-table dependency specification/u,
   );
-});
-
-test('release sync targets both WASIX example dependency scopes independently', () => {
-  const bindings = exampleCargoReleaseVersionBindings();
-  for (const policyId of ['wasix-tauri', 'wasix-electron-sidecar']) {
-    const policy = EXAMPLE_CARGO_POLICIES.find(({ id }) => id === policyId);
-    assert.notEqual(policy, undefined);
-    const manifestPath = path.join(ROOT, policy.crateDir, 'Cargo.toml');
-    const initial = readFileSync(manifestPath, 'utf8');
-    const result = syncExampleCargoManifestText(initial, {
-      policy,
-      bindings: bindings.filter(({ policyId: candidate }) => candidate === policyId),
-      label: `${policy.crateDir}/Cargo.toml`,
-    });
-    assert.equal(result.text, initial);
-    assert.deepEqual(result.details, []);
-  }
-});
-
-test('generated release readiness closes the cheap pre-fanout fixed point', () => {
-  const result = spawnSync(
-    'bash',
-    ['tools/release/sync-release-pr.sh', '--check-generated-release'],
-    {
-      cwd: ROOT,
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-      timeout: 10_000,
-    },
-  );
-  assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join('\n'));
-  assert.match(result.stdout, /release PR derived files are in sync/u);
-
-  const conflicting = spawnSync(
-    process.execPath,
-    ['tools/release/sync-release-pr.mts', '--check', '--check-generated-release'],
-    { cwd: ROOT, encoding: 'utf8', timeout: 10_000 },
-  );
-  assert.equal(conflicting.status, 2);
-  assert.match(conflicting.stderr, /mutually exclusive/u);
 });

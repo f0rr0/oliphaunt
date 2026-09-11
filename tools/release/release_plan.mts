@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { extensionArtifactProductsForReleaseProducts } from '../../src/shared/product-metadata/release-artifact-targets.mts';
+import { extensionArtifactProductsForReleaseProducts } from './release-artifact-targets.mts';
 import {
   buildPlan,
   buildPlanFromProductTags,
@@ -10,7 +10,7 @@ import {
   loadGraph,
   normalizeFiles,
   wasixEvidenceProductsForRelease,
-} from '../../src/shared/product-metadata/release-graph.mts';
+} from './release-graph.mts';
 
 const TOOL = 'release_plan.mts';
 

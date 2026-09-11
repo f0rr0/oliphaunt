@@ -301,16 +301,16 @@ topology-specific patches are not the source of truth for this lane. The
 historical adoption decisions are recorded in Git history. Those decisions
 reflect a single-backend WASIX product. The five compatible optimizations—hash-load,
 top-XID visibility, guarded btree int4 comparison, LIKE literal substring, and
-first int4 leaf comparison—are owned by the main WASIX runtime. The postmaster
-consumes those exact patches through
-`postgres/main-optimizations.series` instead of maintaining copies. The
+first int4 leaf comparison—are shared in `third-party/postgres/patches/wasix`.
+Both products select those exact patches through their complete ordered
+`postgres/series` recipes instead of maintaining copies. The
 single-user-only btree delete stack placement, bottom-up-delete runtime toggle,
 and full concurrent-postmaster runtime patches remain outside the default
-single-backend lane. The postmaster keeps its narrow pg_dump LTO hygiene patch
-locally because it belongs to that build topology.
+single-backend lane. Both WASIX lanes also select the shared pg_dump LTO
+hygiene and entropy-handling patches.
 
 New shared
-optimizations must be adopted through the canonical single-backend patch stack;
+optimizations must be explicitly selected by each compatible lane;
 postmaster lifecycle patches remain owned by the postmaster product.
 
 ## Current Slice

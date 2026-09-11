@@ -70,7 +70,7 @@ another backup mode.
 
 The filename arithmetic contract, including 16 MiB and 4 MiB segment sizes and
 the 4 GiB `XLogId` boundary, is fixed by
-`src/shared/fixtures/storage/physical-backup-wal-range-v1.properties`.
+`test-fixtures/storage/physical-backup-wal-range-v1.properties`.
 The bulk pass skips top-level backup/runtime temporaries, `.DS_Store` wherever
 encountered, `pg_internal.init*`, `pgsql_tmp*`, `global/pg_control`, `pg_wal` contents, and the contents of
 PostgreSQL's transient state directories. Those directories remain present as
@@ -113,7 +113,7 @@ The required restored files are:
 ## Verification
 
 Native C tests and both WASIX binding suites consume the shared manifest and WAL
-range fixtures under `src/shared/fixtures/storage`. Parser tests cover traversal,
+range fixtures under `test-fixtures/storage`. Parser tests cover traversal,
 links, duplicate paths, invalid
 checksums, truncated terminators, trailing data, unknown metadata, and
 tree-shape conflicts. Backup tests cover same-segment and multi-segment WAL

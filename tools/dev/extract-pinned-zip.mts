@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mts';
+import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 
 export function extractPinnedZip(argv: string[]) {
   const { values } = parseArgs({

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { loadPublicationCatalog } from '../../src/shared/product-metadata/publication-catalog.mts';
-import { extensionSqlNames } from '../../src/shared/product-metadata/release-artifact-targets.mts';
-import { buildPlan, loadGraph } from '../../src/shared/product-metadata/release-graph.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
+import { extensionSqlNames } from './release-artifact-targets.mts';
+import { buildPlan, loadGraph } from './release-graph.mts';
 import { normalPublicationPlan } from './normal-publication-plan.mts';
 
 function carrier({ id, product, publishOrder, dependencies = [] }) {
@@ -169,13 +169,13 @@ describe('normal publication plan', () => {
   });
 
   test('real release selections include exact embedded consumers without unrelated products', () => {
-    const external = realSelection('src/extensions/external/vector/CHANGELOG.md');
+    const external = realSelection('extensions/external/vector/CHANGELOG.md');
     expect(external.release.directProducts).toEqual(['oliphaunt-extension-vector']);
     expect(external.release.releaseProducts).toEqual(['oliphaunt-extension-vector']);
     expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.releaseProducts);
     expect(external.topology.carrierCount).toBe(external.catalog.carriers.length);
 
-    const runtime = realSelection('src/runtimes/liboliphaunt/native/CHANGELOG.md');
+    const runtime = realSelection('runtimes/liboliphaunt-native/CHANGELOG.md');
     expect(runtime.release.directProducts).toEqual(['liboliphaunt-native']);
     expect(runtime.release.releaseProducts).toContain('liboliphaunt-native');
     expect(runtime.release.releaseProducts).not.toContain('liboliphaunt-wasix');
@@ -193,16 +193,16 @@ describe('normal publication plan', () => {
     expect(runtime.catalog.products.map(({ id }) => id)).toEqual(runtime.release.releaseProducts);
     expect(runtime.topology.carrierCount).toBe(runtime.catalog.carriers.length);
 
-    const contrib = realSelection('src/extensions/contrib/postgres18.toml');
+    const contrib = realSelection('extensions/contrib/postgres18.toml');
     expect(contrib.release.directProducts).toEqual(['liboliphaunt-native', 'liboliphaunt-wasix']);
     expect(contrib.release.releaseProducts).toEqual(['liboliphaunt-native', 'liboliphaunt-wasix']);
     expect(contrib.release.releaseProducts).not.toContain('oliphaunt-wasix-napi');
 
-    const icu = realSelection('src/runtimes/liboliphaunt/icu/src/lib.rs');
-    expect(icu.release.directProducts).toEqual(['liboliphaunt-wasix']);
-    expect(icu.release.releaseProducts).toEqual(['liboliphaunt-wasix']);
+    const icu = realSelection('database-resources/icu/cargo/src/lib.rs');
+    expect(icu.release.directProducts).toEqual(['database-resources']);
+    expect(icu.release.releaseProducts).toEqual(['database-resources']);
 
-    const sdk = realSelection('src/sdks/react-native/CHANGELOG.md');
+    const sdk = realSelection('sdks/react-native/CHANGELOG.md');
     expect(sdk.release.directProducts).toEqual(['oliphaunt-react-native']);
     expect(sdk.release.releaseProducts).toEqual(['oliphaunt-react-native']);
     expect(sdk.catalog.products.map(({ id }) => id)).toEqual(sdk.release.releaseProducts);

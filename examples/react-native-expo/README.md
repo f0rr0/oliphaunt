@@ -16,11 +16,11 @@ the extension-specific runtime proofs, including the pgvector HNSW query.
 Fast Android smoke:
 
 ```sh
-pnpm run smoke
-pnpm run smoke:android
+bun run smoke
+bun run smoke:android
 ```
 
-`pnpm run smoke` is the default installed-app harness: it runs the Android and
+`bun run smoke` is the default installed-app harness: it runs the Android and
 iOS Expo development-client smokes through the repository validation script.
 Use `smoke:android` or `smoke:ios` when only one simulator/device stack is
 available.
@@ -29,9 +29,9 @@ The default local dev command is the Expo development-client harness with local
 Expo MCP capabilities enabled, not Expo Go:
 
 ```sh
-pnpm start
-pnpm run android:start
-pnpm run ios:start
+bun run start
+bun run android:start
+bun run ios:start
 ```
 
 The automated smoke, benchmark, and crash scripts start their own
@@ -51,8 +51,8 @@ same-device Expo SQLite WAL baseline uses its own explicit SQLite durability
 profile so comparisons do not invent an Oliphaunt durability mode:
 
 ```sh
-pnpm run bench:android
-pnpm run bench:ios
+bun run bench:android
+bun run bench:ios
 ```
 
 Process-death recovery runs use the same dev-client build but launch a
@@ -65,8 +65,8 @@ verifies the effective PostgreSQL `fsync`, `full_page_writes`, and
 `synchronous_commit` settings are all `on`:
 
 ```sh
-pnpm run crash:android
-pnpm run crash:ios
+bun run crash:android
+bun run crash:ios
 ```
 
 The runners choose isolated persistent storage by default. Set
@@ -89,23 +89,23 @@ The smoke script:
 Useful overrides:
 
 ```sh
-OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS=shared_buffers=8MB,wal_buffers=-1 pnpm run bench:android
-OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=quick pnpm run bench:android
-OLIPHAUNT_EXPO_ANDROID_SKIP_BUILD=1 pnpm run smoke:android
-OLIPHAUNT_EXPO_ANDROID_KEEP_METRO=1 pnpm run smoke:android
-OLIPHAUNT_EXPO_ANDROID_REPACKAGE_ASSETS=1 pnpm run smoke:android
-OLIPHAUNT_EXPO_ANDROID_GRADLE_CONFIGURATION_CACHE=1 pnpm run smoke:android
-OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR=/path/to/runtime pnpm run smoke:android
-OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR=/path/to/android-datum64-runtime-closure pnpm run smoke:android
-OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO=/path/to/liboliphaunt.so pnpm run smoke:android
+OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS=shared_buffers=8MB,wal_buffers=-1 bun run bench:android
+OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=quick bun run bench:android
+OLIPHAUNT_EXPO_ANDROID_SKIP_BUILD=1 bun run smoke:android
+OLIPHAUNT_EXPO_ANDROID_KEEP_METRO=1 bun run smoke:android
+OLIPHAUNT_EXPO_ANDROID_REPACKAGE_ASSETS=1 bun run smoke:android
+OLIPHAUNT_EXPO_ANDROID_GRADLE_CONFIGURATION_CACHE=1 bun run smoke:android
+OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR=/path/to/runtime bun run smoke:android
+OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR=/path/to/android-datum64-runtime-closure bun run smoke:android
+OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO=/path/to/liboliphaunt.so bun run smoke:android
 ```
 
 Benchmark and crash tuning uses explicit PostgreSQL startup GUCs:
 
 ```sh
 export OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS=shared_buffers=32MB,wal_buffers=-1,min_wal_size=32MB,max_wal_size=64MB
-pnpm run bench:android
-pnpm run crash:android
+bun run bench:android
+bun run crash:android
 ```
 
 Use `bench:ios` and `crash:ios` for iOS. Set
@@ -125,7 +125,7 @@ Fast iOS build/smoke harness:
 OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK=/path/to/liboliphaunt.xcframework \
 OLIPHAUNT_EXPO_IOS_RUNTIME_DIR=/path/to/postgres-runtime \
 OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR=/path/to/ios-datum64-runtime-closure \
-pnpm run smoke:ios
+bun run smoke:ios
 ```
 
 Use `OLIPHAUNT_EXPO_IOS_BUILD_ONLY=1` when you only want the generated Expo iOS
@@ -144,7 +144,7 @@ OLIPHAUNT_EXPO_IOS_SDK=iphoneos \
 OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK=/path/to/liboliphaunt.xcframework \
 OLIPHAUNT_EXPO_IOS_RUNTIME_DIR=/path/to/postgres-runtime \
 OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR=/path/to/ios-datum64-runtime-closure \
-pnpm run bench:ios
+bun run bench:ios
 ```
 
 Set `OLIPHAUNT_EXPO_IOS_DEVICE_ID` to pick a specific paired device, and
@@ -175,7 +175,7 @@ because the device was locked, retry without rebuilding:
 OLIPHAUNT_EXPO_IOS_REUSE_INSTALLED_APP=1 \
 OLIPHAUNT_EXPO_IOS_SDK=iphoneos \
 OLIPHAUNT_EXPO_IOS_DEVICE_ID=<device-udid> \
-pnpm run crash:ios
+bun run crash:ios
 ```
 
 The physical iOS smoke harness exercises background/foreground automatically:
@@ -186,11 +186,11 @@ installed app and verifies SQL still works on the resumed database.
 Expo local MCP capabilities are installed through `expo-mcp`:
 
 ```sh
-pnpm run mcp:version
-pnpm run mcp:start
+bun run mcp:version
+bun run mcp:start
 ```
 
-`mcp:start` is an alias for the default `pnpm start` dev-client/MCP harness,
+`mcp:start` is an alias for the default `bun run start` dev-client/MCP harness,
 which is the local tool path for screenshots, app logs, DevTools, and automation
 from MCP-capable agents. Expo's remote MCP server requires Expo OAuth/EAS
 access, so the repo keeps local CLI/dev-client validation as the default
@@ -206,7 +206,7 @@ npx eas-cli@latest --version
 Baseline local checks:
 
 ```sh
-pnpm run typecheck
-pnpm run lint -- --max-warnings=0
+bun run typecheck
+bun run lint -- --max-warnings=0
 npx expo-doctor
 ```

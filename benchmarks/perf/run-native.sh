@@ -10,14 +10,14 @@ mkdir "$output" # Never mix measurements from different invocations.
 if command -v sha256sum >/dev/null; then hash=(sha256sum); else hash=(shasum -a 256); fi
 {
   git rev-parse HEAD
-  git status --short -- src/sdks/rust src/shared/rust-query-core benchmarks/perf benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo
+  git status --short -- sdks/rust/sdk sdks/rust-query benchmarks/perf benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo
   rustc -Vv
   uname -a
   date -u
 } >"$output/context.txt"
 
 {
-  for name in LIBOLIPHAUNT_PATH OLIPHAUNT_POSTGRES OLIPHAUNT_INITDB OLIPHAUNT_BROKER_PATH OLIPHAUNT_QUERY_CORE_RS; do
+  for name in LIBOLIPHAUNT_PATH OLIPHAUNT_POSTGRES OLIPHAUNT_INITDB OLIPHAUNT_BROKER_PATH; do
     value="${!name:-}"
     if [ -n "$value" ]; then
       [ -f "$value" ] || value="$(command -v "$value")"
@@ -26,7 +26,7 @@ if command -v sha256sum >/dev/null; then hash=(sha256sum); else hash=(shasum -a 
   done
   while IFS= read -r -d '' file; do
     [ ! -f "$file" ] || "${hash[@]}" "$file"
-  done < <(git ls-files -z --cached --others --exclude-standard -- src/sdks/rust src/shared/rust-query-core benchmarks/perf/runner benchmarks/perf/run-native.sh benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo)
+  done < <(git ls-files -z --cached --others --exclude-standard -- sdks/rust/sdk sdks/rust-query benchmarks/perf/runner benchmarks/perf/run-native.sh benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo)
 } >"$output/inputs.sha256"
 CARGO_TARGET_DIR="$root/target" cargo build --release --locked -p oliphaunt-perf >"$output/build.log" 2>&1
 runner="$root/target/release/oliphaunt-perf"

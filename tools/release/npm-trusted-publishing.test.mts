@@ -1,20 +1,16 @@
 #!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
   NPM_TRUSTED_PUBLISHING_REPOSITORY,
   validateNpmTrustedPublishingManifest,
-} from '../../src/shared/artifact-packaging/npm-trusted-publishing.mts';
+} from '../packaging/npm-trusted-publishing.mts';
 import {
   validateNpmTrustCliRuntime,
   validateNpmTrustedPublishingRuntime,
 } from './npm-trusted-publishing-runtime.mts';
-
-const CLI = fileURLToPath(new URL('npm-trusted-publishing-runtime.mts', import.meta.url));
 
 function manifest(overrides = {}) {
   return {
@@ -40,24 +36,6 @@ test('accepts the minimum supported trusted-publishing runtime', () => {
   assert.doesNotThrow(() =>
     validateNpmTrustedPublishingRuntime({ nodeVersion: '24.1.0', npmVersion: '11.18.0' }),
   );
-});
-
-test('the runtime checker executes directly under Node without a Bun prerequisite', () => {
-  const accepted = spawnSync(
-    'node',
-    [CLI, 'check-runtime', '--node', 'v22.22.3', '--npm', '11.18.0'],
-    { encoding: 'utf8' },
-  );
-  assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stdout, /npm trusted-publishing runtime passed/u);
-
-  const rejected = spawnSync(
-    'node',
-    [CLI, 'check-runtime', '--node', 'v22.13.0', '--npm', '11.18.0'],
-    { encoding: 'utf8' },
-  );
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /Node[.]js v22[.]13[.]0 is too old/u);
 });
 
 test('rejects old or malformed Node.js and npm versions', () => {

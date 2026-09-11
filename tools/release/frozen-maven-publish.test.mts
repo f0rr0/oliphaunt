@@ -1,16 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { readZipEntries } from '../../src/shared/artifact-packaging/release-carrier.mts';
+import { readZipEntries } from '../packaging/release-carrier.mts';
 import {
   assertMavenCentralBundleSize,
   loadPreparedMavenBundle,
   publishFrozenMavenBundle,
   stageFrozenMavenBundle,
 } from './frozen-maven-publish.mts';
-import { publicKeyFingerprints } from './verify-maven-signing-readiness.mts';
 
 const temporaryDirectories = [];
 const root = path.join(import.meta.dir, '../..');
@@ -22,8 +20,7 @@ function sha256(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
-function fixtureLock() {
-  const directory = mkdtempSync(path.join(root, 'target/frozen-maven-test-'));
+function fixtureLock(directory = mkdtempSync(path.join(root, 'target/frozen-maven-test-'))) {
   temporaryDirectories.push(directory);
   const jar = path.join(directory, 'fixture-1.2.3.jar');
   const pom = path.join(directory, 'fixture-1.2.3.pom');
@@ -61,6 +58,56 @@ function fixtureLock() {
   };
 }
 
+if (['prepare-signing', 'verify-signing'].includes(process.argv[2])) {
+  const directory = process.argv[3];
+  const statePath = path.join(directory, 'test-state.json');
+  const outputRoot = path.join(directory, 'output');
+  if (process.argv[2] === 'prepare-signing') {
+    const { jar, lock } = fixtureLock(directory);
+    mkdirSync(outputRoot, { recursive: true });
+    const prepared = stageFrozenMavenBundle({ lock, products: ['fixture-product'], outputRoot });
+    const staged = path.join(prepared.layout, 'dev/oliphaunt/fixture/1.2.3/fixture-1.2.3.jar');
+    expect(readFileSync(staged)).toEqual(readFileSync(jar));
+    expect(readFileSync(staged + '.md5', 'utf8')).toMatch(/^[0-9a-f]{32}$/u);
+    expect(readFileSync(staged + '.sha1', 'utf8')).toMatch(/^[0-9a-f]{40}$/u);
+    writeFileSync(
+      path.join(outputRoot, 'context.json'),
+      JSON.stringify({ prepared, lockDigest: lock.lockDigest }),
+    );
+    writeFileSync(statePath, JSON.stringify({ lock, prepared }));
+    writeFileSync(
+      path.join(directory, 'payloads.txt'),
+      prepared.payloads.map((payload) => payload.staged).join('\n') + '\n',
+    );
+  } else {
+    const { lock, prepared } = JSON.parse(readFileSync(statePath, 'utf8'));
+    const ready = loadPreparedMavenBundle({ lock, products: ['fixture-product'], outputRoot });
+    expect(ready.bundleSize).toBe(statSync(prepared.bundle).size);
+    const entries = readZipEntries(prepared.bundle);
+    expect(entries.size).toBeGreaterThan(0);
+    for (const payload of prepared.payloads) {
+      const name = path.relative(prepared.layout, payload.staged).split(path.sep).join('/');
+      expect(Buffer.from(entries.get(name).data())).toEqual(readFileSync(payload.staged));
+      expect(readFileSync(payload.staged + '.asc', 'utf8')).toContain('BEGIN PGP SIGNATURE');
+    }
+    expect(() =>
+      loadPreparedMavenBundle({
+        lock: { ...lock, lockDigest: 'b'.repeat(64) },
+        products: ['fixture-product'],
+        outputRoot,
+      }),
+    ).toThrow('exact publication lock');
+    expect(() => loadPreparedMavenBundle({ lock, products: ['other'], outputRoot })).toThrow(
+      'exact publication lock',
+    );
+    writeFileSync(prepared.bundle, 'changed ZIP');
+    expect(() =>
+      loadPreparedMavenBundle({ lock, products: ['fixture-product'], outputRoot }),
+    ).toThrow('bytes changed');
+  }
+  process.exit(0);
+}
+
 afterEach(() => {
   while (temporaryDirectories.length > 0) {
     rmSync(temporaryDirectories.pop(), { recursive: true, force: true });
@@ -68,110 +115,6 @@ afterEach(() => {
 });
 
 describe('frozen Maven Central publication', () => {
-  test('bundles exact locked payloads and generates only signatures and checksums', () => {
-    const { directory, jar, lock } = fixtureLock();
-    const outputRoot = path.join(directory, 'output');
-    mkdirSync(outputRoot, { recursive: true });
-    const result = stageFrozenMavenBundle({
-      lock,
-      products: ['fixture-product'],
-      outputRoot,
-    });
-    const staged = path.join(result.layout, 'dev/oliphaunt/fixture/1.2.3/fixture-1.2.3.jar');
-    expect(readFileSync(staged)).toEqual(readFileSync(jar));
-    expect(readFileSync(`${staged}.md5`, 'utf8')).toMatch(/^[0-9a-f]{32}$/u);
-    expect(readFileSync(`${staged}.sha1`, 'utf8')).toMatch(/^[0-9a-f]{40}$/u);
-    const home = path.join(directory, 'gpg');
-    mkdirSync(home, { mode: 0o700 });
-    const gpg = (args, input) => {
-      const result = spawnSync('gpg', ['--batch', '--homedir', home, ...args], {
-        input,
-        encoding: 'utf8',
-        timeout: 15000,
-      });
-      if (result.status !== 0) throw new Error(result.stderr);
-      return result.stdout;
-    };
-    try {
-      gpg(
-        [
-          '--pinentry-mode',
-          'loopback',
-          '--passphrase-fd',
-          '0',
-          '--quick-generate-key',
-          'Maven bundle <fixture@example.invalid>',
-          'ed25519',
-          'sign',
-          '0',
-        ],
-        'fixture password\n',
-      );
-      const fingerprint = publicKeyFingerprints(gpg(['--with-colons', '--list-keys']))[0];
-      const privateKey = gpg(
-        [
-          '--pinentry-mode',
-          'loopback',
-          '--passphrase-fd',
-          '0',
-          '--armor',
-          '--export-secret-keys',
-          fingerprint,
-        ],
-        'fixture password\n',
-      );
-      writeFileSync(
-        path.join(outputRoot, 'context.json'),
-        JSON.stringify({ prepared: result, lockDigest: lock.lockDigest }),
-      );
-      const signed = spawnSync(
-        'bash',
-        [
-          path.join(import.meta.dir, 'preflight-maven-central-bundle.sh'),
-          '--sign-staged',
-          outputRoot,
-        ],
-        {
-          env: {
-            ...process.env,
-            ORG_GRADLE_PROJECT_signingInMemoryKey: privateKey,
-            ORG_GRADLE_PROJECT_signingInMemoryKeyId: fingerprint,
-            ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: 'fixture password',
-          },
-          encoding: 'utf8',
-          timeout: 20000,
-        },
-      );
-      if (signed.status !== 0) throw new Error(signed.stderr);
-      const ready = loadPreparedMavenBundle({ lock, products: ['fixture-product'], outputRoot });
-      expect(ready.bundleSize).toBe(statSync(result.bundle).size);
-      const entries = readZipEntries(result.bundle);
-      expect(entries.size).toBeGreaterThan(0);
-      for (const payload of result.payloads) {
-        const name = path.relative(result.layout, payload.staged).split(path.sep).join('/');
-        expect(Buffer.from(entries.get(name).data())).toEqual(readFileSync(payload.staged));
-        gpg(['--verify', payload.staged + '.asc', payload.staged]);
-        expect(readFileSync(payload.staged + '.asc', 'utf8')).toContain('BEGIN PGP SIGNATURE');
-      }
-      expect(() =>
-        loadPreparedMavenBundle({
-          lock: { ...lock, lockDigest: 'b'.repeat(64) },
-          products: ['fixture-product'],
-          outputRoot,
-        }),
-      ).toThrow('exact publication lock');
-      expect(() => loadPreparedMavenBundle({ lock, products: ['other'], outputRoot })).toThrow(
-        'exact publication lock',
-      );
-      writeFileSync(result.bundle, 'changed ZIP');
-      expect(() =>
-        loadPreparedMavenBundle({ lock, products: ['fixture-product'], outputRoot }),
-      ).toThrow('bytes changed');
-    } finally {
-      spawnSync('gpgconf', ['--homedir', home, '--kill', 'all']);
-    }
-  });
-
   test('rejects a deployment bundle larger than the Central portal limit', () => {
     expect(() => assertMavenCentralBundleSize(1_000_000_001)).toThrow(
       'smaller than 1000000000 bytes',
