@@ -8,6 +8,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::SyncSender,
 };
+use std::time::Duration;
 
 use crate::lifecycle::teardown_result;
 use crate::wire::{
@@ -167,12 +168,17 @@ impl OliphauntProxy {
                 stream
                     .set_nonblocking(false)
                     .context("configure TCP proxy stream as blocking")?;
+                // Bound reads so shutdown does not depend on the OS interrupting
+                // an in-flight recv on a cloned socket handle.
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .context("configure TCP proxy shutdown polling")?;
                 let _active = active_connection.register_tcp(&stream)?;
                 if shutdown.load(Ordering::SeqCst) {
                     active_connection.shutdown();
                     return Ok(());
                 }
-                self.handle_stream(stream)
+                self.handle_stream(stream, &shutdown)
             })();
             if let Some(error) = self.connection_teardown_failure(&result) {
                 return Err(error);
@@ -210,7 +216,7 @@ impl OliphauntProxy {
                     active_connection.shutdown();
                     return Ok(());
                 }
-                self.handle_stream(stream)
+                self.handle_stream(stream, &shutdown)
             })();
             if let Some(error) = self.connection_teardown_failure(&result) {
                 return Err(error);
@@ -223,7 +229,7 @@ impl OliphauntProxy {
         Ok(())
     }
 
-    fn handle_stream<S>(&self, mut stream: S) -> Result<()>
+    fn handle_stream<S>(&self, mut stream: S, shutdown: &Arc<AtomicBool>) -> Result<()>
     where
         S: CloneProtocolStream,
     {
@@ -233,7 +239,8 @@ impl OliphauntProxy {
         let mut protocol_batch = Vec::new();
 
         loop {
-            let read = stream.read(&mut buffer).context("read frontend socket")?;
+            let read = read_frontend(&mut stream, &mut buffer, shutdown)
+                .context("read frontend socket")?;
             if read == 0 {
                 flush_protocol_batch_if_started(
                     &mut protocol_batch,
@@ -347,6 +354,7 @@ impl OliphauntProxy {
                                     stream
                                         .try_clone_for_protocol()
                                         .context("clone frontend socket for protocol pump")?,
+                                    Arc::clone(shutdown),
                                 ))?;
                             }
                             backend = Some(opened);
@@ -802,10 +810,30 @@ fn startup_config_for_message(base: &StartupConfig, message: &[u8]) -> Result<St
     Ok(config)
 }
 
-struct ProtocolIo<S>(S);
+fn read_frontend(
+    stream: &mut impl Read,
+    bytes: &mut [u8],
+    shutdown: &AtomicBool,
+) -> io::Result<usize> {
+    loop {
+        if shutdown.load(Ordering::SeqCst) {
+            return Ok(0);
+        }
+        match stream.read(bytes) {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            result => return result,
+        }
+    }
+}
+
+struct ProtocolIo<S>(S, Arc<AtomicBool>);
 impl<S: Read> Read for ProtocolIo<S> {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        self.0.read(bytes)
+        read_frontend(&mut self.0, bytes, &self.1)
     }
 }
 impl<S: Write> Write for ProtocolIo<S> {
@@ -818,6 +846,9 @@ impl<S: Write> Write for ProtocolIo<S> {
 }
 impl<S: Read + Write + Send + ProtocolReadiness> ProtocolStream for ProtocolIo<S> {
     fn read_ready(&mut self) -> io::Result<bool> {
+        if self.1.load(Ordering::SeqCst) {
+            return Ok(true);
+        }
         self.0.read_ready()
     }
 }
@@ -825,6 +856,36 @@ impl<S: Read + Write + Send + ProtocolReadiness> ProtocolStream for ProtocolIo<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_reader_retries_idle_timeouts_and_observes_shutdown() -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let mut client = TcpStream::connect(listener.local_addr()?)?;
+        let (stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_millis(10)))?;
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut protocol = ProtocolIo(stream, Arc::clone(&shutdown));
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || -> io::Result<()> {
+            let mut byte = [0];
+            assert_eq!(protocol.read(&mut byte)?, 1);
+            assert_eq!(byte, [42]);
+            tx.send(()).unwrap();
+            assert_eq!(protocol.read(&mut byte)?, 0);
+            assert!(protocol.read_ready()?);
+            tx.send(()).unwrap();
+            Ok(())
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        client.write_all(&[42])?;
+        rx.recv_timeout(Duration::from_secs(2))?;
+        // Deliberately leave the socket open: cancellation must work even if
+        // the OS does not interrupt the pending read on the cloned handle.
+        shutdown.store(true, Ordering::SeqCst);
+        rx.recv_timeout(Duration::from_secs(2))?;
+        worker.join().unwrap()?;
+        Ok(())
+    }
 
     #[test]
     fn protocol_batch_flushes_on_client_boundaries() {

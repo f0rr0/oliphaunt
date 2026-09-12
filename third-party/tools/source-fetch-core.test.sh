@@ -12,10 +12,8 @@ for scope in icu native-runtime wasix-runtime wasix-postmaster-runtime productio
   plan="$scratch/plan-$scope"
   mkdir "$plan"
   bun "$tools/fetch-sources.mts" plan "$plan" "$scope" --force
-  case "$scope" in
-    icu|production-all) [[ -f "$plan/icu-data.json" ]] ;;
-    *) [[ ! -f "$plan/icu-data.json" && -f "$plan/icu.json" ]] ;;
-  esac
+  [[ -f "$plan/icu-data.json" ]]
+  if [[ "$scope" != icu ]]; then [[ -f "$plan/icu.json" ]]; fi
 done
 bun test "$test_data"
 mkdir "$scratch/fixtures" "$scratch/bin"

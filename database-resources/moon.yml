@@ -60,14 +60,8 @@ tasks:
     outputs: ["/target/database-resources/seed-carriers/npm/*ios-datum64*/*.tgz", "/target/database-resources/seed-carriers/cargo/*ios-datum64*.crate", "/target/database-resources/release-assets/*-swift.zip"]
     options:
       runFromWorkspaceRoot: true
-  fetch-icu-sources:
-    command: "bash third-party/tools/fetch-sources.sh icu --force"
-    inputs: ["icu/source.toml", "/third-party/tools/**/*", "!/third-party/tools/**/*.test.*", "!/third-party/tools/**/fixtures/**/*"]
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
   build-icu-data:
-    deps: ["database-resources:fetch-icu-sources"]
+    deps: ["source-inputs:source-fetch-icu-data"]
     command: "bash database-resources/icu/tools/build-data.sh"
     inputs: ["icu/source.toml", "icu/tools/data.sh", "icu/tools/build-data.sh"]
     outputs: ["/target/database-resources/icu/data/share/icu/**/*"]

@@ -9,6 +9,19 @@ oliphaunt_icu_canonical_data_sha256() {
   printf '%s\n' 'dbc14e1c48ef209f230adc2aa6854bd4d6bba8f5e6733e75897a4263d97920f0'
 }
 
+oliphaunt_icu_sha256() {
+  local digest
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest="$(sha256sum "$@")" || return 1
+  elif command -v shasum >/dev/null 2>&1; then
+    digest="$(shasum -a 256 "$@")" || return 1
+  else
+    echo "ICU hashing requires sha256sum or shasum" >&2
+    return 127
+  fi
+  printf '%s\n' "${digest%% *}"
+}
+
 oliphaunt_icu_require_canonical_data() {
   local archive="${1:?ICU data archive is required}"
   [ -f "$archive" ] || {
@@ -16,7 +29,7 @@ oliphaunt_icu_require_canonical_data() {
     return 1
   }
   local actual
-  actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  actual="$(oliphaunt_icu_sha256 < "$archive")" || return 1
   [ "$actual" = "$(oliphaunt_icu_canonical_data_sha256)" ] || {
     echo "ICU data archive checksum mismatch: expected $(oliphaunt_icu_canonical_data_sha256), got $actual" >&2
     return 1
@@ -59,7 +72,7 @@ oliphaunt_icu_files_data_ready() {
 oliphaunt_icu_install_canonical_data() {
   local archive="${1:?pinned ICU data archive is required}"
   local destination="${2:?ICU data destination is required}"
-  oliphaunt_icu_require_canonical_data "$archive"
+  oliphaunt_icu_require_canonical_data "$archive" || return 1
   local tmp_destination="$destination.tmp"
 
   rm -rf "$tmp_destination"

@@ -16,6 +16,17 @@ owners:
     "**/*":
       - "@oliphaunt/core"
 tasks:
+  source-fetch-icu-data:
+    command: bash third-party/tools/fetch-sources.sh icu --force
+    inputs:
+      - /database-resources/icu/source.toml
+      - "**/*"
+      - "!**/*.test.*"
+      - /tools/dev/curl-platform-flags.sh
+      - "@group(release-archive-contract)"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
   test:
     tags:
       - quality
@@ -36,6 +47,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   fetch-all:
+    deps: ["source-fetch-icu-data"]
     tags:
       - source
       - fetch
@@ -58,6 +70,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: false
   source-fetch-native-runtime:
+    deps: ["source-fetch-icu-data"]
     tags:
       - source
       - fetch
@@ -78,6 +91,7 @@ tasks:
       internal: true
       runFromWorkspaceRoot: true
   source-fetch-wasix-runtime:
+    deps: ["source-fetch-icu-data"]
     tags:
       - source
       - fetch
@@ -97,6 +111,7 @@ tasks:
       internal: true
       runFromWorkspaceRoot: true
   source-fetch-wasix-postmaster-runtime:
+    deps: ["source-fetch-icu-data"]
     tags:
       - source
       - fetch

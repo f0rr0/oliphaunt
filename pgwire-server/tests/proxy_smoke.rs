@@ -149,20 +149,33 @@ fn tcp_proxy_accepts_a_fragmented_message_larger_than_64_kib() -> Result<()> {
 #[test]
 #[ignore = "requires prepared WASIX runtime"]
 fn tcp_server_close_interrupts_an_active_client() -> Result<()> {
-    let mut server = OliphauntServer::builder().start()?;
-    let addr = tcp_addr(&server)?;
-    let mut client = TcpStream::connect(addr)?;
-    client.set_read_timeout(Some(Duration::from_secs(30)))?;
-    client.write_all(&startup_message())?;
-    read_until_ready(&mut client)?;
+    for stage in ["before startup", "after startup", "COPY input"] {
+        let mut server = OliphauntServer::builder().start()?;
+        let addr = tcp_addr(&server)?;
+        let mut client = TcpStream::connect(addr)?;
+        client.set_read_timeout(Some(Duration::from_secs(30)))?;
+        if stage != "before startup" {
+            client.write_all(&startup_message())?;
+            read_until_ready(&mut client)?;
+        }
+        if stage == "COPY input" {
+            client.write_all(&simple_query_message(
+                "CREATE TEMP TABLE shutdown_copy(value integer)",
+            ))?;
+            read_query_values(&mut client)?;
+            client.write_all(&simple_query_message("COPY shutdown_copy FROM STDIN"))?;
+            let (tag, _) = read_backend_message(&mut client)?;
+            ensure!(tag == b'G', "expected CopyInResponse before shutdown");
+        }
 
-    let (closed_tx, closed_rx) = std::sync::mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let _ = closed_tx.send(server.close());
-    });
-    closed_rx
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|_| anyhow::anyhow!("server close remained blocked on its active client"))??;
+        let (closed_tx, closed_rx) = std::sync::mpsc::sync_channel(1);
+        thread::spawn(move || {
+            let _ = closed_tx.send(server.close());
+        });
+        closed_rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| anyhow::anyhow!("server close blocked on active client: {stage}"))??;
+    }
     Ok(())
 }
 

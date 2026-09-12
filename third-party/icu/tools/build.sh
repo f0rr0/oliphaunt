@@ -14,7 +14,7 @@ oliphaunt_icu_source_commit() {
 }
 
 oliphaunt_icu_script_sha256() {
-  cat "${BASH_SOURCE[0]}" "$(dirname "${BASH_SOURCE[0]}")/../../../database-resources/icu/tools/data.sh" | shasum -a 256 | awk '{print $1}'
+  cat "${BASH_SOURCE[0]}" "$(dirname "${BASH_SOURCE[0]}")/../../../database-resources/icu/tools/data.sh" | oliphaunt_icu_sha256
 }
 
 oliphaunt_icu_native_tools_stamp() {
@@ -24,7 +24,7 @@ oliphaunt_icu_native_tools_stamp() {
     printf 'source=%s\n' "$(oliphaunt_icu_source_commit "$source_dir")"
     printf 'script=%s\n' "$(oliphaunt_icu_script_sha256)"
     printf 'configure=static-no-tests-no-samples-no-extras-no-icuio-no-layoutex-tools-only\n'
-  } | shasum -a 256 | awk '{print $1}'
+  } | oliphaunt_icu_sha256
 }
 
 oliphaunt_icu_target_stamp() {
@@ -53,7 +53,7 @@ oliphaunt_icu_target_stamp() {
     printf 'ldflags=%s\n' "$ldflags"
     printf 'canonical-data-sha256=%s\n' "$(oliphaunt_icu_canonical_data_sha256)"
     printf 'configure=files-data-static-libs-static-consumer-no-extra-target-tools-stub-data-archive-pinned-upstream-data\n'
-  } | shasum -a 256 | awk '{print $1}'
+  } | oliphaunt_icu_sha256
 }
 
 oliphaunt_icu_require_source() {

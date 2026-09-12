@@ -121,7 +121,8 @@ function loadSourcesManifest(selectedScope) {
     );
     return { sources };
   }
-  if (selectedScope === 'all' || selectedScope === 'production-all') {
+  if (scopeIncludes(selectedScope, sourceOrigins.sharedThirdParty)) {
+    // ICU compilation consumes the data even when runtime packages omit it.
     pushSourcePin(
       sources,
       names,
