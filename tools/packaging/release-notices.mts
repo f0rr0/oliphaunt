@@ -569,8 +569,8 @@ export function stageReleaseNotices(destination, options = {}) {
 export function hasCanonicalReleaseStagingMode(mode, platform = process.platform) {
   // Windows exposes synthetic Unix permission bits through stat(2). chmod can
   // toggle the read-only attribute, but it cannot establish a meaningful 0644
-  // filesystem contract. Portable archives still carry and validate their
-  // explicit modes in assertReleaseNoticesInEntries.
+  // filesystem contract. Archive checks require readability without special
+  // permission bits, allowing packers to preserve Windows synthetic modes.
   return platform === 'win32' || (mode & 0o777) === 0o644;
 }
 
@@ -626,8 +626,10 @@ export function assertReleaseNoticesInEntries(entries, options = {}) {
     if (!entry?.isFile || entry.isSymbolicLink) {
       throw new Error(`${label} is missing regular release notice member ${member}`);
     }
-    if ((entry.mode & 0o777) !== 0o644) {
-      throw new Error(`${label} release notice member ${member} must have mode 0644`);
+    if ((entry.mode & 0o444) !== 0o444 || (entry.mode & 0o7000) !== 0) {
+      throw new Error(
+        `${label} release notice member ${member} must be readable by all users without special permission bits`,
+      );
     }
     const canonical = requireCanonicalSource(row);
     const actual = Buffer.from(entry.data());

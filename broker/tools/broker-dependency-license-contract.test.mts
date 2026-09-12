@@ -173,7 +173,7 @@ test('staged and packed closures preserve exact bytes, modes, and members', {
   );
 });
 
-test('portable archive dependency-license modes remain exact on every host', {
+test('portable archive dependency licenses accept synthetic modes and reject inaccessible modes', {
   timeout: TIMEOUT,
 }, async (t) => {
   const target = 'windows-x64-msvc';
@@ -182,12 +182,20 @@ test('portable archive dependency-license modes remain exact on every host', {
   t.after(() => rmSync(packed, { force: true }));
   const entries = readPortableArchiveEntries(packed);
 
+  const syntheticModes = new Map(
+    [...entries].map(([member, entry]) => [
+      member,
+      { ...entry, mode: entry.isDirectory ? 0o777 : 0o666 },
+    ]),
+  );
+  assertBrokerDependencyLicensesInEntries(syntheticModes, { target });
+
   const fileMember = `${BROKER_DEPENDENCY_LICENSE_ROOT}/DEPENDENCIES.json`;
   const fileModeDrift = new Map(entries);
-  fileModeDrift.set(fileMember, { ...entries.get(fileMember), mode: 0o666 });
+  fileModeDrift.set(fileMember, { ...entries.get(fileMember), mode: 0o600 });
   assert.throws(
     () => assertBrokerDependencyLicensesInEntries(fileModeDrift, { target }),
-    /dependency license member .* must have mode 0644/u,
+    /dependency license member .* readable.*special permission bits/u,
   );
 
   const directoryMember = `${BROKER_DEPENDENCY_LICENSE_ROOT}/licenses`;
@@ -195,7 +203,7 @@ test('portable archive dependency-license modes remain exact on every host', {
   directoryModeDrift.set(directoryMember, { ...entries.get(directoryMember), mode: 0o700 });
   assert.throws(
     () => assertBrokerDependencyLicensesInEntries(directoryModeDrift, { target }),
-    /dependency license directory .* must have mode 0755/u,
+    /dependency license directory .* readable and searchable/u,
   );
 });
 

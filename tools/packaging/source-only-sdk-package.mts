@@ -229,8 +229,10 @@ function archiveJson(entries, member, label) {
   if (!entry?.isFile || entry.isSymbolicLink) {
     throw new Error(`${label} is missing regular member ${member}`);
   }
-  if ((entry.mode & 0o777) !== 0o644) {
-    throw new Error(`${label} member ${member} must have mode 0644`);
+  if ((entry.mode & 0o444) !== 0o444 || (entry.mode & 0o7000) !== 0) {
+    throw new Error(
+      `${label} member ${member} must be readable by all users without special permission bits`,
+    );
   }
   let parsed;
   try {

@@ -155,7 +155,7 @@ export function createRustDependencyLicenseContract({
     // Windows exposes synthetic Unix permission bits through stat(2). chmod can
     // toggle the read-only attribute, but it cannot establish meaningful 0644
     // or 0755 filesystem metadata. Published archives still carry and validate
-    // their explicit portable modes in assertRustDependencyLicensesInEntries.
+    // readability and special permission bits in assertRustDependencyLicensesInEntries.
     return platform === 'win32' || (mode & 0o777) === expectedMode;
   }
 
@@ -866,8 +866,10 @@ export function createRustDependencyLicenseContract({
       const entry = entries.get(member);
       if (!entry?.isFile || entry.isSymbolicLink)
         fail(`${label} is missing regular dependency license member ${member}`);
-      if ((entry.mode & 0o777) !== 0o644)
-        fail(`${label} dependency license member ${member} must have mode 0644`);
+      if ((entry.mode & 0o444) !== 0o444 || (entry.mode & 0o7000) !== 0)
+        fail(
+          `${label} dependency license member ${member} must be readable by all users without special permission bits`,
+        );
       if (!Buffer.from(entry.data()).equals(bytes))
         fail(`${label} dependency license member ${member} differs from canonical bytes`);
     }
@@ -876,8 +878,10 @@ export function createRustDependencyLicenseContract({
       if (expectedDirs.has(member)) {
         if (!entry.isDirectory || entry.isSymbolicLink)
           fail(`${label} dependency license directory ${member} must be a real directory`);
-        if ((entry.mode & 0o777) !== 0o755)
-          fail(`${label} dependency license directory ${member} must have mode 0755`);
+        if ((entry.mode & 0o555) !== 0o555 || (entry.mode & 0o7000) !== 0)
+          fail(
+            `${label} dependency license directory ${member} must be readable and searchable by all users without special permission bits`,
+          );
         continue;
       }
       if (member !== prefixed(RUST_DEPENDENCY_LICENSE_ROOT) && !member.startsWith(namespace))

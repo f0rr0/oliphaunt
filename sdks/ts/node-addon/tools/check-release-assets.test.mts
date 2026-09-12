@@ -12,8 +12,10 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { gzipSync } from 'node:zlib';
 
 import { archiveDirectory as writeArchive } from '../../../../tools/packaging/archive-directory.mts';
+import { createDeterministicTar } from '../../../../tools/packaging/cargo-source-package.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
 import {
@@ -125,10 +127,18 @@ test('Node direct npm validation rejects notice drift and runtime-license carryo
   chmodSync(path.join(staged.packageDir, 'THIRD_PARTY_NOTICES.md'), 0o755);
   archive = path.join(root, 'mode-drift.tgz');
   await archiveDirectory(staged.packageDir, archive, { keepParent: true });
-  assert.throws(
-    () => assertNodeDirectNpmArchive(archive, [TARGET], staged.manifest.version),
-    /mode 0644/u,
-  );
+  assertNodeDirectNpmArchive(archive, [TARGET], staged.manifest.version);
+  for (const mode of [0o666, 0o777]) {
+    writeFileSync(
+      archive,
+      gzipSync(
+        createDeterministicTar(staged.packageDir, 'package', {
+          fixedFileMode: mode,
+        }),
+      ),
+    );
+    assertNodeDirectNpmArchive(archive, [TARGET], staged.manifest.version);
+  }
 });
 
 test('Node direct npm rejects missing and modified compiled dependency licenses', async (t) => {

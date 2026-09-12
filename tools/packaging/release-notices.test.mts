@@ -121,7 +121,7 @@ test('treats directory modes as POSIX-only staging metadata', () => {
   assert.equal(hasCanonicalReleaseStagingMode(0o666, 'linux'), false);
 });
 
-test('keeps portable archive notice modes exact on every host', () => {
+test('accepts synthetic archive modes but rejects unreadable and privileged notices', () => {
   const entries = new Map(
     releaseNoticeRows().map((row) => [
       row.member,
@@ -134,7 +134,14 @@ test('keeps portable archive notice modes exact on every host', () => {
       },
     ]),
   );
-  assert.throws(() => assertReleaseNoticesInEntries(entries), /mode 0644/u);
+  assertReleaseNoticesInEntries(entries);
+  for (const mode of [0o600, 0o4644]) {
+    entries.get('LICENSE').mode = mode;
+    assert.throws(
+      () => assertReleaseNoticesInEntries(entries),
+      /readable.*special permission bits/u,
+    );
+  }
 });
 
 test('exact validation rejects unknown legal namespace members and staging removes only safe stale files', async (t) => {
@@ -314,7 +321,7 @@ test('validates exact notices in a real zstd-compressed ustar carrier', async (t
   );
 });
 
-test('rejects archive byte and mode drift', async (t) => {
+test('rejects archive byte drift and accepts readable executable notices', async (t) => {
   const { root, stage } = fixture(t);
   stageReleaseNotices(stage, { components: ['postgresql'] });
   writeFileSync(path.join(stage, 'LICENSE'), 'not the license\n');
@@ -333,12 +340,8 @@ test('rejects archive byte and mode drift', async (t) => {
   chmodSync(path.join(stage, 'LICENSE'), 0o755);
   const modeArchive = path.join(root, 'mode-drift.tar.gz');
   await archiveDirectory(stage, modeArchive, { keepParent: true });
-  assert.throws(
-    () =>
-      assertReleaseNoticesInArchive(modeArchive, {
-        prefix: path.basename(stage),
-        components: ['postgresql'],
-      }),
-    /mode 0644/u,
-  );
+  assertReleaseNoticesInArchive(modeArchive, {
+    prefix: path.basename(stage),
+    components: ['postgresql'],
+  });
 });

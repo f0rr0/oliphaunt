@@ -57,7 +57,10 @@ runs:
         echo "$toolchain_bin" >> "$GITHUB_PATH"
         echo "MOON_HOME=$moon_home_env" >> "$GITHUB_ENV"
         echo "MOON_BIN=$moon_bin" >> "$GITHUB_ENV"
-        echo "MOON_TOOLCHAIN_FORCE_GLOBALS=true" >> "$GITHUB_ENV"
+        # List every configured plugin to keep verified global tools while Moon
+        # still injects a child PATH. With `true`, Rust searches System32 before
+        # inherited PATH on Windows and launches WSL's bash.exe.
+        echo "MOON_TOOLCHAIN_FORCE_GLOBALS=javascript,node,bun,rust" >> "$GITHUB_ENV"
 
     - name: Verify toolchain
       shell: bash
@@ -66,11 +69,7 @@ runs:
         moon --version
         node --version
         bun --version
-        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
-          # Exercise native Windows child lookup, not Bash's own lookup.
-          bash_version="$(MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /c 'bash --version')"
-          [[ "$bash_version" == 'GNU bash,'* ]]
-        fi
+        moon run ci-workflows:verify-bash
 
     - name: Save verified tool archives
       if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_verified_moon_toolchain.outputs.cache-hit != 'true' }}
