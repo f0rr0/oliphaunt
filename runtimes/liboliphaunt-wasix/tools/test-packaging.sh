@@ -23,7 +23,18 @@ for scenario in nested-owner aggregate; do
   # Keep registry dependencies at the qualified workspace versions; this
   # disposable consumer only changes local carrier paths and feature selection.
   cp Cargo.lock "$root/app/Cargo.lock"
+  cargo fetch --manifest-path "$root/app/Cargo.toml"
   CARGO_TARGET_DIR="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/cargo-target" \
     OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$root" \
-    cargo run --offline --manifest-path "$root/app/Cargo.toml"
+    cargo run --locked --offline --manifest-path "$root/app/Cargo.toml"
 done
+root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/aggregate"
+chunk="$(find "$root/work/cargo-package-sources/oliphaunt-extension-contrib-pg18-wasix-part-001/payload" -type f -print -quit)"
+printf 'corrupt' >> "$chunk"
+if CARGO_TARGET_DIR="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/cargo-target" \
+  OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$root" \
+  cargo check --locked --offline --manifest-path "$root/app/Cargo.toml" > "$root/corrupt.log" 2>&1; then
+  echo 'Corrupt extracted extension payload was accepted' >&2
+  exit 1
+fi
+rg -q 'extension payload digest mismatch' "$root/corrupt.log"

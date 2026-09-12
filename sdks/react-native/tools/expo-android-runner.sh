@@ -105,7 +105,6 @@ startup_gucs="${OLIPHAUNT_EXPO_ANDROID_STARTUP_GUCS:-${OLIPHAUNT_EXPO_MOBILE_STA
 benchmark_preset="${OLIPHAUNT_EXPO_ANDROID_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET:-full}}"
 crash_storage_override="${OLIPHAUNT_EXPO_ANDROID_CRASH_STORAGE:-}"
 crash_storage="${crash_storage_override:-/data/data/$app_id/files/oliphaunt-crash-recovery-storage-$crash_storage_suffix}"
-mobile_packaging_initdb="${OLIPHAUNT_EXPO_ANDROID_INITDB:-}"
 case "${OLIPHAUNT_EXPO_ANDROID_ICU:-0}" in
   1|true|TRUE|yes|YES|on|ON) android_icu_enabled=1 ;;
   0|false|FALSE|no|NO|off|OFF) android_icu_enabled=0 ;;
@@ -421,16 +420,12 @@ prepare_runtime_resources() {
     android_runtime_source="$(android_build_root_for_abi)/install"
     if [ -f "$root/target/liboliphaunt-android-runtime-smoke/share/postgresql/postgres.bki" ]; then
       runtime_source="$root/target/liboliphaunt-android-runtime-smoke"
-    elif [ -f "$android_runtime_source/share/postgresql/postgres.bki" ]; then
-      runtime_source="$android_runtime_source"
     else
-      runtime_source="$(ensure_host_runtime_assets)"
+      runtime_source="$android_runtime_source"
     fi
   fi
-  [ -f "$runtime_source/share/postgresql/postgres.bki" ] ||
-    fail "runtime assets are missing postgres.bki: $runtime_source"
-  ensure_mobile_runtime_tool_permissions "$runtime_source"
-  ensure_mobile_tool_executable "$mobile_packaging_initdb"
+  require_mobile_runtime_data "$runtime_source" OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR \
+    "liboliphaunt-native:build-runtime-android-$android_abi"
 
   local seed seed_profile=standard
   [ "$android_icu_enabled" != 1 ] || seed_profile=icu
@@ -455,7 +450,6 @@ prepare_runtime_resources() {
   if prepared_package="$(oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package \
     Android \
     "$runtime_source" \
-    "$mobile_packaging_initdb" \
     "$selected_extensions" \
     "$package_root" \
     "$android_icu_enabled" \

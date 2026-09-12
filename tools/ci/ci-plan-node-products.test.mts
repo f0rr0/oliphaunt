@@ -11,6 +11,11 @@ import {
 } from './ci_plan.mts';
 import { combinedNativeWasix, paths, taskRoots } from './ci-plan-test-inputs.mts';
 import { affectedObservation, taskObservation } from './ci-plan-test-observations.mts';
+import { loadExtensionTargetProfiles } from '../../extensions/contracts/extension-target-profiles.mts';
+import {
+  contribCarrierDescriptor,
+  extensionProductForSqlName,
+} from '../release/release-artifact-targets.mts';
 import { publishedConsumerDependencies } from '../../sdks/ts/sdk/tools/published-consumer.mts';
 
 const GRAPH = loadGraph('ci-plan-node-products.test.mts');
@@ -114,6 +119,26 @@ function effects(paths) {
     tasks,
   };
 }
+
+test('Rust release qualification executes the compiled consumer against shipped Linux dependencies', () => {
+  const consumer = 'oliphaunt-rust:test-consumer-runtime';
+  const plan = planForReleaseProducts(['oliphaunt-rust'], 'd'.repeat(40));
+  assert(plan.job_targets['native-consumers'].includes(consumer));
+  assert(plan.job_targets['rust-sdk-package'].includes('oliphaunt-rust:test-consumer'));
+  for (const target of [
+    'liboliphaunt-native:package-runtime-desktop-target',
+    'postgres-tools-native:package-assets',
+    'oliphaunt-broker:build-release-assets',
+  ])
+    assert(plan.tasks.includes(target), `missing shipped consumer input ${target}`);
+  const roots = new Set([consumer]);
+  assert.deepEqual(
+    [...dependencyPlatformTargets('liboliphaunt-native-desktop', roots)],
+    ['linux-x64-gnu'],
+  );
+  assert.deepEqual([...dependencyPlatformTargets('broker-runtime', roots)], ['linux-x64-gnu']);
+  assert(!requiredTasksForAffected(roots).has('native-extension-lifecycle:lifecycle'));
+});
 
 test('an empty Moon selection requires no product tasks or releases', () => {
   const tasks = new Set<string>();
@@ -403,6 +428,54 @@ test('shared contrib source releases only its two runtime owners', () => {
   );
   assert.deepEqual(release.directProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
   assert.deepEqual(release.releaseProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
+  const plan = planForReleaseProducts(release.releaseProducts, 'c'.repeat(40));
+  const contrib = contribCarrierDescriptor();
+  assert(plan.extension_package_products.includes(contrib.artifactProduct));
+  assert(plan.tasks.includes('native-extension-lifecycle:lifecycle'));
+  assert(plan.tasks.includes('extension-artifacts-wasix:build-target'));
+  for (const sql of ['hstore', 'pg_trgm']) {
+    assert(plan.native_extension_lifecycle_sql_names.includes(sql));
+    assert(
+      plan.extension_artifacts_wasix_matrix.include.some((row) =>
+        row.sql_names_csv.split(',').includes(sql),
+      ),
+    );
+  }
+  assert.throws(
+    () => planForReleaseProducts([contrib.artifactProduct], 'c'.repeat(40)),
+    /known product IDs/,
+  );
+});
+
+test('external extension release selects shared producers and same-run lifecycle evidence', () => {
+  const product = extensionProductForSqlName('pgtap');
+  const plan = planForReleaseProducts([product], 'c'.repeat(40));
+  assert.deepEqual(plan.qualification_products, [product]);
+  for (const target of [
+    'extension-artifacts-native:build-target',
+    'extension-artifacts-wasix:build-target',
+    'native-extension-lifecycle:lifecycle',
+  ])
+    assert(plan.tasks.includes(target), `missing ${target}`);
+  assert(
+    plan.job_targets['native-extension-lifecycle'].includes('native-extension-lifecycle:lifecycle'),
+  );
+  assert(plan.native_extension_lifecycle_sql_names.includes('pgtap'));
+  assert(plan.jobs.includes('liboliphaunt-wasix-runtime'));
+  assert(plan.jobs.includes('liboliphaunt-wasix-aot'));
+  const profiles = loadExtensionTargetProfiles({
+    file: new URL('../../extensions/contracts/extension-target-profiles.toml', import.meta.url),
+  });
+  for (const { family, target } of profiles.targets) {
+    const rows =
+      family === 'native'
+        ? plan.extension_artifacts_native_matrix.include
+        : plan.extension_artifacts_wasix_matrix.include;
+    assert(
+      rows.some((row) => row.target === target && row.sql_names_csv.split(',').includes('pgtap')),
+      `missing pgtap ${target}`,
+    );
+  }
 });
 
 test('WASIX N-API source selects only its real WASIX artifact inputs', () => {
@@ -640,7 +713,11 @@ test('release helper changes invalidate only their product artifacts', () => {
     'mobile-extension-packages',
     'react-native-sdk-package',
   ]);
-  assert.deepEqual(kotlin.jobTargets['js-sdk-package'], ['database-resources:package-icu']);
+  // The selected Expo build installs RN with its packed query dependency.
+  assert.deepEqual(kotlin.jobTargets['js-sdk-package'], [
+    'database-resources:package-icu',
+    'oliphaunt-query-ts:package',
+  ]);
 
   const nodeDirect = effects(paths.sdksTsNodeAddonToolsCheckReleaseAssetsMts);
   assert.deepEqual(

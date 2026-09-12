@@ -8,13 +8,28 @@ use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::Duration;
 
-use oliphaunt::{AsyncOliphauntServer, DatabaseStorage, ServerListen};
+use oliphaunt::{AsyncOliphauntServer, DatabaseStorage, IntoParameter, Oliphaunt, ServerListen};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let root = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("usage: oliphaunt-rust-release-consumer DATABASE_ROOT"))?;
+    if let Some(mode) = std::env::args().nth(2) {
+        return exercise_embedded(&root, &mode);
+    }
+    for mode in ["direct", "broker"] {
+        let database_root = root.with_file_name(format!("database-{mode}"));
+        for action in [mode.to_owned(), format!("{mode}-verify")] {
+            command_succeeded(
+                &action,
+                &Command::new(std::env::current_exe()?)
+                    .arg(&database_root)
+                    .arg(&action)
+                    .output()?,
+            )?;
+        }
+    }
     let backup = root.with_file_name("database-basebackup");
     let copied_log = root.with_file_name("database-basebackup.log");
     let psql = packaged_tool("psql")?;
@@ -130,8 +145,46 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     copied.stop()?;
     println!(
-        "OLIPHAUNT_RUST_RELEASE_CONSUMER_PASS checks=open,external-psql,pg-basebackup,restart,query,close"
+        "OLIPHAUNT_RUST_RELEASE_CONSUMER_PASS checks=direct,broker,parameters,transaction,backup,restore,external-psql,pg-basebackup,restart,query,close"
     );
+    Ok(())
+}
+
+fn exercise_embedded(root: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
+    let verify = mode.ends_with("-verify");
+    let restored = root.with_extension("restored");
+    if verify {
+        Oliphaunt::restore(&restored, std::fs::read(root.with_extension("backup"))?)?;
+    }
+    let mut builder = Oliphaunt::builder().storage(DatabaseStorage::Directory(if verify {
+        restored
+    } else {
+        root.to_owned()
+    }));
+    if mode.starts_with("broker") {
+        builder = builder.broker();
+    }
+    let mut database = builder.open()?;
+    if !verify {
+        database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text)")?;
+        database.execute_with_params(
+            "INSERT INTO items VALUES ($1, $2)",
+            [1_i32.into_parameter(), "café 🐘".into_parameter()],
+        )?;
+        database.transaction(|transaction| {
+            transaction.execute("INSERT INTO items VALUES (2, '東京')")?;
+            Ok::<(), oliphaunt::Error>(())
+        })?;
+        assert!(database.execute("SELECT 1; SELECT 2").is_err());
+    }
+    let rows = database.query("SELECT value FROM items ORDER BY id")?;
+    assert_eq!(rows.row_count(), Some(2));
+    assert_eq!(rows.get_text(0, "value")?, Some("café 🐘"));
+    assert_eq!(rows.get_text(1, "value")?, Some("東京"));
+    if !verify {
+        std::fs::write(root.with_extension("backup"), database.backup()?)?;
+    }
+    database.close()?;
     Ok(())
 }
 

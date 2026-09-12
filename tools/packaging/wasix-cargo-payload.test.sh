@@ -5,13 +5,17 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 bun tools/packaging/wasix-cargo-payload.test.mts "$scratch"
 while IFS=$'\t' read -r crate payload variable external; do
+  # Provision this fixture's locked dependencies before the offline assertions;
+  # a source-only CI job need not have compiled a Rust SDK beforehand.
+  # Cargo trims the copied workspace lock to this standalone package closure.
+  cargo fetch --manifest-path "$crate/Cargo.toml"
   # A real extracted carrier embeds its own bytes.
-  CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --offline --quiet \
+  CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --locked --offline --quiet \
     --manifest-path "$crate/Cargo.toml" --example probe
   if [[ "$payload" == artifacts ]]; then
     mkdir "$crate/removed-aot"
     mv "$crate/$payload/"*.zst "$crate/removed-aot/"
-    if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --offline --quiet \
+    if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
       --manifest-path "$crate/Cargo.toml" --lib > "$scratch/missing-aot.log" 2>&1; then
       echo "Published carrier accepted missing declared AOT files: $crate" >&2
       exit 1
@@ -23,18 +27,18 @@ while IFS=$'\t' read -r crate payload variable external; do
   # Neither a populated ancestor checkout nor an explicit override may repair
   # an incomplete published package, even without the maintainer strict flag.
   if env "$variable=$external" CARGO_TARGET_DIR="$scratch/cargo-target" \
-    cargo run --offline --quiet --manifest-path "$crate/Cargo.toml" \
+    cargo run --locked --offline --quiet --manifest-path "$crate/Cargo.toml" \
     --example probe > "$scratch/missing.log" 2>&1; then
     echo "Published carrier accepted missing payload: $crate" >&2
     exit 1
   fi
-  rg -q 'published WASIX carrier requires package-local' "$scratch/missing.log"
+  rg -q 'published (WASIX|ICU) carrier requires package-local' "$scratch/missing.log"
   # The checkout entrypoint deliberately supports the same external inputs.
   printf 'const PACKAGE_LOCAL: bool = false;\ninclude!("build-support.rs");\n' > "$crate/build.rs"
   env "$variable=$external" CARGO_TARGET_DIR="$scratch/cargo-target" \
-    cargo run --offline --quiet --manifest-path "$crate/Cargo.toml" --example probe
+    cargo run --locked --offline --quiet --manifest-path "$crate/Cargo.toml" --example probe
   mv "$external" "$external.saved"
-  CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --offline --quiet \
+  CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
     --manifest-path "$crate/Cargo.toml" --lib
 done < "$scratch/cases.tsv"
 printf 'WASIX extracted Cargo carrier payload isolation passed\n'

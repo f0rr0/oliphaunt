@@ -1,6 +1,11 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { extractPortableArchiveTree } from './portable-archive.mts';
+import {
+  filesystemTreeRows,
+  logicalTreeSha256,
+} from '../../database-resources/contracts/native-manifest.mts';
+import { createDeterministicTar } from './cargo-source-package.mts';
+import { extractPortableArchiveTree, releaseZstdCompressSync } from './portable-archive.mts';
 import { packageSpec } from './wasix-cargo-payload.mts';
 
 const root = path.resolve(import.meta.dir, '../..');
@@ -8,6 +13,15 @@ const scratch = process.argv[2];
 if (!scratch) throw new Error('Run the paired Shell test');
 const triple = 'x86_64-unknown-linux-gnu';
 const cases = [
+  [
+    'icu',
+    'database-resources/icu/cargo',
+    'icu-data',
+    'payload',
+    'icu-data',
+    'OLIPHAUNT_ICU_DATA_DIR',
+    'ICU_DATA_TREE_SHA256.unwrap().as_bytes()',
+  ],
   [
     'runtime',
     'runtimes/liboliphaunt-wasix/crates/assets',
@@ -48,35 +62,51 @@ const cases = [
 const rows: string[] = [];
 for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expression] of cases) {
   const base = path.join(scratch, id);
-  const payloadRoot = path.join(base, ancestorAssets);
-  mkdirSync(path.join(payloadRoot, 'bin'), { recursive: true });
-  for (const file of [
-    'oliphaunt.wasix.tar.zst',
-    'bin/initdb.wasix.wasm',
-    'bin/pg_dump.wasix.wasm',
-    'bin/psql.wasix.wasm',
-    'oliphaunt-llvm-opta.bin.zst',
-    'pg_dump-llvm-opta.bin.zst',
-  ]) {
-    writeFileSync(path.join(payloadRoot, file), 'selected-payload');
+  const external = path.join(base, ancestorAssets);
+  let payloadRoot = external;
+  let expected = 'selected-payload';
+  if (id === 'icu') {
+    mkdirSync(payloadRoot, { recursive: true });
+    writeFileSync(path.join(payloadRoot, 'icudt76l.dat'), expected);
+    expected = logicalTreeSha256(filesystemTreeRows(payloadRoot));
+    const archive = releaseZstdCompressSync(
+      createDeterministicTar(payloadRoot, 'share/icu', { fixedFileMode: 0o644 }),
+    );
+    payloadRoot = path.join(base, 'icu-payload');
+    mkdirSync(payloadRoot);
+    writeFileSync(path.join(payloadRoot, 'icu-data.tar.zst'), archive);
+  } else {
+    mkdirSync(path.join(payloadRoot, 'bin'), { recursive: true });
+    for (const file of [
+      'oliphaunt.wasix.tar.zst',
+      'bin/initdb.wasix.wasm',
+      'bin/pg_dump.wasix.wasm',
+      'bin/psql.wasix.wasm',
+      'oliphaunt-llvm-opta.bin.zst',
+      'pg_dump-llvm-opta.bin.zst',
+    ]) {
+      writeFileSync(path.join(payloadRoot, file), 'selected-payload');
+    }
+    const aot = kind.endsWith('aot');
+    writeFileSync(
+      path.join(payloadRoot, 'manifest.json'),
+      JSON.stringify(
+        aot
+          ? {
+              artifacts: [
+                {
+                  name: id === 'tools-aot' ? 'tool:pg_dump' : 'runtime:oliphaunt',
+                  path:
+                    id === 'tools-aot'
+                      ? 'pg_dump-llvm-opta.bin.zst'
+                      : 'oliphaunt-llvm-opta.bin.zst',
+                },
+              ],
+            }
+          : { extensions: [] },
+      ),
+    );
   }
-  const aot = kind.endsWith('aot');
-  writeFileSync(
-    path.join(payloadRoot, 'manifest.json'),
-    JSON.stringify(
-      aot
-        ? {
-            artifacts: [
-              {
-                name: id === 'tools-aot' ? 'tool:pg_dump' : 'runtime:oliphaunt',
-                path:
-                  id === 'tools-aot' ? 'pg_dump-llvm-opta.bin.zst' : 'oliphaunt-llvm-opta.bin.zst',
-              },
-            ],
-          }
-        : { extensions: [] },
-    ),
-  );
   mkdirSync(path.join(base, '.git'));
   for (const marker of [
     'Cargo.toml',
@@ -94,7 +124,7 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
       name: manifest.package.name,
       templateDir: path.join(root, template),
       kind,
-      target: aot ? triple : 'portable',
+      target: kind.endsWith('aot') ? triple : 'portable',
       payloadRoot,
       payloadDirName,
     },
@@ -111,9 +141,9 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
   mkdirSync(path.join(crate, 'examples'));
   writeFileSync(
     path.join(crate, 'examples/probe.rs'),
-    `fn main() { assert_eq!(${manifest.package.name.replaceAll('-', '_')}::${expression}, b"selected-payload"); }\n`,
+    `fn main() { assert_eq!(${manifest.package.name.replaceAll('-', '_')}::${expression}, b${JSON.stringify(expected)}); }\n`,
   );
   cpSync(path.join(root, 'Cargo.lock'), path.join(crate, 'Cargo.lock'));
-  rows.push([crate, payloadDirName, variable, payloadRoot].join('\t'));
+  rows.push([crate, payloadDirName, variable, external].join('\t'));
 }
 writeFileSync(path.join(scratch, 'cases.tsv'), `${rows.join('\n')}\n`);

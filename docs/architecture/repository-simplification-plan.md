@@ -1527,6 +1527,12 @@ Use the established task order; remove obsolete tests with their mechanisms.
   license inventories and filename/version/mode ceremony. **Done:** actual
   distributions retain required notice contents; canonical archive modes have
   one owner and source-only checks do not fetch every target unnecessarily.
+  Cargo audit checkpoint: an isolated cold-cache proof showed that scoped
+  `cargo tree` fetches only the selected dependency closure but omits registry
+  source paths; filtered `cargo metadata` still fetches unrelated workspace
+  dependencies, while `--no-deps` omits required registry metadata. Retain full
+  metadata acquisition for actual source-license and VCS-provenance verification;
+  no custom Cargo-cache locator or synthetic workspace mechanism was added.
 - [ ] **M09 — Cargo build scripts (07,09,15–17,22).** Remove query-source copying
   through real crate dependencies. Retain necessary linking and artifact metadata
   propagation until a working replacement exists. Remove published-package
@@ -1534,13 +1540,19 @@ Use the established task order; remove obsolete tests with their mechanisms.
   with an established implementation where hashing remains necessary. **Done:**
   clean published consumers work with declared dependencies and no hidden runtime
   producer build; required payload integrity checks still reject corruption.
-  WASIX carrier checkpoint: packaged runtime and PostgreSQL-tool crates use a
+  Carrier checkpoint: packaged WASIX runtime, PostgreSQL-tool and ICU crates use a
   strict package-local build entrypoint. Missing payloads or declared AOT files
   fail even when environment overrides and ancestor checkouts contain usable
   alternatives. Source builds retain lightweight checks and explicit local
-  inputs. Four extracted carrier-family proofs and all ten source-carrier
-  Clippy checks pass; actual Moon queries propagate support changes to SDK
-  consumers without selecting PostgreSQL compilation.
+  inputs. Five extracted carrier-family proofs and source-carrier Clippy checks
+  pass; actual Moon queries propagate support changes to SDK consumers without
+  selecting PostgreSQL compilation. Fixtures acquire their own standalone Cargo
+  closure from workspace lock versions before locked offline assertions; an
+  empty Cargo cache and subsequent entirely offline repeat both pass.
+  Generated native/WASIX extension carriers now use `sha2` instead of handwritten
+  SHA-256 rounds. Extracted split/unsplit Cargo consumers compile, native payload
+  hashes match an independent implementation, and modified WASIX chunks fail
+  digest validation. Unrelated native linking and metadata propagation remain.
 - [ ] **M10 — Source packages and splitting (16,20,22,27,28).** Prefer native
   package commands and one source manifest authority. Resolve unpublished sibling
   candidate dependencies explicitly before deleting staging transformations;
@@ -3469,3 +3481,54 @@ Android unit tests, plugin checks and formatting pass; an unchanged repeat takes
 3 seconds, with all Kotlin compilation up to date and Cargo completing in
 0.14 seconds. This proves local freshness and incremental compilation, not
 Android device or Apple artifact qualification.
+
+M05 resource preparation checkpoint: Expo's Android/iOS resource assemblers no
+longer compile a desktop PostgreSQL runtime implicitly or repair permissions in
+producer outputs. Removed the unused seed-normalization helper and obsolete
+initdb parameter/CI environment forwarding. Missing runtime data names the
+corresponding native Moon producer and explicit runtime-directory override;
+existing example build tasks retain their native package dependencies. A Linux
+assembly using existing PostgreSQL data and a validated selected Android seed
+passes without executing or copying initdb. The owner Shell regression proves
+source bytes and non-executable tool permissions stay unchanged and missing
+data fails with producer guidance. Clean packaged-workspace dependency isolation
+and actual device qualification remain separate M05 acceptance work.
+
+Clean-runner checkpoint (2026-09-12): CI run `34661770025` at `fa99f617`
+passed Kotlin lint/unit checks and Apple Swift source tests. Its two underlying
+failures were test prerequisites: the dependency-prefix fixture assumed `target`
+already existed, and extracted Cargo carrier tests assumed locked registry
+dependencies were cached. The prefix fixture now creates its own parent and
+passes from a fresh Git tree. Cargo carrier fixtures explicitly acquire their
+locked dependency closure before offline execution; an empty Cargo cache and
+an offline repeat both pass. Failed source tests blocked expensive producers
+and their artifact consumers; later aggregate failures did not introduce missing
+artifact cascades. This run is failed qualification, not publishable evidence.
+
+Packed Rust consumer checkpoint: its runtime invocation now belongs to the
+SDK's `test-consumer-runtime` task and native-consumer job, rather than the
+extension lifecycle shard. The package job supplies the compiled consumer;
+declared runtime, broker and PostgreSQL-tool producers supply its inputs. The
+same packed executable passes direct/broker parameter, transaction, query,
+backup/restore checks and the existing server/base-backup checks against newly
+packaged local artifacts. Missing archives and an obsolete broker protocol fail.
+Native runtime packaging defaults to the detected host when no CI target is
+provided; actual Linux packaging, binary compatibility and notices checks pass
+without that environment variable. This proves the local packed runtime seam;
+Rust-only release fanout and unchanged published dependency reuse remain open.
+
+M05 packed Expo dependency checkpoint: artifact mode now uses an app-only
+workspace with an explicit packaged query dependency; it never copies the query
+source project. Mobile Moon build tasks and CI handoffs declare the query package
+producer. Before installation, actual RN/query tarball manifests must identify
+the expected packages and the query version must satisfy RN's declared
+dependency. Source integration keeps its ordinary workspace behavior.
+The owner-local lock projection removes checkout workspace references while
+retaining locked external dependency descriptors and registry records; Bun
+reconciles candidate file dependencies. A neutral-root projection was rejected
+because the real Expo graph refreshed transitive versions. The corrected real
+graph retains all 972 registry version/integrity identities and repeats with an
+identical lock. Installed-package, missing-artifact, undeclared-dependency and
+wrong-version checks pass, and the permanent fixture exercises the real Expo
+dependency graph without a native build. This is dependency-closure evidence,
+not final Apple/Android package or device qualification.

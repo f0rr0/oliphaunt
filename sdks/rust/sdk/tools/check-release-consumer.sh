@@ -116,26 +116,33 @@ build_consumer() {
 run_consumer() {
   local consumer="$1"
   local native_assets="$2"
-  local runtime_archive tools_archive install_dir tools_dir
+  local tools_assets="$3"
+  local broker_assets="$4"
+  local runtime_archive tools_archive broker_archive install_dir tools_dir
   require_linux_x64
   require_file "$consumer"
   [ -x "$consumer" ] || fail "release consumer is not executable: $consumer"
   [ -d "$native_assets" ] || fail "native asset directory is missing: $native_assets"
   runtime_archive="$(find_one "$native_assets" 'liboliphaunt-*-linux-x64-gnu.tar.gz')"
-  tools_archive="$(find_one "$native_assets" 'oliphaunt-tools-*-linux-x64-gnu.tar.gz')"
+  tools_archive="$(find_one "$tools_assets" 'oliphaunt-tools-*-linux-x64-gnu.tar.gz')"
+  broker_archive="$(find_one "$broker_assets" 'oliphaunt-broker-*-linux-x64-gnu.tar.gz')"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-rust-release-consumer-run.XXXXXX")"
 
-  mkdir -p "$scratch/native" "$scratch/tools" "$scratch/runtime-cache"
+  mkdir -p "$scratch/native" "$scratch/tools" "$scratch/broker" "$scratch/runtime-cache"
   tar -xzf "$runtime_archive" -C "$scratch/native"
   tar -xzf "$tools_archive" -C "$scratch/tools"
+  tar -xzf "$broker_archive" -C "$scratch/broker"
   install_dir="$scratch/native/runtime"
   tools_dir="$scratch/tools/runtime"
-  for file in "$install_dir/bin/postgres" "$install_dir/bin/initdb" "$install_dir/bin/pg_ctl" \
+  for file in "$scratch/native/lib/liboliphaunt.so" "$scratch/broker/bin/oliphaunt-broker" "$install_dir/bin/postgres" "$install_dir/bin/initdb" "$install_dir/bin/pg_ctl" \
     "$tools_dir/bin/pg_basebackup" "$tools_dir/bin/pg_dump" "$tools_dir/bin/psql"; do
     require_file "$file"
   done
 
   env \
+    LIBOLIPHAUNT_PATH="$scratch/native/lib/liboliphaunt.so" \
+    OLIPHAUNT_EMBEDDED_MODULE_DIR="$scratch/native/lib/modules" \
+    OLIPHAUNT_BROKER="$scratch/broker/bin/oliphaunt-broker" \
     OLIPHAUNT_INSTALL_DIR="$install_dir" \
     OLIPHAUNT_TOOLS_DIR="$tools_dir" \
     OLIPHAUNT_RUNTIME_CACHE_DIR="$scratch/runtime-cache" \
@@ -149,8 +156,8 @@ case "${1:-}" in
     build_consumer "$2" "$3"
     ;;
   run)
-    [ "$#" -eq 3 ] || fail "usage: $0 run CONSUMER NATIVE_ASSET_DIR"
-    run_consumer "$2" "$3"
+    [ "$#" -eq 5 ] || fail "usage: $0 run CONSUMER NATIVE_ASSET_DIR TOOLS_ASSET_DIR BROKER_ASSET_DIR"
+    run_consumer "$2" "$3" "$4" "$5"
     ;;
-  *) fail "usage: $0 {build SDK_ARTIFACT_DIR OUTPUT|run CONSUMER NATIVE_ASSET_DIR}" ;;
+  *) fail "usage: $0 {build SDK_ARTIFACT_DIR OUTPUT|run CONSUMER NATIVE_ASSET_DIR TOOLS_ASSET_DIR BROKER_ASSET_DIR}" ;;
 esac

@@ -1124,6 +1124,14 @@ jobs:
           path: target/sdk-artifacts/oliphaunt-broker
           if-no-files-found: error
 
+      - name: Upload packed Rust consumer
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['rust-sdk-package'], 'oliphaunt-rust:test-consumer') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-rust-release-consumer-linux-x64-gnu
+          path: target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer
+          if-no-files-found: error
+
       - name: Build native extension lifecycle proof runner
         if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'native-extension-lifecycle') }}
         run: cargo build --locked --release -p oliphaunt-native-extension-proof
@@ -1140,9 +1148,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-native-extension-proof-linux-x64-gnu
-          path: |
-            target/native-extension-proof/oliphaunt-native-extension-proof
-            target/native-extension-proof/oliphaunt-rust-release-consumer
+          path: target/native-extension-proof/oliphaunt-native-extension-proof
           if-no-files-found: error
 
   broker-runtime-linux:
@@ -1723,7 +1729,7 @@ jobs:
 
   native-consumers:
     name: Builds / Native Product Consumers
-    needs: [affected, js-sdk-package, liboliphaunt-native-desktop, broker-runtime, node-direct]
+    needs: [affected, js-sdk-package, rust-sdk-package, liboliphaunt-native-desktop, broker-runtime, node-direct]
     if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-consumers') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -1758,17 +1764,32 @@ jobs:
           name: oliphaunt-query-ts-sdk-package-artifacts
           path: target/sdk-artifacts/oliphaunt-query-ts
       - name: Download Linux runtime archive
-        if: ${{ !contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer-published') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: liboliphaunt-native-release-assets-linux-x64-gnu
           path: target/liboliphaunt/desktop-release-assets/linux-x64-gnu
       - name: Download Linux broker archive
-        if: ${{ !contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer-published') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: oliphaunt-broker-release-assets-linux-x64-gnu
           path: target/oliphaunt-broker/release-assets
+      - name: Download packed Rust consumer
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-rust-release-consumer-linux-x64-gnu
+          path: target/oliphaunt-rust/release-consumer
+      - name: Make packed Rust consumer executable
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        run: chmod 0755 target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer
+      - name: Download Linux tools archive
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: postgres-tools-native-release-assets-linux-x64-gnu
+          path: target/postgres-tools/native/release-assets
       - name: Download Linux addon archive
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1778,7 +1799,7 @@ jobs:
       - name: Exercise selected products against shipped native artifacts
         env:
           OLIPHAUNT_PUBLISHED_DEPENDENCIES: ${{ needs.affected.outputs.published_dependencies }}
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-js:package", "oliphaunt-query-ts:package", "liboliphaunt-native:package-runtime-desktop-target", "oliphaunt-broker:build-release-assets", "oliphaunt-node-direct:build-release-assets"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-rust:test-consumer", "postgres-tools-native:package-assets", "oliphaunt-js:package", "oliphaunt-query-ts:package", "liboliphaunt-native:package-runtime-desktop-target", "oliphaunt-broker:build-release-assets", "oliphaunt-node-direct:build-release-assets"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh native-consumers
 
   wasix-ts-sdk-package:
@@ -2492,15 +2513,6 @@ jobs:
           name: oliphaunt-native-extension-proof-linux-x64-gnu
           path: target/native-extension-lifecycle/input/proof-runner
 
-      - name: Run packed Rust release consumer
-        if: ${{ matrix.shard == 0 }}
-        run: |
-          chmod 0755 \
-            target/native-extension-lifecycle/input/proof-runner/oliphaunt-rust-release-consumer
-          sdks/rust/sdk/tools/check-release-consumer.sh run \
-            target/native-extension-lifecycle/input/proof-runner/oliphaunt-rust-release-consumer \
-            target/native-extension-lifecycle/input/runtime
-
       - name: Run planned native extension lifecycle proof
         id: native_extension_lifecycle
         env:
@@ -2798,6 +2810,12 @@ jobs:
           name: oliphaunt-kotlin-sdk-package-artifacts
           path: target/sdk-artifacts/oliphaunt-kotlin
 
+      - name: Download query package artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-query-ts-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-query-ts
+
       - name: Download React Native SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -2823,8 +2841,7 @@ jobs:
           OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
           OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO: ${{ github.workspace }}/${{ matrix.build-root }}/out/liboliphaunt.so
           OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR: ${{ github.workspace }}/target/liboliphaunt-mobile-host/${{ matrix.target }}/install
-          OLIPHAUNT_EXPO_ANDROID_INITDB: ${{ github.workspace }}/target/liboliphaunt-mobile-host/${{ matrix.target }}/install/bin/initdb
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["database-resources:package-icu", "database-resources:build-native-android-icu", "extension-packages:package-mobile", "liboliphaunt-native:package-runtime-android-x86_64", "liboliphaunt-native:finalize-runtime-android-abi", "oliphaunt-kotlin:package", "oliphaunt-react-native:package"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-query-ts:package", "database-resources:package-icu", "database-resources:build-native-android-icu", "extension-packages:package-mobile", "liboliphaunt-native:package-runtime-android-x86_64", "liboliphaunt-native:finalize-runtime-android-abi", "oliphaunt-kotlin:package", "oliphaunt-react-native:package"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh mobile-build-android
 
       - name: Validate Android mobile app artifacts
@@ -2939,6 +2956,12 @@ jobs:
           name: oliphaunt-swift-sdk-package-artifacts
           path: target/sdk-artifacts/oliphaunt-swift
 
+      - name: Download query package artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-query-ts-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-query-ts
+
       - name: Download React Native SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -3036,9 +3059,8 @@ jobs:
           OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS: "1"
           OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK: ${{ github.workspace }}/target/liboliphaunt-ios-xcframework/out/liboliphaunt.xcframework
           OLIPHAUNT_EXPO_IOS_RUNTIME_DIR: ${{ github.workspace }}/target/liboliphaunt-mobile-host/ios-xcframework/install
-          OLIPHAUNT_EXPO_IOS_INITDB: ${{ github.workspace }}/target/liboliphaunt-mobile-host/ios-xcframework/install/bin/initdb
           OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: ${{ github.workspace }}/target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["database-resources:package-icu", "database-resources:build-native-ios-icu", "extension-packages:package-mobile", "liboliphaunt-native:package-runtime-ios-xcframework", "oliphaunt-react-native:package", "oliphaunt-swift:package"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-query-ts:package", "database-resources:package-icu", "database-resources:build-native-ios-icu", "extension-packages:package-mobile", "liboliphaunt-native:package-runtime-ios-xcframework", "oliphaunt-react-native:package", "oliphaunt-swift:package"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh mobile-build-ios
 
       - name: Validate iOS mobile app artifacts

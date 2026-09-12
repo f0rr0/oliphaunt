@@ -44,6 +44,7 @@ tasks:
       - /runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json
       - /runtimes/liboliphaunt-wasix/crates/**/*
       - /postgres-tools/wasix/crates/**/*
+      - /database-resources/icu/cargo/**/*
     options:
       cache: true
       runFromWorkspaceRoot: true

@@ -108,7 +108,6 @@ fi
 startup_gucs="${OLIPHAUNT_EXPO_IOS_STARTUP_GUCS:-${OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS:-}}"
 benchmark_preset="${OLIPHAUNT_EXPO_IOS_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET:-full}}"
 crash_storage_override="${OLIPHAUNT_EXPO_IOS_CRASH_STORAGE:-}"
-mobile_packaging_initdb="${OLIPHAUNT_EXPO_IOS_INITDB:-}"
 if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then
   configure_mobile_catalog_profile_probe icu
 else
@@ -187,16 +186,12 @@ prepare_runtime_resources() {
   if [ -z "$runtime_source" ]; then
     if [ -f "$root/target/liboliphaunt-ios-runtime-smoke/share/postgresql/postgres.bki" ]; then
       runtime_source="$root/target/liboliphaunt-ios-runtime-smoke"
-    elif [ -f "$root/target/liboliphaunt-ios-simulator/install/share/postgresql/postgres.bki" ]; then
-      runtime_source="$root/target/liboliphaunt-ios-simulator/install"
     else
-      runtime_source="$(ensure_host_runtime_assets)"
+      runtime_source="$root/target/liboliphaunt-ios-simulator/install"
     fi
   fi
-  [ -f "$runtime_source/share/postgresql/postgres.bki" ] ||
-    fail "runtime assets are missing postgres.bki: $runtime_source"
-  ensure_mobile_runtime_tool_permissions "$runtime_source"
-  ensure_mobile_tool_executable "$mobile_packaging_initdb"
+  require_mobile_runtime_data "$runtime_source" OLIPHAUNT_EXPO_IOS_RUNTIME_DIR \
+    liboliphaunt-native:build-runtime-ios-xcframework
 
   local seed seed_profile=standard
   [ "${OLIPHAUNT_EXPO_IOS_ICU:-0}" != 1 ] || seed_profile=icu
@@ -214,7 +209,6 @@ prepare_runtime_resources() {
   if oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package \
     iOS \
     "$runtime_source" \
-    "$mobile_packaging_initdb" \
     "$selected_extensions" \
     "$package_root" \
     "${OLIPHAUNT_EXPO_IOS_ICU:-0}" \

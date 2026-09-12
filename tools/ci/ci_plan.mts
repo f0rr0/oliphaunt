@@ -24,12 +24,13 @@ import {
 import {
   compareText,
   exactExtensionProducts,
+  exactExtensionReleaseProducts,
   extensionPublicDependencySqlNames,
   extensionSqlNames,
   extensionSqlNamesForProducts,
 } from '../release/release-artifact-targets.mts';
 import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
-import { loadProducts } from '../release/release-graph.mts';
+import { loadProducts, moonProjectsById } from '../release/release-graph.mts';
 import { qualificationRequestKey } from '../../.github/scripts/release-candidate-lib.mts';
 import {
   publishedConsumerInventory,
@@ -459,8 +460,36 @@ export function planForReleaseProducts(
       )
       .map((task) => task.target),
   );
+  // External extensions own release metadata; their actual producers are shared
+  // native/WASIX artifact projects. Keep the normal graph closure so their
+  // package consumers and same-run lifecycle evidence remain required.
+  const externalProducts = new Set(exactExtensionReleaseProducts());
+  const selectedExternalProducts = products.filter((product) => externalProducts.has(product));
+  if (selectedExternalProducts.length > 0) {
+    const artifactProjects = new Set(
+      [...moonProjectsById(PREFIX).values()]
+        .filter(
+          (project) =>
+            project.config.tags.includes('extensions') && project.config.tags.includes('artifacts'),
+        )
+        .map((project) => project.id),
+    );
+    const producers = [...TASKS_BY_TARGET.values()].filter(
+      (task) =>
+        artifactProjects.has(task.target.split(':')[0]) &&
+        task.tags?.includes('artifact-builder') &&
+        task.options?.runInCI !== false &&
+        task.options?.runInCI !== 'skip',
+    );
+    if (producers.length === 0)
+      throw new Error('external extension release has no qualifying Moon artifact producers');
+    for (const task of producers) roots.add(task.target);
+  }
   for (const product of products) {
-    if (![...roots].some((target) => target.startsWith(`${product}:`)))
+    if (
+      !externalProducts.has(product) &&
+      ![...roots].some((target) => target.startsWith(`${product}:`))
+    )
       throw new Error(`release product ${product} has no qualifying Moon tasks`);
   }
   const excludedTargets = new Set(RELEASE_ONLY_TARGETS);

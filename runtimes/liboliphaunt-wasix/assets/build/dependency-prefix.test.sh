@@ -2,6 +2,7 @@
 set -euo pipefail
 owner="$(cd "$(dirname "$0")" && pwd)"
 root="$(git -C "$owner" rev-parse --show-toplevel)"
+mkdir -p "$root/target"
 scratch="$(mktemp -d "$root/target/dependency-prefix-test.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/recipes" "$scratch/bin" "$scratch/sqlite"

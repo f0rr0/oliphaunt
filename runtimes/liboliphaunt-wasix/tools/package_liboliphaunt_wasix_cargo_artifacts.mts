@@ -1267,6 +1267,7 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
       'path = "src/lib.rs"',
       '',
       '[build-dependencies]',
+      'sha2 = "0.10"',
       ...partSources.map(
         (part) => `${part.name} = { version = "=${spec.version}", path = "../${part.name}" }`,
       ),
@@ -1423,6 +1424,7 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
       'path = "src/lib.rs"',
       '',
       '[build-dependencies]',
+      'sha2 = "0.10"',
       ...partSources.map(
         (part) => `${part.name} = { version = "=${spec.version}", path = "../${part.name}" }`,
       ),

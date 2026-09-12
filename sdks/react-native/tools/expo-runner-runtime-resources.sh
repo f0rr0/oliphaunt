@@ -7,6 +7,12 @@
 
 expo_runner_runtime_resources_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
+require_mobile_runtime_data() {
+  local runtime_source="$1" configured_env="$2" producer="$3"
+  [ -f "$runtime_source/share/postgresql/postgres.bki" ] ||
+    fail "mobile runtime data is missing at $runtime_source; run moon run $producer or set $configured_env to its prepared install directory"
+}
+
 mobile_cluster_seed_target() {
   case "$1" in
     iOS) printf '%s\n' ios-datum64 ;;

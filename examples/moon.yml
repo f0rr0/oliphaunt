@@ -66,6 +66,7 @@ tasks:
       export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
       exec bun run --cwd examples/react-native-expo mobile-build:android
     deps:
+      - "oliphaunt-query-ts:package"
       - "database-resources:build-native-android-icu"
       - "database-resources:package-icu"
       - "extension-packages:package-mobile"
@@ -130,6 +131,7 @@ tasks:
       export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
       exec bun run --cwd examples/react-native-expo mobile-build:ios
     deps:
+      - "oliphaunt-query-ts:package"
       - "database-resources:build-native-ios-icu"
       - "database-resources:package-icu"
       - "extension-packages:package-mobile"

@@ -233,7 +233,7 @@ tasks:
         for archive in target/sdk-artifacts/"$product"/*.crate; do dependencies+=(--dependency-crate "${archive}"); done
       done
       bash tools/packaging/check-cargo-package-tests.sh --crate "target/sdk-artifacts/oliphaunt-rust/oliphaunt-$version.crate" --all-features "${dependencies[@]}" --stub-dependency-prefix liboliphaunt-native- --stub-dependency-prefix oliphaunt-broker-
-      bash sdks/rust/sdk/tools/check-release-consumer.sh build target/sdk-artifacts/oliphaunt-rust target/native-extension-proof/oliphaunt-rust-release-consumer
+      bash sdks/rust/sdk/tools/check-release-consumer.sh build target/sdk-artifacts/oliphaunt-rust target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer
     deps:
       - "oliphaunt-rust:package"
       - "oliphaunt-query:package"
@@ -248,9 +248,23 @@ tasks:
       - "/sdks/rust/sdk/tools/artifact-dependencies.mts"
       - "/tools/dev/bun.sh"
     outputs:
-      - "/target/native-extension-proof/oliphaunt-rust-release-consumer"
+      - "/target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer"
     options:
       cache: true
+      runFromWorkspaceRoot: true
+
+  test-consumer-runtime:
+    tags: [consumer, integration, ci-native-consumers, platform-linux-x64-gnu]
+    command: "bash sdks/rust/sdk/tools/check-release-consumer.sh run target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer target/liboliphaunt/desktop-release-assets/linux-x64-gnu target/postgres-tools/native/release-assets target/oliphaunt-broker/release-assets"
+    deps:
+      - "~:test-consumer"
+      - "liboliphaunt-native:package-runtime-desktop-target"
+      - "postgres-tools-native:package-assets"
+      - "oliphaunt-broker:build-release-assets"
+    inputs:
+      - "tools/check-release-consumer.sh"
+    options:
+      cache: false
       runFromWorkspaceRoot: true
 
   packaging-unit:

@@ -303,6 +303,7 @@ tasks:
       - "@group(legal-files)"
       - /runtimes/liboliphaunt-native/include/**/*
       - /runtimes/liboliphaunt-native/tools/release-runtime.sh
+      - /runtimes/liboliphaunt-native/tools/runtime-preflight.sh
       - /runtimes/liboliphaunt-native/tools/package-liboliphaunt-linux-assets.sh
       - /runtimes/liboliphaunt-native/tools/package-liboliphaunt-macos-assets.sh
       - /runtimes/liboliphaunt-native/tools/package-liboliphaunt-windows-assets.sh

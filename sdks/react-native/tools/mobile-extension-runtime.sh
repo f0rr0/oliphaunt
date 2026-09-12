@@ -133,11 +133,10 @@ oliphaunt_dev_prebuilt_ios_extension_framework_zips_for_selection() {
 oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   local platform="$1"
   local runtime_source="$2"
-  local initdb_source="$3"
-  local selected_extensions="$4"
-  local package_root="$5"
-  local icu_enabled="${6:-0}"
-  local icu_data_dir="${7:-}"
+  local selected_extensions="$3"
+  local package_root="$4"
+  local icu_enabled="${5:-0}"
+  local icu_data_dir="${6:-}"
 
   case "$icu_enabled" in
     0 | 1) ;;
@@ -201,9 +200,6 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   done < <(printf '%s\n' "$prebuilt_runtime_artifacts")
 
   local -a resource_env=(OLIPHAUNT_INSTALL_DIR="$runtime_source")
-  if [ -n "$initdb_source" ]; then
-    resource_env+=(OLIPHAUNT_INITDB="$initdb_source")
-  fi
   if [ "$icu_enabled" = "1" ]; then
     resource_env+=(OLIPHAUNT_ICU_DATA_DIR="$icu_data_dir")
   fi

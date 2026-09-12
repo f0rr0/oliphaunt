@@ -15,7 +15,8 @@ case "$mode" in
     script="runtimes/liboliphaunt-native/bin/build-postgres18-$platform"
     ;;
   package)
-    : "${target:?OLIPHAUNT_CI_TARGET is required for packaging}"
+    . runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+    target="${target:-$(oliphaunt_runtime_native_host_target_id)}"
     export OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/desktop-release-assets/$target"
     export OLIPHAUNT_RELEASE_BUILD_RUNTIME=0 OLIPHAUNT_RELEASE_FETCH_ASSETS=0
     script="runtimes/liboliphaunt-native/tools/package-liboliphaunt-$platform-assets"

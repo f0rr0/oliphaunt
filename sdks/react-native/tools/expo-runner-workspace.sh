@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Shared scratch-workspace and cluster-seed helpers for the React Native
+# Shared scratch-workspace helpers for the React Native
 # Expo mobile runners. Callers provide platform-specific variables such as
 # scratch_root, example_dir, package_work, source_example_dir, rn_dir,
-# mobile_packaging_initdb and react_native_package_extra_excludes.
+# react_native_package_extra_excludes.
 
 react_native_package_extra_excludes=()
 
@@ -12,127 +12,6 @@ react_native_source_package_fingerprint() {
     --root "$root" \
     --rn-dir "$rn_dir" \
     --example-package "$source_example_dir/package.json"
-}
-
-host_runtime_label() {
-  case "$(uname -s):$(uname -m)" in
-    Darwin:*) printf '%s\n' macos ;;
-    Linux:x86_64 | Linux:amd64) printf '%s\n' linux-x64-gnu ;;
-    Linux:aarch64 | Linux:arm64) printf '%s\n' linux-arm64-gnu ;;
-    *) fail "unsupported host runtime build platform for mobile packaging: $(uname -s)/$(uname -m)" ;;
-  esac
-}
-
-host_runtime_work_root() {
-  case "$(host_runtime_label)" in
-    macos) printf '%s\n' "${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18}" ;;
-    linux-x64-gnu) printf '%s\n' "${OLIPHAUNT_LINUX_WORK_ROOT:-${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-linux-x64-gnu}}" ;;
-    linux-arm64-gnu) printf '%s\n' "${OLIPHAUNT_LINUX_WORK_ROOT:-${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-linux-arm64-gnu}}" ;;
-    *) fail "unsupported host runtime build platform for mobile packaging: $(uname -s)/$(uname -m)" ;;
-  esac
-}
-
-host_runtime_install_dir() {
-  printf '%s/install\n' "$(host_runtime_work_root)"
-}
-
-host_runtime_build_script() {
-  case "$(host_runtime_label)" in
-    macos) printf '%s\n' "$root/runtimes/liboliphaunt-native/bin/build-postgres18-macos.sh" ;;
-    linux-x64-gnu | linux-arm64-gnu) printf '%s\n' "$root/runtimes/liboliphaunt-native/bin/build-postgres18-linux.sh" ;;
-    *) fail "unsupported host runtime build platform for mobile packaging: $(uname -s)/$(uname -m)" ;;
-  esac
-}
-
-host_runtime_ready() {
-  local runtime_source="$1"
-  [ -x "$runtime_source/bin/initdb" ] &&
-    [ -f "$runtime_source/share/postgresql/postgres.bki" ] &&
-    [ -f "$runtime_source/share/postgresql/postgresql.conf.sample" ]
-}
-
-ensure_host_runtime_assets() {
-  local runtime_source
-  runtime_source="$(host_runtime_install_dir)"
-  if host_runtime_ready "$runtime_source"; then
-    printf '%s\n' "$runtime_source"
-    return
-  fi
-  if ! expo_allows_native_builds; then
-    fail "host PostgreSQL runtime assets are missing and native builds are disabled; set OLIPHAUNT_EXPO_*_RUNTIME_DIR and OLIPHAUNT_EXPO_*_INITDB to prebuilt liboliphaunt artifacts"
-  fi
-
-  local label log build_script
-  label="$(host_runtime_label)"
-  build_script="$(host_runtime_build_script)"
-  log="$scratch_root/logs/build-host-runtime-$label.log"
-  mkdir -p "$(dirname "$log")"
-  if ! "$build_script" --runtime-only >"$log" 2>&1; then
-    tail -120 "$log" >&2 || true
-    fail "failed to build host PostgreSQL runtime assets for mobile packaging; see $log"
-  fi
-  if ! host_runtime_ready "$runtime_source"; then
-    tail -120 "$log" >&2 || true
-    fail "host PostgreSQL runtime assets are incomplete after build: $runtime_source"
-  fi
-  printf '%s\n' "$runtime_source"
-}
-
-normalize_cluster_seed() {
-  local pgdata="$1"
-  local conf="$pgdata/postgresql.conf"
-  [ -f "$conf" ] || return 0
-
-  local tmp="$conf.liboliphaunt-normalized"
-  awk '
-    /^[[:space:]]*dynamic_shared_memory_type[[:space:]]*=/ {
-      print "dynamic_shared_memory_type = mmap"
-      next
-    }
-    /^[[:space:]]*log_timezone[[:space:]]*=/ {
-      print "log_timezone = '\''UTC'\''"
-      next
-    }
-    /^[[:space:]]*timezone[[:space:]]*=/ {
-      print "timezone = '\''UTC'\''"
-      next
-    }
-    /^[[:space:]]*lc_messages[[:space:]]*=/ {
-      print "lc_messages = '\''C'\''"
-      next
-    }
-    /^[[:space:]]*lc_monetary[[:space:]]*=/ {
-      print "lc_monetary = '\''C'\''"
-      next
-    }
-    /^[[:space:]]*lc_numeric[[:space:]]*=/ {
-      print "lc_numeric = '\''C'\''"
-      next
-    }
-    /^[[:space:]]*lc_time[[:space:]]*=/ {
-      print "lc_time = '\''C'\''"
-      next
-    }
-    { print }
-  ' "$conf" >"$tmp"
-  mv "$tmp" "$conf"
-}
-
-ensure_mobile_tool_executable() {
-  local tool="$1"
-  [ -n "$tool" ] || return 0
-  [ -f "$tool" ] || return 0
-  [ -x "$tool" ] && return 0
-  chmod u+x "$tool" ||
-    fail "mobile runtime tool is not executable and could not be repaired: $tool"
-}
-
-ensure_mobile_runtime_tool_permissions() {
-  local runtime_source="$1"
-  local tool
-  for tool in postgres initdb pg_ctl pg_dump psql; do
-    ensure_mobile_tool_executable "$runtime_source/bin/$tool"
-  done
 }
 
 directory_fingerprint() {
@@ -147,16 +26,30 @@ directory_fingerprint() {
 
 patch_expo_example_react_native_dependency() {
   local dependency_spec="$1"
+  if expo_requires_sdk_artifacts; then
+    local query_artifact
+    query_artifact="$(expo_single_sdk_artifact_file oliphaunt-query-ts '*.tgz')" || return
+    bun "$root/sdks/react-native/tools/expo-runner-common.mts" check-query-dependency \
+      "${dependency_spec#file:}" "$query_artifact" || return
+  fi
   bun "$root/sdks/react-native/tools/expo-runner-common.mts" patch-dependency "$example_dir/package.json" "$dependency_spec"
 }
 
 write_scratch_bun_workspace() {
+  local query_artifact=""
+  if expo_requires_sdk_artifacts; then
+    query_artifact="$(expo_single_sdk_artifact_file oliphaunt-query-ts '*.tgz')" || return
+  fi
   bun "$root/sdks/react-native/tools/expo-runner-common.mts" workspace \
-    "$root" "$scratch_root" "${scratch_workspace_name:-oliphaunt-react-native-expo-workspace}"
+    "$root" "$scratch_root" "${scratch_workspace_name:-oliphaunt-react-native-expo-workspace}" "$query_artifact"
 }
 install_expo_example_dependencies() {
   if [ "$example_dir" = "$scratch_root/examples/react-native-expo" ]; then
-    run bun install --cwd "$scratch_root" --prefer-offline --filter react-native-oliphaunt-expo
+    if expo_requires_sdk_artifacts; then
+      run bun install --cwd "$scratch_root" --prefer-offline
+    else
+      run bun install --cwd "$scratch_root" --prefer-offline --filter react-native-oliphaunt-expo
+    fi
   else
     run bun install --cwd "$example_dir" --prefer-offline
   fi

@@ -2440,7 +2440,7 @@ export function exactNativeExtensionMemberDependencies(members, memberDependenci
   });
 }
 
-function writeNativeExtensionSplitAggregatorCrate(
+export function writeNativeExtensionSplitAggregatorCrate(
   crateDir,
   {
     product,
@@ -2490,6 +2490,7 @@ include = ${tomlString(['Cargo.toml', 'README.md', 'build.rs', 'src/**', ...carr
 path = "src/lib.rs"
 
 [build-dependencies]
+sha2 = "0.10"
 ${dependencyLines.join('\n')}
 
 [workspace]
@@ -2629,6 +2630,9 @@ include = ${tomlString(['Cargo.toml', 'README.md', 'build.rs', 'src/**', 'payloa
 
 [lib]
 path = "src/lib.rs"
+
+[build-dependencies]
+sha2 = "0.10"
 
 [workspace]
 `,
