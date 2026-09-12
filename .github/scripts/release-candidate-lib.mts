@@ -1,0 +1,489 @@
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function canonicalValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalValue);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+function sha256(value) {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function strictJson(file, context) {
+  let bytes;
+  try {
+    bytes = readFileSync(file);
+  } catch (error) {
+    throw new Error(`${context} cannot be read at ${file}: ${error.message}`);
+  }
+  let value;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    throw new Error(`${context} is not strict JSON at ${file}: ${error.message}`);
+  }
+  assert(
+    value !== null && !Array.isArray(value) && typeof value === 'object',
+    `${context} must be a JSON object`,
+  );
+  return { bytes, value };
+}
+
+function sortedUniqueStrings(value, context) {
+  assert(Array.isArray(value), `${context} must be a string list`);
+  assert(
+    value.every((item) => typeof item === 'string' && item.length > 0),
+    `${context} must contain non-empty strings`,
+  );
+  const sorted = [...new Set(value)].sort();
+  assert(sorted.length === value.length, `${context} must not contain duplicates`);
+  assert(JSON.stringify(sorted) === JSON.stringify(value), `${context} must be canonically sorted`);
+  return sorted;
+}
+
+function uniqueStrings(value, context) {
+  assert(Array.isArray(value), `${context} must be a string list`);
+  assert(
+    value.every((item) => typeof item === 'string' && item.length > 0),
+    `${context} must contain non-empty strings`,
+  );
+  assert(new Set(value).size === value.length, `${context} must not contain duplicates`);
+  return value;
+}
+
+export const FULL_PAYLOAD_QUALIFICATION_MODE = 'full-payload';
+export const PRODUCT_QUALIFICATION_MODE = 'selected-products';
+
+export function qualificationRequestKey(sha, products) {
+  assert(/^[0-9a-f]{40}$/.test(sha ?? ''), 'qualification request requires an exact SHA');
+  assert(
+    Array.isArray(products) &&
+      products.length > 0 &&
+      products.every((product) => typeof product === 'string' && product.length > 0) &&
+      new Set(products).size === products.length,
+    'qualification request requires unique non-empty products',
+  );
+  return `${sha}-${createHash('sha256')
+    .update(JSON.stringify([...products].sort()))
+    .digest('hex')}`;
+}
+
+function qualificationBinding(plan) {
+  const fields = ['qualification_mode', 'qualification_base_sha', 'qualification_head_sha'];
+  const present = fields.map((field) => Object.hasOwn(plan, field));
+  if (!present.some(Boolean)) return undefined;
+  assert(present.every(Boolean), 'affected CI plan qualification binding is incomplete');
+  const mode = plan.qualification_mode;
+  const baseSha = plan.qualification_base_sha;
+  const headSha = plan.qualification_head_sha;
+  assert(
+    [FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE].includes(mode),
+    `affected CI plan qualification mode is invalid: ${mode}`,
+  );
+  if (mode === PRODUCT_QUALIFICATION_MODE) {
+    assert(
+      baseSha === null && /^[0-9a-f]{40}$/.test(headSha ?? ''),
+      'selected-products plan requires exact candidate SHA without an affected base',
+    );
+    const products = sortedUniqueStrings(plan.qualification_products, 'qualification products');
+    const tasks = sortedUniqueStrings(plan.tasks, 'qualification tasks');
+    assert(
+      products.length > 0 && tasks.length > 0,
+      'product qualification requires products and tasks',
+    );
+    return { mode, baseSha, headSha, products, tasks };
+  }
+  assert(
+    baseSha === null && headSha === null,
+    'full-payload CI plan must not carry an affected range',
+  );
+  return { mode, baseSha, headSha };
+}
+
+export function candidateQualificationMode(candidate) {
+  return candidate?.affectedPlan?.qualification?.mode ?? FULL_PAYLOAD_QUALIFICATION_MODE;
+}
+
+export function affectedPlanBinding(planPath, wasixReleaseRegressionRequired) {
+  assert(
+    typeof wasixReleaseRegressionRequired === 'boolean',
+    'WASIX release regression requirement must be boolean',
+  );
+  const { value: plan } = strictJson(planPath, 'affected CI plan');
+  const jobs = sortedUniqueStrings(plan.jobs, 'affected CI plan jobs');
+  const projects = sortedUniqueStrings(plan.projects, 'affected CI plan projects');
+  const extensionPackageProducts = sortedUniqueStrings(
+    plan.extension_package_products ?? [],
+    'affected CI plan extension package products',
+  );
+  const expectedRequirement = jobs.includes('liboliphaunt-wasix-runtime');
+  assert(
+    wasixReleaseRegressionRequired === expectedRequirement,
+    `affected CI plan WASIX requirement mismatch: jobs imply ${expectedRequirement}, workflow reported ${wasixReleaseRegressionRequired}`,
+  );
+  const qualification = qualificationBinding(plan);
+  const canonical = JSON.stringify(canonicalValue(plan));
+  return {
+    digest: sha256(canonical),
+    jobs,
+    projects,
+    extensionPackageProducts,
+    wasixReleaseRegressionRequired,
+    ...(qualification === undefined ? {} : { qualification }),
+  };
+}
+
+function jsonFiles(root) {
+  assert(existsSync(root), `WASIX evidence artifact root does not exist: ${root}`);
+  const files = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      compareText(left.name, right.name),
+    )) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(file);
+      } else if (entry.isFile() && entry.name.endsWith('.json')) {
+        files.push(file);
+      }
+    }
+  };
+  visit(root);
+  return files;
+}
+
+function expectedPublicExtensions(catalogPath) {
+  const { value: catalog } = strictJson(catalogPath, 'extension catalog');
+  assert(Array.isArray(catalog.extensions), 'extension catalog extensions must be a list');
+  return catalog.extensions.map((extension) => extension.id).sort();
+}
+
+function same(actual, expected, context) {
+  assert(actual === expected, `${context} mismatch: expected ${expected}, got ${actual}`);
+}
+
+function positiveInteger(value, context) {
+  assert(Number.isSafeInteger(value) && value > 0, `${context} must be a positive safe integer`);
+}
+
+function findEvidenceRun(root) {
+  const matches = [];
+  for (const file of jsonFiles(root)) {
+    let value;
+    try {
+      value = JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (
+      value?.schema === 'oliphaunt-extension-evidence-v1' &&
+      value?.evidenceTier === 'wasix-full-lifecycle-v1'
+    ) {
+      matches.push({ file, value, bytes: readFileSync(file) });
+    }
+  }
+  assert(
+    matches.length === 1,
+    `WASIX evidence artifact must contain exactly one full-lifecycle run, found ${matches.length}`,
+  );
+  return matches[0];
+}
+
+export function wasixEvidenceBinding(
+  evidenceRoot,
+  {
+    repository,
+    workflow,
+    runId,
+    runAttempt,
+    sha,
+    tree,
+    catalogPath = 'extensions/generated/extensions.catalog.json',
+  },
+) {
+  const expectedRunId = Number.parseInt(String(runId), 10);
+  positiveInteger(expectedRunId, 'expected evidence runId');
+  positiveInteger(runAttempt, 'candidate runAttempt');
+  const root = path.resolve(evidenceRoot);
+  const { file, value: evidence, bytes } = findEvidenceRun(root);
+  same(evidence.status, 'passed', 'WASIX evidence status');
+  same(evidence.sourceCommit, sha, 'WASIX evidence sourceCommit');
+  same(evidence.sourceTree, tree, 'WASIX evidence sourceTree');
+  assert(
+    /^sha256:[0-9a-f]{64}$/u.test(evidence.sourceDigest),
+    'WASIX evidence sourceDigest must be SHA-256',
+  );
+  uniqueStrings(evidence.sourceDigestInputs, 'WASIX evidence sourceDigestInputs');
+  same(evidence.github?.repository, repository, 'WASIX evidence GitHub repository');
+  same(evidence.github?.workflow, workflow, 'WASIX evidence GitHub workflow');
+  same(evidence.github?.runId, expectedRunId, 'WASIX evidence GitHub runId');
+  positiveInteger(evidence.github?.runAttempt, 'WASIX evidence GitHub runAttempt');
+  // A failed-job rerun preserves successful run-level artifacts from an
+  // earlier attempt. Accept that immutable evidence, but never future evidence.
+  assert(
+    evidence.github.runAttempt <= runAttempt,
+    `WASIX evidence GitHub runAttempt must not be newer than the candidate attempt: expected at most ${runAttempt}, got ${evidence.github.runAttempt}`,
+  );
+  same(evidence.github?.job, 'wasix-release-regression', 'WASIX evidence GitHub job');
+
+  assert(
+    Array.isArray(evidence.results) && evidence.results.length > 0,
+    'WASIX evidence results must be non-empty',
+  );
+  const extensions = [];
+  for (const result of evidence.results) {
+    assert(
+      typeof result?.extension === 'string' && result.extension.length > 0,
+      'WASIX evidence result extension is invalid',
+    );
+    same(result.postgresMajor, 18, `${result.extension} PostgreSQL major`);
+    same(result.artifactFamily, 'wasix-runtime', `${result.extension} artifact family`);
+    same(result.platformTarget, 'portable', `${result.extension} platform target`);
+    // Previously frozen candidates used the ambiguous dump-restore label.
+    const restorationModes = Object.hasOwn(result.runtimeModeStatuses ?? {}, 'backup-restore')
+      ? ['backup-restore', 'materialization']
+      : ['dump-restore'];
+    for (const mode of ['direct', 'server', 'restart', ...restorationModes]) {
+      same(result.runtimeModeStatuses?.[mode], 'passed', `${result.extension} ${mode} status`);
+    }
+    extensions.push(result.extension);
+  }
+  extensions.sort();
+  assert(
+    new Set(extensions).size === extensions.length,
+    'WASIX evidence results must not repeat extensions',
+  );
+  const expectedExtensions = expectedPublicExtensions(catalogPath);
+  assert(
+    JSON.stringify(extensions) === JSON.stringify(expectedExtensions),
+    'WASIX evidence results must cover every and only public extension',
+  );
+
+  return {
+    artifact: 'wasix-release-regression-evidence',
+    file: path.relative(root, file).split(path.sep).join('/'),
+    digest: sha256(bytes),
+    id: evidence.id,
+    sourceDigest: evidence.sourceDigest,
+    sourceCommit: evidence.sourceCommit,
+    sourceTree: evidence.sourceTree,
+    github: {
+      repository: evidence.github.repository,
+      workflow: evidence.github.workflow,
+      runId: evidence.github.runId,
+      runAttempt: evidence.github.runAttempt,
+      job: evidence.github.job,
+    },
+    resultCount: extensions.length,
+    extensionsDigest: sha256(JSON.stringify(extensions)),
+  };
+}
+
+export function assertCandidateBindingShape(candidate) {
+  assert(
+    candidate?.schemaVersion === 2,
+    `release candidate schemaVersion must be 2, got ${candidate?.schemaVersion}`,
+  );
+  if (candidate.producers !== undefined) {
+    assert(Array.isArray(candidate.producers), 'candidate producers must be a list');
+    const targets = new Set();
+    for (const receipt of candidate.producers) {
+      assert(
+        typeof receipt.target === 'string' && !targets.has(receipt.target),
+        'duplicate or invalid producer',
+      );
+      targets.add(receipt.target);
+      assert(
+        receipt.producer?.sha === candidate.sha &&
+          receipt.producer?.runId === candidate.runId &&
+          receipt.producer?.runAttempt === candidate.runAttempt,
+        'producer receipt is not from the qualification run and attempt',
+      );
+      assert(
+        Number.isSafeInteger(receipt.artifact?.id) &&
+          receipt.artifact.id > 0 &&
+          Number.isSafeInteger(receipt.artifact.size) &&
+          receipt.artifact.size > 0 &&
+          /^sha256:[0-9a-f]{64}$/.test(receipt.artifact.digest),
+        'producer artifact identity is invalid',
+      );
+      assert(
+        receipt.toolchain?.moon &&
+          receipt.toolchain?.bun &&
+          receipt.toolchain?.typescript &&
+          receipt.toolchain.target === 'portable-typescript',
+        'producer toolchain identity is incomplete',
+      );
+      assert(typeof receipt.eligible === 'boolean', 'producer eligibility is missing');
+      if (!receipt.eligible) {
+        assert(
+          typeof receipt.reason === 'string' && receipt.reason.length > 0,
+          'ineligible producer requires a reason',
+        );
+        continue;
+      }
+      assert(
+        typeof receipt.cacheHit === 'boolean' && Array.isArray(receipt.hashes),
+        'producer execution evidence is missing',
+      );
+      const hashes = new Map(receipt.hashes.map((entry) => [entry.target, entry.hash]));
+      assert(
+        hashes.size === receipt.hashes.length && hashes.get(receipt.target) === receipt.taskHash,
+        'producer hash chain is inconsistent',
+      );
+      for (const entry of receipt.hashes) {
+        assert(/^[0-9a-f]{64}$/.test(entry.hash), 'producer hash is invalid');
+        for (const [dependency, hash] of Object.entries(entry.dependencies))
+          assert(hashes.get(dependency) === hash, 'producer dependency hash is incomplete');
+      }
+    }
+  }
+  assert(
+    candidate.affectedPlan !== null && typeof candidate.affectedPlan === 'object',
+    'release candidate affectedPlan is missing',
+  );
+  assert(
+    /^sha256:[0-9a-f]{64}$/u.test(candidate.affectedPlan.digest),
+    'release candidate plan digest is invalid',
+  );
+  const jobs = sortedUniqueStrings(
+    candidate.affectedPlan.jobs,
+    'release candidate affectedPlan.jobs',
+  );
+  sortedUniqueStrings(candidate.affectedPlan.projects, 'release candidate affectedPlan.projects');
+  sortedUniqueStrings(
+    candidate.affectedPlan.extensionPackageProducts,
+    'release candidate affectedPlan.extensionPackageProducts',
+  );
+  assert(
+    typeof candidate.affectedPlan.wasixReleaseRegressionRequired === 'boolean',
+    'release candidate affectedPlan WASIX requirement must be boolean',
+  );
+  assert(
+    candidate.affectedPlan.wasixReleaseRegressionRequired ===
+      jobs.includes('liboliphaunt-wasix-runtime'),
+    'release candidate affectedPlan WASIX requirement is inconsistent with selected jobs',
+  );
+  const qualification = candidate.affectedPlan.qualification;
+  if (qualification !== undefined) {
+    assert(
+      qualification !== null && !Array.isArray(qualification) && typeof qualification === 'object',
+      'release candidate affectedPlan qualification is invalid',
+    );
+    assert(
+      JSON.stringify(Object.keys(qualification).sort()) ===
+        JSON.stringify(
+          qualification.mode === PRODUCT_QUALIFICATION_MODE
+            ? ['baseSha', 'headSha', 'mode', 'products', 'tasks']
+            : ['baseSha', 'headSha', 'mode'],
+        ),
+      'release candidate affectedPlan qualification fields are invalid',
+    );
+    assert(
+      [FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE].includes(qualification.mode),
+      'release candidate qualification mode is invalid',
+    );
+    if (qualification.mode === PRODUCT_QUALIFICATION_MODE) {
+      assert(
+        qualification.baseSha === null && qualification.headSha === candidate.sha,
+        'selected-products qualification must bind the candidate SHA',
+      );
+      assert(
+        sortedUniqueStrings(qualification.products, 'qualification products').length > 0,
+        'qualification products must not be empty',
+      );
+      assert(
+        sortedUniqueStrings(qualification.tasks, 'qualification tasks').length > 0,
+        'qualification tasks must not be empty',
+      );
+    } else
+      assert(
+        qualification.baseSha === null && qualification.headSha === null,
+        'full-payload release candidate must not carry an affected range',
+      );
+  }
+  const requirements = candidate.evidenceRequirements;
+  assert(
+    requirements !== null && typeof requirements === 'object',
+    'release candidate evidenceRequirements is missing',
+  );
+  assert(
+    requirements.wasixReleaseRegression === candidate.affectedPlan.wasixReleaseRegressionRequired,
+    'release candidate WASIX evidence requirement is inconsistent with affected plan',
+  );
+  const expectedArtifacts = requirements.wasixReleaseRegression
+    ? ['wasix-release-regression-evidence']
+    : [];
+  assert(
+    JSON.stringify(requirements.artifacts) === JSON.stringify(expectedArtifacts),
+    'release candidate evidence artifact requirements are inconsistent',
+  );
+  if (requirements.wasixReleaseRegression) {
+    assert(
+      candidate.evidence?.wasixReleaseRegression !== null,
+      'release candidate is missing required WASIX evidence binding',
+    );
+    assert(
+      /^sha256:[0-9a-f]{64}$/u.test(candidate.evidence.wasixReleaseRegression.digest),
+      'release candidate WASIX evidence digest is invalid',
+    );
+    positiveInteger(
+      candidate.evidence.wasixReleaseRegression.github?.runId,
+      'release candidate WASIX evidence runId',
+    );
+    positiveInteger(
+      candidate.evidence.wasixReleaseRegression.github?.runAttempt,
+      'release candidate WASIX evidence runAttempt',
+    );
+  } else {
+    assert(
+      candidate.evidence?.wasixReleaseRegression === null,
+      'release candidate carries WASIX evidence that its plan did not require',
+    );
+  }
+}
+
+export function assertBindingMatches(actual, expected, context) {
+  assert(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    `${context} binding does not match the recomputed same-run content`,
+  );
+}
+
+export function assertQualificationProductCoverage(candidate, products) {
+  assert(
+    Array.isArray(products) &&
+      products.length > 0 &&
+      products.every((product) => typeof product === 'string' && product.length > 0) &&
+      new Set(products).size === products.length,
+    'publication products must be a non-empty unique string list',
+  );
+  if (candidateQualificationMode(candidate) === FULL_PAYLOAD_QUALIFICATION_MODE) return;
+  const qualified = new Set(candidate.affectedPlan.qualification.products);
+  for (const product of products)
+    assert(
+      qualified.has(product),
+      `release candidate is missing qualification for product ${product}`,
+    );
+}

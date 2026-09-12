@@ -1,0 +1,16 @@
+{
+  "name": "@oliphaunt/liboliphaunt-wasix-tools-win32-x64-msvc",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  }
+}

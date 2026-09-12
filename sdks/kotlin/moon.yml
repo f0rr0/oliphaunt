@@ -1,0 +1,219 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-kotlin"
+language: "kotlin"
+layer: "library"
+stack: "systems"
+tags: ["javascript-quality", "sdk", "kotlin", "android", "native", "release-product"]
+dependsOn:
+  - id: "oliphaunt-mobile-bindings"
+    scope: "build"
+  - id: "database-resources"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+  - id: "cluster-seed-contract"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - "liboliphaunt-native"
+  - id: "extension-runtime-contract"
+    scope: "build"
+
+project:
+  title: "Oliphaunt Kotlin SDK"
+  description: "Android SDK for native liboliphaunt."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-kotlin"
+    packagePath: "sdks/kotlin"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-android"
+  paths:
+    "**/*.kt": ["@oliphaunt/sdk-android"]
+    "**/*.kts": ["@oliphaunt/sdk-android"]
+
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
+tasks:
+  format-check:
+    tags: ["quality", "static", "format", "requires-android-sdk"]
+    command: "./gradlew :oliphaunt:spotlessCheck --configuration-cache"
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../target"
+    inputs: ["@group(code)"]
+  lint:
+    tags: ["quality", "static", "requires-android-sdk", "requires-rust"]
+    deps:
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../target"
+    command: >-
+      ./gradlew
+      :oliphaunt:detekt
+      :oliphaunt:lintDebug
+      --configuration-cache
+    inputs:
+      - "@group(code)"
+      - project: "extensions"
+        group: "sdk-metadata"
+      - project: "extension-runtime-contract"
+        group: "contract"
+  build:
+    tags: ["build", "requires-android-sdk", "requires-rust"]
+    deps:
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../target"
+    command: >-
+      ./gradlew
+      :oliphaunt:compileKotlinJvm
+      :oliphaunt:compileDebugKotlinAndroid
+      :oliphaunt:compileReleaseKotlinAndroid
+      :oliphaunt-android-gradle-plugin:classes
+      --configuration-cache
+    inputs:
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - project: "extensions"
+        group: "sdk-metadata"
+      - "@group(code)"
+      - project: "extension-runtime-contract"
+        group: "contract"
+    options:
+      cache: true
+  test:
+    tags: ["quality", "unit", "requires-android-sdk", "requires-rust"]
+    deps:
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../target"
+    script: |
+      set -e
+      ./gradlew :oliphaunt:jvmTest :oliphaunt:testDebugUnitTest :oliphaunt:testReleaseUnitTest :oliphaunt-android-gradle-plugin:check -x :oliphaunt:koverVerify --configuration-cache
+    inputs:
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - project: "extensions"
+        group: "sdk-metadata"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "cluster-seed-contract"
+        group: "contract"
+      - "@group(code)"
+      - project: "extension-runtime-contract"
+        group: "contract"
+    options:
+      cache: true
+  test-native-bindings:
+    tags: ["integration", "requires-android-sdk", "requires-rust"]
+    command: "bash tools/test-native-bindings.sh"
+    deps:
+      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    options:
+      cache: false
+  package-maven:
+    tags: ["package", "requires-android-sdk", "requires-rust"]
+    deps:
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    script: |
+      set -e
+      ./gradlew \
+        :oliphaunt:checkMavenPublicationContract \
+        :oliphaunt:publishAndroidReleasePublicationToMavenLocal \
+        :oliphaunt-android-gradle-plugin:publishToMavenLocal \
+        "-Dmaven.repo.local=$MOON_WORKSPACE_ROOT/target/moon/oliphaunt-kotlin/package/maven" \
+        "-PoliphauntAndroidAbiFilters=arm64-v8a,x86_64" \
+        --no-configuration-cache
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../target/moon/oliphaunt-kotlin/package"
+    inputs:
+      - project: "extensions"
+        group: "sdk-metadata"
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - "@group(code)"
+      - project: "extension-runtime-contract"
+        group: "contract"
+    outputs:
+      - "/target/moon/oliphaunt-kotlin/package/maven/**/*"
+    options:
+      cache: true
+  coverage:
+    tags: ["coverage", "requires-android-sdk", "requires-rust"]
+    deps:
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    command: "./gradlew :oliphaunt:koverXmlReport --configuration-cache"
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../target/coverage/oliphaunt-kotlin"
+    inputs:
+      - "@group(code)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    outputs: ["/target/coverage/oliphaunt-kotlin/**/*"]
+    options:
+      cache: false
+      runInCI: false
+
+  package:
+    tags: ["release", "artifact-package", "ci-kotlin-sdk-package"]
+    script: |
+      set -eu
+      bash tools/dev/bun.sh sdks/kotlin/tools/stage-release-artifacts.mts
+      bash tools/dev/bun.sh sdks/kotlin/tools/check-package.mts
+    deps:
+      - "oliphaunt-kotlin:package-maven"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/sdks/kotlin/tools/check-package.mts"
+      - "/sdks/kotlin/tools/stage-release-artifacts.mts"
+      - "/tools/packaging/staging.mts"
+      - "/tools/dev/bun.sh"
+      - "/third-party/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+
+  maven-staging:
+    tags: ["release", "artifact-package", "ci-kotlin-maven-staging"]
+    command: "tools/dev/bun.sh sdks/kotlin/tools/kotlin-maven-staging.mts"
+    deps:
+      - "oliphaunt-kotlin:package"
+    inputs:
+      - "/sdks/kotlin/gradle.properties"
+      - "/sdks/kotlin/tools/kotlin-maven-staging.mts"
+      - "/tools/packaging/maven-central-contract.mts"
+      - "/target/sdk-artifacts/oliphaunt-kotlin/maven/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  test-packaging:
+    tags: ["quality", "unit"]
+    command: "bun test --timeout=30000 ./sdks/kotlin/tools/kotlin-maven-staging.test.mts"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "/tools/packaging/testdata/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/packaging/*.{mts,sh}"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -20,10 +20,7 @@ import {
   type ExpoSQLiteBenchmarkReport,
   type ReactNativeBenchmarkWorkload,
 } from './sqlite-benchmark';
-import {
-  EXPO_SMOKE_PASS_TAG,
-  serializeExpoSmokePassReceipt,
-} from './smoke-pass-receipt';
+import { EXPO_SMOKE_PASS_TAG, serializeExpoSmokePassReceipt } from './smoke-pass-receipt';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -109,11 +106,9 @@ type NativeBenchmarkReport = {
 
 const smokeGlobalKey = '__OLIPHAUNT_EXPO_SMOKE_STATE__';
 const initialUrlTimeoutMs = 2_500;
-const defaultSmokeStorageName =
-  `installed-smoke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+const defaultSmokeStorageName = `installed-smoke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const packagedCatalogProfile = process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE;
-const packagedCatalogProfileProbeSql =
-  process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL;
+const packagedCatalogProfileProbeSql = process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL;
 const packagedCatalogProfileProbeExpected =
   process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED;
 let initialLaunchUrlPromise: Promise<string | null> | undefined;
@@ -156,7 +151,9 @@ export default function HomeScreen() {
         }
 
         if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
-          throw new Error(`installed mobile release proof does not support platform ${Platform.OS}`);
+          throw new Error(
+            `installed mobile release proof does not support platform ${Platform.OS}`,
+          );
         }
         const extensionPlan = mobileReleaseExtensionProofPlan();
         const extensions = extensionPlan.map((extension) => extension.sqlName);
@@ -168,10 +165,11 @@ export default function HomeScreen() {
         const extensionProofResult = await runMobileReleaseExtensionProof(
           db,
           extensionPlan,
-          check =>
+          (check) =>
             stage(`extensions:${check.status}`, {
               name: check.name,
-              checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
+              checkElapsedMs:
+                check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
             }),
         );
         const extensionProof = extensionProofResult.checks;
@@ -185,13 +183,11 @@ export default function HomeScreen() {
         const parameterized = await db.query('SELECT $1::text AS value', ['hello']);
         const parameterRoundTrip = requiredQueryText(parameterized, 'value');
         stage('query:parameter:done', { value: parameterRoundTrip });
-        const bindingProof = await runMobileBindingProof(
-          db,
-          check =>
-            stage(`binding:${check.status}`, {
-              name: check.name,
-              checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
-            }),
+        const bindingProof = await runMobileBindingProof(db, (check) =>
+          stage(`binding:${check.status}`, {
+            name: check.name,
+            checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
+          }),
         );
         const lifecycle = await runLifecycleResumeValidation(db, stage);
         const profileProof = await runCatalogProfileReopenProof(db, extensions, stage);
@@ -316,11 +312,16 @@ export default function HomeScreen() {
               label="SQLite p90"
               value={
                 report.sqliteBenchmark
-                  ? formatLatency(benchmarkWorkload(report.sqliteBenchmark, 'sqlite_parameterized_select_rtt'))
+                  ? formatLatency(
+                      benchmarkWorkload(report.sqliteBenchmark, 'sqlite_parameterized_select_rtt'),
+                    )
                   : 'pending'
               }
             />
-            <Metric label="checks" value={report.checks ? String(report.checks.length) : 'pending'} />
+            <Metric
+              label="checks"
+              value={report.checks ? String(report.checks.length) : 'pending'}
+            />
           </View>
 
           <View style={styles.panel}>
@@ -375,11 +376,7 @@ export default function HomeScreen() {
 
 async function resolveRunnerMode(): Promise<RunnerMode> {
   const envRunner = process.env.EXPO_PUBLIC_OLIPHAUNT_RUNNER;
-  if (
-    envRunner === 'benchmark' ||
-    envRunner === 'crash-write' ||
-    envRunner === 'crash-verify'
-  ) {
+  if (envRunner === 'benchmark' || envRunner === 'crash-write' || envRunner === 'crash-verify') {
     return envRunner;
   }
   const url = await resolveInitialLaunchUrl();
@@ -387,11 +384,7 @@ async function resolveRunnerMode(): Promise<RunnerMode> {
     return 'smoke';
   }
   const urlRunner = extractQueryParam(url, 'liboliphauntRunner');
-  if (
-    urlRunner === 'benchmark' ||
-    urlRunner === 'crash-write' ||
-    urlRunner === 'crash-verify'
-  ) {
+  if (urlRunner === 'benchmark' || urlRunner === 'crash-write' || urlRunner === 'crash-verify') {
     return urlRunner;
   }
   if (url.includes('liboliphauntRunner=benchmark') || url.includes('benchmark=1')) {
@@ -477,7 +470,9 @@ async function runCatalogProfileReopenProof(
   );
   const reopenedMarker = requiredQueryText(persisted, 'value');
   if (reopenedMarker !== marker) {
-    throw new Error(`database reopen marker mismatch: expected '${marker}', got '${reopenedMarker}'`);
+    throw new Error(
+      `database reopen marker mismatch: expected '${marker}', got '${reopenedMarker}'`,
+    );
   }
   await assertCatalogProfileProbe(reopened, sql, expected, catalogProfile);
   const elapsedMs = now() - started;
@@ -498,7 +493,9 @@ async function assertCatalogProfileProbe(
   const result = await db.query(`SELECT (${sql})::text AS result`);
   const actual = requiredQueryText(result, 'result');
   if (actual !== expected) {
-    throw new Error(`${profile} packaged catalog probe failed: expected '${expected}', got '${actual}'`);
+    throw new Error(
+      `${profile} packaged catalog probe failed: expected '${expected}', got '${actual}'`,
+    );
   }
 }
 
@@ -673,8 +670,11 @@ async function runNativeBenchmark(
       await db.query('SELECT 1');
     }
     const workloads = [
-      await benchmarkLatency('typed_select_rtt', 'SELECT 1 query round trip', options.typedRttIterations, () =>
-        db.query('SELECT 1'),
+      await benchmarkLatency(
+        'typed_select_rtt',
+        'SELECT 1 query round trip',
+        options.typedRttIterations,
+        () => db.query('SELECT 1'),
       ),
       await benchmarkLatency(
         'parameterized_select_rtt',
@@ -685,7 +685,9 @@ async function runNativeBenchmark(
     ];
 
     await db.execute('DROP TABLE IF EXISTS oliphaunt_expo_benchmark');
-    await db.execute('CREATE TABLE oliphaunt_expo_benchmark(id integer PRIMARY KEY, value text NOT NULL)');
+    await db.execute(
+      'CREATE TABLE oliphaunt_expo_benchmark(id integer PRIMARY KEY, value text NOT NULL)',
+    );
     const insertStarted = now();
     await db.execute(
       'INSERT INTO oliphaunt_expo_benchmark SELECT value, md5(value::text) FROM generate_series(1, $1::integer) AS value',
@@ -698,7 +700,7 @@ async function runNativeBenchmark(
       throughput: {
         rows: options.insertRows,
         totalMs: insertMs,
-        rowsPerSecond: insertMs === 0 ? 0 : options.insertRows * 1_000 / insertMs,
+        rowsPerSecond: insertMs === 0 ? 0 : (options.insertRows * 1_000) / insertMs,
       },
       rows: options.insertRows,
     });
@@ -837,7 +839,9 @@ async function runCrashRecoveryPhase(
   if (!value.startsWith(`crash-${Platform.OS}-`)) {
     throw new Error(`crash recovery verification found unexpected value '${value}'`);
   }
-  await db.execute('INSERT INTO rn_crash_recovery (id, value) VALUES (2, \'verified\') ON CONFLICT (id) DO UPDATE SET value = excluded.value');
+  await db.execute(
+    "INSERT INTO rn_crash_recovery (id, value) VALUES (2, 'verified') ON CONFLICT (id) DO UPDATE SET value = excluded.value",
+  );
   await db.close();
   liveness.stop();
   const payload = {
@@ -935,7 +939,8 @@ async function openDatabase(
     } satisfies Parameters<typeof Oliphaunt.open>[0];
     smokeState.databasePromise = Oliphaunt.open(config).then((database) => {
       smokeState.databaseInstance = database;
-      (database as unknown as { __liboliphauntOpenMs?: number }).__liboliphauntOpenMs = now() - started;
+      (database as unknown as { __liboliphauntOpenMs?: number }).__liboliphauntOpenMs =
+        now() - started;
       stage?.('open:resolved', {
         openMs: (database as unknown as { __liboliphauntOpenMs?: number }).__liboliphauntOpenMs,
       });
@@ -955,8 +960,8 @@ async function resolveOpenTuning(): Promise<OpenTuning> {
   const url = await resolveInitialLaunchUrl();
   const rawStartupGUCs = String(
     process.env.EXPO_PUBLIC_OLIPHAUNT_STARTUP_GUCS ??
-    extractQueryParam(url, 'liboliphauntStartupGUCs') ??
-    '',
+      extractQueryParam(url, 'liboliphauntStartupGUCs') ??
+      '',
   );
   const startupGUCs = parseStartupGUCs(rawStartupGUCs);
   return {
@@ -967,7 +972,10 @@ async function resolveOpenTuning(): Promise<OpenTuning> {
 
 function parseStartupGUCs(value: string): Record<string, string> {
   const gucs: Record<string, string> = {};
-  for (const entry of value.split(',').map((part) => part.trim()).filter(Boolean)) {
+  for (const entry of value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)) {
     const separator = entry.indexOf('=');
     if (separator <= 0) {
       throw new Error(`startup GUC must use name=value syntax: ${entry}`);
@@ -1003,8 +1011,8 @@ async function resolveBenchmarkPreset(): Promise<BenchmarkPreset> {
   const url = await resolveInitialLaunchUrl();
   const rawPreset = String(
     process.env.EXPO_PUBLIC_OLIPHAUNT_BENCHMARK_PRESET ??
-    extractQueryParam(url, 'liboliphauntBenchmarkPreset') ??
-    'full',
+      extractQueryParam(url, 'liboliphauntBenchmarkPreset') ??
+      'full',
   );
   return normalizeBenchmarkPreset(rawPreset);
 }

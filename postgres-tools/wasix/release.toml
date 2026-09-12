@@ -1,0 +1,28 @@
+id = "postgres-tools-wasix"
+owner = "@oliphaunt/core"
+kind = "postgres-tools"
+publish_targets = ["github-release-assets", "crates-io", "npm"]
+registry_packages = [
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-win32-x64-msvc",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-darwin-arm64",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-linux-x64-gnu",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools-linux-arm64-gnu",
+  "crates:oliphaunt-wasix-tools",
+  "crates:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools",
+  "npm:@oliphaunt/wasix-tools",
+]
+release_artifacts = ["postgres-tools", "npm-package"]
+
+[compatibility_versions.oliphaunt-wasix-tools-runtime]
+source_product = "liboliphaunt-wasix"
+path = "postgres-tools/wasix/ts/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-tools-carrier-runtime]
+source_product = "liboliphaunt-wasix"
+path = "postgres-tools/wasix/npm/package.json"
+parser = "json:oliphaunt.runtimeVersion"

@@ -26,11 +26,11 @@ case "$tool" in
 esac
 
 case "$tool" in
-  bun) manifest="${OLIPHAUNT_BUN_TOOLCHAIN_MANIFEST:-$root/src/sources/toolchains/bun.toml}" ;;
-  deno) manifest="${OLIPHAUNT_DENO_TOOLCHAIN_MANIFEST:-$root/src/sources/toolchains/deno.toml}" ;;
+  bun) manifest="${OLIPHAUNT_BUN_TOOLCHAIN_MANIFEST:-$root/tools/dev/bun.toml}" ;;
+  deno) manifest="${OLIPHAUNT_DENO_TOOLCHAIN_MANIFEST:-$root/tools/dev/deno.toml}" ;;
 esac
 proto_file="${OLIPHAUNT_PINNED_TOOL_PROTO_FILE:-$root/.prototools}"
-extractor="${OLIPHAUNT_PINNED_ZIP_EXTRACTOR:-$root/tools/dev/extract-pinned-zip.sh}"
+extractor="$script_dir/extract-pinned-binary.sh"
 curl_platform_flags="$script_dir/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_PINNED_TOOL_CACHE_ROOT:-$root/target/oliphaunt-tools}"
 case "$(uname -s)" in
@@ -42,7 +42,7 @@ case "$(uname -s)" in
 esac
 [ -f "$manifest" ] || fail "missing $tool manifest: $manifest"
 [ -f "$proto_file" ] || fail "missing tool version file: $proto_file"
-[ -x "$extractor" ] || fail "missing executable pinned ZIP extractor: $extractor"
+[ -f "$extractor" ] && [ ! -L "$extractor" ] || fail "missing regular pinned binary extractor: $extractor"
 if [ ! -f "$curl_platform_flags" ] || [ -L "$curl_platform_flags" ]; then
   fail "missing regular curl platform policy: $curl_platform_flags"
 fi
@@ -83,16 +83,13 @@ proto_version() {
   ' "$proto_file"
 }
 
-version="$(manifest_value toolchain version)" || fail "$manifest must contain exactly one quoted toolchain.version"
+version="$(proto_version)" || fail "$proto_file must contain exactly one $tool version"
+version="${version#v}"
 case "$version" in
   ''|.*|*.|*..*|*[!0-9.]*) fail "invalid $tool version in $manifest: $version" ;;
 esac
 [ "$(awk -F. 'NF == 3 { print "valid" }' <<<"$version")" = "valid" ] ||
   fail "invalid $tool version in $manifest: $version"
-configured_version="$(proto_version)" || fail "$proto_file must contain exactly one $tool version"
-configured_version="${configured_version#v}"
-[ "$configured_version" = "$version" ] ||
-  fail "$proto_file $tool version $configured_version does not match $manifest version $version"
 if [ -n "$expected_input" ]; then
   expected_input="${expected_input#v}"
   [ "$expected_input" = "$version" ] ||
@@ -305,20 +302,8 @@ for candidate_url in "$url" ${mirror_url:+"$mirror_url"}; do
 done
 [ "$downloaded" = "1" ] || fail "could not download the verified $tool $version $target archive"
 
-extract_args=(
-  --archive "$archive"
-  --destination "$stage/extracted"
-  --entry-count "$entry_count"
-  --required "$binary_path"
-  --executable "$binary_path"
-)
-case "$binary_path" in
-  */*) extract_args+=(--prefix "${binary_path%%/*}") ;;
-esac
-"$extractor" "${extract_args[@]}"
 mkdir -p "$stage/bin"
-mv "$stage/extracted/$binary_path" "$stage/bin/$exe_name"
-rm -rf "$stage/extracted"
+bash "$extractor" zip "$archive" "$binary_path" "$stage/bin/$exe_name" "$binary_sha256"
 chmod 0700 "$stage" "$stage/bin"
 chmod 0555 "$stage/bin/$exe_name"
 printf '%s\n' "$receipt_text" >"$stage/receipt"

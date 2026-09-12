@@ -1,0 +1,22 @@
+# PostgreSQL 18.4. Ordered repository-relative patch paths.
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0001-liboliphaunt-add-backend-host-io.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0002-liboliphaunt-add-embedded-entrypoint.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0003-liboliphaunt-return-from-embedded-frontend-terminate.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0004-liboliphaunt-run-embedded-exit-cleanup.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0005-liboliphaunt-restore-host-cwd.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0006-liboliphaunt-add-static-extension-loader.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0008-liboliphaunt-clean-embedded-symbols.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0009-liboliphaunt-guard-embedded-proc-exit.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0010-liboliphaunt-use-host-runtime-paths.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0011-liboliphaunt-add-android-embedded-shared-memory.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0013-liboliphaunt-fix-embedded-backend-main-return-contract.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0014-liboliphaunt-use-portable-embedded-socketpair.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0015-liboliphaunt-add-embedded-meson-option.patch
+third-party/postgres/patches/common/control-initdb-collation-discovery.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0017-liboliphaunt-namespace-dynahash-host-collisions.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0018-liboliphaunt-contain-embedded-proc-signals.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0019-liboliphaunt-link-windows-embedded-modules-to-host.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0020-liboliphaunt-enforce-embedded-signal-boundary.patch
+runtimes/liboliphaunt-native/patches/postgresql-18.4/0021-liboliphaunt-wake-embedded-epoll-through-self-pipe.patch

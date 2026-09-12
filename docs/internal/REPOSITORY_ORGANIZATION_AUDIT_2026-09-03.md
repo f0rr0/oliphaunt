@@ -102,7 +102,7 @@ instead of imitating SwiftPM's `Tests` layout, consistent with Gradle's
    `Tests` tree.
 2. Deleted the unused duplicate docs favicon under `static`; retained the
    standard Next.js `public/img/favicon.svg`.
-3. Added `tools/native-extension-proof/**/*` to the existing release planner
+3. Added `src/extensions/tests/native/**/*` to the existing release planner
    trigger and a chaos test. Editing the hosted proof executable now selects the
    native extension lifecycle that actually consumes it.
 4. Renamed `native-tools-proof:check` and `native-packaging:test` to truthful
@@ -168,7 +168,7 @@ instead of imitating SwiftPM's `Tests` layout, consistent with Gradle's
 - No mass rename of underscore-named release scripts was performed. Those paths
   are invoked by workflows and release tooling; naming consistency alone does
   not justify that failure surface.
-- `tools/xtask` remains at the root because its surviving commands span WASIX
+- `src/runtimes/liboliphaunt/wasix/tools/xtask` remains at the root because its surviving commands span WASIX
   source acquisition, runtime assets, extensions, AOT, and release staging.
   Earlier dead commands were removed; moving the remaining crate would only
   move complexity.

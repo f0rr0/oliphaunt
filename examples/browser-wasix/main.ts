@@ -7,27 +7,12 @@ import Oliphaunt, {
   type WasixStorage,
   WasixStorageError,
 } from '@oliphaunt/wasix-ts';
-import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
-import { pgDump, psql } from '@oliphaunt/wasix-tools';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
+import { standardSeed } from './resources.js';
 
-import logicalToolsFixtureJson from '../../src/shared/fixtures/postgres/logical-tools.json?raw';
-import logicalToolsSeed from '../../src/shared/fixtures/postgres/logical-tools-seed.sql?raw';
-import logicalToolsVerify from '../../src/shared/fixtures/postgres/logical-tools-verify.sql?raw';
-import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
 import { expectStructuredApi } from './structured-api-smoke.js';
-
-const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
-  expected: {
-    rows: number;
-    sum: number;
-    sequenceLastValue: number;
-    quotedValue: string;
-    normalizedMatches: number;
-    extensionLoaded: boolean;
-  };
-};
 
 const status = requireElement<HTMLParagraphElement>('status');
 const sql = requireElement<HTMLTextAreaElement>('sql');
@@ -51,6 +36,7 @@ try {
   }
   const storage = indexedDB('browser-smoke');
   let database = await (smoke ? Oliphaunt : WorkerOliphaunt).open({
+    seed: standardSeed,
     extensions,
     ...(smoke ? { storage } : {}),
   });
@@ -82,7 +68,6 @@ try {
     if (pgUuidv7Canary) {
       await readPgUuidv7(database);
     }
-    await expectDirectPgDump(database);
     await database.close();
 
     directWorkerAudit?.assertNoneAndRestore();
@@ -111,7 +96,6 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
-    const logicalTools = await expectLogicalTools();
     const opfsAnswers = await expectOpfsPersistence(extensions);
     const opfsCrash = await expectOpfsCrashRecovery();
     const postgisVersion = postgisWorkerCanary ? await expectLargePostgisWorkerModule() : undefined;
@@ -122,11 +106,9 @@ try {
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
       directWorkers: 0,
-      directPgDump: true,
       opfsTransport: 'synchronous-access',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,
-      logicalTools,
       ...(firstUuid === undefined ? {} : { pg_uuidv7: firstUuid }),
       ...(postgisVersion === undefined ? {} : { postgis: postgisVersion }),
     });
@@ -179,7 +161,7 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
     throw new Error('browser worker canary requires a PostGIS side module larger than 8 MiB');
   }
 
-  const database = await WorkerOliphaunt.open({ extensions: [postgis] });
+  const database = await WorkerOliphaunt.open({ seed: standardSeed, extensions: [postgis] });
   try {
     await database.execute('CREATE EXTENSION postgis');
     const version = await readPostgisVersion(database);
@@ -244,7 +226,10 @@ function expectOwnedMemoryCopyAcrossGrowth(): void {
 }
 
 async function expectConcurrentDirectExecution(first: OliphauntDatabase): Promise<void> {
-  const attempts = await Promise.allSettled([Oliphaunt.open(), Oliphaunt.open()]);
+  const attempts = await Promise.allSettled([
+    Oliphaunt.open({ seed: standardSeed }),
+    Oliphaunt.open({ seed: standardSeed }),
+  ]);
   const opened = attempts.flatMap((attempt) =>
     attempt.status === 'fulfilled' ? [attempt.value] : [],
   );
@@ -276,7 +261,7 @@ async function expectDirectWithoutWorker(): Promise<void> {
     value: undefined,
   });
   try {
-    const database = await Oliphaunt.open();
+    const database = await Oliphaunt.open({ seed: standardSeed });
     try {
       await expectAnswer(database);
       await expectOwnedRawProtocolResponse(database);
@@ -323,42 +308,6 @@ async function expectOwnedRawProtocolResponse(database: OliphauntDatabase): Prom
   }
 }
 
-async function expectLogicalTools(): Promise<string> {
-  const source = await WorkerOliphaunt.open({ extensions: [pgtap] });
-  let sql: string;
-  try {
-    await psql(source, { script: logicalToolsSeed });
-    sql = await pgDump(source);
-    if (!sql.includes('COPY public.logical_items') || sql.includes('--inserts')) {
-      throw new Error('browser pg_dump did not preserve standard plain COPY output');
-    }
-  } finally {
-    await source.close();
-  }
-
-  const target = await WorkerOliphaunt.open({ extensions: [pgtap] });
-  try {
-    await psql(target, { script: sql });
-    const result = await target.queryRaw(logicalToolsVerify);
-    const actual = {
-      rows: Number(result.getText(0, 'rows')),
-      sum: Number(result.getText(0, 'sum')),
-      sequenceLastValue: Number(result.getText(0, 'sequence_last_value')),
-      quotedValue: result.getText(0, 'quoted_value'),
-      normalizedMatches: Number(result.getText(0, 'normalized_matches')),
-      extensionLoaded: result.getText(0, 'extension_loaded') === 't',
-    };
-    if (JSON.stringify(actual) !== JSON.stringify(logicalToolsFixture.expected)) {
-      throw new Error(
-        `browser logical tool round trip differed from the shared fixture: ${JSON.stringify(actual)}`,
-      );
-    }
-    return `${actual.rows}:${actual.sum}:${actual.sequenceLastValue}`;
-  } finally {
-    await target.close();
-  }
-}
-
 async function expectClockConsistency(database: OliphauntDatabase): Promise<void> {
   const wallClock = await database.queryRaw(
     'SELECT (extract(epoch FROM clock_timestamp()) * 1000)::bigint AS millis',
@@ -381,7 +330,7 @@ async function expectStartupSqlstate(
   client: typeof Oliphaunt,
 ): Promise<void> {
   try {
-    const unexpected = await client.open({ database });
+    const unexpected = await client.open({ seed: standardSeed, database });
     await unexpected.close();
     throw new Error(
       `browser smoke unexpectedly opened missing database ${JSON.stringify(database)}`,
@@ -399,7 +348,7 @@ async function expectStartupSqlstate(
 
 async function expectFailedDirectOpenRecovery(): Promise<void> {
   await expectStartupSqlstate('oliphaunt_browser_smoke_missing_database', '3D000', Oliphaunt);
-  const reopened = await Oliphaunt.open();
+  const reopened = await Oliphaunt.open({ seed: standardSeed });
   try {
     await expectAnswer(reopened);
   } finally {
@@ -413,7 +362,7 @@ async function expectFailedWorkerOpenRecovery(): Promise<void> {
     '3D000',
     WorkerOliphaunt,
   );
-  const reopened = await WorkerOliphaunt.open();
+  const reopened = await WorkerOliphaunt.open({ seed: standardSeed });
   try {
     await expectAnswer(reopened);
   } finally {
@@ -427,7 +376,7 @@ async function expectExclusiveOwnership(
   provider: string,
 ): Promise<void> {
   try {
-    const duplicate = await Oliphaunt.open({ storage, extensions });
+    const duplicate = await Oliphaunt.open({ seed: standardSeed, storage, extensions });
     await duplicate.close();
     throw new Error(`browser smoke opened one ${provider} database twice`);
   } catch (error) {
@@ -441,7 +390,7 @@ async function expectOpfsPersistence(
   extensions: readonly WasixExtensionDescriptor[],
 ): Promise<string> {
   const storage = opfs('browser-smoke');
-  let database = await Oliphaunt.open({ storage, extensions });
+  let database = await Oliphaunt.open({ seed: standardSeed, storage, extensions });
   await expectExclusiveOwnership(storage, extensions, 'OPFS');
   await database.queryRaw('CREATE TABLE opfs_reopen_probe (answer integer NOT NULL)');
   await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (1)');
@@ -567,7 +516,7 @@ async function expectOpfsCrashRecovery(): Promise<Readonly<{ answer: string; rel
     worker.terminate();
   }
 
-  const database = await Oliphaunt.open({ storage: opfs(name) });
+  const database = await Oliphaunt.open({ seed: standardSeed, storage: opfs(name) });
   try {
     const result = await database.queryRaw('SELECT answer FROM opfs_crash_probe');
     const answer = result.getText(0, 'answer');

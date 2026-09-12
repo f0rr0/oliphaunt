@@ -5,12 +5,16 @@ root entrypoint and the explicit package-owned `/worker` entrypoint. It also
 demonstrates IndexedDB and OPFS persistence and verifies that the root
 constructs no hidden Worker.
 
-Build the WASIX runtime assets, then run:
+Build the runtime and the independently selected standard seed, then start the example:
 
 ```sh
-pnpm --dir src/bindings/wasix-ts dev
+moon run liboliphaunt-wasix:runtime-portable database-resources:build-wasix-standard
+bun run --cwd sdks/ts-wasix/sdk dev
 ```
 
-The browser smoke and benchmark commands in `src/bindings/wasix-ts/package.json`
+`resources.ts` selects the seed served by the local asset middleware. New browser
+storage needs this seed; reopening IndexedDB or OPFS needs only the runtime.
+
+The browser smoke and benchmark commands in `sdks/ts-wasix/sdk/package.json`
 use the same example so there is only one browser integration surface to keep
 current.

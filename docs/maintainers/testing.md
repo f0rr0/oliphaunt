@@ -5,12 +5,12 @@ Status: normative testing policy. Last verified: 2026-07-28. Owner: repository m
 Oliphaunt is a polyglot product repo. Product-native tests stay in product-native test roots.
 Each SDK is validated with the same tools its consumers use:
 
-- Rust SDK: `src/sdks/rust/tests/`
-- Rust WASIX binding: `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/`
-- Swift SDK: `src/sdks/swift/Tests/`
-- Kotlin SDK: `src/sdks/kotlin/oliphaunt/src/commonTest/`,
-  and `src/sdks/kotlin/oliphaunt/src/androidUnitTest/`
-- React Native package: `src/sdks/react-native/src/__tests__/`
+- Rust SDK: `sdks/rust/sdk/tests/`
+- Rust WASIX binding: `sdks/rust-wasix/tests/`
+- Swift SDK: `sdks/swift/Tests/`
+- Kotlin SDK: `sdks/kotlin/oliphaunt/src/commonTest/`,
+  and `sdks/kotlin/oliphaunt/src/androidUnitTest/`
+- React Native package: `sdks/react-native/src/__tests__/`
 - Installed React Native app smoke and benchmark coverage:
   `examples/react-native-expo/`
 
@@ -21,14 +21,16 @@ validation.
 - PR: Moon-affected `check` and `test` tasks, release intent, and the selected
   package, artifact, and E2E jobs. Measured `coverage` is an explicit
   local/manual lane; it is not part of the `Required` PR gate.
-- Main: the PR gate plus selected runtime smokes and regressions for changed
-  products; a successful non-cancelled run emits the exact-SHA `Qualified`
-  release record.
-- Full manual: full regressions, extension matrix, installed mobile app
-  smokes, lifecycle drills, and measured benchmark reports.
+- Main: affected checks, builds, runtime tests, and selected E2E. This does not
+  currently emit a `Qualified` release record.
+- Full manual: the complete selected source/runtime/package/E2E graph. Only
+  an exhaustive dispatch with all target selectors produces the exact-SHA
+  `Qualified` release record. Coverage and benchmarks remain optional.
 - Release: package-native dry-runs, artifact manifests, checksums,
   attestations, registry checks, exact-extension evidence, binary
-  compatibility-floor inspection, and selected regression/performance gates.
+  compatibility-floor inspection, and selected artifact behavior evidence.
+  Publication reuses qualified artifacts; it does not rebuild products or rerun
+  the release tooling's implementation tests.
 
 Merging a PR emits a `pull_request.closed` cancellation tombstone in the
 existing PR concurrency group. That event allocates no runners: the plan,
@@ -59,7 +61,7 @@ result and therefore remain fail-closed for release evidence.
 Linux producer lanes prove compatibility twice. The format-independent ELF
 inspector rejects any `GLIBC` requirement above 2.38 or `GLIBCXX` requirement
 above 3.4.30, including objects inside static archives. The packaged dynamic
-trees then run through `tools/release/check-linux-consumer-baseline.sh` in an
+trees then run through `tools/packaging/check-linux-consumer-baseline.sh` in an
 immutable Fedora 39/glibc 2.38 container with no network, writable root, or
 Linux capabilities. The fixture is an ABI test appliance, not a supported-OS
 or security-lifecycle assertion. The broker is additionally built and started
@@ -72,7 +74,7 @@ Cargo examples use crates.io dependencies pinned to the current Oliphaunt versio
 They do not commit nested lockfiles. Validate them with:
 
 ```sh
-tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
+tools/dev/bun.sh tools/release/example-cargo-policy.mts --check
 ```
 
 Cross-product behavior belongs in `docs/maintainers/sdk-parity-policy.md` and executable parity
@@ -90,26 +92,25 @@ fixtures are clearer and cheaper to maintain.
 Shared fixture domains are small, semantic contracts consumed by
 product-native tests or policy checks:
 
-- `src/shared/fixtures/protocol/query-response-cases.json`: PostgreSQL backend-response
+- `test-fixtures/protocol/query-response-cases.json`: PostgreSQL backend-response
   corpus consumed by Rust, Swift, Kotlin, React Native, TypeScript, and WASIX
   protocol tests.
-- `src/shared/fixtures/postgres/behavior-contract.json`: common PostgreSQL
+- `test-fixtures/postgres/behavior-contract.json`: common PostgreSQL
   behavior cases that are meaningful in more than one SDK.
-- `src/shared/fixtures/storage/database-root.json`: the exact five-field
+- `test-fixtures/storage/database-root.json`: the exact five-field
   managed-root descriptor cases consumed by native and WASIX validators.
-- `src/shared/fixtures/storage/physical-archive-native-v1.properties` and
+- `runtimes/liboliphaunt-native/smoke/fixtures/physical-archive-native-v1.properties` and
   `physical-archive-wasix-v1.properties`: exact physical archive identities
   consumed by the runtime-family backup and restore tests.
-- `src/shared/fixtures/storage/physical-backup-wal-range-v1.properties`: exact
+- `test-fixtures/storage/physical-backup-wal-range-v1.properties`: exact
   inclusive WAL segment-range vectors consumed by native and both WASIX online
   backup implementations, including non-default segment size arithmetic.
 
-`bun tools/policy/check-shared-fixtures.mjs` validates the manifest and rejects
-byte-for-byte source copies outside the canonical fixture root. Published
-source packages receive any required standalone copies only in their generated
-staging directories.
+Product tests consume these shared fixtures through the actual protocol and
+archive implementations. Published source packages receive required standalone
+copies in their staging directories.
 Reusable benchmark datasets, benchmark plans, and published reports belong in
-`benchmarks/`. Executable benchmark harnesses belong in `tools/perf/` unless
+`benchmarks/`. Executable benchmark harnesses belong in `benchmarks/perf/` unless
 the harness is intentionally part of a product's public developer API.
 
 ## Moon Tasks
@@ -124,7 +125,7 @@ Moon task names are intentionally narrow:
   regression suites.
 - `perf-tools:*-plan`: benchmark plan/report validation only.
 - `perf-tools:*-measure`: measured benchmark execution.
-- `coverage-tools:<product>`: runs product-native measured line coverage and writes
+- `<product>:coverage`: runs product-native measured line coverage and writes
   machine-readable reports under `target/coverage/<product>/`.
 
 `check` and `test` must not call the same command for SDK products. `test`
@@ -144,9 +145,8 @@ artifacts cannot be built or located.
 React Native installed-app smoke is split by platform:
 
 ```sh
-moon run oliphaunt-react-native:smoke-android
-moon run oliphaunt-react-native:smoke-ios
-moon run oliphaunt-react-native:smoke
+moon run integration-examples:react-native-android-e2e
+moon run integration-examples:react-native-ios-e2e
 ```
 
 PR jobs run RN static, unit, Codegen, JSI, config-plugin, and package checks.
@@ -165,23 +165,14 @@ files, app artifacts, runner behavior, and CI logs for the selected Maestro
 lanes; it does not revisit provider selection.
 
 `tools/dev/setup-maestro.sh` installs only the exact versioned release asset and
-SHA-256 recorded in `src/sources/toolchains/maestro.toml`; that manifest is the
+SHA-256 recorded in `tools/dev/maestro.toml`; that manifest is the
 single release pin. It does not execute the vendor's network installer. Version
 upgrades change the reviewed manifest metadata and must keep the staged
 archive/layout/version and atomic-promotion regression tests green; incomplete
 or inconsistent metadata fails before any download.
 
-The Node direct addon likewise treats `src/sources/toolchains/node.toml` as the
-single source for fallback header and Windows import-library release metadata.
-`package-node-direct-runtime.sh` continues to prefer an explicit or installed local header
-or `node.lib` candidate. Only a missing candidate activates the fallback, which
-then requires the manifest's exact Node runtime, HTTPS-only bounded transfer,
-SHA-256 verification, safe staged header extraction, and atomic cache promotion.
-The fault suite covers invalid metadata, corrupt caches, unsafe or truncated
-archives, transport interruption, checksum failure, and promotion rollback.
-Node upgrades update that manifest's reviewed digests together with
-`.prototools` and each CI `NODE_VERSION`; source-toolchain policy rejects any
-runtime/manifest drift before a release build.
+The native Node addon uses the Rust Node-API adapter. It no longer downloads
+Node C headers or a separate Windows import library through a custom fallback.
 
 Prior provider research is historical context, not a standing checklist. Maestro
 pin upgrades are dependency maintenance; they do not reopen the runner decision
@@ -201,11 +192,11 @@ the failure proves a concrete requirement this model cannot satisfy.
 Coverage is measured evidence, not a policy-only check. Product tasks run the
 native reporter for their ecosystem: `cargo-llvm-cov` for Rust and WASIX library
 coverage, `swift test --enable-code-coverage` for Swift, Kover for Kotlin, and
-Vitest V8 coverage for TypeScript and React Native TypeScript code. Each product writes
-`target/coverage/<product>/summary.json` plus its native report formats, and
-The local-only `moon run repo:coverage` aggregate writes those summaries to
-`target/coverage/summary.json` and `target/coverage/summary.md`; hosted CI owns
-each product threshold directly and does not rerun the aggregate dependency tree.
+Vitest V8 coverage for TypeScript and React Native TypeScript code. Run
+`moon run <product>:coverage` for that product's native reports under
+`target/coverage/<product>/`. There is no repository coverage aggregate or
+shared summary-file contract. Coverage is an explicit measurement, separate from
+the required source-test and release gates.
 
 Rust and WASIX executable unit tests run through `cargo nextest` with the `ci`
 profile. Unit lanes still run doctests through `cargo test --doc` because
@@ -226,21 +217,13 @@ Native native adapter compile checks, Codegen checks, Expo prebuild/app wiring,
 and installed-device smokes remain separate package or runtime lanes; Vitest
 coverage is only evidence for TypeScript API/config/JSI contract code.
 
-`coverage/baseline.toml` records product-owned `source_globs`, precise
-`exclude_globs`, explicit waivers, the blocking aggregate gate, and a visible
-per-file warning threshold. Every owned source file must be measured or waived with a reason and
-replacement evidence; every waiver also carries an owner and expiry/review
-horizon. Generated code, vendored code, PostgreSQL sources, native build
-outputs, package `lib/` output, Gradle build directories, Xcode DerivedData,
-and Codegen output are excluded from SDK wrapper coverage gates.
-The aggregate floor is 80 percent for SDK wrapper code. A file below 50 percent
-emits a CI warning, including the current `storage.rs` result, without weakening
-the aggregate gate or the requirement for complete, valid coverage evidence.
-Actual measurements are published as CI artifacts rather than committed snapshots.
-Use `moon run repo:coverage-policy` when you only need to validate the
-coverage policy shape.
+Coverage is an optional product-owned diagnostic. Each SDK invokes its native
+coverage tool directly; normal CI runs its unit tasks once. Reports remain under
+`target/coverage/<product>/`. There is no cross-language percentage gate, source
+scanner, waiver ledger, or second test execution layer.
 
-The root coverage commands are:
+Run coverage for one product with `moon run <product>:coverage`. To select all
+product coverage tasks (requiring their respective toolchains):
 
 ```sh
 moon run :coverage
@@ -248,6 +231,14 @@ moon run :coverage --affected
 ```
 
 ## WASIX Runtime Tests
+
+Extension lifecycle qualification tests physical backup/restore, reopening the
+restored database and verifying existing extension state without rerunning setup.
+Logical `pg_dump`/`psql` tests are separate and prove only their tested fixtures.
+In particular, pinned pg_ivm 1.13 does not preserve incremental-view maintenance
+through a plain logical dump/restore: use physical backup/restore for those
+databases. Upstream introduced metadata export and `restore_immv` in pg_ivm 1.15;
+adopting that release requires the normal extension source and platform qualification.
 
 `oliphaunt-wasix` is intended for tests that need real Postgres semantics without
 Docker.
@@ -283,7 +274,7 @@ Use `OliphauntServer` when the application already talks to Postgres through a
 client library:
 
 ```rust,no_run
-use oliphaunt_wasix::AsyncOliphauntServer;
+use oliphaunt_pgwire_server::AsyncOliphauntServer;
 use sqlx::{Connection, Row};
 
 #[tokio::test]
@@ -367,10 +358,10 @@ Use logical dumps, not physical archives, when you need a portable export.
 
 ## Cross-Language Clients
 
-Use `oliphaunt-wasix-proxy` when the test process lives outside Rust:
+Use `oliphaunt-pgwire-server` when the test process lives outside Rust:
 
 ```sh
-oliphaunt-wasix-proxy --memory --print-uri
+oliphaunt-pgwire-server --memory --print-uri
 ```
 
 Pass the printed URI to Python `psycopg`, Go `pgx`, Node `pg`, or another

@@ -13,8 +13,8 @@ lifecycle, archive parser, or root validation.
 
 ## Public C boundary
 
-ABI version 10 exports one fixed surface from
-`src/runtimes/liboliphaunt/native/include/oliphaunt.h`:
+The unreleased checkout ABI version 11 exports one fixed surface from
+`runtimes/liboliphaunt-native/include/oliphaunt.h`:
 
 - `oliphaunt_init`, `oliphaunt_detach`, `oliphaunt_close`, generation-guarded
   close, version access, and atomic caller-owned error copies;
@@ -32,6 +32,12 @@ caller already owns the stable sibling root lease; without it, the C runtime
 acquires that lease itself. Every other bit is rejected. Fixed runtime behavior
 is not represented as a profile enum, archive-format enum, replacement policy,
 or initialization mode.
+
+The v11 config appends nullable `const char *icu_data_dir`. Host bindings pass
+canonical ICU data explicitly rather than relying on JavaScript environment
+mutation reaching libc. The ABI bump prevents an older, shorter config from
+being read with the new layout. Published v10 release records remain historical
+and do not imply that v11 is already available.
 
 ## Direct lifecycle
 
@@ -167,6 +173,6 @@ SDK package and smoke lanes then prove their adapters against the same artifact.
 
 ```sh
 moon run liboliphaunt-native:host-smoke
-moon run oliphaunt-rust:regression
-moon run extension-artifacts-native:build-target oliphaunt-rust:extension-regression
+moon run oliphaunt-rust:test-integration
+moon run extension-artifacts-native:build-target oliphaunt-rust:test-extensions
 ```

@@ -1,357 +1,152 @@
-# Tooling Decisions
+# Tooling
 
-Status: normative tooling decision record. Last verified: 2026-09-03. Owner: repository maintainers.
+Moon owns the project graph, affected task selection, task ordering, and output
+caching. Cargo, Bun, Gradle, and SwiftPM own their package dependencies.
+Product versions and compatibility requirements live in product manifests.
+There is no second repository build scheduler.
 
-Oliphaunt is a polyglot product monorepo. Tooling has to make product work
-predictable without hiding ecosystem-native behavior.
+## Local commands and ownership
 
-## Roles
+Put build, lint, test, and package commands in the product's native manifest or
+local Shell script. Its `moon.yml` orders and caches those commands; it should
+not be the only place an ordinary compilation recipe exists. Shared runtime,
+ABI, shared query, and fixture dependencies belong in the graph when the product
+actually consumes them; unrelated platforms must not hold up one another's tests.
 
-- Moon is the product/task graph, affectedness engine, local cache, and CI task
-  executor.
-- Release Please manifest mode owns release PRs, versions, and changelogs.
-- The protected release workflow owns exact-SHA product tags and draft GitHub
-  releases.
-- Product-local `release.toml` files activate a public product and own package
-  metadata Release Please does not model: owner, kind, publish targets,
-  registry packages, release artifacts, exact published compatibility pins, and
-  derived version files. Incomplete extension work stays on a branch.
-- Runtime products select target presets in Moon
-  `project.release.artifactTargets`; the global extension target-profile
-  contract applies those concrete targets to every catalogued SQL extension.
-- Product-native build tools own product behavior: Cargo, SwiftPM/Xcode,
-  Gradle, npm, Expo, React Native Codegen, and PostgreSQL build scripts.
-- Bun helpers under `tools/release/*.mjs` and `.github/scripts/*.mjs` own the
-  public and protected release check, dry-run, publish, tag, and draft-release
-  command surface.
+Use Shell for external commands and TypeScript for data processing. Committed
+JavaScript and Python implementations are not maintained. Generated JavaScript
+inside npm packages remains part of those packages' supported interface.
+Native Rust/C helpers remain where they execute WASM, serialize AOT artifacts,
+or provide operating-system operations unavailable in the scripting runtime.
 
-Do not add a second source graph, release graph, or root alias layer over Moon.
-Do not add a repo-wide tool because it is popular in one language ecosystem.
+Task names describe the result, not a compulsory sequence:
 
-## Moon
+| Task | Contract | Prerequisites |
+| --- | --- | --- |
+| `format-check` | Read-only formatting diagnostics | Source and formatter |
+| `lint` | Source diagnostics | Source and language tools; compiler analysis is allowed |
+| `typecheck` | Compiler/type diagnostics without a distributable artifact | Required dependency interfaces |
+| `build` | Compile or generate usable product outputs | Builds of dependencies actually consumed |
+| `test` | Source behavior and unit tests | The ecosystem's test runner may compile its test targets |
+| `check` | An explicitly declared aggregate of source checks and isolated tests | Its listed source tasks; no platform release promise |
+| `package` | Produce and inspect the distributable | Required build outputs; no implicit full source-test gate |
+| `test-integration` | Behavior against a real runtime or dependency | The runtime and inputs actually exercised |
+| `test-consumer` | Install or compile the produced package outside the source workspace | The actual package and dependency closure |
+| `test-browser` / platform tests | Browser or device behavior | The named platform and required artifacts |
+| `test-packaging` | Isolated packaging behavior | Artifact fixtures; an installed consumer remains a separate proof |
+| `coverage` / benchmarks | Optional measurement | The suite or runtime being measured |
 
-Install Moon through Proto from `.prototools` and run `moon` directly. Moon's
-current plugins require the Proto version pinned in
-`src/sources/toolchains/proto.toml` (currently 0.61.3):
+Use a suffix when it identifies a real boundary, such as `smoke-android`,
+`smoke-ios`, `lint-codegen`, or `rust-lint` in a mixed-language package.
+Do not add empty tasks to make every ecosystem expose every name. In particular,
+`cargo test`, `swift test`, and Gradle tests already compile what they need;
+they should not depend on a second, standalone `build` merely to enforce a tier.
+Native lifecycle names remain native: Gradle's `build` normally combines
+assembly and checking; use its compilation/assembly tasks for the Moon `build`
+phase. Do not override Gradle's lifecycle just to match the table.
 
-```sh
-proto upgrade 0.61.3
-proto install
-moon query projects
-moon query tasks
-moon query affected --upstream none --downstream direct
-moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile
-moon run :test :unit :tools-unit
-moon run :coverage
-```
+Optional prek hooks run cheap file checks and validate commit messages. Formatting
+belongs to the owning project's `format` and `format-check` tasks; editing an
+unrelated TOML file does not run formatting across the Rust workspace.
 
-Moon task names carry stable intent:
+The old product `qualify` aliases were removed: some meant source checks,
+others included a native runtime or packaging, and none certified publication.
+The hosted `Qualified` artifact is a separate release protocol, described below.
 
-- `check`, `compile`, `format-check`, `js-format-check`, `rust-format-check`,
-  and `lint`: distinct static validation.
-- `test` and `unit`: product-native unit or contract tests.
-- `package`: assemble or inspect a carrier; it never publishes.
-- `smoke`: one runtime happy path.
-- `regression`: broader SQL, protocol, extension, lifecycle, or runtime
-  regressions.
-- `perf-tools:*-plan`: benchmark plan/report validation.
-- `perf-tools:*-measure`: measured benchmark execution.
-- `coverage-tools:<product>`: measured product-native line coverage.
-- `qualify`: an explicit local/release aggregate, never an ordinary CI leaf.
-
-Every task must declare explicit inputs. Tasks with deterministic output that
-other tasks consume must declare outputs. Use Moon tags for CI lanes and ad-hoc
-selection; do not create root script aliases for new lanes.
-
-Moon dependency scopes describe local source relationships:
-
-- `production` and `peer` mean a local consumer uses the dependency's code or
-  artifact.
-- `build` is for tests, fixtures, generated metadata, and package-shape checks.
-
-Release propagation stops at the first publishable product boundary. Exact
-published dependency versions live in product-local `compatibility_versions`;
-Moon edges qualify direct consumers but never invent downstream releases.
-
-## pnpm
-
-pnpm is not the global build orchestrator. Its repo-level role is:
-
-- install JavaScript-family workspace dependencies from `pnpm-lock.yaml`;
-- provide JavaScript package-manager commands for docs, TypeScript, and React
-  Native packages.
-
-The root `package.json` intentionally has no scripts. Run the corresponding
-Moon target or the product-native package command; a second alias layer makes
-affectedness, cache behavior, and ownership harder to inspect.
-
-Cargo, Gradle, SwiftPM, Xcode, npm publish, Expo, and PostgreSQL build
-scripts stay product-owned and are invoked through Moon tasks where repository
-or CI orchestration is needed. `node_modules/` directories are normal ignored
-local install state; they must never be tracked.
-
-## Scripts
-
-Use shell for setup, process orchestration, platform packaging glue, and thin
-CI wrappers. Policy code that parses repository files and asserts invariants
-should live under `tools/policy/assertions/assert-*.mjs` and run with Bun. Keep
-`check-*` scripts as Moon/CI entrypoints when they aggregate checks or wrap
-ecosystem-native tools.
-
-## Bootstrap toolchain sources
-
-The manifests in `src/sources/toolchains/` are the source of truth for
-downloaded maintainer toolchains. `bun.toml` and `deno.toml` pin both the
-official archive SHA-256 and the extracted executable SHA-256 for every
-supported macOS, Linux, and Windows host target. `android-sdk.toml` pins the
-Linux and macOS command-line-tools archives and the exact SDK package
-identities used by builds. Version inputs in composite actions are compatibility
-guards: they must agree with the manifest; they do not select arbitrary bytes.
-
-CI does not delegate Node, Moon, or pnpm acquisition to `actions/setup-node`,
-Corepack, or `moonrepo/setup-toolchain`. `node-runtime.toml` pins the official
-Node archive and extracted runtime binary for every supported host.
-`moon-cli.toml` and `pnpm.toml` pin their archives, component hashes, executable
-modes, and extracted-tree identities. `moon-plugins.toml` pins both each OCI
-manifest digest and the manifest-bound WASM blob. `npm-publisher.toml` applies
-the same archive and complete-tree contract to the npm CLI used by publication.
-The proto version in Moon configuration is
-a compatibility contract only; CI does not hydrate tools through proto.
-
-Bootstrap downloads are HTTPS-only, bounded, checksum-verified, validated for
-archive layout and entry type, extracted into private staging directories, and
-promoted by a same-filesystem rename. A valid local executable is preserved. A
-corrupt or wrong-version cache is repaired, and an interrupted replacement
-restores the prior directory. Do not add `continue-on-error` setup-action or
-unchecked `curl | unzip` fallbacks.
-
-GitHub cache entries are acceleration only. Every restored binary, wrapper,
-plugin, component, mode inventory, and complete package tree is revalidated
-before its path is exported. Moon plugins are copied into a fresh private
-`MOON_HOME`, and `MOON_TOOLCHAIN_FORCE_GLOBALS=true` prevents Moon from
-silently hydrating another runtime. On Windows, composite actions convert
-Git-Bash paths back to native paths before writing `GITHUB_PATH`.
-
-Verified Node.js, Moon, pnpm, and npm-publisher archives use explicit cache
-restore and save actions with one exact key per runner OS and architecture.
-Every save happens only after complete payload verification, only after an
-exact-key miss, and only under CI's main-branch `HEAVY_CACHE_SAVE_IF` gate;
-cache-save failures are non-blocking. Release and mobile workflows are
-restore-only. Do not use the monolithic `actions/cache` action in reachable
-workflows or composites, and do not cache the pnpm content-addressable store:
-the standalone setup action runs before caller dependency installation, so it
-cannot produce a complete store entry.
-
-Android command-line-tools are byte-pinned. Packages installed through
-`sdkmanager` are not immutable repository blobs: the bootstrap requests the
-exact NDK, CMake, build-tools, and platform package identities, then validates
-their installed `source.properties` and build-critical executables/resources.
-`platform-tools` is an intentionally
-unversioned moving Android repository package and is validated by the presence
-of an executable `adb`; do not describe it as byte-reproducible.
-
-The Android setup action restores the Gradle dependency cache only for
-Gradle/Expo consumers. It uses the same dependency-derived key and paths as
-`actions/setup-java`, but defaults to an explicit restore-only action. The
-fixed Linux `kotlin-sdk-package` job is the sole caller allowed to enable
-setup-java's cache writer, and only under CI's bounded main-branch heavy-cache
-policy. Native-only Android artifact jobs pass `gradle-cache: "false"` and do
-not restore or write Gradle state. Do not add a per-consumer Gradle cache scope
-unless the bounded producer is also designed to populate that exact key;
-restore-only keys with no producer remain permanently cold.
-
-When native ccache is enabled, the Android action creates and configures a
-target-owned directory for reuse within the job. Native runtime build trees
-and compiler caches are not restored across runs, because stale generated
-files and mtimes are build correctness inputs rather than dependency caches.
-
-Kotlin plugin and dependency resolution try Google Cloud's fixed, hosted Maven
-Central mirror before canonical Maven Central. The mirror is an availability
-path for valid Central coordinates when a shared GitHub-hosted runner IP is
-temporarily refused; canonical Central remains the missing-module fallback.
-Do not add retries for an HTTP 403, a mutable repository override, or another
-uncontrolled repository. A mirror or cache change must be proven from a fresh
-Gradle home, and mirror payloads used as evidence must match canonical Central
-by checksum. Gradle dependency verification should be introduced only as one
-complete, reviewed rollout covering every supported host and configuration;
-an incomplete host-generated metadata file is not a release safeguard.
-
-## CI
-
-GitHub Actions owns runners, credentials, artifact upload, and platform matrix
-fan-out. Moon owns which tasks are affected and how tasks depend on each other.
-Every GitHub-hosted runner uses an explicit OS-version label. Mutable
-`ubuntu-latest`, `macos-latest`, and `windows-latest` aliases are forbidden by
-workflow policy, including suffixed variants. A runner-image upgrade is an
-intentional dependency change: inspect the image/toolchain delta, rerun the
-platform binary compatibility contract, and qualify every affected release
-target before changing the pin.
-The repository build toolchain is exact Rust 1.93.1 in
-`rust-toolchain.toml`; crate `rust-version = "1.93"` fields are the distinct
-consumer MSRV contract and must not be used as a mutable CI toolchain selector.
-Linux broker packaging also pins the official Rust 1.93.1 Bookworm OCI index
-by digest because the final glibc symbol bindings are a linker-input contract,
-not a property guaranteed by `rust-toolchain.toml`. Its sealed build is
-networkless and read-only. The separate digest-pinned Fedora 39 image is used
-only to rehearse the glibc 2.38 ABI after verifying the container's observed
-glibc version; Fedora 39's end-of-life security status is not a production OS
-support claim.
-Windows jobs configure the runner-owned Visual Studio developer shell through
-`.github/scripts/setup-msvc.ps1`; they do not depend on a third-party Node
-action for compiler environment discovery. The setup accepts only Visual Studio
-installation major 18, selects x64 tools from `HostX64/x64`, and verifies the
-VC145 redistributable closure. It records the observed Visual Studio, VC tools,
-Windows SDK, compiler/linker, and runner-image versions without patch-pinning a
-runner-owned toolchain that GitHub may service in place. Apple jobs select the
-exact `/Applications/Xcode_26.5.app/Contents/Developer` bundle and require the
-observed Xcode minor to remain 26.5. The Xcode build identifier, Apple SDK
-versions, and runner-image version are evidence rather than patch pins. macOS
-setup removes the unused runner-provided `aws/tap` before formula lookup instead
-of disabling Homebrew's tap-trust enforcement.
-
-CI flow:
-
-1. The affected job uses Moon queries to select stable job names from task tags
-   named `ci-<job>` and to emit the exact Moon task targets for each job.
-2. The affected job emits dynamic `Checks / <targets>` and `Tests / <targets>`
-   matrices plus one compact `Policy` task batch from Moon-selected targets.
-   Each visible entry lists and runs at most four tasks with identical setup.
-   `Checks` are normal static/lint/typecheck-style package or tool checks.
-   Policy targets are invariant assertions that parse repository files,
-   workflow YAML, release metadata, generated graphs, or package topology.
-   Package checks and tests keep task inheritance; the policy batch runs its
-   selected targets with `--upstream none` so it does not re-run package
-   prerequisites that already have their own visible jobs. A task that truly
-   needs the Android SDK declares the `requires-android-sdk` Moon tag. The planner
-   projects that capability into runner setup, so unrelated check, policy, and
-   test groups do not install Android tooling.
-3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
-4. The planned-job wrapper reads the affected job target map, then delegates to
-   `.github/scripts/run-moon-targets.sh`, which runs
-   `moon run` with the selected targets. This is for planned artifact targets
-   whose producer jobs may be selected by release-product implications rather
-   than by direct file affectedness. Jobs that consume downloaded artifacts pass
-   their direct producer targets through
-   `OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON`; the wrapper validates those edges,
-   runs remaining local prerequisites, and suppresses only the transferred
-   producers. `release-tools:<product>-sdk-package` tasks consume product
-   `package` outputs instead of hiding release assembly in source projects.
-5. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
-   runtime target, broker target, Node direct target, WASIX AOT target, Android
-   emulator, and iOS simulator.
-
-The required PR gate is thin: visible `Checks / <targets>`, `Policy`,
-`Tests / <targets>`, `Builds / <artifact>`, and installed-app
-`E2E` jobs all fan out from the affected plan, while Moon models package-local
-prerequisites. The final `Required` job aggregates the `Checks`, `Tests`,
-`Builds`, and `E2E` phase gates plus `release-intent`; the selected `Policy`
-batch is included in the `Checks` gate. Mobile installed-app `E2E`
-consumes built app artifacts from the same CI run and does not rebuild runtimes,
-SDKs, or extension packages.
-
-Mobile CI target fan-out is derived from published
-`liboliphaunt-native` artifact rows generated from the product's Moon
-`artifactTargets` declaration and the release target preset. Android jobs use
-rows whose surfaces include `react-native-android`; iOS jobs use rows whose
-surfaces include `react-native-ios`. Do not hardcode mobile ABI target lists in
-CI planners.
-
-Keep workflow names and job names product-oriented. Put implementation details
-in step names.
-
-## Moon Cache Policy
-
-Moon is allowed to cache task results when inputs, dependency task outputs,
-toolchain-sensitive files, environment variables, and outputs represent the
-work. It does not know about simulator/device state, installed apps, local
-ports, Docker daemon state, code-signing identities, registry state, or copied
-runtime artifacts unless those are modeled as inputs.
-
-Cache deterministic static checks, package-shape checks, generated freshness,
-docs builds, unit tests, and coverage reports when they declare inputs and
-outputs.
-
-Use `cache: local` for developer smoke tasks that are useful to replay when
-local source inputs have not changed.
-
-Set `cache: false` on CI/mobile/device proof tasks; those lanes prove the
-current runner, simulator/device, signing environment, app artifact, and
-runtime artifact. Keep Moon caching enabled so deterministic prerequisites can
-still be restored.
-
-Cache benchmark plan checks, never measured benchmark runs. `*-plan` validates
-matrix and report shape; `*-measure` measures current hardware and runtime
-state.
-
-Use `runInCI: skip` for expensive dependency-only tasks that must stay valid in
-CI action graphs but must not run as broad CI work. Use `runInCI: false` only
-for tasks CI must never invoke.
-
-## Release Tooling
-
-Release Please owns the generated release PR, product-version bumps, and
-changelogs without forcing non-JavaScript products into fake `package.json`
-files. It supplies the reviewed component/version state used to derive tag
-names, but it does not create tags or GitHub releases.
-
-What release-please does not own:
-
-- platform binary builds;
-- extension artifact builds;
-- checksums and attestations;
-- registry credential checks;
-- package-native publish commands;
-- verifying already-published GitHub release assets;
-- exact-SHA product tags and draft GitHub releases.
-
-Those stay behind the Bun release entrypoints, the protected workflow, and
-product-native release tasks.
-
-Do not reintroduce release-plz, git-cliff product changelog ownership, a central
-release graph, or broad clean-registry reinstall gates as routine CI policy.
-
-## Debugging
-
-Use Moon's graph and cache diagnostics before adding scripts:
+Useful commands from the repository root:
 
 ```sh
-moon project-graph
-moon action-graph release-tools:react-native-sdk-package
-moon hash <hash>
-moon run <target> --cache off --log trace
+moon query tasks --project <product>
+moon query affected --upstream none --downstream deep
+moon run <product>:format-check <product>:lint <product>:test
+moon run <product>:package
+moon run <product>:test-consumer --cache off
+bash tools/ci/check-workflows.sh
+bash tools/dev/install-hooks.sh
 ```
 
-If a task is slow, first check whether its inputs are too broad, outputs are
-missing, dependency scopes are wrong, or CI is proving runner state that cannot
-be safely cached.
+Choose explicit owner targets from the affected graph and the product's task
+list. CI selects source checks through task tags; local commands above name the
+checks to run. Use a host with the required capabilities. Package and
+installed-consumer checks must exercise their artifact; source-text assertions
+cannot substitute for them.
 
-## Policy Design
+The ordinary package manager commands also remain available, such as
+`cargo test -p <package>`, `cargo clippy -p <package> --all-targets`, and each
+SDK's documented Bun, Gradle, or SwiftPM commands. For an unreleased crate,
+`cargo semver-checks` needs an explicit `--baseline-rev <commit>`; a registry
+baseline exists only after publication.
 
-Policy checks protect externally meaningful contracts, not the current spelling
-of an implementation. Prefer these forms, in order:
+For TypeScript, use `moon run oliphaunt-js:build` (or the corresponding WASIX/RN product) to build its declared query dependency first. A local `bun run build` runs the package's own recipe. Bun workspaces declare package dependencies; Moon orders cross-project tasks. An ordinary TypeScript edit does not require building PostgreSQL.
 
-1. parse a manifest, package, workflow, lock, checksum, or evidence record and
-   assert a stable invariant;
-2. execute a package-shape, clean-consumer, failure-path, or runtime test;
-3. use a narrow security scan when the unsafe behavior is itself textual.
+Build dependencies and release propagation are different. A published dependency
+can retain its existing compatible version. A private library copied or compiled
+into several products must make every embedding product release-affected. A
+shared test fixture must rerun its consumer tests without forcing a release.
+The current release planner does not yet implement every one of these cases;
+moving a directory or adding a Moon edge alone does not fix version propagation.
 
-Do not assert function names, step display names, source line order, prose
-fragments, or exhaustive file inventories. Refactoring should fail policy only
-when it changes a contract. Focused checks own release, SDK, extension,
-workflow, dependency, and evidence behavior.
+## Toolchain and cache inputs
 
-The repository-local skills under `.codex/skills/` are the operational runbooks
-for agent-built changes. Use `qualify-oliphaunt-change` for selecting proof,
-`add-oliphaunt-extension` for extension metadata and carriers, and
-`release-oliphaunt` for candidate qualification and publication. Update the
-relevant skill when an operational workflow changes; do not encode a tutorial
-as source-text assertions in CI.
+Toolchain pins and platform archive checksums live under `tools/dev`.
+GitHub setup actions use the local Shell installers. Use the pinned Moon and
+Bun versions when reproducing CI; arbitrary globally installed versions can
+behave differently.
 
-## Tool Ownership
+A cached task must declare every input that affects its output. Cache completed
+build outputs as well as compiler objects where source, toolchain, flags, and ABI
+identity establish safe reuse. A version label alone does not establish that
+identity. Do not cache a live device, process-recovery, or benchmark measurement
+as if it proved the current runner's state.
 
-Keep code in the narrowest owning domain: product behavior beside the product,
-shared source/asset operations in `tools/xtask`, performance behavior in
-`tools/perf`, CI selection in `tools/graph`, release contracts in
-`tools/release`, and repository invariants in `tools/policy`. Split a module
-when it has independent inputs, outputs, or failure modes. File names and helper
-boundaries are implementation details, not policy APIs.
+Root Cargo package owners carry the `cargo-package` tag. Their internal
+`cargo-sources` task runs no command: it hashes local source and the same node
+in declared dependencies. Compiler tasks depend on this hash, so a transitive
+library edit invalidates consumers without running a duplicate Cargo build.
+Formatting stays local. Extend the owner's `cargo-sources` file group when its
+crate compiles source outside `src`; do not repeat dependency directory lists
+in each consumer. Cross-language consumers also depend on this source hash when
+their required binary producer cannot be cached safely. Affected selection must
+traverse task dependents deeply to preserve these transitive relationships.
+
+Postmaster binds prepared upstream checkouts to pinned commits, patches, and
+executor source. Its build receipts additionally bind compiler and build
+recipes. A build-script change must not force reapplying unchanged upstream
+patches. Standalone tests are outside the executor source identity.
+
+## Release and qualification
+
+Ordinary execution delegates dependency ordering and parallelism to Moon.
+Downloaded CI artifacts require a narrower path: Moon 2.5.4 with `--upstream none`
+does not preserve edges even between explicitly selected tasks. A disposable
+workspace probe on 2026-09-11 ran a consumer before its delayed producer wrote
+its artifact; the consumer also ran when that producer was configured to fail.
+Without the flag, Moon ordered them correctly, ran an independent task in
+parallel, and withheld the consumer after producer failure. Consequently, CI
+handoffs first run local prerequisites normally, then run selected roots in
+dependency order with upstream traversal disabled. This fallback prevents
+rebuilding downloaded producers; it is only used for transferred artifacts.
+
+Release Please prepares independently selected product versions and changelogs.
+The protected Release workflow prepares or publishes a candidate. Its internal
+steps freeze and qualify package bytes, perform necessary first-publication
+setup, submit missing packages, and verify publication. Retries reconcile exact
+bytes; they must not silently replace an existing version with different bytes.
+See [the release guide](release.md) for the maintained commands and recovery flow.
+
+Currently, only an exhaustive manual CI dispatch can produce `Qualified`; an
+affected PR or main push cannot. The record is bound to that exact SHA and
+same-run artifacts. Publication consumes those artifacts without rebuilding
+them. Product-scoped qualification requires changing the planner, evidence
+record, verifier, and workflow together; deleting unrelated workflow jobs alone
+would leave an invalid release contract.
+
+Run affected product checks before expensive platform builds. Checks of archive
+safety, ABI compatibility, package installation, transaction recovery, and
+immutable publication protect real boundaries. Source-spelling, repository
+layout, fixture-content duplication, and generated symbol-list gates do not
+replace those checks.
+
+Optional performance measurements use the native workloads described in
+[performance evidence](performance-evidence.md). They retain raw results and
+input identities and are separate from release qualification.

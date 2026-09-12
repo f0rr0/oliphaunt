@@ -1,0 +1,295 @@
+{
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-definitions",
+      "path": "extensions/external"
+    }
+  ],
+  "modules": [
+    {
+      "data-files": [],
+      "id": "amcheck",
+      "native-module-stem": "amcheck",
+      "sql-name": "amcheck",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "auto_explain",
+      "native-module-stem": "auto_explain",
+      "sql-name": "auto_explain",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "bloom",
+      "native-module-stem": "bloom",
+      "sql-name": "bloom",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "btree_gin",
+      "native-module-stem": "btree_gin",
+      "sql-name": "btree_gin",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "btree_gist",
+      "native-module-stem": "btree_gist",
+      "sql-name": "btree_gist",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "citext",
+      "native-module-stem": "citext",
+      "sql-name": "citext",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "cube",
+      "native-module-stem": "cube",
+      "sql-name": "cube",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "dict_int",
+      "native-module-stem": "dict_int",
+      "sql-name": "dict_int",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [
+        "share/postgresql/tsearch_data/xsyn_sample.rules"
+      ],
+      "id": "dict_xsyn",
+      "native-module-stem": "dict_xsyn",
+      "sql-name": "dict_xsyn",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "earthdistance",
+      "native-module-stem": "earthdistance",
+      "sql-name": "earthdistance",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "file_fdw",
+      "native-module-stem": "file_fdw",
+      "sql-name": "file_fdw",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "fuzzystrmatch",
+      "native-module-stem": "fuzzystrmatch",
+      "sql-name": "fuzzystrmatch",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "hstore",
+      "native-module-stem": "hstore",
+      "sql-name": "hstore",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "intarray",
+      "native-module-stem": "_int",
+      "sql-name": "intarray",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "isn",
+      "native-module-stem": "isn",
+      "sql-name": "isn",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "lo",
+      "native-module-stem": "lo",
+      "sql-name": "lo",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "ltree",
+      "native-module-stem": "ltree",
+      "sql-name": "ltree",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pageinspect",
+      "native-module-stem": "pageinspect",
+      "sql-name": "pageinspect",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_buffercache",
+      "native-module-stem": "pg_buffercache",
+      "sql-name": "pg_buffercache",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_freespacemap",
+      "native-module-stem": "pg_freespacemap",
+      "sql-name": "pg_freespacemap",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_hashids",
+      "native-module-stem": "pg_hashids",
+      "sql-name": "pg_hashids",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_ivm",
+      "native-module-stem": "pg_ivm",
+      "sql-name": "pg_ivm",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_surgery",
+      "native-module-stem": "pg_surgery",
+      "sql-name": "pg_surgery",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_textsearch",
+      "native-module-stem": "pg_textsearch",
+      "sql-name": "pg_textsearch",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_trgm",
+      "native-module-stem": "pg_trgm",
+      "sql-name": "pg_trgm",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_uuidv7",
+      "native-module-stem": "pg_uuidv7",
+      "sql-name": "pg_uuidv7",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_visibility",
+      "native-module-stem": "pg_visibility",
+      "sql-name": "pg_visibility",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pg_walinspect",
+      "native-module-stem": "pg_walinspect",
+      "sql-name": "pg_walinspect",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "pgcrypto",
+      "native-module-stem": "pgcrypto",
+      "sql-name": "pgcrypto",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [
+        "share/postgresql/contrib/postgis-3.6/legacy.sql",
+        "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
+        "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
+        "share/postgresql/contrib/postgis-3.6/postgis.sql",
+        "share/postgresql/contrib/postgis-3.6/postgis_upgrade.sql",
+        "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
+        "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
+        "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+        "share/postgresql/proj/proj.db"
+      ],
+      "id": "postgis",
+      "native-module-stem": "postgis-3",
+      "sql-name": "postgis",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "seg",
+      "native-module-stem": "seg",
+      "sql-name": "seg",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "tablefunc",
+      "native-module-stem": "tablefunc",
+      "sql-name": "tablefunc",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "tcn",
+      "native-module-stem": "tcn",
+      "sql-name": "tcn",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "tsm_system_rows",
+      "native-module-stem": "tsm_system_rows",
+      "sql-name": "tsm_system_rows",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "tsm_system_time",
+      "native-module-stem": "tsm_system_time",
+      "sql-name": "tsm_system_time",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [
+        "share/postgresql/tsearch_data/unaccent.rules"
+      ],
+      "id": "unaccent",
+      "native-module-stem": "unaccent",
+      "sql-name": "unaccent",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "uuid_ossp",
+      "native-module-stem": "uuid-ossp",
+      "sql-name": "uuid-ossp",
+      "static-registry-required": true
+    },
+    {
+      "data-files": [],
+      "id": "vector",
+      "native-module-stem": "vector",
+      "sql-name": "vector",
+      "static-registry-required": true
+    }
+  ]
+}

@@ -12,19 +12,14 @@
         "binary": "oliphaunt_wasix_napi.node",
         "addonAbiVersion": 1,
         "nodeApiVersion": 8,
-        "profiles": [
-          "standard",
-          "icu"
-        ],
+        "profiles": ["standard", "icu"],
         "build": {
           "cargoProfile": "release",
           "incremental": false,
           "codegenUnits": 1,
           "lto": "thin",
           "strip": "symbols",
-          "features": [
-            "release"
-          ]
+          "features": ["release"]
         }
       },
       "runtimeBuild": {
@@ -73,7 +68,7 @@
       "surfaces": {
         "worker": {
           "engine": "comparison-worker",
-          "entrypoint": "tools/perf/wasix-node/pglite-node-worker.mjs",
+          "entrypoint": "benchmarks/perf/wasix-node/pglite-node-worker.mts",
           "callingContract": "async",
           "executionOwner": "harness-worker",
           "executionBoundary": "node-worker-thread",
@@ -105,24 +100,14 @@
     "pairing": "same-repeat-candidate-over-comparison",
     "percentileMethod": "nearest-rank",
     "startupMetric": "cold-to-first-result",
-    "startupMetricIncludes": [
-      "public-open",
-      "immediate-first-query"
-    ]
+    "startupMetricIncludes": ["public-open", "immediate-first-query"]
   },
   "gate": {
     "maxGeomeanRatio": 0.8,
     "requiresCorrectness": true,
-    "comparisons": [
-      "worker",
-      "direct"
-    ],
+    "comparisons": ["worker", "direct"],
     "metric": "geometric-mean-of-median-paired-candidate-over-comparison-ratios-lower-is-better",
-    "includes": [
-      "cold-to-first-result",
-      "warm-rtt-p50",
-      "bulk-elapsed"
-    ]
+    "includes": ["cold-to-first-result", "warm-rtt-p50", "bulk-elapsed"]
   },
   "bulkTransport": {
     "publicApi": "execProtocolRaw",
@@ -155,14 +140,8 @@
   "firstQuery": {
     "sql": "SELECT 42::int4 AS answer",
     "expectedResult": {
-      "fields": [
-        "answer"
-      ],
-      "rows": [
-        [
-          "42"
-        ]
-      ]
+      "fields": ["answer"],
+      "rows": [["42"]]
     }
   },
   "warmSetupSql": "CREATE TABLE bench_rtt (id integer PRIMARY KEY, payload text NOT NULL); INSERT INTO bench_rtt SELECT i, 'row-' || lpad(i::text, 6, '0') FROM generate_series(1, 1024) AS i; CREATE TABLE bench_counter (value integer NOT NULL); INSERT INTO bench_counter VALUES (0);",
@@ -170,40 +149,24 @@
     {
       "id": "parameter-scalar",
       "sql": "SELECT $1::int4 + 1 AS answer",
-      "parameters": [
-        41
-      ],
+      "parameters": [41],
       "expectation": {
         "kind": "exact",
         "result": {
-          "fields": [
-            "answer"
-          ],
-          "rows": [
-            [
-              "42"
-            ]
-          ]
+          "fields": ["answer"],
+          "rows": [["42"]]
         }
       }
     },
     {
       "id": "indexed-lookup",
       "sql": "SELECT payload FROM bench_rtt WHERE id = $1::int4",
-      "parameters": [
-        513
-      ],
+      "parameters": [513],
       "expectation": {
         "kind": "exact",
         "result": {
-          "fields": [
-            "payload"
-          ],
-          "rows": [
-            [
-              "row-000513"
-            ]
-          ]
+          "fields": ["payload"],
+          "rows": [["row-000513"]]
         }
       }
     },
@@ -220,20 +183,8 @@
   "warmValidation": {
     "sql": "SELECT count(*)::bigint AS fixture_rows, min(id)::bigint AS min_id, max(id)::bigint AS max_id, (SELECT value::bigint FROM bench_counter) AS counter FROM bench_rtt",
     "expectedResult": {
-      "fields": [
-        "fixture_rows",
-        "min_id",
-        "max_id",
-        "counter"
-      ],
-      "rows": [
-        [
-          "1024",
-          "1",
-          "1024",
-          "$totalIterations"
-        ]
-      ]
+      "fields": ["fixture_rows", "min_id", "max_id", "counter"],
+      "rows": [["1024", "1", "1024", "$totalIterations"]]
     }
   },
   "bulk": [
@@ -245,22 +196,8 @@
       },
       "validationSql": "SELECT count(*)::bigint AS rows, min(id)::bigint AS min_id, max(id)::bigint AS max_id, sum(id)::bigint AS sum_id, sum(octet_length(payload))::bigint AS total_bytes FROM bench_bulk",
       "expectedResult": {
-        "fields": [
-          "rows",
-          "min_id",
-          "max_id",
-          "sum_id",
-          "total_bytes"
-        ],
-        "rows": [
-          [
-            "25000",
-            "1",
-            "25000",
-            "312512500",
-            "800000"
-          ]
-        ]
+        "fields": ["rows", "min_id", "max_id", "sum_id", "total_bytes"],
+        "rows": [["25000", "1", "25000", "312512500", "800000"]]
       }
     },
     {
@@ -270,20 +207,8 @@
       },
       "validationSql": "SELECT count(*)::bigint AS rows, sum(octet_length(payload))::bigint AS total_bytes, to_regclass('bench_bulk_payload_idx')::text AS index_name, (SELECT indisvalid::text FROM pg_index WHERE indexrelid = to_regclass('bench_bulk_payload_idx')) AS index_valid FROM bench_bulk",
       "expectedResult": {
-        "fields": [
-          "rows",
-          "total_bytes",
-          "index_name",
-          "index_valid"
-        ],
-        "rows": [
-          [
-            "25000",
-            "800000",
-            "bench_bulk_payload_idx",
-            "true"
-          ]
-        ]
+        "fields": ["rows", "total_bytes", "index_name", "index_valid"],
+        "rows": [["25000", "800000", "bench_bulk_payload_idx", "true"]]
       }
     },
     {
@@ -294,18 +219,8 @@
       },
       "validationSql": "SELECT count(*)::bigint AS rows, count(*) FILTER (WHERE id <= 12500 AND payload = reverse(md5(id::text)))::bigint AS reversed, sum(octet_length(payload))::bigint AS total_bytes FROM bench_bulk",
       "expectedResult": {
-        "fields": [
-          "rows",
-          "reversed",
-          "total_bytes"
-        ],
-        "rows": [
-          [
-            "25000",
-            "12500",
-            "800000"
-          ]
-        ]
+        "fields": ["rows", "reversed", "total_bytes"],
+        "rows": [["25000", "12500", "800000"]]
       }
     },
     {
@@ -314,18 +229,8 @@
         "kind": "aggregate-query"
       },
       "expectedResult": {
-        "fields": [
-          "rows",
-          "sum_id",
-          "total_bytes"
-        ],
-        "rows": [
-          [
-            "25000",
-            "312512500",
-            "800000"
-          ]
-        ]
+        "fields": ["rows", "sum_id", "total_bytes"],
+        "rows": [["25000", "312512500", "800000"]]
       }
     }
   ]

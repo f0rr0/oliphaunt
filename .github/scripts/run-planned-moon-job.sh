@@ -8,12 +8,15 @@ if [[ -z "$job" || "$#" -gt 2 ]]; then
   exit 2
 fi
 
-execution_file="$(mktemp)"
-trap 'rm -f "$execution_file"' EXIT
+plan_dir="$(mktemp -d)"
+trap 'rm -rf "$plan_dir"' EXIT
+execution_file="$plan_dir/execution"
+"${MOON_BIN:-moon}" task-graph --json >"$plan_dir/graph.json"
 
 resolve_args=("$job")
 if [[ -n "$target" ]]; then resolve_args+=("$target"); fi
-bun .github/scripts/resolve-planned-moon-execution.mjs "${resolve_args[@]}" >"$execution_file"
+OLIPHAUNT_MOON_TASK_GRAPH_FILE="$plan_dir/graph.json" \
+  bun .github/scripts/resolve-planned-moon-execution.mts "${resolve_args[@]}" >"$execution_file"
 
 targets=()
 local_dependencies=()
@@ -24,7 +27,10 @@ while IFS=$'\t' read -r kind target; do
     local) local_dependencies+=("$target") ;;
     target) targets+=("$target") ;;
     transferred) transferred_dependencies+=("$target") ;;
-    *) echo "CI job '$job' has invalid execution-plan row: $kind" >&2; exit 2 ;;
+    *)
+      echo "CI job '$job' has invalid execution-plan row: $kind" >&2
+      exit 2
+      ;;
   esac
 done <"$execution_file"
 
@@ -46,7 +52,12 @@ if [[ "${#transferred_dependencies[@]}" -gt 0 ]]; then
   if [[ "${#local_dependencies[@]}" -gt 0 ]]; then
     .github/scripts/run-moon-targets.sh "${local_dependencies[@]}"
   fi
-  exec .github/scripts/run-moon-targets.sh --upstream none "${targets[@]}"
+  for target in "${targets[@]}"; do
+    # Omitting transferred producers also omits their source hashes in Moon.
+    # Execute the consumer against the downloaded bytes instead of caching it.
+    MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none "$target"
+  done
+  exit 0
 fi
 
 if [[ "${#moon_args[@]}" -gt 0 ]]; then

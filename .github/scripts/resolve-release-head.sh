@@ -25,7 +25,7 @@ else
   fi
 fi
 
-node tools/release/publication-controller.mjs "$release_sha" "$workflow_sha"
+bash tools/release/publication-controller.sh "$release_sha" "$workflow_sha"
 
 {
   echo "sha=$release_sha"

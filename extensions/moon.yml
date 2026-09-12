@@ -1,0 +1,151 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: extensions
+language: unknown
+layer: configuration
+stack: systems
+tags:
+  - javascript-quality
+  - extensions
+  - catalog
+  - assets
+dependsOn:
+  - id: postgres18
+    scope: build
+  - id: extension-runtime-contract
+    scope: build
+  - id: third-party-icu
+    scope: build
+  - id: third-party-openssl
+    scope: build
+project:
+  title: Extension Catalog
+  description: "Exact SQL extension catalog, build plans, and generated tables."
+  owner: oliphaunt
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*":
+      - "@oliphaunt/core"
+fileGroups:
+  mobile-metadata:
+    - generated/mobile/**/*
+  sdk-metadata:
+    - generated/sdk/**/*
+  model:
+    - catalog/**/*
+    - contrib/**/*
+    - evidence/**/*
+    - external/**/*
+    - generated/**/*
+    - schemas/**/*
+    - tools/**/*
+  build:
+    - catalog/**/*
+    - contrib/**/*
+    - external/**/*
+    - generated/**/*
+    - schemas/**/*
+    - tools/**/*
+    - "!**/*.md"
+    - "!external/**/VERSION"
+    - "!external/**/release.toml"
+    - "!generated/docs"
+    - "!generated/docs/**"
+  package:
+    - catalog/**/*
+    - contrib/**/*
+    - external/**/*
+    - generated/**/*
+    - schemas/**/*
+    - tools/**/*
+    - "!generated/docs"
+    - "!generated/docs/**"
+tasks:
+  lint:
+    toolchains: [bun]
+    tags:
+      - quality
+      - static
+    command: bash extensions/tools/check-extension-model.sh --check
+    inputs:
+      - "@group(legal-files)"
+      - project: postgres18
+        group: source
+      - "@group(model)"
+      - project: extension-runtime-contract
+        group: contract
+      - /test-fixtures/extensions/**/*
+      - /runtimes/liboliphaunt-native/sources/*.toml
+      - project: third-party-icu
+        group: sources
+      - project: third-party-openssl
+        group: sources
+      - /sdks/rust/liboliphaunt-native/src/generated/extensions.rs
+      - /sdks/ts/sdk/src/generated/extensions.ts
+      - /sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt
+      - /sdks/react-native/src/generated/extensions.ts
+      - /examples/react-native-expo/src/generated/extension-smoke.ts
+      - /third-party/openssl/LICENSE.txt
+      - /third-party/postgres/COPYRIGHT
+      - /sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json
+      - /third-party/tools/source-fetch-core.mts
+      - /extensions/tools/extension-upstream-licenses.mts
+      - "@group(release-archive-contract)"
+      - /tools/release/query.mts
+      - "@group(release-target-contract)"
+      - /tools/release/platform-compatibility-policy.test.mts
+      - /tools/release/release-graph.mts
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags:
+      - quality
+      - unit
+    command: bash tools/dev/bun.sh test ./extensions/tools/native-component-contract.test.mts ./extensions/tools/extension-model.test.mts
+    inputs:
+      - catalog/native-components.toml
+      - catalog/extensions.source.json
+      - tools/native-component-contract.mts
+      - tools/native-component-contract.test.mts
+      - tools/extension-model.test.mts
+      - tools/extension-evidence.mts
+      - tools/extension-projections.mts
+      - "@group(model)"
+      - /test-fixtures/extensions/**/*
+      - "/third-party/{icu,openssl}/source.toml"
+      - /runtimes/liboliphaunt-native/sources/*.toml
+      - /runtimes/liboliphaunt-native/portable-uuid/**/*
+      - project: extension-runtime-contract
+        group: contract
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  packaging-unit:
+    tags:
+      - quality
+      - unit
+    command: bash extensions/tools/extension-upstream-licenses.test.sh
+    inputs:
+      - external/**/upstream-license-data.json
+      - external/**/upstream-licenses/**/*
+      - generated/sdk/extensions.json
+      - /sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json
+      - "@group(upstream-licenses)"
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - tools/extension-upstream-licenses.test.sh
+      - /tools/packaging/testdata/**/*
+      - /tools/dev/bun.sh
+      - "/tools/packaging/*.{mts,sh}"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  audit-license-sources:
+    command: bun tools/extension-upstream-licenses.mts audit-sources
+    options:
+      cache: false
+      runInCI: false

@@ -36,13 +36,16 @@ The managed root contains `.oliphaunt.json` and `pgdata`. Runtime overlays and
 other mutable guest directories are SDK-owned state elsewhere. A host-directory
 owner prevents a second Rust open while the database is live.
 
-Ordinary open initializes a new store from the packaged cluster seed. Tests or
-tools that specifically need `initdb` invoke the packaged tool directly.
+In the development checkout, ordinary Rust open initializes a new store with
+initdb. Select `.seed(ClusterSeed::new(archive, manifest))` for a separately
+produced seed, and `.icu_data(IcuData::new(data, manifest)?)` for canonical ICU.
+Existing roots need no seed; ICU data remains necessary for ICU roots.
 Physical archives use the dedicated restore API. There is no legacy
 PGDATA-only restore path; nonempty descriptorless roots and incomplete stores
 fail without mutation.
 
-`OliphauntServer::builder().start()` supplies a local PostgreSQL endpoint when
+The separate `oliphaunt-pgwire-server` package
+(`oliphaunt_pgwire_server::OliphauntServer::builder().start()`) supplies a local PostgreSQL endpoint when
 an existing Rust client needs one; the returned handle exposes only its
 connection string, closed state, and close. The parallel
 `AsyncOliphauntServer::builder().start().await` keeps lifecycle work off the
@@ -70,6 +73,8 @@ and provide that runtime code again.
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 
+// Native hosts can initialize without a seed. New browser storage must pass
+// seed: { archive, manifest } from the separate seed-wasix-standard carrier.
 await using database = await Oliphaunt.open();
 const result = await database.query('select $1::int + 1 as answer', [41]);
 ```
@@ -188,10 +193,10 @@ already naturally portable.
 
 ```sh
 moon run oliphaunt-wasix-rust:package
-moon run oliphaunt-wasix-rust:compile oliphaunt-wasix-rust:unit
+moon run oliphaunt-wasix-rust:build oliphaunt-wasix-rust:test
 moon run oliphaunt-wasix-ts:package
-moon run oliphaunt-wasix-ts:compile oliphaunt-wasix-ts:unit
-moon run oliphaunt-wasix-tools-ts:qualify
+moon run oliphaunt-wasix-ts:typecheck oliphaunt-wasix-ts:test
+moon run oliphaunt-wasix-tools-ts:typecheck oliphaunt-wasix-tools-ts:test oliphaunt-wasix-tools-ts:package
 ```
 
 Package tasks inspect carriers. Explicit artifact and smoke tasks own the

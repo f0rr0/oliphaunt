@@ -3,17 +3,19 @@ $schema: "https://moonrepo.dev/schemas/workspace.json"
 projects:
   globFormat: "source-path"
   globs:
-    - "moon.yml"
-    - "benchmarks/moon.yml"
-    - "examples/moon.yml"
-    - "src/**/moon.yml"
-    - "tools/**/moon.yml"
+    - "**/moon.yml"
+    - "!target/**"
+    - "!**/node_modules/**"
   sources:
     ci-workflows: ".github"
 
 pipeline:
   installDependencies: false
   logRunningCommand: true
+
+cache:
+  cas:
+    verifyIntegrity: true
 
 vcs:
   provider: "github"

@@ -51,10 +51,8 @@ The practical direction is therefore:
 - Defer broader planner/executor shortcuts, locale-sensitive LIKE shortcuts,
   and stack-allocation rewrites until they have focused regression coverage,
   because they can silently change SQL semantics or memory pressure.
-- Preserve the concluded cross-topology patch review in
-  `src/runtimes/liboliphaunt/wasix/assets/build/postgres/experiment-patch-disposition.toml`
-  and require a fresh WASIX rationale before adopting any additional
-  postmaster-originated patch into the embedded runtime.
+- Record the runtime rationale in each patch header when adopting a
+  postmaster-originated change into the embedded runtime.
 
 Current postmaster architecture and performance interpretation are maintained
 in [`docs/maintainers/wasix-postmaster.md`](../maintainers/wasix-postmaster.md).
@@ -300,26 +298,19 @@ not by wholesale copying more upstream Oliphaunt code.
 
 The postmaster product's early patch stack was useful prior art, but its
 topology-specific patches are not the source of truth for this lane. The
-reviewed historical disposition manifest is:
-
-```sh
-src/runtimes/liboliphaunt/wasix/assets/build/postgres/experiment-patch-disposition.toml
-```
-
-The manifest records each reviewed patch by filename, whether it was applied,
-adopted from current main, or rejected, and why that decision fits a
-single-backend WASIX product. The five compatible optimizations—hash-load,
+historical adoption decisions are recorded in Git history. Those decisions
+reflect a single-backend WASIX product. The five compatible optimizations—hash-load,
 top-XID visibility, guarded btree int4 comparison, LIKE literal substring, and
-first int4 leaf comparison—are owned by the main WASIX runtime. The postmaster
-consumes those exact patches through
-`postgres/main-optimizations.series` instead of maintaining copies. The
+first int4 leaf comparison—are shared in `third-party/postgres/patches/wasix`.
+Both products select those exact patches through their complete ordered
+`postgres/series` recipes instead of maintaining copies. The
 single-user-only btree delete stack placement, bottom-up-delete runtime toggle,
 and full concurrent-postmaster runtime patches remain outside the default
-single-backend lane. The postmaster keeps its narrow pg_dump LTO hygiene patch
-locally because it belongs to that build topology.
+single-backend lane. Both WASIX lanes also select the shared pg_dump LTO
+hygiene and entropy-handling patches.
 
-The source-spine guard keeps those concluded decisions explicit. New shared
-optimizations must be adopted through the canonical single-backend patch stack;
+New shared
+optimizations must be explicitly selected by each compatible lane;
 postmaster lifecycle patches remain owned by the postmaster product.
 
 ## Current Slice
@@ -334,29 +325,11 @@ It downloads or reuses the PostgreSQL 18.4 tarball, verifies the upstream
 checksum, extracts into `target/oliphaunt-wasix/wasix-build`,
 and applies the patch series in
 `src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/series`.
-The source-spine guard also requires that file to match the duplicate
-`[patches].series` list in `postgres/source.toml`, so build metadata
-and the applied patch order cannot drift silently.  It also rejects orphan
-`.patch` files that are not listed in the series; source fingerprints and
-applied patch contents must describe the same stack.  The guard also checks
-that the stack remains reviewable: sequentially numbered `oliphaunt-wasix`
-patches, each with a matching subject/filename slug, an
-Oliphaunt maintainer header, and a short rationale before the diff.  When a
-prepared PG18 source tree exists, xtask recomputes the source fingerprint from
-the PostgreSQL tarball metadata, patch series file, and patch file hashes, then
-compares both the source-tree marker and work-root marker against that value.
-The same prepared-source verifier is used by PG18 source prep and build-output
-discovery, so template/package/AOT commands do not accept a stale prepared
-source tree.  If source prep uses an overridden PG18 work root, xtask verifies
-the marker in that actual work root rather than the default target directory.
-The same guard scans the PG18 patch stack, PG18 build scripts, Rust host loader,
-prepared source tree, and generated PG18 manifests/AOT metadata for legacy
-Oliphaunt ABI tokens such as `__OLIPHAUNT__`, `OLIPHAUNT_*`, `PGL_*`, and `pgl_*`.  PG17
-and upstream Oliphaunt remain valid references, but the PG18 release lane must use
-only `oliphaunt_wasix_*` and `OLIPHAUNT_WASM_*` names in runtime/build
-surfaces.
-
-The existing PG17.5 released build remains untouched.
+That series is the only patch inventory. Source preparation and build-output
+validation hash the same ordered patches and PostgreSQL source pin. A prepared
+tree must carry matching source and work-root fingerprints before packaging or
+AOT generation. The compiler and runtime tests verify behavior; patch authors,
+source spellings, and generated review tables do not gate the build.
 
 ## Build Entry Points
 

@@ -1,0 +1,241 @@
+schema_version = 1
+generated_root = "target/docs"
+site_docs_root = "target/docs/site-docs"
+static_root = "target/docs/static"
+
+[[routes]]
+id = "start"
+title = "Start"
+kind = "public"
+route = "start"
+source = "docs/content/start"
+page_order = ["index"]
+
+[[routes]]
+id = "sdk"
+title = "SDKs"
+kind = "public"
+route = "sdk"
+source = "docs/content/sdk"
+page_order = ["index"]
+
+[[routes]]
+id = "learn"
+title = "Learn"
+kind = "public"
+route = "learn"
+source = "docs/content/learn"
+page_order = [
+  "index",
+  "embedded-postgres",
+  "native-runtime",
+  "mobile-stability",
+  "sqlite-upgrade",
+  "tauri",
+]
+
+[[routes]]
+id = "reference"
+title = "Reference"
+kind = "public"
+route = "reference"
+source = "docs/content/reference"
+page_order = [
+  "index",
+  "sdk-products",
+  "capabilities",
+  "extensions",
+  "performance",
+  "releases",
+  "version-matrix",
+  "extension-catalog",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "capabilities",
+  "extensions",
+  "performance",
+]
+
+[[routes]]
+id = "oliphaunt-rust"
+product_id = "oliphaunt-rust"
+title = "Rust SDK"
+kind = "sdk"
+route = "sdk/rust"
+source = "docs/content/sdk/rust"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+
+[[routes]]
+id = "oliphaunt-swift"
+product_id = "oliphaunt-swift"
+title = "Swift SDK"
+kind = "sdk"
+route = "sdk/swift"
+source = "docs/content/sdk/swift"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+
+[[routes]]
+id = "oliphaunt-kotlin"
+product_id = "oliphaunt-kotlin"
+title = "Kotlin SDK"
+kind = "sdk"
+route = "sdk/kotlin"
+source = "docs/content/sdk/kotlin"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+
+[[routes]]
+id = "oliphaunt-react-native"
+product_id = "oliphaunt-react-native"
+title = "React Native SDK"
+kind = "sdk"
+route = "sdk/react-native"
+source = "docs/content/sdk/react-native"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "architecture",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+  "architecture",
+]
+
+[[routes]]
+id = "oliphaunt-js"
+product_id = "oliphaunt-js"
+title = "TypeScript SDK"
+kind = "sdk"
+route = "sdk/typescript"
+source = "docs/content/sdk/typescript"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+
+[[routes]]
+id = "oliphaunt-wasix-rust"
+product_id = "oliphaunt-wasix-rust"
+title = "Rust WASIX SDK"
+kind = "sdk"
+route = "sdk/wasix-rust"
+source = "docs/content/sdk/wasix-rust"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "runtime",
+  "dump-restore",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+  "runtime",
+  "dump-restore",
+]
+
+[[routes]]
+id = "oliphaunt-wasix-typescript"
+product_id = "oliphaunt-wasix-ts"
+title = "WASIX TypeScript SDK"
+kind = "sdk"
+route = "sdk/wasix-typescript"
+source = "docs/content/sdk/wasix-typescript"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+
+[[routes]]
+id = "liboliphaunt-native"
+product_id = "liboliphaunt-native"
+title = "C ABI"
+kind = "sdk"
+route = "sdk/c-abi"
+source = "docs/content/sdk/c-abi"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]

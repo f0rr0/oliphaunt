@@ -1,0 +1,240 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: oliphaunt-react-native
+language: typescript
+layer: library
+stack: frontend
+tags:
+  - javascript-quality
+  - sdk
+  - react-native
+  - typescript
+  - ios
+  - android
+  - release-product
+dependsOn:
+  - id: oliphaunt-query-ts
+    scope: build
+  - id: shared-test-fixtures
+    scope: development
+  - id: extensions
+    scope: build
+  - id: cluster-seed-contract
+    scope: development
+  - oliphaunt-swift
+  - oliphaunt-kotlin
+  - id: extension-runtime-contract
+    scope: build
+project:
+  title: Oliphaunt React Native SDK
+  description: React Native New Architecture SDK over the Swift and Kotlin Oliphaunt SDKs.
+  owner: oliphaunt
+  release:
+    component: oliphaunt-react-native
+    packagePath: sdks/react-native
+owners:
+  defaultOwner: "@oliphaunt/sdk-react-native"
+  paths:
+    "**/*.ts":
+      - "@oliphaunt/sdk-react-native"
+    "**/*.tsx":
+      - "@oliphaunt/sdk-react-native"
+    ios/**:
+      - "@oliphaunt/sdk-react-native"
+      - "@oliphaunt/sdk-swift"
+    android/**:
+      - "@oliphaunt/sdk-react-native"
+      - "@oliphaunt/sdk-android"
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+tasks:
+  test-cpp:
+    tags: [quality, unit]
+    command: "bash tools/test-cpp.sh"
+    inputs: ["cpp/**/*", "tools/test-cpp.sh"]
+  build:
+    tags:
+      - build
+    command: bun run build
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - /tools/packaging/portable-archive.mts
+      - project: oliphaunt-query-ts
+        group: sources
+      - "@group(bun-workspace)"
+      - "@group(code)"
+      - "!/sdks/react-native/**/node_modules"
+      - "!/sdks/react-native/**/node_modules/**"
+      - "!/sdks/react-native/**/.build"
+      - "!/sdks/react-native/**/.build/**"
+      - "!/sdks/react-native/**/.gradle/**"
+      - "!/sdks/react-native/**/.cxx/**"
+      - "!/sdks/react-native/**/build/**"
+      - "!/sdks/react-native/**/lib/**"
+      - "!/sdks/react-native/ios/vendor/**"
+    outputs:
+      - lib/**/*
+      - app.plugin.js
+      - react-native.config.js
+      - tools/codegen-check.cjs
+      - tools/native-resource-closure.mjs
+      - tools/stage-ios-app.mjs
+      - tools/verify-ios-package.mjs
+    options:
+      cache: true
+  typecheck:
+    tags:
+      - quality
+      - static
+    command: bun run typecheck
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "@group(code)"
+      - "@group(bun-workspace)"
+      - project: oliphaunt-query-ts
+        group: sources
+  package:
+    tags:
+      - package
+      - release
+      - artifact-package
+      - ci-react-native-sdk-package
+    script: bun run --cwd sdks/react-native package
+    env:
+      OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: target/liboliphaunt/abi-compatible-release-assets/ios-datum64
+    deps:
+      - oliphaunt-react-native:build
+      - liboliphaunt-native:finalize-runtime-ios-abi
+    inputs:
+      - /runtimes/liboliphaunt-native/include/oliphaunt.h
+      - "@group(legal-files)"
+      - "@group(bun-workspace)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - /sdks/react-native/tools/check-package.mts
+      - /extensions/artifacts/packages/tools/contrib-carriers.mts
+      - /sdks/swift/tools/ios-carrier-manifest.mts
+      - /tools/release/release-graph.mts
+      - /tools/packaging/npm-package.mts
+      - /sdks/react-native/tools/stage-release-artifacts.mts
+      - /sdks/react-native/tools/stage-release-artifacts.sh
+      - /tools/packaging/staging.mts
+      - /tools/packaging/source-only-sdk-package.mts
+      - /database-resources/icu/npm/**/*
+      - /examples/react-native-expo/package.json
+      - /sdks/react-native/tools/icu-autolinking-fixture.mts
+      - /sdks/react-native/tools/check-icu-autolinking.sh
+      - /tools/packaging/portable-archive.mts
+      - /target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*
+      - /tools/dev/bun.sh
+      - /third-party/tools/source-fetch-core.mts
+      - "@group(legal-files)"
+      - project: oliphaunt-query-ts
+        group: sources
+      - project: extensions
+        group: sdk-metadata
+      - "@group(bun-workspace)"
+      - "**/*"
+      - "!/sdks/react-native/**/node_modules"
+      - "!/sdks/react-native/**/node_modules/**"
+      - "!/sdks/react-native/**/.build"
+      - "!/sdks/react-native/**/.build/**"
+      - "!/sdks/react-native/**/.gradle/**"
+      - "!/sdks/react-native/**/.cxx/**"
+      - "!/sdks/react-native/**/build/**"
+      - "!/sdks/react-native/**/lib/**"
+      - "!/sdks/react-native/ios/vendor/**"
+    outputs:
+      - /target/sdk-artifacts/oliphaunt-react-native/**/*
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  coverage:
+    tags:
+      - coverage
+    command: bun run coverage
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "@group(code)"
+      - "@group(bun-workspace)"
+      - project: oliphaunt-query-ts
+        group: sources
+      - project: shared-test-fixtures
+        group: fixtures
+    outputs:
+      - /target/coverage/oliphaunt-react-native/**/*
+    options:
+      cache: false
+      runInCI: false
+  test:
+    tags:
+      - quality
+      - unit
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - /tools/packaging/portable-archive.mts
+      - project: oliphaunt-query-ts
+        group: sources
+      - "@group(bun-workspace)"
+      - project: cluster-seed-contract
+        group: contract
+      - project: extensions
+        group: sdk-metadata
+      - project: extensions
+        group: mobile-metadata
+      - /runtimes/liboliphaunt-native/bin/mobile-static-extensions.sh
+      - "@group(code)"
+      - "!/sdks/react-native/**/node_modules"
+      - "!/sdks/react-native/**/node_modules/**"
+      - "!/sdks/react-native/**/.build"
+      - "!/sdks/react-native/**/.build/**"
+      - "!/sdks/react-native/**/.gradle/**"
+      - "!/sdks/react-native/**/.cxx/**"
+      - "!/sdks/react-native/**/build/**"
+      - "!/sdks/react-native/**/lib/**"
+      - "!/sdks/react-native/ios/vendor/**"
+    options:
+      cache: true
+    command: bun run test
+  check-codegen:
+    tags:
+      - quality
+      - static
+    command: bun run codegen:check
+    inputs:
+      - package.json
+      - tools/codegen-check.cts
+      - src/specs/**/*.ts
+      - "@group(bun-workspace)"
+  lint:
+    deps:
+      - oliphaunt-react-native:check-codegen
+  test-consumer:
+    command: bun run test-consumer
+    tags:
+      - integration
+      - consumer
+      - ci-react-native-sdk-package
+    deps:
+      - oliphaunt-react-native:package
+    inputs:
+      - tools/check-icu-autolinking.sh
+      - tools/icu-autolinking-fixture.mts
+      - /examples/react-native-expo/package.json
+      - /database-resources/icu/npm/**/*
+      - "@group(bun-workspace)"
+    options:
+      cache: false
+workspace:
+  inheritedTasks:
+    rename:
+      js-format: format
+      js-format-check: format-check
+      js-lint: lint

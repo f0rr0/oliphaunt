@@ -1,0 +1,145 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "database-resources"
+language: "unknown"
+layer: "library"
+tags: ["javascript-quality", "resources", "release-product"]
+dependsOn:
+  - id: "cluster-seed-contract"
+    scope: "development"
+project:
+  title: "Database resources"
+  description: "Selectable PostgreSQL cluster seeds and shared ICU data."
+  release:
+    component: "database-resources"
+    packagePath: "database-resources"
+fileGroups:
+  cargo-carrier-sources: ["icu/cargo/**/*.rs", "icu/cargo/Cargo.toml"]
+tasks:
+  format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p oliphaunt-icu --check"
+    inputs: ["icu/cargo/**/*.rs", "icu/cargo/Cargo.toml", "@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p oliphaunt-icu --all-targets --locked -- -D warnings"
+    inputs: ["icu/cargo/**/*", "/clippy.toml", "@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit"]
+    deps: ["cluster-seed-contract:test"]
+    command: "bash test.sh"
+    inputs: ["test.sh", "seeds/*.mts", "icu/tools/**/*", "icu/npm/**/*", "contracts/**/*", "/tools/packaging/**/*.mts", "!/tools/packaging/**/*.test.*"]
+  package-native:
+    deps: ["database-resources:build-native-standard", "database-resources:build-native-icu"]
+    command: "bash database-resources/seeds/package.sh native"
+    inputs: ["seeds/**/*", "VERSION", "$OLIPHAUNT_CI_TARGET"]
+    outputs: ["/target/database-resources/seed-carriers/npm/*native*/*.tgz", "/target/database-resources/seed-carriers/cargo/*native*.crate"]
+    options:
+      runFromWorkspaceRoot: true
+  package-wasix:
+    deps: ["database-resources:build-wasix-standard", "database-resources:build-wasix-icu"]
+    command: "bash database-resources/seeds/package.sh wasix"
+    inputs: ["seeds/**/*", "VERSION"]
+    outputs: ["/target/database-resources/seed-carriers/npm/*wasix*/*.tgz", "/target/database-resources/seed-carriers/cargo/*wasix*.crate"]
+    options:
+      runFromWorkspaceRoot: true
+  package-android:
+    deps: ["database-resources:build-native-android-standard", "database-resources:build-native-android-icu", "database-resources:package-icu"]
+    command: "bash database-resources/seeds/package.sh native android-datum64"
+    inputs: ["seeds/**/*", "VERSION"]
+    outputs: ["/target/database-resources/seed-carriers/npm/*android-datum64*/*.tgz", "/target/database-resources/seed-carriers/cargo/*android-datum64*.crate", "/target/database-resources/release-assets/*android-datum64*-maven.tar.gz", "/target/release/maven-staging/database-resources-seeds/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+  package-ios:
+    deps: ["database-resources:build-native-ios-standard", "database-resources:build-native-ios-icu", "database-resources:package-icu"]
+    command: "bash database-resources/seeds/package.sh native ios-datum64"
+    inputs: ["seeds/**/*", "VERSION"]
+    outputs: ["/target/database-resources/seed-carriers/npm/*ios-datum64*/*.tgz", "/target/database-resources/seed-carriers/cargo/*ios-datum64*.crate", "/target/database-resources/release-assets/*-swift.zip"]
+    options:
+      runFromWorkspaceRoot: true
+  build-icu-data:
+    deps: ["source-inputs:source-fetch-icu-data"]
+    command: "bash database-resources/icu/tools/build-data.sh"
+    inputs: ["icu/source.toml", "icu/tools/data.sh", "icu/tools/build-data.sh"]
+    outputs: ["/target/database-resources/icu/data/share/icu/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+  package-icu:
+    tags: ["release", "artifact-package", "ci-js-sdk-package"]
+    deps: ["database-resources:build-icu-data"]
+    command: "bash database-resources/icu/tools/package.sh"
+    inputs: ["icu/**/*", "tools/**/*", "contracts/**/*", "!**/*.test.*", "VERSION", "/tools/packaging/**/*.mts", "!/tools/packaging/**/*.test.*"]
+    outputs: ["/target/database-resources/release-assets/*icu-data.tar.gz", "/target/database-resources/cargo-artifacts/**/*", "/target/release/npm-packages/oliphaunt-icu/*.tgz", "/target/release/maven-manifests/database-resources.tsv", "/target/release/maven-staging/database-resources/**/*"]
+    options:
+      runFromWorkspaceRoot: true
+  build-native-standard:
+    tags: ["artifact-package", "ci-liboliphaunt-native-desktop"]
+    deps: ["liboliphaunt-native:build-runtime-desktop-target"]
+    command: "bash database-resources/seeds/build.sh native standard"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "$OLIPHAUNT_CI_TARGET", "$OLIPHAUNT_SEED_RUNTIME_DIR"]
+    outputs: ["/target/database-resources/release-assets/*seed-native-*-standard.*"]
+    options:
+      runFromWorkspaceRoot: true
+  build-native-icu:
+    tags: ["artifact-package", "ci-liboliphaunt-native-desktop"]
+    deps: ["liboliphaunt-native:build-runtime-desktop-target", "database-resources:build-icu-data"]
+    command: "bash database-resources/seeds/build.sh native icu"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "$OLIPHAUNT_CI_TARGET", "$OLIPHAUNT_SEED_RUNTIME_DIR", "$OLIPHAUNT_ICU_DATA_DIR"]
+    outputs: ["/target/database-resources/release-assets/*seed-native-*-icu.*"]
+    options:
+      runFromWorkspaceRoot: true
+  build-wasix-standard:
+    tags: ["artifact-package", "ci-liboliphaunt-wasix-runtime"]
+    deps: ["liboliphaunt-wasix:compiler-output"]
+    command: "bash database-resources/seeds/build.sh wasix standard"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "@group(cargo-workspace)"]
+    outputs: ["/target/database-resources/release-assets/*seed-wasix-standard.*"]
+    options:
+      runFromWorkspaceRoot: true
+  build-wasix-icu:
+    tags: ["artifact-package", "ci-liboliphaunt-wasix-runtime"]
+    deps: ["liboliphaunt-wasix:compiler-output", "database-resources:build-icu-data"]
+    command: "bash database-resources/seeds/build.sh wasix icu"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "@group(cargo-workspace)"]
+    outputs: ["/target/database-resources/release-assets/*seed-wasix-icu.*"]
+    options:
+      runFromWorkspaceRoot: true
+
+  build-native-android-standard:
+    tags: ["artifact-package", "ci-liboliphaunt-native-android-abi"]
+    deps: ["liboliphaunt-native:build-runtime-android-arm64-v8a","liboliphaunt-native:build-runtime-android-x86_64"]
+    command: "env OLIPHAUNT_CI_TARGET=android-datum64 bash database-resources/seeds/build.sh native standard"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
+    outputs: ["/target/database-resources/release-assets/*seed-native-android-datum64-standard.*"]
+    options:
+      runFromWorkspaceRoot: true
+
+  build-native-android-icu:
+    tags: ["artifact-package", "ci-liboliphaunt-native-android-abi"]
+    deps: ["liboliphaunt-native:build-runtime-android-arm64-v8a","liboliphaunt-native:build-runtime-android-x86_64","database-resources:build-icu-data"]
+    command: "env OLIPHAUNT_CI_TARGET=android-datum64 bash database-resources/seeds/build.sh native icu"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
+    outputs: ["/target/database-resources/release-assets/*seed-native-android-datum64-icu.*"]
+    options:
+      runFromWorkspaceRoot: true
+
+  build-native-ios-standard:
+    tags: ["artifact-package", "ci-liboliphaunt-native-ios-abi"]
+    deps: ["liboliphaunt-native:build-runtime-ios-xcframework"]
+    command: "env OLIPHAUNT_CI_TARGET=ios-datum64 bash database-resources/seeds/build.sh native standard"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
+    outputs: ["/target/database-resources/release-assets/*seed-native-ios-datum64-standard.*"]
+    options:
+      runFromWorkspaceRoot: true
+
+  build-native-ios-icu:
+    tags: ["artifact-package", "ci-liboliphaunt-native-ios-abi"]
+    deps: ["liboliphaunt-native:build-runtime-ios-xcframework","database-resources:build-icu-data"]
+    command: "env OLIPHAUNT_CI_TARGET=ios-datum64 bash database-resources/seeds/build.sh native icu"
+    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
+    outputs: ["/target/database-resources/release-assets/*seed-native-ios-datum64-icu.*"]
+    options:
+      runFromWorkspaceRoot: true

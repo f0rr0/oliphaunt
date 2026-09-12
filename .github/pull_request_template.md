@@ -8,6 +8,5 @@
 
 ## Verification
 
-- [ ] `moon run dev-tools:doctor`
 - [ ] Moon affected checks and tests passed.
 - [ ] Product-specific smoke/package/perf checks when product behavior or artifacts changed.

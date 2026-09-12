@@ -1,0 +1,18 @@
+[package]
+name = "oliphaunt-node-direct"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+liboliphaunt-native-bindings = { path = "../../rust/liboliphaunt-native" }
+napi = { version = "=3.12.2", default-features = false, features = ["napi8"] }
+napi-derive = { version = "=3.6.3", default-features = false, features = ["strict", "type-def"] }
+
+[build-dependencies]
+napi-build = "=2.4.1"

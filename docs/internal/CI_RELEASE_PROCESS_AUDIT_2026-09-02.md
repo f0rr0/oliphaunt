@@ -27,8 +27,8 @@ fair technical description.
 The planner ignores affected scope on non-PR runs and selects every
 builder/runtime job with the reason `non-PR full CI/runtime run`.
 
-The latest `main` change touched only `tools/perf/runner/Cargo.toml` and
-`tools/policy/check-native-boundaries.mjs`, but GitHub run
+The latest `main` change touched only `benchmarks/perf/runner/Cargo.toml` and
+`tools/policy/check-native-boundaries.mts`, but GitHub run
 <https://github.com/f0rr0/oliphaunt/actions/runs/33628129735> launched 100 jobs,
 used approximately 879 raw runner-minutes, took 103 minutes wall-clock, and
 failed.
@@ -71,7 +71,7 @@ in the visible Tests phase.
 
 ### 4. “Validate release metadata” is a large unit-test suite
 
-`tools/release/release-check.mjs` first runs metadata validation and then
+`tools/release/release-check.sh` first runs metadata validation and then
 dynamically discovers every `*.test.mjs` under `tools/policy` and
 `tools/release`. It currently discovers 165 files, excludes one dedicated test,
 and launches 164 fresh Bun subprocesses per invocation.
@@ -107,7 +107,7 @@ gate cannot validate the generated versions or changelog state.
 
 ### 6. The “dry run” is candidate assembly, not publication simulation
 
-`release-publish.mjs publish-dry-run` validates metadata and registries and
+`release-dry-run.sh` validates metadata and registries and
 exits before any publication transport executes. The surrounding workflow
 downloads qualified artifacts, packages public carriers, and creates a
 publication lock. Its accurate name would be **Assemble and approve release
@@ -140,7 +140,7 @@ security principles but is factually unreliable in important places:
 - It names `graph-tools:check` and `graph-tools:generate`; no `graph-tools`
   Moon project or task exists at the audited revision.
 - It says `graph-tools:generate` is the sole writer of `target/graph`, while
-  `tools/graph/ci_plan.mjs` directly writes `target/graph/ci-plan.json`.
+  `tools/graph/ci_plan.mts` directly writes `target/graph/ci-plan.json`.
 - Its opening advice says expensive producers and E2E should run only when
   relevant inputs change, while hosted CI deliberately does the opposite on
   every `main` push and every workflow-only PR.
@@ -395,7 +395,7 @@ unchanged while changing task ownership:
   no longer expose identical leaf `package` wrappers; shared native, WASIX, and
   carrier projects own the actual work.
 - Generic Moon `release-check` tasks and one-dependency aliases are gone.
-  The repository-wide `tools/release/release-check.mjs` executable remains, but
+  The repository-wide `tools/release/release-check.sh` executable remains, but
   is documented as release-policy validation rather than a product gate.
 - Rust package qualification no longer greps test-function names to claim
   coverage. The actual unit/smoke/regression tasks retain those behavior proofs.
@@ -538,7 +538,7 @@ Task edges now have an executable invariant:
 | `outputs` | 11 | Consumer hydrates a producer's declared outputs | All producers declare outputs |
 | `ignored` | 101 | Ordering/qualification only; no artifact data is consumed | No producer declares outputs |
 
-`product-task-model.test.mjs` now checks this for the entire task graph, the five
+`product-task-model.test.mts` now checks this for the entire task graph, the five
 SDK carrier tasks that consume product package staging, and the absence of
 `src/ -> tools/` project edges. Moon itself rejects missing targets and cycles
 while constructing the graph.
@@ -953,7 +953,7 @@ Native release staging now default their carrier input to the same canonical
 target path used by CI, while retaining CI overrides for downloaded
 cross-runner artifacts.
 
-The cold local `release-tools:wasix-ts-sdk-package` path then passed end to end
+The cold local `oliphaunt-wasix-ts:release-package` path then passed end to end
 in 39m36s. The portable runtime producer consumed 38m35s (PostgreSQL, ICU,
 PostGIS, remaining extensions, and package validation); the SDK staging plus
 real packed browser/database/tools smoke consumed 57s. This establishes both
@@ -995,7 +995,7 @@ command/libc tests and four Rust behavior tests.
 Residual root-tool boundary: SDK, binding, broker, Node Direct, and WASIX
 Node-API product tasks no longer invoke repository release/performance/coverage
 machinery. Native, WASIX, Postmaster, extension-artifact, extension-catalog, and
-source-input projects still execute root `tools/xtask` or release-contract
+source-input projects still execute root `src/runtimes/liboliphaunt/wasix/tools/xtask` or release-contract
 helpers. The source-fetch implementation itself now lives with its owner under
 `src/sources/tools`; it still reuses the root process-capture and extension
 license libraries. The remaining calls are pre-existing production build
@@ -1017,7 +1017,7 @@ miniature CI systems:
   type-check, run their own unit tests, and build/package their own npm source.
   The root integration task consumes those package outputs plus the separately
   built portable and Node-API runtime carriers.
-- `release-tools:wasix-ts-sdk-package` now only validates and stages release
+- `oliphaunt-wasix-ts:release-package` now only validates and stages release
   artifacts. Browser behavior is no longer concealed inside a task named
   `package`.
 - The WASIX Node-API producer was missing the AOT runtime and WASIX extension

@@ -1,0 +1,289 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-rust"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["cargo-package", "javascript-quality", "sdk", "rust", "tauri", "native", "release-product"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "extensions"
+    scope: "build"
+  - "liboliphaunt-native"
+  - "oliphaunt-query"
+  - "liboliphaunt-native-bindings"
+  - "oliphaunt-broker"
+
+project:
+  title: "Oliphaunt Rust SDK"
+  description: "Canonical Rust SDK for native embedded PostgreSQL in Tauri and Rust desktop apps."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-rust"
+    packagePath: "sdks/rust/sdk"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-rust"
+  paths:
+    "**/*.rs": ["@oliphaunt/sdk-rust"]
+    "Cargo.toml": ["@oliphaunt/sdk-rust"]
+
+fileGroups:
+  cargo-sources: ["crates/oliphaunt-build/src/**/*", "crates/oliphaunt-build/Cargo.toml"]
+  sources: ["src/**/*", "build.rs", "Cargo.toml"]
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
+tasks:
+  format:
+    command: "cargo fmt -p oliphaunt-build -p oliphaunt"
+    options:
+      cache: false
+      runInCI: false
+      runFromWorkspaceRoot: true
+
+  build:
+    tags: ["build", "requires-rust"]
+    script: |
+      set -e
+      cargo build -p oliphaunt -p oliphaunt-build --locked
+    outputs: ["/target/debug/liboliphaunt.rlib", "/target/debug/liboliphaunt_build.rlib"]
+    env:
+      CARGO_TARGET_DIR: "target"
+    deps:
+      - target: "~:cargo-sources"
+        cacheStrategy: hash
+    inputs:
+      - "@group(cargo-workspace)"
+      - "/clippy.toml"
+      - "@group(code)"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit", "requires-rust"]
+    script: |
+      set -e
+      mkdir -p "$CARGO_TARGET_DIR"
+      if [ -n "${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER:-}" ]; then
+        rustc --edition=2024 --test sdks/rust/sdk/build.rs -C "linker=$CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -o "$CARGO_TARGET_DIR/build-script-tests"
+      else
+        rustc --edition=2024 --test sdks/rust/sdk/build.rs -o "$CARGO_TARGET_DIR/build-script-tests"
+      fi
+      "$CARGO_TARGET_DIR/build-script-tests"
+      cargo test -p oliphaunt --doc --locked
+      cargo test -p oliphaunt-build --locked
+      cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --test-threads=1
+    env:
+      # Cargo releases its build lock before rustdoc consumes the compiled libraries.
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/unit"
+    deps:
+      - target: "~:cargo-sources"
+        cacheStrategy: hash
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(rust-test-config)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "@group(code)"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test-integration:
+    tags: ["regression", "runtime"]
+    script: |
+      set -e
+      . runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+      oliphaunt_runtime_native_host_require basic
+      cargo test -p oliphaunt --locked --test native_smoke --test native_sql_regression -- --test-threads=1
+    env:
+      CARGO_TARGET_DIR: "target"
+    deps:
+      - target: "~:cargo-sources"
+        cacheStrategy: hash
+      - "liboliphaunt-native:build-runtime-desktop-target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "@group(code)"
+      - "/runtimes/liboliphaunt-native/tools/runtime-preflight.sh"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  test-extensions:
+    tags: ["regression", "runtime", "extensions"]
+    script: |
+      set -e
+      . runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+      oliphaunt_runtime_native_host_require extensions
+      cargo test -p oliphaunt --locked --test native_extensions -- --test-threads=1
+    env:
+      CARGO_TARGET_DIR: "target"
+    deps:
+      - target: "~:cargo-sources"
+        cacheStrategy: hash
+      - "extension-artifacts-native:build-target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "extensions"
+        group: "build"
+      - project: "liboliphaunt-native"
+        group: "runtime"
+      - "@group(code)"
+      - "/runtimes/liboliphaunt-native/tools/runtime-preflight.sh"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  coverage:
+    tags: ["coverage", "requires-rust"]
+    script: |
+      set -e
+      mkdir -p target/coverage/oliphaunt-rust
+      cargo llvm-cov nextest -p oliphaunt --locked --profile ci --no-tests=fail --test-threads=1 --lcov --output-path target/coverage/oliphaunt-rust/lcov.info
+    env:
+      CARGO_LLVM_COV_TARGET_DIR: "target/coverage-build/oliphaunt-rust"
+    deps:
+      - target: "~:cargo-sources"
+        cacheStrategy: hash
+    inputs:
+      - "@group(code)"
+      - "@group(cargo-workspace)"
+      - "@group(rust-test-config)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    outputs: ["/target/coverage/oliphaunt-rust/**/*"]
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p oliphaunt-build -p oliphaunt --check"
+    inputs: ["/sdks/rust/sdk/crates/oliphaunt-build/**/*.rs","/sdks/rust/sdk/crates/oliphaunt-build/Cargo.toml","/sdks/rust/sdk/**/*.rs","/sdks/rust/sdk/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p oliphaunt-build -p oliphaunt --all-targets --locked -- -D warnings"
+    env:
+      CARGO_TARGET_DIR: "target"
+    deps:
+      - target: "~:cargo-sources"
+        cacheStrategy: hash
+    inputs: ["/sdks/rust/sdk/crates/oliphaunt-build/**/*.rs","/sdks/rust/sdk/crates/oliphaunt-build/Cargo.toml","/sdks/rust/sdk/**/*.rs","/sdks/rust/sdk/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+
+  package:
+    tags: ["release", "artifact-package", "ci-rust-sdk-package"]
+    script: |
+      set -eu
+      cargo fetch --locked
+      bash sdks/rust/sdk/tools/stage-release-artifacts.sh
+
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs:
+      - "**/*"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "oliphaunt-query"
+        group: "sources"
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/tools/packaging/*.{mjs,mts}"
+      - "/tools/packaging/cargo-source-package.mts"
+      - "/tools/packaging/package-cargo-source.sh"
+      - "/tools/packaging/check-cargo-package-tests.sh"
+      - "/sdks/rust/sdk/tools/check-package.mts"
+      - "/extensions/artifacts/packages/tools/contrib-carriers.mts"
+      - "/sdks/rust/sdk/tools/prepare-rust-release-source.mts"
+      - "/tools/release/release-graph.mts"
+      - "/tools/packaging/rust-native-targets.mts"
+      - "/sdks/rust/sdk/tools/stage-release-artifacts.sh"
+      - "/tools/packaging/staging.mts"
+      - "/tools/dev/bun.sh"
+      - "/third-party/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  test-consumer:
+    tags: ["release", "runtime", "ci-rust-sdk-package"]
+    script: |
+      set -eu
+      bash tools/dev/bun.sh sdks/rust/sdk/tools/check-package.mts
+      version="$(bash tools/dev/bun.sh tools/release/product-version.mts version oliphaunt-rust)"
+      dependencies=()
+      for product in oliphaunt-query liboliphaunt-native-bindings oliphaunt-broker; do
+        for archive in target/sdk-artifacts/"$product"/*.crate; do dependencies+=(--dependency-crate "${archive}"); done
+      done
+      bash tools/packaging/check-cargo-package-tests.sh --crate "target/sdk-artifacts/oliphaunt-rust/oliphaunt-$version.crate" --all-features "${dependencies[@]}" --stub-dependency-prefix liboliphaunt-native- --stub-dependency-prefix oliphaunt-broker-
+      bash sdks/rust/sdk/tools/check-release-consumer.sh build target/sdk-artifacts/oliphaunt-rust target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer
+    deps:
+      - "oliphaunt-rust:package"
+      - "oliphaunt-query:package"
+      - "liboliphaunt-native-bindings:package"
+      - "oliphaunt-broker:package"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/release-consumer"
+    inputs:
+      - "/rust-toolchain.toml"
+      - "/sdks/rust/sdk/tests/release-consumer/**/*"
+      - "/sdks/rust/sdk/tools/check-release-consumer.sh"
+      - "/sdks/rust/sdk/tools/artifact-dependencies.mts"
+      - "/tools/dev/bun.sh"
+    outputs:
+      - "/target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  test-consumer-runtime:
+    tags: [consumer, integration, ci-native-consumers, platform-linux-x64-gnu]
+    command: "bash sdks/rust/sdk/tools/check-release-consumer.sh run target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer target/liboliphaunt/desktop-release-assets/linux-x64-gnu target/postgres-tools/native/release-assets target/oliphaunt-broker/release-assets"
+    deps:
+      - "~:test-consumer"
+      - "liboliphaunt-native:package-runtime-desktop-target"
+      - "postgres-tools-native:package-assets"
+      - "oliphaunt-broker:build-release-assets"
+    inputs:
+      - "tools/check-release-consumer.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  packaging-unit:
+    tags: ["quality", "unit", "requires-rust"]
+    command: "bash sdks/rust/sdk/tools/prepare-rust-release-source.test.sh"
+    inputs:
+      - "**/*"
+      - "/sdks/rust-query/src/lib.rs"
+      - "/sdks/rust/liboliphaunt-native/**/*"
+      - "/test-fixtures/**/*"
+      - "@group(cargo-workspace)"
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts}"
+      - "/tools/packaging/testdata/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/packaging/*.{mts,sh}"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

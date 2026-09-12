@@ -1,0 +1,222 @@
+---
+title: Build With Kotlin
+description: Add Oliphaunt to an Android app with Gradle, coroutines, app-private storage, selected extensions, backup, and app-owned lifecycle actions.
+---
+
+# Build With Kotlin
+
+Use the Kotlin SDK in Android apps. It provides coroutine-friendly APIs over the
+native runtime and owns Android resource hydration, storage validation, and
+extension materialization.
+
+<Callout type="info" title="Android packaging stays in the Android SDK">
+React Native on Android delegates runtime behavior through this SDK. Native
+Android apps use the Kotlin facade directly for resource hydration and ABI
+selection.
+</Callout>
+
+<SdkGuideSummary id="kotlin" />
+
+<Steps>
+<Step>
+
+### Install
+
+Add the Android SDK and app-applied Gradle plugin. The plugin resolves and
+packages native runtime artifacts, Android ABIs, and exact extension files.
+
+```kotlin
+plugins {
+    id("com.android.application")
+    id("dev.oliphaunt.android") version "{{release:oliphaunt-kotlin}}"
+}
+
+dependencies {
+    implementation("dev.oliphaunt:oliphaunt-android:{{release:oliphaunt-kotlin}}")
+}
+
+oliphaunt {
+    selectedExtensions.add("vector")
+}
+```
+
+Storage defaults to an SDK-owned temporary directory. Choose an app-private
+directory when data must persist.
+
+</Step>
+<Step>
+
+### Open and query
+
+Create an `OliphauntConfig`, open a database, run SQL, and close it from
+coroutines.
+
+```kotlin
+val database =
+    Oliphaunt.open(
+        context = context,
+        config = OliphauntConfig(
+            storage = DatabaseStorage.Directory(
+                context.filesDir.resolve("main.oliphaunt").absolutePath,
+            ),
+            extensions = listOf("vector"),
+        ),
+    )
+
+val rows = database.query("SELECT 1::text AS value")
+val value = rows.rows.first().value("value", PostgresDecoders.string)
+
+database.close()
+```
+
+Share the opened database object through your app's dependency graph. It
+represents one serialized native session.
+
+</Step>
+<Step>
+
+### Create app data
+
+Use coroutine-friendly SQL helpers from repositories or use cases. Keep
+database ownership in an Android service object rather than inside a composable:
+
+```kotlin
+database.execute(
+    """
+    CREATE TABLE IF NOT EXISTS notes (
+        id bigserial PRIMARY KEY,
+        title text NOT NULL,
+        body text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+    )
+    """.trimIndent(),
+)
+
+database.query(
+    "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
+    listOf(
+        QueryParam.string("First note"),
+        QueryParam.string("Stored by embedded PostgreSQL"),
+    ),
+)
+
+val notes =
+    database.query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20")
+val firstTitle = notes.rows.first().value("title", PostgresDecoders.string)
+```
+
+Expose app-specific suspend functions to UI code. The SDK owns the serialized
+native session underneath those calls.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure storage, selected exact extensions, startup identity, and PostgreSQL
+startup GUCs through `OliphauntConfig` and the Android facade. Normal apps use
+packaged runtime assets; explicit asset locations remain advanced overrides.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+Android direct mode owns one resident backend per app process and one physical
+session.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Database calls are suspending at the public boundary. A single-thread owner
+dispatcher runs storage preparation, JNI open, SQL/protocol work, backup, and
+close away from the Android UI thread. Ordinary work, transaction controls, and
+close share FIFO admission. A transaction or close is an atomic cutoff: calls
+admitted earlier drain before it, and incompatible later calls fail. `cancel()`
+uses a separate control dispatcher, and close completes its ownership transition
+even when its calling coroutine is cancelled. Cancellation remains available
+while close drains earlier admissions and stops when native teardown starts.
+Raw-stream callbacks are synchronous backpressure boundaries: while one is
+running, all same-handle database and transaction work is rejected, including
+work launched onto another coroutine dispatcher, except for out-of-band
+`cancel()`. A callback failure is returned only after confirmed
+protocol recovery and leaves the session reusable. A raw buffered or streaming
+transport/recovery failure poisons the database. Use `cancel()` and `close()`
+explicitly according to the app's lifecycle policy. A phantom-reference cleaner
+only schedules best-effort forgotten-handle cleanup on the owner; it does not
+replace explicit close or block the garbage collector thread. Run
+`execute("CHECKPOINT")` only when an explicit PostgreSQL checkpoint is needed.
+
+Inside `transaction {}`, use the transaction's typed `query`, `execute`, `exec`,
+and `describe` methods. Return to commit or call `rollback()` to settle the outer
+transaction; do not issue outer-lifecycle SQL such as `BEGIN`/`START TRANSACTION`,
+`COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND [NO] CHAIN`), or
+`PREPARE TRANSACTION`. Nested `SAVEPOINT`, `RELEASE
+SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` SQL is supported. PostgreSQL exposes
+`ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command tag and
+transactional ready status, so the SDK rejects `ROLLBACK`/`ABORT ... AND CHAIN`
+before dispatch and still validates every actual protocol boundary. Raw
+protocol APIs stay on the database for callers that explicitly own transaction
+lifecycle.
+
+After automatic rollback succeeds, Kotlin rethrows the original callback
+exception. If the callback catches a poisoning database or rollback error and
+returns, the transaction still fails with that stored original exception. If
+rollback also fails,
+`OliphauntTransactionRollbackException.callbackError` and `.rollbackError`
+preserve both; the callback is the cause and rollback is suppressed. If the
+callback throws a different exception after an earlier independent database or
+protocol failure poisoned or expired transaction ownership,
+`OliphauntTransactionDatabaseException.callbackError` and `.databaseError`
+preserve both; the callback is the cause, the database error is suppressed, and
+the database is close-only. An ordinary PostgreSQL statement error that remains
+safely rollbackable is not automatically wrapped in either composite exception.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Select exact SQL extension names before opening the database. Android artifacts
+contain only those selected extensions and mandatory dependencies.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+Use `backup()` and static `restore(destination, bytes)` with Android
+file/document APIs. Restore accepts a new or existing-empty destination and
+rejects nonempty data without mutation.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="kotlin" />
+
+## Troubleshooting
+
+Check app storage permissions, storage ownership, missing native libraries, missing
+runtime resources, runtime errors, selected-extension artifacts, and
+SQLSTATE-bearing PostgreSQL errors.
+
+## Development resource packaging
+
+These resource-package changes are unreleased. The published installation
+versions above do not include this new package arrangement; use a coordinated
+checkout for this section.
+
+The Android Gradle plugin selects initialization resources at build time:
+
+```kotlin
+oliphaunt {
+    seedProfile.set("standard") // Or "icu" for an ICU seed and canonical ICU data.
+}
+```
+
+The default includes no seed. Select one for first-open initialization, or omit
+it when opening existing storage or supplying application-owned resources.
+Runtime libraries, seed carriers, and canonical ICU data are separate packages.
+Actual device qualification of the new seed carriers remains pending.

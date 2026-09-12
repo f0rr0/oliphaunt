@@ -1,0 +1,84 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "postgres-tools-native"
+language: "unknown"
+layer: "tool"
+stack: "systems"
+tags: ["postgres", "tools", "release-product"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "liboliphaunt-native"
+    scope: "build"
+project:
+  title: "PostgreSQL native tools"
+  owner: "oliphaunt"
+  release:
+    component: "postgres-tools-native"
+    packagePath: "postgres-tools/native"
+    artifactTargets:
+      preset: "postgres-tools-native"
+      targets: ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]
+fileGroups:
+  sources: ["**/*", "!**/node_modules/**/*", "!**/target/**/*"]
+tasks:
+  format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p oliphaunt-tools --check"
+    inputs: ["crates/tools/**/*.rs", "crates/tools/Cargo.toml", "@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p oliphaunt-tools --all-targets --locked -- -D warnings"
+    inputs: ["crates/tools/**/*", "/clippy.toml", "@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  build:
+    tags: ["build", "requires-rust"]
+    script: |
+      set -e
+      cargo build -p oliphaunt-tools --locked
+      bun run --cwd postgres-tools/native/npm build
+    inputs: ["crates/tools/**/*", "@group(cargo-workspace)", "npm/index.mts", "/tools/packaging/emit-javascript.mts"]
+    outputs: ["npm/index.js", "/target/debug/liboliphaunt_tools.rlib"]
+    options:
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit", "requires-rust"]
+    command: "cargo test -p oliphaunt-tools --locked"
+    inputs:
+      - "crates/tools/**/*"
+      - "@group(cargo-workspace)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    options:
+      runFromWorkspaceRoot: true
+  package-assets:
+    tags: ["artifact-package", "ci-liboliphaunt-native-desktop"]
+    command: "bash postgres-tools/native/tools/package-assets.sh"
+    deps: ["liboliphaunt-native:build-runtime-desktop-target"]
+    inputs:
+      - "$OLIPHAUNT_CI_TARGET"
+      - "VERSION"
+      - "tools/package-assets.sh"
+      - "/runtimes/liboliphaunt-native/tools/runtime-preflight.sh"
+      - "/runtimes/liboliphaunt-native/tools/native-runtime-payload*"
+      - "/tools/packaging/*.{mts,sh}"
+      - "@group(legal-files)"
+    outputs: ["/target/postgres-tools/native/release-assets/**/*"]
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  test-assets:
+    tags: ["integration", "ci-liboliphaunt-native-desktop"]
+    command: "bash postgres-tools/native/tools/test-assets.sh"
+    deps: ["postgres-tools-native:package-assets"]
+    inputs:
+      - "$OLIPHAUNT_CI_TARGET"
+      - "VERSION"
+      - "tools/test-assets.sh"
+      - "/runtimes/liboliphaunt-native/tools/runtime-preflight.sh"
+      - "/tools/packaging/{portable-archive.mts,check-linux-consumer-baseline.sh}"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

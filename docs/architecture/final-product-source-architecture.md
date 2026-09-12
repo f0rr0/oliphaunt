@@ -1,9 +1,11 @@
 # Oliphaunt Source Architecture
 
 Status: canonical product, task, qualification, and release-boundary model.
-Last verified: 2026-09-05. Owner: repository maintainers.
+Last reviewed: 2026-09-11. Owner: repository maintainers.
 
 This document describes the active repository model. It is not a migration log.
+The remaining target layout and implementation progress are tracked in
+[the simplification plan](repository-simplification-plan.md).
 
 ## Authority Boundaries
 
@@ -20,9 +22,12 @@ Oliphaunt uses one source graph and one release identity system:
   does not model: owner, kind, publish targets, registry coordinates, release
   artifacts, and exact published-product compatibility pins.
 - Product-local `targets/*.toml` files own platform artifact metadata.
-- Bun entrypoints under `tools/release/*.mjs` own release checks, dry-runs,
-  publication routing, checksums, attestations, registry checks, and artifact
-  verification.
+- Product-owned tools assemble and validate their packages. Shared archive and
+  metadata contracts live under `src/shared/`.
+- Shell entrypoints under `tools/release/` own release command execution;
+  TypeScript handles metadata, native HTTP, frozen publication identities and
+  receipts. Committed scripting source uses TypeScript or Shell; published
+  JavaScript assets retain their customer-facing entrypoints.
 
 There is no separate release graph, release-input graph, CI jobs graph, or
 consumer lockfile. If a relationship affects source, task execution, or release
@@ -33,26 +38,29 @@ coupling, it must be visible in Moon or release-please/product-local metadata.
 Source products and shared domains live under `src/`:
 
 ```text
-src/postgres/versions/18/        PostgreSQL 18 source pin and validation
+third-party/postgres/        PostgreSQL 18 source pin and validation
 src/sources/                     shared source and toolchain pins
-src/extensions/                  exact SQL extension catalog, recipes, evidence
-src/runtimes/liboliphaunt/native native C ABI runtime
-src/runtimes/liboliphaunt/wasix  WASIX runtime and AOT assets
-src/runtimes/broker              Rust broker helper runtime
-src/runtimes/node-direct         Node direct native runtime
-src/sdks/rust                    Rust SDK
-src/sdks/swift                   Swift SDK
-src/sdks/kotlin                  Kotlin/Android SDK
-src/sdks/react-native            React Native SDK
-src/sdks/js                      TypeScript SDK
-src/bindings/wasix-rust          Rust binding for the WASIX runtime
-src/bindings/wasix-ts            TypeScript browser and Node/Bun/Deno/Electron WASIX binding with optional tools
-src/shared/js-core              shared JavaScript query and protocol code
-src/shared/rust-query-core      shared Rust query code
-src/shared/extension-runtime-contract extension/runtime ABI contract
-src/shared/cluster-seed-contract shared cluster-seed format contract
-src/shared/fixtures              shared semantic test fixtures
-src/docs                         public docs site
+extensions/                  exact SQL extension catalog, recipes, evidence
+runtimes/liboliphaunt-native native C ABI runtime
+runtimes/liboliphaunt-wasix  WASIX runtime and AOT assets
+sdks/ts-wasix/node-addon          WASIX Node-API runtime adapter
+broker              Rust broker helper runtime
+sdks/ts/node-addon         Node direct native runtime
+sdks/rust/sdk                    Rust SDK
+sdks/swift                   Swift SDK
+sdks/kotlin                  Kotlin/Android SDK
+sdks/react-native            React Native SDK
+sdks/ts/sdk                      TypeScript SDK
+sdks/rust-wasix          Rust binding for the WASIX runtime
+sdks/ts-wasix/sdk            TypeScript browser and Node/Bun/Deno/Electron WASIX binding with optional tools
+sdks/ts-query                   published TypeScript query and protocol package
+sdks/rust-query                 published Rust query crate
+extensions/contracts extension/runtime ABI contract
+database-resources/contracts shared cluster-seed format contract
+tools/packaging    shared archive and package contracts
+tools/release      shared product and compatibility readers
+test-fixtures              shared semantic test fixtures
+docs                         public docs site
 ```
 
 Generated local state lives outside source roots or in ignored product build
@@ -102,12 +110,19 @@ Use Moon queries for graph inspection:
 ```sh
 moon query projects
 moon query tasks
-moon query affected --upstream none --downstream direct
+moon query affected --upstream none --downstream deep
 moon project-graph
-moon action-graph oliphaunt-rust:unit
+moon action-graph oliphaunt-rust:test
 ```
 
 Do not add a second graph format to answer questions Moon already answers.
+
+Cargo schedules Rust compilation. The internal `cargo-sources` task carries
+source hashes through Cargo-derived Moon dependencies without executing a
+command. Compiler and test tasks consume that hash, so a transitive crate edit
+invalidates their cached results. Swift and Kotlin consume the mobile bindings'
+source hash as well as their generated outputs. Formatting stays local to its
+owner; source checks do not acquire a runtime build dependency through this node.
 
 Native SDK and WASIX SDK database lifetimes use the shared vocabulary in
 [`database-storage.md`](database-storage.md). That contract aligns public names
@@ -135,9 +150,8 @@ The flow is:
    `Tests / <targets>` matrices plus one compact `Policy` batch from
    Moon-selected targets. Each matrix entry groups at most four tasks with the
    same runner capabilities, and its label lists those tasks. `Checks` is for normal
-   static/lint/typecheck-style work. `Policy` is for repository assertions that
-   parse code, workflows, release metadata, or generated graphs and enforce
-   invariants. Check and test matrix jobs delegate one compatible target group
+   static/lint/typecheck-style work. `Policy` checks shared workflow and release
+   contracts. Check and test matrix jobs delegate one compatible target group
    to `moon run --upstream deep`, so task inheritance and target dependencies stay
    in Moon without pulling unrelated affected tests into the checks phase. The
    policy batch runs its exact selected targets with `--upstream none`, because
@@ -169,22 +183,22 @@ The flow is:
    to `.github/scripts/run-planned-moon-job.sh`; it runs remaining local
    prerequisites normally, then runs the consumer roots with upstream traversal
    disabled so transferred producers are not rebuilt.
-   `release-tools:<product>-sdk-package` tasks consume the product `package`
-   outputs instead of hiding release assembly in source projects.
+   Product-owned `release-package` tasks consume their `package` outputs.
+   Root release tooling coordinates publication of those finished artifacts.
 10. Expensive runtime, mobile, benchmark, publish, registry, and provenance jobs
    are selected by affectedness, but they execute live when current runner state
    matters.
 
 Mobile build jobs do not own ABI lists. They request target surfaces such as
 `react-native-android` and `react-native-ios`; the selected native runtime
-target IDs come from `src/runtimes/liboliphaunt/native/targets/*.toml`. Mobile
+target IDs come from `runtimes/liboliphaunt-native/targets/*.toml`. Mobile
 E2E is a separate installed-app phase that consumes the app artifacts from the
 same CI run; it must not rebuild runtimes, SDKs, or extension packages.
 
 Moon task options must be semantic:
 
 - cache deterministic checks, tests, package-shape checks, generated freshness,
-  docs builds, and measured unit coverage with declared inputs and outputs.
+  and docs builds with declared inputs and outputs.
 - use `runInCI: skip` for expensive dependency tasks that should remain valid
   in CI action graphs but should not run as broad affected work.
 - use `runInCI: false` only for local/manual tasks that CI must never invoke.
@@ -199,7 +213,7 @@ and product-local compatibility pins:
 1. Release Please identifies product components, versions, and changelogs and
    prepares the generated release PR.
 2. Product-local `release.toml` adds publish and artifact metadata.
-3. `tools/dev/bun.sh tools/release/release_plan.mjs` maps changed paths to
+3. `bash tools/release/release-plan.sh` maps changed paths to
    owning Moon projects.
 4. A changed non-publishable source project follows `production` and `peer`
    edges only until the first publishable product boundary.
@@ -259,18 +273,18 @@ versioned product.
 
 - Public selection is by SQL extension name, for example `vector` or `postgis`.
 - PostgreSQL 18 contrib ownership is declared in
-  `src/extensions/contrib/carriers.toml`. Native carriers use the native runtime
+  `extensions/contrib/carriers.toml`. Native carriers use the native runtime
   version and tag; WASIX carriers use the WASIX runtime version and tag. The
-  canonical member inventory stays in `src/extensions/contrib/postgres18.toml`.
-- External extensions own folders under `src/extensions/external/<name>/` with
+  canonical member inventory stays in `extensions/contrib/postgres18.toml`.
+- External extensions own folders under `extensions/external/<name>/` with
   source pin, recipe, target metadata, tests, changelog, version, and
   `release.toml`.
 - Complex external extensions keep dependency source pins under their own
   extension folder, for example PostGIS dependency pins under
-  `src/extensions/external/postgis/dependencies/`.
-- `src/shared/extension-runtime-contract/` defines the runtime contract shared
+  `extensions/external/postgis/dependencies/`.
+- `extensions/contracts/` defines the runtime contract shared
   by native and WASIX extension artifacts.
-- `src/extensions/artifacts/native/` and `src/extensions/artifacts/wasix/`
+- `extensions/artifacts/native/` and `extensions/artifacts/wasix/`
   validate publishable exact-extension artifact shape.
 - Contrib publication groups those exact member artifacts into one deterministic
   carrier per family/target. Every carrier records each member's nested path,
@@ -293,26 +307,22 @@ checks must prove unselected extension files do not enter app artifacts.
 
 ## Tool Entrypoints
 
-Use Moon directly for repository tasks:
+Use the affected product's local commands. Moon resolves declared prerequisites
+when running a product task, for example:
 
 ```sh
-moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile
-moon run :test :unit :tools-unit
-moon run :coverage
-moon run :package
-moon run :smoke --cache off
-moon query affected --upstream none --downstream direct
+moon run oliphaunt-rust:build oliphaunt-rust:test oliphaunt-rust:package
+moon run oliphaunt-swift:test-packaging
+moon query affected --upstream none --downstream deep
 ```
 
-`moon run :package` is the workspace-wide carrier assembly/inspection lane and
-may require platform artifacts produced earlier. For a fast check, run the
-affected product's exact `package` task. Package tasks must not build platform
-runtimes or mobile apps; publishable artifacts are produced by explicit
-release-tool, runtime, extension, and mobile builder tasks selected by
-the `CI` workflow.
+Package tasks declare the compilation and artifact inputs they consume.
+Runtime, extension and mobile producers have separate tasks; downloaded
+artifacts satisfy those dependencies in CI. Product packaging does not rerun
+source qualification. Coverage and benchmarks are optional local tasks.
 
-Use pnpm only for JavaScript dependency installation and package-manager
-commands. Use Cargo, SwiftPM/Xcode, Gradle, npm, and Expo through
+Use pinned Bun for workspace installation, TypeScript scripting, tests and npm
+package assembly. Use Cargo, SwiftPM/Xcode, Gradle, npm publication, and Expo through
 product-local Moon tasks or product-owned scripts. Do not add root alias layers
 over Moon.
 

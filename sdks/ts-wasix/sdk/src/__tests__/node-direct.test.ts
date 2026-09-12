@@ -1,0 +1,28 @@
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
+
+import type { NativeWasixSession } from '../native-session.js';
+import { workerOpenOptions } from './worker-helpers.js';
+
+const nativeMocks = {
+  open: vi.fn(),
+};
+
+vi.mock('../native-session.js', () => ({
+  NativeWasixSession: { open: nativeMocks.open },
+}));
+
+import { openNodeDirectSession } from '../node-direct.js';
+
+beforeEach(() => nativeMocks.open.mockReset());
+
+describe('WASIX Node direct native routing', () => {
+  it('opens one synchronous native session in the importing realm', async () => {
+    const options = workerOpenOptions();
+    const session = {} as NativeWasixSession;
+    nativeMocks.open.mockResolvedValueOnce(session);
+
+    await expect(openNodeDirectSession(options)).resolves.toBe(session);
+    expect(nativeMocks.open).toHaveBeenCalledTimes(1);
+    expect(nativeMocks.open).toHaveBeenCalledWith(options);
+  });
+});

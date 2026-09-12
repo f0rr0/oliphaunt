@@ -1,5 +1,9 @@
 $schema: "https://moonrepo.dev/schemas/tasks.json"
 
+taskOptions:
+  unixShell: "bash"
+  windowsShell: "bash"
+
 fileGroups:
   cargo-workspace:
     - "/Cargo.lock"
@@ -7,61 +11,45 @@ fileGroups:
     - "/rust-toolchain.toml"
   rust-test-config:
     - "/.config/nextest.toml"
-  pnpm-workspace:
+  bun-workspace:
     - "/package.json"
-    - "/pnpm-lock.yaml"
-    - "/pnpm-workspace.yaml"
-  js-quality:
-    - "/package.json"
-    - "/pnpm-lock.yaml"
-    - "/pnpm-workspace.yaml"
-    - "/biome.json"
-    - "/renovate.json"
-    - "/.markdownlint-cli2.jsonc"
-    - "/src/docs/package.json"
-    - "/src/docs/next.config.mjs"
-    - "/src/docs/postcss.config.mjs"
-    - "/src/docs/proxy.ts"
-    - "/src/docs/source.config.ts"
-    - "/src/docs/src/**/*"
-    - "/src/docs/tools/**/*"
-    - "/src/bindings/wasix-ts/package.json"
-    - "/src/bindings/wasix-ts/src/**/*"
-    - "/src/bindings/wasix-ts/tools-package/**/*"
-    - "/src/bindings/wasix-ts/tools/**/*"
-    - "/examples/browser-wasix/**/*"
-    - "!/examples/browser-wasix/dist/**/*"
-    - "/src/shared/js-core/src/**/*"
-    - "/src/runtimes/liboliphaunt/native/tools-npm/**/*"
-    - "/src/runtimes/liboliphaunt/native/tools/smoke-packed-tools-npm.mjs"
-    - "/src/sdks/react-native/package.json"
-    - "/src/sdks/react-native/typedoc.json"
-    - "/src/sdks/react-native/react-native.config.js"
-    - "/src/sdks/react-native/src/**/*"
-    - "/src/sdks/js/package.json"
-    - "/src/sdks/js/typedoc.json"
-    - "/src/sdks/js/src/**/*"
-    - "/tools/integration/**/*"
-    - "/tools/perf/matrix/**/*"
-    - "/tools/perf/wasix-browser/**/*"
-    - "/tools/perf/wasix-node/**/*"
-    - "/tools/test/**/*"
-    - "/tools/policy/format.sh"
+    - "/bun.lock"
+    - "/bunfig.toml"
   legal-files:
     - "/LICENSE"
     - "/THIRD_PARTY_NOTICES.md"
+  upstream-licenses:
+    - "/third-party/postgres/COPYRIGHT"
+    - "/third-party/icu/LICENSE"
+    - "/third-party/openssl/LICENSE.txt"
   release-archive-contract:
-    - "/tools/release/release-directory-safety.mjs"
-    - "/src/shared/artifact-packaging/portable-archive.mjs"
-    - "/tools/release/release-notices.mjs"
+    - "/tools/packaging/release-directory-safety.mts"
+    - "/tools/packaging/portable-archive.mts"
+    - "/tools/packaging/release-notices.mts"
+  package-test-metadata:
+    - "/release-please-config.json"
+    - "/.release-please-manifest.json"
+    - "/**/release.toml"
+    - "/**/moon.yml"
+    - "/**/{VERSION,LIBOLIPHAUNT_VERSION,Cargo.toml,package.json,gradle.properties}"
+    - "/**/targets/**/*.toml"
+    - "/extensions/generated/extensions.catalog.json"
+    - "/extensions/contrib/*.toml"
+    - "/extensions/external/**/{recipe,source}.toml"
+    - "/third-party/postgres/source.toml"
+    - "/tools/release/release-graph.mts"
+    - "/tools/release/release-history.mts"
+    - "/extensions/artifacts/packages/tools/contrib-carriers.mts"
+    - "/extensions/artifacts/packages/tools/extension-registry-packages.mts"
+    - "/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts"
   release-target-contract:
-    - "/tools/release/platform-compatibility-policy.mjs"
-    - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
-    - "/src/shared/extension-runtime-contract/extension-target-profiles.toml"
-    - "/tools/release/release-artifact-targets.mjs"
+    - "/tools/release/platform-compatibility-policy.mts"
+    - "/extensions/contracts/extension-target-profiles.mts"
+    - "/extensions/contracts/extension-target-profiles.toml"
+    - "/tools/release/release-artifact-targets.mts"
 # Installed dependency trees are derived state. Task invalidation comes from
 # tracked package manifests, workspace configuration, and lockfiles instead of
-# pnpm's directory symlinks, which Moon cannot hash as files.
+# Bun's directory symlinks, which Moon cannot hash as files.
 implicitInputs:
   # Changes to shared groups and universal inputs must invalidate their users.
   - "/.moon/tasks/inputs.yml"
@@ -74,9 +62,5 @@ implicitInputs:
   - "/.prototools"
   - "!/node_modules"
   - "!/node_modules/**"
-  - "!/examples/**/node_modules"
-  - "!/examples/**/node_modules/**"
-  - "!/src/**/node_modules"
-  - "!/src/**/node_modules/**"
-  - "!/tools/**/node_modules"
-  - "!/tools/**/node_modules/**"
+  - "!/**/node_modules"
+  - "!/**/node_modules/**"

@@ -74,7 +74,7 @@ Remaining work:
 
 Acceptance:
 
-- `moon run liboliphaunt-native:host-smoke oliphaunt-rust:regression` proves C
+- `moon run liboliphaunt-native:host-smoke oliphaunt-rust:test-integration` proves C
   smoke plus Rust SDK behavior against current artifacts.
 - Patch-stack review output is deterministic and checked into release evidence.
 - No patch grows product-specific branching that belongs above PostgreSQL.
@@ -173,7 +173,7 @@ Remaining work:
 
 Acceptance:
 
-- `moon run extension-artifacts-native:build-target oliphaunt-rust:extension-regression`
+- `moon run extension-artifacts-native:build-target oliphaunt-rust:test-extensions`
   passes with first-party extension artifacts.
 - `extension-packages:package` receives native extension artifacts for every
   published native runtime target and WASIX extension artifacts for every

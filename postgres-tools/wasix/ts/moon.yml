@@ -1,0 +1,73 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-wasix-tools-ts"
+language: "typescript"
+layer: "library"
+stack: "frontend"
+tags: ["javascript-quality", "binding", "wasix", "typescript", "tools", "package"]
+dependsOn:
+  - id: "oliphaunt-wasix-ts"
+    scope: "production"
+  - id: "shared-test-fixtures"
+    scope: "development"
+
+project:
+  title: "Oliphaunt WASIX TypeScript tools"
+  description: "TypeScript pg_dump and psql facade for the WASIX runtime."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+
+tasks:
+  build:
+    tags: ["build"]
+    command: "bun run build"
+    deps: ["oliphaunt-wasix-ts:build"]
+    inputs: ["@group(bun-workspace)", "@group(code)"]
+    outputs: ["lib/**/*"]
+
+  typecheck:
+    tags: ["quality", "static"]
+    command: "bun run --cwd postgres-tools/wasix/ts typecheck"
+    deps: ["oliphaunt-wasix-ts:build"]
+    inputs:
+      - "@group(bun-workspace)"
+      - "@group(code)"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  test:
+    tags: ["quality", "unit"]
+    command: "bun run --cwd postgres-tools/wasix/ts test"
+    inputs:
+      - "@group(bun-workspace)"
+      - "@group(code)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  package:
+    tags: ["package", "artifact-package", "ci-js-sdk-package"]
+    command: "bash postgres-tools/wasix/ts/tools/package.sh"
+    deps: ["build"]
+    inputs:
+      - "@group(legal-files)"
+      - "@group(bun-workspace)"
+      - "**/*"
+      - "/sdks/ts-wasix/sdk/package.json"
+    outputs:
+      - "/target/oliphaunt-wasix-tools-ts/package/**/*"
+      - "/target/sdk-artifacts/postgres-tools-wasix/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

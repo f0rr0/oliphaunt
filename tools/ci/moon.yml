@@ -1,0 +1,16 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "ci-tools"
+language: "bash"
+layer: "tool"
+stack: "infrastructure"
+tags: ["javascript-quality", "tools", "ci"]
+project:
+  title: "CI adapters"
+  description: "Map Moon tasks to hosted jobs and transfer their prepared outputs."
+tasks:
+  test:
+    tags: ["quality", "unit"]
+    command: "bash tools/ci/start-android-emulator-ci.test.sh"
+    inputs: ["start-android-emulator-ci.sh", "start-android-emulator-ci.test.sh"]
+    options:
+      runFromWorkspaceRoot: true

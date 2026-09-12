@@ -1,0 +1,129 @@
+import assert from 'node:assert/strict';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+
+import {
+  assertSourceOnlyNpmArchive,
+  prepareSourceOnlyNpmPackage,
+  SOURCE_ONLY_NPM_PROFILES,
+} from './source-only-sdk-package.mts';
+
+const QUERY_PACKAGE = '@oliphaunt/ts-query';
+
+import { assertReleaseNoticesInDirectory } from './release-notices.mts';
+
+const ROOT = path.resolve(import.meta.dir, '../..');
+
+function writeJson(file, value) {
+  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function packageManifest(profile) {
+  const manifest = {
+    name: profile.name,
+    version: '1.2.3',
+    license: 'MIT',
+    files: ['index.js', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
+    scripts: {
+      build: 'false',
+      prepack: 'false',
+      test: 'false',
+      ...profile.scripts,
+    },
+    dependencies: { [QUERY_PACKAGE]: '0.1.0' },
+    devDependencies: { imaginary: '1.0.0' },
+  };
+  if (profile.optionalDependencyVersions !== undefined) {
+    manifest.oliphaunt = Object.fromEntries(
+      [...new Set(Object.values(profile.optionalDependencyVersions))].map((field) => [
+        field,
+        '1.2.0',
+      ]),
+    );
+    manifest.optionalDependencies = Object.fromEntries(
+      Object.keys(profile.optionalDependencyVersions).map((name) => [name, 'workspace:*']),
+    );
+  }
+  return manifest;
+}
+
+if (['prepare', 'verify'].includes(process.argv[2])) {
+  const scratch = process.argv[3];
+  for (const [profileName, profile] of Object.entries(SOURCE_ONLY_NPM_PROFILES)) {
+    const packageDir = path.join(scratch, profileName, 'package');
+    if (process.argv[2] === 'prepare') {
+      mkdirSync(packageDir, { recursive: true });
+      writeJson(path.join(packageDir, 'package.json'), packageManifest(profile));
+      writeFileSync(path.join(packageDir, 'index.js'), 'export {};\n', 'utf8');
+      prepareSourceOnlyNpmPackage(packageDir, profile);
+      prepareSourceOnlyNpmPackage(packageDir, profile);
+
+      const staged = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
+      assert.equal(staged.license, 'MIT');
+      assert.deepEqual(staged.scripts ?? {}, profile.scripts);
+      assert.equal(staged.devDependencies, undefined);
+      if (profile.optionalDependencyVersions !== undefined) {
+        assert.deepEqual(
+          staged.optionalDependencies,
+          Object.fromEntries(
+            Object.keys(profile.optionalDependencyVersions).map((name) => [name, '1.2.0']),
+          ),
+        );
+      }
+    } else {
+      const destination = path.join(scratch, profileName, 'packed');
+      const archives = readdirSync(destination).filter((entry) => entry.endsWith('.tgz'));
+      assert.equal(archives.length, 1);
+      const archive = path.join(destination, archives[0]);
+      const packed = assertSourceOnlyNpmArchive(archive, profile);
+      assert.deepEqual(packed.scripts ?? {}, profile.scripts);
+      assert.equal(packed.devDependencies, undefined);
+
+      writeFileSync(path.join(packageDir, 'LICENSE'), 'not canonical\n', 'utf8');
+      chmodSync(path.join(packageDir, 'LICENSE'), 0o644);
+      assert.throws(
+        () => assertReleaseNoticesInDirectory(packageDir, { profile: 'source-sdk' }),
+        /differs byte-for-byte/u,
+      );
+    }
+  }
+  process.exit(0);
+}
+
+test('rejects a symlinked package directory before rewriting its manifest', {
+  skip: process.platform === 'win32',
+}, () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
+  const scratch = mkdtempSync(path.join(ROOT, 'target', 'source-only-symlink-'));
+  try {
+    const packageDir = path.join(scratch, 'real-package');
+    const alias = path.join(scratch, 'package-alias');
+    mkdirSync(packageDir);
+    const manifestFile = path.join(packageDir, 'package.json');
+    writeJson(manifestFile, packageManifest(SOURCE_ONLY_NPM_PROFILES.js));
+    writeFileSync(path.join(packageDir, 'index.js'), 'export {};\n', 'utf8');
+    const before = readFileSync(manifestFile);
+    symlinkSync(packageDir, alias, 'dir');
+
+    assert.throws(
+      () => prepareSourceOnlyNpmPackage(alias, SOURCE_ONLY_NPM_PROFILES.js),
+      /symlink or non-directory ancestor/u,
+    );
+    assert.deepEqual(readFileSync(manifestFile), before);
+    assert.equal(existsSync(path.join(packageDir, 'LICENSE')), false);
+    assert.equal(existsSync(path.join(packageDir, 'THIRD_PARTY_NOTICES.md')), false);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

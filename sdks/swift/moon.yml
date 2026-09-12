@@ -1,0 +1,223 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-swift"
+language: "swift"
+layer: "library"
+stack: "systems"
+tags: ["javascript-quality", "sdk", "swift", "ios", "macos", "native", "release-product"]
+dependsOn:
+  - "oliphaunt-mobile-bindings"
+  - "liboliphaunt-native"
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "cluster-seed-contract"
+    scope: "development"
+
+project:
+  title: "Oliphaunt Swift SDK"
+  description: "Swift SDK for iOS and macOS apps using native liboliphaunt."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-swift"
+    packagePath: "sdks/swift"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-swift"
+  paths:
+    "**/*.swift": ["@oliphaunt/sdk-swift"]
+    "Package.swift": ["@oliphaunt/sdk-swift"]
+
+fileGroups:
+  code:
+    - "**/*"
+    - "!.build"
+    - "!.build/**"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
+tasks:
+  prepare-bindings:
+    tags: ["build", "requires-rust"]
+    deps:
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    command: "bash tools/prepare-bindings.sh"
+    options:
+      cache: false
+  package-bindings:
+    tags: ["package", "requires-apple", "requires-rust", "requires-swift", "ci-swift-bindings"]
+    deps:
+      - "oliphaunt-mobile-bindings:generate"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    command: "bash tools/build-bindings-xcframework.sh"
+    outputs:
+      - "/target/oliphaunt-swift/release-assets/*"
+      - "/target/mobile-bindings/generated/OliphauntNativeBindings.swift"
+    options:
+      cache: false
+  build:
+    deps:
+      - "prepare-bindings"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    tags: ["build", "requires-swift"]
+    command: "swift build"
+    inputs:
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - "@group(code)"
+    options:
+      cache: false
+  test:
+    deps:
+      - "prepare-bindings"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    tags: ["quality", "unit", "requires-swift"]
+    script: |
+      set -e
+      swift test
+    inputs:
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "cluster-seed-contract"
+        group: "contract"
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - "@group(code)"
+      - "!/sdks/swift/.build"
+      - "!/sdks/swift/.build/**"
+    options:
+      cache: true
+  test-apple:
+    deps:
+      - "prepare-bindings"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    tags: ["quality", "unit", "requires-apple", "requires-swift"]
+    command: "swift test --filter ApplePlatformTests"
+    inputs:
+      - "@group(code)"
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+  test-native:
+    tags: ["runtime", "smoke", "requires-swift"]
+    script: |
+      set -e
+      . runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+      oliphaunt_runtime_native_host_require basic
+      env OLIPHAUNT_SWIFT_REQUIRE_NATIVE=1 \
+        LIBOLIPHAUNT_PATH="$(oliphaunt_runtime_native_host_lib)" \
+        OLIPHAUNT_INSTALL_DIR="$(oliphaunt_runtime_native_host_install_dir)" \
+        swift test --package-path sdks/swift --filter NativeRuntimeTests
+    deps:
+      - "oliphaunt-swift:prepare-bindings"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+      - "liboliphaunt-native:build-runtime-desktop-target"
+    inputs:
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "cluster-seed-contract"
+        group: "contract"
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - project: "liboliphaunt-native"
+        group: "runtime"
+      - "@group(code)"
+      - "!/sdks/swift/.build"
+      - "!/sdks/swift/.build/**"
+      - "/runtimes/liboliphaunt-native/tools/runtime-preflight.sh"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  package-source:
+    tags: ["package"]
+    script: |
+      set -e
+      rm -rf target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive
+      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package
+      rsync -a --exclude .build --exclude .swiftpm sdks/swift/ target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/
+      cp runtimes/liboliphaunt-native/include/oliphaunt.h target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/Sources/COliphaunt/include/oliphaunt.h
+      cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/
+      chmod 0644 target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/LICENSE target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/THIRD_PARTY_NOTICES.md
+      bun tools/packaging/archive-directory.mts --keep-parent target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip
+    inputs:
+      - "/tools/packaging/archive-directory.mts"
+      - "/tools/packaging/portable-archive.mts"
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - "@group(legal-files)"
+      - "**/*"
+      - "!/sdks/swift/.build"
+      - "!/sdks/swift/.build/**"
+    outputs:
+      - "/target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  coverage:
+    deps:
+      - "prepare-bindings"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    tags: ["coverage", "requires-swift"]
+    command: "swift test --enable-code-coverage --scratch-path ../../target/coverage/oliphaunt-swift"
+    inputs: ["@group(code)"]
+    outputs: ["/target/coverage/oliphaunt-swift/**/*"]
+    options:
+      cache: false
+      runInCI: false
+
+  package:
+    tags: ["release", "artifact-package", "ci-swift-sdk-package"]
+    script: |
+      set -eu
+      bash tools/dev/bun.sh sdks/swift/tools/stage-release-artifacts.mts
+      bash tools/dev/bun.sh sdks/swift/tools/check-package.mts
+    env:
+      OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: "target/liboliphaunt/abi-compatible-release-assets/ios-datum64"
+    deps:
+      - "oliphaunt-swift:package-bindings"
+      - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+      - "oliphaunt-swift:package-source"
+      - "liboliphaunt-native:finalize-runtime-ios-abi"
+    inputs:
+      - "/runtimes/liboliphaunt-native/include/oliphaunt.h"
+      - "/tools/packaging/portable-archive.mts"
+      - "/database-resources/contracts/*.mts"
+      - "/tools/packaging/emit-javascript.mts"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/sdks/swift/tools/check-package.mts"
+      - "/extensions/artifacts/packages/tools/contrib-carriers.mts"
+      - "/sdks/swift/tools/ios-carrier-manifest.mts"
+      - "/sdks/swift/tools/prepare-swift-release-consumer.mts"
+      - "/tools/release/release-graph.mts"
+      - "/tools/packaging/staging.mts"
+      - "/sdks/swift/tools/stage-release-artifacts.mts"
+      - "/sdks/swift/tools/swift-source-carrier-contract.mts"
+      - "/Package.swift"
+      - "/extensions/generated/sdk/extensions.json"
+      - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
+      - "/tools/dev/bun.sh"
+      - "/third-party/tools/source-fetch-core.mts"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-swift/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+
+  test-packaging:
+    tags: ["quality", "unit"]
+    script: |
+      set -eu
+      bash sdks/swift/tools/swift-carrier-resolver.test.sh
+      bun sdks/swift/tools/extension-resource-inventory.test.mts
+      bash tools/dev/bun.sh test --timeout=30000 ./sdks/swift/tools/ios-carrier-manifest.test.mts ./sdks/swift/tools/render_swiftpm_release_package.test.mts ./sdks/swift/tools/check-package.test.mts ./sdks/swift/tools/prepare-swift-release-consumer.test.mts ./sdks/swift/tools/swift-extension-release-consumer-inputs.test.mts
+    inputs:
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mjs,mts,sh}"
+      - "Tests/Fixtures/**/*"
+      - "@group(legal-files)"
+      - "/tools/packaging/testdata/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/packaging/*.{mts,sh}"
+      - "/database-resources/contracts/*.mts"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

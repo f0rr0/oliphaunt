@@ -1,0 +1,21 @@
+name: Set up Node and Bun
+description: Install pinned Node.js and Bun for Oliphaunt.
+
+outputs:
+  node-execution-envelope:
+    description: Absolute digest-verified Node.js execution envelope.
+    value: ${{ steps.node_runtime.outputs.execution-envelope }}
+  bun-execution-envelope:
+    description: Absolute digest-verified Bun execution envelope.
+    value: ${{ steps.install.outputs.execution-envelope }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up verified Node.js
+      id: node_runtime
+      uses: ./.github/actions/setup-node-runtime
+
+    - name: Set up verified Bun
+      id: install
+      uses: ./.github/actions/setup-bun

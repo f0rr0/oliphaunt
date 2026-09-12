@@ -1,0 +1,16 @@
+id = "oliphaunt-wasix-rust"
+owner = "@oliphaunt/wasix-rust"
+kind = "sdk"
+publish_targets = ["crates-io"]
+registry_packages = ["crates:oliphaunt-wasix"]
+release_artifacts = ["cargo-crate"]
+
+[compatibility_versions.runtime]
+source_product = "liboliphaunt-wasix"
+path = "sdks/rust-wasix/Cargo.toml"
+parser = "toml:package.metadata.oliphaunt.runtime-version"
+
+[compatibility_versions.oliphaunt-wasix-rust-query]
+source_product = "oliphaunt-query"
+path = "sdks/rust-wasix/Cargo.toml"
+parser = "toml:dependencies.oliphaunt-query.version"

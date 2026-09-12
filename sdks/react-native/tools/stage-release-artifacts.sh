@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+artifact_root="$PWD/target/sdk-artifacts/oliphaunt-react-native"
+work_root="$PWD/target/sdk-artifacts-work/oliphaunt-react-native"
+rm -rf "$artifact_root" "$work_root"
+mkdir -p "$artifact_root" "$work_root/package/src/generated"
+rsync -a --exclude node_modules --exclude .build --exclude android/.gradle --exclude android/.cxx --exclude android/build --exclude ios/vendor sdks/react-native/ "$work_root/package/"
+cp extensions/generated/sdk/extensions.json extensions/generated/sdk/ios-static-dependencies.json "$work_root/package/src/generated/"
+mkdir -p "$work_root/package/android/src/main/cpp/include"
+cp runtimes/liboliphaunt-native/include/oliphaunt.h "$work_root/package/android/src/main/cpp/include/oliphaunt.h"
+cp LICENSE THIRD_PARTY_NOTICES.md "$work_root/package/"
+bun sdks/react-native/tools/stage-release-artifacts.mts "$artifact_root" "$work_root"
+node "$work_root/package/tools/verify-ios-package.mjs" --package-dir "$work_root/package"
+bun tools/packaging/source-only-sdk-package.mts prepare-npm react-native "$work_root/package"
+filename="$(bun tools/packaging/npm-package.mts "$work_root/package")"
+archive="$artifact_root/$filename"
+bun pm pack --cwd "$work_root/package" --filename "$archive"
+
+bun tools/packaging/source-only-sdk-package.mts check-npm-archive react-native "$archive"
+bun tools/packaging/staging.mts "$artifact_root"

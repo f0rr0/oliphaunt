@@ -62,7 +62,7 @@ with the maintainer contract in
   keep only package README/CHANGELOG files and source-adjacent API comments.
 - `docs/`: architecture, release, development, maintainer, and internal source
   material.
-- `docs/internal/`: maintainer-only progress notes and generated patch-stack
+- `docs/internal/`: maintainer-only progress notes and patch-stack
   audits.
 
 See [repo-structure.md](../maintainers/repo-structure.md) for the repository policy and the evidence behind
@@ -139,7 +139,7 @@ tasks independently; CI lanes use `moon ci` through
 After building `liboliphaunt`, run:
 
 ```sh
-tools/perf/matrix/run_native_oliphaunt_matrix.sh
+benchmarks/perf/matrix/run_native_oliphaunt_matrix.sh
 ```
 
 For fast local plumbing checks:
@@ -159,7 +159,7 @@ Focused diagnostic runs can select one engine or suite without changing the
 release default:
 
 ```sh
-tools/perf/matrix/run_native_oliphaunt_matrix.sh \
+benchmarks/perf/matrix/run_native_oliphaunt_matrix.sh \
   --quick --engines broker --suites streaming
 ```
 

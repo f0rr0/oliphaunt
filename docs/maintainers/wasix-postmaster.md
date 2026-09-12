@@ -56,8 +56,9 @@ must not consume the single-backend-only patches that disable workers or guest
 process creation.
 
 Algorithmic optimizations can be shared when their guards and semantics are
-topology-neutral. `postgres/main-optimizations.series` references those
-canonical decisions. Postmaster-specific patches cover POSIX dynamic shared
+topology-neutral. The complete ordered `postgres/series` references shared
+patches in `third-party/postgres/patches/wasix` and product-owned patches.
+Postmaster-specific patches cover POSIX dynamic shared
 memory, EXEC_BACKEND handoff, process join reliability, packed latch ordering,
 and other concurrency contracts. Every local patch must be explained by
 `postgres/product-patch-provenance.toml`; experiment disposition files are not
@@ -92,7 +93,7 @@ build job and its output is tied to:
 - the exact installed guest closure.
 
 The complete loadable side-module closure is declared once in
-`runtime/policies/sealed-side-modules.v1.tsv`. The builder, guest provenance,
+`wasmer/policies/sealed-side-modules.v1.tsv`. The builder, guest provenance,
 linear-memory receipt, manifest, test fixture, and independent verifier all
 consume that policy. Do not reintroduce a hard-coded shortlist in any of those
 layers. Aliases are regular byte-identical carrier files because sealed path
@@ -197,13 +198,19 @@ Windows x64 is present in the CI matrix as an explicit planned no-op. It does
 not build or publish an asset until its runtime, memory-mapping, packaging, and
 lifecycle contracts are implemented and qualified.
 
-Linux admits direct carrier mappings only after immutable-inode deployment and
-qualifies every server tree under finite cgroup-v2 memory controls. macOS has
-neither primitive, so it copies verified AOT and preinitialized-memory bytes
-into runtime-owned private backing. Its loader audit must account for the exact
-copy, hash every mapped byte, perform no carrier-source writes or sync calls,
-and retain no mutable carrier mapping. These are platform-specific mechanisms
-for the same sealed-carrier integrity contract, not a weaker unqualified mode.
+Ordinary build and recovery qualification runs without privilege escalation.
+Linux uses verified private reflink or streamed snapshots when the carrier is
+not already immutable; macOS uses streamed copies. The loader audit accounts
+for the selected mechanism, hashes every mapped byte, and rejects carrier-source
+writes or sync calls. No mutable carrier mapping is retained.
+
+Linux also supports direct mappings from immutable inodes or a supported read-only
+filesystem. Testing immutable-inode deployment requires a separately provisioned
+carrier: pass its `--immutable-carrier-receipt` and finite `--cgroup-memory-max`,
+`--cgroup-memory-high`, and `--cgroup-swap-max` values to
+`bin/qualify-release-carrier.sh`. That opt-in test verifies the immutable receipt,
+direct activation, and cgroup membership. Product commands never acquire elevated
+privileges themselves; ordinary release CI does not certify this deployment mode.
 
 Wasmer source portability alone does not make another target supported.
 
@@ -234,13 +241,12 @@ The mandatory product boundary is:
 4. build a carrier containing the full declared module closure;
 5. independently verify the carrier;
 6. run initdb, concurrent libpq sessions, regression subset, backend-wave
-   stress, and checkpoint/recovery on every target, plus immutable deployment
-   and cgroup checks on Linux;
+   stress, and checkpoint/recovery on every target using unprivileged activation;
 7. package only the verified carrier from the exact release commit;
 8. freeze it in the publication lock and verify the GitHub release assets.
 
 Generated checkouts, caches, reports, and measurement data remain under
-`target/`. Benchmark harnesses belong under `tools/perf/` and durable benchmark
+`target/`. Benchmark harnesses belong under `benchmarks/perf/` and durable benchmark
 results under `benchmarks/`; neither belongs in the runtime product source.
 
 ## Retired experimental machinery

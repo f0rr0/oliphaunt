@@ -1,0 +1,79 @@
+---
+title: WASIX TypeScript SDK
+description: Run portable PostgreSQL in browsers, Node.js, Bun, Deno, and Electron with one small asynchronous API.
+---
+
+> **Development checkout:** This section describes unreleased package separation. Published installation versions elsewhere on this site refer only to completed public releases.
+
+
+
+# WASIX TypeScript SDK
+
+<SdkLanding id="wasix-typescript" />
+
+`@oliphaunt/wasix-ts` hosts the portable `liboliphaunt-wasix` runtime in a
+browser, Node.js, Bun, Deno, or Electron. It is a separate product from native
+`@oliphaunt/ts`: neither package selects or falls back to the other.
+
+## Install
+
+```sh
+bun add @oliphaunt/wasix-ts@{{release:oliphaunt-wasix-ts}}
+```
+
+Deno uses the same npm package through an `npm:` import.
+
+## Open And Query
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+
+await using database = await Oliphaunt.open();
+const result = await database.query('select $1::int + 1 as answer', [41]);
+console.log(result.rows[0]?.answer);
+```
+
+Omitted storage creates a fresh in-memory database. Browser pages must be
+cross-origin isolated with COOP `same-origin` and COEP `require-corp`.
+
+## Runtime Shape
+
+In browsers the root runs the database in the importing JavaScript realm. On
+Node-compatible hosts the root uses a dedicated Rust owner and keeps the event
+loop responsive. `@oliphaunt/wasix-ts/direct` opts into the lowest-overhead
+blocking native placement, while `@oliphaunt/wasix-ts/worker` uses a
+package-owned JavaScript Worker on every runtime. There is no `execution`
+option or silent placement fallback.
+
+The core package provides queries, commands, callback transactions, buffered
+and callback-streamed raw PostgreSQL protocol bytes, one physical backup,
+restore into persistent storage, and close. Optional
+`@oliphaunt/wasix-tools` adds `pgDump` for root, direct, or Worker handles.
+Non-interactive `psql` works with all three placements on Node, Bun, Deno, and Electron; browsers
+require a Worker handle. The host-only `/server` subpath adds a local endpoint
+on Node, Bun, Deno, and Electron. Cancellation and a dedicated typed COPY API remain
+absent.
+
+## App Responsibilities
+
+- In the development API, supply an independent seed for new browser storage.
+  Reopening existing storage needs no seed; ICU roots still need their ICU data.
+
+- Import only the persistent-storage adapter and exact WASIX extension packages
+  the application uses.
+- Keep the same extension selection when reopening a persistent database.
+- Call `close()` or use `await using`. If an operational workflow explicitly
+  requires PostgreSQL `CHECKPOINT`, issue it through `execute('CHECKPOINT')`.
+- Treat physical archives as same-format recovery artifacts. Use logical SQL
+  dumps for version upgrades or transfers outside the WASIX physical format.
+- Use root, direct, or Worker handles for `pgDump`. On Node, Bun, Deno, and Electron,
+  all three placements also support `psql`; browsers require a Worker handle.
+  Use the lightweight local endpoint for one compatibility client, or the
+  separate postmaster product for concurrency.
+
+## First Query
+
+Use the [guide](/docs/sdk/wasix-typescript/guide) for storage, transactions,
+backup, restore, tools, and local endpoints. Use the [API reference](/docs/sdk/wasix-typescript/api-reference)
+for the exact exported declarations. Rust hosts use the separate
+[Rust WASIX SDK](/docs/sdk/wasix-rust).

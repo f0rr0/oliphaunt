@@ -1,0 +1,38 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-runtime-contract"
+language: "typescript"
+layer: "configuration"
+stack: "systems"
+tags: ["javascript-quality", "extensions", "contract", "runtime"]
+dependsOn:
+
+project:
+  title: "Extension Runtime Contract"
+  description: "Shared contract between base runtimes and exact extension artifacts."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+fileGroups:
+  contract:
+    - "contract.toml"
+    - "extension-artifact-archive-policy.properties"
+    - "extension-target-profiles.mts"
+    - "extension-target-profiles.toml"
+    - "wasix-extension-install.mts"
+
+tasks:
+  test:
+    tags: ["quality", "unit"]
+    command: "bun test ./extensions/contracts"
+    inputs:
+      - "@group(contract)"
+      - "*.test.mts"
+      - "/tools/packaging/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

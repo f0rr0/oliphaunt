@@ -4,7 +4,7 @@ id: "repo"
 language: "unknown"
 layer: "configuration"
 stack: "infrastructure"
-tags: ["repo", "hygiene", "monorepo"]
+tags: ["javascript-quality", "repo", "hygiene", "monorepo"]
 
 project:
   title: "Repository"
@@ -17,157 +17,26 @@ owners:
     "*": ["@oliphaunt/core"]
 
 tasks:
-  check:
-    tags: ["policy", "aggregate", "quality", "static"]
-    command: "true"
-    deps:
-      - "repo:tooling"
-      - "ci-workflows:check"
-      - "repo:docs-policy"
-      - "repo:release-metadata"
-      - "release-tools:broker-dependency-license-audit"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  tooling:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "bash tools/policy/check-tooling-stack.sh"
-    inputs:
-      - "/.github/**/*"
-      - "/.moon/workspace.yml"
-      - "/.moon/toolchains.yml"
-      - "/docs/maintainers/tooling.md"
-      - "/moon.yml"
-      - "@group(pnpm-workspace)"
-      - "/src/**/moon.yml"
-      - "/tools/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  docs-policy:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "bash tools/policy/check-docs.sh"
-    inputs:
-      - "/docs/**/*"
-      - "/src/docs/**/*"
-      - "!/src/docs/node_modules"
-      - "!/src/docs/node_modules/**"
-      - "!/src/docs/.next/**"
-      - "/tools/policy/check-docs.sh"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  release-metadata:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"
-    inputs:
-      - "/README.md"
-      - "/docs/**/*"
-      - "/Package.swift"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/dev/bun.sh"
-      - "/tools/dev/capture-command-output.mjs"
-      - "/tools/dev/moon-command.mjs"
-      - "/tools/release/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-      # The macOS publication-host job owns this exact proof in hosted CI.
-      runInCI: skip
   prek:
     tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools"]
-    command: "bash tools/policy/check-prek.sh"
+    command: "bash tools/dev/check-prek.sh"
     inputs:
-      - "/.config/nextest.toml"
-      - "/.lychee.toml"
-      - "/.markdownlint-cli2.jsonc"
-      - "/.typos.toml"
-      - "/biome.json"
-      - "/deny.toml"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/prek.toml"
-      - "/renovate.json"
-      - "/rust-toolchain.toml"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/policy/check-prek.sh"
+      - "/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
       # Local hook validation only; hosted checks already run the owned format
       # and policy tasks without bootstrapping every maintainer binary.
       runInCI: false
-  package:
-    tags: ["package"]
-    command: "bash tools/policy/check-crate-package.sh --allow-dirty"
-    inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/src/**/Cargo.toml"
-      - "/src/**/*.rs"
-      - "/tools/policy/check-crate-size.sh"
+  js-format-check:
+    command: "bun x --no-install biome format package.json biome.json renovate.json .markdownlint-cli2.jsonc"
+    inputs: ["/package.json", "/biome.json", "/renovate.json", "/.markdownlint-cli2.jsonc"]
     options:
-      cache: true
-      runFromWorkspaceRoot: true
-      runInCI: false
-  coverage:
-    tags: ["coverage", "quality"]
-    command: "tools/coverage/summarize"
-    deps:
-      - target: "coverage-tools:rust"
-        cacheStrategy: "outputs"
-      - target: "coverage-tools:swift"
-        cacheStrategy: "outputs"
-      - target: "coverage-tools:kotlin"
-        cacheStrategy: "outputs"
-      - target: "coverage-tools:js"
-        cacheStrategy: "outputs"
-      - target: "coverage-tools:react-native"
-        cacheStrategy: "outputs"
-      - target: "coverage-tools:wasix-rust"
-        cacheStrategy: "outputs"
-      - target: "coverage-tools:wasix-ts"
-        cacheStrategy: "outputs"
-    inputs:
-      - "/coverage/baseline.toml"
-      - "/tools/coverage/**/*"
-    outputs:
-      - "/target/coverage/summary.json"
-      - "/target/coverage/summary.md"
+      mergeArgs: replace
+      mergeInputs: replace
+  js-lint:
+    command: "bun x --no-install biome lint --diagnostic-level=error package.json biome.json renovate.json .markdownlint-cli2.jsonc"
+    inputs: ["/package.json", "/biome.json", "/renovate.json", "/.markdownlint-cli2.jsonc"]
     options:
-      cache: true
-      runFromWorkspaceRoot: true
-      runInCI: false
-  coverage-policy:
-    tags: ["coverage", "policy"]
-    command: "bun tools/policy/check-coverage-baseline.mjs all"
-    inputs:
-      - "/coverage/baseline.toml"
-      - "/tools/policy/check-coverage-baseline.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
+      mergeArgs: replace
+      mergeInputs: replace

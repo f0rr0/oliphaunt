@@ -7,171 +7,39 @@ extractor="$root/tools/dev/extract-pinned-zip.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
-python_bin=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1 &&
-    "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
-    python_bin="$candidate"
-    break
-  fi
-done
-[ -n "$python_bin" ] || {
-  echo "Python 3.8 or newer is required" >&2
-  exit 1
-}
 
 mkdir -p "$tmp/fixtures" "$tmp/config" "$tmp/bin" "$tmp/home"
-"$python_bin" - "$tmp" <<'PY'
-import hashlib
-import stat
-import sys
-import zipfile
-from pathlib import Path
+bash "$root/tools/dev/bun.sh" - "$tmp" <<'TS'
+import {createHash} from 'node:crypto';
+import {writeFileSync} from 'node:fs';
+import {zipArchive} from './tools/packaging/testdata/zip-fixture.mts';
+const root = process.argv[2];
+const sha = data => createHash('sha256').update(data).digest('hex');
+const write = (name, data) => writeFileSync(root + '/' + name, data);
 
-root = Path(sys.argv[1])
-fixtures = root / "fixtures"
-config = root / "config"
+function archive(name, version, layout = 'cmdline-tools') {
+  const entries = {
+    [layout + '/bin/sdkmanager']: "#!/usr/bin/env bash\nset -euo pipefail\nsdk_root=\"\"\noperation=\"\"\npackages=()\nfor argument in \"$@\"; do\n  case \"$argument\" in\n    --sdk_root=*) sdk_root=\"${argument#--sdk_root=}\" ;;\n    --version) operation=version ;;\n    --licenses) operation=licenses ;;\n    --install) operation=install ;;\n    *) packages+=(\"$argument\") ;;\n  esac\ndone\n[ -n \"$sdk_root\" ]\ncase \"$operation\" in\n  version)\n    printf '{version}\\n'\n    ;;\n  licenses)\n    exit 0\n    ;;\n  install)\n    expected=(\n      platform-tools\n      'platforms;android-36'\n      'build-tools;36.0.0'\n      'cmake;3.22.1'\n      'ndk;27.0.12077973'\n    )\n    [ \"${#packages[@]}\" = \"${#expected[@]}\" ]\n    for index in \"${!expected[@]}\"; do\n      [ \"${packages[$index]}\" = \"${expected[$index]}\" ]\n    done\n    mkdir -p \\\n      \"$sdk_root/platform-tools\" \\\n      \"$sdk_root/platforms/android-36\" \\\n      \"$sdk_root/build-tools/36.0.0\" \\\n      \"$sdk_root/cmake/3.22.1/bin\" \\\n      \"$sdk_root/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin\"\n    printf '%s\\n' '#!/bin/sh' 'exit 0' > \"$sdk_root/platform-tools/adb\"\n    chmod +x \"$sdk_root/platform-tools/adb\"\n    printf 'AndroidVersion.ApiLevel=36\\n' > \"$sdk_root/platforms/android-36/source.properties\"\n    printf 'fake-android-jar\\n' > \"$sdk_root/platforms/android-36/android.jar\"\n    printf 'Pkg.Revision=36.0.0\\n' > \"$sdk_root/build-tools/36.0.0/source.properties\"\n    printf '%s\\n' '#!/bin/sh' 'exit 0' > \"$sdk_root/build-tools/36.0.0/aapt2\"\n    printf '%s\\n' '#!/bin/sh' 'exit 0' > \"$sdk_root/build-tools/36.0.0/zipalign\"\n    printf '%s\\n' '#!/bin/sh' 'exit 0' > \"$sdk_root/build-tools/36.0.0/apksigner\"\n    chmod +x \\\n      \"$sdk_root/build-tools/36.0.0/aapt2\" \\\n      \"$sdk_root/build-tools/36.0.0/zipalign\" \\\n      \"$sdk_root/build-tools/36.0.0/apksigner\"\n    printf 'Pkg.Revision = 3.22.1\\n' > \"$sdk_root/cmake/3.22.1/source.properties\"\n    printf '%s\\n' '#!/bin/sh' 'exit 0' > \"$sdk_root/cmake/3.22.1/bin/cmake\"\n    chmod +x \"$sdk_root/cmake/3.22.1/bin/cmake\"\n    printf 'Pkg.Revision = 27.0.12077973\\n' > \"$sdk_root/ndk/27.0.12077973/source.properties\"\n    printf '%s\\n' '#!/bin/sh' 'exit 0' > \"$sdk_root/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang\"\n    chmod +x \"$sdk_root/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang\"\n    count=0\n    [ ! -f \"$sdk_root/fake-install-count\" ] || count=\"$(cat \"$sdk_root/fake-install-count\")\"\n    printf '%s\\n' \"$((count + 1))\" > \"$sdk_root/fake-install-count\"\n    ;;\n  *)\n    exit 2\n    ;;\nesac\n".replace('{version}', version),
+    [layout + '/bin/avdmanager']: '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n',
+    [layout + '/bin/apkanalyzer']: '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n',
+    [layout + '/source.properties']: 'Pkg.Revision=20.0\n',
+    [layout + '/lib/sdkmanager-classpath.jar']: 'fake-classpath\n',
+  };
+  const bytes = zipArchive(Object.entries(entries).map(([name,data]) => ({name,data,method: 8,externalAttributes: (name.includes('/bin/') ? 0o100755 : 0o100644) << 16})));
+  write('fixtures/' + name, bytes);
+  return sha(bytes);
+}
+for (const [name, digest] of [
+  ['android.toml', archive('android.zip','20.0')],
+  ['android-bad-sha.toml','0'.repeat(64)],
+  ['android-wrong-version.toml',archive('android-wrong-version.zip','19.0')],
+  ['android-wrong-layout.toml',archive('android-wrong-layout.zip','20.0','not-cmdline-tools')],
+]) write('config/' + name, "[packages]\ncommand_line_tools_build = \"14742923\"\ncommand_line_tools_revision = \"20.0\"\nndk = \"27.0.12077973\"\ncmake = \"3.22.1\"\ncompile_sdk = \"36\"\nbuild_tools = \"36.0.0\"\n\n[command_line_tools.linux]\nurl = \"https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip\"\nmirror_url = \"https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-linux-14742923_latest.zip\"\nsha256 = \"{digest}\"\nentry_count = \"5\"\n\n[command_line_tools.mac]\nurl = \"https://dl.google.com/android/repository/commandlinetools-mac-14742923_latest.zip\"\nmirror_url = \"https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-mac-14742923_latest.zip\"\nsha256 = \"{digest}\"\nentry_count = \"5\"\n".replaceAll('{digest}', digest));
 
-def sdkmanager(version):
-    return f'''#!/usr/bin/env bash
-set -euo pipefail
-sdk_root=""
-operation=""
-packages=()
-for argument in "$@"; do
-  case "$argument" in
-    --sdk_root=*) sdk_root="${{argument#--sdk_root=}}" ;;
-    --version) operation=version ;;
-    --licenses) operation=licenses ;;
-    --install) operation=install ;;
-    *) packages+=("$argument") ;;
-  esac
-done
-[ -n "$sdk_root" ]
-case "$operation" in
-  version)
-    printf '{version}\\n'
-    ;;
-  licenses)
-    exit 0
-    ;;
-  install)
-    expected=(
-      platform-tools
-      'platforms;android-36'
-      'build-tools;36.0.0'
-      'cmake;3.22.1'
-      'ndk;27.0.12077973'
-    )
-    [ "${{#packages[@]}}" = "${{#expected[@]}}" ]
-    for index in "${{!expected[@]}}"; do
-      [ "${{packages[$index]}}" = "${{expected[$index]}}" ]
-    done
-    mkdir -p \
-      "$sdk_root/platform-tools" \
-      "$sdk_root/platforms/android-36" \
-      "$sdk_root/build-tools/36.0.0" \
-      "$sdk_root/cmake/3.22.1/bin" \
-      "$sdk_root/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin"
-    printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/platform-tools/adb"
-    chmod +x "$sdk_root/platform-tools/adb"
-    printf 'AndroidVersion.ApiLevel=36\\n' > "$sdk_root/platforms/android-36/source.properties"
-    printf 'fake-android-jar\\n' > "$sdk_root/platforms/android-36/android.jar"
-    printf 'Pkg.Revision=36.0.0\\n' > "$sdk_root/build-tools/36.0.0/source.properties"
-    printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/build-tools/36.0.0/aapt2"
-    printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/build-tools/36.0.0/zipalign"
-    printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/build-tools/36.0.0/apksigner"
-    chmod +x \
-      "$sdk_root/build-tools/36.0.0/aapt2" \
-      "$sdk_root/build-tools/36.0.0/zipalign" \
-      "$sdk_root/build-tools/36.0.0/apksigner"
-    printf 'Pkg.Revision = 3.22.1\\n' > "$sdk_root/cmake/3.22.1/source.properties"
-    printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/cmake/3.22.1/bin/cmake"
-    chmod +x "$sdk_root/cmake/3.22.1/bin/cmake"
-    printf 'Pkg.Revision = 27.0.12077973\\n' > "$sdk_root/ndk/27.0.12077973/source.properties"
-    printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
-    chmod +x "$sdk_root/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
-    count=0
-    [ ! -f "$sdk_root/fake-install-count" ] || count="$(cat "$sdk_root/fake-install-count")"
-    printf '%s\\n' "$((count + 1))" > "$sdk_root/fake-install-count"
-    ;;
-  *)
-    exit 2
-    ;;
-esac
-'''.encode()
+TS
 
-def avdmanager():
-    return b'''#!/usr/bin/env bash
-set -euo pipefail
-exit 0
-'''
-
-def apkanalyzer():
-    return b'''#!/usr/bin/env bash
-set -euo pipefail
-exit 0
-'''
-
-def write_archive(name, version, layout="cmdline-tools"):
-    path = fixtures / name
-    entries = {
-        f"{layout}/bin/sdkmanager": sdkmanager(version),
-        f"{layout}/bin/avdmanager": avdmanager(),
-        f"{layout}/bin/apkanalyzer": apkanalyzer(),
-        f"{layout}/source.properties": b"Pkg.Revision=20.0\n",
-        f"{layout}/lib/sdkmanager-classpath.jar": b"fake-classpath\n",
-    }
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for member, contents in entries.items():
-            info = zipfile.ZipInfo(member)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (
-                stat.S_IFREG
-                | (0o755 if member.endswith(("sdkmanager", "avdmanager", "apkanalyzer")) else 0o644)
-            ) << 16
-            archive.writestr(info, contents)
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-good_sha = write_archive("android.zip", "20.0")
-wrong_version_sha = write_archive("android-wrong-version.zip", "19.0")
-wrong_layout_sha = write_archive("android-wrong-layout.zip", "20.0", "not-cmdline-tools")
-
-def manifest(name, digest):
-    (config / name).write_text(f'''[packages]
-command_line_tools_build = "14742923"
-command_line_tools_revision = "20.0"
-ndk = "27.0.12077973"
-cmake = "3.22.1"
-compile_sdk = "36"
-build_tools = "36.0.0"
-
-[command_line_tools.linux]
-url = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
-mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-linux-14742923_latest.zip"
-sha256 = "{digest}"
-entry_count = "5"
-
-[command_line_tools.mac]
-url = "https://dl.google.com/android/repository/commandlinetools-mac-14742923_latest.zip"
-mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-mac-14742923_latest.zip"
-sha256 = "{digest}"
-entry_count = "5"
-''', encoding="utf-8")
-
-manifest("android.toml", good_sha)
-manifest("android-bad-sha.toml", "0" * 64)
-manifest("android-wrong-version.toml", wrong_version_sha)
-manifest("android-wrong-layout.toml", wrong_layout_sha)
-PY
-
-"$python_bin" - "$tmp/bin/curl" <<'PY'
-import stat
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-path.write_text(r'''#!/usr/bin/env bash
+cat >"$tmp/bin/curl" <<'SH'
+#!/usr/bin/env bash
 set -euo pipefail
 output=""
 url=""
@@ -205,9 +73,8 @@ case "$CURL_MODE" in
     exit 2
     ;;
 esac
-''', encoding="utf-8")
-path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-PY
+SH
+chmod 0700 "$tmp/bin/curl"
 
 common_env=(
   "HOME=$tmp/home"

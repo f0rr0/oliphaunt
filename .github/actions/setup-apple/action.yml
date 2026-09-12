@@ -2,6 +2,10 @@ name: Set up Apple
 description: Select and verify the supported Xcode toolchain for Apple SDK jobs.
 
 inputs:
+  install-build-dependencies:
+    description: Install PostgreSQL build utilities when the job compiles the runtime.
+    required: false
+    default: "true"
   xcode-minor:
     description: Supported Xcode minor version installed on the pinned macOS runner image.
     required: false
@@ -90,24 +94,27 @@ runs:
         gem --version
 
     - name: Install Apple build dependencies
+      if: ${{ inputs.install-build-dependencies == 'true' }}
       shell: bash
       run: |
         .github/scripts/prepare-macos-homebrew.sh
-        if ! brew list bison >/dev/null 2>&1; then
-          installed=0
-          for attempt in 1 2 3; do
-            if HOMEBREW_NO_AUTO_UPDATE=1 brew install bison; then
-              installed=1
-              break
+        for formula in bison coreutils; do
+          if ! brew list "$formula" >/dev/null 2>&1; then
+            installed=0
+            for attempt in 1 2 3; do
+              if HOMEBREW_NO_AUTO_UPDATE=1 brew install "$formula"; then
+                installed=1
+                break
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 15))
+              fi
+            done
+            if [ "$installed" != "1" ]; then
+              echo "setup-apple: Homebrew failed to install $formula after 3 attempts" >&2
+              exit 1
             fi
-            if [ "$attempt" -lt 3 ]; then
-              sleep $((attempt * 15))
-            fi
-          done
-          if [ "$installed" != "1" ]; then
-            echo "setup-apple: Homebrew failed to install bison after 3 attempts" >&2
-            exit 1
           fi
-        fi
+        done
         bison_prefix="$(brew --prefix bison)"
         "$bison_prefix/bin/bison" --version | head -n 1

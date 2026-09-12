@@ -12,6 +12,36 @@ fail() {
   exit 1
 }
 
+# The GUI session owns the driver process and its descendants.
+if [ "${1:-}" = --run-built ]; then
+  [ "$#" = 3 ] || fail 'internal GUI invocation requires DRIVER APPLICATION'
+  command -v setsid >/dev/null || fail 'missing setsid'
+  command -v timeout >/dev/null || fail 'missing GNU timeout'
+  app_data="$(mktemp -d)"
+  driver_pid=''
+  # This function is invoked only by the EXIT trap.
+  # shellcheck disable=SC2317
+  cleanup_driver() {
+    if [ -n "$driver_pid" ]; then
+      kill -TERM -- "-$driver_pid" 2>/dev/null || true
+      if kill -0 -- "-$driver_pid" 2>/dev/null; then
+        sleep 1
+        kill -KILL -- "-$driver_pid" 2>/dev/null || true
+      fi
+      wait "$driver_pid" 2>/dev/null || true
+    fi
+    rm -rf "$app_data"
+  }
+  trap 'cleanup_driver' EXIT
+  ports="$(bun "$root/examples/tools/tauri-webdriver-smoke.mts" --ports)"
+  read -r port native_port <<< "$ports"
+  XDG_DATA_HOME="$app_data" XDG_CONFIG_HOME="$app_data" XDG_CACHE_HOME="$app_data" \
+    setsid -- "$2" --port "$port" --native-port "$native_port" &
+  driver_pid=$!
+  timeout --kill-after=3s 210s bun "$root/examples/tools/tauri-webdriver-smoke.mts" "$port" "$3"
+  exit 0
+fi
+
 source_app_dir="${1:-}"
 if [ -z "$source_app_dir" ]; then
   fail "usage: examples/tools/run-tauri-webdriver-smoke.sh <tauri-example-dir>"
@@ -30,7 +60,7 @@ if [ ! -f "$source_app_path/src-tauri/Cargo.toml" ]; then
 fi
 
 command -v node >/dev/null 2>&1 || fail "missing node"
-command -v pnpm >/dev/null 2>&1 || fail "missing pnpm"
+command -v bun >/dev/null 2>&1 || fail "missing bun"
 command -v WebKitWebDriver >/dev/null 2>&1 ||
   fail "missing WebKitWebDriver; install webkit2gtk-driver on Debian/Ubuntu"
 
@@ -40,14 +70,14 @@ if [ ! -x "$driver" ]; then
 fi
 
 source_app_relative="${source_app_path#"$root"/}"
-scratch="$root/target/e2e/tauri-apps/${source_app_relative//\//-}/$$"
+scratch="$root/target/e2e/tauri-apps${source_app_relative//\//-}/$$"
 trap 'rm -rf "$scratch"' EXIT
 rm -rf "$scratch"
 app_dir="$(examples/tools/stage-tauri-webdriver-app.sh "$source_app_path" "$scratch")"
 rm -f "$app_dir/src-tauri/Cargo.lock"
 
-pnpm --dir "$app_dir" install --no-frozen-lockfile
-pnpm --dir "$app_dir" tauri build --debug
+bun install --cwd "$app_dir"
+bun run --cwd "$app_dir" tauri build --debug
 
 package_name="$(
   awk -F'"' '
@@ -64,13 +94,7 @@ if [ ! -x "$application" ]; then
   fail "missing built Tauri application: $application"
 fi
 
-run_smoke=(
-  env
-  "OLIPHAUNT_E2E_TAURI_DRIVER=$driver"
-  "OLIPHAUNT_E2E_TAURI_APP=$application"
-  node
-  "$root/examples/tools/tauri-webdriver-smoke.mjs"
-)
+run_smoke=(bash "$root/examples/tools/run-tauri-webdriver-smoke.sh" --run-built "$driver" "$application")
 
 if command -v xvfb-run >/dev/null 2>&1; then
   xvfb-run -a "${run_smoke[@]}"

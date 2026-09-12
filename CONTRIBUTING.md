@@ -8,28 +8,29 @@ opening a PR:
 ```sh
 tools/dev/bootstrap-tools.sh
 moon run dev-tools:doctor
-moon run policy-tools:js-format-check policy-tools:rust-format-check
+moon run repo:js-format-check
 moon run :check :compile :format-check :lint :tools-compile --affected
-moon run :test :unit :tools-unit --affected
+moon run :test :tools-unit --affected
 ```
 
 The runtime smoke starts embedded Postgres and is intentionally slower than unit tests.
 The protected `publish-dry-run` operation is a release-candidate check: run it
-from the GitHub `Release` workflow after the exact release-bump commit has a
-successful `Qualified` CI record. The documented same-version control recovery
+from the GitHub `Release` workflow. It requires a successful, product-scoped
+`Qualified` CI record for the exact release-bump commit; the workflow reuses an
+eligible run or requests qualification when needed. The documented same-version control recovery
 uses a separately qualified linear recovery head bound to that original
 release-bump commit. It is not a routine source-PR check.
 
 Install local hooks with:
 
 ```sh
-tools/dev/bun.sh tools/dev/install-hooks.mjs
+bash tools/dev/install-hooks.sh
 ```
 
 Hooks stay deliberately smaller than CI: pre-commit handles file hygiene and
 formatting, while commit-msg validates Conventional Commit messages. Run
 `moon run release-tools:metadata` for a product metadata change. Release code
-uses `release-tools:unit`; repository policy uses `policy-tools:unit`; workflow
+uses `release-tools:test`; workflow
 and planner code uses `ci-workflows:check`. CI remains the source of truth for generated AOT runtime
 matrices, packaging, Tauri, frontend, feature combinations, public API
 compatibility, and supply-chain checks.
@@ -43,7 +44,7 @@ authoritative.
 ## Assets
 
 Bundled runtime assets must stay aligned with product-local runtime metadata
-under `src/runtimes/` and extension metadata under `src/extensions/`. If a
+under `runtimes/` and extension metadata under `extensions/`. If a
 runtime or extension artifact target changes, update the owning product
 metadata and run the affected Moon checks.
 

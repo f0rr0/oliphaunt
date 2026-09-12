@@ -166,13 +166,13 @@ if [ -d "$install_dir" ]; then
   rm -rf "$install_dir"
 fi
 
-for command in curl tar mktemp python3; do
+for command in curl tar mktemp bun xz; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Wasmer LLVM installation requires $command" >&2
     exit 127
   fi
 done
-if [ ! -f "$ACTION_PATH/validate-archive.py" ]; then
+if [ ! -f "$ACTION_PATH/validate-archive.mts" ]; then
   echo "Wasmer LLVM archive validator is missing from $ACTION_PATH" >&2
   exit 127
 fi
@@ -233,7 +233,7 @@ if [ "$actual_sha256" != "$LLVM_SHA256" ]; then
   exit 1
 fi
 
-python3 "$ACTION_PATH/validate-archive.py" "$archive" "$LLVM_BYTES"
+xz -dc "$archive" | bun "$ACTION_PATH/validate-archive.mts" "$LLVM_BYTES"
 
 staging_dir="$(mktemp -d "$cache_root/.llvm-stage.XXXXXX")"
 if ! tar -xJf "$archive" -C "$staging_dir"; then

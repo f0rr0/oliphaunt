@@ -5,7 +5,7 @@ Status: normative external-setup guide. Last verified: 2026-07-30. Owner: reposi
 This document covers state that cannot live in the repository. The executable
 contract is the direct least-privilege workflow in
 `.github/workflows/release.yml` and
-`tools/release/check_publish_environment.mjs`; update this guide when either
+`tools/release/check_publish_environment.mts`; update this guide when either
 changes.
 
 ## GitHub controls
@@ -48,7 +48,7 @@ GitHub can reject tags on an older candidate whose workflow files differ from
 the publishing commit, even with an existing transport ref. The normal
 `GITHUB_TOKEN` cannot request `workflows: write`. The pinned
 `actions/create-github-app-token` action requests only the two required
-permissions for this repository, checks them before candidate download, and
+permissions for this repository, checks them before publication, and
 mints fresh tokens immediately before product/transport tags and SwiftPM tags.
 It revokes each installation token during job cleanup. Ordinary publication,
 attestations, and registry authentication keep their existing credentials.
@@ -134,7 +134,7 @@ mutation:
 
 ```sh
 lock=target/release/publication-lock.json
-tools/dev/bun.sh tools/release/trusted-publisher-config.mjs --lock "$lock"
+bash tools/release/trusted-publisher-config.sh --lock "$lock"
 ```
 
 Authenticated `--audit` remains read-only. Mutation exists only behind the
@@ -156,8 +156,8 @@ with the `release-publish` grants. Bootstrap's
 content write is solely to create the immutable
 release transport tag immediately before its first registry mutation;
 reruns do not create, move, or delete repository refs.
-Dry-run and publish share one YAML-anchored step list but remain separate
-permission and environment boundaries.
+Candidate preparation, conditional bootstrap, and publication are dependent
+jobs in one `publish` run with separate permissions and environments.
 The read-only dry-run validates every public release visible to its token and
 every selected product tag. `publish` uses its content-write token to require
 the complete live draft/public release set before mutation. A hidden draft is
@@ -165,14 +165,15 @@ therefore never misclassified as absent proof, and dry-run does not gain write
 capability merely to list drafts.
 
 Bootstrap recovery uses GitHub's rerun of the original failed workflow run.
-The rerun retains the original workflow SHA and explicit approved dry-run ID,
+The rerun retains the original workflow SHA and explicit candidate identity,
 then verifies the exact `oliphaunt-release-transport/<full-sha>` tag instead of
 resolving moving `main`.
 
-Audit the live controls without changing them:
+Audit the live controls without changing them for release setup or an actual
+public registry/tag/asset mutation:
 
 ```sh
-tools/dev/bun.sh tools/release/audit-github-release-controls.mjs \
+tools/dev/bun.sh tools/release/audit-github-release-controls.mts \
   --governance solo \
   --bootstrap-state idle
 ```
@@ -181,12 +182,11 @@ Use `--governance team` only when an independent maintainer is actually
 available. Bootstrap state is an explicit credential lifecycle, not an
 authorization shortcut:
 
-- `idle` is the default before first-identity bootstrap, including
-  qualification, release-PR preparation, and dry-run; it requires both
-  bootstrap tokens to be absent;
+- `idle` is the default when bootstrap tokens are absent; it requires both
+  token names to be absent and does not describe whether source CI may run;
 - `ready` is valid only after every reviewed short-lived Cargo/npm token
   required by the approved lock has been installed for an imminent
-  `publish-bootstrap` dispatch; it accepts either registry token or both, and
+  `publish` dispatch that will bootstrap missing identities; it accepts either registry token or both, and
   requires at least one. Provision only the registries whose exact locked
   identities remain absent. A recovery in which every selected Cargo/npm
   version already matches stays `idle` and requires neither token; and
@@ -194,7 +194,14 @@ authorization shortcut:
   configured, and both tokens were revoked and removed; it also requires the
   token names to be absent.
 
-The `publish-bootstrap` workflow independently derives the registries required
+This audit is not an ordinary branch-push, release-PR or source-qualification
+gate. Those jobs do not select `release-bootstrap` and cannot receive its
+environment secrets. A bootstrap lifecycle finding does not justify blocking
+unrelated source work, changing credentials, or claiming a different lifecycle.
+It remains a release setup finding to resolve before the affected public
+mutation. No remote settings or secrets are changed by this diagnostic.
+
+The conditional bootstrap job independently derives the registries required
 by the approved lock and rejects each missing credential immediately before
 mutation, so an `idle` audit cannot authorize bootstrap publication. The
 auditor reads the canonical repository through `gh api`, prints deterministic
@@ -213,7 +220,7 @@ The publication catalog defines stable carrier topology; the frozen publication 
 
 1. Create the maintainer account/team.
 2. Inventory the exact first-release lock. Crates.io's documented per-user new-name limit is a burst of 5 followed by one new crate every 10 minutes. Do not copy a carrier count from this document: the publication catalog is the stable identity model, while oversized payloads add generated `*-part-NNN` carriers only when the candidate artifacts and publication lock are assembled. For `C` missing Cargo names, the untouched-default rate-limit floor is `max(0, C - 5) * 10 minutes`. Crates.io support may grant exceptional capacity, but no API exposes that account state, so the workflow never treats an operator-entered number as proof. A valid `429 Retry-After` response and the next read-only registry inventory are authoritative.
-3. Use the protected `publish-bootstrap` operation for only the missing first versions. The operator supplies the run ID of the prior dry-run that emitted the approved lock and complete publication candidate. The slim bootstrap job verifies and atomically installs those exact bytes; it does not rebuild them. Before initializing its ledger or sending any npm/Cargo mutation, the workflow queries crates.io read-only and reports exact selected/existing/missing counts and the official-default duration floor. It admits only a dependency-closed batch that fits the bounded job window. Independent Cargo and npm mutations overlap; each registry remains strictly sequential, and dependencies within the absent-name scope remain barriers. An optional npm dependency on an existing package name stays on the normal trusted-publication graph; any other unavailable locked dependency stops bootstrap.
+3. Dispatch `publish`; its conditional protected bootstrap job creates only missing first versions using the candidate prepared in the same run. The slim bootstrap job verifies and atomically installs those exact bytes; it does not rebuild them. Before initializing its ledger or sending any npm/Cargo mutation, the workflow queries crates.io read-only and reports exact selected/existing/missing counts and the official-default duration floor. It admits only a dependency-closed batch that fits the bounded job window. Independent Cargo and npm mutations overlap; each registry remains strictly sequential, and dependencies within the absent-name scope remain barriers. An optional npm dependency on an existing package name stays on the normal trusted-publication graph; any other unavailable locked dependency stops bootstrap.
 
    When the exact lock cannot finish in one six-hour hosted job, the job drains
    in-flight uploads, reconciles successful mutations, uploads its
@@ -257,9 +264,9 @@ The publication catalog defines stable carrier topology; the frozen publication 
    ```sh
    lock=target/release/publication-lock.json
    digest="$(jq -er .lockDigest "$lock")"
-   tools/dev/bun.sh tools/release/trusted-publisher-config.mjs \
+   bash tools/release/trusted-publisher-config.sh \
      --audit --ecosystem cargo --lock "$lock"
-   tools/dev/bun.sh tools/release/trusted-publisher-config.mjs \
+   bash tools/release/trusted-publisher-config.sh \
      --apply --confirm-lock-digest "$digest" --ecosystem cargo --lock "$lock"
    ```
 
@@ -329,10 +336,10 @@ publish before their aggregator, and are not independent release products.
    ```sh
    lock=target/release/publication-lock.json
    digest="$(jq -er .lockDigest "$lock")"
-   tools/dev/bun.sh tools/release/trusted-publisher-config.mjs \
+   bash tools/release/trusted-publisher-config.sh \
      --audit --ecosystem npm --batch 1 --lock "$lock" \
      --output target/release/npm-trust-batch-1-pre-audit.json
-   tools/dev/bun.sh tools/release/trusted-publisher-config.mjs \
+   bash tools/release/trusted-publisher-config.sh \
      --apply --confirm-lock-digest "$digest" \
      --ecosystem npm --batch 1 --lock "$lock" \
      --output target/release/npm-trust-batch-1-apply.json
@@ -435,33 +442,33 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
    head. A raw Release Please head is never
    mergeable merely because its direct versions and changelogs look complete.
 4. Merge it and wait for that exact commit's non-cancelled `Qualified` CI run.
-5. Run `publish-dry-run`. It must download that run's exact-SHA build artifacts, create/freeze the exhaustive publication lock and complete publication candidate, and perform clean package/install checks without credentials. Preserve the successful run ID containing both approval artifacts.
-6. If npm/crates first identities are missing, run `publish-bootstrap` with that approved dry-run ID. Before any registry identity becomes public, it resolves the exact merged Release Please PR by the release SHA, requires pending or already-tagged lifecycle state, and proves the tagged label still exists. At the mutation boundary it uses the exact transport rule above; an absent tag is its first mutation and requires the immediately preceding current-main proof. It installs the complete candidate without rebuilding, writes a genesis checkpoint before the first registry mutation, and appends immutable byte receipts throughout the run. If the job reports incomplete, use its exact rerun command after the reported delay; the rerun restores the same lock-bound ledger and approval even if `main` advanced. After the chain seals, use the exact lock's `trusted-publisher-config.mjs` plan, audit, and explicit apply flow above; retain the final reports and revoke the bootstrap tokens. Bootstrap does not promote GitHub releases or publish unrelated registries.
-7. Run normal `publish` on the same current `main` SHA. Before the first
-   mutation it repeats the exact Release Please markability assertion and pins
-   the immutable transport tag. One protected job stages GitHub releases,
-   attempts the complete dependency-ordered registry plan, runs public
-   Cargo/npm/Maven and Git/Swift probes from fresh anonymous caches, and
-   promotes drafts last. It has no normal checkpoint, continuation, or phase
-   handoff. If it stops, use GitHub's rerun on the original Release run;
-   matching immutable state is byte-verified and skipped. The final label updates add
-   `autorelease: tagged` and remove `autorelease: pending` without replacing
-   unrelated labels.
-8. Preserve the publication lock, ledger, provenance, and workflow URL with the release.
+5. Run `publish`. It prepares the frozen lock and complete candidate from
+   exact-SHA CI artifacts, then automatically bootstraps missing Cargo/npm
+   names, publishes the dependency-ordered registry plan, checks anonymous
+   public consumers, and promotes GitHub drafts last. Existing names use
+   trusted publishing. Provision short-lived bootstrap tokens only if names
+   are absent. No separate dry-run, bootstrap dispatch, or approval run ID is
+   needed on this path.
+6. If a job stops, preserve its evidence and use
+   `gh run rerun <run-id> --failed` after any reported not-before delay.
+   Bootstrap restores its checkpoint; publishers prove and skip matching
+   immutable bytes. Successful preparation is reused.
+7. After first identities exist, configure their trusted publishers with the
+   exact lock's `trusted-publisher-config.sh` plan/audit/apply flow and revoke
+   bootstrap tokens before the next release. Preserve the lock, ledger,
+   provenance, and workflow URL.
 
 The first generated release PR consumes the one-time `bootstrap-sha` boundary.
-`sync-release-pr.mjs` removes it on that PR once any manifest entry advances
+`sync-release-pr.mts` removes it on that PR once any manifest entry advances
 from `0.0.0`; the release-bump commit must contain that removal. Never delete
 the boundary on the unreleased introduction tree. Never restore it on a
 publishable release-bump tree.
 
-On every path, `release_commit` is only an equality assertion for the workflow
-commit; it cannot select an older commit and the workflow ref must be `main`.
-An incomplete bootstrap is resumed by rerunning the original workflow run,
-which stays pinned to its release commit and approved candidate. Release
-tooling fixes create a new candidate SHA and require new qualification. There
-is no temporary Release Please target branch, and a later commit cannot finish
-the release.
+Normally `release_commit` asserts the current workflow SHA. For a narrowly
+permitted publication-only fix, `publish` may supply an approved ancestor SHA
+and its `approval_run_id`. The controller rejects product, packaging, build,
+CI, and lockfile changes. The old candidate retains its exact qualification
+and bytes; the current controller requires successful CI `Required`.
 
 ## Recovery
 
@@ -476,10 +483,12 @@ qualification.
 Normal recovery reruns `publish` at the exact same release commit with the same
 qualified artifacts and approved lock. Use GitHub's rerun for the failed
 Release run rather than a fresh dispatch after `main` moves. The original run
-and referenced CI/dry-run artifacts must still be available. The rerun
+and referenced CI/candidate artifacts must still be available. The rerun
 byte-verifies public registry and GitHub state, skips exact matches, and writes
-only missing state. A required fix creates a new candidate and requires normal
-versioning and qualification. First-identity bootstrap alone restores its checkpoint chain. See
+only missing state. Product changes require a new candidate and normal
+versioning and qualification. Publication-only fixes may reuse a completed
+Release run whose candidate preparation succeeded, through the explicit
+source SHA and approval run inputs. First-identity bootstrap alone restores its checkpoint chain. See
 `.codex/skills/release-oliphaunt/references/recovery.md` for recovery.
 
 ## External readiness checklist

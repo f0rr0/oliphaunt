@@ -1,0 +1,58 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-artifacts-wasix"
+language: "unknown"
+layer: "tool"
+stack: "systems"
+tags: ["javascript-quality", "extensions", "artifacts", "wasix"]
+dependsOn:
+  - id: "extension-runtime-contract"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+  - id: "source-inputs"
+    scope: "build"
+
+project:
+  title: "WASIX Extension Artifacts"
+  description: "Publishable exact-extension artifact checks for the WASIX runtime."
+  owner: "oliphaunt"
+
+tasks:
+  compiler-output:
+    tags: ["artifact", "ci-liboliphaunt-wasix-runtime"]
+    command: "bash extensions/artifacts/wasix/tools/build-portable.sh"
+    deps: ["liboliphaunt-wasix:runtime-portable"]
+    inputs: ["tools/build-portable.sh", "/runtimes/liboliphaunt-wasix/assets/build/**/*", "/runtimes/liboliphaunt-wasix/tools/extension-build-scripts.mts", "/runtimes/liboliphaunt-wasix/tools/xtask/**/*", {project: "extensions", group: "build"}]
+    outputs: ["/target/extensions/wasix/assets/**/*"]
+    options: {runFromWorkspaceRoot: true, cache: local}
+  build-aot:
+    command: "bash extensions/artifacts/wasix/tools/build-aot.sh"
+    deps: ["compiler-output"]
+    tags: ["artifact", "ci-liboliphaunt-wasix-aot"]
+    inputs: ["tools/build-aot.sh", "/runtimes/liboliphaunt-wasix/tools/serialize-aot.sh", "/runtimes/liboliphaunt-wasix/tools/xtask/**/*", "$AOT_TARGET"]
+    outputs: ["/target/extensions/wasix/aot-artifacts/**/*"]
+    options: {runFromWorkspaceRoot: true, cache: local}
+  build-target:
+    tags: ["release", "artifact-builder", "ci-extension-artifacts-wasix"]
+    command: "bash extensions/artifacts/wasix/tools/package-release-assets.sh"
+    deps:
+      - "compiler-output"
+    inputs:
+      - project: "extensions"
+        group: "build"
+      - project: "liboliphaunt-wasix"
+        group: "version"
+      - "tools/package-release-assets.mts"
+      - "tools/package-release-assets.sh"
+      - "/tools/packaging/*.{mjs,mts}"
+      - project: "extension-runtime-contract"
+        group: "contract"
+    outputs:
+      - "/target/extensions/wasix/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

@@ -4,7 +4,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 #[cfg(test)]
 use oliphaunt_wasix::{tools, Oliphaunt};
-use oliphaunt_wasix::{AsyncOliphauntServer, Extension};
+use oliphaunt_pgwire_server::AsyncOliphauntServer;
+use oliphaunt_wasix::{Extension};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;

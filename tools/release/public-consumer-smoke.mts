@@ -1,0 +1,1537 @@
+#!/usr/bin/env bun
+
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+import { compareText, loadProducts, ROOT } from './release-graph.mts';
+import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
+import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
+import { validateRegistryReceiptEvidence } from './registry-integrity.mts';
+import { validateGithubAttestationReceipt } from './verify_github_release_attestations.mts';
+
+export const PUBLIC_CONSUMER_EVIDENCE_SCHEMA = 'oliphaunt-public-consumer-smoke-v1';
+
+const TOOL = 'public-consumer-smoke';
+const REGISTRY_ECOSYSTEMS = ['cargo', 'maven', 'npm'];
+const SUPPORTED_PUBLISH_TARGETS = new Set([
+  'crates-io',
+  'github-release',
+  'github-release-assets',
+  'maven-central',
+  'npm',
+  'swift-package-source-tag',
+]);
+const TARGET_ECOSYSTEM = new Map([
+  ['crates-io', 'cargo'],
+  ['maven-central', 'maven'],
+  ['npm', 'npm'],
+]);
+const CONSUMER_DEPENDENCY_SCOPES = Object.freeze({
+  cargo: new Set(['build', 'runtime']),
+  maven: new Set(['compile', 'runtime']),
+  npm: new Set(['optional', 'peer', 'runtime']),
+});
+const DEFAULT_REPOSITORY = 'f0rr0/oliphaunt';
+const DEFAULT_OUTPUT = path.join(ROOT, 'target/release/public-consumer-smoke.json');
+const DEFAULT_OVERALL_TIMEOUT_SECONDS = 780;
+const DEFAULT_POST_SMOKE_RESERVE_SECONDS = 600;
+const MAX_RECEIPT_BYTES = 64 * 1024 * 1024;
+const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
+const MAX_CRATES_IO_METADATA_BYTES = 1024 * 1024;
+const CRATES_IO_API = 'https://crates.io/api/v1';
+const CRATES_IO_FEATURE_ATTEMPTS = 4;
+const CRATES_IO_REQUEST_TIMEOUT_MILLISECONDS = 20_000;
+const CRATES_IO_USER_AGENT = 'oliphaunt-public-consumer-smoke (https://github.com/f0rr0/oliphaunt)';
+const SHA256_RE = /^[0-9a-f]{64}$/u;
+const FULL_SHA_RE = /^[0-9a-f]{40}$/u;
+const EXACT_RUST_TOOLCHAIN_RE = /^[1-9][0-9]*\.[0-9]+\.[0-9]+$/u;
+
+class PublicCommandError extends Error {
+  constructor(message, { retryable = false } = {}) {
+    super(message);
+    this.retryable = retryable;
+  }
+}
+
+function error(message) {
+  return new Error(`${TOOL}: ${message}`);
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort(compareText)
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256Bytes(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function sortedUniqueStrings(values, context, { allowEmpty = true } = {}) {
+  if (
+    !Array.isArray(values) ||
+    values.some(
+      (value) => typeof value !== 'string' || value.length === 0 || /[\0\r\n]/u.test(value),
+    )
+  ) {
+    throw error(`${context} must be a list of non-empty single-line strings`);
+  }
+  const result = [...new Set(values)].sort(compareText);
+  if (result.length !== values.length) throw error(`${context} must not contain duplicates`);
+  if (!allowEmpty && result.length === 0) throw error(`${context} must not be empty`);
+  return result;
+}
+
+function sameStrings(left, right) {
+  return stableJson([...left].sort(compareText)) === stableJson([...right].sort(compareText));
+}
+
+function requirePositiveInteger(raw, context, fallback) {
+  const value =
+    raw === undefined || raw === null || String(raw).trim() === ''
+      ? fallback
+      : Number(String(raw).trim());
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw error(`${context} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function selectedProductRows(lock, products) {
+  const requested = sortedUniqueStrings(products, 'products', { allowEmpty: false });
+  const locked = lock.products.map(({ id }) => id).sort(compareText);
+  if (!sameStrings(requested, locked)) {
+    throw error(
+      `requested products must exactly match the frozen publication lock: requested=${JSON.stringify(requested)}, locked=${JSON.stringify(locked)}`,
+    );
+  }
+  const byId = new Map(lock.products.map((product) => [product.id, product]));
+  return requested.map((id) => byId.get(id));
+}
+
+function assertCarrier(carrier, productIds) {
+  if (
+    carrier === null ||
+    Array.isArray(carrier) ||
+    typeof carrier !== 'object' ||
+    typeof carrier.id !== 'string' ||
+    carrier.id !== `${carrier.ecosystem}:${carrier.name}` ||
+    !REGISTRY_ECOSYSTEMS.includes(carrier.ecosystem) ||
+    typeof carrier.name !== 'string' ||
+    carrier.name.length === 0 ||
+    typeof carrier.version !== 'string' ||
+    carrier.version.length === 0 ||
+    !productIds.has(carrier.product) ||
+    !Array.isArray(carrier.dependencies)
+  ) {
+    throw error(
+      `publication lock contains an invalid selected carrier ${JSON.stringify(carrier?.id)}`,
+    );
+  }
+  sortedUniqueStrings(carrier.dependencies, `${carrier.id}.dependencies`);
+}
+
+function entryCarrierIds(carriers) {
+  const carrierIds = new Set(carriers.map(({ id }) => id));
+  const dependedOn = new Set();
+  for (const carrier of carriers) {
+    for (const dependency of carrier.dependencies) {
+      if (carrierIds.has(dependency)) dependedOn.add(dependency);
+    }
+  }
+  return carriers
+    .filter(({ id }) => !dependedOn.has(id))
+    .map(({ id }) => id)
+    .sort(compareText);
+}
+
+function consumerDependencyIds(carrier, selectedCarrierIds) {
+  if (!Array.isArray(carrier.packageDependencies)) {
+    // Synthetic plan tests and callers predating the frozen artifact envelope
+    // can still exercise graph behavior. A validated publication lock always
+    // carries packageDependencies and therefore always takes the scope-aware
+    // branch below.
+    return carrier.dependencies.filter((id) => selectedCarrierIds.has(id)).sort(compareText);
+  }
+  const scopes = CONSUMER_DEPENDENCY_SCOPES[carrier.ecosystem];
+  if (scopes === undefined)
+    throw error(`no public consumer dependency-scope policy for ${carrier.ecosystem}`);
+  return [
+    ...new Set(
+      carrier.packageDependencies
+        .filter((dependency) => scopes.has(dependency.scope))
+        .map((dependency) => `${dependency.ecosystem}:${dependency.name}`)
+        .filter((id) => selectedCarrierIds.has(id)),
+    ),
+  ].sort(compareText);
+}
+
+function lockedEntryClosures(carriers, entries, ecosystem) {
+  if (carriers.length === 0) return [];
+  if (entries.length === 0) {
+    throw error(`${ecosystem} selected carrier graph has no public consumer entry root`);
+  }
+  const byId = new Map(carriers.map((carrier) => [carrier.id, carrier]));
+  const covered = new Set();
+  const closures = entries.map((entryCarrierId) => {
+    const closure = new Set();
+    const pending = [entryCarrierId];
+    while (pending.length > 0) {
+      const id = pending.pop();
+      if (closure.has(id)) continue;
+      const carrier = byId.get(id);
+      if (carrier === undefined)
+        throw error(`${ecosystem} public entry closure refers to unknown carrier ${id}`);
+      closure.add(id);
+      covered.add(id);
+      for (const dependency of carrier.dependencies) {
+        // Cross-registry edges order publication, but this registry's clean
+        // consumer cannot resolve them. The selected-lock validation above
+        // still requires those carriers, and their own surfaces prove them.
+        if (byId.has(dependency)) pending.push(dependency);
+      }
+    }
+    return { entryCarrierId, carrierIds: [...closure].sort(compareText) };
+  });
+  const missing = carriers
+    .map(({ id }) => id)
+    .filter((id) => !covered.has(id))
+    .sort(compareText);
+  if (missing.length > 0) {
+    throw error(
+      `${ecosystem} public consumer roots omit locked carrier dependencies: ${missing.join(', ')}`,
+    );
+  }
+  return closures;
+}
+
+function repositoryUrl(repository) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
+    throw error(`repository must use owner/name, got ${JSON.stringify(repository)}`);
+  }
+  return `https://github.com/${repository}.git`;
+}
+
+/**
+ * Derive the complete public-consumer surface from the same selected frozen
+ * lock used for publication. Registry byte receipts already prove every
+ * payload. This plan chooses dependency-graph roots for real consumer install
+ * probes while retaining the complete transitive carrier set as a fail-closed
+ * resolution assertion.
+ */
+export function publicConsumerPlan(
+  lock,
+  products,
+  graph,
+  { repository = process.env.GITHUB_REPOSITORY || DEFAULT_REPOSITORY } = {},
+) {
+  if (lock === null || Array.isArray(lock) || typeof lock !== 'object') {
+    throw error('publication lock must be an object');
+  }
+  if (
+    !SHA256_RE.test(lock.lockDigest ?? '') ||
+    !FULL_SHA_RE.test(lock.source?.commit ?? '') ||
+    !FULL_SHA_RE.test(lock.source?.tree ?? '')
+  ) {
+    throw error('publication lock must contain an exact digest and source commit/tree');
+  }
+  const productRows = selectedProductRows(lock, products);
+  const productIds = new Set(productRows.map(({ id }) => id));
+  for (const product of productRows) {
+    const targets = sortedUniqueStrings(product.publishTargets, `${product.id}.publishTargets`);
+    const unsupported = targets.filter((target) => !SUPPORTED_PUBLISH_TARGETS.has(target));
+    if (unsupported.length > 0) {
+      throw error(
+        `${product.id} has unsupported public consumer targets: ${unsupported.join(', ')}`,
+      );
+    }
+  }
+  const carriers = lock.carriers
+    .filter(({ product }) => productIds.has(product))
+    .slice()
+    .sort(
+      (left, right) => left.publishOrder - right.publishOrder || compareText(left.id, right.id),
+    );
+  for (const carrier of carriers) assertCarrier(carrier, productIds);
+  if (new Set(carriers.map(({ id }) => id)).size !== carriers.length) {
+    throw error('publication lock contains duplicate selected carrier identities');
+  }
+  const selectedCarrierIds = new Set(carriers.map(({ id }) => id));
+  const allCarriersById = new Map(lock.carriers.map((carrier) => [carrier.id, carrier]));
+  for (const carrier of carriers) {
+    const omitted = carrier.dependencies.filter((dependency) => {
+      const locked = allCarriersById.get(dependency);
+      return locked !== undefined && !selectedCarrierIds.has(dependency);
+    });
+    if (omitted.length > 0) {
+      throw error(
+        `${carrier.id} public consumer selection omits locked dependencies: ${omitted.join(', ')}`,
+      );
+    }
+  }
+  const surfaces = [];
+  for (const ecosystem of REGISTRY_ECOSYSTEMS) {
+    const ecosystemCarriers = carriers.filter((carrier) => carrier.ecosystem === ecosystem);
+    const targetProducts = productRows
+      .filter((product) =>
+        product.publishTargets.some((target) => TARGET_ECOSYSTEM.get(target) === ecosystem),
+      )
+      .map(({ id }) => id)
+      .sort(compareText);
+    const carrierProducts = [...new Set(ecosystemCarriers.map(({ product }) => product))].sort(
+      compareText,
+    );
+    if (!sameStrings(targetProducts, carrierProducts)) {
+      throw error(
+        `${ecosystem} publish targets and frozen carrier products disagree: targets=${JSON.stringify(targetProducts)}, carriers=${JSON.stringify(carrierProducts)}`,
+      );
+    }
+    if (ecosystemCarriers.length === 0) continue;
+    const consumerCarriers = ecosystemCarriers.map((carrier) => ({
+      ...carrier,
+      dependencies: consumerDependencyIds(carrier, selectedCarrierIds),
+    }));
+    const entries = entryCarrierIds(consumerCarriers);
+    const entryClosures = lockedEntryClosures(consumerCarriers, entries, ecosystem);
+    surfaces.push({
+      ecosystem,
+      carrierIds: ecosystemCarriers.map(({ id }) => id).sort(compareText),
+      entryCarrierIds: entries,
+      entryClosures,
+      dependencyScopes: [...CONSUMER_DEPENDENCY_SCOPES[ecosystem]].sort(compareText),
+    });
+  }
+
+  const productTags = productRows
+    .map((product) => {
+      const config = graph?.products?.[product.id];
+      if (
+        typeof config?.tag_prefix !== 'string' ||
+        config.tag_prefix.length === 0 ||
+        config.version !== product.version
+      ) {
+        throw error(
+          `${product.id} release graph tag/version does not match the frozen publication lock`,
+        );
+      }
+      return {
+        product: product.id,
+        tag: `${config.tag_prefix}${product.version}`,
+        commit: lock.source.commit,
+      };
+    })
+    .sort((left, right) => compareText(left.product, right.product));
+
+  const swiftProducts = productRows.filter((product) =>
+    product.publishTargets.includes('swift-package-source-tag'),
+  );
+  if (swiftProducts.length > 1)
+    throw error('only one selected SwiftPM source-tag product is supported');
+  const swift =
+    swiftProducts.length === 0
+      ? null
+      : {
+          product: swiftProducts[0].id,
+          version: swiftProducts[0].version,
+          tag: swiftProducts[0].version,
+          parentCommit: lock.source.commit,
+        };
+  return {
+    repository,
+    repositoryUrl: repositoryUrl(repository),
+    products: productRows.map(({ id }) => id).sort(compareText),
+    surfaces,
+    github: { productTags, swift },
+  };
+}
+
+function boundedRegularJson(file, maximum, context) {
+  const absolute = path.resolve(file);
+  const stat = lstatSync(absolute);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > maximum) {
+    throw error(`${context} must be a regular non-symlink file no larger than ${maximum} bytes`);
+  }
+  try {
+    const bytes = readFileSync(absolute);
+    return { absolute, bytes, value: JSON.parse(bytes.toString('utf8')) };
+  } catch (cause) {
+    throw error(`${context} is not valid JSON: ${cause.message}`);
+  }
+}
+
+export function sanitizedPublicEnvironment(overrides = {}, inherited = process.env) {
+  const env = { ...inherited };
+  for (const name of Object.keys(env)) {
+    if (
+      /(?:^|_)(?:AUTH|PASSWORD|PASSPHRASE|SECRET|TOKEN|USERNAME)(?:_|$)/iu.test(name) ||
+      /^CARGO_(?:REGISTRIES|REGISTRY|SOURCE)_/iu.test(name) ||
+      /^GIT_/iu.test(name) ||
+      /^NPM_CONFIG_/iu.test(name) ||
+      /^ORG_GRADLE_PROJECT_/iu.test(name) ||
+      /^(?:DENO_CONFIG|DENO_DIR|DENO_IMPORT_MAP|DENO_LOCK|GRADLE_OPTS|JAVA_OPTS|JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS|_JAVA_OPTIONS)$/iu.test(
+        name,
+      )
+    )
+      delete env[name];
+  }
+  for (const name of [
+    'CARGO_REGISTRY_TOKEN',
+    'CARGO_REGISTRIES_CRATES_IO_TOKEN',
+    'CRATES_IO_BOOTSTRAP_TOKEN',
+    'DENO_AUTH_TOKENS',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'NODE_AUTH_TOKEN',
+    'NPM_CONFIG__AUTH',
+    'NPM_CONFIG__AUTHTOKEN',
+    'NPM_TOKEN',
+    'ORG_GRADLE_PROJECT_mavenCentralPassword',
+    'ORG_GRADLE_PROJECT_mavenCentralUsername',
+  ]) {
+    delete env[name];
+  }
+  return { ...env, ...overrides };
+}
+
+function publicCargoToolchainEnvironment(inherited = process.env, { root = ROOT } = {}) {
+  const manifestFile = path.join(root, 'rust-toolchain.toml');
+  let manifest;
+  try {
+    const stat = lstatSync(manifestFile);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error('manifest is not a regular non-symlink file');
+    }
+    manifest = Bun.TOML.parse(readFileSync(manifestFile, 'utf8'));
+  } catch (cause) {
+    throw error(
+      `cannot load the pinned Cargo consumer toolchain from ${manifestFile}: ${cause.message}`,
+    );
+  }
+  const toolchain = manifest?.toolchain?.channel;
+  if (typeof toolchain !== 'string' || !EXACT_RUST_TOOLCHAIN_RE.test(toolchain)) {
+    throw error(
+      'rust-toolchain.toml must pin an exact stable Rust toolchain for public Cargo consumers',
+    );
+  }
+
+  const configuredRustupHome =
+    typeof inherited.RUSTUP_HOME === 'string' ? inherited.RUSTUP_HOME.trim() : '';
+  const inheritedHome =
+    typeof inherited.HOME === 'string' && inherited.HOME.trim() !== ''
+      ? inherited.HOME.trim()
+      : typeof inherited.USERPROFILE === 'string'
+        ? inherited.USERPROFILE.trim()
+        : '';
+  const rustupHome =
+    configuredRustupHome !== ''
+      ? configuredRustupHome
+      : inheritedHome === ''
+        ? ''
+        : path.join(inheritedHome, '.rustup');
+  if (rustupHome === '' || !path.isAbsolute(rustupHome) || /[\0\r\n]/u.test(rustupHome)) {
+    throw error('public Cargo consumers require an absolute installed RUSTUP_HOME');
+  }
+  let canonicalRustupHome;
+  try {
+    const stat = lstatSync(rustupHome);
+    if (!stat.isDirectory()) throw new Error('path is not a directory');
+    canonicalRustupHome = realpathSync(rustupHome);
+  } catch (cause) {
+    throw error(
+      `public Cargo consumer RUSTUP_HOME is unavailable at ${rustupHome}: ${cause.message}`,
+    );
+  }
+  return {
+    RUSTUP_HOME: canonicalRustupHome,
+    RUSTUP_TOOLCHAIN: toolchain,
+  };
+}
+
+export function publicCargoEnvironment(
+  consumerRoot,
+  inherited = process.env,
+  { repositoryRoot = ROOT } = {},
+) {
+  if (
+    typeof consumerRoot !== 'string' ||
+    !path.isAbsolute(consumerRoot) ||
+    /[\0\r\n]/u.test(consumerRoot)
+  ) {
+    throw error('public Cargo consumer root must be an absolute path');
+  }
+  return sanitizedPublicEnvironment(
+    {
+      ...publicCargoToolchainEnvironment(inherited, { root: repositoryRoot }),
+      CARGO_HOME: path.join(consumerRoot, 'cargo-home'),
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true',
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: 'sparse',
+      HOME: path.join(consumerRoot, 'cargo-user-home'),
+    },
+    inherited,
+  );
+}
+
+function carrierRows(lock, surface) {
+  const ids = new Set(surface.carrierIds);
+  return lock.carriers
+    .filter(({ id }) => ids.has(id))
+    .sort((left, right) => compareText(left.id, right.id));
+}
+
+function resolvedSurfaceCoverage(surface, entries, rows) {
+  const closureByEntry = new Map(
+    surface.entryClosures.map((entry) => [entry.entryCarrierId, entry.carrierIds]),
+  );
+  if (
+    !sameStrings(
+      entries.map(({ entryCarrierId }) => entryCarrierId),
+      surface.entryCarrierIds,
+    )
+  ) {
+    throw error(`${surface.ecosystem} consumer probes omit one or more exact-lock entry roots`);
+  }
+  const merged = new Map();
+  for (const row of rows.flat()) {
+    const prior = merged.get(row.id);
+    if (prior !== undefined && stableJson(prior) !== stableJson(row)) {
+      throw error(
+        `${surface.ecosystem} consumer probes returned conflicting resolution evidence for ${row.id}`,
+      );
+    }
+    merged.set(row.id, row);
+  }
+  const carrierIds = new Set(surface.carrierIds);
+  const normalizedEntries = entries
+    .map((entry) => {
+      const planned = new Set(closureByEntry.get(entry.entryCarrierId) ?? []);
+      const resolvedCarrierIds = sortedUniqueStrings(
+        entry.resolvedCarrierIds,
+        `${surface.ecosystem} ${entry.entryCarrierId} resolvedCarrierIds`,
+      );
+      if (!resolvedCarrierIds.includes(entry.entryCarrierId)) {
+        throw error(
+          `${surface.ecosystem} public consumer entry ${entry.entryCarrierId} did not resolve itself exactly`,
+        );
+      }
+      const outside = resolvedCarrierIds.filter((id) => !planned.has(id));
+      if (outside.length > 0) {
+        throw error(
+          `${surface.ecosystem} public consumer entry ${entry.entryCarrierId} resolved selected carriers outside its frozen dependency closure: ${outside.join(', ')}`,
+        );
+      }
+      const missing = [...planned]
+        .filter((id) => !resolvedCarrierIds.includes(id))
+        .sort(compareText);
+      if (missing.length > 0) {
+        throw error(
+          `${surface.ecosystem} public consumer entry ${entry.entryCarrierId} omitted frozen platform-independent lock dependencies: ${missing.join(', ')}`,
+        );
+      }
+      return { entryCarrierId: entry.entryCarrierId, resolvedCarrierIds };
+    })
+    .sort((left, right) => compareText(left.entryCarrierId, right.entryCarrierId));
+  const resolved = [...merged.values()].sort((left, right) => compareText(left.id, right.id));
+  const unknown = resolved.map(({ id }) => id).filter((id) => !carrierIds.has(id));
+  if (unknown.length > 0)
+    throw error(
+      `${surface.ecosystem} consumer probes returned unknown selected carriers: ${unknown.join(', ')}`,
+    );
+  if (
+    !sameStrings(
+      resolved.map(({ id }) => id),
+      surface.carrierIds,
+    )
+  ) {
+    throw error(
+      `${surface.ecosystem} public entry lock closures do not resolve the exhaustive frozen carrier set`,
+    );
+  }
+  return {
+    carrierIds: surface.carrierIds,
+    dependencyScopes: surface.dependencyScopes,
+    entryCarrierIds: surface.entryCarrierIds,
+    plannedEntryClosures: surface.entryClosures,
+    entries: normalizedEntries,
+    resolved,
+  };
+}
+
+function tomlString(value) {
+  return JSON.stringify(value);
+}
+
+export function cargoEntryFeatureNames(metadata, carrier) {
+  const artifacts = Array.isArray(carrier?.artifacts)
+    ? carrier.artifacts.filter(
+        ({ path: artifactPath }) =>
+          typeof artifactPath === 'string' && artifactPath.endsWith('.crate'),
+      )
+    : [];
+  if (
+    metadata === null ||
+    Array.isArray(metadata) ||
+    typeof metadata !== 'object' ||
+    artifacts.length !== 1 ||
+    !SHA256_RE.test(artifacts[0].sha256 ?? '') ||
+    !Number.isSafeInteger(artifacts[0].size) ||
+    artifacts[0].size <= 0 ||
+    metadata.version?.crate !== carrier?.name ||
+    metadata.version?.num !== carrier?.version ||
+    metadata.version?.checksum !== artifacts[0].sha256 ||
+    metadata.version?.crate_size !== artifacts[0].size ||
+    metadata.version?.yanked !== false
+  ) {
+    throw error(
+      `${carrier?.id ?? 'Cargo entry'} crates.io version metadata does not match its exact frozen carrier`,
+    );
+  }
+  const merged = new Map();
+  for (const [label, table] of [
+    ['features', metadata.version.features],
+    ['features2', metadata.version.features2 ?? {}],
+  ]) {
+    if (table === null || Array.isArray(table) || typeof table !== 'object') {
+      throw error(`${carrier.id} crates.io ${label} must be a feature table`);
+    }
+    for (const [name, members] of Object.entries(table)) {
+      if (
+        typeof name !== 'string' ||
+        name.length === 0 ||
+        /[\0\r\n]/u.test(name) ||
+        !Array.isArray(members) ||
+        members.some(
+          (member) => typeof member !== 'string' || member.length === 0 || /[\0\r\n]/u.test(member),
+        )
+      ) {
+        throw error(
+          `${carrier.id} crates.io metadata contains an invalid Cargo feature declaration`,
+        );
+      }
+      const prior = merged.get(name);
+      if (prior !== undefined && stableJson(prior) !== stableJson(members)) {
+        throw error(`${carrier.id} crates.io features and features2 disagree for ${name}`);
+      }
+      merged.set(name, members);
+    }
+  }
+  // Cargo resolves target-specific dependencies for every target into the
+  // lockfile, but it deliberately omits optional dependencies whose features
+  // are not enabled. Resolve every public opt-in feature so the anonymous lock
+  // probe covers the complete frozen carrier closure. The crates.io checksum
+  // above binds this feature metadata to the same immutable .crate bytes
+  // already proven by the exhaustive registry receipt.
+  return [...merged.keys()].filter((name) => name !== 'default').sort(compareText);
+}
+
+async function boundedResponseJson(response, label) {
+  const declared = response.headers.get('content-length');
+  if (declared !== null) {
+    const bytes = Number(declared);
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MAX_CRATES_IO_METADATA_BYTES) {
+      await response.body?.cancel?.().catch(() => {});
+      throw error(`${label} returned an invalid or oversized Content-Length`);
+    }
+  }
+  const reader = response.body?.getReader?.();
+  if (reader === undefined) {
+    throw error(`${label} returned no bounded response body`);
+  }
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_CRATES_IO_METADATA_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw error(`${label} response exceeds ${MAX_CRATES_IO_METADATA_BYTES} bytes`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+  } catch (cause) {
+    throw error(`${label} returned invalid JSON: ${cause.message}`);
+  }
+}
+
+async function cratesIoEntryFeatureNames(carrier, deadlineMilliseconds) {
+  const crate = encodeURIComponent(carrier.name);
+  const version = encodeURIComponent(carrier.version);
+  const url = `${CRATES_IO_API}/crates/${crate}/${version}`;
+  let lastFailure = '';
+  for (let attempt = 0; attempt < CRATES_IO_FEATURE_ATTEMPTS; attempt += 1) {
+    const remaining = deadlineMilliseconds - Date.now();
+    if (remaining <= 0)
+      throw error(
+        `shared public-consumer deadline reached before resolving ${carrier.id} features`,
+      );
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      Math.min(remaining, CRATES_IO_REQUEST_TIMEOUT_MILLISECONDS),
+    );
+    let retryHeaders;
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': CRATES_IO_USER_AGENT,
+        },
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+      if (response.ok) {
+        return cargoEntryFeatureNames(await boundedResponseJson(response, carrier.id), carrier);
+      }
+      retryHeaders = response.headers;
+      await response.body?.cancel?.().catch(() => {});
+      if (!registryStatusRetryable(response.status)) {
+        throw new PublicCommandError(
+          `${TOOL}: crates.io returned HTTP ${response.status} for exact carrier ${carrier.id}`,
+        );
+      }
+      lastFailure = `HTTP ${response.status}`;
+    } catch (cause) {
+      if (
+        cause instanceof PublicCommandError ||
+        (cause instanceof Error && cause.message.startsWith(`${TOOL}:`))
+      ) {
+        throw cause;
+      }
+      lastFailure = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (attempt + 1 < CRATES_IO_FEATURE_ATTEMPTS) {
+      const seconds = registryRetryDelaySeconds({
+        attempt,
+        baseSeconds: 1,
+        headers: retryHeaders,
+      });
+      const milliseconds = Math.ceil(seconds * 1_000);
+      if (deadlineMilliseconds - Date.now() <= milliseconds + 30_000)
+        throw error('public metadata retry would cross the shared deadline');
+      await new Promise((resolve) => setTimeout(resolve, milliseconds));
+    }
+  }
+  throw new PublicCommandError(
+    `${TOOL}: failed to resolve checksum-bound crates.io features for ${carrier.id}: ${lastFailure}`,
+    { retryable: true },
+  );
+}
+
+export function validateCargoResolution(
+  lockText,
+  carriers,
+  requiredCarrierIds = carriers.map(({ id }) => id),
+) {
+  let parsed;
+  try {
+    parsed = Bun.TOML.parse(lockText);
+  } catch (cause) {
+    throw error(`clean Cargo.lock is invalid: ${cause.message}`);
+  }
+  const packages = Array.isArray(parsed.package) ? parsed.package : [];
+  const byName = new Map(carriers.map((carrier) => [carrier.name, carrier]));
+  const rows = [];
+  for (const entry of packages) {
+    const carrier = byName.get(entry?.name);
+    if (carrier === undefined) continue;
+    if (entry.version !== carrier.version) {
+      throw error(
+        `${carrier.id} resolved substituted Cargo version ${entry.version}, expected exact ${carrier.version}`,
+      );
+    }
+    if (entry.source !== 'registry+https://github.com/rust-lang/crates.io-index') {
+      throw error(
+        `${carrier.id}@${carrier.version} resolved through non-public or substituted Cargo source ${JSON.stringify(entry.source)}`,
+      );
+    }
+    if (!SHA256_RE.test(entry.checksum ?? '')) {
+      throw error(`${carrier.id}@${carrier.version} clean resolution has no crates.io checksum`);
+    }
+    rows.push({ id: carrier.id, version: carrier.version, checksum: entry.checksum });
+  }
+  const ids = rows.map(({ id }) => id);
+  if (new Set(ids).size !== ids.length)
+    throw error('clean Cargo resolution contains duplicate exact selected carrier identities');
+  const missing = requiredCarrierIds.filter((id) => !ids.includes(id));
+  if (missing.length > 0)
+    throw error(`clean Cargo resolution omitted required exact carriers: ${missing.join(', ')}`);
+  return rows.sort((left, right) => compareText(left.id, right.id));
+}
+
+async function cargoSurface({ lock, surface, root, deadlineMilliseconds }, prepare) {
+  const directory = path.join(root, 'cargo');
+  const home = path.join(root, 'cargo-home');
+  mkdirSync(home, { recursive: true });
+  const carriers = carrierRows(lock, surface);
+  const byId = new Map(carriers.map((carrier) => [carrier.id, carrier]));
+  const env = publicCargoEnvironment(root);
+  const entries = [];
+  const rows = [];
+  for (const [index, entryCarrierId] of surface.entryCarrierIds.entries()) {
+    const carrier = byId.get(entryCarrierId);
+    const consumer = path.join(directory, `entry-${String(index).padStart(3, '0')}`);
+    if (prepare) {
+      const features = await cratesIoEntryFeatureNames(carrier, deadlineMilliseconds);
+      const featureClause = features.length === 0 ? '' : `, features = ${tomlString(features)}`;
+      mkdirSync(path.join(consumer, 'src'), { recursive: true });
+      writeFileSync(
+        path.join(consumer, 'Cargo.toml'),
+        `[package]\nname = "oliphaunt-public-consumer-smoke-${String(index).padStart(3, '0')}"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n[dependencies]\nlocked_entry = { package = ${tomlString(carrier.name)}, version = ${tomlString(`=${carrier.version}`)}${featureClause} }\n\n[workspace]\n`,
+      );
+      writeFileSync(
+        path.join(consumer, 'src/lib.rs'),
+        '// dependency resolution only; immutable receipts prove target payload bytes.\n',
+      );
+      continue;
+    }
+    const resolved = validateCargoResolution(
+      readFileSync(path.join(consumer, 'Cargo.lock'), 'utf8'),
+      carriers,
+      [entryCarrierId],
+    );
+    rows.push(resolved);
+    entries.push({ entryCarrierId, resolvedCarrierIds: resolved.map(({ id }) => id) });
+  }
+  if (prepare) return env;
+  return {
+    surface: 'cargo',
+    mode: 'anonymous-public-independent-entry-all-feature-resolution-no-compile',
+    registry: 'https://crates.io',
+    ...resolvedSurfaceCoverage(surface, entries, rows),
+    receiptCoveredWithoutPayloadFetchCarrierIds: surface.carrierIds,
+  };
+}
+
+function npmPackagePath(root, packageName) {
+  return path.join(root, 'node_modules', ...packageName.split('/'));
+}
+
+export function validateNpmResolution(packageLock, carriers, requiredEntryIds, nodeModules) {
+  if (
+    packageLock === null ||
+    Array.isArray(packageLock) ||
+    typeof packageLock !== 'object' ||
+    packageLock.lockfileVersion < 3
+  ) {
+    throw error('clean npm install must emit package-lock v3 or newer');
+  }
+  const packages = packageLock.packages;
+  if (packages === null || Array.isArray(packages) || typeof packages !== 'object') {
+    throw error('clean npm package lock has no packages map');
+  }
+  const entries = new Set(requiredEntryIds);
+  const resolved = [];
+  for (const carrier of carriers) {
+    const suffix = `node_modules/${carrier.name}`;
+    const matches = Object.entries(packages).filter(
+      ([key]) => key === suffix || key.endsWith(`/${suffix}`),
+    );
+    if (matches.length === 0) {
+      if (entries.has(carrier.id))
+        throw error(`${carrier.id}@${carrier.version} is missing from the clean npm lock`);
+      continue;
+    }
+    if (matches.length !== 1 || matches[0][1]?.version !== carrier.version) {
+      throw error(
+        `${carrier.id}@${carrier.version} must be the only selected version in the clean npm lock; found ${matches.length}`,
+      );
+    }
+    const row = matches[0][1];
+    if (
+      row.link === true ||
+      typeof row.resolved !== 'string' ||
+      !row.resolved.startsWith('https://registry.npmjs.org/') ||
+      typeof row.integrity !== 'string' ||
+      !row.integrity.startsWith('sha512-')
+    ) {
+      throw error(
+        `${carrier.id}@${carrier.version} resolved through a non-public, linked, or integrity-free npm source`,
+      );
+    }
+    if (entries.has(carrier.id)) {
+      const manifestFile = path.join(npmPackagePath(nodeModules, carrier.name), 'package.json');
+      let installed;
+      try {
+        installed = JSON.parse(readFileSync(manifestFile, 'utf8'));
+      } catch (cause) {
+        throw error(
+          `${carrier.id}@${carrier.version} entry package was not installed from the public registry: ${cause.message}`,
+        );
+      }
+      if (installed.name !== carrier.name || installed.version !== carrier.version) {
+        throw error(
+          `${carrier.id} installed package identity does not match ${carrier.name}@${carrier.version}`,
+        );
+      }
+    }
+    resolved.push({ id: carrier.id, version: carrier.version, integrity: row.integrity });
+  }
+  resolved.sort((left, right) => compareText(left.id, right.id));
+  const installedCarrierIds = carriers
+    .filter((carrier) => {
+      try {
+        return statSync(
+          path.join(npmPackagePath(nodeModules, carrier.name), 'package.json'),
+        ).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .map(({ id }) => id)
+    .sort(compareText);
+  return { resolved, installedCarrierIds };
+}
+
+function npmSurface({ lock, surface, root }, prepare) {
+  const directory = path.join(root, 'npm');
+  const home = path.join(root, 'npm-home');
+  mkdirSync(directory, { recursive: true });
+  mkdirSync(home, { recursive: true });
+  const carriers = carrierRows(lock, surface);
+  const byId = new Map(carriers.map((carrier) => [carrier.id, carrier]));
+  const userConfig = path.join(home, '.npmrc');
+  const globalConfig = path.join(home, 'global.npmrc');
+  writeFileSync(userConfig, 'registry=https://registry.npmjs.org/\nalways-auth=false\n');
+  writeFileSync(globalConfig, 'registry=https://registry.npmjs.org/\nalways-auth=false\n');
+  const env = sanitizedPublicEnvironment({
+    HOME: home,
+    NPM_CONFIG_CACHE: path.join(root, 'npm-cache'),
+    NPM_CONFIG_GLOBALCONFIG: globalConfig,
+    NPM_CONFIG_REGISTRY: 'https://registry.npmjs.org/',
+    NPM_CONFIG_USERCONFIG: userConfig,
+  });
+  const entries = [];
+  const rows = [];
+  const installed = new Set();
+  for (const [index, entryCarrierId] of surface.entryCarrierIds.entries()) {
+    const carrier = byId.get(entryCarrierId);
+    const consumer = path.join(directory, `entry-${String(index).padStart(3, '0')}`);
+    if (prepare) {
+      mkdirSync(consumer, { recursive: true });
+      writeFileSync(
+        path.join(consumer, 'package.json'),
+        `${JSON.stringify(
+          {
+            name: `oliphaunt-public-consumer-smoke-${String(index).padStart(3, '0')}`,
+            version: '0.0.0',
+            private: true,
+            dependencies: { [carrier.name]: carrier.version },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      continue;
+    }
+    const lockJson = JSON.parse(readFileSync(path.join(consumer, 'package-lock.json'), 'utf8'));
+    const result = validateNpmResolution(lockJson, carriers, [entryCarrierId], consumer);
+    rows[index] = result.resolved;
+    entries[index] = { entryCarrierId, resolvedCarrierIds: result.resolved.map(({ id }) => id) };
+    for (const id of result.installedCarrierIds) installed.add(id);
+  }
+  if (prepare) return env;
+  return {
+    surface: 'npm',
+    mode: 'anonymous-public-independent-entry-host-install-and-lock-resolution',
+    registry: 'https://registry.npmjs.org',
+    host: `${process.platform}-${process.arch}`,
+    ...resolvedSurfaceCoverage(surface, entries, rows),
+    installedCarrierIds: [...installed].sort(compareText),
+    receiptCoveredNotHostInstalledCarrierIds: surface.carrierIds
+      .filter((id) => !installed.has(id))
+      .sort(compareText),
+  };
+}
+
+function mavenCoordinate(name, version) {
+  const parts = name.split(':');
+  if (parts.length !== 2 || parts.some((value) => value.length === 0)) {
+    throw error(`invalid locked Maven coordinate ${JSON.stringify(name)}`);
+  }
+  return `${name}:${version}`;
+}
+
+export function validateMavenResolution(
+  output,
+  carriers,
+  entryCarrierIds = carriers.map(({ id }) => id),
+) {
+  const prefix = 'OLIPHAUNT_PUBLIC_COMPONENT\t';
+  const rows = output
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).split('\t'));
+  if (rows.some((parts) => parts.length !== 4))
+    throw error('clean Maven resolution emitted malformed component evidence');
+  const byName = new Map(carriers.map((carrier) => [carrier.name, carrier]));
+  const resolvedByEntry = new Map(entryCarrierIds.map((id) => [id, new Map()]));
+  for (const [entryCarrierId, group, artifact, version] of rows) {
+    const entry = resolvedByEntry.get(entryCarrierId);
+    if (entry === undefined)
+      throw error(`clean Maven resolution emitted unknown entry root ${entryCarrierId}`);
+    const carrier = byName.get(`${group}:${artifact}`);
+    if (carrier === undefined) continue;
+    if (version !== carrier.version) {
+      throw error(
+        `${carrier.id} resolved substituted Maven version ${version}, expected exact ${carrier.version}`,
+      );
+    }
+    entry.set(carrier.id, { id: carrier.id, version: carrier.version });
+  }
+  const entries = entryCarrierIds.map((entryCarrierId) => {
+    const resolved = resolvedByEntry.get(entryCarrierId);
+    if (!resolved.has(entryCarrierId)) {
+      throw error(
+        `${entryCarrierId} was omitted from its independent clean Maven Central resolution`,
+      );
+    }
+    return { entryCarrierId, resolvedCarrierIds: [...resolved.keys()].sort(compareText) };
+  });
+  const resolved = new Map();
+  for (const values of resolvedByEntry.values()) {
+    for (const [id, row] of values) resolved.set(id, row);
+  }
+  return {
+    entries,
+    resolved: [...resolved.values()].sort((left, right) => compareText(left.id, right.id)),
+  };
+}
+
+function mavenSurface({ lock, surface, root }, prepare) {
+  const directory = path.join(root, 'maven');
+  mkdirSync(directory, { recursive: true });
+  const carriers = carrierRows(lock, surface);
+  const byId = new Map(carriers.map((carrier) => [carrier.id, carrier]));
+  if (prepare) {
+    writeFileSync(
+      path.join(directory, 'settings.gradle'),
+      "rootProject.name = 'oliphaunt-public-consumer-smoke'\n",
+    );
+    const probes = surface.entryCarrierIds.map((entryCarrierId, index) => ({
+      carrier: byId.get(entryCarrierId),
+      configuration: `smoke${String(index).padStart(3, '0')}`,
+      entryCarrierId,
+    }));
+    const configurations = probes.map(
+      ({ configuration }) =>
+        `  ${configuration} {\n    canBeConsumed = false\n    canBeResolved = true\n  }`,
+    );
+    const dependencies = probes.map(
+      ({ carrier, configuration }) =>
+        `  ${configuration}(${JSON.stringify(mavenCoordinate(carrier.name, carrier.version))}) { version { strictly(${JSON.stringify(carrier.version)}) } }`,
+    );
+    const probeRows = probes
+      .map(
+        ({ configuration, entryCarrierId }) =>
+          `    [${JSON.stringify(entryCarrierId)}, ${JSON.stringify(configuration)}]`,
+      )
+      .join(',\n');
+    writeFileSync(
+      path.join(directory, 'build.gradle'),
+      `
+repositories {
+  mavenCentral()
+  google()
+}
+
+configurations {
+${configurations.join('\n')}
+}
+
+dependencies {
+${dependencies.join('\n')}
+}
+
+tasks.register("resolveOliphauntPublicConsumers") {
+  doLast {
+    def probes = [
+${probeRows}
+    ]
+    probes.each { probe ->
+      def entryCarrierId = probe[0]
+      def configuration = configurations.getByName(probe[1])
+      configuration.files
+      def ids = configuration.incoming.resolutionResult.allComponents
+        .collect { it.id }
+        .findAll { it instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier }
+        .collect { "${'$'}{it.group}\\t${'$'}{it.module}\\t${'$'}{it.version}" }
+        .toSorted()
+      ids.each { println("OLIPHAUNT_PUBLIC_COMPONENT\\t" + entryCarrierId + "\\t" + it) }
+    }
+  }
+}
+`,
+    );
+    const env = sanitizedPublicEnvironment({
+      GRADLE_USER_HOME: path.join(root, 'gradle-home'),
+      HOME: path.join(root, 'gradle-user-home'),
+    });
+    return env;
+  }
+  const result = boundedCommandOutput(path.join(root, 'gradle-output'));
+  const resolution = validateMavenResolution(result, carriers, surface.entryCarrierIds);
+  return {
+    surface: 'maven',
+    mode: 'anonymous-public-independent-entry-coordinate-resolution-no-compile',
+    registries: ['https://repo1.maven.org/maven2', 'https://dl.google.com/dl/android/maven2'],
+    ...resolvedSurfaceCoverage(surface, resolution.entries, [resolution.resolved]),
+  };
+}
+
+function gitEnvironment(root) {
+  const home = path.join(root, 'git-home');
+  mkdirSync(home, { recursive: true });
+  return sanitizedPublicEnvironment({
+    GIT_ASKPASS: '',
+    GIT_CONFIG_GLOBAL: path.join(root, 'empty-gitconfig'),
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0',
+    HOME: home,
+    SSH_ASKPASS: '',
+  });
+}
+
+function githubSurface({ plan, root }, prepare) {
+  if (prepare) return gitEnvironment(root);
+  const read = (name) => boundedCommandOutput(path.join(root, name)).trim();
+  for (const [index, row] of plan.github.productTags.entries()) {
+    const commit = read('tag-' + index);
+    if (commit !== row.commit)
+      throw error(`anonymous public tag ${row.tag} resolves to ${commit}, not exact ${row.commit}`);
+  }
+  let swift = null;
+  if (plan.github.swift !== null) {
+    const row = plan.github.swift;
+    const commit = read('swift-commit');
+    const parents = read('swift-parents').split(/\s+/u);
+    if (parents.length !== 2 || parents[0] !== commit || parents[1] !== row.parentCommit)
+      throw error(
+        `SwiftPM source tag ${row.tag} must be a single synthetic child of exact ${row.parentCommit}`,
+      );
+    const packageDescription = JSON.parse(read('swift-package.json'));
+    if (typeof packageDescription.name !== 'string' || packageDescription.name.length === 0)
+      throw error(`SwiftPM source tag ${row.tag} has no package name`);
+    swift = {
+      ...row,
+      commit,
+      tree: read('swift-tree'),
+      packageName: packageDescription.name,
+      proofScope: 'anonymous-source-tag-and-manifest-only',
+    };
+  }
+  return {
+    surface: 'github',
+    mode: 'anonymous-public-exact-tag-resolution',
+    repository: plan.repository,
+    productTags: plan.github.productTags,
+    swift,
+    limitation:
+      plan.github.swift === null
+        ? null
+        : 'Draft GitHub binaryTarget assets are not anonymously public before promotion; their exact bytes are covered by the bound immutable GitHub receipt, not this source-tag probe.',
+  };
+}
+
+function boundedCommandOutput(file) {
+  const stat = lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024)
+    throw error('consumer command output must be a bounded regular file');
+  return readFileSync(file, 'utf8');
+}
+
+export function publicConsumerEvidence({
+  lock,
+  plan,
+  registryReceiptSha256,
+  githubReceiptDigest,
+  surfaces,
+}) {
+  const result = {
+    schema: PUBLIC_CONSUMER_EVIDENCE_SCHEMA,
+    lockDigest: lock.lockDigest,
+    source: lock.source,
+    products: plan.products,
+    repository: plan.repository,
+    proofScope: {
+      host: `${process.platform}-${process.arch}`,
+      statement:
+        'Anonymous public dependency resolution/install on the publish host; same-SHA CI and immutable receipts cover the complete supported platform artifact matrix.',
+    },
+    receiptBindings: {
+      githubReceiptDigest,
+      registryReceiptSha256,
+    },
+    surfaces: surfaces.slice().sort((left, right) => compareText(left.surface, right.surface)),
+  };
+  result.evidenceDigest = sha256Bytes(stableJson(result));
+  return result;
+}
+
+export function validatePublicConsumerEvidence(evidence, lock, plan) {
+  if (evidence === null || Array.isArray(evidence) || typeof evidence !== 'object')
+    throw error('public consumer evidence must be an object');
+  if (evidence.schema !== PUBLIC_CONSUMER_EVIDENCE_SCHEMA)
+    throw error(`public consumer evidence schema must be ${PUBLIC_CONSUMER_EVIDENCE_SCHEMA}`);
+  if (
+    evidence.lockDigest !== lock.lockDigest ||
+    stableJson(evidence.source) !== stableJson(lock.source)
+  ) {
+    throw error('public consumer evidence is not bound to the active publication lock');
+  }
+  if (!sameStrings(evidence.products ?? [], plan.products))
+    throw error('public consumer evidence products differ from the exact lock selection');
+  if (
+    !SHA256_RE.test(evidence.receiptBindings?.registryReceiptSha256 ?? '') ||
+    !SHA256_RE.test(evidence.receiptBindings?.githubReceiptDigest ?? '')
+  ) {
+    throw error('public consumer evidence has invalid immutable receipt bindings');
+  }
+  const expectedSurfaces = [...plan.surfaces.map(({ ecosystem }) => ecosystem), 'github'].sort(
+    compareText,
+  );
+  const actualSurfaces = Array.isArray(evidence.surfaces)
+    ? evidence.surfaces.map(({ surface }) => surface)
+    : [];
+  if (!sameStrings(actualSurfaces, expectedSurfaces)) {
+    throw error(
+      `public consumer evidence surface coverage mismatch: expected=${JSON.stringify(expectedSurfaces)}, actual=${JSON.stringify(actualSurfaces)}`,
+    );
+  }
+  for (const surface of plan.surfaces) {
+    const observed = evidence.surfaces.find(({ surface: name }) => name === surface.ecosystem);
+    if (
+      !sameStrings(observed?.carrierIds ?? [], surface.carrierIds) ||
+      !sameStrings(observed?.entryCarrierIds ?? [], surface.entryCarrierIds)
+    ) {
+      throw error(
+        `${surface.ecosystem} public consumer evidence omits exact-lock carriers or entry roots`,
+      );
+    }
+    if (stableJson(observed?.plannedEntryClosures) !== stableJson(surface.entryClosures)) {
+      throw error(
+        `${surface.ecosystem} public consumer evidence changed the frozen entry dependency closures`,
+      );
+    }
+    if (stableJson(observed?.dependencyScopes) !== stableJson(surface.dependencyScopes)) {
+      throw error(
+        `${surface.ecosystem} public consumer evidence changed the package-manager dependency scope policy`,
+      );
+    }
+    const coverage = resolvedSurfaceCoverage(surface, observed?.entries ?? [], [
+      observed?.resolved ?? [],
+    ]);
+    for (const field of [
+      'carrierIds',
+      'dependencyScopes',
+      'entryCarrierIds',
+      'plannedEntryClosures',
+      'entries',
+      'resolved',
+    ]) {
+      if (stableJson(observed?.[field]) !== stableJson(coverage[field])) {
+        throw error(
+          `${surface.ecosystem} public consumer evidence has non-canonical ${field} coverage`,
+        );
+      }
+    }
+    if (surface.ecosystem === 'npm') {
+      const installed = sortedUniqueStrings(
+        observed?.installedCarrierIds ?? [],
+        'npm installedCarrierIds',
+      );
+      const resolved = new Set(coverage.resolved.map(({ id }) => id));
+      if (
+        installed.some((id) => !resolved.has(id)) ||
+        stableJson(installed) !== stableJson(observed.installedCarrierIds)
+      ) {
+        throw error(
+          'npm host-installed carriers must be a canonical subset of its exact public resolution',
+        );
+      }
+      const notInstalled = surface.carrierIds
+        .filter((id) => !installed.includes(id))
+        .sort(compareText);
+      if (
+        stableJson(observed.receiptCoveredNotHostInstalledCarrierIds) !== stableJson(notInstalled)
+      ) {
+        throw error(
+          'npm evidence must explicitly distinguish exhaustive lock resolution from the publish-host installed subset',
+        );
+      }
+    }
+    if (
+      surface.ecosystem === 'cargo' &&
+      stableJson(observed.receiptCoveredWithoutPayloadFetchCarrierIds) !==
+        stableJson(surface.carrierIds)
+    ) {
+      throw error(
+        'Cargo evidence must explicitly distinguish registry resolution from receipt-proved payload bytes',
+      );
+    }
+  }
+  const github = evidence.surfaces.find(({ surface }) => surface === 'github');
+  if (stableJson(github?.productTags) !== stableJson(plan.github.productTags)) {
+    throw error('GitHub public consumer evidence does not resolve every exact product tag');
+  }
+  if (
+    plan.github.swift === null
+      ? github?.swift !== null
+      : github?.swift?.tag !== plan.github.swift.tag
+  ) {
+    throw error('GitHub public consumer evidence SwiftPM source-tag coverage mismatch');
+  }
+  const withoutDigest = structuredClone(evidence);
+  delete withoutDigest.evidenceDigest;
+  const expectedDigest = sha256Bytes(stableJson(withoutDigest));
+  if (evidence.evidenceDigest !== expectedDigest)
+    throw error(`public consumer evidence digest mismatch: expected ${expectedDigest}`);
+  return evidence;
+}
+
+export function writeImmutablePublicConsumerEvidence(file, evidence) {
+  const absolute = path.resolve(file);
+  const body = `${JSON.stringify(evidence, null, 2)}\n`;
+  if (Buffer.byteLength(body) > MAX_EVIDENCE_BYTES)
+    throw error(`public consumer evidence exceeds ${MAX_EVIDENCE_BYTES} bytes`);
+  mkdirSync(path.dirname(absolute), { recursive: true });
+  const temporary = `${absolute}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(temporary, body, { flag: 'wx', mode: 0o644 });
+    try {
+      linkSync(temporary, absolute);
+    } catch (cause) {
+      if (cause?.code !== 'EEXIST') throw cause;
+      const stat = lstatSync(absolute);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_EVIDENCE_BYTES) {
+        throw error(`refusing to replace unsafe existing public consumer evidence ${file}`);
+      }
+      if (readFileSync(absolute, 'utf8') !== body) {
+        throw error(`refusing to replace non-identical immutable public consumer evidence ${file}`);
+      }
+    }
+  } finally {
+    try {
+      unlinkSync(temporary);
+    } catch {}
+  }
+  return absolute;
+}
+
+function parseArgs(argv) {
+  const options = {
+    githubReceipt: '',
+    lock: DEFAULT_PUBLICATION_LOCK,
+    output: DEFAULT_OUTPUT,
+    productsJson: '',
+    registryReceipts: '',
+    repository: process.env.GITHUB_REPOSITORY || DEFAULT_REPOSITORY,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === '--help' || argument === '-h') return { help: true };
+    const separator = argument.indexOf('=');
+    const flag = separator === -1 ? argument : argument.slice(0, separator);
+    const value = separator === -1 ? argv[++index] : argument.slice(separator + 1);
+    if (value === undefined || value.length === 0) throw error(`${flag} requires a value`);
+    if (flag === '--github-release-receipt') options.githubReceipt = value;
+    else if (flag === '--publication-lock') options.lock = value;
+    else if (flag === '--output') options.output = value;
+    else if (flag === '--products-json') options.productsJson = value;
+    else if (flag === '--registry-receipts') options.registryReceipts = value;
+    else if (flag === '--repository') options.repository = value;
+    else throw error(`unknown argument ${argument}`);
+  }
+  if (!options.productsJson || !options.registryReceipts || !options.githubReceipt) {
+    throw error('--products-json, --registry-receipts, and --github-release-receipt are required');
+  }
+  let products;
+  try {
+    products = JSON.parse(options.productsJson);
+  } catch (cause) {
+    throw error(`--products-json is invalid: ${cause.message}`);
+  }
+  return { ...options, products };
+}
+
+function usage() {
+  console.log(
+    'usage: bash tools/release/public-consumer-smoke.sh --publication-lock FILE --products-json JSON --registry-receipts FILE --github-release-receipt FILE --output FILE',
+  );
+}
+
+function sharedDeadlineMilliseconds() {
+  const timeoutSeconds = requirePositiveInteger(
+    process.env.PUBLIC_CONSUMER_SMOKE_TIMEOUT_SECONDS,
+    'PUBLIC_CONSUMER_SMOKE_TIMEOUT_SECONDS',
+    DEFAULT_OVERALL_TIMEOUT_SECONDS,
+  );
+  const reserveSeconds = requirePositiveInteger(
+    process.env.PUBLIC_CONSUMER_FINALIZATION_RESERVE_SECONDS,
+    'PUBLIC_CONSUMER_FINALIZATION_RESERVE_SECONDS',
+    DEFAULT_POST_SMOKE_RESERVE_SECONDS,
+  );
+  let deadline = Date.now() + timeoutSeconds * 1_000;
+  const hardRaw = process.env.REGISTRY_JOB_HARD_DEADLINE_EPOCH?.trim();
+  if (hardRaw) {
+    if (!/^[1-9][0-9]*$/u.test(hardRaw))
+      throw error('REGISTRY_JOB_HARD_DEADLINE_EPOCH must be a positive Unix timestamp');
+    const hard = Number(hardRaw) * 1_000;
+    if (!Number.isSafeInteger(hard))
+      throw error('REGISTRY_JOB_HARD_DEADLINE_EPOCH exceeds the safe timestamp range');
+    deadline = Math.min(deadline, hard - reserveSeconds * 1_000);
+  }
+  if (deadline - Date.now() < 30_000) {
+    throw error(
+      'less than 30 seconds remain before the shared public-consumer deadline after preserving final promotion reserve',
+    );
+  }
+  return deadline;
+}
+
+async function prepare(scratch, argv) {
+  const args = parseArgs(argv);
+  if (args.help) {
+    usage();
+    return;
+  }
+  const lock = loadPublicationLock(path.resolve(ROOT, args.lock));
+  const graph = { products: loadProducts(TOOL) };
+  const plan = publicConsumerPlan(lock, args.products, graph, { repository: args.repository });
+  const registryEvidence = validateRegistryReceiptEvidence(args.registryReceipts, lock, {
+    products: plan.products,
+    ecosystems: REGISTRY_ECOSYSTEMS,
+    receiptMode: 'sealed',
+  });
+  const githubFile = boundedRegularJson(
+    args.githubReceipt,
+    MAX_RECEIPT_BYTES,
+    'GitHub release receipt',
+  );
+  const githubReceipt = validateGithubAttestationReceipt(githubFile.value, lock, {
+    repo: plan.repository,
+  });
+  const registryFile = boundedRegularJson(
+    args.registryReceipts,
+    MAX_RECEIPT_BYTES,
+    'registry receipt evidence',
+  );
+  if (registryFile.value.lockDigest !== registryEvidence.lockDigest)
+    throw error('registry receipt changed during public consumer setup');
+
+  const deadlineMilliseconds = sharedDeadlineMilliseconds();
+  writeFileSync(
+    path.join(scratch, 'context.json'),
+    JSON.stringify({
+      args,
+      lock,
+      plan,
+      deadlineMilliseconds,
+      registryReceiptSha256: sha256Bytes(registryFile.bytes),
+      githubReceiptDigest: githubReceipt.receiptDigest,
+    }),
+    { flag: 'wx', mode: 0o600 },
+  );
+}
+
+async function main(argv) {
+  const [phase, scratch, ecosystem] = argv;
+  if (phase === '--prepare' && scratch) return prepare(scratch, argv.slice(2));
+  if (!scratch || !['--stage', '--finish', '--report'].includes(phase))
+    throw error('use bash tools/release/public-consumer-smoke.sh [options]');
+  const context = boundedRegularJson(
+    path.join(scratch, 'context.json'),
+    MAX_RECEIPT_BYTES,
+    'consumer context',
+  ).value;
+  const { args, lock, plan } = context;
+  if (phase === '--report') {
+    const surfaces = [...plan.surfaces.map(({ ecosystem }) => ecosystem), 'github'].map(
+      (name) =>
+        boundedRegularJson(path.join(scratch, name + '.json'), MAX_EVIDENCE_BYTES, 'surface result')
+          .value,
+    );
+    const evidence = publicConsumerEvidence({ ...context, surfaces });
+    validatePublicConsumerEvidence(evidence, lock, plan);
+    writeImmutablePublicConsumerEvidence(path.resolve(ROOT, args.output), evidence);
+    console.log(
+      `Verified ${plan.products.length} products across ${surfaces.length} anonymous public consumer surfaces; immutable evidence: ${path.relative(ROOT, args.output)} (${evidence.evidenceDigest}).`,
+    );
+    return;
+  }
+  const runner = {
+    cargo: cargoSurface,
+    npm: npmSurface,
+    maven: mavenSurface,
+    github: githubSurface,
+  }[ecosystem];
+  if (
+    !runner ||
+    (ecosystem !== 'github' && !plan.surfaces.some((row) => row.ecosystem === ecosystem))
+  )
+    throw error('unknown public consumer surface');
+  const root = path.join(scratch, ecosystem);
+  mkdirSync(root, { recursive: true });
+  const result = await runner(
+    { ...context, root, surface: plan.surfaces.find((row) => row.ecosystem === ecosystem) },
+    phase === '--stage',
+  );
+  if (phase === '--stage') {
+    writeFileSync(
+      path.join(root, 'environment'),
+      Object.entries(result)
+        .map(([name, value]) => name + '=' + value + '\0')
+        .join(''),
+      { mode: 0o600 },
+    );
+    if (ecosystem === 'github' && plan.github.swift !== null) {
+      const env = sanitizedPublicEnvironment({
+        CLANG_MODULE_CACHE_PATH: path.join(root, 'swift-module-cache'),
+        HOME: path.join(root, 'swift-home'),
+        SWIFTPM_MODULECACHE_OVERRIDE: path.join(root, 'swift-module-cache'),
+      });
+      writeFileSync(
+        path.join(root, 'swift-environment'),
+        Object.entries(env)
+          .map(([name, value]) => name + '=' + value + '\0')
+          .join(''),
+        { mode: 0o600 },
+      );
+    }
+  } else
+    writeFileSync(path.join(scratch, ecosystem + '.json'), JSON.stringify(result), {
+      flag: 'wx',
+      mode: 0o600,
+    });
+}
+
+if (import.meta.main) {
+  try {
+    await main(Bun.argv.slice(2));
+  } catch (cause) {
+    console.error(cause.message);
+    process.exitCode = cause instanceof PublicCommandError && cause.retryable ? 75 : 1;
+  }
+}

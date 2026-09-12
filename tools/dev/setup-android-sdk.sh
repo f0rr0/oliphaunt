@@ -25,7 +25,7 @@ Options:
   -h, --help                 Show this help.
 
 The command-line-tools URLs and SHA-256 checksums are intentionally not
-overridable. Update src/sources/toolchains/android-sdk.toml to change them.
+overridable. Update tools/dev/android-sdk.toml to change them.
 EOF
 }
 
@@ -33,7 +33,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
   fail "must run inside the Oliphaunt git checkout"
 cd "$root"
 
-manifest="${OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST:-$root/src/sources/toolchains/android-sdk.toml}"
+manifest="${OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST:-$root/tools/dev/android-sdk.toml}"
 extractor="${OLIPHAUNT_ANDROID_ZIP_EXTRACTOR:-$root/tools/dev/extract-pinned-zip.sh}"
 curl_bin="${OLIPHAUNT_ANDROID_CURL:-curl}"
 [ -f "$manifest" ] || fail "missing Android toolchain manifest: $manifest"

@@ -209,13 +209,13 @@ irreversible registry write.
 
 Passed on the final tree:
 
-- full `tools/release/release-check.mjs`, including metadata and every
+- full `tools/release/release-check.sh`, including metadata and every
   policy/release mutation unit file;
 - `tools/policy/check-workflows.sh`: actionlint, zizmor, workflow security,
   planner chaos tests, and fail-closed pinned toolchain bootstrap tests;
 - `release-metadata-check.mjs` after replacing the redundant workflow gates;
 - real PR #167 candidate normalization/synchronization and current
-  `verify-release-commit.mjs` for all 20 selected products;
+  `verify-release-commit.mts` for all 20 selected products;
 - focused pacer concurrency, deadline, malformed-journal, and test-isolation
   tests;
 - product task/edge invariants and 21 affected-selection chaos cases;

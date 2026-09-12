@@ -1,0 +1,103 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+id: "postgres-tools-wasix"
+language: "unknown"
+layer: "tool"
+stack: "systems"
+tags: ["postgres", "tools", "release-product"]
+dependsOn:
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+project:
+  title: "PostgreSQL WASIX tools"
+  owner: "oliphaunt"
+  release:
+    component: "postgres-tools-wasix"
+    packagePath: "postgres-tools/wasix"
+    artifactTargets:
+      preset: "postgres-tools-wasix"
+      targets: ["portable", "linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]
+fileGroups:
+  sources: ["**/*", "!**/node_modules/**/*", "!**/target/**/*"]
+  cargo-carrier-sources: ["crates/**/*.rs", "crates/**/Cargo.toml"]
+tasks:
+  test:
+    command: "bash postgres-tools/wasix/tools/test-packaging.sh"
+    tags: ["quality", "unit"]
+    inputs: ["tools/**/*", "npm/**/*", "cargo/**/*", "/runtimes/liboliphaunt-wasix/tools/*.mts", "/tools/packaging/**/*", "@group(release-target-contract)", "@group(legal-files)"]
+    options: {runFromWorkspaceRoot: true}
+  compiler-output:
+    tags: ["artifact", "ci-liboliphaunt-wasix-runtime"]
+    command: "bash postgres-tools/wasix/tools/build-portable.sh"
+    deps: ["liboliphaunt-wasix:runtime-portable"]
+    inputs: ["tools/build-portable.sh", "/runtimes/liboliphaunt-wasix/assets/build/docker_{pgdump,psql}.sh", "/runtimes/liboliphaunt-wasix/tools/xtask/**/*"]
+    outputs: ["/target/postgres-tools/wasix/assets/**/*"]
+    options: {runFromWorkspaceRoot: true, cache: local}
+  build-aot:
+    command: "bash postgres-tools/wasix/tools/build-aot.sh"
+    deps: ["compiler-output"]
+    tags: ["artifact", "ci-liboliphaunt-wasix-aot"]
+    inputs: ["tools/build-aot.sh", "/runtimes/liboliphaunt-wasix/tools/serialize-aot.sh", "/runtimes/liboliphaunt-wasix/tools/xtask/**/*", "$AOT_TARGET"]
+    outputs: ["/target/postgres-tools/wasix/aot/**/*"]
+    options: {runFromWorkspaceRoot: true, cache: local}
+  package-portable:
+    command: "bash tools/ci/with-projects.sh postgres-tools/wasix/tools/package-assets.mts --target portable"
+    deps: ["compiler-output"]
+    tags: ["artifact", "ci-liboliphaunt-wasix-runtime"]
+    inputs: ["VERSION", "tools/package-assets.mts", "/tools/packaging/**/*", "/runtimes/liboliphaunt-wasix/tools/{check-release-assets.mts,package-release-assets.mts,wasix-aot-manifest.mts,wasix-cargo-artifact-contract.mts}"]
+    outputs: ["/target/postgres-tools/wasix/release-assets/*-portable.tar.gz"]
+    options:
+      runInCI: true
+      runFromWorkspaceRoot: true
+  package-aot:
+    command: "bash tools/ci/with-projects.sh postgres-tools/wasix/tools/package-assets.mts --target aot"
+    deps: ["build-aot"]
+    tags: ["artifact", "ci-liboliphaunt-wasix-aot"]
+    inputs: ["VERSION", "tools/package-assets.mts", "/tools/packaging/**/*", "/runtimes/liboliphaunt-wasix/tools/{check-release-assets.mts,package-release-assets.mts,wasix-aot-manifest.mts,wasix-cargo-artifact-contract.mts}", "$AOT_TARGET"]
+    outputs: ["/target/postgres-tools/wasix/release-assets/*-aot-*.tar.gz"]
+    options:
+      runInCI: true
+      runFromWorkspaceRoot: true
+  build:
+    command: "bash tools/ci/with-projects.sh postgres-tools/wasix/tools/build-npm.mts"
+    deps: ["package-portable"]
+    inputs: ["npm/**/*", "tools/build-npm.mts", "tools/wasix-tools-npm-carrier.mts"]
+    outputs: ["/target/postgres-tools/wasix/npm/**/*"]
+    options: {runFromWorkspaceRoot: true}
+  test-consumer:
+    tags: ["integration", "consumer", "ci-wasix-ts-sdk-package"]
+    command: "bash tools/ci/with-projects.sh --exec bash postgres-tools/wasix/ts/tests/consumer.sh"
+    deps: ["oliphaunt-wasix-tools-ts:package", "oliphaunt-wasix-ts:package", "oliphaunt-wasix-napi:build-release-assets", "postgres-tools-wasix:package-portable", "postgres-tools-wasix:package-aot"]
+    inputs: ["ts/tests/**/*", "/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts", "/sdks/ts-wasix/sdk/tools/pgwire-client.mts", "/test-fixtures/postgres/**/*", "tools/*.mts"]
+    options: {cache: false, runFromWorkspaceRoot: true}
+  test-browser:
+    tags: ["integration", "browser", "ci-wasix-ts-sdk-package"]
+    command: "bash tools/ci/with-projects.sh --exec bash sdks/ts-wasix/sdk/tools/integration/smoke-browser.sh --package-only --tools"
+    deps: ["oliphaunt-wasix-tools-ts:package", "oliphaunt-wasix-ts:package", "postgres-tools-wasix:package-portable"]
+    inputs: ["ts/tests/**/*", "/sdks/ts-wasix/sdk/tools/integration/{packed-node-fixture.mts,smoke-browser.*}", "/test-fixtures/postgres/**/*", "tools/*.mts"]
+    options: {cache: false, runFromWorkspaceRoot: true}
+  format-check:
+    tags:
+      - quality
+      - static
+      - format
+      - requires-rust
+    command: cargo fmt -p oliphaunt-wasix-tools -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --check
+    inputs:
+      - "@group(cargo-carrier-sources)"
+      - "@group(cargo-workspace)"
+    options:
+      runFromWorkspaceRoot: true
+  lint:
+    tags:
+      - quality
+      - static
+      - requires-rust
+    command: cargo clippy -p oliphaunt-wasix-tools -p oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu -p oliphaunt-wasix-tools-aot-aarch64-apple-darwin -p oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc --all-targets --locked -- -D warnings
+    env:
+      CARGO_TARGET_DIR: target
+    inputs:
+      - "@group(cargo-carrier-sources)"
+      - "@group(cargo-workspace)"
+      - /clippy.toml
+    options:
+      runFromWorkspaceRoot: true

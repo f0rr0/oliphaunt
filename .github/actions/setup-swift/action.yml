@@ -1,0 +1,19 @@
+name: Set up Swift
+description: Install the Swift SDK owner's exact Linux compiler using upstream Swiftly setup.
+runs:
+  using: composite
+  steps:
+    - name: Read Swift version
+      id: version
+      shell: bash
+      run: printf 'version=%s\n' "$(cat sdks/swift/.swift-version)" >> "$GITHUB_OUTPUT"
+    - name: Install Swift
+      uses: swift-actions/setup-swift@d8e84bc3a450686a95474d7d6fa4a3301498debc # v3, Swiftly 1.1.0
+      with:
+        swift-version: ${{ steps.version.outputs.version }}
+    - name: Verify active compiler
+      shell: bash
+      run: |
+        expected="$(cat sdks/swift/.swift-version)"
+        observed="$(swift --version | sed -n 's/^Swift version \([^ ]*\).*/\1/p')"
+        test "$observed" = "$expected" || { echo "expected Swift $expected, got $observed" >&2; exit 1; }

@@ -1,32 +1,18 @@
 # Benchmarks
 
-Benchmark definitions, workload specs, baselines, and intentionally promoted
-reports belong here. Executable benchmark harnesses stay under `tools/perf`.
+Fixed SQL workloads, benchmark specs, baselines, and promoted reports live here.
+The native runner compares direct, broker, and server modes with PostgreSQL and
+SQLite. WASIX Node/browser and mobile workloads retain their own runners.
 
-The long-term benchmark matrix should compare:
+Use `benchmarks/perf/run-native.sh OUTPUT_DIRECTORY COMMAND [OPTIONS...]` for one
+native measurement with source/build identity and raw JSON. See
+[measurement instructions](../docs/maintainers/performance-evidence.md) for commands
+and comparison requirements. Optional matrices, generated verdicts, and report
+verification gates have been retired.
 
-- native PostgreSQL control;
-- `liboliphaunt` direct mode;
-- `oliphaunt` direct, broker, and server modes;
-- SQLite baselines for comparable embedded workloads.
-
-The native `oliphaunt` matrix in
-`tools/perf/matrix/run_native_oliphaunt_matrix.sh` now includes direct, broker,
-server, native PostgreSQL, SQLite, streaming, direct/broker/server
-prepared-update, native PostgreSQL prepared-update, resource, and artifact-size
-rows. RTT report rows include p50/p90/p95/p99 tail latency. Prepared-update
-report rows include fresh-process p50/p90/p95, native-PostgreSQL p90 ratios,
-and command-level CPU/RSS/footprint.
-
-Current layout:
-
-- `native/sql/`: fixed SQL workloads used by native direct, broker, server,
-  native PostgreSQL, and SQLite comparison suites.
-- `native/baselines/`: committed native baselines when promoted as release
-  evidence.
-- `wasix/`: WASIX benchmark specs and baselines.
-- `mobile/`: mobile benchmark specs and baselines.
-- `reports/`: published reports promoted as release evidence.
-
-Tooling may live in `tools/` when it is an executable harness, but benchmark
-plans, datasets, baselines, and published reports live here.
+- `native/sql/`: fixed native SQL workloads.
+- `native/baselines/`: historical native baselines.
+- `wasix/`: WASIX specs and baselines.
+- `mobile/`: mobile specs and baselines.
+- `reports/`: retained published measurements.
+- `perf/`: executable benchmark runners.

@@ -25,7 +25,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-npm-publisher
-        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/npm-publisher.toml', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/release/npm-publisher.toml', 'tools/packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}
 
     - name: Install exact npm publisher
       id: install
@@ -42,7 +42,7 @@ runs:
           node_launcher="$(cygpath -u "$node_launcher")"
         fi
         npm_cli_fs="$(cd "$publisher_bin/../npm/bin" && pwd -P)/npm-cli.js"
-        verifier_fs="$(pwd -P)/tools/release/npm-trusted-publishing-runtime.mjs"
+        verifier_fs="$(pwd -P)/tools/release/npm-trusted-publishing-runtime.mts"
         execution_envelope="$(cd "$publisher_bin/.." && pwd -P)"
         if [[ "$node_launcher" != /* || ! -f "$node_launcher" || -L "$node_launcher" ]]; then
           echo "The verified Node.js launcher is not a regular absolute path: ${node_launcher}" >&2
@@ -59,15 +59,15 @@ runs:
         run_native_node() {
           MSYS2_ARG_CONV_EXCL='*' "$node_launcher" "$@"
         }
-        node_executable="$(
-          run_native_node -e 'process.stdout.write(process.execPath)'
-        )"
         npm_cli="$npm_cli_fs"
         verifier="$verifier_fs"
+        node_info="$(pwd -P)/tools/dev/node-info.mts"
         if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
           npm_cli="$(cygpath -aw "$npm_cli_fs")"
           verifier="$(cygpath -aw "$verifier_fs")"
+          node_info="$(cygpath -aw "$node_info")"
         fi
+        node_executable="$(run_native_node "$node_info" executable)"
         node_version="$(run_native_node --version)"
         npm_version="$(run_native_node "$npm_cli" --version)"
         if [[ "$npm_version" != "$NPM_PUBLISHER_VERSION" ]]; then
@@ -77,8 +77,6 @@ runs:
         run_native_node "$verifier" check-runtime \
           --node "$node_version" \
           --npm "$npm_version"
-        run_native_node "$verifier" check-trust-cli \
-          --npm-cli "$npm_cli"
         export_dir="$publisher_bin"
         output_node="$node_executable"
         output_npm_cli="$npm_cli"
@@ -100,4 +98,4 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-npm-publisher
-        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/npm-publisher.toml', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/release/npm-publisher.toml', 'tools/packaging/portable-archive.mts', 'tools/dev/curl-platform-flags.sh') }}

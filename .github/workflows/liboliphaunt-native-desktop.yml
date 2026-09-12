@@ -1,0 +1,111 @@
+name: liboliphaunt-native-desktop
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        required: true
+        type: string
+      job-targets:
+        required: true
+        type: string
+permissions:
+  contents: read
+env:
+  OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ inputs.job-targets }}
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  HEAVY_CACHE_SAVE_IF: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Builds / Native Runtime (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache/native-runtime/${{ matrix.target }}
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_COMPRESS: "true"
+      OLIPHAUNT_CCACHE_ZERO_STATS: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up MSVC
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-msvc
+
+      - name: Prepare native build paths
+        env:
+          NATIVE_BUILD_ROOT: ${{ matrix.build-root }}
+        run: |
+          mkdir -p "$NATIVE_BUILD_ROOT"
+          if [[ "$RUNNER_OS" != "Windows" ]]; then
+            mkdir -p "$CCACHE_DIR"
+          fi
+
+      - name: Configure native compiler cache
+        run: .github/scripts/setup-native-build-tools.sh 2G
+
+      - name: Build and package liboliphaunt native runtime
+        env:
+          OLIPHAUNT_CI_TARGET: ${{ matrix.target }}
+        run: .github/scripts/run-planned-moon-job.sh liboliphaunt-native-desktop
+
+      - name: Upload liboliphaunt release assets
+        if: ${{ contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'liboliphaunt-native:package-runtime-desktop-target') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-native-release-assets-${{ matrix.target }}
+          path: target/liboliphaunt/desktop-release-assets/${{ matrix.target }}
+          if-no-files-found: error
+
+      - name: Upload PostgreSQL tools release assets
+        if: ${{ contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'postgres-tools-native:package-assets') || contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'postgres-tools-native:test-assets') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: postgres-tools-native-release-assets-${{ matrix.target }}
+          path: target/postgres-tools/native/release-assets
+          if-no-files-found: error
+
+      - name: Upload independent native cluster seeds
+        if: ${{ contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'database-resources:build-native-standard') || contains(fromJson(inputs.job-targets).liboliphaunt-native-desktop, 'database-resources:build-native-icu') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: database-resources-native-seeds-${{ matrix.target }}
+          path: target/database-resources/release-assets/*-seed-native-${{ matrix.target }}-*
+          if-no-files-found: error
+
+      - name: Show native compiler cache stats
+        if: ${{ always() }}
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+        run: |
+          if [[ "$NATIVE_TARGET" != windows-* ]] && command -v ccache >/dev/null 2>&1; then
+            ccache --show-stats
+          fi
+
+      - name: Upload liboliphaunt build logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-logs-${{ matrix.target }}
+          path: |
+            ${{ matrix.build-root }}/*.log
+            target/liboliphaunt/**/*.log
+          if-no-files-found: ignore

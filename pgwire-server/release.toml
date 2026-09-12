@@ -1,0 +1,16 @@
+id = "oliphaunt-pgwire-server"
+owner = "@oliphaunt/core"
+kind = "sdk"
+publish_targets = ["crates-io"]
+registry_packages = ["crates:oliphaunt-pgwire-server"]
+release_artifacts = ["cargo-crate"]
+
+[compatibility_versions.pgwire_server_query]
+source_product = "oliphaunt-query"
+path = "pgwire-server/Cargo.toml"
+parser = "toml:dependencies.oliphaunt-query.version"
+
+[compatibility_versions.pgwire_server_wasix]
+source_product = "oliphaunt-wasix-rust"
+path = "pgwire-server/Cargo.toml"
+parser = "toml:dependencies.oliphaunt-wasix.version"

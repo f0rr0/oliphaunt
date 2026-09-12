@@ -21,41 +21,19 @@ if [ ! -f "$app_dir/package.json" ] || [ ! -f "$app_dir/src/main-process.ts" ]; 
 fi
 
 command -v node >/dev/null 2>&1 || fail "missing node"
-command -v pnpm >/dev/null 2>&1 || fail "missing pnpm"
+command -v timeout >/dev/null 2>&1 || fail "missing GNU timeout"
+command -v bun >/dev/null 2>&1 || fail "missing bun"
 
 assert_npm_package() {
   local package_name="$1"
   local expected_version="$2"
   local resolver_package="${3:-}"
-  pnpm --dir "$app_dir" exec node - "$package_name" "$expected_version" "$resolver_package" <<'NODE'
-const fs = require('node:fs');
-const path = require('node:path');
-
-const [packageName, expectedVersion, resolverPackage] = process.argv.slice(2);
-const resolvePaths = [process.cwd()];
-if (resolverPackage) {
-  const resolverPackageJson = require.resolve(`${resolverPackage}/package.json`, {
-    paths: [process.cwd()],
-  });
-  resolvePaths.unshift(path.dirname(resolverPackageJson));
-}
-const packageJson = require.resolve(`${packageName}/package.json`, {
-  paths: resolvePaths,
-});
-const data = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
-if (data.version !== expectedVersion) {
-  throw new Error(`${packageName} resolved version ${data.version}, expected ${expectedVersion}`);
-}
-const normalized = packageJson.split(path.sep).join('/');
-if (!normalized.includes('/node_modules/')) {
-  throw new Error(`${packageName} resolved outside node_modules: ${packageJson}`);
-}
-NODE
+  (cd "$app_dir" && bun "$root/examples/tools/assert-installed-package.mts" "$package_name" "$expected_version" "$resolver_package")
 }
 
 example_package_version() {
   local package_name="$1"
-  node "$root/examples/tools/example-release-dependencies.mjs" electron-package-version "$package_name"
+  bun "$root/examples/tools/example-release-dependencies.mts" electron-package-version "$package_name"
 }
 
 electron_relative_path() {
@@ -90,7 +68,7 @@ repair_electron_install() {
   command -v unzip >/dev/null 2>&1 || fail "missing unzip required to repair Electron binary install"
 
   local version
-  version="$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$electron_pkg/package.json")"
+  version="$(node "$root/tools/dev/node-info.mts" package-version "$electron_pkg/package.json")"
   local archive_name="electron-v$version-$platform-$arch.zip"
   local archive=""
   for cache_root in "${electron_config_cache:-}" "$HOME/.cache/electron"; do
@@ -106,7 +84,7 @@ repair_electron_install() {
   rm -rf "$electron_pkg/dist"
   mkdir -p "$electron_pkg/dist"
   unzip -q "$archive" -d "$electron_pkg/dist"
-  printf '%s' "$relative_path" > "$electron_pkg/path.txt"
+  printf '%s' "$relative_path" >"$electron_pkg/path.txt"
   if [ -f "$electron_pkg/dist/electron.d.ts" ]; then
     mv "$electron_pkg/dist/electron.d.ts" "$electron_pkg/electron.d.ts"
   fi
@@ -118,7 +96,7 @@ prepare_wasix_sidecar() {
     return
   fi
 
-  local scratch="$root/target/e2e/electron-sidecars/${app_dir//\//-}"
+  local scratch="$root/target/e2e/electron-sidecars${app_dir//\//-}"
   rm -rf "$scratch"
   mkdir -p "$scratch"
   cp -R "$root/$app_dir/src-wasix/." "$scratch/"
@@ -147,10 +125,10 @@ prepare_wasix_sidecar() {
   wasix_sidecar_env=("OLIPHAUNT_WASIX_TODO_SIDECAR=$sidecar")
 }
 
-pnpm --dir "$app_dir" install --no-frozen-lockfile
+bun install --cwd "$app_dir"
 electron_pkg="$root/$app_dir/node_modules/electron"
-electron_platform="$(node -p 'process.platform')"
-electron_arch="$(node -p 'process.arch')"
+electron_platform="$(node "$root/tools/dev/node-info.mts" platform)"
+electron_arch="$(node "$root/tools/dev/node-info.mts" arch)"
 electron_relative="$(electron_relative_path "$electron_platform" "$electron_arch")"
 repair_electron_install "$electron_pkg" "$electron_platform" "$electron_arch" "$electron_relative"
 electron="$electron_pkg/dist/$electron_relative"
@@ -160,22 +138,27 @@ fi
 if [ "$app_dir" = "examples/electron" ]; then
   typescript_version="$(example_package_version "@oliphaunt/ts")"
   liboliphaunt_linux_version="$(example_package_version "@oliphaunt/liboliphaunt-linux-x64-gnu")"
-  hstore_version="$(example_package_version "@oliphaunt/extension-hstore")"
+  contrib_version="$(example_package_version "@oliphaunt/extension-contrib-pg18")"
 
   assert_npm_package "@oliphaunt/ts" "$typescript_version"
   assert_npm_package "@oliphaunt/liboliphaunt-linux-x64-gnu" "$liboliphaunt_linux_version" "@oliphaunt/ts"
-  assert_npm_package "@oliphaunt/extension-hstore" "$hstore_version"
+  assert_npm_package "@oliphaunt/extension-contrib-pg18" "$contrib_version"
 fi
-pnpm --dir "$app_dir" build
+bun run --cwd "$app_dir" build
 prepare_wasix_sidecar
 
+user_data="$(mktemp -d)"
+trap 'rm -rf "$user_data"' EXIT
+cd "$root/$app_dir"
 run_smoke=(
+  timeout --kill-after=3s 210s
   env
-  "OLIPHAUNT_E2E_ELECTRON=$electron"
-  "OLIPHAUNT_E2E_ELECTRON_APP=$root/$app_dir"
+  "OLIPHAUNT_ELECTRON_E2E_DRIVER=1"
   "${wasix_sidecar_env[@]}"
-  node
-  "$root/examples/tools/electron-driver-smoke.mjs"
+  "$electron"
+  --no-sandbox
+  "--user-data-dir=$user_data"
+  dist/main/main-process.js
 )
 
 if command -v xvfb-run >/dev/null 2>&1; then

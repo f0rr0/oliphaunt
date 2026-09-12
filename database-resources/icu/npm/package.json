@@ -1,0 +1,43 @@
+{
+  "name": "@oliphaunt/icu",
+  "version": "0.2.1",
+  "description": "Portable ICU data files for Oliphaunt runtimes.",
+  "license": "MIT AND Unicode-3.0",
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "database-resources/icu/npm"
+  },
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "homepage": "https://oliphaunt.dev",
+  "oliphaunt": {
+    "product": "oliphaunt-icu",
+    "kind": "icu-data",
+    "target": "portable",
+    "dataRelativePath": "OliphauntICU.bundle/share/icu",
+    "manifestRelativePath": "OliphauntICU.bundle/manifest.properties",
+    "icuDataTreeSha256": "x-release-icu-data-tree-sha256"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "OliphauntICU.bundle",
+    "OliphauntICU.podspec",
+    "react-native.config.js",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+    "THIRD_PARTY_LICENSES/ICU-LICENSE"
+  ],
+  "exports": {
+    "./data": "./OliphauntICU.bundle/share/icu/icudt76l.dat",
+    "./manifest": "./OliphauntICU.bundle/manifest.properties",
+    "./package.json": "./package.json"
+  }
+}

@@ -22,10 +22,12 @@ isolation is required.
 
 ## Storage
 
-Mobile SDKs hydrate a packaged cluster seed into app-private storage and publish
+Mobile SDKs hydrate an explicitly selected seed carrier into app-private storage and publish
 the managed-root descriptor last. The C boundary validates complete PGDATA and
 never runs `initdb`. A failed initialization cannot leave a descriptor-only
-root that later opens as valid.
+root that later opens as valid. Existing databases do not need a seed to reopen.
+ICU data is selected separately from the runtime; an ICU seed carrier declares
+its canonical ICU dependency.
 
 Persistent roots survive close. Physical backup uses the native archive;
 restore accepts only a new or existing-empty destination. App migrations use
@@ -46,8 +48,8 @@ mobile SDK moves them to an owned execution context:
 
 | SDK | Public shape | Runtime owner | Cancellation and close |
 | --- | --- | --- | --- |
-| Swift | `async throws` | One dedicated serial dispatch queue owns root preparation, open, protocol work, backup, and close. | Transaction pinning and close are FIFO admission cutoffs: earlier permits drain and later incompatible calls fail. `cancel()` uses a separate control queue so it can interrupt the active owner call. |
-| Kotlin | `suspend` | One single-thread coroutine dispatcher owns root preparation, JNI open, protocol work, backup, and close. | Transaction pinning and close are FIFO admission cutoffs. Admitted JNI work completes even if its caller is cancelled; close uses `NonCancellable`, while `cancel()` uses a separate control dispatcher. A phantom-reference fallback only enqueues forgotten-handle close on the owner. |
+| Swift | `async throws` | Generated UniFFI `NativeDatabase` delegates execution to the shared Rust `EngineExecutor`; Swift owns resource preparation and facade admission. | Request-scoped task cancellation reaches the shared owner through `withTaskCancellationHandler`. Transaction pinning and close preserve admission order. |
+| Kotlin | `suspend` | The same generated `NativeDatabase` and Rust executor own native execution; Kotlin owns resource preparation and facade admission. | Caller `Job` cancellation uses a scoped notification. Admitted work drains under `NonCancellable`; transaction pinning and close preserve admission order. |
 | React Native / Expo | JavaScript `Promise` | JSI copies binary arguments, then delegates to the same Swift or Kotlin SDK owner. | A thrown stream callback rejects its promise after native recovery confirms a known protocol boundary; an execution, transport, or recovery failure is authoritative instead. Invalidation stops callback delivery to the retiring runtime and schedules close without blocking the JavaScript, main, or UI thread. |
 
 The synchronous callback used for raw protocol streaming is backpressure, not a
@@ -68,7 +70,7 @@ Cleaner/deinitializer paths are safety nets, not lifecycle APIs, and schedule
 best-effort close on the same owner rather than running PostgreSQL on a runtime
 finalizer thread.
 
-The mobile bridges call `oliphaunt_copy_last_error` on the native operation's
+The shared Rust native binding calls `oliphaunt_copy_last_error` on the native operation's
 calling thread and move its operation-local snapshot into language-owned
 memory. The size probe and copy remain stable if the separate cancellation
 owner updates the handle-wide fallback concurrently. The C boundary exposes no

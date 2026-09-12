@@ -27,7 +27,7 @@ current Oliphaunt release versions and do not commit nested lockfiles.
 Run the static Cargo manifest checks with:
 
 ```sh
-tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
+tools/dev/bun.sh tools/release/example-cargo-policy.mts --check
 ```
 The native examples exercise their configured database path during startup;
 native tool compatibility is qualified separately against the local server.
@@ -47,7 +47,7 @@ through `tauri-driver`, creates a todo through the real UI, toggles it done, and
 asserts the done filter. It expects `WebKitWebDriver`; on Debian/Ubuntu install
 `webkit2gtk-driver`. In headless environments it uses `xvfb-run` when present.
 
-Run Electron GUI smoke tests through the IPC test driver on Linux:
+Run Electron GUI smoke tests on Linux:
 
 ```sh
 examples/tools/run-electron-driver-smoke.sh examples/electron
@@ -55,9 +55,9 @@ examples/tools/run-electron-driver-smoke.sh examples/electron-wasix
 ```
 
 The Electron smoke builds the selected app, launches the packaged Electron
-binary with a test-driver IPC channel, creates a todo through the real renderer,
-toggles it done, and asserts the done filter. In headless environments it uses
-`xvfb-run` when present.
+binary with an isolated profile, creates a todo through the real renderer,
+toggles it done, and asserts the done filter. GNU `timeout` bounds the run to
+210 seconds. In headless environments it uses `xvfb-run` when present.
 
 On Linux, SwiftPM artifacts are staged for inspection and skipped for registry
 publish when `swift` is not installed.

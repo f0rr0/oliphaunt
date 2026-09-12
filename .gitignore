@@ -6,15 +6,15 @@ node_modules/
 /target/oliphaunt-sources/checkouts/
 /target/oliphaunt-wasix/
 /src/target/
-/src/docs/.docusaurus/
-/src/docs/.next/
-/src/docs/.source/
-/src/docs/build/
-/src/docs/out/
-/src/runtimes/liboliphaunt/wasix/crates/assets/assets/
-/src/runtimes/liboliphaunt/wasix/crates/aot/*/artifacts/
-/src/sdks/react-native/ios/vendor/oliphaunt-swift/
-/src/sdks/react-native/ios/vendor/liboliphaunt.xcframework/
+/docs/.docusaurus/
+/docs/.next/
+/docs/.source/
+/docs/build/
+/docs/out/
+/runtimes/liboliphaunt-wasix/crates/assets/assets/
+/runtimes/liboliphaunt-wasix/crates/aot/*/artifacts/
+/sdks/react-native/ios/vendor/oliphaunt-swift/
+/sdks/react-native/ios/vendor/liboliphaunt.xcframework/
 **/.DS_Store
 __pycache__/
 # Build artifacts from cargo package
@@ -25,3 +25,18 @@ oliphaunt_wasix-*.crates.tar.gz
 /examples/tauri-wasix/src-tauri/Cargo.lock
 /examples/electron-wasix/src-wasix/Cargo.lock
 /examples/browser-wasix/dist/
+
+# JavaScript emitted from TypeScript for public package consumers.
+/sdks/swift/tools/extension-resource-inventory.mjs
+/sdks/swift/tools/render-extension-products.mjs
+/sdks/swift/tools/swift-carrier-resolver.mjs
+/sdks/react-native/tools/native-resource-closure.mjs
+/sdks/react-native/tools/stage-ios-app.mjs
+/sdks/react-native/tools/verify-ios-package.mjs
+/sdks/react-native/app.plugin.js
+/sdks/react-native/react-native.config.js
+/sdks/react-native/tools/codegen-check.cjs
+/postgres-tools/native/npm/index.js
+/postgres-tools/wasix/npm/index.js
+/database-resources/icu/npm/react-native.config.js
+/sdks/react-native/.generated-tools/

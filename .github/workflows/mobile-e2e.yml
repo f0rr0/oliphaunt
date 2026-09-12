@@ -37,11 +37,6 @@ concurrency:
   group: mobile-e2e-${{ inputs.sha || github.sha }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: false
 
-env:
-  NODE_VERSION: 22.22.3
-  PNPM_VERSION: 11.5.0
-  BUN_VERSION: 1.3.14
-
 jobs:
   resolve:
     name: resolve-build-artifacts
@@ -63,8 +58,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Resolve mobile app artifacts
         id: plan
@@ -75,7 +68,10 @@ jobs:
           INPUT_PLATFORM: ${{ inputs.platform || 'all' }}
           DEFAULT_SHA: ${{ github.sha }}
           BUILD_GATE_JOB: Builds
-        run: bun .github/scripts/resolve-mobile-e2e.mjs
+        run: |
+          CHECKOUT_SHA="$(git rev-parse --verify 'HEAD^{commit}')"
+          export CHECKOUT_SHA
+          bun .github/scripts/resolve-mobile-e2e.mts
 
   android:
     name: android-installed-app
@@ -95,12 +91,10 @@ jobs:
       - name: Set up Node
         id: setup_android_e2e_node
         uses: ./.github/actions/setup-node-runtime
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Reclaim Android emulator disk
         id: reclaim_android_emulator_disk
-        run: node .github/scripts/reclaim-android-mobile-build-disk.mjs
+        run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
 
       - name: Set up Android
         id: setup_android_e2e
@@ -119,7 +113,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$CI_HEAD_SHA" \
             target/mobile-build/react-native/android \
@@ -128,13 +122,20 @@ jobs:
             --artifact react-native-mobile-android-app-android-x86_64
           find target/mobile-build/react-native/android -maxdepth 2 -type f -print
 
+      - name: Provision runner KVM access
+        run: |
+          test -c /dev/kvm
+          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            sudo chmod a+rw /dev/kvm
+          fi
+
       - name: Start Android emulator
         id: start_android_emulator
         env:
           OLIPHAUNT_ANDROID_EMULATOR_API: "35"
           OLIPHAUNT_ANDROID_EMULATOR_DISK_HEADROOM_MB: "2048"
           OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB: "6144"
-        run: tools/dev/start-android-emulator-ci.sh
+        run: tools/ci/start-android-emulator-ci.sh
 
       - name: Run Android installed-app E2E
         id: android_app_e2e
@@ -144,7 +145,7 @@ jobs:
           OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
           OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-        run: bash src/sdks/react-native/tools/mobile-e2e.sh android
+        run: bash sdks/react-native/tools/mobile-e2e.sh android
 
       - name: Upload Android E2E reports
         if: ${{ always() }}
@@ -172,11 +173,8 @@ jobs:
           ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
 
-      - name: Set up Node and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
+      - name: Set up Node and Bun
+        uses: ./.github/actions/setup-node-bun
 
       - name: Set up Apple
         uses: ./.github/actions/setup-apple
@@ -192,7 +190,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          node .github/scripts/download-build-artifacts.mjs \
+          bash .github/scripts/download-build-artifacts.sh \
             CI \
             "$CI_HEAD_SHA" \
             target/mobile-build/react-native/ios-transport \
@@ -204,7 +202,7 @@ jobs:
         id: verify_ios_app_transport
         run: |
           rm -rf target/mobile-build/react-native/ios
-          node src/sdks/react-native/tools/ios-app-transport.mjs verify-extract \
+          bash sdks/react-native/tools/ios-app-transport.sh verify-extract \
             --transport-dir target/mobile-build/react-native/ios-transport \
             --output-dir target/mobile-build/react-native/ios
           find target/mobile-build/react-native/ios -maxdepth 2 -print
@@ -219,7 +217,7 @@ jobs:
           OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-        run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
+        run: bash sdks/react-native/tools/mobile-e2e.sh ios
 
       - name: Upload iOS E2E reports
         if: ${{ always() }}
@@ -234,7 +232,7 @@ jobs:
 
   required:
     name: E2E
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs:
       - resolve
       - android
@@ -251,8 +249,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check resolver
         id: resolver_gate
@@ -260,7 +256,7 @@ jobs:
           NEEDS_JSON: ${{ toJson(needs) }}
           REQUIRED_JOBS_JSON: '["resolve"]'
           GATE_LABEL: E2E resolver
-        run: bun .github/scripts/check-ci-gate.mjs required
+        run: bun .github/scripts/check-ci-gate.mts required
 
       - name: Check selected E2E platform jobs
         id: selected_platforms_gate
@@ -268,4 +264,4 @@ jobs:
           NEEDS_JSON: ${{ toJson(needs) }}
           SELECTED_JOBS_JSON: ${{ needs.resolve.outputs.platform_jobs }}
           GATE_LABEL: selected E2E platform jobs
-        run: bun .github/scripts/check-ci-gate.mjs selected
+        run: bun .github/scripts/check-ci-gate.mts selected

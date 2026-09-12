@@ -1,0 +1,138 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: extension-artifacts-native
+language: unknown
+layer: tool
+stack: systems
+tags:
+  - javascript-quality
+  - extensions
+  - artifacts
+  - native
+dependsOn:
+  - id: extension-runtime-contract
+    scope: build
+  - id: extensions
+    scope: build
+  - id: liboliphaunt-native
+    scope: build
+  - id: source-inputs
+    scope: build
+  - id: third-party-icu
+    scope: build
+  - id: third-party-openssl
+    scope: build
+project:
+  title: Native Extension Artifacts
+  description: Publishable exact-extension artifact checks for native liboliphaunt targets.
+  owner: oliphaunt
+tasks:
+  test:
+    tags:
+      - quality
+      - unit
+    command: bash extensions/artifacts/native/tools/test.sh
+    inputs:
+      - /extensions/artifacts/native/tools/run-observed-phase.sh
+      - /extensions/artifacts/native/tools/run-observed-phase.test.sh
+      - /extensions/artifacts/native/tools/*.{mts,sh}
+      - /extensions/artifacts/packages/tools/extension-artifact-inventory.mts
+      - /extensions/artifacts/native/tools/extension-artifact-packager.mts
+      - "@group(legal-files)"
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - /extensions/contracts/*.mts
+      - /extensions/tools/extension-artifact-archive-policy.mts
+      - /extensions/tools/extension-upstream-licenses.mts
+      - /extensions/external/**/upstream-license-data.json
+      - /extensions/external/**/upstream-licenses/**/*
+      - /tools/packaging/strip-native-binaries.sh
+      - /extensions/artifacts/native/tools/ios-extension-registration.sh
+      - /tools/packaging/*.mts
+      - /extensions/generated/**/*
+      - /tools/packaging/testdata/release-fixture-utils.mts
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build-target:
+    tags:
+      - release
+      - artifact-builder
+      - ci-extension-artifacts-native
+    command: bash extensions/artifacts/native/tools/package-release-assets.sh
+    env:
+      OLIPHAUNT_TRACK_BUILD: missing
+    deps:
+      - source-inputs:source-fetch-native-runtime
+    inputs:
+      - /.github/actions/setup-apple/**
+      - /.github/actions/setup-android/**
+      - /.github/scripts/setup-native-build-tools.sh
+      - /.prototools
+      - /tools/dev/*.toml
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - project: extensions
+        group: build
+      - /third-party/postgres/**/*
+      - "@group(upstream-licenses)"
+      - project: liboliphaunt-native
+        group: runtime
+      - project: extension-runtime-contract
+        group: contract
+      - project: third-party-icu
+        group: sources
+      - project: third-party-openssl
+        group: sources
+      - /runtimes/liboliphaunt-native/sources/*.toml
+      - /extensions/artifacts/native/tools/**/*
+      - /tools/packaging/check-linux-consumer-baseline.sh
+      - /third-party/tools/source-fetch-core.mts
+      - /extensions/tools/extension-upstream-licenses.mts
+      - /tools/packaging/linux-abi-baseline.test.sh
+      - "/tools/packaging/*.{mjs,mts}"
+      - /extensions/tools/extension-artifact-archive-policy.mts
+      - /extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
+      - /runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json
+      - /tools/release/platform-compatibility-policy.mts
+      - /tools/release/platform-compatibility-policy.test.mts
+      - /tools/packaging/platform-binary-contract.mts
+      - /tools/packaging/strip-native-binaries.sh
+      - /tools/packaging/platform-binary-contract.test.mts
+      - /tools/packaging/release-notices.mts
+      - /tools/packaging/release-directory-safety.mts
+      - /tools/packaging/windows-vc-runtime-closure.mts
+    outputs:
+      - /target/extensions/native/release-assets/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+  rust-format-check:
+    tags:
+      - quality
+      - static
+      - format
+      - requires-rust
+    command: cargo fmt -p oliphaunt-native-extension-proof --check
+    inputs:
+      - /extensions/tests/native/**/*.rs
+      - /extensions/tests/native/Cargo.toml
+      - /clippy.toml
+      - "@group(cargo-workspace)"
+    options:
+      runFromWorkspaceRoot: true
+  rust-lint:
+    tags:
+      - quality
+      - static
+      - requires-rust
+    command: cargo clippy -p oliphaunt-native-extension-proof --all-targets --locked -- -D warnings
+    env:
+      CARGO_TARGET_DIR: target
+    inputs:
+      - /extensions/tests/native/**/*.rs
+      - /extensions/tests/native/Cargo.toml
+      - /clippy.toml
+      - "@group(cargo-workspace)"
+    options:
+      runFromWorkspaceRoot: true

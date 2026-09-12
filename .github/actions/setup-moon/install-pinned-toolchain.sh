@@ -13,28 +13,24 @@ if [ -z "$root" ]; then
 fi
 
 action_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-moon_manifest="${OLIPHAUNT_MOON_MANIFEST:-$root/src/sources/toolchains/moon-cli.toml}"
-pnpm_manifest="${OLIPHAUNT_PNPM_MANIFEST:-$root/src/sources/toolchains/pnpm.toml}"
-proto_manifest="${OLIPHAUNT_PROTO_MANIFEST:-$root/src/sources/toolchains/proto.toml}"
-plugin_manifest="${OLIPHAUNT_MOON_PLUGIN_MANIFEST:-$root/src/sources/toolchains/moon-plugins.toml}"
+moon_manifest="${OLIPHAUNT_MOON_MANIFEST:-$root/tools/dev/moon-cli.toml}"
+proto_manifest="${OLIPHAUNT_PROTO_MANIFEST:-$root/tools/dev/proto.toml}"
+plugin_manifest="${OLIPHAUNT_MOON_PLUGIN_MANIFEST:-$root/tools/dev/moon-plugins.toml}"
 proto_file="${OLIPHAUNT_MOON_PROTO_FILE:-$root/.prototools}"
 moon_config="${OLIPHAUNT_MOON_TOOLCHAINS_CONFIG:-$root/.moon/toolchains.yml}"
-extractor="${OLIPHAUNT_MOON_ARCHIVE_EXTRACTOR:-$action_dir/toolchain-archive.py}"
+extractor="${OLIPHAUNT_MOON_ARCHIVE_EXTRACTOR:-$action_dir/toolchain-archive.mts}"
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_MOON_TOOLCHAIN_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-moon-toolchain}"
 
-windows_posix=0
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)
     command -v cygpath >/dev/null 2>&1 || fail "cygpath is required on Windows"
-    windows_posix=1
     cache_root="$(cygpath -u "$cache_root")"
     ;;
 esac
 
 for path in \
   "$moon_manifest" \
-  "$pnpm_manifest" \
   "$proto_manifest" \
   "$plugin_manifest" \
   "$proto_file" \
@@ -47,14 +43,7 @@ done
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
 
-python=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    python="$candidate"
-    break
-  fi
-done
-[ -n "$python" ] || fail "python3 or python is required for safe archive extraction"
+command -v bun >/dev/null 2>&1 || fail "Bun is required; run setup-node-bun first"
 
 manifest_value() {
   local manifest="$1"
@@ -123,13 +112,6 @@ validate_digest() {
     fail "$label must contain exactly 64 lowercase hexadecimal characters"
 }
 
-validate_sha512() {
-  local label="$1"
-  local digest="$2"
-  [ "${#digest}" -eq 128 ] && [[ ! "$digest" =~ [^0-9a-f] ]] ||
-    fail "$label must contain exactly 128 lowercase hexadecimal characters"
-}
-
 validate_count() {
   local label="$1"
   local value="$2"
@@ -145,61 +127,17 @@ sha256_file() {
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
   else
-    "$python" - "$1" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-digest = hashlib.sha256()
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum or shasum is required"
   fi
 }
 
-sha512_file() {
-  if command -v sha512sum >/dev/null 2>&1; then
-    sha512sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 512 "$1" | awk '{print $1}'
-  else
-    "$python" - "$1" <<'PY'
-import hashlib
-import pathlib
-import sys
-
-digest = hashlib.sha512()
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
-  fi
-}
-
-moon_version="$(manifest_value "$moon_manifest" toolchain version)" ||
-  fail "$moon_manifest must contain exactly one quoted toolchain.version"
-pnpm_version="$(manifest_value "$pnpm_manifest" toolchain version)" ||
-  fail "$pnpm_manifest must contain exactly one quoted toolchain.version"
+moon_version="$(prototool_version moon)" || fail "$proto_file must contain exactly one moon version"
+moon_version="${moon_version#v}"
 proto_version="$(manifest_value "$proto_manifest" toolchain version)" ||
   fail "$proto_manifest must contain exactly one quoted toolchain.version"
 validate_version Moon "$moon_version"
-validate_version pnpm "$pnpm_version"
 validate_version proto "$proto_version"
 
-for tool in moon pnpm; do
-  configured="$(prototool_version "$tool")" ||
-    fail "$proto_file must contain exactly one $tool version"
-  configured="${configured#v}"
-  case "$tool" in
-    moon) expected="$moon_version" ;;
-    pnpm) expected="$pnpm_version" ;;
-  esac
-  [ "$configured" = "$expected" ] ||
-    fail "$proto_file $tool version $configured does not match pinned version $expected"
-done
 configured_proto="$(moon_proto_version)" ||
   fail "$moon_config must contain exactly one quoted proto.version"
 configured_proto="${configured_proto#v}"
@@ -244,7 +182,6 @@ case "$target" in
     expected_moon_companion="moonx.exe"
     expected_moon_entries="5"
     moon_archive_suffix="zip"
-    moon_archive_executables=()
     ;;
   aarch64-apple-darwin | x86_64-apple-darwin | aarch64-unknown-linux-gnu | x86_64-unknown-linux-gnu)
     expected_moon_format="tar.xz"
@@ -253,7 +190,6 @@ case "$target" in
     expected_moon_companion="moonx"
     expected_moon_entries="6"
     moon_archive_suffix="tar.xz"
-    moon_archive_executables=("$expected_moon_binary" "$expected_moon_companion")
     ;;
   *) fail "unsupported pinned Moon target: $target" ;;
 esac
@@ -271,45 +207,8 @@ for value in "$moon_archive_bytes" "$moon_expanded_bytes" "$moon_entry_count"; d
   validate_count "$moon_manifest $moon_section count" "$value"
 done
 
-pnpm_url="$(manifest_value "$pnpm_manifest" package url)" || fail "$pnpm_manifest is missing package.url"
-pnpm_archive_sha256="$(manifest_value "$pnpm_manifest" package sha256)" || fail "$pnpm_manifest is missing package.sha256"
-pnpm_archive_sha512="$(manifest_value "$pnpm_manifest" package sha512)" || fail "$pnpm_manifest is missing package.sha512"
-pnpm_archive_bytes="$(manifest_value "$pnpm_manifest" package bytes)" || fail "$pnpm_manifest is missing package.bytes"
-pnpm_expanded_bytes="$(manifest_value "$pnpm_manifest" package expanded_bytes)" || fail "$pnpm_manifest is missing package.expanded_bytes"
-pnpm_format="$(manifest_value "$pnpm_manifest" package format)" || fail "$pnpm_manifest is missing package.format"
-pnpm_prefix="$(manifest_value "$pnpm_manifest" package prefix)" || fail "$pnpm_manifest is missing package.prefix"
-pnpm_entry_count="$(manifest_value "$pnpm_manifest" package entry_count)" || fail "$pnpm_manifest is missing package.entry_count"
-pnpm_file_count="$(manifest_value "$pnpm_manifest" package file_count)" || fail "$pnpm_manifest is missing package.file_count"
-pnpm_tree_sha256="$(manifest_value "$pnpm_manifest" package tree_sha256)" || fail "$pnpm_manifest is missing package.tree_sha256"
-pnpm_executable_paths="$(manifest_value "$pnpm_manifest" package executable_paths)" || fail "$pnpm_manifest is missing package.executable_paths"
-pnpm_binary_path="$(manifest_value "$pnpm_manifest" package binary_path)" || fail "$pnpm_manifest is missing package.binary_path"
-pnpm_binary_sha256="$(manifest_value "$pnpm_manifest" package binary_sha256)" || fail "$pnpm_manifest is missing package.binary_sha256"
-pnpm_companion_path="$(manifest_value "$pnpm_manifest" package companion_path)" || fail "$pnpm_manifest is missing package.companion_path"
-pnpm_companion_sha256="$(manifest_value "$pnpm_manifest" package companion_sha256)" || fail "$pnpm_manifest is missing package.companion_sha256"
-pnpm_payload_path="$(manifest_value "$pnpm_manifest" package payload_path)" || fail "$pnpm_manifest is missing package.payload_path"
-pnpm_payload_sha256="$(manifest_value "$pnpm_manifest" package payload_sha256)" || fail "$pnpm_manifest is missing package.payload_sha256"
-
-expected_pnpm_url="https://registry.npmjs.org/pnpm/-/pnpm-$pnpm_version.tgz"
-[ "$pnpm_url" = "$expected_pnpm_url" ] || fail "$pnpm_manifest package.url must be $expected_pnpm_url"
-[ "$pnpm_format" = "tar.gz" ] || fail "$pnpm_manifest package.format must be tar.gz"
-[ "$pnpm_prefix" = "package" ] || fail "$pnpm_manifest package.prefix must be package"
-[ "$pnpm_binary_path" = "bin/pnpm.mjs" ] || fail "$pnpm_manifest package.binary_path must be bin/pnpm.mjs"
-[ "$pnpm_companion_path" = "bin/pnpx.mjs" ] || fail "$pnpm_manifest package.companion_path must be bin/pnpx.mjs"
-[ "$pnpm_payload_path" = "dist/pnpm.mjs" ] || fail "$pnpm_manifest package.payload_path must be dist/pnpm.mjs"
-expected_pnpm_executable_paths="bin/pnpm.mjs,bin/pnpx.mjs,dist/node-gyp-bin/node-gyp,dist/node-gyp-bin/node-gyp.cmd,dist/node_modules/node-gyp/bin/node-gyp.js"
-[ "$pnpm_executable_paths" = "$expected_pnpm_executable_paths" ] ||
-  fail "$pnpm_manifest package.executable_paths must be $expected_pnpm_executable_paths"
-IFS=',' read -r -a pnpm_executables <<<"$pnpm_executable_paths"
-for digest in "$pnpm_archive_sha256" "$pnpm_tree_sha256" "$pnpm_binary_sha256" "$pnpm_companion_sha256" "$pnpm_payload_sha256"; do
-  validate_digest "$pnpm_manifest package digest" "$digest"
-done
-validate_sha512 "$pnpm_manifest package.sha512" "$pnpm_archive_sha512"
-for value in "$pnpm_archive_bytes" "$pnpm_expanded_bytes" "$pnpm_entry_count" "$pnpm_file_count"; do
-  validate_count "$pnpm_manifest package count" "$value"
-done
-
 plugin_records=()
-for plugin_id in javascript node pnpm rust; do
+for plugin_id in javascript node bun rust; do
   section="plugins.$plugin_id"
   locator="$(manifest_value "$plugin_manifest" "$section" locator)" || fail "$plugin_manifest is missing $section.locator"
   repository="$(manifest_value "$plugin_manifest" "$section" repository)" || fail "$plugin_manifest is missing $section.repository"
@@ -321,7 +220,7 @@ for plugin_id in javascript node pnpm rust; do
   case "$plugin_id" in
     javascript) expected_repository="moonrepo/javascript_toolchain" ;;
     node) expected_repository="moonrepo/node_toolchain" ;;
-    pnpm) expected_repository="moonrepo/node_depman_toolchain" ;;
+    bun) expected_repository="moonrepo/bun_toolchain" ;;
     rust) expected_repository="moonrepo/rust_toolchain" ;;
   esac
   [ "$repository" = "$expected_repository" ] || fail "$plugin_manifest $section.repository must be $expected_repository"
@@ -337,7 +236,7 @@ for plugin_id in javascript node pnpm rust; do
   plugin_records+=("$plugin_id|$repository|$manifest_sha256|$manifest_bytes|$blob_sha256|$blob_bytes|$cache_file")
 done
 
-for command_name in "${OLIPHAUNT_MOON_CURL:-curl}" mktemp node; do
+for command_name in "${OLIPHAUNT_MOON_CURL:-curl}" mktemp bun; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
 done
 
@@ -371,14 +270,11 @@ download_verified() {
   local expected_sha256="$2"
   local expected_bytes="$3"
   local output="$4"
-  local expected_sha512="${5:-}"
-  local bearer="${6:-}"
-  local actual_size
+  local bearer="${5:-}"
   if [ -f "$output" ] && [ ! -L "$output" ]; then
     actual_size="$(wc -c <"$output" | tr -d '[:space:]')"
     if [ "$actual_size" = "$expected_bytes" ] &&
-      [ "$(sha256_file "$output")" = "$expected_sha256" ] &&
-      { [ -z "$expected_sha512" ] || [ "$(sha512_file "$output")" = "$expected_sha512" ]; }; then
+      [ "$(sha256_file "$output")" = "$expected_sha256" ]; then
       return 0
     fi
   fi
@@ -407,10 +303,6 @@ download_verified() {
     rm -f "$partial"
     fail "downloaded SHA-256 mismatch for $url"
   }
-  if [ -n "$expected_sha512" ] && [ "$(sha512_file "$partial")" != "$expected_sha512" ]; then
-    rm -f "$partial"
-    fail "downloaded SHA-512 mismatch for $url"
-  fi
   chmod 0444 "$partial"
   mv "$partial" "$output"
 }
@@ -430,20 +322,7 @@ registry_token() {
     fail "could not obtain a bounded read-only GHCR token for $repository"
   fi
   local token
-  token="$($python - "$response" <<'PY'
-import json
-import pathlib
-import sys
-
-data = pathlib.Path(sys.argv[1]).read_bytes()
-if len(data) > 16384:
-    raise SystemExit(1)
-value = json.loads(data).get("token")
-if not isinstance(value, str):
-    raise SystemExit(1)
-print(value)
-PY
-  )" || {
+  token="$(bun "$extractor" oci-token "$response")" || {
     rm -f "$response"
     fail "GHCR returned an invalid token response for $repository"
   }
@@ -492,9 +371,9 @@ download_oci_manifest() {
   rm -f "$headers"
   [ "$(wc -c <"$partial" | tr -d '[:space:]')" = "$expected_bytes" ] &&
     [ "$(sha256_file "$partial")" = "$digest" ] || {
-      rm -f "$partial"
-      fail "OCI manifest body integrity mismatch for $repository"
-    }
+    rm -f "$partial"
+    fail "OCI manifest body integrity mismatch for $repository"
+  }
   chmod 0444 "$partial"
   mv "$partial" "$output"
 }
@@ -503,28 +382,10 @@ validate_oci_manifest() {
   local manifest_path="$1"
   local expected_blob_sha256="$2"
   local expected_blob_bytes="$3"
-  "$python" - "$manifest_path" "$expected_blob_sha256" "$expected_blob_bytes" <<'PY'
-import json
-import pathlib
-import sys
-
-value = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
-expected_digest = f"sha256:{sys.argv[2]}"
-expected_size = int(sys.argv[3])
-if value.get("schemaVersion") != 2:
-    raise SystemExit("OCI manifest schemaVersion must be 2")
-if value.get("mediaType") != "application/vnd.oci.image.manifest.v1+json":
-    raise SystemExit("OCI manifest has the wrong mediaType")
-layers = value.get("layers")
-if not isinstance(layers, list):
-    raise SystemExit("OCI manifest layers must be an array")
-wasm = [layer for layer in layers if isinstance(layer, dict) and layer.get("mediaType") == "application/wasm"]
-if len(wasm) != 1 or wasm[0].get("digest") != expected_digest or wasm[0].get("size") != expected_size:
-    raise SystemExit("OCI manifest does not bind exactly one expected WASM blob")
-PY
+  bun "$extractor" oci-manifest "$manifest_path" "$expected_blob_sha256" "$expected_blob_bytes"
 }
 
-identity="moon-$moon_version-pnpm-$pnpm_version"
+identity="moon-$moon_version"
 install_parent="$cache_root/installations/$identity"
 if [ -L "$cache_root/installations" ] || [ -L "$install_parent" ]; then
   fail "toolchain installation cache must not contain symbolic-link directories"
@@ -534,100 +395,31 @@ final="$install_parent/$target"
 moon_exe="$expected_moon_binary"
 moonx_exe="$expected_moon_companion"
 
-receipt_text="$(printf 'moon_version=%s\npnpm_version=%s\nproto_contract_version=%s\ntarget=%s\nmoon_archive_sha256=%s\npnpm_archive_sha256=%s\npnpm_tree_sha256=%s' \
-  "$moon_version" \
-  "$pnpm_version" \
-  "$proto_version" \
-  "$target" \
-  "$moon_archive_sha256" \
-  "$pnpm_archive_sha256" \
-  "$pnpm_tree_sha256")"
-pnpm_wrapper_text="$(printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'set -euo pipefail' \
-  'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'cli_path="$script_dir/../pnpm/bin/pnpm.mjs"' \
-  'case "$(uname -s)" in' \
-  '  MINGW* | MSYS* | CYGWIN*)' \
-  '    command -v cygpath >/dev/null 2>&1 || { echo "pnpm: cygpath is required on Windows" >&2; exit 1; }' \
-  '    cli_path="$(cygpath -aw "$cli_path")"' \
-  '    ;;' \
-  'esac' \
-  'exec node "$cli_path" "$@"')"
-pnpx_wrapper_text="$(printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'set -euo pipefail' \
-  'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'cli_path="$script_dir/../pnpm/bin/pnpx.mjs"' \
-  'case "$(uname -s)" in' \
-  '  MINGW* | MSYS* | CYGWIN*)' \
-  '    command -v cygpath >/dev/null 2>&1 || { echo "pnpx: cygpath is required on Windows" >&2; exit 1; }' \
-  '    cli_path="$(cygpath -aw "$cli_path")"' \
-  '    ;;' \
-  'esac' \
-  'exec node "$cli_path" "$@"')"
-pnpm_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\pnpm\bin\pnpm.mjs" %*')"
-pnpx_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\pnpm\bin\pnpx.mjs" %*')"
+receipt_text="$(printf 'moon_version=%s\nproto_contract_version=%s\ntarget=%s\nmoon_archive_sha256=%s' "$moon_version" "$proto_version" "$target" "$moon_archive_sha256")"
 
 moon_binary_version() {
   "$1" --version 2>/dev/null | awk '$1 == "moon" { print $2; exit }'
 }
 
-pnpm_binary_version() {
-  local script="$1"
-  if [ "$windows_posix" = "1" ]; then
-    script="$(cygpath -aw "$script")" || return 1
-    MSYS2_ARG_CONV_EXCL='*' node "$script" --version 2>/dev/null |
-      awk 'NF { print $1; exit }'
-  else
-    node "$script" --version 2>/dev/null | awk 'NF { print $1; exit }'
-  fi
-}
-
 cache_valid() {
   local candidate="$1"
   [ -d "$candidate" ] && [ ! -L "$candidate" ] || return 1
-  [ "$(find "$candidate" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" = "4" ] || return 1
+  [ "$(find "$candidate" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" = "3" ] || return 1
   [ -d "$candidate/bin" ] && [ ! -L "$candidate/bin" ] || return 1
-  [ -d "$candidate/pnpm" ] && [ ! -L "$candidate/pnpm" ] || return 1
   [ -d "$candidate/plugins" ] && [ ! -L "$candidate/plugins" ] || return 1
-  [ "$(find "$candidate/bin" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" = "6" ] || return 1
+  [ "$(find "$candidate/bin" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" = "2" ] || return 1
   for path in \
     "$candidate/bin/$moon_exe" \
     "$candidate/bin/$moonx_exe" \
-    "$candidate/pnpm/$pnpm_binary_path" \
-    "$candidate/pnpm/$pnpm_companion_path" \
-    "$candidate/pnpm/$pnpm_payload_path" \
-    "$candidate/bin/pnpm" \
-    "$candidate/bin/pnpx" \
-    "$candidate/bin/pnpm.cmd" \
-    "$candidate/bin/pnpx.cmd" \
     "$candidate/receipt"; do
     [ -f "$path" ] && [ ! -L "$path" ] || return 1
   done
   [ "$(sha256_file "$candidate/bin/$moon_exe")" = "$moon_binary_sha256" ] || return 1
   [ "$(sha256_file "$candidate/bin/$moonx_exe")" = "$moon_companion_sha256" ] || return 1
-  [ "$(sha256_file "$candidate/pnpm/$pnpm_binary_path")" = "$pnpm_binary_sha256" ] || return 1
-  [ "$(sha256_file "$candidate/pnpm/$pnpm_companion_path")" = "$pnpm_companion_sha256" ] || return 1
-  [ "$(sha256_file "$candidate/pnpm/$pnpm_payload_path")" = "$pnpm_payload_sha256" ] || return 1
-  [ "$(cat "$candidate/bin/pnpm")" = "$pnpm_wrapper_text" ] || return 1
-  [ "$(cat "$candidate/bin/pnpx")" = "$pnpx_wrapper_text" ] || return 1
-  [ "$(cat "$candidate/bin/pnpm.cmd")" = "$pnpm_cmd_text" ] || return 1
-  [ "$(cat "$candidate/bin/pnpx.cmd")" = "$pnpx_cmd_text" ] || return 1
   if [ "$target" != "x86_64-pc-windows-msvc" ]; then
     [ -x "$candidate/bin/$moon_exe" ] && [ -x "$candidate/bin/$moonx_exe" ] || return 1
-    [ -x "$candidate/bin/pnpm" ] && [ -x "$candidate/bin/pnpx" ] || return 1
   fi
-  local tree_result
-  local tree_args=(tree-digest --root "$candidate/pnpm")
-  local executable
-  for executable in "${pnpm_executables[@]}"; do
-    tree_args+=(--executable "$executable")
-  done
-  tree_result="$($python "$extractor" "${tree_args[@]}" 2>/dev/null)" || return 1
-  [ "$tree_result" = "$pnpm_file_count $pnpm_tree_sha256" ] || return 1
   [ "$(moon_binary_version "$candidate/bin/$moon_exe")" = "$moon_version" ] || return 1
-  [ "$(pnpm_binary_version "$candidate/pnpm/$pnpm_binary_path")" = "$pnpm_version" ] || return 1
   [ "$(cat "$candidate/receipt")" = "$receipt_text" ] || return 1
   local plugin_count=0
   for record in "${plugin_records[@]}"; do
@@ -647,9 +439,7 @@ if cache_valid "$final"; then
 fi
 
 moon_archive="$archive_root/$moon_archive_sha256.$moon_archive_suffix"
-pnpm_archive="$archive_root/$pnpm_archive_sha256.tgz"
 download_verified "$moon_url" "$moon_archive_sha256" "$moon_archive_bytes" "$moon_archive"
-download_verified "$pnpm_url" "$pnpm_archive_sha256" "$pnpm_archive_bytes" "$pnpm_archive" "$pnpm_archive_sha512"
 
 for record in "${plugin_records[@]}"; do
   IFS='|' read -r plugin_id repository manifest_sha256 manifest_bytes blob_sha256 blob_bytes cache_file <<<"$record"
@@ -671,7 +461,6 @@ for record in "${plugin_records[@]}"; do
       "$blob_sha256" \
       "$blob_bytes" \
       "$blob" \
-      "" \
       "$token"
   fi
 done
@@ -698,54 +487,17 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 moon_extract="$stage/moon-extract"
-pnpm_extract="$stage/pnpm"
-moon_extract_args=(
-  extract \
-  --archive "$moon_archive" \
-  --format "$moon_format" \
-  --prefix "$moon_prefix" \
-  --entry-count "$moon_entry_count" \
-  --expected-bytes "$moon_archive_bytes" \
-  --expanded-bytes "$moon_expanded_bytes" \
-  --destination "$moon_extract" \
-  --required "$moon_binary_path" \
-  --required "$moon_companion_path"
-)
-for executable in "${moon_archive_executables[@]}"; do
-  moon_extract_args+=(--executable "$executable")
-done
-"$python" "$extractor" "${moon_extract_args[@]}"
-pnpm_extract_args=(
-  extract
-  --archive "$pnpm_archive" \
-  --format "$pnpm_format" \
-  --prefix "$pnpm_prefix" \
-  --entry-count "$pnpm_entry_count" \
-  --expected-bytes "$pnpm_archive_bytes" \
-  --expanded-bytes "$pnpm_expanded_bytes" \
-  --destination "$pnpm_extract" \
-  --required "$pnpm_binary_path" \
-  --required "$pnpm_companion_path" \
-  --required "$pnpm_payload_path" \
-  --required package.json
-)
-for executable in "${pnpm_executables[@]}"; do
-  pnpm_extract_args+=(--required "$executable" --executable "$executable")
-done
-"$python" "$extractor" "${pnpm_extract_args[@]}"
-
+mkdir -p "$moon_extract"
+moon_member_prefix=""
+[ "$moon_prefix" = "." ] || moon_member_prefix="$moon_prefix/"
+binary_extractor="$action_dir/../../../tools/dev/extract-pinned-binary.sh"
+bash "$binary_extractor" "$moon_format" "$moon_archive" "$moon_member_prefix$moon_binary_path" "$moon_extract/$moon_binary_path" "$moon_binary_sha256"
+bash "$binary_extractor" "$moon_format" "$moon_archive" "$moon_member_prefix$moon_companion_path" "$moon_extract/$moon_companion_path" "$moon_companion_sha256"
 mkdir -p "$stage/bin" "$stage/plugins"
 mv "$moon_extract/$moon_binary_path" "$stage/bin/$moon_exe"
 mv "$moon_extract/$moon_companion_path" "$stage/bin/$moonx_exe"
 rm -rf "$moon_extract"
 chmod 0555 "$stage/bin/$moon_exe" "$stage/bin/$moonx_exe"
-
-printf '%s\n' "$pnpm_wrapper_text" >"$stage/bin/pnpm"
-printf '%s\n' "$pnpx_wrapper_text" >"$stage/bin/pnpx"
-printf '%s\n' "$pnpm_cmd_text" >"$stage/bin/pnpm.cmd"
-printf '%s\n' "$pnpx_cmd_text" >"$stage/bin/pnpx.cmd"
-chmod 0555 "$stage/bin/pnpm" "$stage/bin/pnpx"
-chmod 0444 "$stage/bin/pnpm.cmd" "$stage/bin/pnpx.cmd"
 
 for record in "${plugin_records[@]}"; do
   IFS='|' read -r plugin_id repository manifest_sha256 manifest_bytes blob_sha256 blob_bytes cache_file <<<"$record"

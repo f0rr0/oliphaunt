@@ -1,0 +1,200 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: oliphaunt-js
+language: typescript
+layer: library
+stack: backend
+tags:
+  - javascript-quality
+  - sdk
+  - typescript
+  - node
+  - bun
+  - deno
+  - release-product
+dependsOn:
+  - id: oliphaunt-query-ts
+    scope: build
+  - id: cluster-seed-contract
+    scope: development
+  - id: shared-test-fixtures
+    scope: development
+  - liboliphaunt-native
+  - oliphaunt-broker
+  - oliphaunt-node-direct
+project:
+  title: Oliphaunt TypeScript SDK
+  description: "TypeScript SDK with native direct topology defaults for Node.js, Bun, and Deno."
+  owner: oliphaunt
+  release:
+    component: oliphaunt-js
+    packagePath: sdks/ts/sdk
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+  paths:
+    "**/*.ts":
+      - "@oliphaunt/sdk-js"
+    tools/**:
+      - "@oliphaunt/sdk-js"
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+tasks:
+  build:
+    tags:
+      - build
+    command: bun run build
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - project: oliphaunt-query-ts
+        group: sources
+      - "@group(bun-workspace)"
+      - "@group(code)"
+    outputs:
+      - lib/**/*
+    options:
+      cache: true
+  typecheck:
+    tags:
+      - quality
+      - static
+    command: bun run typecheck
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - project: oliphaunt-query-ts
+        group: sources
+      - "@group(bun-workspace)"
+      - "@group(code)"
+    options:
+      cache: true
+  coverage:
+    tags:
+      - coverage
+    command: bun run coverage
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "@group(code)"
+      - "@group(bun-workspace)"
+      - project: oliphaunt-query-ts
+        group: sources
+      - project: shared-test-fixtures
+        group: fixtures
+    outputs:
+      - /target/coverage/oliphaunt-js/**/*
+    options:
+      cache: false
+      runInCI: false
+  test:
+    tags:
+      - quality
+      - unit
+    command: bun run test
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - /tools/release/check_registry_publication.mts
+      - /tools/release/public-consumer-smoke.mts
+      - project: shared-test-fixtures
+        group: fixtures
+      - project: cluster-seed-contract
+        group: contract
+      - project: oliphaunt-query-ts
+        group: sources
+      - "@group(bun-workspace)"
+      - "@group(code)"
+    options:
+      cache: true
+  package:
+    tags:
+      - package
+      - release
+      - artifact-package
+      - ci-js-sdk-package
+    deps:
+      - oliphaunt-js:build
+    inputs:
+      - "@group(legal-files)"
+      - "@group(bun-workspace)"
+      - "@group(release-archive-contract)"
+      - "**/*"
+      - /sdks/ts/sdk/tools/check-package.mts
+      - /sdks/ts/sdk/tools/stage-release-artifacts.sh
+      - /tools/packaging/npm-package.mts
+      - /tools/packaging/staging.mts
+      - /tools/packaging/source-only-sdk-package.mts
+      - /tools/dev/bun.sh
+      - /third-party/tools/source-fetch-core.mts
+    outputs:
+      - /target/sdk-artifacts/oliphaunt-js/**/*
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+    command: bun run --cwd sdks/ts/sdk package
+  test-consumer:
+    tags: [consumer, integration, ci-native-consumers, platform-linux-x64-gnu]
+    command: bun run --cwd sdks/ts/sdk test-consumer
+    deps:
+      - package
+      - oliphaunt-query-ts:package
+      - liboliphaunt-native:package-runtime-desktop-target
+      - oliphaunt-broker:build-release-assets
+      - oliphaunt-node-direct:build-release-assets
+    inputs:
+      - tools/test-consumer.sh
+      - tools/prepare-consumer.mts
+      - tools/test-native.sh
+      - src/__tests__/native-*.{ts,mts}
+      - /runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+      - /tools/packaging/portable-archive.mts
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  test-consumer-published:
+    tags: [consumer, integration, ci-native-consumers, platform-linux-x64-gnu, release-only]
+    command: bash sdks/ts/sdk/tools/test-consumer.sh --published-dependencies
+    deps:
+      - package
+    inputs:
+      - /tools/release/check_registry_publication.mts
+      - /tools/release/public-consumer-smoke.mts
+      - tools/test-consumer.sh
+      - tools/prepare-consumer.mts
+      - tools/published-consumer.mts
+      - tools/test-native.sh
+      - src/__tests__/native-*.{ts,mts}
+      - /runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+      - /tools/packaging/portable-archive.mts
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  test-native:
+    tags:
+      - runtime
+      - smoke
+      - node
+      - bun
+      - deno
+    command: bun run --cwd sdks/ts/sdk test-native
+    deps:
+      - build
+      - liboliphaunt-native:build-runtime-desktop-target
+      - oliphaunt-broker:build
+      - oliphaunt-node-direct:build
+    inputs:
+      - "@group(code)"
+      - /runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+workspace:
+  inheritedTasks:
+    rename:
+      js-format: format
+      js-format-check: format-check
+      js-lint: lint

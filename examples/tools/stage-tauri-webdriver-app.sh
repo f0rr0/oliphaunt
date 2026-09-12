@@ -27,20 +27,20 @@ else
   source_app_path="$(realpath -m "$root/$source_app_dir")"
 fi
 case "$source_app_path" in
-  "$root/examples/"*) ;;
+  "$root/examples"*) ;;
   *) fail "Tauri webdriver examples must live under $root/examples: $source_app_dir" ;;
 esac
 [[ -f "$source_app_path/package.json" && -f "$source_app_path/src-tauri/Cargo.toml" ]] ||
   fail "$source_app_dir does not look like a Tauri example directory"
 source_app_relative="${source_app_path#"$root"/}"
 case "$source_app_relative" in
-  examples/tauri|examples/tauri-wasix) ;;
+  examples/tauri | examples/tauri-wasix) ;;
   *) fail "unsupported Tauri webdriver example: $source_app_relative" ;;
 esac
 
 destination_root="$(realpath -m "$destination_root")"
 case "$destination_root" in
-  /|"$root"|"$root/examples"|"$root/examples/"*)
+  / | "$root" | "$root/examples" | "$root/examples"*)
     fail "destination must not overlap the checkout or its example sources: $destination_root"
     ;;
 esac
@@ -66,37 +66,12 @@ done
 # the scratch build has no symlink or live-checkout dependency.
 config="$source_app_path/src-tauri/tauri.conf.json"
 if [[ -f "$config" ]]; then
+  icons="$(bun "$root/examples/tools/tauri-icons.mts" "$config" "$root")"
   while IFS= read -r asset_relative; do
     [[ -n "$asset_relative" ]] || continue
     mkdir -p "$worktree/$(dirname "$asset_relative")"
     cp -p "$root/$asset_relative" "$worktree/$asset_relative"
-  done < <(
-    node - "$config" "$root" <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-
-const [configFile, root] = process.argv.slice(2);
-const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
-const icons = config?.bundle?.icon ?? [];
-if (!Array.isArray(icons) || !icons.every((value) => typeof value === "string")) {
-  throw new Error(`${configFile}: bundle.icon must be an array of paths`);
-}
-for (const icon of icons) {
-  const source = path.resolve(path.dirname(configFile), icon);
-  const relative = path.relative(root, source);
-  if (relative === "" || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error(`${configFile}: bundle icon escapes the repository: ${icon}`);
-  }
-  if (/[\r\n\0]/u.test(relative)) {
-    throw new Error(`${configFile}: bundle icon has an unsafe path: ${icon}`);
-  }
-  if (!fs.statSync(source).isFile()) {
-    throw new Error(`${configFile}: bundle icon is not a regular file: ${icon}`);
-  }
-  process.stdout.write(`${relative.split(path.sep).join("/")}\n`);
-}
-NODE
-  )
+  done <<<"$icons"
 fi
 
 app_dir="$worktree/$source_app_relative"
