@@ -22,7 +22,6 @@ tasks:
     toolchains: ["system"]
     options:
       cache: false
-      runInCI: false
   llvm-install-unit:
     tags: ["quality", "unit"]
     command: "bash .github/actions/setup-wasmer-llvm/install.test.sh"
