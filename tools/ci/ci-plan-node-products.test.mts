@@ -207,6 +207,23 @@ test('WASIX SDK changes select artifact consumption without invalidating AOT com
   );
 });
 
+test('pgwire runtime consumers execute in the AOT job with their required producers', () => {
+  for (const target of [
+    'oliphaunt-pgwire-server:test-integration',
+    'oliphaunt-pgwire-server:test-aot',
+  ]) {
+    const selected = new Set([target]);
+    const tasks = requiredTasksForAffected(selected);
+    const jobs = jobTargetsForJobs(planJobsForAffected(selected), tasks);
+    assert(jobs['liboliphaunt-wasix-aot'].includes(target));
+    assert(!jobs['liboliphaunt-wasix-runtime']?.includes(target));
+    assert(tasks.has('liboliphaunt-wasix:runtime-aot'));
+    if (target.endsWith(':test-aot')) {
+      assert(tasks.has('extension-artifacts-wasix:build-aot'));
+    }
+  }
+});
+
 test('optional WASIX compiler changes select their owner handoffs without invalidating core compilation', () => {
   for (const [file, owner] of [
     [paths.postgresToolsWasixToolsBuildPortableSh, 'postgres-tools-wasix'],

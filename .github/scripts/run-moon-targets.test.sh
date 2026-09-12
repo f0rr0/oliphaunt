@@ -5,10 +5,19 @@ trap 'rm -rf "$fixture"' EXIT
 export MOON_BIN="$fixture/moon" MOON_CALLS="$fixture/calls"
 cat >"$MOON_BIN" <<'MOON'
 #!/usr/bin/env bash
+if [[ -v MOON_BASE || -v MOON_HEAD ]]; then
+  echo 'explicit task execution inherited affectedness revisions' >&2
+  exit 8
+fi
 printf '%s\n' "$*" >>"$MOON_CALLS"
 exit "${MOON_TEST_EXIT:-0}"
 MOON
 chmod +x "$MOON_BIN"
+MOON_BASE=missing-base MOON_HEAD=missing-head \
+  bash .github/scripts/run-moon-targets.sh ci-workflows:verify-bash
+printf 'run ci-workflows:verify-bash\n' >"$fixture/expected"
+cmp "$MOON_CALLS" "$fixture/expected"
+: >"$MOON_CALLS"
 export MOON_TARGET_MATRIX_JSON='{"include":[{"target":"sdk:b"},{"target":"sdk:a"},{"target":"sdk:a"},{"target":"native:c","upstream":"none"}]}'
 bash .github/scripts/run-moon-targets.sh --matrix
 printf 'run --upstream deep sdk:a sdk:b\nrun --upstream none native:c\n' >"$fixture/expected"

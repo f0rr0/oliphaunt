@@ -14,7 +14,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { extractSourceArchive, sourceArchiveEntries } from './source-archive.mts';
 
@@ -147,7 +147,7 @@ export function promotePathTransactional(candidate, destination, { afterBackup }
   const hadPrevious = pathExists(destination);
   const backup = join(
     dirname(destination),
-    `.${destination.split(sep).at(-1)}-backup-${process.pid}-${randomUUID()}`,
+    `.${basename(destination)}-backup-${process.pid}-${randomUUID()}`,
   );
   const promotion = { destination, backup, hadPrevious };
   activePromotions.push(promotion);

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -54,6 +54,8 @@ async function fixture() {
 test('finalizes one domain with exact deterministic proof members', async () => {
   const current = await fixture();
   try {
+    symlinkSync('libecpg.so.6', path.join(current.receiptRoot, 'arm/libecpg.so'));
+    symlinkSync(current.receiptRoot, path.join(current.receiptRoot, 'cycle'));
     await finalizeNativeMobileAbiProofs({
       domain: 'android-datum64',
       assetDir: current.assetDir,
@@ -76,6 +78,25 @@ test('finalizes one domain with exact deterministic proof members', async () => 
       receiptRoot: current.receiptRoot,
     });
     expect(readFileSync(current.archive)).toEqual(first);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects symbolic links used as ABI receipts', async () => {
+  const current = await fixture();
+  try {
+    const file = path.join(current.receiptRoot, 'arm/native-mobile-abi.properties');
+    writeFileSync(path.join(current.root, 'linked-receipt'), readFileSync(file));
+    rmSync(file);
+    symlinkSync(path.join(current.root, 'linked-receipt'), file);
+    await expect(
+      finalizeNativeMobileAbiProofs({
+        domain: 'android-datum64',
+        assetDir: current.assetDir,
+        receiptRoot: current.receiptRoot,
+      }),
+    ).rejects.toThrow(/receipt input is not a regular file/u);
   } finally {
     rmSync(current.root, { recursive: true, force: true });
   }

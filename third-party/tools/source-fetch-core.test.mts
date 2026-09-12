@@ -207,7 +207,8 @@ function writeArchiveManifest(manifestPath, source) {
 test('transactional promotion restores the prior destination on a normal failure', () => {
   const root = makeRoot('source-promotion');
   try {
-    const destination = path.join(root, 'live');
+    // Git Bash passes forward slashes to Bun even when node:path.sep is '\\'.
+    const destination = path.join(root, 'live').replaceAll('\\', '/');
     const candidate = path.join(root, 'candidate');
     mkdirSync(destination);
     mkdirSync(candidate);

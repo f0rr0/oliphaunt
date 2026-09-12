@@ -1,7 +1,7 @@
 #![cfg(feature = "wasix")]
 
 use anyhow::{Context, Result};
-use oliphaunt_pgwire_server::{AsyncOliphauntServer, OliphauntServer as DirectOliphauntServer};
+use oliphaunt_pgwire_server::AsyncOliphauntServer;
 use sqlx::{Connection, Row};
 use tokio_postgres::NoTls;
 
@@ -43,11 +43,12 @@ async fn tokio_postgres_parameters_and_error_recovery_work() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires prepared WASIX runtime"]
 async fn sqlx_uses_the_standard_postgres_connection_string() -> Result<()> {
-    let mut server = DirectOliphauntServer::builder()
+    let server = AsyncOliphauntServer::builder()
         .username("postgres")
         .database("postgres")
         .startup_guc("work_mem", "8MB")
-        .start()?;
+        .start()
+        .await?;
     let connection_string = server.connection_string();
     let mut connection = sqlx::PgConnection::connect(connection_string).await?;
     let row = sqlx::query("SELECT current_setting('work_mem') AS work_mem, $1::text AS value")
@@ -57,6 +58,6 @@ async fn sqlx_uses_the_standard_postgres_connection_string() -> Result<()> {
     assert_eq!(row.try_get::<&str, _>("work_mem")?, "8MB");
     assert_eq!(row.try_get::<&str, _>("value")?, "ok");
     connection.close().await?;
-    server.close()?;
+    server.close().await?;
     Ok(())
 }

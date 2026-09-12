@@ -8,7 +8,7 @@ if [ "$host" != "$target" ]; then
   exit 1
 fi
 proof_root="$PWD/target/pgwire-server-aot-smoke"
-OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$PWD/target/oliphaunt-wasix/assets" \
+OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$PWD/target/extensions/wasix/assets" \
 OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$PWD/target/extensions/wasix/aot-artifacts" \
   bash tools/dev/bun.sh extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \
     --output-root "$proof_root/extension-artifacts" --family wasix --require-wasix \

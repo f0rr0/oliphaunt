@@ -48,15 +48,15 @@ tasks:
     inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
   test-integration:
     command: "cargo test --locked -- --ignored --test-threads=1"
-    tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-runtime"]
-    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-portable"]
+    tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot"]
     inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
     options:
       cache: false
   test-aot:
     command: "bash pgwire-server/tools/test-aot.sh"
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
-    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot"]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-aot"]
     inputs: ["@group(sources)", "tools/test-aot.sh", "/Cargo.toml", "/Cargo.lock"]
     options:
       cache: false

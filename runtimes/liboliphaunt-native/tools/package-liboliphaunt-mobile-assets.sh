@@ -162,7 +162,7 @@ package_ios() {
     --receipt "$macos_producer_receipt"
 
   stage_runtime_resource_closure "$macos_runtime" macos-arm64 "$macos_runtime_stage"
-  stage_runtime_resource_closure "$macos_runtime" "$icu_source" ios-datum64 "$ios_runtime_stage"
+  stage_runtime_resource_closure "$macos_runtime" ios-datum64 "$ios_runtime_stage"
   local ios_proof="$ios_runtime_stage/oliphaunt/provenance/native-mobile-abi"
   mkdir -p "$ios_proof"
   cp "$ios_device_receipt" "$ios_proof/ios-arm64.properties"

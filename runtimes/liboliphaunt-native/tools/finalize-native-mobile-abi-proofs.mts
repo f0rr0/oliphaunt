@@ -33,9 +33,9 @@ function receiptFiles(root) {
     for (const name of readdirSync(directory).sort()) {
       const file = path.join(directory, name);
       const metadata = lstatSync(file);
-      if (metadata.isSymbolicLink()) fail(`receipt input contains a symbolic link: ${file}`);
       if (metadata.isDirectory()) visit(file);
-      else if (metadata.isFile() && /^native-mobile-abi(?:-producer)?\.properties$/u.test(name)) {
+      else if (/^native-mobile-abi(?:-producer)?\.properties$/u.test(name)) {
+        if (!metadata.isFile()) fail(`receipt input is not a regular file: ${file}`);
         files.push(file);
       }
     }

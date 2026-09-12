@@ -121,7 +121,7 @@ function loadSourcesManifest(selectedScope) {
     );
     return { sources };
   }
-  if (scopeIncludes(selectedScope, sourceOrigins.sharedThirdParty)) {
+  if (selectedScope === 'all' || selectedScope === 'production-all') {
     pushSourcePin(
       sources,
       names,

@@ -30,10 +30,14 @@ async fn async_server_close_releases_directory_ownership_before_completion() -> 
         .start()
         .await?;
     server.close().await?;
-    let mut database = Oliphaunt::builder()
-        .storage(DatabaseStorage::Directory(root))
-        .open()?;
-    database.close()?;
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut database = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root))
+            .open()?;
+        database.close()?;
+        Ok(())
+    })
+    .await??;
     assert!(server.is_closed());
     Ok(())
 }

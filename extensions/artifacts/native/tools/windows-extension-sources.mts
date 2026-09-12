@@ -68,7 +68,7 @@ export function pgxsSources(root: string) {
   return values.map((value) => value.slice(0, -2) + '.c');
 }
 
-function patchTextsearch(root: string) {
+export function patchTextsearch(root: string) {
   write(
     path.join(root, 'src/oliphaunt_windows_compat.h'),
     '#ifdef _MSC_VER\n#ifndef __attribute__\n#define __attribute__(x)\n#endif\n#endif\n',
@@ -89,7 +89,7 @@ function patchTextsearch(root: string) {
     const target = path.join(root, 'src', file);
     replace(
       target,
-      `typedef struct ${name}`,
+      new RegExp(`typedef struct ${name}\\b`),
       `#ifdef _MSC_VER\n#pragma pack(push, ${pack})\n#endif\ntypedef struct ${name}`,
     );
     replace(

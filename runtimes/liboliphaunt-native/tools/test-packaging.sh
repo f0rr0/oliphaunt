@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 tests=()
-shell_tests=(runtimes/liboliphaunt-native/tools/liboliphaunt-extension-guard.test.sh)
+shell_tests=(runtimes/liboliphaunt-native/tools/liboliphaunt-extension-guard.test.sh runtimes/liboliphaunt-native/tools/package-liboliphaunt-mobile-assets.test.sh)
 for file in runtimes/liboliphaunt-native/tools/*.test.mts; do
   if [[ -f "${file%.mts}.sh" ]]; then
     shell_tests+=("${file%.mts}.sh")

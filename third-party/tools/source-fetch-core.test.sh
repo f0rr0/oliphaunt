@@ -8,6 +8,15 @@ test_data="$tools/source-fetch-core.test.mts"
 archive_tool="$tools/source-archive.mts"
 export FETCH_TEST_GIT="$(command -v git)"
 base_path="$PATH"
+for scope in icu native-runtime wasix-runtime wasix-postmaster-runtime production-all; do
+  plan="$scratch/plan-$scope"
+  mkdir "$plan"
+  bun "$tools/fetch-sources.mts" plan "$plan" "$scope" --force
+  case "$scope" in
+    icu|production-all) [[ -f "$plan/icu-data.json" ]] ;;
+    *) [[ ! -f "$plan/icu-data.json" && -f "$plan/icu.json" ]] ;;
+  esac
+done
 bun test "$test_data"
 mkdir "$scratch/fixtures" "$scratch/bin"
 bun "$test_data" prepare "$scratch/fixtures"

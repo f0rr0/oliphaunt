@@ -69,7 +69,7 @@ runs:
         moon --version
         node --version
         bun --version
-        moon run ci-workflows:verify-bash
+        .github/scripts/run-moon-targets.sh ci-workflows:verify-bash
 
     - name: Save verified tool archives
       if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_verified_moon_toolchain.outputs.cache-hit != 'true' }}
