@@ -601,18 +601,13 @@ async function npmPackageMetadata(packageName) {
   }
 }
 
-async function npmVersionExists(packageName, version) {
+export async function npmPublishedVersion(packageName, version) {
   const data = await npmPackageMetadata(packageName);
-  if (data === undefined) {
-    return false;
-  }
-  const versions = data.versions;
-  return (
-    versions !== null &&
-    !Array.isArray(versions) &&
-    typeof versions === 'object' &&
-    version in versions
-  );
+  return data?.versions?.[version];
+}
+
+async function npmVersionExists(packageName, version) {
+  return (await npmPublishedVersion(packageName, version)) !== undefined;
 }
 
 async function npmPackageExists(packageName) {

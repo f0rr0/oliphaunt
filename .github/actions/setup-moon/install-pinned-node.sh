@@ -92,13 +92,9 @@ sha256_file() {
   fi
 }
 
-node_version="$(manifest_value toolchain version)" ||
-  fail "$manifest must contain exactly one quoted toolchain.version"
+node_version="$(proto_version)" || fail "$proto_file must contain exactly one node version"
+node_version="${node_version#v}"
 [[ "$node_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid Node.js version: $node_version"
-configured="$(proto_version)" || fail "$proto_file must contain exactly one node version"
-configured="${configured#v}"
-[ "$configured" = "$node_version" ] ||
-  fail "$proto_file node version $configured does not match pinned version $node_version"
 
 if [ -n "${OLIPHAUNT_NODE_RUNTIME_TARGET:-}" ]; then
   [ "${OLIPHAUNT_NODE_RUNTIME_TESTING:-0}" = "1" ] ||

@@ -83,16 +83,13 @@ proto_version() {
   ' "$proto_file"
 }
 
-version="$(manifest_value toolchain version)" || fail "$manifest must contain exactly one quoted toolchain.version"
+version="$(proto_version)" || fail "$proto_file must contain exactly one $tool version"
+version="${version#v}"
 case "$version" in
   ''|.*|*.|*..*|*[!0-9.]*) fail "invalid $tool version in $manifest: $version" ;;
 esac
 [ "$(awk -F. 'NF == 3 { print "valid" }' <<<"$version")" = "valid" ] ||
   fail "invalid $tool version in $manifest: $version"
-configured_version="$(proto_version)" || fail "$proto_file must contain exactly one $tool version"
-configured_version="${configured_version#v}"
-[ "$configured_version" = "$version" ] ||
-  fail "$proto_file $tool version $configured_version does not match $manifest version $version"
 if [ -n "$expected_input" ]; then
   expected_input="${expected_input#v}"
   [ "$expected_input" = "$version" ] ||

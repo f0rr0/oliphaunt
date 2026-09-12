@@ -25,9 +25,6 @@ binary_bytes="$(wc -c <"$binary" | tr -d '[:space:]')"
 binary_sha256="$(sha256sum "$binary" | awk '{print $1}')"
 
 cat >"$work/node-runtime.toml" <<EOF
-[toolchain]
-version = "22.22.3"
-
 [assets.x86_64-unknown-linux-gnu]
 url = "https://nodejs.org/download/release/v22.22.3/node-v22.22.3-linux-x64.tar.xz"
 sha256 = "$archive_sha256"

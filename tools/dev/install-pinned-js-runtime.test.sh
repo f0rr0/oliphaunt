@@ -27,12 +27,12 @@ const bun = archive('bun.zip', 'bun-linux-x64/bun', "#!/bin/sh\nprintf '1.2.3\\n
 const wrong = archive('bun-wrong-version.zip', 'bun-linux-x64/bun', "#!/bin/sh\nprintf '9.9.9\\n'\n");
 const deno = archive('deno.zip', 'deno', "#!/bin/sh\nprintf 'deno 1.2.3 (stable, release, x86_64-unknown-linux-gnu)\\n'\n");
 function bunManifest(name, pin) {
-  write('config/' + name, "[toolchain]\nversion = \"1.2.3\"\n\n[assets.linux-x64]\nurl = \"https://github.com/oven-sh/bun/releases/download/bun-v1.2.3/bun-linux-x64.zip\"\nsha256 = \"{archive_sha}\"\nbinary_path = \"bun-linux-x64/bun\"\nbinary_sha256 = \"{binary_sha}\"\nentry_count = \"1\"\n".replace('{archive_sha}', pin.archive).replace('{binary_sha}', pin.binary));
+  write('config/' + name, "[assets.linux-x64]\nurl = \"https://github.com/oven-sh/bun/releases/download/bun-v1.2.3/bun-linux-x64.zip\"\nsha256 = \"{archive_sha}\"\nbinary_path = \"bun-linux-x64/bun\"\nbinary_sha256 = \"{binary_sha}\"\nentry_count = \"1\"\n".replace('{archive_sha}', pin.archive).replace('{binary_sha}', pin.binary));
 }
 bunManifest('bun.toml', bun);
 bunManifest('bun-bad-sha.toml', {...bun, archive: '0'.repeat(64)});
 bunManifest('bun-wrong-version.toml', wrong);
-write('config/deno.toml', "[toolchain]\nversion = \"1.2.3\"\n\n[assets.x86_64-unknown-linux-gnu]\nurl = \"https://github.com/denoland/deno/releases/download/v1.2.3/deno-x86_64-unknown-linux-gnu.zip\"\nmirror_url = \"https://dl.deno.land/release/v1.2.3/deno-x86_64-unknown-linux-gnu.zip\"\nsha256 = \"{deno_archive_sha}\"\nbinary_path = \"deno\"\nbinary_sha256 = \"{deno_binary_sha}\"\nentry_count = \"1\"\n".replace('{deno_archive_sha}', deno.archive).replace('{deno_binary_sha}', deno.binary));
+write('config/deno.toml', "[assets.x86_64-unknown-linux-gnu]\nurl = \"https://github.com/denoland/deno/releases/download/v1.2.3/deno-x86_64-unknown-linux-gnu.zip\"\nmirror_url = \"https://dl.deno.land/release/v1.2.3/deno-x86_64-unknown-linux-gnu.zip\"\nsha256 = \"{deno_archive_sha}\"\nbinary_path = \"deno\"\nbinary_sha256 = \"{deno_binary_sha}\"\nentry_count = \"1\"\n".replace('{deno_archive_sha}', deno.archive).replace('{deno_binary_sha}', deno.binary));
 for (const [tool, target, pin] of [['bun','linux-x64',bun],['deno','x86_64-unknown-linux-gnu',deno]]) {
   write('config/' + tool + '-receipt', 'tool=' + tool + '\nversion=1.2.3\ntarget=' + target + '\narchive_sha256=' + pin.archive + '\nbinary_sha256=' + pin.binary + '\n');
 }

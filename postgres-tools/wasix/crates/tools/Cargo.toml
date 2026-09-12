@@ -12,7 +12,7 @@ publish = false
 links = "oliphaunt_artifact_oliphaunt_wasix_tools"
 include = [
   "Cargo.toml",
-  "build.rs",
+  "build.rs", "build-support.rs",
   "README.md",
   "src/**",
   "payload/**",

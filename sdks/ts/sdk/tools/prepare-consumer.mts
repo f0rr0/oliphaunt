@@ -1,6 +1,10 @@
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { extractPortableTarGzipTree } from '../../../../tools/packaging/portable-archive.mts';
+import {
+  preparePublishedConsumerEnvironment,
+  validPublishedConsumerInventory,
+} from './published-consumer.mts';
 
 const destination = path.resolve(process.argv[2]);
 const artifact = (directory: string, pattern: RegExp) => {
@@ -11,6 +15,25 @@ const artifact = (directory: string, pattern: RegExp) => {
 };
 mkdirSync(destination, { recursive: true });
 const sdk = artifact('target/sdk-artifacts/oliphaunt-js', /\.tgz$/u);
+const published = process.argv[3] === '--published-dependencies';
+if (published) {
+  const inventory = JSON.parse(process.env.OLIPHAUNT_PUBLISHED_DEPENDENCIES ?? 'null');
+  if (!validPublishedConsumerInventory(inventory))
+    throw new Error('missing or invalid verified published dependency inventory');
+  preparePublishedConsumerEnvironment(destination);
+  writeFileSync(
+    path.join(destination, 'package.json'),
+    JSON.stringify({
+      private: true,
+      type: 'module',
+      dependencies: {
+        '@oliphaunt/ts': `file:${sdk}`,
+        ...Object.fromEntries(inventory.map((row) => [row.name, row.version])),
+      },
+    }),
+  );
+  process.exit(0);
+}
 const query = artifact('target/sdk-artifacts/oliphaunt-query-ts', /\.tgz$/u);
 writeFileSync(
   path.join(destination, 'package.json'),

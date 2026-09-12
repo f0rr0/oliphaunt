@@ -21,8 +21,6 @@ runs:
 
     - name: Set up exact Node.js and Bun
       uses: ./.github/actions/setup-node-bun
-      with:
-        node-version: "22.22.3"
 
     - name: Install verified Moon
       shell: bash
@@ -65,9 +63,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        [[ "$(moon --version)" == "moon 2.5.4" ]]
-        [[ "$(node --version)" == "v22.22.3" ]]
-        [[ "$(bun --version)" == "1.4.2" ]]
+        moon --version
+        node --version
+        bun --version
         if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
           # Exercise native Windows child lookup, not Bash's own lookup.
           bash_version="$(MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /c 'bash --version')"

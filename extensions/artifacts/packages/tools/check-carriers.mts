@@ -1,8 +1,32 @@
-import { exactExtensionProducts } from '../../../../tools/release/release-artifact-targets.mts';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import {
-  ROOT,
+  buildSwiftExtensionCarrierManifest,
+  swiftExtensionCarrierAssetName,
+} from '../../../../sdks/swift/tools/ios-carrier-manifest.mts';
+import {
+  portableMemberName,
+  readFileOnlyTarGzipEntries,
+} from '../../../../tools/packaging/portable-archive.mts';
+import {
+  archiveTarNames,
+  archiveZipNames,
+  fail,
+  isFile,
+  PREFIX,
+  readJson,
+  readPropertiesText,
+  rel,
+  sha256File,
+} from '../../../../tools/packaging/release-carrier.mts';
+import {
+  assertReleaseNoticesInArchive,
+  releaseNoticeRows,
+} from '../../../../tools/packaging/release-notices.mts';
+import {
   compareText,
+  exactExtensionProducts,
   extensionArtifactProductRoot,
   extensionArtifactTargets,
   extensionMetadata,
@@ -10,38 +34,14 @@ import {
   extensionReleaseVersion,
   extensionSourceIdentity,
   extensionSqlNames,
+  ROOT,
 } from '../../../../tools/release/release-artifact-targets.mts';
-import {
-  portableMemberName,
-  readCanonicalTarGzipEntries,
-} from '../../../../tools/packaging/portable-archive.mts';
-import {
-  PREFIX,
-  archiveTarNames,
-  archiveZipNames,
-  fail,
-  isFile,
-  readJson,
-  readPropertiesText,
-  rel,
-  sha256File,
-} from '../../../../tools/packaging/release-carrier.mts';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 import { assertWasixExtensionMemberInstall } from '../../../contracts/wasix-extension-install.mts';
 import {
   assertExtensionUpstreamLicensesInArchive,
   extensionCarrierLegalContract,
 } from '../../../tools/extension-upstream-licenses.mts';
-import {
-  assertReleaseNoticesInArchive,
-  releaseNoticeRows,
-} from '../../../../tools/packaging/release-notices.mts';
-import { createHash } from 'node:crypto';
-import {
-  buildSwiftExtensionCarrierManifest,
-  swiftExtensionCarrierAssetName,
-} from '../../../../sdks/swift/tools/ios-carrier-manifest.mts';
+import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 
 export const EXTENSION_ROOT = path.resolve(
   ROOT,
@@ -173,12 +173,12 @@ const INTERNAL_EXTENSION_BUNDLE_CARRIER_ASSET_KEYS = new Set([
   'memberCount',
 ]);
 
-function canonicalBundleTarEntries(file) {
+function bundleTarEntries(file) {
   let archiveEntries;
   try {
-    archiveEntries = readCanonicalTarGzipEntries(file, { fileMode: 0o644 });
+    archiveEntries = readFileOnlyTarGzipEntries(file, { fileMode: 0o644 });
   } catch (error) {
-    fail(`${rel(file)} is not an exact canonical bundle: ${error.message}`);
+    fail(`${rel(file)} is not a consumer-compatible bundle: ${error.message}`);
   }
   const entries = new Map();
   for (const [name, entry] of archiveEntries) {
@@ -533,7 +533,7 @@ async function checkExtensionBundleProduct(
       });
     }
     carrierLegal.set(name, legal);
-    carrierEntries.set(name, canonicalBundleTarEntries(carrierPath));
+    carrierEntries.set(name, bundleTarEntries(carrierPath));
   }
   if (requireFullTargets) {
     const missing = [...allowedTargets]
@@ -665,7 +665,7 @@ async function checkExtensionBundleProduct(
           `${rel(manifest)} member ${member.sqlName} local asset ${name} is missing or does not match its size/digest`,
         );
       }
-      // canonicalBundleTarEntries also applies this contract to every key in
+      // bundleTarEntries also applies this contract to every key in
       // the archive before any nested member is looked up.
       const inner = carrierEntries.get(carrierAsset)?.get(composedPath);
       if (

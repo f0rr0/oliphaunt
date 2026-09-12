@@ -31,6 +31,10 @@ import {
 import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
 import { loadProducts } from '../release/release-graph.mts';
 import { qualificationRequestKey } from '../../.github/scripts/release-candidate-lib.mts';
+import {
+  publishedConsumerInventory,
+  validPublishedConsumerInventory,
+} from '../../sdks/ts/sdk/tools/published-consumer.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const PREFIX = 'ci_plan.mts';
@@ -155,6 +159,11 @@ export function moonCiJobTargets() {
 }
 
 export const CI_JOB_TARGETS = moonCiJobTargets();
+const RELEASE_ONLY_TARGETS = new Set(
+  [...TASKS_BY_TARGET.values()]
+    .filter((task) => task.tags?.includes('release-only'))
+    .map((task) => task.target),
+);
 export const BUILDER_JOBS = new Set(
   Object.keys(CI_JOB_TARGETS).filter((job) => job !== NATIVE_EXTENSION_LIFECYCLE_JOB),
 );
@@ -190,8 +199,10 @@ export function jobTargetsForJobs(jobs, selectedTasks = undefined) {
       .filter((job) => CI_JOB_TARGETS[job] !== undefined)
       .map((job) => [
         job,
-        CI_JOB_TARGETS[job].filter(
-          (target) => selectedTasks === undefined || selectedTasks.has(target),
+        CI_JOB_TARGETS[job].filter((target) =>
+          selectedTasks === undefined
+            ? !RELEASE_ONLY_TARGETS.has(target)
+            : selectedTasks.has(target),
         ),
       ]),
   );
@@ -220,12 +231,12 @@ function taskDependencyTargets(task) {
     .filter((target) => typeof target === 'string');
 }
 
-function downstreamTaskClosure(tasks) {
-  const closure = new Set(tasks);
+function downstreamTaskClosure(tasks, excludedTargets = RELEASE_ONLY_TARGETS) {
+  const closure = new Set([...tasks].filter((target) => !excludedTargets.has(target)));
   const pending = [...closure];
   while (pending.length > 0) {
     for (const dependent of DEPENDENTS_BY_TARGET.get(pending.pop()) ?? []) {
-      if (!closure.has(dependent)) {
+      if (!closure.has(dependent) && !excludedTargets.has(dependent)) {
         closure.add(dependent);
         pending.push(dependent);
       }
@@ -260,9 +271,9 @@ export function addRequiredJobs(jobs) {
   return jobs;
 }
 
-export function planJobsForAffected(tasks) {
+export function planJobsForAffected(tasks, excludedTargets = RELEASE_ONLY_TARGETS) {
   const jobs = new Set(ALWAYS_JOBS);
-  const directlySelectedJobs = jobsForTargets(requiredTasksForAffected(tasks), {
+  const directlySelectedJobs = jobsForTargets(requiredTasksForAffected(tasks, excludedTargets), {
     allowedJobs: ALL_BUILDER_JOBS,
   });
   for (const job of directlySelectedJobs) {
@@ -271,9 +282,11 @@ export function planJobsForAffected(tasks) {
   return jobs;
 }
 
-export function requiredTasksForAffected(tasks) {
+export function requiredTasksForAffected(tasks, excludedTargets = RELEASE_ONLY_TARGETS) {
   const selected = new Set(
-    [...downstreamTaskClosure(tasks)].filter((target) => JOBS_BY_TARGET.has(target)),
+    [...downstreamTaskClosure(tasks, excludedTargets)].filter((target) =>
+      JOBS_BY_TARGET.has(target),
+    ),
   );
   const pending = [...selected];
   while (pending.length > 0) {
@@ -411,7 +424,11 @@ export function planForAffectedRange() {
   };
 }
 
-export function planForReleaseProducts(products, headSha = process.env.MOON_HEAD) {
+export function planForReleaseProducts(
+  products,
+  headSha = process.env.MOON_HEAD,
+  publishedDependencies = null,
+) {
   if (
     process.env.CI_QUALIFICATION_REQUEST &&
     process.env.CI_QUALIFICATION_REQUEST !== qualificationRequestKey(headSha, products)
@@ -436,6 +453,7 @@ export function planForReleaseProducts(products, headSha = process.env.MOON_HEAD
       .filter(
         (task) =>
           projects.has(task.target.split(':')[0]) &&
+          !RELEASE_ONLY_TARGETS.has(task.target) &&
           task.options?.runInCI !== false &&
           task.options?.runInCI !== 'skip',
       )
@@ -445,8 +463,19 @@ export function planForReleaseProducts(products, headSha = process.env.MOON_HEAD
     if (![...roots].some((target) => target.startsWith(`${product}:`)))
       throw new Error(`release product ${product} has no qualifying Moon tasks`);
   }
-  const tasks = requiredTasksForAffected(roots);
-  for (const target of downstreamTaskClosure(roots)) {
+  const excludedTargets = new Set(RELEASE_ONLY_TARGETS);
+  const reusePublished =
+    products.length === 1 &&
+    products[0] === 'oliphaunt-js' &&
+    validPublishedConsumerInventory(publishedDependencies);
+  if (reusePublished) {
+    roots.delete('oliphaunt-js:test-consumer');
+    excludedTargets.add('oliphaunt-js:test-consumer');
+    excludedTargets.delete('oliphaunt-js:test-consumer-published');
+    roots.add('oliphaunt-js:test-consumer-published');
+  }
+  const tasks = requiredTasksForAffected(roots, excludedTargets);
+  for (const target of downstreamTaskClosure(roots, excludedTargets)) {
     const task = TASKS_BY_TARGET.get(target);
     if (
       task?.tags?.includes('quality') &&
@@ -464,9 +493,9 @@ export function planForReleaseProducts(products, headSha = process.env.MOON_HEAD
       }
     }
   }
-  const jobs = planJobsForAffected(roots);
+  const jobs = planJobsForAffected(roots, excludedTargets);
   const selectedExtensionProducts = selectedExtensionProductsForPlan(projects, roots, jobs);
-  return renderPlanWithSelection({
+  const plan = renderPlanWithSelection({
     jobs,
     projects,
     tasks,
@@ -476,8 +505,10 @@ export function planForReleaseProducts(products, headSha = process.env.MOON_HEAD
     qualificationMode: PRODUCT_QUALIFICATION_MODE,
     qualificationProducts: [...products].sort(compareText),
     qualificationHeadSha: headSha,
+    excludedTargets,
     reason: `release qualification for products: ${[...products].sort(compareText).join(', ')}`,
   });
+  return { ...plan, published_dependencies: reusePublished ? publishedDependencies : [] };
 }
 
 export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {
@@ -661,7 +692,7 @@ function targetsForJobs(jobs) {
   const targets = new Set();
   for (const job of jobs) {
     for (const target of CI_JOB_TARGETS[job] ?? []) {
-      targets.add(target);
+      if (!RELEASE_ONLY_TARGETS.has(target)) targets.add(target);
     }
   }
   return targets;
@@ -765,9 +796,9 @@ export function nativeExtensionLifecycleShardPlan(products) {
 
 // A dependency-only producer inherits explicit host requirements from its selected
 // consumers. Unbounded consumers and directly selected producers retain all hosts.
-export function dependencyPlatformTargets(job, roots) {
+export function dependencyPlatformTargets(job, roots, excludedTargets = RELEASE_ONLY_TARGETS) {
   if (!roots) return null;
-  const selected = downstreamTaskClosure(roots);
+  const selected = downstreamTaskClosure(roots, excludedTargets);
   const producers = new Set(CI_JOB_TARGETS[job] ?? []);
   if (intersects(selected, producers)) return null;
   const platforms = new Set();
@@ -805,6 +836,7 @@ export function renderPlanWithSelection({
   qualificationHeadSha = null,
   qualificationProducts = [],
   platformRoots = qualificationMode === AFFECTED_QUALIFICATION_MODE ? tasks : null,
+  excludedTargets = RELEASE_ONLY_TARGETS,
 }) {
   const extensionProducts = sorted(selectedExtensionProducts ?? new Set());
   const extensionSqlNames = extensionSqlNamesForProducts(extensionProducts);
@@ -910,7 +942,7 @@ export function renderPlanWithSelection({
       ['broker-runtime', 'broker_runtime_matrix'],
       ['node-direct', 'node_direct_runtime_matrix'],
     ]) {
-      const required = dependencyPlatformTargets(job, platformRoots);
+      const required = dependencyPlatformTargets(job, platformRoots, excludedTargets);
       if (required) {
         const available = new Set(plan[matrix].include.map((row) => row.target));
         for (const target of required) {
@@ -985,7 +1017,7 @@ function writePlanArtifact(plan) {
   writeFileSync(file, `${JSON.stringify(sortedValue(plan), null, 2)}\n`, 'utf8');
 }
 
-export function emitGithubOutputs() {
+export async function emitGithubOutputs() {
   let planned;
   try {
     if (process.env.CI_RELEASE_PRODUCTS_JSON && process.env.CI_RELEASE_PRODUCTS_JSON !== '[]') {
@@ -995,7 +1027,12 @@ export function emitGithubOutputs() {
         )
       )
         throw new Error('product qualification cannot use focused platform targets');
-      planned = planForReleaseProducts(JSON.parse(process.env.CI_RELEASE_PRODUCTS_JSON));
+      const products = JSON.parse(process.env.CI_RELEASE_PRODUCTS_JSON);
+      planned = planForReleaseProducts(
+        products,
+        process.env.MOON_HEAD,
+        await publishedConsumerInventory(products),
+      );
     } else if (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch') {
       const affectedPlan = planForAffectedRange();
       const selectedExtensionProducts = selectedExtensionProductsForPlan(
@@ -1130,10 +1167,10 @@ Commands:
 `;
 }
 
-function main(argv) {
+async function main(argv) {
   const [command, ...rest] = argv;
   if (command === undefined) {
-    process.exit(emitGithubOutputs());
+    process.exit(await emitGithubOutputs());
   }
   if (command === '--help' || command === '-h') {
     console.log(usage());
@@ -1177,5 +1214,5 @@ function main(argv) {
 }
 
 if (import.meta.main) {
-  main(Bun.argv.slice(2));
+  await main(Bun.argv.slice(2));
 }

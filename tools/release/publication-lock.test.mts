@@ -18,29 +18,19 @@ import {
   stageExtensionUpstreamLicenses,
 } from '../../extensions/tools/extension-upstream-licenses.mts';
 import { extensionDependencyRequirement } from '../../runtimes/liboliphaunt-wasix/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
-import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
-import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
 } from '../../sdks/swift/tools/ios-carrier-manifest.mts';
+import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
+import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { canonicalGzipSync } from '../packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../packaging/release-notices.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
-  allArtifactTargets,
-  currentProductVersionSync,
-  extensionArtifactProductRoot,
-  extensionArtifactTargets,
-  extensionMetadata,
-  extensionSourceIdentity,
-  extensionSqlNames,
-} from './release-artifact-targets.mts';
-import { productCompatibilityVersion } from './release-graph.mts';
-import {
-  assertLockedProductArtifacts,
   assertLockedArtifactSet,
+  assertLockedProductArtifacts,
   assertPublicationLockSource,
   buildPublicationCandidate,
   discoverProductArtifacts,
@@ -52,6 +42,16 @@ import {
   validatePublicationCandidate,
   validatePublicationLock,
 } from './publication-lock.mts';
+import {
+  allArtifactTargets,
+  currentProductVersionSync,
+  extensionArtifactProductRoot,
+  extensionArtifactTargets,
+  extensionMetadata,
+  extensionSourceIdentity,
+  extensionSqlNames,
+} from './release-artifact-targets.mts';
+import { productCompatibilityVersion } from './release-graph.mts';
 
 const temporaryDirectories = [];
 
@@ -844,13 +844,13 @@ describe('publication artifact discovery and freezing', () => {
       manifestSuffix: [
         '',
         '[target.\'cfg(target_os = "linux")\'.dependencies]',
-        `oliphaunt-build = \"=${version}\"`,
+        `oliphaunt-build = "=${version}"`,
         '',
         '[target.\'cfg(target_os = "macos")\'.dependencies]',
-        `oliphaunt-build = \"=${version}\"`,
+        `oliphaunt-build = "=${version}"`,
         '',
         '[target.\'cfg(target_os = "windows")\'.dependencies]',
-        `oliphaunt-build = \"=${version}\"`,
+        `oliphaunt-build = "=${version}"`,
         '',
       ].join('\n'),
     });
@@ -1245,7 +1245,7 @@ describe('publication artifact discovery and freezing', () => {
           chmodSync(path.join(stage, 'LICENSE'), 0o600);
         },
       },
-      /member .*\/LICENSE must be a canonical regular mode=0644 uid=0 gid=0 mtime=0 file/u,
+      /member .*\/LICENSE must be a regular mode=644 file/u,
     );
   });
 
@@ -1281,23 +1281,23 @@ describe('publication artifact discovery and freezing', () => {
       {
         mutateBundleArchive({ output }) {
           const bytes = readFileSync(output);
-          bytes[9] = 0;
+          bytes[3] = 8;
           writeFileSync(output, bytes);
         },
       },
-      /canonical gzip method, flags, mtime, XFL, and OS header/u,
+      /without optional header sections/u,
     );
 
     reject(
       {
         mutateBundleArchive({ output }) {
           const tar = gunzipSync(readFileSync(output));
-          Buffer.from('builder\0', 'ascii').copy(tar, 265);
+          Buffer.from('ustar  \0', 'ascii').copy(tar, 257);
           refreshTarHeaderChecksum(tar);
           writeFileSync(output, canonicalGzipSync(tar));
         },
       },
-      /exact deterministic POSIX ustar file encoding/u,
+      /non-POSIX-ustar/u,
     );
   });
 

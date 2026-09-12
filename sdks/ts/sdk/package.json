@@ -65,7 +65,7 @@
   ],
   "scripts": {
     "build": "rm -rf lib && tsc -p tsconfig.build.json",
-    "test": "bun test --isolate --timeout=30000 ./src/__tests__",
+    "test": "bun test --isolate --timeout=30000 ./src/__tests__ ./tools/published-consumer.test.mts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf lib",
     "coverage": "bun test --isolate --timeout=30000 ./src/__tests__ --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../../target/coverage/oliphaunt-js",

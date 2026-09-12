@@ -27,9 +27,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CANONICAL_RELEASE_REPOSITORY: f0rr0/oliphaunt
-  NODE_VERSION: 22.22.3
   NPM_VERSION: 11.18.0
-  BUN_VERSION: 1.4.2
   PUBLICATION_LOCK_PATH: target/release/publication-lock.json
   BOOTSTRAP_LEDGER_PATH: target/release/bootstrap-ledger
   RELEASE_JOB_HARD_WINDOW_SECONDS: 21180

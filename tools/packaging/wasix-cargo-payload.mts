@@ -78,6 +78,12 @@ function copyPackageSource(spec, sourceRoot, version, transformManifest) {
     filter: (source) => !['target', 'payload', 'artifacts'].includes(path.basename(source)),
   });
   cpSync(spec.payloadRoot, path.join(crateDir, spec.payloadDirName), { recursive: true });
+  if (existsSync(path.join(crateDir, 'build-support.rs'))) {
+    writeFileSync(
+      path.join(crateDir, 'build.rs'),
+      'const PACKAGE_LOCAL: bool = true;\ninclude!("build-support.rs");\n',
+    );
+  }
   const noticeProfile = noticeProfileForSpec(spec);
   stageReleaseNotices(crateDir, { profile: noticeProfile });
   rewriteCargoManifest(path.join(crateDir, 'Cargo.toml'), {

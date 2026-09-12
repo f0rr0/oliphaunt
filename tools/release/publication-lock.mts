@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { parseMavenArtifactManifest } from '../packaging/maven-artifact-manifest.mts';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -12,26 +11,27 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { extensionRuntimeAssetContract } from '../../extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts';
+import { assertWasixExtensionMemberInstall } from '../../extensions/contracts/wasix-extension-install.mts';
 import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from '../../extensions/tools/extension-upstream-licenses.mts';
 import {
+  buildSwiftExtensionCarrierManifest,
+  swiftExtensionCarrierAssetName,
+} from '../../sdks/swift/tools/ios-carrier-manifest.mts';
+import {
   validateSelectionNeutralSwiftSourceCarrier,
   validateSwiftSourceReleaseContract,
 } from '../../sdks/swift/tools/swift-source-carrier-contract.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
-import {
-  buildSwiftExtensionCarrierManifest,
-  swiftExtensionCarrierAssetName,
-} from '../../sdks/swift/tools/ios-carrier-manifest.mts';
+import { parseMavenArtifactManifest } from '../packaging/maven-artifact-manifest.mts';
 import { validateMavenCentralPublication } from '../packaging/maven-central-contract.mts';
 import { validateNpmTrustedPublishingManifest } from '../packaging/npm-trusted-publishing.mts';
 import {
-  readCanonicalTarGzipEntries,
+  readFileOnlyTarGzipEntries,
   readPortableArchiveEntries,
 } from '../packaging/portable-archive.mts';
-import { assertWasixExtensionMemberInstall } from '../../extensions/contracts/wasix-extension-install.mts';
 import {
   loadPublicationCatalog,
   PUBLICATION_CATALOG_SCHEMA,
@@ -187,12 +187,12 @@ function archiveMemberText(file, suffix, { exact = false } = {}) {
   return new TextDecoder('utf-8', { fatal: true }).decode(entries[0].data());
 }
 
-function canonicalExtensionBundleEntries(file) {
+function extensionBundleEntries(file) {
   let entries;
   try {
-    entries = readCanonicalTarGzipEntries(file, { fileMode: 0o644 });
+    entries = readFileOnlyTarGzipEntries(file, { fileMode: 0o644 });
   } catch (cause) {
-    throw error(`${rel(file)} is not an exact canonical tar.gz bundle: ${cause.message}`);
+    throw error(`${rel(file)} is not a consumer-compatible tar.gz bundle: ${cause.message}`);
   }
   return entries;
 }
@@ -550,7 +550,7 @@ function validateChecksumManifest(file, payloadFiles, context) {
     if (rawLine.length === 0) {
       continue;
     }
-    const match = rawLine.match(/^([0-9a-f]{64})  \.\/([^/\0]+)$/u);
+    const match = rawLine.match(/^([0-9a-f]{64}) {2}\.\/([^/\0]+)$/u);
     if (match === null) {
       throw error(`${context} checksum line ${index + 1} must be '<sha256>  ./<basename>'`);
     }
@@ -1186,7 +1186,7 @@ function extensionBundleGithubReleaseArtifacts({
       licenseFiles: legal.licenseFiles,
       members: manifestMembers,
     };
-    const entries = canonicalExtensionBundleEntries(file);
+    const entries = extensionBundleEntries(file);
     const legalFiles = extensionCarrierLegalFileInventory(product.id, memberNames, {
       family: row.family,
       target: row.target,

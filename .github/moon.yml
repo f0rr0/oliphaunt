@@ -54,6 +54,10 @@ tasks:
       - "/tools/ci/affected.mts"
       - "/tools/ci/ci_plan.mts"
       - "/tools/ci/ci-plan.sh"
+      - "/sdks/ts/sdk/tools/published-consumer.mts"
+      - "/sdks/ts/sdk/package.json"
+      - "/tools/release/check_registry_publication.mts"
+      - "/tools/release/public-consumer-smoke.mts"
       - "/tools/release/release-graph.mts"
     options:
       cache: true

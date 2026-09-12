@@ -37,10 +37,6 @@ concurrency:
   group: mobile-e2e-${{ inputs.sha || github.sha }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: false
 
-env:
-  NODE_VERSION: 22.22.3
-  BUN_VERSION: 1.4.2
-
 jobs:
   resolve:
     name: resolve-build-artifacts
@@ -62,8 +58,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Resolve mobile app artifacts
         id: plan
@@ -97,8 +91,6 @@ jobs:
       - name: Set up Node
         id: setup_android_e2e_node
         uses: ./.github/actions/setup-node-runtime
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Reclaim Android emulator disk
         id: reclaim_android_emulator_disk
@@ -183,8 +175,6 @@ jobs:
 
       - name: Set up Node and Bun
         uses: ./.github/actions/setup-node-bun
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Set up Apple
         uses: ./.github/actions/setup-apple
@@ -259,8 +249,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check resolver
         id: resolver_gate

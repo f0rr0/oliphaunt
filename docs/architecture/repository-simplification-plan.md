@@ -953,13 +953,34 @@ the resulting evidence in task 30.
   dependencies determine selected builder tasks; source-check matrices use the
   same scope. The existing qualification record binds product IDs, tasks and
   candidate SHA, and publication rejects uncovered requested products. An empty
-  selection retains the exhaustive audit. All producer dependencies still run
-  in the same candidate run: cross-commit binary reuse is not implemented.
+  selection retains the exhaustive audit. Unpublished or selected producer
+  dependencies still run in the same candidate run; cross-commit binary
+  producer reuse is not implemented.
   Generated same-repository Release PRs and merged main release commits now
   derive the same selection from Release Please's actual manifest transition.
   Main push writes qualification only after Plan and Required succeed; PRs
   cannot create publishable evidence. Missing-run request/reuse is implemented
   below; no hosted qualification has been claimed from local graph tests.
+
+  **Native TypeScript published-dependency slice:** for a release selecting only
+  `oliphaunt-js`, existing npm publication lookup verifies the exact query,
+  Linux runtime, broker and addon pins and SHA-512 registry integrity. A complete
+  inventory selects the SDK's release-only consumer task and is retained in the
+  candidate plan. That task installs the newly packed SDK with those public
+  dependencies, checks Bun's resolved identities and integrity against the
+  inventory, and runs the existing Node/Bun/Deno native and server contracts.
+  Registry lookup uses the existing bounded retry/error behavior; an outage
+  cannot substitute current-tree bytes for unverified published dependencies.
+  Missing publications, incompatible inventory or mixed selected products keep
+  the ordinary producer chain. Normal PR affectedness and exhaustive audit
+  continue to select freshly produced dependencies. Actual Moon graph tests
+  prove six jobs reduce to three only with a complete inventory; installer
+  mutation checks reject wrong versions, changed integrity and private sources.
+  Current public inventory is incomplete, so a complete public-byte native
+  consumer run remains pending publication. Rust-only releases still reach real
+  mobile binding consumers and their artifact dependencies; that separation
+  remains unfinished. This slice does not close 26 or the native receipt work
+  in 26a.
   Local evidence: disposable Git histories prove identical PR/main product
   selection and rejection of an unknown manifest owner; 52 workflow/task-graph
   tests pass, as do 20 candidate/matrix/gate tests, seven strict release-history
@@ -1444,6 +1465,11 @@ Use the established task order; remove obsolete tests with their mechanisms.
   coherently. **Done:** representative ordinary and special-tool updates resolve
   and select appropriate checks; no half-updated pin or unrelated ecosystem
   failure blocks an independent update.
+  **Checkpoint:** removed the Moon/Node version-only Renovate managers: they
+  changed `.prototools` without the installers' verified archive manifests.
+  Tool updates remain explicit coherent version/digest changes; native ecosystem
+  managers and existing dependency groups remain enabled. Representative update
+  qualification and coordinated-group review remain outstanding.
 - [ ] **M03 — Tool installation (06,22).** Replace ordinary custom installers
   with existing Moon/proto or ecosystem mechanisms where supported. Retain
   narrow verified installation for special toolchains. Remove upstream README
@@ -1451,6 +1477,15 @@ Use the established task order; remove obsolete tests with their mechanisms.
   integrity and safe interrupted installation. **Done:** clean/repeated/failed
   setup works on supported hosts, installs only requested prerequisites, and
   uses the same underlying mechanism locally and in CI.
+  **Checkpoint:** Moon, Node, Bun and Deno installation versions now come only
+  from `.prototools`; verified asset manifests retain URLs, hashes, sizes and
+  executable metadata, without another version field. Composite setup actions
+  and workflow callers no longer repeat those pins. Installers still reject
+  mismatched URLs or executable versions and corrupted payloads. Native Node,
+  Moon and Bun/Deno installer fault suites pass, and the real cached Node, Bun
+  and Moon binaries pass verification with downloads disabled. Root Bun
+  `packageManager`/`engines` remain ecosystem declarations. Supported-host
+  installation qualification and broader installer simplification remain open.
 - [x] **M04 — Machinery tests (21,22,25).** Retain tests for corrupt inputs,
   failed extraction, partial publication and conflicting public bytes. Delete
   source-layout, duplicate-copy and obsolete receipt-protocol assertions with
@@ -1499,6 +1534,13 @@ Use the established task order; remove obsolete tests with their mechanisms.
   with an established implementation where hashing remains necessary. **Done:**
   clean published consumers work with declared dependencies and no hidden runtime
   producer build; required payload integrity checks still reject corruption.
+  WASIX carrier checkpoint: packaged runtime and PostgreSQL-tool crates use a
+  strict package-local build entrypoint. Missing payloads or declared AOT files
+  fail even when environment overrides and ancestor checkouts contain usable
+  alternatives. Source builds retain lightweight checks and explicit local
+  inputs. Four extracted carrier-family proofs and all ten source-carrier
+  Clippy checks pass; actual Moon queries propagate support changes to SDK
+  consumers without selecting PostgreSQL compilation.
 - [ ] **M10 — Source packages and splitting (16,20,22,27,28).** Prefer native
   package commands and one source manifest authority. Resolve unpublished sibling
   candidate dependencies explicitly before deleting staging transformations;
@@ -1527,14 +1569,24 @@ Use the established task order; remove obsolete tests with their mechanisms.
   A wholesale `Bun.Archive` producer substitution is not proven: the current
   API probe writes an empty-directory key as a regular file and defaults to
   current timestamps and non-executable modes.
-  Swift resolver checkpoint: extraction now validates once in private staging;
+  Swift resolver and React Native iOS stager checkpoint: extraction now validates
+  once in private staging;
   rejected replacements preserve the existing output and tree manifest. Removed
   its redundant archive inventory pass, retaining actual extracted-tree hashes
   for cache validation. The bootstrap capsule reuses the existing tar-header
   writer without changing its streaming payload or canonical-byte contract.
-  Swift hostile-archive/cache/consumer and capsule integrity/repeat tests pass;
+  Swift and React Native hostile-archive/cache/consumer tests and capsule
+  integrity/repeat tests pass;
   24 old/new header comparisons are byte-identical. This does not claim atomic
   directory-plus-manifest publication across forced crashes or concurrent writers.
+  Extension bundle qualification now checks the actual mobile consumer subset:
+  regular 0644 files, POSIX ustar, a single gzip stream without optional header
+  sections, bounded safe members and an exact two-block terminator. Removed full
+  tar-byte reconstruction and its duplicate encoder; archive hashes still freeze
+  exact release bytes, and producer tests retain deterministic output. Different
+  gzip OS metadata, valid owner names and file order are accepted by the real
+  consumers and no longer fail qualification. Nested extension leaf contracts
+  remain unchanged.
 - [ ] **M12 — WASIX export sealing (13,22,25).** Keep Rust binary analysis and
   required dynamic-linkage/ABI checks. Remove the requirement that DCE must remove
   at least one function/global; a justified size budget is a separate concern.
@@ -3404,3 +3456,16 @@ launcher instead of Git Bash. The common Moon setup now publishes Git's real
 `bin` path. Windows addon packaging separately exposed a missing app-local
 VCRUNTIME DLL; its raw and npm carriers now stage the existing verified VC
 closure before validation. Hosted rerun is required to qualify these fixes.
+
+Standalone Kotlin generation had a separate freshness gap: after changing a
+transitive Rust dependency, Gradle reported `generateNativeBindings UP-TO-DATE`.
+Gradle now always invokes the existing generator and lets Cargo's native
+dependency fingerprints decide whether compilation is needed; it no longer
+maintains an incomplete Rust input list. The same source-only change then rebuilt
+the affected Rust chain through a reused Gradle configuration cache. Moon's
+generation task also no longer builds the library separately before the
+generator's own `cargo build --features bindgen`. Combined Kotlin lint, JVM and
+Android unit tests, plugin checks and formatting pass; an unchanged repeat takes
+3 seconds, with all Kotlin compilation up to date and Cargo completing in
+0.14 seconds. This proves local freshness and incremental compilation, not
+Android device or Apple artifact qualification.

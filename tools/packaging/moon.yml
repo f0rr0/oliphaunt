@@ -42,6 +42,8 @@ tasks:
       - /database-resources/contracts/*.mts
       - /tools/release/**/*.mts
       - /runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json
+      - /runtimes/liboliphaunt-wasix/crates/**/*
+      - /postgres-tools/wasix/crates/**/*
     options:
       cache: true
       runFromWorkspaceRoot: true

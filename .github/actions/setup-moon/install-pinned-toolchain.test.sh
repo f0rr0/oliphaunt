@@ -63,9 +63,6 @@ moon_expanded_bytes="$(
 moon_sha256="$(sha256_file "$fixture/content/moon")"
 moonx_sha256="$(sha256_file "$fixture/content/moonx")"
 cat >"$fixture/tools/dev/moon-cli.toml" <<EOF
-[toolchain]
-version = "$moon_version"
-
 [assets.$moon_target]
 url = "https://github.com/moonrepo/moon/releases/download/v$moon_version/moon_cli-$moon_target.tar.xz"
 sha256 = "$moon_archive_sha256"

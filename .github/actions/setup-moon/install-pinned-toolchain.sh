@@ -131,15 +131,13 @@ sha256_file() {
   fi
 }
 
-moon_version="$(manifest_value "$moon_manifest" toolchain version)" ||
-  fail "$moon_manifest must contain exactly one quoted toolchain.version"
+moon_version="$(prototool_version moon)" || fail "$proto_file must contain exactly one moon version"
+moon_version="${moon_version#v}"
 proto_version="$(manifest_value "$proto_manifest" toolchain version)" ||
   fail "$proto_manifest must contain exactly one quoted toolchain.version"
 validate_version Moon "$moon_version"
 validate_version proto "$proto_version"
 
-configured="$(prototool_version moon)" || fail "$proto_file must contain exactly one moon version"
-[ "${configured#v}" = "$moon_version" ] || fail "Moon version does not match pinned version"
 configured_proto="$(moon_proto_version)" ||
   fail "$moon_config must contain exactly one quoted proto.version"
 configured_proto="${configured_proto#v}"

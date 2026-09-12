@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { closeSync, openSync, writeSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,7 +16,6 @@ import { gunzipSync, gzipSync, constants as zlibConstants, zstdCompressSync } fr
 import { archiveDirectory } from './archive-directory.mts';
 
 import {
-  validateZipEntryTypes,
   canonicalGzipSync,
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   decompressSingleZstdFrame,
@@ -15,11 +23,12 @@ import {
   portableMemberName,
   RELEASE_ZSTD_COMPRESSION_LEVEL,
   readAndroidApkEntries,
-  readCanonicalTarGzipEntries,
+  readFileOnlyTarGzipEntries,
   readPortableArchiveEntries,
   readPortableTarStream,
   readPortableTarZstdBufferEntries,
   releaseZstdCompressSync,
+  validateZipEntryTypes,
 } from './portable-archive.mts';
 
 test('exposes the same portable member contract to nested carrier consumers', () => {
@@ -544,23 +553,27 @@ test('reads strict ustar and rejects links, bad checksums, padding, and end mark
   assert.throws(() => readPortableArchiveEntries(linkField), /sets a link target on non-link/u);
 });
 
-test('binds the exact deterministic tar-gzip encoding used by release consumers', async (t) => {
+test('accepts consumer-compatible tar metadata and rejects unsupported bundle formats', async (t) => {
   const validBytes = tarArchive([
     { name: 'root/LICENSE', data: 'license\n' },
     { name: 'root/bundle-manifest.json', data: '{}\n' },
   ]);
   const valid = fixtureFile(t, 'canonical.tar.gz', validBytes).file;
   assert.deepEqual(
-    [...readCanonicalTarGzipEntries(valid).keys()],
+    [...readFileOnlyTarGzipEntries(valid).keys()],
     ['root/LICENSE', 'root/bundle-manifest.json'],
   );
 
   const wrongGzipHeader = Buffer.from(validBytes);
   wrongGzipHeader[9] = 0;
   const wrongGzip = fixtureFile(t, 'wrong-gzip-header.tar.gz', wrongGzipHeader).file;
+  assert.doesNotThrow(() => readFileOnlyTarGzipEntries(wrongGzip));
+
+  const optionalHeader = Buffer.from(validBytes);
+  optionalHeader[3] = 8;
   assert.throws(
-    () => readCanonicalTarGzipEntries(wrongGzip),
-    /canonical gzip method, flags, mtime, XFL, and OS header/u,
+    () => readFileOnlyTarGzipEntries(fixtureFile(t, 'optional-header.tar.gz', optionalHeader).file),
+    /without optional header sections/u,
   );
 
   const ownerTar = gunzipForTest(validBytes);
@@ -568,9 +581,21 @@ test('binds the exact deterministic tar-gzip encoding used by release consumers'
   refreshFirstTarChecksum(ownerTar);
   const owner = fixtureFile(t, 'owner.tar.gz', canonicalGzipSync(ownerTar)).file;
   assert.doesNotThrow(() => readPortableArchiveEntries(owner));
+  assert.doesNotThrow(() => readFileOnlyTarGzipEntries(owner));
+
+  const extraPadding = fixtureFile(
+    t,
+    'extra-padding.tar.gz',
+    canonicalGzipSync(Buffer.concat([gunzipForTest(validBytes), Buffer.alloc(512)])),
+  ).file;
+  assert.throws(() => readFileOnlyTarGzipEntries(extraPadding), /after its two-block/u);
+
+  const gnuTar = gunzipForTest(validBytes);
+  Buffer.from('ustar  \0', 'ascii').copy(gnuTar, 257);
+  refreshFirstTarChecksum(gnuTar);
   assert.throws(
-    () => readCanonicalTarGzipEntries(owner),
-    /exact deterministic POSIX ustar file encoding/u,
+    () => readFileOnlyTarGzipEntries(fixtureFile(t, 'gnu.tar.gz', canonicalGzipSync(gnuTar)).file),
+    /non-POSIX-ustar/u,
   );
 
   const unsorted = fixtureFile(
@@ -582,10 +607,7 @@ test('binds the exact deterministic tar-gzip encoding used by release consumers'
     ]),
   ).file;
   assert.doesNotThrow(() => readPortableArchiveEntries(unsorted));
-  assert.throws(
-    () => readCanonicalTarGzipEntries(unsorted),
-    /canonical file members.*sorted order/u,
-  );
+  assert.doesNotThrow(() => readFileOnlyTarGzipEntries(unsorted));
 });
 
 test('accepts POSIX directory type flags and rejects file entries with directory markers', async (t) => {

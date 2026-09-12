@@ -1,12 +1,6 @@
 name: Set up Bun
 description: Install the pinned Bun toolchain for TypeScript npm consumer checks.
 
-inputs:
-  bun-version:
-    description: Bun version.
-    required: false
-    default: "1.4.2"
-
 outputs:
   execution-envelope:
     description: Absolute digest-verified Bun execution envelope.
@@ -19,11 +13,10 @@ runs:
       id: install
       shell: bash
       env:
-        BUN_VERSION_INPUT: ${{ inputs.bun-version }}
         OLIPHAUNT_PINNED_TOOL_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-pinned-tools
       run: | # zizmor: ignore[github-env] the installer returns a digest- and version-verified runner-temp path.
         set -euo pipefail
-        binary="$(tools/dev/install-pinned-js-runtime.sh bun --expected-version "$BUN_VERSION_INPUT")"
+        binary="$(tools/dev/install-pinned-js-runtime.sh bun)"
         binary_dir="$(dirname "$binary")"
         execution_envelope="$(cd "$binary_dir/.." && pwd -P)"
         output_envelope="$execution_envelope"

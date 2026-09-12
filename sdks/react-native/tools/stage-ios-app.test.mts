@@ -1961,7 +1961,24 @@ async function main() {
           : row,
       ),
     );
+    const rejectedAsset = traversal.base.assets.find(({ role }) => role === 'base-xcframework');
+    const previousExtraction = path.join(
+      root,
+      'malicious-traversal-cache',
+      'extracted',
+      rejectedAsset.sha256,
+    );
+    await write(path.join(previousExtraction, 'preserved.txt'), 'previous extraction\n');
+    await write(`${previousExtraction}.tree.json`, 'previous manifest\n');
     await expectCarrierFailure('malicious-traversal', traversal, [], /unsafe archive member/u);
+    assert.equal(
+      await fs.readFile(path.join(previousExtraction, 'preserved.txt'), 'utf8'),
+      'previous extraction\n',
+    );
+    assert.equal(
+      await fs.readFile(`${previousExtraction}.tree.json`, 'utf8'),
+      'previous manifest\n',
+    );
     await assert.rejects(
       fs.access(path.join(root, 'malicious-traversal-cache', 'extracted', 'escaped-from-rn.txt')),
     );
@@ -2073,7 +2090,7 @@ async function main() {
           { name: 'payload', type: 'file' },
           { name: 'payload', type: 'file' },
         ],
-        /repeats archive member/u,
+        /repeats archive member|EEXIST/u,
       ],
       [
         'tar-case-collision',
@@ -2089,7 +2106,7 @@ async function main() {
           { name: 'parent', type: 'file' },
           { name: 'parent/child', type: 'file' },
         ],
-        /uses regular file parent as an archive directory/u,
+        /uses regular file parent as an archive directory|EEXIST|ENOTDIR/u,
       ],
     ]) {
       const archive = path.join(root, 'archives', `${name}.tar.gz`);

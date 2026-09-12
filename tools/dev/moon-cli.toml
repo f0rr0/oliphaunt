@@ -1,6 +1,3 @@
-[toolchain]
-version = "2.5.4"
-
 [assets.aarch64-apple-darwin]
 url = "https://github.com/moonrepo/moon/releases/download/v2.5.4/moon_cli-aarch64-apple-darwin.tar.xz"
 sha256 = "c4e0f41f43f80533be4120917858ca68e1d65063375de0088882342e45366867"

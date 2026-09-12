@@ -164,8 +164,8 @@ val mobileBindingsRoot = rootProject.layout.projectDirectory.dir("../../target/m
 val generateNativeBindings by tasks.registering(Exec::class) {
     workingDir(rootProject.layout.projectDirectory.dir("../.."))
     commandLine("bash", "sdks/rust/mobile-bindings/tools/generate.sh")
-    inputs.dir(rootProject.layout.projectDirectory.dir("../rust/mobile-bindings"))
-    inputs.file(rootProject.layout.projectDirectory.file("../../Cargo.lock"))
+    // Cargo tracks the complete Rust dependency graph, including local crates.
+    outputs.upToDateWhen { false }
     outputs.dir(mobileBindingsRoot.dir("generated"))
 }
 val configuredCxxBuildRoot =

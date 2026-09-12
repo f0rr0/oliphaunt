@@ -67,6 +67,6 @@ tasks:
     command: "bash tools/generate.sh"
     options:
       cache: false
-    deps: [{target: "cargo-sources", cacheStrategy: hash}, "build"]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}]
     inputs: ["src/**/*", "tools/generate.sh", "uniffi.toml", "Cargo.toml", "/Cargo.lock", "/Cargo.toml"]
     outputs: ["/target/mobile-bindings/generated/**/*"]

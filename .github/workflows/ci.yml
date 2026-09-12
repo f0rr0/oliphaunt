@@ -70,9 +70,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  NODE_VERSION: 22.22.3
   NPM_VERSION: 11.18.0
-  BUN_VERSION: 1.4.2
   DENO_VERSION: v2.8.1
   ACTIONLINT_VERSION: 1.7.12
   ASSET_PROFILE: release
@@ -100,6 +98,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      published_dependencies: ${{ steps.plan.outputs.published_dependencies }}
       mobile_extension_package_native_targets_ios_csv: ${{ steps.plan.outputs.mobile_extension_package_native_targets_ios_csv }}
       mobile_extension_package_native_targets_android_csv: ${{ steps.plan.outputs.mobile_extension_package_native_targets_android_csv }}
       broker_runtime_matrix_other: ${{ steps.plan.outputs.broker_runtime_matrix_other }}
@@ -373,8 +372,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check selected check and policy jobs
         id: selected_checks_gate
@@ -463,8 +460,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check selected test jobs
         id: selected_tests_gate
@@ -1748,9 +1743,10 @@ jobs:
         with:
           deno-version: ${{ env.DENO_VERSION }}
       - name: Set up Rust
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') }}
         uses: ./.github/actions/setup-rust
       - name: Download SDK package
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer-published') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: oliphaunt-js-sdk-package-artifacts
@@ -1762,11 +1758,13 @@ jobs:
           name: oliphaunt-query-ts-sdk-package-artifacts
           path: target/sdk-artifacts/oliphaunt-query-ts
       - name: Download Linux runtime archive
+        if: ${{ !contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer-published') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: liboliphaunt-native-release-assets-linux-x64-gnu
           path: target/liboliphaunt/desktop-release-assets/linux-x64-gnu
       - name: Download Linux broker archive
+        if: ${{ !contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer-published') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: oliphaunt-broker-release-assets-linux-x64-gnu
@@ -1779,6 +1777,7 @@ jobs:
           path: target/oliphaunt-node-direct/release-assets
       - name: Exercise selected products against shipped native artifacts
         env:
+          OLIPHAUNT_PUBLISHED_DEPENDENCIES: ${{ needs.affected.outputs.published_dependencies }}
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-js:package", "oliphaunt-query-ts:package", "liboliphaunt-native:package-runtime-desktop-target", "oliphaunt-broker:build-release-assets", "oliphaunt-node-direct:build-release-assets"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh native-consumers
 
@@ -3126,8 +3125,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check selected build jobs
         id: selected_builds_gate
@@ -3164,8 +3161,6 @@ jobs:
       - name: Set up Node
         id: setup_android_e2e_node
         uses: ./.github/actions/setup-node-runtime
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Reclaim Android emulator disk
         id: reclaim_android_emulator_disk
@@ -3242,8 +3237,6 @@ jobs:
 
       - name: Set up Node and Bun
         uses: ./.github/actions/setup-node-bun
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Set up Apple
         uses: ./.github/actions/setup-apple
@@ -3310,8 +3303,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check final release execution qualification
         id: selected_e2e_gate
@@ -3343,8 +3334,6 @@ jobs:
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Check required jobs
         id: required_gate
@@ -3391,8 +3380,6 @@ jobs:
 
       - name: Set up Node.js
         uses: ./.github/actions/setup-node-runtime
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Download same-run affected plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

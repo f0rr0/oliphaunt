@@ -11,6 +11,7 @@ import {
 } from './ci_plan.mts';
 import { combinedNativeWasix, paths, taskRoots } from './ci-plan-test-inputs.mts';
 import { affectedObservation, taskObservation } from './ci-plan-test-observations.mts';
+import { publishedConsumerDependencies } from '../../sdks/ts/sdk/tools/published-consumer.mts';
 
 const GRAPH = loadGraph('ci-plan-node-products.test.mts');
 const NATIVE_TS_CONSUMER_JOBS = [
@@ -21,6 +22,48 @@ const NATIVE_TS_CONSUMER_JOBS = [
   'native-consumers',
   'node-direct',
 ];
+
+test('SDK-only release reuses a complete published dependency inventory, while missing or selected dependencies retain producers', () => {
+  const inventory = Object.entries(publishedConsumerDependencies()).map(([name, version]) => ({
+    name,
+    version,
+    integrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
+    tarball: `https://registry.npmjs.org/${name}/-/${name.split('/')[1]}-${version}.tgz`,
+  }));
+  const published = planForReleaseProducts(['oliphaunt-js'], 'a'.repeat(40), inventory);
+  assert.deepEqual(published.jobs, ['affected', 'js-sdk-package', 'native-consumers']);
+  assert.deepEqual(published.job_targets['native-consumers'], [
+    'oliphaunt-js:test-consumer-published',
+  ]);
+  assert.deepEqual(published.job_targets['js-sdk-package'], ['oliphaunt-js:package']);
+  assert(!published.tasks.includes('liboliphaunt-native:package-runtime-desktop-target'));
+  for (const rows of [
+    null,
+    inventory.slice(1),
+    inventory.map((row, index) => (index === 0 ? { ...row, version: '999.0.0' } : row)),
+  ]) {
+    const plan = planForReleaseProducts(['oliphaunt-js'], 'a'.repeat(40), rows);
+    assert(plan.jobs.includes('liboliphaunt-native-desktop'));
+    assert.deepEqual(plan.job_targets['native-consumers'], ['oliphaunt-js:test-consumer']);
+  }
+  const mixed = planForReleaseProducts(
+    ['oliphaunt-js', 'oliphaunt-query-ts'],
+    'a'.repeat(40),
+    inventory,
+  );
+  assert(mixed.job_targets['js-sdk-package'].includes('oliphaunt-query-ts:package'));
+  assert(mixed.jobs.includes('node-direct'));
+  assert(
+    !requiredTasksForAffected(new Set(['oliphaunt-js:test-consumer-published'])).has(
+      'oliphaunt-js:test-consumer-published',
+    ),
+  );
+  assert(
+    !jobTargetsForJobs(new Set(['native-consumers']))['native-consumers'].includes(
+      'oliphaunt-js:test-consumer-published',
+    ),
+  );
+});
 
 test('selected TypeScript SDK qualification includes shipped native consumption without mobile or WASIX producers', () => {
   const plan = planForReleaseProducts(['oliphaunt-js'], 'a'.repeat(40));

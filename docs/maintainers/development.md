@@ -32,6 +32,10 @@ Run `moon run ci-workflows:check` for workflow changes and
 supply-chain policy changes; neither is an unconditional pre-PR ceremony.
 
 Tool versions for Moon, Node, Bun, and Deno are pinned in `.prototools`.
+Update tool versions there alongside their verified archive URLs and digests in
+the corresponding `tools/dev/{moon-cli,node-runtime,bun,deno}.toml` manifest.
+Renovate updates ecosystem dependencies; it does not propose partial changes to
+these tool pins, which the verified installers would reject.
 Bun is required for the TypeScript SDK checks because `@oliphaunt/ts` supports
 Bun through the npm artifact; local checks use `tools/dev/bun.sh` when the shell
 does not already provide the pinned Bun. Deno is optional for normal local checks

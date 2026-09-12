@@ -8,7 +8,7 @@ repository = "https://github.com/f0rr0/oliphaunt"
 license = "MIT AND PostgreSQL AND Unicode-3.0"
 publish = false
 links = "oliphaunt_artifact_oliphaunt_wasix_tools_aot_windows_x64_msvc"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**", "artifacts/**", "LICENSE", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.oliphaunt-wasix.md", "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT", "THIRD_PARTY_LICENSES/ICU-LICENSE"]
+include = ["Cargo.toml", "README.md", "build.rs", "build-support.rs", "src/**", "artifacts/**", "LICENSE", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.oliphaunt-wasix.md", "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT", "THIRD_PARTY_LICENSES/ICU-LICENSE"]
 
 [lib]
 path = "src/lib.rs"

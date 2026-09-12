@@ -1,14 +1,6 @@
 name: Set up Node and Bun
 description: Install pinned Node.js and Bun for Oliphaunt.
 
-inputs:
-  node-version:
-    description: Node.js version.
-    default: "22.22.3"
-  bun-version:
-    description: Bun version.
-    default: "1.4.2"
-
 outputs:
   node-execution-envelope:
     description: Absolute digest-verified Node.js execution envelope.
@@ -23,11 +15,7 @@ runs:
     - name: Set up verified Node.js
       id: node_runtime
       uses: ./.github/actions/setup-node-runtime
-      with:
-        node-version: ${{ inputs.node-version }}
 
     - name: Set up verified Bun
       id: install
       uses: ./.github/actions/setup-bun
-      with:
-        bun-version: ${{ inputs.bun-version }}

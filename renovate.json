@@ -14,7 +14,6 @@
     "gradle-wrapper",
     "npm",
     "pep621",
-    "regex",
     "swift"
   ],
   "packageRules": [
@@ -37,24 +36,6 @@
     {
       "matchManagers": ["swift", "cocoapods"],
       "groupName": "Apple SDK"
-    }
-  ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "Pinned Moon CLI",
-      "managerFilePatterns": ["/^\\.prototools$/"],
-      "matchStrings": ["moon = \"(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "npm",
-      "depNameTemplate": "@moonrepo/cli"
-    },
-    {
-      "customType": "regex",
-      "description": "Pinned Node runtime",
-      "managerFilePatterns": ["/^\\.prototools$/"],
-      "matchStrings": ["node = \"(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "node-version",
-      "depNameTemplate": "node"
     }
   ]
 }

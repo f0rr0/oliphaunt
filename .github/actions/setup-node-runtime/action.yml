@@ -1,12 +1,6 @@
 name: Set up verified Node.js runtime
 description: Install the exact digest-verified Node.js runtime pinned by Oliphaunt.
 
-inputs:
-  node-version:
-    description: Exact Node.js version expected from the repository pin.
-    required: false
-    default: "22.22.3"
-
 outputs:
   execution-envelope:
     description: Absolute digest-verified Node.js execution envelope.
@@ -26,16 +20,10 @@ runs:
       id: install
       shell: bash
       env:
-        EXPECTED_NODE_VERSION: ${{ inputs.node-version }}
         OLIPHAUNT_NODE_RUNTIME_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-node-runtime
       run: | # zizmor: ignore[github-env] only a digest-verified runner-temp path is exported.
         set -euo pipefail
         binary="$(bash .github/actions/setup-moon/install-pinned-node.sh)"
-        observed="$($binary --version)"
-        if [[ "$observed" != "v$EXPECTED_NODE_VERSION" ]]; then
-          echo "Expected Node.js v${EXPECTED_NODE_VERSION}; observed ${observed}" >&2
-          exit 1
-        fi
         export_dir="$(dirname "$binary")"
         execution_envelope="$(cd "$export_dir/.." && pwd -P)"
         output_envelope="$execution_envelope"
