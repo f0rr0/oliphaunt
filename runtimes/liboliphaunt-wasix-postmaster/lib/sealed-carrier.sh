@@ -78,7 +78,7 @@ fresh_aot_producer_recipe_sha256() {
     "$FRESH_ROOT/lib/build-sealed-carrier.mts"
     "$FRESH_ROOT/lib/publish-directory.c"
     "$FRESH_ROOT/lib/linear-memory-profile.mts"
-    "$FRESH_ROOT/lib/linear-memory-transaction.mts"
+    "$FRESH_ROOT/lib/receipt-files.mts"
     "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts"
     "$FRESH_ROOT/wasmer/bin/verify-postmaster-wasm-import.mts"
     "$REPO_ROOT/tools/packaging/strict-json.mts"

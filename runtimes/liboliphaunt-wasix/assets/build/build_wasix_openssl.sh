@@ -26,6 +26,7 @@ wasixcc_version="$(wasixcc --version 2>/dev/null)"
 wasixcc_version="${wasixcc_version%%$'\n'*}"
 stamp="source=$source_commit
 script=$script_sha256
+helper=$(oliphaunt_wasix_script_sha256 "$ROOT/wasix_third_party.sh")
 profile=$(oliphaunt_wasix_wasix_profile_signature)
 wasixcc=$wasixcc_version
 configure=no-asm no-shared no-tests no-apps no-docs no-module no-engine no-dso no-zlib no-pinshared no-dgram no-sock no-threads no-secure-memory"
@@ -39,8 +40,13 @@ if [ -f "$OPENSSL_PREFIX/.oliphaunt-wasix-openssl-build" ] &&
 fi
 
 {
-  rm -rf "$OPENSSL_BUILD_DIR" "$OPENSSL_PREFIX"
+  rm -rf "$OPENSSL_BUILD_DIR"
   mkdir -p "$OPENSSL_BUILD_DIR" "$(dirname "$OPENSSL_PREFIX")"
+  install_stage="$(mktemp -d "$OPENSSL_PREFIX.install.XXXXXX")"
+  staged_prefix="$install_stage$OPENSSL_PREFIX"
+  trap 'rm -rf "$install_stage"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   cp -a "$OPENSSL_SOURCE_DIR/." "$OPENSSL_BUILD_DIR/"
   rm -rf "$OPENSSL_BUILD_DIR/.git"
 
@@ -68,11 +74,12 @@ fi
       --openssldir="$OPENSSL_PREFIX/ssl" \
       CFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -Wno-unused-command-line-argument"
     make -s -j"$JOBS" build_libs
-    make -s install_dev >/dev/null
+    make -s install_dev DESTDIR="$install_stage" >/dev/null
   )
 } >&2
 
-test -f "$OPENSSL_PREFIX/include/openssl/evp.h"
-test -f "$OPENSSL_PREFIX/lib/libcrypto.a"
-printf '%s\n' "$stamp" > "$OPENSSL_PREFIX/.oliphaunt-wasix-openssl-build"
+test -f "$staged_prefix/include/openssl/evp.h"
+test -f "$staged_prefix/lib/libcrypto.a"
+printf '%s\n' "$stamp" > "$staged_prefix/.oliphaunt-wasix-openssl-build"
+oliphaunt_wasix_publish_prefix "$staged_prefix" "$OPENSSL_PREFIX"
 echo "$OPENSSL_PREFIX"

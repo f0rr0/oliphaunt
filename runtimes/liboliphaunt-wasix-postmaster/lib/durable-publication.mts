@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
-import { stableRead } from './linear-memory-transaction.mts';
+import { stableRead } from './receipt-files.mts';
 
 const maxBytes = 256 * 1024 * 1024;
 type Source = { device: bigint; inode: bigint; size: number; sha256: string };
@@ -257,56 +257,6 @@ export async function writePrivate(
 }
 export async function run(args: string[]) {
   const [command, ...values] = args;
-  if (command === 'directory-identity' && values.length === 1) {
-    const fd = anchorDirectory(resolve(values[0]));
-    try {
-      const info = fs.fstatSync(fd, { bigint: true });
-      console.log(info.dev + ':' + info.ino);
-    } finally {
-      fs.closeSync(fd);
-    }
-    return;
-  }
-  if (
-    (command === 'fsync-paths' && values.length) ||
-    (command === 'fsync-tree-directories' && values.length === 1)
-  ) {
-    const paths: string[] = [];
-    function visit(path: string) {
-      for (const entry of fs.readdirSync(path, { withFileTypes: true })) {
-        const child = resolve(path, entry.name);
-        if (entry.isDirectory()) visit(child);
-        else if (entry.isSymbolicLink())
-          assert(
-            !fs.statSync(child, { throwIfNoEntry: false })?.isDirectory(),
-            'publication directory must not be a symlink',
-          );
-      }
-      paths.push(path);
-    }
-    if (command === 'fsync-tree-directories') visit(fs.realpathSync(values[0]));
-    else paths.push(...values);
-    for (const path of paths) {
-      const fd = fs.openSync(
-        path,
-        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-      );
-      try {
-        const info = fs.fstatSync(fd);
-        assert(
-          command === 'fsync-tree-directories'
-            ? info.isDirectory()
-            : info.isFile() || info.isDirectory(),
-          'refusing to fsync a special file',
-        );
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-    }
-    return;
-  }
-
   if (command === 'require-equal' && values.length === 2) {
     const read = (path: string) => {
       const chunks: Buffer[] = [];

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { parseStrictJson } from '../../../tools/packaging/strict-json.mts';
-import { stableRead } from '../lib/linear-memory-transaction.mts';
+import { stableRead } from '../lib/receipt-files.mts';
 
 export const schema = 'oliphaunt.wasix-postmaster.sealed-loader-receipt.v2';
 const advice = [

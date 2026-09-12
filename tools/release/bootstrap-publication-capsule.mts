@@ -5,8 +5,8 @@ import {
   closeSync,
   constants,
   existsSync,
-  fsyncSync,
   fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -21,13 +21,14 @@ import {
 import path from 'node:path';
 import process from 'node:process';
 import { TextDecoder } from 'node:util';
+import { tarHeader as createTarHeader } from '../packaging/archive-directory.mts';
 
 import {
   assertPublicationLockSource,
   loadPublicationLock,
   lockedPublicationFiles,
 } from './publication-lock.mts';
-import { ROOT, compareText } from './release-graph.mts';
+import { compareText, ROOT } from './release-graph.mts';
 
 export const PUBLICATION_CANDIDATE_SCHEMA = 'oliphaunt-frozen-publication-candidate-v1';
 export const PUBLICATION_CANDIDATE_MANIFEST_PATH =
@@ -245,55 +246,9 @@ function verifyCandidateFiles(manifest, workspaceRoot) {
   }
 }
 
-function tarPathParts(relative) {
-  const bytes = Buffer.byteLength(relative);
-  if (bytes <= 100) return { name: relative, prefix: '' };
-  const components = relative.split('/');
-  for (let index = 1; index < components.length; index += 1) {
-    const prefix = components.slice(0, index).join('/');
-    const name = components.slice(index).join('/');
-    if (name.length > 0 && Buffer.byteLength(prefix) <= 155 && Buffer.byteLength(name) <= 100) {
-      return { name, prefix };
-    }
-  }
-  throw error(`archive path is too long for canonical ustar: ${relative}`);
-}
-
-function writeString(buffer, offset, length, value, context) {
-  const bytes = Buffer.from(value, 'utf8');
-  if (bytes.length > length) throw error(`${context} exceeds its ustar field`);
-  bytes.copy(buffer, offset);
-}
-
-function writeOctal(buffer, offset, length, value, context) {
-  if (!Number.isSafeInteger(value) || value < 0)
-    throw error(`${context} is not a safe non-negative integer`);
-  const text = value.toString(8);
-  if (text.length > length - 1) throw error(`${context} exceeds its ustar field`);
-  writeString(buffer, offset, length, `${text.padStart(length - 1, '0')}\0`, context);
-}
-
 function tarHeader(relative, size) {
-  const safe = safeArchivePath(relative, 'archive member path');
-  const { name, prefix } = tarPathParts(safe);
-  const header = Buffer.alloc(BLOCK_SIZE, 0);
-  writeString(header, 0, 100, name, `${safe} name`);
-  writeOctal(header, 100, 8, 0o644, `${safe} mode`);
-  writeOctal(header, 108, 8, 0, `${safe} uid`);
-  writeOctal(header, 116, 8, 0, `${safe} gid`);
-  writeOctal(header, 124, 12, size, `${safe} size`);
-  writeOctal(header, 136, 12, 0, `${safe} mtime`);
-  header.fill(0x20, 148, 156);
-  writeString(header, 156, 1, '0', `${safe} type`);
-  writeString(header, 257, 6, 'ustar\0', `${safe} magic`);
-  writeString(header, 263, 2, '00', `${safe} version`);
-  writeString(header, 345, 155, prefix, `${safe} prefix`);
-  let checksum = 0;
-  for (const byte of header) checksum += byte;
-  const checksumText = checksum.toString(8);
-  if (checksumText.length > 6) throw error(`${safe} ustar checksum exceeds its field`);
-  writeString(header, 148, 8, `${checksumText.padStart(6, '0')}\0 `, `${safe} checksum`);
-  return header;
+  if (!Number.isSafeInteger(size) || size < 0) throw error(`invalid archive member size: ${size}`);
+  return createTarHeader({ name: safeArchivePath(relative, 'archive member path') }, size, 0o644);
 }
 
 function writeAll(descriptor, bytes) {

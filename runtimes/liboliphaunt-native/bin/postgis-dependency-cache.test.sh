@@ -15,15 +15,17 @@ populate() {
   printf object > "$build/object.o"
 }
 
-# Exact completed outputs survive reuse, but a second interrupted reuse does not.
+# Reusing a complete cache does not revoke it. A caller interrupted after
+# preparation must leave the same verified libraries available to the next run.
 populate
 oliphaunt_postgis_dependency_cache_commit "$deps" "$fingerprint" "$archive"
 oliphaunt_postgis_dependency_cache_prepare "$deps" "$fingerprint" "$build"
 test "$(cat "$archive")" = library
 test "$(cat "$build/object.o")" = object
 oliphaunt_postgis_dependency_cache_prepare "$deps" "$fingerprint" "$build"
-test ! -e "$archive"
-test ! -e "$build"
+test "$(cat "$archive")" = library
+test "$(cat "$build/object.o")" = object
+oliphaunt_postgis_dependency_cache_is_complete "$deps" "$fingerprint"
 
 # Toolchain changes and changed output bytes both invalidate installed and build trees.
 for change in fingerprint bytes; do

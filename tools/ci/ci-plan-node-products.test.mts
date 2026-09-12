@@ -705,3 +705,13 @@ test('native producer host coverage is narrowed only for explicitly bounded depe
     assert.equal(dependencyPlatformTargets(job, new Set(effects(source).directTasks)), null);
   }
 });
+
+test('mixed SDK and query releases retain the Linux native consumer alongside mobile targets', () => {
+  const plan = planForReleaseProducts(['oliphaunt-js', 'oliphaunt-query-ts'], 'a'.repeat(40));
+  assert(plan.jobs.includes('native-consumers'));
+  assert(
+    plan.liboliphaunt_native_desktop_runtime_matrix.include.some(
+      (row) => row.target === 'linux-x64-gnu',
+    ),
+  );
+});

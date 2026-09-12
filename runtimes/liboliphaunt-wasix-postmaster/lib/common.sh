@@ -211,8 +211,14 @@ fresh_wasix_core_build_dir_for() {
   printf '%s/builds/wasix-core%s\n' "$FRESH_WORK_ROOT" "$(fresh_wasix_core_profile_suffix_for "$1")"
 }
 
-fresh_wasix_core_install_dir_for() {
+source "$FRESH_ROOT/lib/guest-generation.sh"
+
+fresh_wasix_core_install_base_for() {
   printf '%s/install/wasix-core%s\n' "$FRESH_WORK_ROOT" "$(fresh_wasix_core_profile_suffix_for "$1")"
+}
+
+fresh_wasix_core_install_dir_for() {
+  fresh_resolve_guest_generation "$(fresh_wasix_core_install_base_for "$1")"
 }
 
 fresh_wasix_core_report_dir_for() {

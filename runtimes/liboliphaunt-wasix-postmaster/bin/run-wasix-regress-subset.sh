@@ -39,6 +39,7 @@ pg_regress_bin="$CLIENT_TOOLS_BUILD_DIR/src/test/regress/pg_regress"
 "$FRESH_ROOT/bin/build-native-client-tools.sh" >/dev/null
 if [ ! -x "$WASIX_INSTALL_DIR/bin/postgres" ]; then
   "$FRESH_ROOT/bin/build-wasix-core.sh"
+  WASIX_INSTALL_DIR="$(fresh_wasix_core_install_dir_for "$WASIX_CORE_PROFILE")"
 fi
 fresh_lock_postgres_baseline shared
 baseline_fingerprint="$(fresh_postgres_baseline_fingerprint)"

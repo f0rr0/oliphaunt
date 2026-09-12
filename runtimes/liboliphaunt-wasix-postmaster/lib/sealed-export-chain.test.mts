@@ -7,7 +7,7 @@ import {
   makeSealedExportFixture,
   makeLinearMemoryFixture,
 } from '../testdata/make-sealed-export-fixture.mts';
-import { AGGREGATE_RELATIVE } from './linear-memory-transaction.mts';
+import { AGGREGATE_RELATIVE } from './receipt-files.mts';
 import {
   receiptRelative,
   sha256,

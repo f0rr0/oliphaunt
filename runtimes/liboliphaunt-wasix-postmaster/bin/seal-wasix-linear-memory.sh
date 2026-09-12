@@ -46,7 +46,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$predecessor_receipt" ] || fail '--predecessor-receipt is required'
-for command in bun find flock od sha256sum sort; do
+for command in bun find od sha256sum sort; do
   fresh_require_command "$command"
 done
 [ -d "$install_dir" ] && [ ! -L "$install_dir" ] ||
@@ -54,20 +54,12 @@ done
 install_dir="$(cd "$install_dir" && pwd -P)"
 fresh_require_managed_generated_path "$install_dir" WASIX_INSTALL_DIR
 
+[ "${FRESH_WASIX_PRIVATE_INSTALL_DIR:-}" = "$install_dir" ] && [ ! -e "$install_dir/guest-build.receipt" ] ||
+  fail "memory sealing requires the producer private install directory"
 stage="$install_dir/.oliphaunt-linear-memory.pending"
-fresh_require_managed_generated_path "$stage" linear-memory-stage
-transaction_tool="$FRESH_ROOT/lib/linear-memory-transaction.mts"
-[ -f "$transaction_tool" ] && [ ! -L "$transaction_tool" ] ||
-  fail "missing regular linear-memory transaction helper: $transaction_tool"
-lock_path="$install_dir/.oliphaunt-linear-memory.lock"
-exec {linear_memory_lock_fd}>"$lock_path"
-chmod 0600 "$lock_path"
-flock -n "$linear_memory_lock_fd" ||
-  fail "another linear-memory transaction holds the install-prefix lock: $lock_path"
-bun "$transaction_tool" recover \
-  --install-root "$install_dir" \
-  --stage "$stage" >/dev/null ||
-  fail 'could not recover an interrupted linear-memory transaction'
+[ ! -e "$stage" ] && [ ! -L "$stage" ] || fail "private memory stage already exists"
+mkdir -p "$stage/modules" "$stage/receipts"
+trap 'rm -rf -- "$stage"' EXIT
 
 [ -f "$predecessor_receipt" ] && [ ! -L "$predecessor_receipt" ] ||
   fail "missing regular predecessor receipt: $predecessor_receipt"
@@ -106,29 +98,8 @@ predecessor_sha256="$(sha256sum "$predecessor_receipt" | awk '{print $1}')"
 fresh_is_sha256 "$predecessor_sha256" || fail 'predecessor receipt hash is invalid'
 predecessor_relative="${predecessor_receipt#"$install_dir"/}"
 
-bun "$transaction_tool" init \
-  --install-root "$install_dir" \
-  --stage "$stage" ||
-  fail 'could not initialize the linear-memory transaction'
 index="$stage/modules.tsv"
 : >"$index"
-transaction_active=1
-cleanup() {
-  local status=$?
-  trap - EXIT
-  if [ "${transaction_active:-0}" -eq 1 ] && \
-    { [ -e "$stage" ] || [ -L "$stage" ]; }; then
-    if ! bun "$transaction_tool" recover \
-      --install-root "$install_dir" \
-      --stage "$stage" >/dev/null; then
-      printf 'WASIX linear-memory sealer: automatic transaction recovery failed: %s\n' \
-        "$stage" >&2
-      status=2
-    fi
-  fi
-  exit "$status"
-}
-trap cleanup EXIT
 
 module_count=0
 module_paths="$stage/module-paths.nul"
@@ -178,16 +149,9 @@ done <"$index"
 [ "$(sha256sum "$predecessor_receipt" | awk '{print $1}')" = "$predecessor_sha256" ] ||
   fail 'predecessor export receipt changed before transaction preparation'
 
-bun "$transaction_tool" prepare \
-  --install-root "$install_dir" \
-  --stage "$stage" \
-  --aggregate "$aggregate" ||
-  fail 'could not prepare durable linear-memory rollback state'
-bun "$transaction_tool" publish \
-  --install-root "$install_dir" \
-  --stage "$stage" ||
-  fail 'could not publish the linear-memory transaction'
-transaction_active=0
-trap - EXIT
+while IFS=$'\t' read -r relative receipt_relative; do
+  mv "$stage/modules/$relative" "$install_dir/$relative"
+done <"$index"
+mv "$aggregate" "$aggregate_destination"
 printf 'sealed WASIX linear-memory profile: modules=%s receipt=%s\n' \
   "$module_count" "$aggregate_destination"

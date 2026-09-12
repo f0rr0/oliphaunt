@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseStrictJson } from '../../../tools/packaging/strict-json.mts';
-import { atomicFile, member, readJson, safeRelative } from './linear-memory-transaction.mts';
+import { atomicFile, member, readJson, safeRelative } from './receipt-files.mts';
 
 export const profileId =
   'oliphaunt.wasix-postmaster.linear-memory.wasm32-max256m-u64-static4g-guard2g.v1';

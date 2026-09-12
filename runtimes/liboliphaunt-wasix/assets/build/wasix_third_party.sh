@@ -334,3 +334,17 @@ oliphaunt_wasix_static_cmake_build() {
   cmake --build "$build_dir" --parallel "$JOBS"
   cmake --install "$build_dir"
 }
+
+# Publish only a completely installed and validated dependency prefix.
+# ponytail: Callers must serialize a shared prefix. Concurrent writers or
+# SIGKILL between these renames require generation-based publication first.
+oliphaunt_wasix_publish_prefix() (
+  set -e
+  local staged="$1" prefix="$2" backup
+  backup="$(mktemp -d "$prefix.previous.XXXXXX")"
+  trap 'status=$?; if [ "$status" -ne 0 ] && [ ! -e "$prefix" ] && [ -d "$backup/prefix" ]; then mv "$backup/prefix" "$prefix" || exit "$status"; fi; rm -rf "$backup"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [ -e "$prefix" ]; then mv "$prefix" "$backup/prefix"; fi
+  mv "$staged" "$prefix"
+)

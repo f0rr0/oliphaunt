@@ -41,6 +41,7 @@ invoke() {
   local root="$1"
   FRESH_WORK_ROOT="$test_root/work" \
   WASIX_INSTALL_DIR="$root/install" \
+  FRESH_WASIX_PRIVATE_INSTALL_DIR="$root/install" \
   FRESH_MEMORY_PROFILE_BIN="$memory_tool" \
   FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT="$root/executor.receipt" \
     "$project_root/bin/seal-wasix-linear-memory.sh" \
@@ -65,45 +66,20 @@ receipt_after="$(sha256sum "$success_root/install/share/postgresql/wasix-postmas
   exit 1
 }
 
-exec {held_lock_fd}>"$success_root/install/.oliphaunt-linear-memory.lock"
-flock -n "$held_lock_fd"
+
+# Completed generations must never be rewritten by standalone sealers.
+printf 'admitted guest\n' >"$success_root/install/guest-build.receipt"
 if invoke "$success_root" >/dev/null 2>&1; then
-  echo 'linear-memory sealer ignored its install-prefix lock' >&2
+  echo 'memory sealer accepted a published generation' >&2
   exit 1
 fi
-flock -u "$held_lock_fd"
-exec {held_lock_fd}>&-
+[ "$(sha256sum "$success_root/install/share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json" | awk '{print $1}')" = "$receipt_before" ]
 
-stale_root="$(make_fixture stale-staging)"
-bun "$project_root/lib/linear-memory-transaction.mts" init \
-  --install-root "$stale_root/install" \
-  --stage "$stale_root/install/.oliphaunt-linear-memory.pending"
-invoke "$stale_root" >/dev/null
-[ ! -e "$stale_root/install/.oliphaunt-linear-memory.pending" ] || {
-  echo 'linear-memory sealer did not recover an abandoned construction stage' >&2
-  exit 1
-}
-
-rollback_root="$(make_fixture rollback)"
-before="$(sha256sum "$rollback_root/install/bin/initdb" | awk '{print $1}')"
-chmod 0555 "$rollback_root/install/lib"
-if invoke "$rollback_root" >/dev/null 2>&1; then
-  echo 'expected publication failure with a read-only later module directory' >&2
+invalid_root="$(make_fixture invalid)"
+printf 'invalid module\n' >"$invalid_root/install/bin/initdb"
+if invoke "$invalid_root" >/dev/null 2>&1; then
+  echo 'memory sealer accepted a broken predecessor chain' >&2
   exit 1
 fi
-chmod 0755 "$rollback_root/install/lib"
-after="$(sha256sum "$rollback_root/install/bin/initdb" | awk '{print $1}')"
-[ "$after" = "$before" ] || {
-  echo 'publication rollback did not restore an earlier module' >&2
-  exit 1
-}
-[ ! -e "$rollback_root/install/share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json" ] || {
-  echo 'failed publication exposed an aggregate receipt' >&2
-  exit 1
-}
-[ ! -e "$rollback_root/install/.oliphaunt-linear-memory.pending" ] || {
-  echo 'failed publication left recoverable transaction state after rollback' >&2
-  exit 1
-}
-
-printf 'WASIX linear-memory sealer tests passed\n'
+[ ! -e "$invalid_root/install/share/postgresql/wasix-postmaster.linear-memory-profile.receipt.json" ]
+printf 'WASIX private linear-memory sealer tests passed\n'

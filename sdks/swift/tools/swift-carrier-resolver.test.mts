@@ -1089,10 +1089,26 @@ async function main() {
   const traversalArchive = path.join(root, 'archives', 'malicious-traversal.zip');
   await maliciousZip(traversalArchive, '../escaped-from-swift.txt', 'file');
   const traversal = structuredClone(manifest);
-  setDirectExtensionAssets(traversal, 'pgtap', [
-    await asset('runtime-resources', traversalArchive, 'zip', '.'),
-  ]);
+  const traversalAsset = await asset('runtime-resources', traversalArchive, 'zip', '.');
+  setDirectExtensionAssets(traversal, 'pgtap', [traversalAsset]);
+  const previousTree = path.join(
+    root,
+    'malicious-traversal-cache',
+    'extracted',
+    traversalAsset.sha256,
+  );
+  await fs.mkdir(previousTree, { recursive: true });
+  await fs.writeFile(path.join(previousTree, 'existing.txt'), 'preserve existing content');
+  await fs.writeFile(`${previousTree}.tree.json`, 'preserve existing manifest');
   await expectCarrierFailure('malicious-traversal', traversal, 'pgtap', /unsafe/u);
+  assert.equal(
+    await fs.readFile(path.join(previousTree, 'existing.txt'), 'utf8'),
+    'preserve existing content',
+  );
+  assert.equal(
+    await fs.readFile(`${previousTree}.tree.json`, 'utf8'),
+    'preserve existing manifest',
+  );
   await assert.rejects(
     fs.access(path.join(root, 'malicious-traversal-cache', 'extracted', 'escaped-from-swift.txt')),
   );
@@ -1177,7 +1193,7 @@ async function main() {
         { name: 'payload', type: 'file' },
         { name: 'payload', type: 'file' },
       ],
-      /repeats archive member/u,
+      /repeats archive member|EEXIST/u,
     ],
     [
       'tar-case-collision',
@@ -1194,7 +1210,7 @@ async function main() {
         { name: 'parent', type: 'file' },
         { name: 'parent/child', type: 'file' },
       ],
-      /uses regular file parent as an archive directory/u,
+      /uses regular file parent as an archive directory|EEXIST|ENOTDIR/u,
     ],
   ]) {
     const archive = path.join(root, 'archives', `${name}.tar.gz`);

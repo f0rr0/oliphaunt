@@ -302,7 +302,7 @@ export function nativeTargetSubsetForJobs(jobs, tasks) {
   }
 
   const targets = mobileNativeTargetsForJobs(jobs);
-  if (jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
+  if (jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB) || jobs.has('native-consumers')) {
     targets.add('linux-x64-gnu');
   }
   if (jobs.has('swift-sdk-package')) {

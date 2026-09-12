@@ -450,7 +450,7 @@ the resulting evidence in task 30.
 
 ### Phase C — fix genuine package boundaries
 
-- [ ] **07 — Create the shared Rust query crate.** Depends 04–05. Replace
+- [x] **07 — Create the shared Rust query crate.** Depends 04–05. Replace
   include/copy build-script paths in both SDKs with a versioned path+registry
   dependency. Publish as a normal dependency; retain public type behavior.
   **Done:** both SDKs build/test; clean packaged consumers resolve the crate;
@@ -461,7 +461,7 @@ the resulting evidence in task 30.
   duplicate text accessors and unnecessary anyhow/public-error round trips.
   Preserve meaningful behaviour, not the existing arrangement of wrappers.
   Apply the behaviour-based query proof contract below with 08,23,25.
-- [ ] **08 — Finish the TypeScript query package.** Depends 04–05. Keep only
+- [x] **08 — Finish the TypeScript query package.** Depends 04–05. Keep only
   reusable query/protocol code. Native/WASIX/RN consume the declared workspace
   package as a normal published npm dependency; remove bundled-source copies;
   no invisible unpublished dependency in a published package. **Done:** clean
@@ -723,6 +723,11 @@ the resulting evidence in task 30.
   Android Maven carrier integration, and separately selected mobile seed/ICU
   resources. APK reporting accepts one matching seed or seedless existing storage;
   actual archive fixtures and seedless Gradle resolver tests pass.
+  Kotlin source qualification now excludes Android native payload builds;
+  real AAR tasks retain both ABI producers before resource merging. UniFFI's
+  existing JNA cleaner preserves Android API 24 support. Lint, JVM/Android unit
+  tests, configuration-cache serialization and native binding behavior pass
+  locally; these do not substitute for installed-device qualification.
   **Remaining:** installed Apple SwiftPM/app and Android/iOS RN device qualification,
   including the shared JSI lifecycle gates in 20a. No new process isolation claim.
 - [x] **21 — Delete remaining generic shared ownership.** Depends 07–20.
@@ -798,6 +803,12 @@ the resulting evidence in task 30.
   manual qualification for one candidate. **Done:** cold/warm and concurrent
   runs agree; failed/missing artifacts cannot appear successful; consumer jobs
   never rebuild transferred producers; useful failure logs survive failure.
+  Source-failure checkpoint: producer jobs wait for source checks and tests;
+  downstream platform aggregates and consumers also reject failed ancestors,
+  while allowing intentionally unselected platform jobs to remain skipped.
+  This removes the observed missing-artifact cascades after source failures.
+  Offline Cargo consumers seed resolution from the candidate lockfile instead
+  of selecting newer registry versions; isolated locked-version caches pass.
 - [ ] **24c — Migrate required checks and trust settings together.** Depends
   24a–24b. Inspect actual remote branch/ruleset settings, bot permissions,
   protected release environments and trusted-publisher workflow identities.
@@ -1506,6 +1517,24 @@ Use the established task order; remove obsolete tests with their mechanisms.
   trust-boundary validation and safe extraction. **Done:** corrupt/traversing/
   unsafe-link archives fail without damaging existing data; required consumers
   gain no new platform-shell dependency; custom format code is minimized.
+  Archive checkpoint: retain the streaming ZIP64 type validator used by GitHub
+  artifact downloads; the sparse >4GiB test and clean-checkout downloader suite
+  cover this separate large-archive boundary. Other consumers retain the full
+  bounded archive parser.
+  ZIP production and validation use the existing `node:zlib.crc32` implementation
+  instead of two handwritten CRC loops. Existing corruption/traversal,
+  executable-mode, empty-directory and extraction-preservation tests pass.
+  A wholesale `Bun.Archive` producer substitution is not proven: the current
+  API probe writes an empty-directory key as a regular file and defaults to
+  current timestamps and non-executable modes.
+  Swift resolver checkpoint: extraction now validates once in private staging;
+  rejected replacements preserve the existing output and tree manifest. Removed
+  its redundant archive inventory pass, retaining actual extracted-tree hashes
+  for cache validation. The bootstrap capsule reuses the existing tar-header
+  writer without changing its streaming payload or canonical-byte contract.
+  Swift hostile-archive/cache/consumer and capsule integrity/repeat tests pass;
+  24 old/new header comparisons are byte-identical. This does not claim atomic
+  directory-plus-manifest publication across forced crashes or concurrent writers.
 - [ ] **M12 — WASIX export sealing (13,22,25).** Keep Rust binary analysis and
   required dynamic-linkage/ABI checks. Remove the requirement that DCE must remove
   at least one function/global; a justified size budget is a separate concern.
@@ -1514,6 +1543,17 @@ Use the established task order; remove obsolete tests with their mechanisms.
   promotion mechanism that works on each host. **Done:** actual extension loading
   passes and interrupted publication exposes no mixed bundle; unchanged-size
   valid binaries do not fail correctness qualification.
+  **Implemented and proven locally:** private PostgreSQL build/sealing followed
+  by whole-prefix content-addressed publication and atomic selection replaces
+  live-prefix rollback journals. Existing receipt/ABI admission remains intact;
+  imported portable inputs select their exact directory. Linux actual build and
+  repeat produce the same generation; concurrent SQL (two backend PIDs),
+  PL/pgSQL/Snowball loading, and PostgreSQL boolean/CASE/COPY regressions pass.
+  Interrupted/concurrent publication and header corruption tests pass; the
+  unchanged-size export proof remains covered. Owner syntax checking now needs
+  only Shell inputs, without Rust setup. **Remaining:** execute generation
+  publication and consumer qualification on macOS; local Linux evidence does
+  not establish that host guarantee.
 - [ ] **M13 — Capability probes (13,25,26).** Retain concrete patched-runtime
   regressions with the executor/sysroot owner; separate probe builds from runs.
   Scope expensive probes to their real dependencies. capabilities.tsv was found
@@ -1532,6 +1572,15 @@ Use the established task order; remove obsolete tests with their mechanisms.
   mutation and completion-stamp ceremony where unnecessary. **Done:** cold, warm,
   interrupted and changed-input cases behave correctly; safe reuse does not
   require invalidating the previously valid cache.
+  Native PostGIS checkpoint: a fully hash-validated warm cache now keeps its
+  completion marker, so interruption during reuse does not discard valid
+  libraries on the next attempt. Existing changed-input/corrupt-output
+  invalidation remains; owner tests pass under Bash 3.2 and current Bash.
+  WASIX OpenSSL/GEOS/PROJ checkpoint: upstream `DESTDIR` installs now validate
+  staged prefixes before replacing usable dependencies. All three recipes pass
+  repeat/changed-input and configure/build/install failure-retention tests;
+  real cached installs in the existing builder image preserve library bytes.
+  Forced-crash/concurrent publication remains outside this bounded fix.
 - [ ] **M16 — Native consumer integration (20).** Retain Expo, Gradle, CocoaPods
   and RN integration as product behavior. Kotlin/Swift own native dependencies;
   RN composes them without another complete artifact resolver. Keep idiomatic
@@ -3339,9 +3388,16 @@ server through `pg` and the installed native TS SDK through its shared query
 package. Six comparisons cover typed values, arrays/JSON, views and aggregates;
 SQLSTATE 23505, recovery and transaction rollback agree. The same comparator
 rejects an intentionally changed result (42 to 43), then accepts the original.
-No source perturbation or permanent mutation framework remains. A corresponding
-Rust query-owner reference comparison is still unproven; retain that specific
-07 acceptance item instead of repeating the completed extraction.
+The same corpus now passes through the native Rust SDK and its shared query
+crate against separately captured `pg` results from that PostgreSQL server.
+Rust checks nullable/text and typed boolean/integer/float/Unicode decoding,
+SQLSTATE 23505, recovery and callback-scoped transaction rollback. Its comparator
+also rejects the deliberately changed integer, then accepts the unchanged
+result. Both temporary harnesses live outside the repository; no source
+perturbation or permanent mutation framework remains. Together with the existing
+packed Rust/TS dependency closures and source-affectedness checks, this closes
+07/08. It does not qualify platform-specific execution adapters or final mobile
+artifacts.
 
 Hosted Windows broker packaging exposed native child lookup selecting the WSL
 launcher instead of Git Bash. The common Moon setup now publishes Git's real

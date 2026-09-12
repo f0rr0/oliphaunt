@@ -3,12 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { type Stats, lstatSync, readdirSync } from 'node:fs';
 import { join, basename, posix, resolve } from 'node:path';
-import {
-  member,
-  safeRelative,
-  stableRead,
-  AGGREGATE_RELATIVE,
-} from './linear-memory-transaction.mts';
+import { member, safeRelative, stableRead, AGGREGATE_RELATIVE } from './receipt-files.mts';
 import { profileId, profile } from './linear-memory-profile.mts';
 import {
   type Inventory,

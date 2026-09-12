@@ -79,6 +79,25 @@ Build outputs, fetched sources, caches, and qualification results stay under
 release asset unless it was built from the exact release commit and passes the
 product verifier and lifecycle qualification.
 
+PostgreSQL builds and sealing passes use a private install directory. Only
+after the complete generation, including its build and ABI receipts, is ready
+does the producer publish it and atomically update the profile's `.current`
+selection file. Readers resolve that selection once; an interrupted rebuild
+cannot change the directory they are using. Existing generations are retained.
+The separate portable-input archive preserves its fixed internal install path;
+an explicit `WASIX_INSTALL_DIR` with portable-input mode selects those exact
+imported bytes without rebuilding or rewriting them.
+
+After extracting the portable-input archive into the work root, select its
+install directory explicitly, including when that checkout already has a local
+`.current` selection:
+
+```sh
+OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS=1 \
+WASIX_INSTALL_DIR="$PWD/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3" \
+  runtimes/liboliphaunt-wasix-postmaster/bin/build-wasix-core.sh
+```
+
 Linux release qualification additionally requires immutable-inode activation
 and cgroup-v2 memory controls. macOS uses runtime-owned private AOT and memory
 image copies because Linux immutable-inode and cgroup primitives do not exist

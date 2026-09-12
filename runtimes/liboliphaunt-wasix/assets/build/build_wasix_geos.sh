@@ -42,9 +42,14 @@ if [ -f "$GEOS_PREFIX/.oliphaunt-wasix-geos-build" ] &&
 fi
 
 {
-  rm -rf "$GEOS_BUILD_DIR" "$GEOS_PREFIX"
+  rm -rf "$GEOS_BUILD_DIR"
   mkdir -p "$GEOS_BUILD_DIR" "$(dirname "$GEOS_PREFIX")"
-  oliphaunt_wasix_static_cmake_build \
+  install_stage="$(mktemp -d "$GEOS_PREFIX.install.XXXXXX")"
+  staged_prefix="$install_stage$GEOS_PREFIX"
+  trap 'rm -rf "$install_stage"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  DESTDIR="$install_stage" oliphaunt_wasix_static_cmake_build \
     "$GEOS_SOURCE_DIR" \
     "$GEOS_BUILD_DIR" \
     "$GEOS_PREFIX" \
@@ -54,8 +59,9 @@ fi
     -DGEOS_BUILD_DEVELOPER=OFF
 } >&2
 
-test -f "$GEOS_PREFIX/include/geos_c.h"
-test -f "$GEOS_PREFIX/lib/libgeos_c.a"
-test -f "$GEOS_PREFIX/lib/libgeos.a"
-printf '%s\n' "$stamp" > "$GEOS_PREFIX/.oliphaunt-wasix-geos-build"
+test -f "$staged_prefix/include/geos_c.h"
+test -f "$staged_prefix/lib/libgeos_c.a"
+test -f "$staged_prefix/lib/libgeos.a"
+printf '%s\n' "$stamp" > "$staged_prefix/.oliphaunt-wasix-geos-build"
+oliphaunt_wasix_publish_prefix "$staged_prefix" "$GEOS_PREFIX"
 echo "$GEOS_PREFIX"

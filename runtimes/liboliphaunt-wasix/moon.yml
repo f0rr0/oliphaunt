@@ -84,8 +84,15 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -e\nbash runtimes/liboliphaunt-wasix/tools/build-runtime-portable.test.sh\nbash runtimes/liboliphaunt-wasix/tools/serialize-aot.test.sh\n"
+    script: "set -e\nbash runtimes/liboliphaunt-wasix/tools/build-runtime-portable.test.sh\nbash runtimes/liboliphaunt-wasix/tools/serialize-aot.test.sh\nbash runtimes/liboliphaunt-wasix/assets/build/dependency-prefix.test.sh\n"
     inputs:
+      - assets/build/dependency-prefix.test.sh
+      - assets/build/build_wasix_geos.sh
+      - assets/build/build_wasix_proj.sh
+      - assets/build/build_wasix_openssl.sh
+      - assets/build/build_wasix_sqlite.sh
+      - assets/build/wasix_third_party.sh
+      - assets/build/profile_flags.sh
       - tools/build-compiler-output.sh
       - tools/build-runtime-portable.sh
       - tools/build-runtime-portable.test.sh

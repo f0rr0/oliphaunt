@@ -1,43 +1,26 @@
-import { archiveDirectory } from './archive-directory.mts';
 import assert from 'node:assert/strict';
-import {
-  openSync,
-  closeSync,
-  writeSync,
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { closeSync, openSync, writeSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  constants as zlibConstants,
-  deflateRawSync,
-  gunzipSync,
-  gzipSync,
-  zstdCompressSync,
-} from 'node:zlib';
+import { gunzipSync, gzipSync, constants as zlibConstants, zstdCompressSync } from 'node:zlib';
+import { archiveDirectory } from './archive-directory.mts';
 
 import {
-  readPortableTarStream,
   validateZipEntryTypes,
   canonicalGzipSync,
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   decompressSingleZstdFrame,
   normalizeCanonicalGzipHeader,
   portableMemberName,
+  RELEASE_ZSTD_COMPRESSION_LEVEL,
   readAndroidApkEntries,
   readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
+  readPortableTarStream,
   readPortableTarZstdBufferEntries,
-  RELEASE_ZSTD_COMPRESSION_LEVEL,
   releaseZstdCompressSync,
 } from './portable-archive.mts';
-
-const ROOT = path.resolve(import.meta.dirname, '../..');
 
 test('exposes the same portable member contract to nested carrier consumers', () => {
   const archive = '/tmp/carrier.tar.gz';
@@ -53,7 +36,7 @@ test('exposes the same portable member contract to nested carrier consumers', ()
   );
 });
 
-import { zipArchive, crc32 } from './testdata/zip-fixture.mts';
+import { zipArchive } from './testdata/zip-fixture.mts';
 
 function androidAlignmentExtra(alignment, paddingLength, paddingByte = 0) {
   const extra = Buffer.alloc(6 + paddingLength, paddingByte);

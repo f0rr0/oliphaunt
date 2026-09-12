@@ -47,9 +47,14 @@ if [ -f "$PROJ_PREFIX/.oliphaunt-wasix-proj-build" ] &&
 fi
 
 {
-  rm -rf "$PROJ_BUILD_DIR" "$PROJ_PREFIX"
+  rm -rf "$PROJ_BUILD_DIR"
   mkdir -p "$PROJ_BUILD_DIR" "$(dirname "$PROJ_PREFIX")"
-  oliphaunt_wasix_static_cmake_build \
+  install_stage="$(mktemp -d "$PROJ_PREFIX.install.XXXXXX")"
+  staged_prefix="$install_stage$PROJ_PREFIX"
+  trap 'rm -rf "$install_stage"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  DESTDIR="$install_stage" oliphaunt_wasix_static_cmake_build \
     "$PROJ_SOURCE_DIR" \
     "$PROJ_BUILD_DIR" \
     "$PROJ_PREFIX" \
@@ -65,12 +70,13 @@ fi
     -DBUILD_EXAMPLES=OFF \
     -DEMBED_RESOURCE_FILES=ON \
     -DUSE_ONLY_EMBEDDED_RESOURCE_FILES=ON
-  mkdir -p "$PROJ_PREFIX/share/proj"
-  cp "$PROJ_BUILD_DIR/data/proj.db" "$PROJ_PREFIX/share/proj/proj.db"
+  mkdir -p "$staged_prefix/share/proj"
+  cp "$PROJ_BUILD_DIR/data/proj.db" "$staged_prefix/share/proj/proj.db"
 } >&2
 
-test -f "$PROJ_PREFIX/include/proj.h"
-test -f "$PROJ_PREFIX/lib/libproj.a"
-test -f "$PROJ_PREFIX/share/proj/proj.db"
-printf '%s\n' "$stamp" > "$PROJ_PREFIX/.oliphaunt-wasix-proj-build"
+test -f "$staged_prefix/include/proj.h"
+test -f "$staged_prefix/lib/libproj.a"
+test -f "$staged_prefix/share/proj/proj.db"
+printf '%s\n' "$stamp" > "$staged_prefix/.oliphaunt-wasix-proj-build"
+oliphaunt_wasix_publish_prefix "$staged_prefix" "$PROJ_PREFIX"
 echo "$PROJ_PREFIX"

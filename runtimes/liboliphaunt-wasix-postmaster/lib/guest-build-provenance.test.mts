@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { installedClosureIdentity, requiredModules } from './guest-build-provenance.mts';
+import {
+  generationIdentity,
+  installedClosureIdentity,
+  requiredModules,
+} from './guest-build-provenance.mts';
 
 function fixture(run: (root: string) => void) {
   const root = fs.mkdtempSync(join(tmpdir(), 'guest-provenance-'));
@@ -21,6 +25,30 @@ function fixture(run: (root: string) => void) {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+test('generation identity binds headers, tools, modes and contained links without changing runtime identity', () =>
+  fixture((root) => {
+    const runtime = installedClosureIdentity(root);
+    fs.mkdirSync(join(root, 'include'));
+    fs.writeFileSync(join(root, 'include/postgres.h'), 'header one');
+    fs.writeFileSync(join(root, 'bin/psql'), 'client tool');
+    const original = generationIdentity(root, true);
+    assert.equal(generationIdentity(root), original);
+    fs.writeFileSync(join(root, 'include/postgres.h'), 'header two');
+    assert.notEqual(generationIdentity(root), original);
+    assert.equal(installedClosureIdentity(root), runtime);
+    const withHeader = generationIdentity(root);
+    fs.chmodSync(join(root, 'bin/psql'), 0o755);
+    assert.notEqual(generationIdentity(root), withHeader);
+    fs.symlinkSync('psql', join(root, 'bin/client'));
+    const withLink = generationIdentity(root, true);
+    fs.unlinkSync(join(root, 'bin/client'));
+    fs.symlinkSync('postgres', join(root, 'bin/client'));
+    assert.notEqual(generationIdentity(root), withLink);
+    fs.unlinkSync(join(root, 'bin/client'));
+    fs.symlinkSync('/etc/passwd', join(root, 'bin/client'));
+    assert.throws(() => generationIdentity(root), /absolute generation link/);
+  }));
 
 test('guest seal preserves the published closure hash and synchronizes files before directories', () =>
   fixture((root) => {

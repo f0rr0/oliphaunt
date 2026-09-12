@@ -6,7 +6,7 @@ import { createReadStream, fchmodSync, readFileSync, writeFileSync } from 'node:
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { parseArgs } from 'node:util';
-import { atomicFile } from '../../lib/linear-memory-transaction.mts';
+import { atomicFile } from '../../lib/receipt-files.mts';
 import { Reader } from './verify-postmaster-wasm-import.mts';
 
 const schema = 'oliphaunt.wasix-postmaster.final-wasm-concurrency.v1';

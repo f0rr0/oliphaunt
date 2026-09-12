@@ -9,7 +9,7 @@ import {
   writeFileSync,
   constants,
 } from 'node:fs';
-import { member } from './linear-memory-transaction.mts';
+import { member } from './receipt-files.mts';
 import { dirname, basename } from 'node:path';
 import { profile, profileId } from './linear-memory-profile.mts';
 import { readRegular, parseJson, requireSha } from './sealed-export-chain.mts';

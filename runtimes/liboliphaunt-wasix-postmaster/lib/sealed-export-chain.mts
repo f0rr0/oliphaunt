@@ -5,13 +5,8 @@ import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { parseStrictJson } from '../../../tools/packaging/strict-json.mts';
-import {
-  member,
-  safeRelative,
-  stableRead,
-  AGGREGATE_RELATIVE,
-} from './linear-memory-transaction.mts';
-import { closureHash, profileId, profile, fields } from './linear-memory-profile.mts';
+import { closureHash, fields, profile, profileId } from './linear-memory-profile.mts';
+import { AGGREGATE_RELATIVE, member, safeRelative, stableRead } from './receipt-files.mts';
 
 export const receiptRelative = 'share/postgresql/wasix-postmaster.sealed-export.structure.receipt';
 const prefix = 'share/postgresql/wasix-postmaster.sealed-export.';
@@ -276,34 +271,8 @@ export function linearMemorySourceHashes(root: string, inventory?: Inventory) {
     );
   return hashes;
 }
-export function completionReceipt(schema: string, root: string, relatives: string[]) {
-  assert(/^[A-Za-z0-9.-]+$/.test(schema), 'invalid completion schema');
-  const info = lstatSync(root, { bigint: true });
-  assert(info.isDirectory(), 'completion root must be a directory');
-  const lines = ['schema=' + schema, 'install_identity=' + info.dev + ':' + info.ino];
-  for (const relative of relatives) {
-    const hash = createHash('sha256');
-    stableRead(member(root, relative), (chunk) => {
-      hash.update(chunk);
-    });
-    lines.push('file_sha256.' + relative + '=' + hash.digest('hex'));
-  }
-  const after = lstatSync(root, { bigint: true });
-  assert(info.dev === after.dev && info.ino === after.ino, 'completion root was replaced');
-  return lines.join('\n') + '\n';
-}
-
 if (import.meta.main) {
   try {
-    if (process.argv[2] === 'completion') {
-      const [, , , schema, root, ...relatives] = process.argv;
-      assert(
-        schema && root && relatives.length,
-        'completion requires schema, root and member paths',
-      );
-      process.stdout.write(completionReceipt(schema, root, relatives));
-      process.exit(0);
-    }
     const { values } = parseArgs({
       options: {
         'install-root': { type: 'string' },

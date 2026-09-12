@@ -16,7 +16,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import * as zlib from 'node:zlib';
-import { gzipSync, inflateRawSync, constants as zlibConstants } from 'node:zlib';
+import { crc32, gzipSync, inflateRawSync, constants as zlibConstants } from 'node:zlib';
 
 export const RELEASE_ZSTD_COMPRESSION_LEVEL = 19;
 
@@ -257,24 +257,6 @@ function checkedEntries(entries, file, archiveLimits, { caseSensitive = false } 
     }
   }
   return new Map(entries.map((entry) => [entry.name, Object.freeze(entry)]));
-}
-
-let crcTable;
-
-function crc32(buffer) {
-  if (crcTable === undefined) {
-    crcTable = new Uint32Array(256);
-    for (let value = 0; value < 256; value += 1) {
-      let crc = value;
-      for (let bit = 0; bit < 8; bit += 1) {
-        crc = (crc & 1) !== 0 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
-      }
-      crcTable[value] = crc >>> 0;
-    }
-  }
-  let crc = 0xffffffff;
-  for (const byte of buffer) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function androidApkEntryAlignment(name) {

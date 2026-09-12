@@ -5,3 +5,5 @@ ffi_module_name = "OliphauntNativeBindingsFFI"
 [crates.oliphaunt_mobile_bindings.bindings.kotlin]
 package_name = "dev.oliphaunt.bindings"
 cdylib_name = "oliphaunt_mobile_bindings"
+# JNA's cleaner supports Android API 24 and the JVM test host.
+disable_java_cleaner = true

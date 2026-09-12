@@ -509,7 +509,7 @@ jobs:
   extension-artifacts-native:
     name: Builds / extension-artifacts-native
     needs: [affected, extension-artifacts-native-linux, extension-artifacts-native-android, extension-artifacts-native-ios, extension-artifacts-native-other]
-    if: ${{ always() && !cancelled() && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
+    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -579,7 +579,7 @@ jobs:
       - extension-artifacts-native
       - extension-artifacts-wasix
       - liboliphaunt-wasix-aot
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-native.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'extension-packages') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-native.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'extension-packages') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -652,7 +652,7 @@ jobs:
 
   mobile-extension-packages:
     needs: [affected, mobile-extension-packages-android, mobile-extension-packages-ios]
-    if: ${{ always() && !cancelled() && contains(fromJson(needs.affected.outputs.jobs), 'mobile-extension-packages') }}
+    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'mobile-extension-packages') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -683,7 +683,7 @@ jobs:
   liboliphaunt-native-desktop:
     name: Builds / liboliphaunt-native-desktop
     needs: [affected, liboliphaunt-native-desktop-linux, liboliphaunt-native-desktop-other]
-    if: ${{ always() && !cancelled() && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
+    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -875,7 +875,7 @@ jobs:
     needs:
       - affected
       - liboliphaunt-native-android
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android-abi') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android-abi') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -947,7 +947,7 @@ jobs:
     needs:
       - affected
       - liboliphaunt-native-ios
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-native-ios.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios-abi') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-native-ios.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios-abi') }}
     runs-on: ${{ (contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-native-ios-abi'], 'database-resources:build-native-ios-standard') || contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-native-ios-abi'], 'database-resources:build-native-ios-icu')) && 'macos-26' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
@@ -1169,7 +1169,7 @@ jobs:
   broker-runtime:
     name: Builds / broker-runtime
     needs: [affected, broker-runtime-linux, broker-runtime-other]
-    if: ${{ always() && !cancelled() && contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
+    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1233,7 +1233,7 @@ jobs:
     needs:
       - affected
       - broker-runtime
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.broker-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'broker-release-assets') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.broker-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'broker-release-assets') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -1265,7 +1265,7 @@ jobs:
     needs:
       - affected
       - node-direct
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.node-direct.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'node-direct-release-assets') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.node-direct.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'node-direct-release-assets') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -1306,7 +1306,7 @@ jobs:
       - extension-artifacts-wasix
       - liboliphaunt-wasix-aot
       - liboliphaunt-wasix-runtime
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.wasix_napi_runtime_matrix) }}
@@ -1412,7 +1412,7 @@ jobs:
     needs:
       - affected
       - wasix-napi
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-napi.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi-release-assets') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.wasix-napi.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi-release-assets') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -1571,7 +1571,7 @@ jobs:
     needs:
       - affected
       - kotlin-sdk-package
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.kotlin-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'kotlin-maven-staging') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.kotlin-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'kotlin-maven-staging') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1729,7 +1729,7 @@ jobs:
   native-consumers:
     name: Builds / Native Product Consumers
     needs: [affected, js-sdk-package, liboliphaunt-native-desktop, broker-runtime, node-direct]
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-consumers') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-consumers') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -1790,7 +1790,7 @@ jobs:
       - wasix-napi
       - js-sdk-package
       - liboliphaunt-wasix-aot
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && (!contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') || needs.wasix-napi.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') || needs.js-sdk-package.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') || needs.liboliphaunt-wasix-aot.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && (!contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') || needs.wasix-napi.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') || needs.js-sdk-package.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') || needs.liboliphaunt-wasix-aot.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -2332,7 +2332,7 @@ jobs:
     needs:
       - affected
       - wasix-postmaster-portable
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-portable.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.wasix-postmaster-portable.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 360
     strategy:
@@ -2387,6 +2387,7 @@ jobs:
       - name: Build, qualify, and package target WASIX postmaster
         env:
           OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS: "1"
+          WASIX_INSTALL_DIR: ${{ github.workspace }}/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets liboliphaunt-wasix-postmaster:immediate-recovery liboliphaunt-wasix-postmaster:linear-memory-integration
 
       - name: Upload target WASIX postmaster release asset
@@ -2401,7 +2402,7 @@ jobs:
     needs:
       - affected
       - wasix-postmaster-target
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-target.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.wasix-postmaster-target.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -2443,7 +2444,7 @@ jobs:
       - liboliphaunt-native-desktop-linux
       - broker-runtime-linux
       - rust-sdk-package
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-native-linux.result == 'success' && needs.liboliphaunt-native-desktop-linux.result == 'success' && needs.broker-runtime-linux.result == 'success' && needs.rust-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-extension-lifecycle') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-native-linux.result == 'success' && needs.liboliphaunt-native-desktop-linux.result == 'success' && needs.broker-runtime-linux.result == 'success' && needs.rust-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-extension-lifecycle') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.native_extension_lifecycle_matrix) }}
@@ -2528,7 +2529,7 @@ jobs:
     needs:
       - affected
       - native-extension-lifecycle
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.native-extension-lifecycle.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-extension-lifecycle') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.native-extension-lifecycle.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-extension-lifecycle') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2590,7 +2591,7 @@ jobs:
       - extension-artifacts-wasix
       - liboliphaunt-wasix-runtime
       - liboliphaunt-wasix-aot
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && needs.affected.outputs.wasix_release_regression_required == 'true' }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && needs.affected.outputs.wasix_release_regression_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
@@ -2720,7 +2721,7 @@ jobs:
       - liboliphaunt-native-android-abi
       - kotlin-sdk-package
       - react-native-sdk-package
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.js-sdk-package.result == 'success' && needs.mobile-extension-packages-android.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && needs.liboliphaunt-native-android-abi.result == 'success' && needs.kotlin-sdk-package.result == 'success' && needs.react-native-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.js-sdk-package.result == 'success' && needs.mobile-extension-packages-android.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && needs.liboliphaunt-native-android-abi.result == 'success' && needs.kotlin-sdk-package.result == 'success' && needs.react-native-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.react_native_android_mobile_app_matrix) }}
@@ -3149,7 +3150,7 @@ jobs:
     needs:
       - affected
       - mobile-build-android
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.mobile-build-android.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.mobile-build-android.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

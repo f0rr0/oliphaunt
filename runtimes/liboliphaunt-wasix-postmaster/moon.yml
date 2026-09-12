@@ -41,7 +41,7 @@ fileGroups:
   guest-sealing:
     - bin/apply-wasix-core-overlay.sh
     - "bin/seal-wasix-{core-exports,linear-memory}.sh"
-    - "lib/{wasix-build-lock.sh,guest-build-provenance.mts,linear-memory-transaction.mts,linear-memory-profile.mts,sealed-export-chain.mts,durable-publication.mts}"
+    - "lib/{wasix-build-lock.sh,guest-generation.sh,select-guest-generation.mts,publish-directory.c,guest-build-provenance.mts,receipt-files.mts,linear-memory-profile.mts,sealed-export-chain.mts,durable-publication.mts}"
     - "wasmer/bin/{verify-postmaster-wasm-import.mts,verify-postmaster-concurrency-contract.mts,analyze-wasm-concurrency.sh}"
     - wasmer/policies/sealed-*
     - "tools/sealed-export-closure/Cargo.{toml,lock}"
@@ -78,23 +78,9 @@ tasks:
     tags:
       - quality
       - static
-      - requires-rust
     script: "set -e\nwhile IFS= read -r script; do bash -n \"$script\"; done < <(find runtimes/liboliphaunt-wasix-postmaster -type f -name '*.sh' | LC_ALL=C sort)\n"
     inputs:
-      - /rust-toolchain.toml
-      - /third-party/postgres/source.toml
-      - project: third-party-icu
-        group: sources
-      - project: third-party-openssl
-        group: sources
-      - /runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
-      - /runtimes/liboliphaunt-wasix/assets/build/docker/**/*
-      - /runtimes/liboliphaunt-wasix/assets/build/docker_wasix_env.sh
-      - /third-party/postgres/**/*
-      - "!/third-party/postgres/**/*.test.*"
-      - "!/third-party/postgres/testdata/**/*"
-      - "**/*"
-      - /docs/maintainers/wasix-postmaster.md
+      - "**/*.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -233,6 +219,8 @@ tasks:
       - /runtimes/liboliphaunt-wasix-postmaster/bin/build-wasix-core.sh
       - /runtimes/liboliphaunt-wasix-postmaster/lib/common.sh
     outputs:
+      - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3.current
+      - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3.generations/[0-9a-f]*/**/*
       - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*
     options:
       cache: false
@@ -269,7 +257,7 @@ tasks:
       - /runtimes/liboliphaunt-wasix-postmaster/bin/seal-wasix-linear-memory.sh
       - /runtimes/liboliphaunt-wasix-postmaster/bin/seal-wasix-linear-memory.test.sh
       - /runtimes/liboliphaunt-wasix-postmaster/lib/common.sh
-      - /runtimes/liboliphaunt-wasix-postmaster/lib/linear-memory-transaction.mts
+      - /runtimes/liboliphaunt-wasix-postmaster/lib/receipt-files.mts
       - /runtimes/liboliphaunt-wasix-postmaster/lib/linear-memory-profile.mts
       - /runtimes/liboliphaunt-wasix-postmaster/lib/sealed-export-chain.mts
       - /tools/packaging/strict-json.mts
@@ -424,6 +412,8 @@ tasks:
       - "**/*"
       - /runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
       - "/tools/packaging/*.{mjs,mts}"
+      - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3.current
+      - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3.generations/[0-9a-f]*/**/*
       - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*
       - /target/oliphaunt-wasix-postmaster/runtime/build/patched-wasixcc-sysroot/**/*
       - /target/oliphaunt-wasix-postmaster/runtime/build/probes/**/*

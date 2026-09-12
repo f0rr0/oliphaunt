@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { requiredModules } from '../lib/guest-build-provenance.mts';
 import { profile, profileId, closureHash } from '../lib/linear-memory-profile.mts';
-import { AGGREGATE_RELATIVE } from '../lib/linear-memory-transaction.mts';
+import { AGGREGATE_RELATIVE } from '../lib/receipt-files.mts';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

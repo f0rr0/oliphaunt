@@ -186,6 +186,8 @@ elif [ ! -x "$WASIX_INSTALL_DIR/bin/postgres" ] || [ ! -x "$WASIX_INSTALL_DIR/bi
     exit 2
   fi
   "$FRESH_ROOT/bin/build-wasix-core.sh" >/dev/null
+  WASIX_INSTALL_DIR="$(fresh_wasix_core_install_dir_for "$WASIX_CORE_PROFILE")"
+  runtime_root="$WASIX_INSTALL_DIR"
 fi
 
 if [ -n "$sealed_carrier" ]; then
@@ -309,6 +311,14 @@ where client_id = :client_id
 SQL
 
 cat >"$verify_sql" <<'SQL'
+-- Exercise the packaged PL/pgSQL and Snowball side modules after sealing.
+do $$
+begin
+  if not (to_tsvector('english', 'running') @@ to_tsquery('english', 'run')) then
+    raise exception 'packaged Snowball stemming failed';
+  end if;
+end;
+$$ language plpgsql;
 select
   count(*)::int as rows_written,
   count(distinct client_id)::int as clients_seen,

@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { parseStrictJson } from '../../../tools/packaging/strict-json.mts';
 import { requiredModules } from './guest-build-provenance.mts';
 import { parsePayloadInventory } from './verify-sealed-carrier.mts';
-import { safeRelative } from './linear-memory-transaction.mts';
+import { safeRelative } from './receipt-files.mts';
 import { publish, writePrivate } from './durable-publication.mts';
 
 export const SCHEMA = 'oliphaunt.wasix-postmaster.immutable-carrier-deployment.v2';

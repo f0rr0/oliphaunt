@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants as fsConstants, createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,11 +9,8 @@ import { fileURLToPath } from 'node:url';
 import {
   extractPortableArchiveTree,
   extractPortableTarGzipTree,
-  readPortableArchiveEntries,
-  readPortableTarGzipInventory,
 } from '../../../tools/packaging/portable-archive.mts';
 import {
-  createPortablePathCollisionTracker,
   loadSwiftExtensionInventoryCatalog,
   validateSwiftExtensionResourceArtifact,
 } from './extension-resource-inventory.mts';
@@ -163,16 +160,6 @@ const ZIP_LIMITS = {
   maxEntryBytes: MAX_ARCHIVE_MEMBER_BYTES,
   maxExpandedBytes: MAX_ARCHIVE_EXPANDED_BYTES,
 };
-
-function zipEntries(file, maxEntries = MAX_ARCHIVE_ENTRIES) {
-  return [...readPortableArchiveEntries(file, { ...ZIP_LIMITS, maxEntries }).values()].map(
-    (entry) => ({
-      raw: entry.name + (entry.isDirectory ? '/' : ''),
-      size: entry.size,
-      type: entry.isDirectory ? 'd' : '-',
-    }),
-  );
-}
 
 function safeMember(value, label) {
   if (value === '.') return value;
@@ -555,7 +542,6 @@ async function materialize(row, cacheDir, { offline }) {
   const existing = await stat(output);
   if (existing?.isFile() && existing.size === row.bytes && (await digest(output)) === row.sha256)
     return output;
-  await fs.rm(output, { force: true, recursive: true });
   if (offline) fail(`offline cache miss for ${row.name}`);
   const temporary = `${output}.tmp-${process.pid}-${Date.now()}`;
   try {
@@ -584,6 +570,7 @@ async function materialize(row, cacheDir, { offline }) {
     if (actual?.size !== row.bytes) fail(`size mismatch for ${row.name}`);
     const actualDigest = await digest(temporary);
     if (actualDigest !== row.sha256) fail(`checksum mismatch for ${row.name}; got ${actualDigest}`);
+    await fs.rm(output, { force: true, recursive: true });
     await fs.rename(temporary, output);
     return output;
   } finally {
@@ -591,7 +578,7 @@ async function materialize(row, cacheDir, { offline }) {
   }
 }
 
-async function materializeLogicalPayload(locator, carrierFile, cacheDir, carrierMemberCache) {
+async function materializeLogicalPayload(locator, carrierFile, cacheDir) {
   if (locator.path === '.') return carrierFile;
   const directory = path.join(cacheDir, 'payloads');
   const output = path.join(directory, `${locator.sha256}-${path.posix.basename(locator.path)}`);
@@ -604,16 +591,6 @@ async function materializeLogicalPayload(locator, carrierFile, cacheDir, carrier
     (await digest(output)) === locator.sha256
   )
     return output;
-  await fs.rm(output, { force: true, recursive: true });
-
-  let members = carrierMemberCache.get(locator.envelope.sha256);
-  if (members === undefined) {
-    members = await archiveMembers(carrierFile, locator.envelope.format);
-    carrierMemberCache.set(locator.envelope.sha256, members);
-  }
-  if (!members.has(locator.path)) {
-    fail(`${locator.envelope.name} lacks nested logical payload ${locator.path}`);
-  }
   const temporaryRoot = path.join(directory, `.tmp-${process.pid}-${Date.now()}-${locator.sha256}`);
   await fs.rm(temporaryRoot, { force: true, recursive: true });
   await fs.mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
@@ -629,74 +606,12 @@ async function materializeLogicalPayload(locator, carrierFile, cacheDir, carrier
         `${locator.envelope.name} nested payload ${locator.path} does not match its frozen size/checksum`,
       );
     }
+    await fs.rm(output, { force: true, recursive: true });
     await fs.rename(selected, output);
     return output;
   } finally {
     await fs.rm(temporaryRoot, { force: true, recursive: true });
   }
-}
-async function tarEntries(file, maxEntries = MAX_ARCHIVE_ENTRIES) {
-  return [
-    ...(await readPortableTarGzipInventory(file, { ...TAR_LIMITS, maxEntries })).values(),
-  ].map((entry) => ({
-    raw: entry.name + (entry.isDirectory ? '/' : ''),
-    size: entry.size,
-    type: entry.isDirectory ? 'd' : '-',
-  }));
-}
-
-async function archiveMembers(file, format) {
-  const archiveStat = await stat(file);
-  if (archiveStat?.isFile() !== true || archiveStat.isSymbolicLink()) {
-    fail(`${file} is not a regular archive file`);
-  }
-  if (archiveStat.size <= 0 || archiveStat.size > MAX_CARRIER_BYTES) {
-    fail(`${file} exceeds the maximum supported carrier size of ${MAX_CARRIER_BYTES} bytes`);
-  }
-  if (format === 'zip' && archiveStat.size > MAX_ZIP_CARRIER_BYTES) {
-    fail(
-      `${file} exceeds the maximum supported ZIP carrier size of ${MAX_ZIP_CARRIER_BYTES} bytes`,
-    );
-  }
-  let entries;
-  if (format === 'tar.gz') {
-    entries = await tarEntries(file);
-  } else {
-    entries = await zipEntries(file);
-  }
-  if (entries.length === 0) fail(`${file} has no archive members`);
-  const normalizedEntries = entries.map(({ raw, type }) => {
-    if (!['-', 'd'].includes(type)) fail(`${file} contains a link or special entry: ${raw}`);
-    const directoryMarker = raw.endsWith('/');
-    // A POSIX tar typeflag 5 is sufficient to identify a directory; the slash
-    // is a canonical producer convention, not a tar-format requirement. ZIP
-    // still requires its path marker and metadata type to agree.
-    const markerMismatch =
-      format === 'zip' ? (type === 'd') !== directoryMarker : type !== 'd' && directoryMarker;
-    if (markerMismatch && raw !== '.' && raw !== './') {
-      fail(`${file} member type/path marker mismatch: ${raw}`);
-    }
-    return {
-      name: safeMember(raw.replace(/\/$/u, '') || '.', `${file} member`),
-      type: type === 'd' ? 'directory' : 'file',
-    };
-  });
-  const names = normalizedEntries.map(({ name }) => name);
-  if (new Set(names).size !== names.length) fail(`${file} repeats a normalized archive member`);
-  const trackPortablePath = createPortablePathCollisionTracker(`${PREFIX}: ${file}`);
-  for (const name of names) trackPortablePath(name);
-  const files = new Set(
-    normalizedEntries.filter(({ type }) => type === 'file').map(({ name }) => name),
-  );
-  for (const entry of normalizedEntries) {
-    let separator = entry.name.indexOf('/');
-    while (separator >= 0) {
-      const parent = entry.name.slice(0, separator);
-      if (files.has(parent)) fail(`${file} uses file ${parent} as an archive directory`);
-      separator = entry.name.indexOf('/', separator + 1);
-    }
-  }
-  return new Map(normalizedEntries.map(({ name, type }) => [name, type]));
 }
 function jsonDigest(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -744,18 +659,6 @@ async function extractedTree(root) {
   return entries;
 }
 
-function assertArchiveTreeMatches(members, tree, file) {
-  const expected = [...members]
-    .filter(([name]) => name !== '.')
-    .sort(([left], [right]) => compareText(left, right));
-  const actual = tree
-    .map(({ path: name, type }) => [name, type])
-    .sort(([left], [right]) => compareText(left, right));
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    fail(`${file} extracted tree does not exactly match its validated archive member plan`);
-  }
-}
-
 export async function extractVerifiedZipArchive({ archive, destination }) {
   const archivePath = path.resolve(archive);
   const destinationPath = path.resolve(destination);
@@ -766,7 +669,6 @@ export async function extractVerifiedZipArchive({ archive, destination }) {
   if ((await stat(destinationPath)) !== undefined) {
     fail(`verified ZIP destination already exists: ${destinationPath}`);
   }
-  const members = await archiveMembers(archivePath, 'zip');
   const parent = path.dirname(destinationPath);
   await fs.mkdir(parent, { recursive: true });
   const parentStat = await stat(parent);
@@ -779,7 +681,6 @@ export async function extractVerifiedZipArchive({ archive, destination }) {
   try {
     extractPortableArchiveTree(archivePath, temporary, '', ZIP_LIMITS);
     const tree = await extractedTree(temporary);
-    assertArchiveTreeMatches(members, tree, archivePath);
     if (!tree.some(({ type }) => type === 'file')) {
       fail(`${archivePath} contains no regular files`);
     }
@@ -818,15 +719,6 @@ async function extract(row, archive, cacheDir) {
   if (await extractedCacheValid(output, cacheManifest, row.sha256)) {
     return row.member === '.' ? output : path.join(output, row.member);
   }
-  await fs.rm(output, { recursive: true, force: true });
-  await fs.rm(cacheManifest, { force: true });
-  const members = await archiveMembers(archive, row.format);
-  if (
-    row.member !== '.' &&
-    !members.has(row.member) &&
-    ![...members.keys()].some((entry) => entry.startsWith(`${row.member}/`))
-  )
-    fail(`${row.name} lacks ${row.member}`);
   const temporary = `${output}.tmp-${process.pid}-${Date.now()}`;
   const temporaryManifest = `${cacheManifest}.tmp-${process.pid}-${Date.now()}`;
   await fs.rm(temporary, { recursive: true, force: true });
@@ -837,7 +729,6 @@ async function extract(row, archive, cacheDir) {
       await extractPortableTarGzipTree(archive, temporary, TAR_LIMITS);
     }
     const tree = await extractedTree(temporary);
-    if (row.format === 'zip') assertArchiveTreeMatches(members, tree, archive);
     const manifest = {
       archiveSha256: row.sha256,
       entries: tree,
@@ -849,14 +740,14 @@ async function extract(row, archive, cacheDir) {
       fail(`${row.name} member is not a directory: ${row.member}`);
     await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
     await fs.mkdir(path.dirname(output), { recursive: true });
+    await fs.rm(output, { recursive: true, force: true });
+    await fs.rm(cacheManifest, { force: true });
     await fs.rename(temporary, output);
     await fs.rename(temporaryManifest, cacheManifest);
     return row.member === '.' ? output : path.join(output, row.member);
   } catch (error) {
     await fs.rm(temporary, { recursive: true, force: true });
     await fs.rm(temporaryManifest, { force: true });
-    await fs.rm(output, { recursive: true, force: true });
-    await fs.rm(cacheManifest, { force: true });
     throw error;
   }
 }
@@ -1039,7 +930,6 @@ export async function resolveSwiftCarrierSelection({
   }
   const output = [];
   const materializedCarriers = new Map();
-  const carrierMemberCache = new Map();
   for (const row of ordered) {
     const nativeDependencies = row.nativeDependencies;
     const rows = row.assets;
@@ -1063,10 +953,7 @@ export async function resolveSwiftCarrierSelection({
         carrierFile = await materialize(rowAsset.envelope, cacheDir, { offline });
         materializedCarriers.set(carrierKey, carrierFile);
       }
-      materialized.set(
-        rowAsset,
-        await materializeLogicalPayload(rowAsset, carrierFile, cacheDir, carrierMemberCache),
-      );
+      materialized.set(rowAsset, await materializeLogicalPayload(rowAsset, carrierFile, cacheDir));
     }
     const runtimeArchive = materialized.get(runtimeRows[0]);
     const resourceRoot = await extract(runtimeRows[0], runtimeArchive, cacheDir);

@@ -63,6 +63,11 @@ build_consumer() {
   mv "$(dirname "$packed_manifest")" "$scratch/packed/oliphaunt"
   cp sdks/rust/sdk/tests/release-consumer/Cargo.toml "$scratch/consumer/Cargo.toml"
   cp sdks/rust/sdk/tests/release-consumer/src/main.rs "$scratch/consumer/src/main.rs"
+  if [ -f "$scratch/packed/oliphaunt/Cargo.lock" ]; then
+    cp "$scratch/packed/oliphaunt/Cargo.lock" "$scratch/consumer/Cargo.lock"
+  else
+    cp Cargo.lock "$scratch/consumer/Cargo.lock"
+  fi
 
   for product in oliphaunt-query liboliphaunt-native-bindings oliphaunt-broker; do
     dependency_crate="$(find_one "target/sdk-artifacts/$product" "$product-*.crate")"
@@ -97,8 +102,8 @@ build_consumer() {
   } >"$scratch/consumer/.cargo/config.toml"
 
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$scratch/target}" \
-    cargo --config "$scratch/consumer/.cargo/config.toml" generate-lockfile \
-      --manifest-path "$scratch/consumer/Cargo.toml" --offline
+    cargo --config "$scratch/consumer/.cargo/config.toml" metadata \
+      --manifest-path "$scratch/consumer/Cargo.toml" --offline --format-version 1 > /dev/null
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$scratch/target}" \
     cargo --config "$scratch/consumer/.cargo/config.toml" build \
       --manifest-path "$scratch/consumer/Cargo.toml" --locked --offline --release

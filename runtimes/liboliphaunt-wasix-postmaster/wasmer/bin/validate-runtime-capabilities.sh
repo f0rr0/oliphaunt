@@ -376,8 +376,8 @@ validate_exact_sysroot() {
 
 	require_manifest_value "$PATCHED_SYSROOT_MANIFEST" schema oliphaunt.wasix-libc-sysroot.v1
 	require_manifest_value "$PATCHED_SYSROOT_MANIFEST" variant "$WASIXCC_SYSROOT_VARIANT"
-	require_manifest_value "$PATCHED_SYSROOT_MANIFEST" source_patch \
-		"$(fresh_project_source_identity_path "$expected_patch")"
+	# source_patch is descriptive provenance; relocation does not change the
+	# patch. Its exact bytes are checked by source_patch_sha256 below.
 	require_manifest_value "$PATCHED_SYSROOT_MANIFEST" docker_image "$DOCKER_IMAGE"
 	require_manifest_value "$PATCHED_SYSROOT_MANIFEST" makefile Makefile-eh
 	require_manifest_value "$PATCHED_SYSROOT_MANIFEST" make_jobs 2

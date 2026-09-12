@@ -34,10 +34,13 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-cargo-package-test-XXXXXX")
 scratch=$(cd "$scratch" && pwd -P)
 trap 'rm -rf "$scratch"' EXIT
 manifest=$(bun "$helper_dir/cargo-package-test-closure.mts" "$scratch" "${prepare_args[@]}")
+if [ ! -f "$(dirname "$manifest")/Cargo.lock" ]; then
+  cp "$helper_dir/../../Cargo.lock" "$(dirname "$manifest")/Cargo.lock"
+fi
 while IFS= read -r name; do
   case "$name" in OLIPHAUNT_*) unset "$name" ;; esac
 done < <(compgen -e)
 cd "$scratch"
-"$timeout_bin" 1800 cargo generate-lockfile --manifest-path "$manifest" --offline
+"$timeout_bin" 1800 cargo metadata --manifest-path "$manifest" --offline --format-version 1 > /dev/null
 "$timeout_bin" 1800 cargo test --manifest-path "$manifest" --locked --offline --no-run "${test_args[@]}"
 echo "Cargo package test closure verified: $(basename "$(dirname "$manifest")")"

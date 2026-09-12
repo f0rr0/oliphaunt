@@ -66,21 +66,17 @@ oliphaunt_postgis_dependency_cache_prepare() {
   local dependency_root="$1"
   local fingerprint="$2"
   shift 2
-  local stamp="$dependency_root/.oliphaunt-postgis-native-dependencies.sha256"
 
   oliphaunt_postgis_dependency_cache_validate_inputs \
     "$dependency_root" \
     "$fingerprint" \
     "$@" || return
 
-  if ! oliphaunt_postgis_dependency_cache_is_complete "$dependency_root" "$fingerprint"; then
-    rm -rf -- "$dependency_root" "$@"
+  if oliphaunt_postgis_dependency_cache_is_complete "$dependency_root" "$fingerprint"; then
+    return 0
   fi
+  rm -rf -- "$dependency_root" "$@"
   mkdir -p "$dependency_root"
-  # A completion stamp is a lease for exactly one verified reuse attempt. Drop
-  # it before builders inspect the cache so an interrupted repair/reuse cannot
-  # be mistaken for a committed cache by the next process.
-  rm -f -- "$stamp"
 }
 
 oliphaunt_postgis_dependency_cache_commit() {

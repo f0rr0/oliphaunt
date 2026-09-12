@@ -3,7 +3,9 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 source_root="$PWD"
 scratch="$(mktemp -d)"
-trap 'rm -rf "$scratch"' EXIT
+trap 'exit_status=$?
+  if [ "$exit_status" -ne 0 ] && [ -f "${case_root:-$scratch}/result" ]; then cat "$case_root/result" >&2; fi
+  rm -rf "$scratch"; exit "$exit_status"' EXIT
 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 prepare() {
   case_root="$scratch/$1"

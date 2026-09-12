@@ -4,6 +4,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 source "$FRESH_ROOT/lib/wasix-build-lock.sh"
+source "$FRESH_ROOT/lib/sealed-carrier.sh"
 
 configure_only=0
 force_clean=0
@@ -83,24 +84,38 @@ fresh_ensure_dirs
 fresh_require_command git
 fresh_require_command bun
 
-durable_publication="$FRESH_ROOT/lib/durable-publication.mts"
-[ -f "$durable_publication" ] && [ ! -L "$durable_publication" ] || {
-  printf 'missing regular durable-publication helper: %s\n' "$durable_publication" >&2
-  exit 2
-}
-
-if [ -n "${FRESH_PINNED_WASIX_INSTALL_DIR:-}" ] && [ "$WASIX_INSTALL_DIR" = "$FRESH_PINNED_WASIX_INSTALL_DIR" ] && [ "${FRESH_ALLOW_PINNED_INSTALL_WRITE:-0}" != "1" ]; then
-  {
-    printf 'refusing to build into pinned WASIX install: %s\n' "$FRESH_PINNED_WASIX_INSTALL_DIR"
-    printf 'Unset FRESH_PINNED_WASIX_INSTALL_DIR or set FRESH_ALLOW_PINNED_INSTALL_WRITE=1 if you are intentionally replacing the pin.\n'
-  } >&2
-  exit 2
-fi
-
 # Serialize the complete producer, including configuration, sealing, and
 # receipt publication.  Every profile and wasix-make.sh acquires this same
 # product-wide lock because the default profiles share one mutable source tree.
 fresh_lock_wasix_core_build "$WASIX_INSTALL_DIR"
+
+# Every rewrite happens in a private complete prefix, never the selected one.
+generation_base="$(fresh_wasix_core_install_base_for "$WASIX_CORE_PROFILE")"
+{
+  case "$WASIX_INSTALL_DIR" in
+    "$generation_base"|"$generation_base.generations/"*) ;;
+    *)
+      echo 'custom WASIX_INSTALL_DIR is a read-only imported generation; use portable-input mode' >&2
+      exit 2 ;;
+  esac
+  mkdir -p "$generation_base.generations"
+  [ -d "$generation_base.generations" ] && [ ! -L "$generation_base.generations" ] || exit 2
+  WASIX_INSTALL_DIR="$(mktemp -d "$generation_base.generations/.pending.XXXXXXXX")"
+  export WASIX_INSTALL_DIR FRESH_WASIX_PRIVATE_INSTALL_DIR="$WASIX_INSTALL_DIR"
+  export FRESH_WASIX_CORE_BUILD_LOCK_INSTALL="$WASIX_INSTALL_DIR"
+  cleanup_guest_generation() {
+    local status=$?
+    trap - EXIT
+    if [ -n "${FRESH_WASIX_PRIVATE_INSTALL_DIR:-}" ]; then
+      rm -rf -- "$FRESH_WASIX_PRIVATE_INSTALL_DIR"
+    fi
+    exit "$status"
+  }
+  trap cleanup_guest_generation EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
 
 jobs="${JOBS:-$(fresh_jobs)}"
 docker_bin="$(fresh_docker_bin)"
@@ -141,7 +156,10 @@ compute_source_signature() {
       "$FRESH_ROOT/bin/seal-wasix-core-exports.sh" \
       "$FRESH_ROOT/bin/seal-wasix-linear-memory.sh" \
       "$FRESH_ROOT/lib/guest-build-provenance.mts" \
-      "$FRESH_ROOT/lib/linear-memory-transaction.mts" \
+      "$FRESH_ROOT/lib/receipt-files.mts" \
+      "$FRESH_ROOT/lib/guest-generation.sh" \
+      "$FRESH_ROOT/lib/select-guest-generation.mts" \
+      "$FRESH_ROOT/lib/publish-directory.c" \
       "$FRESH_ROOT/lib/linear-memory-profile.mts" \
       "$REPO_ROOT/tools/packaging/strict-json.mts" \
       "$FRESH_ROOT/lib/sealed-export-chain.mts" \
@@ -150,8 +168,7 @@ compute_source_signature() {
       "$FRESH_ROOT/wasmer/policies/sealed-side-modules.v1.tsv" \
       "$FRESH_ROOT/tools/sealed-export-closure/Cargo.toml" \
       "$FRESH_ROOT/tools/sealed-export-closure/Cargo.lock" \
-      "$FRESH_ROOT/tools/sealed-export-closure/src/main.rs" \
-      "$durable_publication"
+      "$FRESH_ROOT/tools/sealed-export-closure/src/main.rs"
     printf 'WASIXCC_SYSROOT_PREFIX=%s\n' "${WASIXCC_SYSROOT_PREFIX:-}"
     printf 'WASIXCC_SYSROOT=%s\n' "${WASIXCC_SYSROOT:-}"
     if [ -n "${WASIXCC_SYSROOT_PREFIX:-}" ] && [ -f "$WASIXCC_SYSROOT_PREFIX/.fresh-sysroot-signature" ]; then
@@ -497,128 +514,19 @@ then
 
       proof_dir="$WASIX_INSTALL_DIR/share/postgresql"
       final_start_proof="$proof_dir/wasix-postmaster.start-proof.json"
-      final_start_proof_pending="$proof_dir/.wasix-postmaster.start-proof.pending"
       final_concurrency_receipt="$proof_dir/wasix-postmaster.final-wasm-concurrency.receipt"
-      final_concurrency_receipt_pending="$proof_dir/.wasix-postmaster.final-wasm-concurrency.pending"
-      [ -d "$proof_dir" ] && [ ! -L "$proof_dir" ] || {
-        printf 'unsafe final-proof directory: %s\n' "$proof_dir" >&2
-        exit 2
-      }
-      bun "$durable_publication" discard-private "$final_start_proof_pending"
-      bun "$durable_publication" discard-private "$final_concurrency_receipt_pending"
-      cleanup_final_proof_stage() {
-        status=$?
-        trap - EXIT
-        bun "$durable_publication" discard-private \
-          "$final_start_proof_pending" || status=2
-        bun "$durable_publication" discard-private \
-          "$final_concurrency_receipt_pending" || status=2
-        exit "$status"
-      }
-      trap cleanup_final_proof_stage EXIT
-
-      docker_install_dir="$(fresh_docker_path_for "$WASIX_INSTALL_DIR")"
-
-      validate_final_proof_generation() {
-        "$FRESH_START_PROOF_BIN" "$WASIX_INSTALL_DIR/bin/postgres" \
-          | bun "$durable_publication" write-stdin \
-            "$final_start_proof_pending"
-        [ -s "$final_start_proof_pending" ] && \
-          [ ! -L "$final_start_proof_pending" ] || {
-          printf 'deterministic-start analyzer did not produce a regular proof\n' >&2
-          return 2
-        }
-        bun "$durable_publication" require-equal \
-          "$final_start_proof_pending" "$final_start_proof"
-        bun "$durable_publication" discard-private "$final_start_proof_pending"
-        bun \
-          "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
-          --expected-total "$expected_final_atomic_fence_total" \
-          --latch-state-contract packed-atomic-v1 \
-          --verified-receipt "$final_concurrency_receipt" \
-          --receipt-only \
-          "$WASIX_INSTALL_DIR/bin/postgres"
-      }
-
-      if [ -e "$final_concurrency_receipt" ] || \
-        [ -L "$final_concurrency_receipt" ]
-      then
-        [ -f "$final_concurrency_receipt" ] && \
-          [ ! -L "$final_concurrency_receipt" ] || {
-          printf 'final concurrency admission is not regular: %s\n' \
-            "$final_concurrency_receipt" >&2
-          exit 2
-        }
-        [ -f "$final_start_proof" ] && [ ! -L "$final_start_proof" ] || {
-          printf 'admitted final generation has no regular start proof: %s\n' \
-            "$final_start_proof" >&2
-          exit 2
-        }
-        validate_final_proof_generation
-      else
-        final_start_proof_identity="$(
-          "$FRESH_START_PROOF_BIN" "$WASIX_INSTALL_DIR/bin/postgres" |
-            bun "$durable_publication" write-stdin-identified \
-              "$final_start_proof_pending"
-        )"
-        IFS=$'\t' read -r final_start_proof_dev final_start_proof_ino \
-          final_start_proof_size final_start_proof_sha \
-          <<<"$final_start_proof_identity"
-        [ -s "$final_start_proof_pending" ] && \
-          [ ! -L "$final_start_proof_pending" ] || {
-          printf 'deterministic-start analyzer did not produce a regular proof\n' >&2
-          exit 2
-        }
-        if [ -e "$final_start_proof" ] || [ -L "$final_start_proof" ]; then
-          [ -f "$final_start_proof" ] && [ ! -L "$final_start_proof" ] || {
-            printf 'partial final start proof is not regular: %s\n' \
-              "$final_start_proof" >&2
-            exit 2
-          }
-          bun "$durable_publication" require-equal \
-            "$final_start_proof_pending" "$final_start_proof"
-          bun "$durable_publication" discard-private "$final_start_proof_pending"
-        else
-          bun "$durable_publication" publish-identified \
-            "$final_start_proof_pending" "$final_start_proof" \
-            "$final_start_proof_dev" "$final_start_proof_ino" \
-            "$final_start_proof_size" "$final_start_proof_sha"
-        fi
-
-        bash "$FRESH_ROOT/wasmer/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
-          "$WASIX_INSTALL_DIR/bin/postgres" \
-          --expected-total "$expected_final_atomic_fence_total" \
-          --latch-state-contract packed-atomic-v1 \
-          --receipt "$final_concurrency_receipt_pending"
-        [ -f "$final_concurrency_receipt_pending" ] && \
-          [ ! -L "$final_concurrency_receipt_pending" ] || {
-          printf 'concurrency analyzer did not produce a regular receipt\n' >&2
-          exit 2
-          }
-        final_concurrency_identity="$(
-          bun "$durable_publication" identify-source \
-            "$final_concurrency_receipt_pending"
-        )"
-        IFS=$'\t' read -r final_concurrency_dev final_concurrency_ino \
-          final_concurrency_size final_concurrency_sha \
-          <<<"$final_concurrency_identity"
-        bun \
-          "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
-          --expected-total "$expected_final_atomic_fence_total" \
-          --latch-state-contract packed-atomic-v1 \
-          --verified-receipt "$final_concurrency_receipt_pending" \
-          --receipt-only \
-          "$WASIX_INSTALL_DIR/bin/postgres"
-        # This receipt is the admission record for the pair and is therefore
-        # published last, without replacement, only after the start proof is
-        # durable at its public name.
-        bun "$durable_publication" publish-identified \
-          "$final_concurrency_receipt_pending" "$final_concurrency_receipt" \
-          "$final_concurrency_dev" "$final_concurrency_ino" \
-          "$final_concurrency_size" "$final_concurrency_sha"
-        validate_final_proof_generation
-      fi
-      trap - EXIT
+      "$FRESH_START_PROOF_BIN" "$WASIX_INSTALL_DIR/bin/postgres" >"$final_start_proof"
+      [ -s "$final_start_proof" ] && [ ! -L "$final_start_proof" ]
+      bash "$FRESH_ROOT/wasmer/bin/analyze-wasm-concurrency.sh" "$docker_bin" "$docker_image_id" \
+        "$WASIX_INSTALL_DIR/bin/postgres" \
+        --expected-total "$expected_final_atomic_fence_total" \
+        --latch-state-contract packed-atomic-v1 \
+        --receipt "$final_concurrency_receipt"
+      bun "$FRESH_ROOT/wasmer/bin/verify-postmaster-concurrency-contract.mts" \
+        --expected-total "$expected_final_atomic_fence_total" \
+        --latch-state-contract packed-atomic-v1 \
+        --verified-receipt "$final_concurrency_receipt" --receipt-only \
+        "$WASIX_INSTALL_DIR/bin/postgres"
     ) >>"$log" 2>&1
     status=$?
     set -e
@@ -628,7 +536,6 @@ fi
 if [ "$status" -eq 0 ]; then
   if [ "$mode" = build ]; then
     guest_build_receipt="$WASIX_INSTALL_DIR/guest-build.receipt"
-    guest_build_receipt_pending="$WASIX_INSTALL_DIR/.guest-build.receipt.pending"
     concurrency_args=()
     if [ -n "$expected_final_atomic_fence_total" ]; then
       concurrency_args+=(--expected-total "$expected_final_atomic_fence_total")
@@ -693,8 +600,7 @@ if [ "$status" -eq 0 ]; then
         exit 2
         ;;
     esac
-    bun "$durable_publication" discard-private "$guest_build_receipt_pending"
-    guest_build_receipt_identity="$({
+    {
       printf 'schema=oliphaunt.wasix-postmaster.guest-build.v5\n'
       printf 'core_profile=%s\n' "$WASIX_CORE_PROFILE"
       printf 'guest_source_signature_sha256=%s\n' "$source_signature"
@@ -719,31 +625,12 @@ if [ "$status" -eq 0 ]; then
       printf 'postgres_tag=%s\n' "$POSTGRES_TAG"
       printf 'postgres_version=%s\n' "$POSTGRES_VERSION"
       printf 'sysroot_variant=%s\n' "$WASIXCC_SYSROOT_VARIANT"
-    } | bun "$durable_publication" write-stdin-identified \
-      "$guest_build_receipt_pending")"
-    IFS=$'\t' read -r guest_build_receipt_dev guest_build_receipt_ino \
-      guest_build_receipt_size guest_build_receipt_sha \
-      <<<"$guest_build_receipt_identity"
-    require_build_inputs_unchanged 'before final guest receipt publication' || exit
-    if [ -e "$guest_build_receipt" ] || [ -L "$guest_build_receipt" ]; then
-      [ -f "$guest_build_receipt" ] && [ ! -L "$guest_build_receipt" ] || {
-        printf 'guest build admission is not regular: %s\n' \
-          "$guest_build_receipt" >&2
-        exit 125
-      }
-      bun "$durable_publication" require-equal \
-        "$guest_build_receipt_pending" "$guest_build_receipt" || exit 125
-      bun "$durable_publication" discard-private \
-        "$guest_build_receipt_pending" || exit 125
-    else
-      # The guest receipt admits the complete installed closure.  It is
-      # synchronized and published without replacement only after every
-      # predecessor proof above has been replayed against that closure.
-      bun "$durable_publication" publish-identified \
-        "$guest_build_receipt_pending" "$guest_build_receipt" \
-        "$guest_build_receipt_dev" "$guest_build_receipt_ino" \
-        "$guest_build_receipt_size" "$guest_build_receipt_sha" || exit 125
-    fi
+    } >"$guest_build_receipt"
+    require_build_inputs_unchanged 'before completed guest generation publication' || exit
+    WASIX_INSTALL_DIR="$(fresh_publish_guest_generation "$WASIX_INSTALL_DIR" "$generation_base")" || exit
+    unset FRESH_WASIX_PRIVATE_INSTALL_DIR
+    export WASIX_INSTALL_DIR
+
   fi
   {
     printf '\n## Result\n\n'

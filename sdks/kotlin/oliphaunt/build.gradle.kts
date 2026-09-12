@@ -956,7 +956,10 @@ val buildNativeBindings =
                     .get()
                     .asFile.absolutePath,
             )
-            doFirst { environment("ANDROID_NDK_HOME", mobileNdkDirectory.get().asFile.absolutePath) }
+            val ndkDirectory = mobileNdkDirectory
+            doFirst {
+                (this as Exec).environment("ANDROID_NDK_HOME", ndkDirectory.get().asFile.absolutePath)
+            }
             // Cargo owns the transitive source fingerprint and incremental rebuild.
             // Do not invent a second handwritten list of Rust dependency inputs.
         }
@@ -969,7 +972,16 @@ tasks.named("preBuild") {
 }
 
 tasks.matching { it.name.startsWith("merge") && (it.name.endsWith("JniLibFolders") || it.name.endsWith("Assets")) }.configureEach {
-    dependsOn(buildNativeBindings)
+    // Source checks also merge resources. Only an AAR needs the Rust payload;
+    // when packaging, generate it before Gradle snapshots the merge inputs.
+    mustRunAfter(buildNativeBindings)
+}
+
+androidComponents.onVariants { variant ->
+    val bundleTask = "bundle${variant.name.replaceFirstChar { it.uppercaseChar() }}Aar"
+    tasks.matching { it.name == bundleTask }.configureEach {
+        dependsOn(buildNativeBindings)
+    }
 }
 
 tasks.matching { it.name.startsWith("compile") && it.name.contains("KotlinAndroid") }.configureEach {

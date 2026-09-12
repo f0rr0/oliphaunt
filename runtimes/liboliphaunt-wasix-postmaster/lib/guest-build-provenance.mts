@@ -216,14 +216,65 @@ export function installedClosureIdentity(root: string, synchronize = false): str
   return installedClosureIdentityFromRecords(records);
 }
 
+// Generation publication also distributes headers and client tools. Keep its
+// whole-prefix identity separate from the admitted runtime closure above.
+export function generationIdentity(root: string, synchronize = false): string {
+  root = resolve(root);
+  const hash = createHash('sha256');
+  frame(hash, 'oliphaunt.wasix-postmaster.guest-generation.v1');
+  function visit(relative: string) {
+    const path = join(root, relative);
+    const before = stat(path);
+    frame(hash, relative);
+    frame(hash, String(before.mode & 0o7777n));
+    if (before.isDirectory()) {
+      frame(hash, 'directory');
+      withRegular(path, true, (fd) => {
+        const names = sorted(fs.readdirSync(path));
+        for (const name of names) visit(relative === '.' ? name : `${relative}/${name}`);
+        assert.deepEqual(sorted(fs.readdirSync(path)), names, 'generation inventory changed');
+        if (synchronize) fs.fsyncSync(fd);
+      });
+    } else if (before.isFile()) {
+      frame(hash, 'file');
+      const value = readRegular(path, synchronize);
+      frame(hash, String(value.size));
+      frame(hash, value.sha256);
+    } else {
+      assert(before.isSymbolicLink(), `special generation entry: ${relative}`);
+      const target = fs.readlinkSync(path);
+      assert(!posix.isAbsolute(target), `absolute generation link: ${relative}`);
+      const resolved = fs.realpathSync(path);
+      assert(resolved.startsWith(`${root}/`), `escaping generation link: ${relative}`);
+      frame(hash, 'symlink');
+      frame(hash, target);
+    }
+    assert.deepEqual(
+      identity(stat(path)),
+      identity(before),
+      `generation entry changed: ${relative}`,
+    );
+  }
+  visit('.');
+  return hash.digest('hex');
+}
+
 if (import.meta.main) {
   try {
     const [mode, root, extra] = process.argv.slice(2);
     assert(
-      root && !extra && ['identity', 'seal-identity'].includes(mode!),
-      'usage: guest-build-provenance.mts identity|seal-identity INSTALL_ROOT',
+      root &&
+        !extra &&
+        ['identity', 'seal-identity', 'generation-identity', 'seal-generation-identity'].includes(
+          mode!,
+        ),
+      'usage: guest-build-provenance.mts [seal-]identity|[seal-]generation-identity INSTALL_ROOT',
     );
-    console.log(installedClosureIdentity(root, mode === 'seal-identity'));
+    console.log(
+      mode.endsWith('generation-identity')
+        ? generationIdentity(root, mode === 'seal-generation-identity')
+        : installedClosureIdentity(root, mode === 'seal-identity'),
+    );
   } catch (error) {
     console.error(`guest build provenance failed: ${(error as Error).message}`);
     process.exitCode = 2;

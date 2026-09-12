@@ -28,6 +28,7 @@ fi
 
 if [ ! -x "$WASIX_INSTALL_DIR/bin/initdb" ]; then
   "$FRESH_ROOT/bin/build-wasix-core.sh"
+  WASIX_INSTALL_DIR="$(fresh_wasix_core_install_dir_for "$WASIX_CORE_PROFILE")"
 fi
 
 wasmer_bin_hash="$(fresh_wasmer_bin_hash "$wasmer_bin")"
