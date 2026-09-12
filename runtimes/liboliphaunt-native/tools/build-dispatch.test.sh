@@ -7,12 +7,16 @@ cd "$fixture"
 git init -q
 owner=runtimes/liboliphaunt-native
 mkdir -p "$owner/tools" "$owner/bin" third-party/postgres bin
-cp "$root/$owner/tools/release-runtime.sh" "$root/$owner/tools/build-ci-target.sh" "$owner/tools/"
+cp "$root/$owner/tools/release-runtime.sh" "$root/$owner/tools/build-ci-target.sh" "$root/$owner/tools/runtime-preflight.sh" "$owner/tools/"
 cp "$root/third-party/postgres/source.toml" third-party/postgres/
-export PATH="$fixture/bin:$PATH" CAPTURE="$fixture/calls" TEST_HOST=Linux
+export PATH="$fixture/bin:$PATH" CAPTURE="$fixture/calls" TEST_HOST=Linux TEST_ARCH=x86_64
 cat > bin/uname <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "$TEST_HOST"
+case "$1" in
+  -s) printf '%s\n' "$TEST_HOST" ;;
+  -m) printf '%s\n' "$TEST_ARCH" ;;
+  *) exit 1 ;;
+esac
 STUB
 cat > bin/bun <<'STUB'
 #!/usr/bin/env bash
@@ -45,14 +49,22 @@ for target in android-arm64-v8a android-x86_64 ios-xcframework; do
 done
 for pair in Linux:linux-x64-gnu Darwin:macos-arm64 MINGW64_NT:windows-x64-msvc; do
   export TEST_HOST="${pair%%:*}" OLIPHAUNT_CI_TARGET="${pair#*:}"
+  case "$TEST_HOST" in Darwin) export TEST_ARCH=arm64 ;; *) export TEST_ARCH=x86_64 ;; esac
   : >"$CAPTURE"
   bash "$owner/tools/release-runtime.sh" build
   bash "$owner/tools/release-runtime.sh" package
   if [ "$TEST_HOST" = MINGW64_NT ]; then
     grep -q 'build-postgres18-windows.sh' "$CAPTURE"
-    if FAIL_BUILD=1 bash "$owner/tools/release-runtime.sh" build; then exit 1; else test "$?" = 19; fi
   fi
   grep -q "desktop-release-assets/$OLIPHAUNT_CI_TARGET 0 0" "$CAPTURE"
+  expected="$(cat "$CAPTURE")"
+  : >"$CAPTURE"
+  env -u OLIPHAUNT_CI_TARGET bash "$owner/tools/release-runtime.sh" build
+  env -u OLIPHAUNT_CI_TARGET bash "$owner/tools/release-runtime.sh" package
+  test "$(cat "$CAPTURE")" = "$expected"
+  if [ "$TEST_HOST" = MINGW64_NT ]; then
+    if FAIL_BUILD=1 bash "$owner/tools/release-runtime.sh" build; then exit 1; else test "$?" = 19; fi
+  fi
 done
 : >"$CAPTURE"
 if TEST_HOST=Linux OLIPHAUNT_CI_TARGET=macos-arm64 bash "$owner/tools/release-runtime.sh" build; then exit 1; fi

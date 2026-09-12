@@ -83,6 +83,7 @@ tasks:
       - tools/build-dispatch.test.sh
       - tools/build-ci-target.sh
       - tools/release-runtime.sh
+      - tools/runtime-preflight.sh
       - /third-party/postgres/source.toml
       - /extensions/artifacts/native/tools/run-observed-phase.sh
     options:
