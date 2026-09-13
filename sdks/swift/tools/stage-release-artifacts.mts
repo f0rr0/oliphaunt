@@ -3,6 +3,7 @@ import { bundleJavaScript, emitJavaScript } from '../../../tools/packaging/emit-
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createDeterministicZip } from '../../../tools/packaging/archive-directory.mts';
+import { extractPortableArchiveTree } from '../../../tools/packaging/portable-archive.mts';
 
 import { IOS_CARRIER_FILENAME, buildIosCarrierManifest } from './ios-carrier-manifest.mts';
 import {
@@ -70,7 +71,7 @@ export async function stageArtifacts(artifactRoot, workRoot) {
   // The downloadable source package is independently buildable: use the
   // frozen public binary dependencies, not checkout-only Cargo output paths.
   const sourcePackage = path.join(workRoot, 'source', 'package');
-  copyDirContents(path.join(path.dirname(swiftSourceArchive), 'package'), sourcePackage);
+  extractPortableArchiveTree(swiftSourceArchive, sourcePackage, 'package');
   const generatedSource = path.join(sourcePackage, 'Sources/OliphauntNativeBindings');
   mkdirSync(generatedSource, { recursive: true });
   copyFileSync(

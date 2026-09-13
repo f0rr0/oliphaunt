@@ -88,9 +88,9 @@ jobs:
           ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
 
-      - name: Set up Node
+      - name: Set up Node and Bun
         id: setup_android_e2e_node
-        uses: ./.github/actions/setup-node-runtime
+        uses: ./.github/actions/setup-node-bun
 
       - name: Reclaim Android emulator disk
         id: reclaim_android_emulator_disk

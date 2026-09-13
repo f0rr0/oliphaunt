@@ -3192,9 +3192,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Node
+      - name: Set up Node and Bun
         id: setup_android_e2e_node
-        uses: ./.github/actions/setup-node-runtime
+        uses: ./.github/actions/setup-node-bun
 
       - name: Reclaim Android emulator disk
         id: reclaim_android_emulator_disk
@@ -3412,8 +3412,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Node.js
-        uses: ./.github/actions/setup-node-runtime
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
 
       - name: Download same-run affected plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
