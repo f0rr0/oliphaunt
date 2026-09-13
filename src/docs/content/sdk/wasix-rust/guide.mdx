@@ -178,25 +178,24 @@ another backend.
 
 ### Select extensions
 
-Enable only the exact Cargo features the application uses, then select the
-matching typed extension value on the builder. Selection makes the artifact
-and required pre-start settings available; it does not run `CREATE EXTENSION`,
-`LOAD`, or migration SQL. Optional extension payloads are not part of the core
-runtime. The matching associated constant exists only when that leaf feature is
-enabled. `Extension::ALL` and `Extension::by_sql_name` enumerate only the
-enabled set, so an unavailable artifact cannot be selected and fail later at
-runtime.
+Contrib ships with the base SDK. Install external packages independently and
+select descriptors for both. Selection makes resources available; migrations
+still own `CREATE EXTENSION` and `LOAD`.
 
 ```toml
 [dependencies]
-oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
+oliphaunt-wasix = "0.2"
+oliphaunt-extension-vector-wasix = "0.2"
 ```
 
 ```rust
-use oliphaunt_wasix::{Extension, Oliphaunt};
+use oliphaunt_wasix::{extensions, Oliphaunt};
+use oliphaunt_extension_vector_wasix::VECTOR;
 
-let mut database = Oliphaunt::builder().extension(Extension::PGTAP).open()?;
-database.execute("CREATE EXTENSION pgtap")?;
+let mut database = Oliphaunt::builder()
+    .extensions([VECTOR, extensions::HSTORE])
+    .open()?;
+database.execute("CREATE EXTENSION vector; CREATE EXTENSION hstore")?;
 ```
 
 </Step>
@@ -277,7 +276,7 @@ An independent pump/recovery failure is
 ## Troubleshooting
 
 Check whether the selected managed root is new or complete, the packaged
-cluster seed and exact runtime/AOT asset pair, enabled extension features,
+cluster seed and exact runtime/AOT asset pair, selected extension packages,
 directory ownership, and SQLSTATE-bearing
 PostgreSQL errors. Browser, Node, Bun, Deno, and Electron actor/direct/Worker behavior, the
 explicit `/worker` entry point, IndexedDB, and recovery behavior are documented

@@ -1,8 +1,8 @@
-//! Cargo build-script integration for Oliphaunt applications.
+//! Cargo build-script integration for Oliphaunt SDKs and custom bundles.
 //!
-//! `configure()` is intended to be called from an application `build.rs`.
-//! Cargo resolves target-specific artifact crates; this crate stages the
-//! already-resolved files into `OUT_DIR`.
+//! SDK and resource crates call `embed_resolved_artifacts()` internally; ordinary
+//! applications need no build script. Custom bundles can call `configure()` to
+//! stage Cargo-resolved artifacts into `OUT_DIR`.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -38,6 +38,110 @@ pub fn configure() {
 /// Run Oliphaunt build-script configuration from Cargo-provided environment.
 pub fn try_configure() -> Result<BuildOutput> {
     BuildContext::from_env()?.configure()
+}
+
+/// Embed the artifact dependencies resolved for this crate, without application metadata.
+/// The generated slice contains (resource path, bytes, SHA-256, executable) tuples.
+pub fn embed_resolved_artifacts() -> Result<PathBuf> {
+    let mut context = BuildContext::from_env()?;
+    context.artifact_manifest_paths = env::vars_os()
+        .filter_map(|(key, value)| {
+            let key = key.to_str()?;
+            let artifact =
+                key.starts_with(ARTIFACT_ENV_PREFIX) && key.ends_with(ARTIFACT_ENV_SUFFIX);
+            let sdk_relay = key.starts_with("DEP_OLIPHAUNT_ARTIFACT_RELAY_")
+                && !key.starts_with("DEP_OLIPHAUNT_ARTIFACT_RELAY_EXTENSION_");
+            (artifact && !sdk_relay && !value.is_empty()).then(|| PathBuf::from(value))
+        })
+        .collect();
+    let artifacts = context.read_artifact_manifests()?;
+    for artifact in &artifacts {
+        if artifact.target != context.target && artifact.target != "portable" {
+            return Err(Error::new(format!(
+                "{} targets {}, but Cargo is building {}",
+                artifact.label(),
+                artifact.target,
+                context.target
+            )));
+        }
+    }
+    let versions = artifacts
+        .iter()
+        .filter_map(|artifact| {
+            if artifact.kind == ArtifactKind::NativeRuntime {
+                Some(artifact.version.as_str())
+            } else if artifact.runtime_product.as_deref() == Some("liboliphaunt-native") {
+                artifact.runtime_version.as_deref()
+            } else {
+                None
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    if versions.len() > 1 {
+        return Err(Error::new(
+            "resolved artifacts require conflicting native runtime versions",
+        ));
+    }
+    let manifest_path = context.manifest_dir.join("Cargo.toml");
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(&manifest_path)
+            .map_err(|error| Error::io("read package manifest", &manifest_path, error))?,
+    )
+    .map_err(|error| Error::parse(&manifest_path, error))?;
+    let fallback = manifest
+        .get("package")
+        .and_then(|package| package.get("metadata"))
+        .and_then(|metadata| metadata.get("oliphaunt"))
+        .and_then(|metadata| metadata.get("native-version"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or("unavailable");
+    println!(
+        "cargo::rustc-env=OLIPHAUNT_NATIVE_RUNTIME_VERSION={}",
+        versions.first().copied().unwrap_or(fallback)
+    );
+    let resources = context.out_dir.join("embedded-resources");
+    let staged = stage_artifacts(&artifacts, &resources)?;
+    let mut files = BTreeMap::new();
+    for artifact in staged {
+        for file in artifact.files {
+            files.insert(file.path.clone(), file);
+        }
+    }
+    let mut source = String::from("&[\n");
+    for artifact in &artifacts {
+        for directory in &artifact.directories {
+            let relative = format!(
+                "{}/{}/{}/",
+                artifact.kind.as_str(),
+                artifact.product,
+                directory
+            );
+            source.push_str(&format!(
+                "({relative:?}, b\"\", {:?}, false),\n",
+                sha256_hex(b"")
+            ));
+        }
+    }
+    for (relative, file) in files {
+        let path = resources.join(&relative);
+        source.push_str(&format!(
+            "({relative:?}, include_bytes!({:?}), {:?}, {}),\n",
+            path, file.sha256, file.executable
+        ));
+    }
+    source.push_str("]\n");
+    let output = context.out_dir.join("embedded_resources.rs");
+    fs::write(&output, source)
+        .map_err(|error| Error::io("write embedded resource index", &output, error))?;
+    for manifest in &context.artifact_manifest_paths {
+        println!("cargo::rerun-if-changed={}", manifest.display());
+    }
+    for artifact in artifacts {
+        for file in artifact.files {
+            println!("cargo::rerun-if-changed={}", file.source.display());
+        }
+    }
+    Ok(output)
 }
 
 /// Successful build-script output.
@@ -532,6 +636,12 @@ fn stage_artifacts(
         let artifact_dir = resources_dir
             .join(artifact.kind.as_str())
             .join(&artifact.product);
+        for directory in &artifact.directories {
+            let relative = checked_relative_path(directory)?;
+            let dest = artifact_dir.join(relative);
+            fs::create_dir_all(&dest)
+                .map_err(|source| Error::io("create artifact directory", &dest, source))?;
+        }
         let mut locked_files = Vec::new();
         for file in &artifact.files {
             let relative = checked_relative_path(&file.relative)?;
@@ -589,6 +699,7 @@ fn stage_artifacts(
             runtime_product: artifact.runtime_product.clone(),
             runtime_version: artifact.runtime_version.clone(),
             files: locked_files,
+            directories: artifact.directories.clone(),
         });
     }
     Ok(staged)
@@ -818,6 +929,8 @@ struct ArtifactManifestDocument {
     #[serde(default)]
     files: Vec<ArtifactFile>,
     #[serde(default)]
+    directories: Vec<String>,
+    #[serde(default)]
     extensions: Vec<ArtifactBundleMember>,
 }
 
@@ -858,6 +971,7 @@ impl ArtifactManifestDocument {
                 extension: self.extension,
                 dependencies: self.dependencies,
                 files: self.files,
+                directories: self.directories,
                 bundle_member: false,
                 source_manifest: None,
             }]);
@@ -872,6 +986,7 @@ impl ArtifactManifestDocument {
             || self.extension.is_some()
             || !self.dependencies.is_empty()
             || !self.files.is_empty()
+            || !self.directories.is_empty()
             || self.extensions.len() < 2
         {
             return Err(Error::new(format!(
@@ -899,6 +1014,7 @@ impl ArtifactManifestDocument {
                 extension: Some(member.extension),
                 dependencies: member.dependencies,
                 files: member.files,
+                directories: Vec::new(),
                 bundle_member: true,
                 source_manifest: None,
             });
@@ -928,6 +1044,7 @@ struct ArtifactManifest {
     extension: Option<String>,
     dependencies: Vec<String>,
     files: Vec<ArtifactFile>,
+    directories: Vec<String>,
     bundle_member: bool,
     source_manifest: Option<PathBuf>,
 }
@@ -1061,9 +1178,6 @@ impl ArtifactManifest {
                         "cluster-seed/manifest.properties",
                         "cluster-seed/files/PG_VERSION",
                         "cluster-seed/files/global/pg_control",
-                        "cluster-seed-icu/manifest.properties",
-                        "cluster-seed-icu/files/PG_VERSION",
-                        "cluster-seed-icu/files/global/pg_control",
                     ],
                 )?;
                 self.reject_files(
@@ -1089,8 +1203,6 @@ impl ArtifactManifest {
                         "bin/initdb.wasix.wasm",
                         "cluster-seeds/standard.tar.zst",
                         "cluster-seeds/standard.json",
-                        "cluster-seeds/icu.tar.zst",
-                        "cluster-seeds/icu.json",
                     ],
                 )?;
                 self.reject_files(
@@ -1277,6 +1389,8 @@ struct LockedArtifact {
     #[serde(skip_serializing_if = "Option::is_none")]
     runtime_version: Option<String>,
     files: Vec<LockedFile>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    directories: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

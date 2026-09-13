@@ -95,6 +95,10 @@ kover {
             includes {
                 classes(
                     "dev.oliphaunt.GeneratedExtensionsKt",
+                    "dev.oliphaunt.ExtensionDescriptor",
+                    "dev.oliphaunt.Extensions",
+                    "dev.oliphaunt.IcuData",
+                    "dev.oliphaunt.ResourcesKt",
                     "dev.oliphaunt.Oliphaunt*",
                     "dev.oliphaunt.Query*",
                 )
@@ -917,6 +921,7 @@ android {
 
     defaultConfig {
         minSdk = 24
+        consumerProguardFiles("consumer-rules.pro")
         if (androidAbiFilters.isNotEmpty()) {
             ndk {
                 abiFilters.addAll(androidAbiFilters)

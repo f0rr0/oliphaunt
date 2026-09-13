@@ -140,6 +140,10 @@ env \
   OLIPHAUNT_ICU_DATA_DIR="$work_root/icu/share/icu" \
   node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --cluster-seeds
 
+tools/dev/bun.sh tools/release/native-icu-seeds.mjs \
+  "$stage" "$work_root/icu/share/icu" "$target_id" \
+  "$out_dir/liboliphaunt-${version}-icu-seed-${target_id}.tar.gz"
+
 src/shared/artifact-packaging/archive-directory.mjs "$stage" "$out_dir/$asset"
 src/shared/artifact-packaging/archive-directory.mjs "$tools_stage" "$out_dir/$tools_asset"
 tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$out_dir/$asset" --profile native-runtime

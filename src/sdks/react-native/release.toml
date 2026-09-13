@@ -19,3 +19,8 @@ parser = "json:oliphaunt.swiftSdkVersion"
 source_product = "oliphaunt-kotlin"
 path = "src/sdks/react-native/package.json"
 parser = "json:oliphaunt.kotlinSdkVersion"
+
+[compatibility_versions.oliphaunt-react-native-liboliphaunt]
+source_product = "liboliphaunt-native"
+path = "src/sdks/react-native/package.json"
+parser = "json:oliphaunt.liboliphauntVersion"

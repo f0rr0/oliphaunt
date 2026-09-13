@@ -1,13 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  defineWasixExtension,
-  serializeWasixExtensionDescriptors,
-} from '../extension-descriptor.js';
+import { serializeWasixExtensionDescriptors } from '../extension-descriptor.js';
 import type {
   WasixExtensionCarrier,
   WasixExtensionDescriptor,
-  WasixExtensionDescriptorInput,
   WasixExtensionInstall,
 } from '../types.js';
 
@@ -94,50 +90,62 @@ describe('WASIX extension descriptors', () => {
     ).toThrow('fields must be exactly');
 
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [carrier('other')],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [carrier('other')],
+        },
+      ]),
     ).toThrow("do not contain root SQL name 'pgtap'");
 
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [carrier('pgtap'), carrier('pgtap')],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [carrier('pgtap'), carrier('pgtap')],
+        },
+      ]),
     ).toThrow("repeats carrier SQL name 'pgtap'");
 
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [
-          carrier('pgtap', {
-            size: 101,
-            source: Uint8Array.from({ length: 100 }),
-          }),
-        ],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [
+            carrier('pgtap', {
+              size: 101,
+              source: Uint8Array.from({ length: 100 }),
+            }),
+          ],
+        },
+      ]),
     ).toThrow('byte length must match declared carrier size 101');
 
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [carrier('pgtap', { archive: 'extensions/renamed.tar.zst' })],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [carrier('pgtap', { archive: 'extensions/renamed.tar.zst' })],
+        },
+      ]),
     ).toThrow('archive must be extensions/pgtap.tar.zst');
 
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        compatibility: { ...compatibility(), postgresMajor: 'not-a-major' },
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          compatibility: { ...compatibility(), postgresMajor: 'not-a-major' },
+        },
+      ]),
     ).toThrow('PostgreSQL major must be a positive integer string');
 
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [carrier('pgtap'), carrier('unused')],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [carrier('pgtap'), carrier('unused')],
+        },
+      ]),
     ).toThrow("exact dependency closure for 'pgtap'; unexpected unused");
 
     const missingCreateSchema = install('pgtap') as unknown as {
@@ -145,23 +153,27 @@ describe('WASIX extension descriptors', () => {
     };
     delete missingCreateSchema.lifecycle.createSchema;
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [
-          carrier('pgtap', {
-            install: missingCreateSchema as unknown as WasixExtensionInstall,
-          }),
-        ],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [
+            carrier('pgtap', {
+              install: missingCreateSchema as unknown as WasixExtensionInstall,
+            }),
+          ],
+        },
+      ]),
     ).toThrow('lifecycle fields must be exactly');
 
     const duplicateStartupConfig = install('pgtap');
     duplicateStartupConfig.lifecycle.startupConfig = ['work_mem=4MB', 'work_mem=4MB'];
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [carrier('pgtap', { install: duplicateStartupConfig })],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [carrier('pgtap', { install: duplicateStartupConfig })],
+        },
+      ]),
     ).toThrow('startupConfig must not repeat values');
 
     const missingLoadOrderFile = {
@@ -169,21 +181,13 @@ describe('WASIX extension descriptors', () => {
       loadOrder: ['lib/postgresql/pgtap.so'],
     };
     expect(() =>
-      defineWasixExtension({
-        ...descriptorInput('pgtap'),
-        carriers: [carrier('pgtap', { install: missingLoadOrderFile })],
-      }),
+      serializeWasixExtensionDescriptors([
+        {
+          ...descriptorInput('pgtap'),
+          carriers: [carrier('pgtap', { install: missingLoadOrderFile })],
+        },
+      ]),
     ).toThrow('load-order path is absent from installedFiles');
-  });
-
-  it('freezes package-authored descriptors and their carrier rows', () => {
-    const descriptor = extension('pgtap');
-    expect(Object.isFrozen(descriptor)).toBe(true);
-    expect(Object.isFrozen(descriptor.carriers)).toBe(true);
-    expect(Object.isFrozen(descriptor.carriers[0])).toBe(true);
-    expect(Object.isFrozen(descriptor.compatibility)).toBe(true);
-    expect(Object.isFrozen(descriptor.carriers[0]?.install)).toBe(true);
-    expect(Object.isFrozen(descriptor.carriers[0]?.install.lifecycle.loadSql)).toBe(true);
   });
 });
 
@@ -230,7 +234,7 @@ function install(sqlName: string, dependencies: readonly string[] = []): WasixEx
   };
 }
 
-function compatibility(): WasixExtensionDescriptorInput['compatibility'] {
+function compatibility(): WasixExtensionDescriptor['compatibility'] {
   return {
     extensionRuntimeContract: 'oliphaunt-extension-runtime-contract-v1',
     postgresMajor: '18',
@@ -242,7 +246,7 @@ function compatibility(): WasixExtensionDescriptorInput['compatibility'] {
 function descriptorInput(
   sqlName: string,
   carriers: readonly WasixExtensionCarrier[] = [carrier(sqlName)],
-): WasixExtensionDescriptorInput {
+): WasixExtensionDescriptor {
   const root = carriers.find((candidate) => candidate.sqlName === sqlName) ?? carrier(sqlName);
   return {
     schema: 'oliphaunt-wasix-extension-v1',
@@ -259,5 +263,5 @@ function extension(
   sqlName: string,
   carriers: readonly WasixExtensionCarrier[] = [carrier(sqlName)],
 ): WasixExtensionDescriptor {
-  return defineWasixExtension(descriptorInput(sqlName, carriers));
+  return descriptorInput(sqlName, carriers);
 }

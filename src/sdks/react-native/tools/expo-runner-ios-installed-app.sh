@@ -569,8 +569,8 @@ ios_runner_url() {
   fi
   if [ -n "$storage_arg" ]; then
     case "$storage_arg" in
-      app-data:*)
-        url="$url&liboliphauntApplicationData=$(urlencode "${storage_arg#app-data:}")"
+      app-directory:*)
+        url="$url&liboliphauntDirectoryName=$(urlencode "${storage_arg#app-directory:}")"
         ;;
       *)
         url="$url&liboliphauntStorageDirectory=$(urlencode "$storage_arg")"
@@ -618,7 +618,7 @@ exercise_ios_crash_recovery() {
 
   if [ -z "$crash_storage_override" ]; then
     case "$crash_storage" in
-      app-data:*)
+      app-directory:*)
         ;;
       /*)
         rm -rf "$crash_storage"
@@ -746,7 +746,7 @@ exercise_ios_device_crash_recovery() {
 
   if [ -z "$crash_storage_override" ]; then
     case "$crash_storage" in
-      app-data:*)
+      app-directory:*)
         ;;
       /*)
         rm -rf "$crash_storage"
@@ -827,7 +827,7 @@ install_and_launch() {
 
     if [ "$runner" = "crash" ]; then
       local crash_storage="$crash_storage_override"
-      [ -n "$crash_storage" ] || crash_storage="app-data:oliphaunt-crash-recovery-$crash_storage_suffix"
+      [ -n "$crash_storage" ] || crash_storage="app-directory:oliphaunt-crash-recovery-$crash_storage_suffix"
       exercise_ios_device_crash_recovery "$device_id" "$crash_storage"
       return
     fi

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import fs from "node:fs/promises";
+import { stageNativeIcuArchive } from "./native-icu-seeds.mjs";
 import path from "node:path";
 
 import { currentVersion } from "./product-version.mjs";
@@ -221,7 +222,12 @@ async function runtimeRows(assetRoot) {
     if (artifact === undefined) {
       fail(`liboliphaunt-native Maven artifact ${coordinate} has no release asset mapping`);
     }
-    const file = await requireFile(path.join(assetRoot, artifact.filename), artifactId);
+    let file = await requireFile(path.join(assetRoot, artifact.filename), artifactId);
+    if (artifactId === "oliphaunt-icu") {
+      file = path.join(ROOT, "target/release/maven-descriptor-sources", `oliphaunt-icu-${version}.tar.gz`);
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await stageNativeIcuArchive(assetRoot, version, file, ["android-datum64"]);
+    }
     assertMavenPayloadLegal(file, artifact.licenseProfile);
     rows.push(
       tsvRow({
@@ -261,6 +267,29 @@ async function extensionRows(extensionRoot, selectedProducts) {
     const currentRuntimeVersion = await currentVersion(runtimeProduct);
     if (runtimeVersion !== currentRuntimeVersion) {
       fail(`${product} native runtime compatibility ${runtimeVersion} does not match ${runtimeProduct}@${currentRuntimeVersion}`);
+    }
+    if (product !== "oliphaunt-extension-contrib-pg18") {
+      const id = product.slice("oliphaunt-extension-".length);
+      const className = id.split("-").map((word) => word[0].toUpperCase() + word.slice(1)).join("");
+      const packageName = `dev.oliphaunt.extensions.${id.replaceAll("-", "")}`;
+      const file = path.join(ROOT, "target/release/maven-descriptor-sources", product, `${className}.java`);
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, `package ${packageName};
+
+/** Native extension resources supplied by ${product}. */
+public final class ${className} {
+    private ${className}() {}
+    public static final dev.oliphaunt.ExtensionDescriptor descriptor =
+        new dev.oliphaunt.ExtensionDescriptor(${JSON.stringify(sqlNames[0])}, ${JSON.stringify(product)}, ${JSON.stringify(version)});
+}
+`);
+      rows.push(tsvRow({
+        groupId: "dev.oliphaunt.extensions", artifactId: product, version, file,
+        name: `Oliphaunt ${sqlNames[0]} extension`, description: "Versioned extension descriptor for Kotlin and Java Android applications.",
+        runtimeProduct, runtimeVersion,
+        licenseSpdx: releaseProfilePackageLicense("code-facade").spdx,
+        licenses: releaseProfileMavenLicenses("code-facade", { product, version }),
+      }));
     }
     const productRoot = path.join(
       extensionArtifactProductRoot(product, "native", extensionRoot, PREFIX),

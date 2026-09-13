@@ -24,9 +24,9 @@ function catalogForArtifactProducts(products) {
 test("the live publication catalog includes PostGIS and the WASIX Node-API carriers", () => {
   const catalog = loadPublicationCatalog("publication-catalog.test");
   expect(catalog.products).toHaveLength(20);
-  expect(catalog.carriers).toHaveLength(203);
+  expect(catalog.carriers).toHaveLength(240);
   expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
-  expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(18);
+  expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(23);
   expect(catalog.products.some(({ id }) => id === "oliphaunt-wasix-napi")).toBe(true);
   expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-wasix-napi")).toHaveLength(4);
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { cp, lstat, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, lstat, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -123,7 +123,27 @@ export async function copyNativeClusterSeed(
   await cp(join(clusterSeedDirectory, 'files'), stagingPgdata, {
     errorOnExist: true,
     recursive: true,
+    async filter(source) {
+      const metadata = await lstat(source);
+      if (!metadata.isFile() && !metadata.isDirectory()) {
+        throw new Error(`cluster seed member must be a regular file or directory: ${source}`);
+      }
+      return true;
+    },
   });
+  if (platform() !== 'win32') await chmod(stagingPgdata, 0o700);
+  const directories = await readFile(join(clusterSeedDirectory, 'directories-v1.txt'), 'utf8');
+  if (!directories.endsWith('\n')) throw new Error('invalid seed directory inventory');
+  for (const relative of directories.split(/\r?\n/u).slice(0, -1)) {
+    if (
+      relative
+        .split('/')
+        .some((part) => !/^[A-Za-z0-9_.-]+$/u.test(part) || part === '.' || part === '..')
+    ) {
+      throw new Error(`unsafe seed directory path: ${JSON.stringify(relative)}`);
+    }
+    await mkdir(join(stagingPgdata, relative), { recursive: true });
+  }
   await normalizeNativeClusterSeedForHost(stagingPgdata);
 }
 

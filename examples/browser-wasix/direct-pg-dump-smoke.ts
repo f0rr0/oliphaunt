@@ -1,4 +1,4 @@
-import type { OliphauntDatabase } from '@oliphaunt/wasix-ts';
+import type { OliphauntDatabase } from '@oliphaunt/wasix-ts/browser';
 import { pgDump } from '@oliphaunt/wasix-tools';
 
 export async function expectDirectPgDump(database: OliphauntDatabase): Promise<void> {

@@ -1,3 +1,4 @@
+import { cargoDatabaseSmokeSource } from "./public-consumer-smoke.mjs";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
@@ -14,6 +15,7 @@ import {
   extensionRegistryPackageTargetSets,
 } from "./release-artifact-targets.mjs";
 import { loadGraph } from "./release-graph.mjs";
+import { stageRustPackageSource } from "../../src/sdks/rust/tools/package-source.mjs";
 import {
   nativeExtensionCargoPackageName,
 } from "./extension-registry-packages.mjs";
@@ -96,14 +98,14 @@ function findFile(root, basename) {
 }
 
 describe("exact extension Cargo facade", () => {
-  test("fails closed for unsupported default-native targets while WASIX opt-out compiles", () => {
+  test("fails closed for unsupported native targets without a feature escape hatch", () => {
     const output = mkdtempSync(path.join(import.meta.dir, "../../target/extension-facade-test-"));
     directories.push(output);
     const [pkg] = packageExtensionCargoFacades(["oliphaunt-extension-pgtap"], output);
     const source = path.join(output, "sources/oliphaunt-extension-pgtap/src/lib.rs");
     const text = readFileSync(source, "utf8");
     expect(text).toContain("compile_error!");
-    expect(text).toContain('feature = "native"');
+    expect(text).not.toContain('feature = "native"');
     expect(text).toContain('target_env = "gnu"');
     expect(text).toContain('target_env = "msvc"');
 
@@ -120,7 +122,7 @@ pub const FIXTURE: bool = true;
       forcedUnsupportedSource,
     ], { encoding: "utf8" });
     expect(unsupported.status).not.toBe(0);
-    expect(unsupported.stderr).toContain("default native feature supports only");
+    expect(unsupported.stderr).toContain("supports only");
 
     const wasixOnly = spawnSync("rustc", [
       "--crate-name", "oliphaunt_extension_pgtap",
@@ -131,11 +133,10 @@ pub const FIXTURE: bool = true;
       "-o", path.join(output, "wasix-only.rmeta"),
       forcedUnsupportedSource,
     ], { encoding: "utf8" });
-    expect(wasixOnly.status).toBe(0);
+    expect(wasixOnly.status).not.toBe(0);
 
     const manifest = Bun.TOML.parse(readFileSync(pkg.manifestPath, "utf8"));
-    expect(manifest.features.default).toEqual(["native"]);
-    expect(manifest.features.wasix).toEqual([`dep:oliphaunt-extension-pgtap-wasix`]);
+    expect(manifest.features).toBeUndefined();
     expect(pkg.cratePath.endsWith(".crate")).toBe(true);
   });
 
@@ -153,9 +154,8 @@ pub const FIXTURE: bool = true;
       "native",
       "package-extension-cargo-facades.test",
     ));
-    expect(manifest.features.default).toEqual(["native"]);
-    expect(manifest.features.wasix).toBeUndefined();
-    expect(Object.keys(manifest.dependencies ?? {})).toHaveLength(0);
+    expect(manifest.features).toBeUndefined();
+    expect(Object.keys(manifest.dependencies ?? {})).toEqual(["oliphaunt-resources"]);
   });
 
   test("real Cargo metadata relays exact bundle and external manifests into an app build", {
@@ -182,7 +182,11 @@ pub const FIXTURE: bool = true;
     const graph = loadGraph("package-extension-cargo-facades.test");
     const nativeRuntimeVersion = graph.products["liboliphaunt-native"].version;
     const products = ["oliphaunt-extension-contrib-pg18", "oliphaunt-extension-vector"];
-    const dependencyPaths = {};
+    const dependencyPaths = {
+      oliphaunt: path.join(import.meta.dir, "../../src/sdks/rust"),
+      "oliphaunt-resources": path.join(import.meta.dir, "../../src/sdks/rust/crates/oliphaunt-resources"),
+      "oliphaunt-build": path.join(import.meta.dir, "../../src/sdks/rust/crates/oliphaunt-build"),
+    };
     for (const product of products) {
       const productVersion = extensionReleaseVersion(
         product,
@@ -228,14 +232,13 @@ pub const FIXTURE: bool = true;
     const genericCarrier = (name, product, version, kind, files) => fakeCarrier(leaves, {
       name,
       version,
-      header: `schema = "oliphaunt-artifact-manifest-v1"\nproduct = ${JSON.stringify(product)}\nversion = ${JSON.stringify(version)}\nkind = ${JSON.stringify(kind)}\ntarget = ${JSON.stringify(host)}`,
-      members: [{ files: files.map((relative) => ({ relative, contents: `${name}:${relative}` })) }],
+      header: `schema = "oliphaunt-artifact-manifest-v1"\nproduct = ${JSON.stringify(product)}\nversion = ${JSON.stringify(version)}\nkind = ${JSON.stringify(kind)}\ntarget = ${JSON.stringify(host)}${kind === "native-runtime" ? '\ndirectories = ["cluster-seed/files/pg_notify", "cluster-seed/files/pg_wal/archive_status"]' : ""}`,
+      members: [{ files: files.map((relative) => ({ relative, contents: relative.endsWith("/directories-v1.txt") ? "pg_notify\npg_wal/archive_status\n" : `${name}:${relative}` })) }],
     });
     const runtime = genericCarrier("fixture-native-runtime", "liboliphaunt-native", nativeRuntimeVersion, "native-runtime", [
       "runtime/bin/postgres", "runtime/bin/initdb", "runtime/bin/pg_ctl",
-      "cluster-seed/manifest.properties", "cluster-seed/files/PG_VERSION",
-      "cluster-seed/files/global/pg_control", "cluster-seed-icu/manifest.properties",
-      "cluster-seed-icu/files/PG_VERSION", "cluster-seed-icu/files/global/pg_control",
+      "cluster-seed/manifest.properties", "cluster-seed/directories-v1.txt", "cluster-seed/files/PG_VERSION",
+      "cluster-seed/files/global/pg_control",
     ]);
     const tools = genericCarrier("fixture-native-tools", "oliphaunt-tools", nativeRuntimeVersion, "native-tools", [
       "runtime/bin/pg_basebackup", "runtime/bin/pg_dump", "runtime/bin/psql",
@@ -279,10 +282,57 @@ oliphaunt-build = { path = ${JSON.stringify(path.join(import.meta.dir, "../../sr
     expect(cargo.status, `${cargo.stdout}\n${cargo.stderr}`).toBe(0);
     const lock = findFile(path.join(root, "cargo-target"), "oliphaunt-assets.lock");
     expect(lock).not.toBeNull();
+    for (const seed of ["cluster-seed"]) {
+      expect(statSync(path.join(path.dirname(lock), "resources/native-runtime/liboliphaunt-native", seed, "files/pg_notify")).isDirectory()).toBe(true);
+    }
     const text = readFileSync(lock, "utf8");
     expect(text).toContain('extension = "cube"');
     expect(text).toContain('extension = "pg_trgm"');
     expect(text).toContain('extension = "vector"');
     expect(text).not.toContain('extension = "hstore"');
+    // The ordinary API needs only dependencies and imported descriptors.
+    rmSync(path.join(app, "build.rs"));
+    const sdk = path.join(root, "sdk");
+    const sdkManifest = stageRustPackageSource(sdk);
+    let sdkText = readFileSync(sdkManifest, "utf8");
+    for (const name of ["oliphaunt-resources", "oliphaunt-build"]) {
+      sdkText = sdkText.replace(new RegExp(`^${name} = .+$`, "m"), `${name} = { path = ${JSON.stringify(dependencyPaths[name])} }`);
+    }
+    const hostTarget = Object.entries(targetTriples).find(([, triple]) => triple === host)[0];
+    const contribName = nativeExtensionCargoPackageName("oliphaunt-extension-contrib-pg18", hostTarget);
+    sdkText = sdkText.replace("[dependencies]", `[dependencies]
+fixture-native-runtime = { path = ${JSON.stringify(runtime)} }
+fixture-broker = { path = ${JSON.stringify(broker)} }
+${contribName} = { path = ${JSON.stringify(dependencyPaths[contribName])} }`);
+    writeFileSync(sdkManifest, sdkText);
+    writeFileSync(path.join(app, "Cargo.toml"), `[package]
+name = "facade-app"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+oliphaunt = { path = ${JSON.stringify(sdk)} }
+vector = { package = "oliphaunt-extension-vector", path = ${JSON.stringify(path.join(generated, "sources/oliphaunt-extension-vector"))} }
+[workspace]
+`);
+    writeFileSync(path.join(app, "src/lib.rs"), `pub fn configured() -> oliphaunt::OliphauntBuilder {
+      oliphaunt::Oliphaunt::builder().extensions([vector::VECTOR, oliphaunt::extensions::HSTORE])
+    }\n`);
+    writeFileSync(path.join(app, "src/main.rs"), cargoDatabaseSmokeSource().replace("use locked_entry::", "use oliphaunt::"));
+    const plain = spawnSync("cargo", ["check", "--offline", "--target-dir", path.join(root, "cargo-target")], {
+      cwd: app, encoding: "utf8", maxBuffer: 20 * 1024 * 1024,
+    });
+    expect(plain.status, `${plain.stdout}\n${plain.stderr}`).toBe(0);
+    const buildRoot = path.join(root, "cargo-target/debug/build");
+    const embedded = readdirSync(buildRoot)
+      .filter(name => /^oliphaunt-[0-9a-f]+$/u.test(name))
+      .map(name => findFile(path.join(buildRoot, name), "embedded_resources.rs"))
+      .filter(file => file !== null)
+      .map(file => readFileSync(file, "utf8"))
+      .find(source => source.includes("native-runtime/liboliphaunt-native/"));
+    expect(embedded).toContain("runtime/bin/postgres");
+    expect(embedded).toContain("cluster-seed/files/pg_notify/");
+    expect(embedded).toContain("extension/oliphaunt-extension-contrib-pg18/");
+    expect(embedded).not.toContain("native-tools/");
+    expect(embedded).not.toContain("extension/oliphaunt-extension-vector/");
   });
 });

@@ -12,6 +12,81 @@ import kotlin.test.assertTrue
 
 class OliphauntAndroidRuntimeAssetsTest {
     @Test
+    fun runtimeAndSeedManifestsRejectCrossProfileResources() {
+        for ((key, value) in listOf(
+            "artifactRole" to "cluster-seed-standard",
+            "catalogProfile" to "standard",
+            "clusterSeedTarget" to "other-target",
+            "icuDataTreeSha256" to "a".repeat(64),
+            "extensions" to "vector",
+        )) {
+            val manifest = manifestProperties().apply { setProperty(key, value) }
+            assertFailsWith<OliphauntException> {
+                OliphauntAndroidRuntimeAssets.parseManifestProperties("oliphaunt/runtime", manifest)
+            }
+        }
+        val icuRuntime = manifestProperties("runtimeFeatures" to "icu").apply { setProperty("icuDataTreeSha256", "bad") }
+        assertFailsWith<OliphauntException> {
+            OliphauntAndroidRuntimeAssets.parseManifestProperties("oliphaunt/runtime", icuRuntime)
+        }
+        for (profile in listOf("standard", "icu")) {
+            val base = OliphauntAndroidRuntimeAssets.parseManifestText(
+                retargetNativeClusterSeedFixture("native-$profile.valid.properties", "android-datum64"),
+                "fixture",
+            )
+            for ((key, value) in listOf(
+                "postgresMajor" to "17",
+                "runtimeFeatures" to if (profile == "icu") "" else "icu",
+                "icuDataVersion" to "99.0",
+                "icuDataForm" to "wrong",
+                "icuDataTreeSha256" to "invalid",
+            )) {
+                val manifest = Properties().apply {
+                    putAll(base)
+                    setProperty(key, value)
+                }
+                assertFailsWith<OliphauntException> {
+                    OliphauntAndroidRuntimeAssets.parseManifestProperties(
+                        if (profile == "icu") "oliphaunt/cluster-seed-icu" else "oliphaunt/cluster-seed",
+                        manifest,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun resourceReceiptChecksSelectedProductVersionAndIcu() {
+        val vector = ExtensionDescriptor("vector", "oliphaunt-extension-vector", "0.8.2")
+        val selected = listOf(vector, Extensions.PG_TRGM, vector)
+        val icu = IcuData("0.2.0")
+        val receipt = Properties().apply {
+            setProperty("schema", "oliphaunt-sdk-resources-v1")
+            setProperty("extension.vector.product", vector.product)
+            setProperty("extension.vector.version", "0.8.2")
+            setProperty("extension.pg_trgm.product", Extensions.PG_TRGM.product)
+            setProperty("extension.pg_trgm.version", "0.2.0")
+            setProperty("icuVersion", "0.2.0")
+        }
+        OliphauntAndroidRuntimeAssets.validateSelectedResourceReceipt(receipt, selected, icu)
+        OliphauntAndroidRuntimeAssets.validateSelectedResourceReceipt(receipt, emptyList(), null)
+        for ((key, value) in listOf(
+            "schema" to "unknown",
+            "extension.vector.product" to "oliphaunt-extension-pgtap",
+            "extension.vector.version" to "0.8.3",
+            "icuVersion" to "0.3.0",
+        )) {
+            val invalid = Properties().apply {
+                putAll(receipt)
+                setProperty(key, value)
+            }
+            assertFailsWith<OliphauntException> {
+                OliphauntAndroidRuntimeAssets.validateSelectedResourceReceipt(invalid, selected, icu)
+            }
+        }
+    }
+
+    @Test
     fun rejectsDuplicateManifestProperties() {
         val error =
             assertFailsWith<OliphauntException> {
@@ -295,7 +370,7 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
-    fun validatesExplicitRuntimeDirectoryAgainstReleaseShapedResources() {
+    fun explicitRuntimeDirectoryPreloadsOnlySelectedExtensions() {
         val resourceRoot = Files.createTempDirectory("liboliphaunt-explicit-runtime").toFile()
         try {
             val runtimeFiles =
@@ -311,7 +386,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     listOf("vector"),
                 )
 
-            assertEquals(setOf("pg_search"), sharedPreloadLibraries)
+            assertEquals(emptySet<String>(), sharedPreloadLibraries)
         } finally {
             resourceRoot.deleteRecursively()
         }
@@ -511,6 +586,10 @@ class OliphauntAndroidRuntimeAssetsTest {
             assertTrue(didPublish)
             assertFalse(staging.exists())
             validateCompleteAndroidPgdata(destination)
+            assertEquals(
+                java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"),
+                Files.getPosixFilePermissions(destination.toPath()),
+            )
         } finally {
             parent.deleteRecursively()
         }

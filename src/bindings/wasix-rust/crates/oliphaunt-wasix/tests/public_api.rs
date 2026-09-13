@@ -578,7 +578,7 @@ fn typed_and_fluent_database_api_is_public() {
     let _: fn(&AsyncOliphauntServer) = async_server_surface;
 }
 
-#[cfg(feature = "extension-vector")]
+#[cfg(feature = "extensions")]
 #[test]
 fn extensions_expose_only_the_selection_contract() {
     use oliphaunt_wasix::Extension;
@@ -592,9 +592,9 @@ fn extensions_expose_only_the_selection_contract() {
     assert!(Extension::ALL.contains(&extension));
 }
 
-#[cfg(feature = "extension-earthdistance")]
+#[cfg(feature = "extensions")]
 #[test]
-fn extension_features_expose_required_dependency_selectors() {
+fn extensions_expose_required_dependency_selectors() {
     use oliphaunt_wasix::Extension;
 
     assert_eq!(

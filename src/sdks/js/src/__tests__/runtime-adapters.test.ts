@@ -6,9 +6,9 @@ import { Readable } from 'node:stream';
 import { test } from 'vitest';
 
 import { normalizeOpenConfig } from '../config.js';
-import { MemoryDuplexStream } from '../runtime/byte-stream.js';
+import { MemoryDuplexStream } from './memory-duplex-stream.js';
 import { BrokerHandle, cancelBrokerStream, createBrokerRuntimeBinding } from '../runtime/broker.js';
-import { encodeBrokerResponse } from '../runtime/broker-frames.js';
+import { encodeBrokerResponse } from './broker-response.js';
 import { createForgottenRuntimeHandleCleanup } from '../runtime/forgotten-handle.js';
 import {
   cleanupFailedManagedLaunch,

@@ -3,63 +3,8 @@ import {
   POSTGRES_MAJOR as CARRIER_POSTGRES_MAJOR,
 } from '@oliphaunt/liboliphaunt-wasix';
 
-export const DATABASE_ROOT_DESCRIPTOR = '.oliphaunt.json';
-export const DATABASE_ROOT_SCHEMA = 'oliphaunt-database-root-v1';
-export const DATABASE_ROOT_PGDATA = 'pgdata';
 export const DATABASE_ROOT_POSTGRES_MAJOR = CARRIER_POSTGRES_MAJOR;
 export const WASIX_PHYSICAL_FORMAT = CARRIER_PHYSICAL_FORMAT;
-export const NATIVE_PHYSICAL_FORMAT = 'native-pg18-v1';
-
-export type DatabaseRootDescriptor = Readonly<{
-  schema: typeof DATABASE_ROOT_SCHEMA;
-  engineFamily: 'native' | 'wasix';
-  pgdata: typeof DATABASE_ROOT_PGDATA;
-  postgresMajor: number;
-  physicalFormat: string;
-}>;
-
-export function wasixDatabaseRootDescriptor(): DatabaseRootDescriptor {
-  return {
-    schema: DATABASE_ROOT_SCHEMA,
-    engineFamily: 'wasix',
-    pgdata: DATABASE_ROOT_PGDATA,
-    postgresMajor: DATABASE_ROOT_POSTGRES_MAJOR,
-    physicalFormat: WASIX_PHYSICAL_FORMAT,
-  };
-}
-
-export function parseDatabaseRootDescriptor(value: unknown): DatabaseRootDescriptor | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const descriptor = value as Record<string, unknown>;
-  const keys = Object.keys(descriptor).sort();
-  if (
-    keys.length !== 5 ||
-    keys[0] !== 'engineFamily' ||
-    keys[1] !== 'pgdata' ||
-    keys[2] !== 'physicalFormat' ||
-    keys[3] !== 'postgresMajor' ||
-    keys[4] !== 'schema'
-  ) {
-    return undefined;
-  }
-  if (
-    descriptor.schema !== DATABASE_ROOT_SCHEMA ||
-    (descriptor.engineFamily !== 'native' && descriptor.engineFamily !== 'wasix') ||
-    descriptor.pgdata !== DATABASE_ROOT_PGDATA ||
-    descriptor.postgresMajor !== DATABASE_ROOT_POSTGRES_MAJOR ||
-    (descriptor.engineFamily === 'native'
-      ? descriptor.physicalFormat !== NATIVE_PHYSICAL_FORMAT
-      : descriptor.physicalFormat !== WASIX_PHYSICAL_FORMAT)
-  ) {
-    return undefined;
-  }
-  return descriptor as DatabaseRootDescriptor;
-}
-
-/** Parse the root descriptor while rejecting duplicate JSON keys. */
-export function parseDatabaseRootDescriptorText(text: string): DatabaseRootDescriptor | undefined {
-  return parseDatabaseRootDescriptor(parseJsonWithUniqueObjectKeys(text));
-}
 
 /** Parse JSON while retaining the duplicate-key rejection lost by JSON.parse(). */
 export function parseJsonWithUniqueObjectKeys(text: string): unknown | undefined {

@@ -31,7 +31,8 @@ resources before JavaScript calls `Oliphaunt.open()`.
 Expo apps:
 
 ```sh
-npx expo install @oliphaunt/react-native
+npx expo install @oliphaunt/react-native expo-file-system
+npm install @oliphaunt/extension-vector
 npx expo prebuild
 npx expo run:ios
 npx expo run:android
@@ -43,14 +44,7 @@ artifacts are included in the app build.
 ```json
 {
   "expo": {
-    "plugins": [
-      [
-        "@oliphaunt/react-native",
-        {
-          "extensions": ["vector"]
-        }
-      ]
-    ]
+    "plugins": ["@oliphaunt/react-native"]
   }
 }
 ```
@@ -71,11 +65,13 @@ needs the handle.
 <!-- oliphaunt-snippet: oliphaunt-react-native -->
 
 ```ts
-import Oliphaunt from '@oliphaunt/react-native';
+import Oliphaunt, { directory, extensions } from '@oliphaunt/react-native';
+import vector from '@oliphaunt/extension-vector';
+import { Paths } from 'expo-file-system';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'main' },
-  extensions: ['vector'],
+  storage: directory(Paths.document.uri + 'main.oliphaunt'),
+  extensions: [vector, extensions.hstore],
 });
 
 const rows = await db.query('SELECT 1::text AS value');
@@ -136,16 +132,15 @@ PostgreSQL wire messages directly.
 ### Configure
 
 Configure storage, selected exact extensions, PostgreSQL startup GUCs, and
-startup identity through the JS API and config plugin. Build-time extension selection
-controls what ships in the app bundle; runtime storage controls where app data
-lives.
+startup identity through the JS API. Installed dependencies determine which
+resources ship in the app; the config plugin discovers them automatically.
 
 Keep build-time and runtime settings separate. The config plugin controls native
 artifacts in the installed app. `Oliphaunt.open()` controls storage, startup
 identity, GUCs, and extension activation for that app run. Omit `storage` for an
 SDK-owned temporary directory. Use
-`{ kind: 'applicationData', name: 'main' }` for normal persistent mobile data,
-or `{ kind: 'directory', path }` when the app already owns a platform path.
+`directory(Paths.document.uri + 'main.oliphaunt')` with Expo FileSystem for persistent mobile data,
+or `directory(path)` with another filesystem library.
 
 </Step>
 <Step>
@@ -183,8 +178,8 @@ Direct mobile mode can logically reopen inside one resident app process.
 
 ### Select extensions
 
-Select exact SQL extension names in configuration. The native app packages
-include only selected extensions plus declared dependencies. `CREATE EXTENSION`
+Install external packages as app dependencies. Base contrib ships with the SDK;
+select both external and contrib descriptors explicitly in database configuration. `CREATE EXTENSION`
 succeeds when the selected runtime resources contain that extension for the
 target platform.
 

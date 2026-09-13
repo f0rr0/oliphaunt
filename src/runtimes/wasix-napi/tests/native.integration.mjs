@@ -7,7 +7,7 @@ import { Worker } from 'node:worker_threads';
 
 const addonPath = process.argv[2];
 if (addonPath === undefined) {
-  throw new Error('usage: node native.integration.mjs /absolute/path/to/addon.node [--tools]');
+  throw new Error('usage: node native.integration.mjs /absolute/path/to/release-addon.node');
 }
 
 const addon = createRequire(import.meta.url)(addonPath);
@@ -19,6 +19,7 @@ const expectedExports = [
   'extensionIdentity',
   'nodeApiVersion',
   'payloadIdentity',
+  'registerTools',
   'restore',
   'restoreDirect',
   'runtimeVersion',
@@ -26,7 +27,7 @@ const expectedExports = [
   'toolIdentity',
 ];
 assert.deepEqual(Object.keys(addon).sort(), expectedExports);
-assert.equal(addon.addonAbiVersion(), 1);
+assert.equal(addon.addonAbiVersion(), 2);
 assert.equal(addon.nodeApiVersion(), 8);
 assert.deepEqual(addon.supportedProfiles(), ['standard', 'icu']);
 
@@ -38,6 +39,20 @@ const openOptions = (profile = 'standard', storage = { kind: 'memory' }) => ({
   startupGucs: {},
   extensions: [],
 });
+
+// Resource/configuration failures on async placements settle their Promise;
+// the direct placement deliberately reports them synchronously.
+let invalidOpen;
+assert.doesNotThrow(() => {
+  invalidOpen = addon.NativeWasixActorDatabase.open(openOptions('standard', { kind: 'directory' }));
+});
+await assert.rejects(invalidOpen, /requires a non-empty path/u);
+assert.throws(() => addon.NativeWasixDatabase.open(openOptions('standard', { kind: 'directory' })), /requires a non-empty path/u);
+let invalidServer;
+assert.doesNotThrow(() => {
+  invalidServer = addon.NativeWasixServer.open({ ...openOptions('standard', { kind: 'directory' }), listen: { transport: 'tcp' } });
+});
+await assert.rejects(invalidServer, /requires a non-empty path/u);
 
 const queryMessage = (sql) => {
   const text = Buffer.from(`${sql}\0`);
@@ -69,7 +84,6 @@ assertTransferable(directResponse);
 const directChunks = [];
 assert.equal(
   direct.execProtocolRawStream(queryMessage('select 4102'), (chunk) => {
-    assertResponse(chunk, 4102);
     directChunks.push(assertTransferable(chunk));
   }),
   'complete',
@@ -119,19 +133,15 @@ assert.equal(
 );
 assertResponse(await actor.execProtocolRaw(queryMessage('select 4204')), 4204);
 
-if (process.argv.includes('--tools')) {
-  const dump = await actor.pgDump([]);
-  assert.equal(dump.status, 0);
-  assert(dump.stdout.byteLength > 0);
-  assertTransferable(dump.stdout);
-  assertTransferable(dump.stderr);
+for (const name of ['pg_dump', 'psql']) {
+  assert.throws(() => addon.toolIdentity(name), /not installed|not embedded|missing|unavailable/iu);
 }
 
 await Promise.all([actor.close(), actor.close()]);
 assert.equal(actor.closed, true);
 await assert.rejects(actor.execProtocolRaw(queryMessage('select 1')), (error) => {
   assert.equal(error.oliphauntWasixError, 'lifecycle');
-  assert.equal(error.oliphauntWasixAddonAbi, 1);
+  assert.equal(error.oliphauntWasixAddonAbi, 2);
   return true;
 });
 
@@ -143,10 +153,16 @@ assert.match(server.connectionString, /^postgresql:\/\//u);
 await Promise.all([server.close(), server.close()]);
 assert.equal(server.closed, true);
 
-assert.match(addon.payloadIdentity('icuDataArchive'), /^[0-9a-f]{64}:\d+$/u);
-const icu = await addon.NativeWasixActorDatabase.open(openOptions('icu'));
-assertResponse(await icu.execProtocolRaw(queryMessage('select 4301')), 4301);
-await icu.close();
+for (const component of ['icuDataArchive', 'icuSeedArchive', 'icuSeedManifest']) {
+  assert.throws(() => addon.payloadIdentity(component), /unsupported WASIX payload component/u);
+}
+for (const sqlName of ['vector', 'pgtap']) {
+  assert.throws(() => addon.extensionIdentity(sqlName), /not embedded/u);
+}
+await assert.rejects(
+  addon.NativeWasixActorDatabase.open(openOptions('icu')),
+  /requires the optional ICU package/u,
+);
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'oliphaunt-wasix-napi-'));
 try {
@@ -163,7 +179,7 @@ try {
     (error) => {
       assert.equal(error.name, 'OliphauntWasixStorageError');
       assert.equal(error.oliphauntWasixError, 'storage');
-      assert.equal(error.oliphauntWasixAddonAbi, 1);
+      assert.equal(error.oliphauntWasixAddonAbi, 2);
       assert.equal(error.code, 'busy');
       assert.equal(error.commitState, 'unchanged');
       assert.equal(error.phase, 'ownership');

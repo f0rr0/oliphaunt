@@ -27,9 +27,42 @@ private enum OliphauntPackagedExtensionRegistry {
 }
 
 extension OliphauntRuntimeResources {
+    func validateSelectedResources(_ configuration: OliphauntConfiguration) throws {
+        let receiptURL = resourceRoot.appendingPathComponent("sdk-resources.properties")
+        let receipt = FileManager.default.fileExists(atPath: receiptURL.path)
+            ? try packagedExtensionProperties(at: receiptURL) : nil
+        if let receipt, receipt["schema"] != "oliphaunt-sdk-resources-v1" {
+            throw OliphauntError.engine("unsupported SDK resource receipt")
+        }
+        OliphauntPackagedExtensionRegistry.lock.lock()
+        let registered = OliphauntPackagedExtensionRegistry.resources
+        OliphauntPackagedExtensionRegistry.lock.unlock()
+        for descriptor in configuration.extensions {
+            if let receipt {
+                let prefix = "extension.\(descriptor.sqlName)"
+                guard receipt["\(prefix).product"] == descriptor.product,
+                      descriptor.version == nil || receipt["\(prefix).version"] == descriptor.version else {
+                    throw OliphauntError.engine("selected extension '\(descriptor.sqlName)' does not match packaged product/version")
+                }
+            } else if let version = descriptor.version {
+                guard let resource = registered[descriptor.sqlName], resource.product == descriptor.product, resource.version == version else {
+                    throw OliphauntError.engine("selected extension '\(descriptor.sqlName)' has no matching registered package")
+                }
+            }
+        }
+        if let icu = configuration.icu {
+            var icuReceipt = receipt
+            if let directory = icu.resourceDirectory {
+                icuReceipt = try packagedExtensionProperties(at: directory.appendingPathComponent("sdk-resources.properties"))
+            }
+            guard icuReceipt?["icuVersion"] == icu.version else {
+                throw OliphauntError.engine("selected ICU version does not match packaged resources")
+            }
+        }
+    }
+
     /// Registers a generated SwiftPM exact-extension resource fragment.
-    /// Applications normally call the generated `OliphauntExtension*.register()`
-    /// wrapper rather than invoking this packaging API directly.
+    /// The generated extension descriptor invokes registration when opening a database.
     @discardableResult
     @_spi(ExtensionSupport) public static func registerPackagedExtensionResource(
         product: String,
@@ -295,7 +328,7 @@ private func readPackagedExtensionResource(
     )
     let allowedRootEntries = Set(["files", "manifest.properties"])
     let actualRootEntries = Set(rootEntries.map(\.lastPathComponent))
-    guard actualRootEntries == allowedRootEntries else {
+    guard actualRootEntries.isSubset(of: allowedRootEntries), actualRootEntries.contains("manifest.properties") else {
         let unexpected = actualRootEntries.subtracting(allowedRootEntries).sorted()
         let missing = allowedRootEntries.subtracting(actualRootEntries).sorted()
         throw OliphauntError.engine(
@@ -351,7 +384,6 @@ private func readPackagedExtensionResource(
         expected: sharedPreloadLibraries.joined(separator: ","),
         source: manifestURL
     )
-    try requirePackagedExtensionProperty(manifest, key: "files", expected: "files", source: manifestURL)
     let createsExtension: Bool
     switch manifest["createsExtension"] {
     case "yes": createsExtension = true
@@ -362,8 +394,16 @@ private func readPackagedExtensionResource(
         )
     }
 
-    let filesRoot = standardizedRoot.appendingPathComponent("files", isDirectory: true)
-    let files = try packagedExtensionFiles(in: filesRoot)
+    let files: [OliphauntPackagedExtensionResource.File]
+    switch manifest["files"] {
+    case "files":
+        let filesRoot = standardizedRoot.appendingPathComponent("files", isDirectory: true)
+        files = try packagedExtensionFiles(in: filesRoot)
+    case "" where !createsExtension && !actualRootEntries.contains("files"):
+        files = []
+    default:
+        throw OliphauntError.engine("SwiftPM exact-extension resource \(sqlName) has an invalid files declaration")
+    }
     if createsExtension {
         let control = "share/postgresql/extension/\(sqlName).control"
         let installPrefix = "share/postgresql/extension/\(sqlName)--"
@@ -584,7 +624,7 @@ private func composedCacheKey(
     )
 }
 
-private func packagedExtensionFingerprint(_ values: [String]) -> String {
+func packagedExtensionFingerprint(_ values: [String]) -> String {
     var hash: UInt64 = 14_695_981_039_346_656_037
     for byte in values.joined(separator: "\u{1f}").utf8 {
         hash ^= UInt64(byte)

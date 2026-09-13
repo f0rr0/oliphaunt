@@ -6,6 +6,11 @@ plugins {
     alias(libs.plugins.maven.publish)
 }
 
+dependencies {
+    compileOnly(libs.android.gradle.api)
+    testImplementation(libs.android.gradle.api)
+}
+
 group = providers.gradleProperty("GROUP").orElse("dev.oliphaunt").get()
 version = providers.gradleProperty("VERSION_NAME").orElse("0.0.0").get()
 

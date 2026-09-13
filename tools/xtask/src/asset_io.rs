@@ -930,10 +930,6 @@ pub(super) fn ensure_aot_manifest_matches_source_lane(
     );
     match expected {
         "stable" => {
-            ensure_postgres_source_fingerprint_matches_current(
-                manifest.source_fingerprint.as_deref(),
-                "PG18 AOT manifest source-fingerprint",
-            )?;
             if let Some(postgres_version) = manifest.postgres_version.as_deref() {
                 ensure!(
                     postgres_version.starts_with("18."),

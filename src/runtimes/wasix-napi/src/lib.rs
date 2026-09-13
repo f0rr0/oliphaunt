@@ -2,7 +2,13 @@
 //!
 //! `NativeWasixActorDatabase` and `NativeWasixServer` reuse the Rust async
 //! owners directly. Promise settlement is the only owner-to-JavaScript hop;
-//! no Tokio runtime or Node async-work queue participates in database work.
+//! database operations stay on those owners. Optional tool package preparation
+//! uses Node async work; no additional Tokio runtime is created by this adapter.
+
+#[cfg(any(feature = "extensions", feature = "tools", test))]
+mod extension_package;
+mod icu_data;
+use icu_data::NativeIcuData;
 
 use std::collections::BTreeMap;
 use std::mem;
@@ -31,7 +37,7 @@ use oliphaunt_wasix::{
 };
 use sha2::{Digest, Sha256};
 
-const ADDON_ABI_VERSION: u32 = 1;
+const ADDON_ABI_VERSION: u32 = 2;
 const NODE_API_VERSION: u32 = 8;
 const RUNTIME_VERSION: &str = liboliphaunt_wasix_portable::PACKAGE_VERSION;
 
@@ -58,6 +64,15 @@ pub struct NativeStorageOptions {
 }
 
 #[napi(object)]
+pub struct NativeExtensionPackage {
+    pub sql_name: String,
+    pub product: String,
+    pub version: String,
+    pub package_json: String,
+    pub aot_package_json: Option<String>,
+}
+
+#[napi(object)]
 pub struct NativeOpenOptions {
     pub profile: String,
     pub storage: NativeStorageOptions,
@@ -66,6 +81,8 @@ pub struct NativeOpenOptions {
     #[napi(js_name = "startupGucs")]
     pub startup_gucs: BTreeMap<String, String>,
     pub extensions: Vec<String>,
+    pub extension_packages: Option<Vec<NativeExtensionPackage>>,
+    pub icu: Option<NativeIcuData>,
 }
 
 #[napi(object)]
@@ -84,6 +101,8 @@ pub struct NativeServerOpenOptions {
     #[napi(js_name = "startupGucs")]
     pub startup_gucs: BTreeMap<String, String>,
     pub extensions: Vec<String>,
+    pub extension_packages: Option<Vec<NativeExtensionPackage>>,
+    pub icu: Option<NativeIcuData>,
     pub listen: NativeListenOptions,
 }
 
@@ -482,16 +501,21 @@ impl ObjectFinalize for NativeWasixServer {}
 #[napi]
 impl NativeWasixServer {
     #[napi(catch_unwind, ts_return_type = "Promise<NativeWasixServer>")]
-    pub fn open(env: Env, options: NativeServerOpenOptions) -> Result<Object<'static>> {
-        let builder = configure_async_server(options)?;
+    pub fn open(env: Env, mut options: NativeServerOpenOptions) -> Result<Object<'static>> {
+        if let Some(icu) = &mut options.icu {
+            icu.snapshot();
+        }
         let (deferred, promise) = env.create_deferred()?;
-        builder.start_with_completion(move |result| {
-            deferred.resolve(move |env| {
-                result
-                    .map(|server| Self { server })
-                    .map_err(|error| native_runtime_error(&env, "open WASIX server", error))
-            });
-        });
+        AsyncOliphauntServerBuilder::start_with_completion(
+            move || configure_async_server(options).map_err(|error| error.reason),
+            move |result| {
+                deferred.resolve(move |env| {
+                    result
+                        .map(|server| Self { server })
+                        .map_err(|error| native_runtime_error(&env, "open WASIX server", error))
+                });
+            },
+        );
         Ok(static_object(&env, promise))
     }
 
@@ -569,7 +593,6 @@ pub fn supported_profiles() -> Vec<&'static str> {
 #[napi(js_name = "payloadIdentity", catch_unwind)]
 pub fn payload_identity(component: String) -> Result<String> {
     static STANDARD_SEED_MANIFEST: OnceLock<String> = OnceLock::new();
-    static ICU_SEED_MANIFEST: OnceLock<String> = OnceLock::new();
     let manifest = embedded_portable_manifest()?;
     match component.as_str() {
         "runtimeArchive" => embedded_identity(
@@ -589,29 +612,6 @@ pub fn payload_identity(component: String) -> Result<String> {
             "standard cluster seed manifest",
             liboliphaunt_wasix_portable::standard_cluster_seed_manifest(),
             &STANDARD_SEED_MANIFEST,
-        ),
-        "icuDataArchive" => embedded_identity(
-            "ICU data archive",
-            oliphaunt_icu::icu_data_archive(),
-            oliphaunt_icu::ICU_DATA_ARCHIVE_SHA256.ok_or_else(|| {
-                Error::new(
-                    Status::GenericFailure,
-                    "WASIX ICU data archive has no embedded SHA-256 identity".to_owned(),
-                )
-            })?,
-        ),
-        "icuSeedArchive" => {
-            let seed = embedded_seed(manifest, "icu")?;
-            embedded_identity(
-                "ICU cluster seed archive",
-                liboliphaunt_wasix_portable::icu_cluster_seed_archive(),
-                &seed.sha256,
-            )
-        }
-        "icuSeedManifest" => hashed_embedded_identity(
-            "ICU cluster seed manifest",
-            liboliphaunt_wasix_portable::icu_cluster_seed_manifest(),
-            &ICU_SEED_MANIFEST,
         ),
         _ => Err(invalid_argument(format!(
             "unsupported WASIX payload component {component:?}"
@@ -644,22 +644,22 @@ pub fn extension_identity(sql_name: String) -> Result<String> {
     }
 }
 
+/// Load optional tool resources without blocking the importing JavaScript thread.
+#[cfg(feature = "tools")]
+#[napi(js_name = "registerTools", catch_unwind)]
+pub fn register_tools(
+    selection: extension_package::NativeToolPackage,
+) -> napi::bindgen_prelude::AsyncTask<extension_package::RegisterTools> {
+    napi::bindgen_prelude::AsyncTask::new(extension_package::RegisterTools(Some(selection)))
+}
+
 #[napi(js_name = "toolIdentity", catch_unwind)]
 pub fn tool_identity(name: String) -> Result<String> {
     #[cfg(feature = "tools")]
     {
-        static PG_DUMP: OnceLock<String> = OnceLock::new();
-        static PSQL: OnceLock<String> = OnceLock::new();
-        let (bytes, identity) = match name.as_str() {
-            "pg_dump" => (oliphaunt_wasix_tools::pg_dump_wasm(), &PG_DUMP),
-            "psql" => (oliphaunt_wasix_tools::psql_wasm(), &PSQL),
-            _ => {
-                return Err(invalid_argument(format!(
-                    "unsupported WASIX tool {name:?}; expected \"pg_dump\" or \"psql\""
-                )));
-            }
-        };
-        hashed_embedded_identity(&format!("tool {name}"), bytes, identity)
+        oliphaunt_wasix::tools::installed_tool_identity(&name)
+            .map(|(hash, size)| format!("{hash}:{size}"))
+            .ok_or_else(|| invalid_argument(format!("WASIX tool {name:?} is not installed")))
     }
     #[cfg(not(feature = "tools"))]
     {
@@ -676,6 +676,8 @@ fn configure_direct_database(options: NativeOpenOptions) -> Result<OliphauntBuil
         database,
         startup_gucs,
         extensions,
+        extension_packages,
+        icu,
     } = options;
     let mut builder = Oliphaunt::builder()
         .storage(resolve_storage(storage)?)
@@ -683,7 +685,10 @@ fn configure_direct_database(options: NativeOpenOptions) -> Result<OliphauntBuil
         .username(username)
         .database(database)
         .startup_gucs(startup_gucs);
-    builder = apply_direct_extensions(builder, extensions)?;
+    if let Some(data) = icu_data::load(&profile, icu)? {
+        builder = builder.icu(data);
+    }
+    builder = apply_direct_extensions(builder, extensions, extension_packages.unwrap_or_default())?;
     Ok(builder)
 }
 
@@ -695,6 +700,8 @@ fn configure_actor_database(options: NativeOpenOptions) -> Result<AsyncOliphaunt
         database,
         startup_gucs,
         extensions,
+        extension_packages,
+        icu,
     } = options;
     let mut builder = AsyncOliphaunt::builder()
         .storage(resolve_storage(storage)?)
@@ -702,7 +709,10 @@ fn configure_actor_database(options: NativeOpenOptions) -> Result<AsyncOliphaunt
         .username(username)
         .database(database)
         .startup_gucs(startup_gucs);
-    builder = apply_async_extensions(builder, extensions)?;
+    if let Some(data) = icu_data::load(&profile, icu)? {
+        builder = builder.icu(data);
+    }
+    builder = apply_async_extensions(builder, extensions, extension_packages.unwrap_or_default())?;
     Ok(builder)
 }
 
@@ -714,6 +724,8 @@ fn configure_async_server(options: NativeServerOpenOptions) -> Result<AsyncOliph
         database,
         startup_gucs,
         extensions,
+        extension_packages,
+        icu,
         listen,
     } = options;
     let mut builder = AsyncOliphauntServer::builder()
@@ -723,7 +735,10 @@ fn configure_async_server(options: NativeServerOpenOptions) -> Result<AsyncOliph
         .database(database)
         .startup_gucs(startup_gucs)
         .listen(resolve_listen(listen)?);
-    builder = apply_server_extensions(builder, extensions)?;
+    if let Some(data) = icu_data::load(&profile, icu)? {
+        builder = builder.icu(data);
+    }
+    builder = apply_server_extensions(builder, extensions, extension_packages.unwrap_or_default())?;
     Ok(builder)
 }
 
@@ -805,15 +820,32 @@ fn resolve_port(port: u32) -> Result<u16> {
 }
 
 #[cfg(feature = "extensions")]
-fn resolve_extensions(names: Vec<String>) -> Result<Vec<Extension>> {
+fn resolve_extensions(
+    names: Vec<String>,
+    packages: Vec<NativeExtensionPackage>,
+) -> Result<Vec<Extension>> {
+    let mut selected = BTreeMap::new();
+    for package in packages {
+        if !names.contains(&package.sql_name) {
+            return Err(invalid_argument("unselected extension package supplied"));
+        }
+        let extension = extension_package::load(package)?;
+        if selected.insert(extension.sql_name(), extension).is_some() {
+            return Err(invalid_argument("duplicate external extension package"));
+        }
+    }
     names
         .into_iter()
         .map(|name| {
-            Extension::by_sql_name(&name).ok_or_else(|| {
-                invalid_argument(format!(
-                    "WASIX extension {name:?} is unknown or unavailable in this runtime"
-                ))
-            })
+            selected
+                .get(name.as_str())
+                .copied()
+                .or_else(|| Extension::by_sql_name(&name))
+                .ok_or_else(|| {
+                    invalid_argument(format!(
+                        "WASIX extension {name:?} is unknown or unavailable in this runtime"
+                    ))
+                })
         })
         .collect()
 }
@@ -821,14 +853,15 @@ fn resolve_extensions(names: Vec<String>) -> Result<Vec<Extension>> {
 fn apply_direct_extensions(
     builder: OliphauntBuilder,
     names: Vec<String>,
+    packages: Vec<NativeExtensionPackage>,
 ) -> Result<OliphauntBuilder> {
     #[cfg(feature = "extensions")]
     {
-        Ok(builder.extensions(resolve_extensions(names)?))
+        Ok(builder.extensions(resolve_extensions(names, packages)?))
     }
     #[cfg(not(feature = "extensions"))]
     {
-        if names.is_empty() {
+        if names.is_empty() && packages.is_empty() {
             Ok(builder)
         } else {
             Err(missing_release_feature("extensions", "open"))
@@ -839,14 +872,15 @@ fn apply_direct_extensions(
 fn apply_async_extensions(
     builder: AsyncOliphauntBuilder,
     names: Vec<String>,
+    packages: Vec<NativeExtensionPackage>,
 ) -> Result<AsyncOliphauntBuilder> {
     #[cfg(feature = "extensions")]
     {
-        Ok(builder.extensions(resolve_extensions(names)?))
+        Ok(builder.extensions(resolve_extensions(names, packages)?))
     }
     #[cfg(not(feature = "extensions"))]
     {
-        if names.is_empty() {
+        if names.is_empty() && packages.is_empty() {
             Ok(builder)
         } else {
             Err(missing_release_feature("extensions", "open"))
@@ -857,14 +891,15 @@ fn apply_async_extensions(
 fn apply_server_extensions(
     builder: AsyncOliphauntServerBuilder,
     names: Vec<String>,
+    packages: Vec<NativeExtensionPackage>,
 ) -> Result<AsyncOliphauntServerBuilder> {
     #[cfg(feature = "extensions")]
     {
-        Ok(builder.extensions(resolve_extensions(names)?))
+        Ok(builder.extensions(resolve_extensions(names, packages)?))
     }
     #[cfg(not(feature = "extensions"))]
     {
-        if names.is_empty() {
+        if names.is_empty() && packages.is_empty() {
             Ok(builder)
         } else {
             Err(missing_release_feature("extensions", "server open"))
@@ -1245,17 +1280,22 @@ impl ObjectFinalize for NativeWasixActorDatabase {}
 #[napi]
 impl NativeWasixActorDatabase {
     #[napi(catch_unwind, ts_return_type = "Promise<NativeWasixActorDatabase>")]
-    pub fn open(env: Env, options: NativeOpenOptions) -> Result<Object<'static>> {
-        let builder = configure_actor_database(options)?;
+    pub fn open(env: Env, mut options: NativeOpenOptions) -> Result<Object<'static>> {
+        if let Some(icu) = &mut options.icu {
+            icu.snapshot();
+        }
         let (deferred, promise) = env.create_deferred()?;
-        builder.open_with_completion(move |result| {
-            deferred.resolve(move |env| {
-                let database = result.map_err(|error| {
-                    native_runtime_error(&env, "open WASIX actor database", error)
-                })?;
-                Self::attach(&env, database)
-            });
-        });
+        AsyncOliphauntBuilder::open_with_completion(
+            move || configure_actor_database(options).map_err(|error| error.reason),
+            move |result| {
+                deferred.resolve(move |env| {
+                    let database = result.map_err(|error| {
+                        native_runtime_error(&env, "open WASIX actor database", error)
+                    })?;
+                    Self::attach(&env, database)
+                });
+            },
+        );
         Ok(static_object(&env, promise))
     }
 

@@ -1,9 +1,12 @@
 # oliphaunt-build
 
-`oliphaunt-build` is the Cargo build-script helper for Rust applications that
-bundle Oliphaunt runtime artifacts.
+`oliphaunt-build` stages Cargo-resolved Oliphaunt artifacts. The native SDK and
+resource packages call `embed_resolved_artifacts()` in their own builds, so
+ordinary applications need no build script, build dependency, or
+`package.metadata.oliphaunt` configuration. See the [Rust SDK setup](../../README.md).
 
-Applications add it as a build dependency and call it from `build.rs`:
+Custom bundles can instead use the explicit staging API from their own
+`build.rs`:
 
 ```rust
 fn main() {

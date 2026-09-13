@@ -9,7 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-public data class PostgresStartupGuc(
+internal data class PostgresStartupGuc(
     val name: String,
     val value: String,
 )
@@ -28,6 +28,8 @@ internal data class EngineConfig(
     val username: String? = null,
     val database: String? = null,
     val extensions: List<String> = emptyList(),
+    val extensionDescriptors: List<ExtensionDescriptor> = emptyList(),
+    val icu: IcuData? = null,
 )
 
 internal fun validateStartupIdentity(
@@ -1118,6 +1120,7 @@ public class OliphauntDatabase private constructor(
                 config.copy(
                     startupGucs = startupGucs,
                     extensions = validateGeneratedExtensionIds(extensions),
+                    extensionDescriptors = selectedExtensionDescriptors(config.extensionDescriptors),
                 )
             return OliphauntDatabase(engine.open(normalized))
         }

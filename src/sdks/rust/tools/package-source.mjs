@@ -28,7 +28,7 @@ export function stageRustPackageSource(outputDir) {
     recursive: true,
     filter: (source) => path.basename(source) !== "target",
   });
-  rmSync(path.join(destination, "crates/oliphaunt-build"), { recursive: true, force: true });
+  rmSync(path.join(destination, "crates"), { recursive: true, force: true });
   cpSync(path.join(ROOT, "src/shared/fixtures"), path.join(destination, "testdata"), {
     recursive: true,
     filter: (source) => path.basename(source) !== "moon.yml",
@@ -43,7 +43,9 @@ export function stageRustPackageSource(outputDir) {
   const manifest = path.join(destination, "Cargo.toml");
   let text = readFileSync(manifest, "utf8")
     .replace("repository.workspace = true", 'repository = "https://github.com/f0rr0/oliphaunt"')
-    .replace("homepage.workspace = true", 'homepage = "https://oliphaunt.dev"');
+    .replace("homepage.workspace = true", 'homepage = "https://oliphaunt.dev"')
+    .replace(', path = "crates/oliphaunt-build"', "")
+    .replace(', path = "crates/oliphaunt-resources"', "");
   if (!text.includes("[workspace]")) text = `${text.trimEnd()}\n\n[workspace]\n`;
   writeFileSync(manifest, text, "utf8");
   return manifest;

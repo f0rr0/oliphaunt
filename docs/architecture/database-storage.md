@@ -54,16 +54,14 @@ configuration schema.
 | TypeScript | omitted `storage` | `{ kind: 'directory', path }` |
 | Swift | `.temporaryDirectory` | `.directory(url)` |
 | Kotlin | `DatabaseStorage.TemporaryDirectory` | `DatabaseStorage.Directory(path)` |
-| React Native | omitted `storage` | `{ kind: 'directory', path }` or `{ kind: 'applicationData', name }` |
+| React Native | omitted `storage` | `directory(pathOrFileURI)` |
 | Rust WASIX | `DatabaseStorage::Memory` | `DatabaseStorage::Directory(path)` |
 | WASIX TypeScript | omitted `storage` | `indexedDB(name)` or `opfs(name)` in browsers; `directory(path)` on Node, Bun, Deno, and Electron |
 
-The React Native `applicationData` case is intentional. JavaScript has no
-portable API for constructing an iOS/Android app-sandbox path, so the native
-adapter resolves one portable name. Swift and Kotlin callers already have URL
-and File APIs and do not need a second path abstraction. Rust WASIX callers
-likewise resolve temporary or application-data paths with their preferred host
-crate and pass the result through `Directory(path)`.
+React Native callers obtain an app sandbox directory from their filesystem
+library, such as Expo's `Paths.document`, and pass its path or local file URI
+to `directory()`. Swift and Kotlin use their platform URL/File APIs. Rust
+callers can use their preferred host crate to locate application directories.
 
 WASIX TypeScript does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
@@ -165,10 +163,9 @@ build physically interchangeable. Native roots are shared among compatible
 native SDKs. Rust and WASIX TypeScript use the same root descriptor and WASIX
 physical-format value, but cross-binding root handoff is not a supported or
 qualified workflow. The managed-root descriptor is
-written once when the root is created. WASIX source fingerprints remain
-asset-graph coherence identities used to reject mixed runtime, cluster-seed,
-AOT, and extension build outputs; they
-are not a physical-reopen key or binding identity in the root. Both runtime
+written once when the root is created. Runtime/resource versions determine
+package compatibility, and artifact checksums detect corruption. Neither is
+a physical-reopen key or binding identity in the root. Both runtime
 families validate either exact descriptor shape. Opening another family's root
 is not a supported transfer path, so the SDKs add no cross-family rejection
 policy; the underlying PostgreSQL/runtime behavior is authoritative.
@@ -212,8 +209,8 @@ hide real semantics or add indirection to a hot path.
   memory filesystem.
 - IndexedDB and OPFS are TypeScript browser providers. Rust WASIX does not grow
   browser-shaped APIs that its ecosystem cannot use naturally.
-- React Native keeps `applicationData(name)` because JavaScript cannot resolve
-  mobile sandbox paths portably; native Swift and Kotlin callers use URL/File.
+- React Native accepts a path or local file URI from a mobile filesystem library;
+  Swift and Kotlin callers use their platform URL/File APIs.
 - Native direct storage and Rust WASIX host storage are direct filesystem I/O.
   WASIX TypeScript uses both direct OPFS I/O and asynchronous providers, so
   publication failure state is a real part of that SDK's error API.

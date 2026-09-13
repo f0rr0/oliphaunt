@@ -209,6 +209,17 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     unpackAndroidExtensionArchives(selectedExtensionFiles);
     refreshRuntimeCacheKey(resourceRoot);
     writeRuntimeResourceSizeReport(resourceRoot, selectedRuntimeArtifacts);
+    var selection = new java.util.TreeMap<String, String>();
+    selection.put("schema", "oliphaunt-sdk-resources-v1");
+    selection.put("runtimeVersion", releaseVersion);
+    selection.put("icuVersion", includeIcu ? releaseVersion : "");
+    for (String name : getSelectedExtensions().get()) {
+      var entry = OliphauntExtensionCatalog.require(name);
+      selection.put("extension." + name + ".product", entry.artifactProduct());
+      selection.put("extension." + name + ".version", getExtensionOwnerVersions().get().getOrDefault(entry.releaseProduct(), releaseVersion));
+    }
+    writeText(new File(resourceRoot, "sdk-resources.properties"),
+        selection.entrySet().stream().map(entry -> entry.getKey() + "=" + entry.getValue() + "\n").collect(java.util.stream.Collectors.joining()));
   }
 
   private List<String> effectiveAbis() {
@@ -2070,6 +2081,9 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     fileSystemOperations.delete(spec -> spec.delete(destination));
     copyTree(icuRoot.toPath(), destination.toPath());
     File icuClusterSeed = new File(root, "cluster-seed-icu");
+    File packagedSeed = new File(carrier, "native-seeds/" + ANDROID_CLUSTER_SEED_TARGET);
+    validateClusterSeed(packagedSeed, "icu", icuDigest);
+    copyTree(packagedSeed.toPath(), icuClusterSeed.toPath());
     File icuClusterSeedManifest = new File(icuClusterSeed, "manifest.properties");
     if (!new File(icuClusterSeed, "files/PG_VERSION").isFile()
         || !new File(icuClusterSeed, "files/global/pg_control").isFile()
@@ -2422,6 +2436,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
           "liboliphaunt Android runtime resources have inconsistent mobileStaticRegistrySource");
     }
     validateClusterSeed(new File(root, "cluster-seed"), "standard", "");
+    if (!new File(root, "cluster-seed-icu").exists()) return;
     Properties icuSeed =
         validateClusterSeed(new File(root, "cluster-seed-icu"), "icu", null);
     String icuDigest = icuSeed.getProperty("icuDataTreeSha256", "");

@@ -109,13 +109,15 @@ tasks:
     script: |
       set -e
       node src/sdks/rust/tools/package-source.mjs
-      cargo package --manifest-path target/liboliphaunt-sdk-check/oliphaunt-rust/package-source/Cargo.toml --allow-dirty --no-verify
       cargo package --manifest-path target/liboliphaunt-sdk-check/oliphaunt-rust/package-source/Cargo.toml --allow-dirty --list > target/liboliphaunt-sdk-check/rust-cargo-package-list.txt
-      cargo package -p oliphaunt-build --locked --allow-dirty --no-verify
+      tools/dev/bun.sh -e 'import { mkdirSync } from "node:fs"; import { stageArtifacts } from "./tools/release/sdk-artifacts/rust.mjs"; const output = process.cwd() + "/target/liboliphaunt-sdk-check/oliphaunt-rust/package"; mkdirSync(output, { recursive: true }); stageArtifacts(output, output + "/work");'
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package"
     inputs:
       - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/tools/release/sdk-artifacts/rust.mjs"
+      - "/tools/release/prepare-rust-release-source.mjs"
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
         group: "fixtures"
@@ -125,7 +127,7 @@ tasks:
     outputs:
       - "/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
       - "/target/liboliphaunt-sdk-check/oliphaunt-rust/package-source/**/*"
-      - "/target/moon/oliphaunt-rust/package/package/**/*"
+      - "/target/liboliphaunt-sdk-check/oliphaunt-rust/package/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

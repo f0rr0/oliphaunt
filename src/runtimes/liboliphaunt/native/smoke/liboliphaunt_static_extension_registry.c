@@ -96,6 +96,23 @@ int main(void) {
         fail("static-extension registry did not preserve the valid long linker symbol");
     }
 
-    puts("liboliphaunt static-extension registry long-symbol contract passed");
+    OliphauntStaticExtension later = valid_extension[0];
+    later.name = "later_database_extension";
+    if (oliphaunt_register_static_extensions(&later, 1) != 0 ||
+        oliphaunt_register_static_extensions(valid_extension, 1) != 0 ||
+        oliphaunt_static_extension_lookup("later_database_extension") == NULL ||
+        oliphaunt_static_extension_lookup("long_symbol_fixture") != registered ||
+        oliphaunt_static_extension_symbol(registered, long_linker_symbol) != &long_symbol_target) {
+        fail("adding a later database extension invalidated an existing registration");
+    }
+    OliphauntStaticExtension conflict[] = {later, valid_extension[0]};
+    conflict[0].name = "must_not_be_registered";
+    conflict[1].symbol_count = 0;
+    if (oliphaunt_register_static_extensions(conflict, 2) == 0 ||
+        oliphaunt_static_extension_lookup("must_not_be_registered") != NULL ||
+        oliphaunt_static_extension_lookup("long_symbol_fixture") != registered) {
+        fail("conflicting registration was not rejected atomically");
+    }
+    puts("liboliphaunt static-extension registry identity and lifetime contracts passed");
     return 0;
 }

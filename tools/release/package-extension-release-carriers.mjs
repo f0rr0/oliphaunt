@@ -38,11 +38,14 @@ import {
   extensionNpmPackageForProduct,
   extensionNpmTargetPackageForProduct,
   extensionNpmWasixPackageForProduct,
+  extensionNpmWasixAotTargets,
   nativeExtensionCargoLinksName,
   nativeExtensionCargoPackageName,
   nativeExtensionCargoPartPackageName,
 } from "./extension-registry-packages.mjs";
-import { CORE_RUNTIME_ARCHIVE_FILES } from "./wasix-cargo-artifact-contract.mjs";
+import { AOT_TARGET_TRIPLES, CORE_RUNTIME_ARCHIVE_FILES } from "./wasix-cargo-artifact-contract.mjs";
+import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
+import { assertWasixAotArtifactPayloads } from "./check-liboliphaunt-wasix-release-assets.mjs";
 import {
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
@@ -299,7 +302,7 @@ function tarballPackageJson(tarball) {
   }
 }
 
-function pnpmPackForNpmPublish(packageDir, tarballRoot) {
+export function pnpmPackForNpmPublish(packageDir, tarballRoot) {
   const packageJson = readJsonFile(path.join(packageDir, "package.json"));
   const packageName = packageJson.name;
   const packageVersion = packageJson.version;
@@ -495,7 +498,7 @@ function sha256File(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
-function npmPlatformConstraints(target) {
+export function npmPlatformConstraints(target) {
   if (target === "linux-x64-gnu") {
     return { os: ["linux"], cpu: ["x64"], libc: ["glibc"] };
   }
@@ -1466,6 +1469,12 @@ function writeWasixExtensionNpmPackage(packageDir, {
       default: `./${descriptorPath}`,
     };
   }
+  if (bundle) {
+    const index = members.map(sqlName => `export { default as ${sqlName.replaceAll("-", "_")} } from './descriptors/${sqlName}.js';`).join("\n") + "\n";
+    writeFileSync(path.join(packageDir, "index.js"), index);
+    writeFileSync(path.join(packageDir, "index.d.ts"), index);
+    exports["."] = { types: "./index.d.ts", import: "./index.js", default: "./index.js" };
+  }
   exports["./package.json"] = "./package.json";
 
   writeWasixExtensionReadme(packageDir, packageName, members, bundle);
@@ -1490,11 +1499,21 @@ function writeWasixExtensionNpmPackage(packageDir, {
       wasixRuntimeProduct: runtimeSet.compatibility.wasixRuntimeProduct,
       wasixRuntimeVersion: runtimeSet.compatibility.wasixRuntimeVersion,
       runtimeBound: runtimeSet.versioning === "runtime-bound",
+      carriers: Object.fromEntries(runtimeSet.members.map(member => [member.sqlName, {
+        path: `extensions/${member.sqlName}/extension.tar.zst`,
+        sha256: member.asset.sha256,
+        size: member.asset.bytes,
+        requiresAot: wasixMemberRequiresAot(member),
+      }])),
     },
+    ...(runtimeSet.members.some(wasixMemberRequiresAot) ? {
+      optionalDependencies: Object.fromEntries(extensionNpmWasixAotTargets(product)
+        .map(target => [`${packageName}-${target}`, version])),
+    } : {}),
     publishConfig: { access: "public", provenance: true },
     files: [
       "README.md",
-      ...(bundle ? ["descriptors"] : ["index.js", "index.d.ts"]),
+      "index.js", "index.d.ts", ...(bundle ? ["descriptors"] : []),
       "extensions",
       ...carrierLegalMembers(legal),
     ],
@@ -1502,6 +1521,47 @@ function writeWasixExtensionNpmPackage(packageDir, {
   });
   stageExtensionCarrierLegal(packageDir, legal);
   return { legal, packageName };
+}
+
+function wasixMemberRequiresAot(member) {
+  return member.install.nativeModule !== null && member.install.nativeModule !== undefined
+    || (member.install.nativeModules?.length ?? 0) > 0;
+}
+
+export function writeWasixExtensionAotNpmPackage(packageDir, {
+  product, version, runtimeVersion, sqlName, target, sourceDir,
+}) {
+  const manifest = readJsonFile(path.join(sourceDir, "manifest.json"));
+  assertCanonicalWasixAotManifest(manifest, { expectedTarget: AOT_TARGET_TRIPLES[target] });
+  const artifacts = assertWasixAotArtifactPayloads(manifest, {
+    readArtifact: relative => readFileSync(path.join(sourceDir, relative)),
+  });
+  const prefix = `extension:${sqlName}`;
+  if (artifacts.some(row => row.name !== prefix && !row.name.startsWith(`${prefix}:`))) {
+    fail(TOOL, `${product} AOT package contains another extension's code`);
+  }
+  const legal = wasixExtensionCarrierLegal(product, [sqlName]);
+  mkdirSync(packageDir, { recursive: true });
+  for (const artifact of artifacts) {
+    const output = path.join(packageDir, artifact.path);
+    mkdirSync(path.dirname(output), { recursive: true });
+    copyFileSync(path.join(sourceDir, artifact.path), output);
+  }
+  writeJsonFile(path.join(packageDir, "aot-manifest.json"), manifest);
+  writeJsonFile(path.join(packageDir, "package.json"), {
+    name: `${extensionNpmWasixPackageForProduct(product)}-${target}`,
+    version, license: legal.packageSpdx,
+    ...npmPlatformConstraints(target),
+    repository: { type: "git", url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
+    publishConfig: { access: "public", provenance: true },
+    oliphaunt: {
+      kind: "wasix-extension-aot", product, target, runtimeVersion,
+      manifestSha256: sha256File(path.join(packageDir, "aot-manifest.json")),
+    },
+    files: ["aot-manifest.json", ...artifacts.map(row => row.path), ...carrierLegalMembers(legal)],
+    exports: { "./package.json": "./package.json" },
+  });
+  stageExtensionCarrierLegal(packageDir, legal);
 }
 
 function extensionModuleDirectory(runtimeDir) {
@@ -1520,12 +1580,12 @@ function extensionModuleDirectory(runtimeDir) {
   return null;
 }
 
-function writeExtensionReadme(packageDir, packageName, members, target) {
+function writeExtensionReadme(packageDir, packageName, product, members, target) {
   const targetText = target === null ? "" : ` for \`${target}\``;
   const memberText = members.length === 1
     ? `the \`${members[0]}\` PostgreSQL extension`
     : `${members.length} PostgreSQL contrib extensions`;
-  const selectionExample = members.length === 1 ? members[0] : members.slice(0, 2).join("', '");
+  const ownerPackage = extensionNpmPackageForProduct(product);
   writeFileSync(
     path.join(packageDir, "README.md"),
     [
@@ -1533,14 +1593,52 @@ function writeExtensionReadme(packageDir, packageName, members, target) {
       "",
       `Oliphaunt registry package for ${memberText}${targetText}.`,
       "",
-      "This package is consumed by `@oliphaunt/ts` when an application opens a database with",
-      `\`extensions: ['${selectionExample}']\`.`,
+      ...(members.length > 1
+        ? ["Contrib ships with the base SDK. Select its descriptors explicitly, for example", "`extensions: [extensions.hstore]` after importing `{ extensions }` from `@oliphaunt/ts`."]
+        : [
+          `Install \`${ownerPackage}\` alongside \`@oliphaunt/ts\` or \`@oliphaunt/react-native\`.`,
+          "",
+          "```typescript",
+          "import Oliphaunt from '@oliphaunt/ts';",
+          `import extension from '${ownerPackage}';`,
+          "",
+          "const db = await Oliphaunt.open({ extensions: [extension] });",
+          "```",
+        ]),
+      "Installing the package supplies resources; select them per database and use SQL migrations to create extensions.",
       "",
     ].join("\n"),
   );
 }
 
-function writeExtensionMetaPackage(packageDir, {
+export function renderNativeExtensionDescriptor({ product, version, sqlName }) {
+  return {
+    schema: "oliphaunt-native-extension-v1",
+    sqlName,
+    product,
+    packageName: extensionNpmPackageForProduct(product),
+    version,
+  };
+}
+
+function writeNativeDescriptorEntrypoints(packageDir, descriptor, stem = "index") {
+  const json = JSON.stringify(descriptor, null, 2);
+  writeFileSync(path.join(packageDir, `${stem}.js`), `const descriptor = Object.freeze(${json});\nexport default descriptor;\n`);
+  writeFileSync(path.join(packageDir, `${stem}.cjs`), `module.exports = Object.freeze(${json});\n`);
+  writeFileSync(path.join(packageDir, `${stem}.node.js`), `const descriptor = Object.freeze({ ...${json}, packageJsonUrl: new URL("./package.json", import.meta.url).href });\nexport default descriptor;\n`);
+  writeFileSync(path.join(packageDir, `${stem}.node.cjs`), `module.exports = Object.freeze({ ...${json}, packageJsonUrl: require("node:url").pathToFileURL(require.resolve("./package.json")).href });\n`);
+  writeFileSync(path.join(packageDir, `${stem}.d.ts`), `declare const descriptor: Readonly<{\n  schema: "oliphaunt-native-extension-v1";\n  sqlName: ${JSON.stringify(descriptor.sqlName)};\n  product: ${JSON.stringify(descriptor.product)};\n  packageName: ${JSON.stringify(descriptor.packageName)};\n  version: ${JSON.stringify(descriptor.version)};\n  packageJsonUrl?: string;\n}>;\nexport default descriptor;\n`);
+  return {
+    types: `./${stem}.d.ts`,
+    "react-native": `./${stem}.js`,
+    node: { import: `./${stem}.node.js`, require: `./${stem}.node.cjs` },
+    import: `./${stem}.js`,
+    require: `./${stem}.cjs`,
+    default: `./${stem}.js`,
+  };
+}
+
+export function writeExtensionMetaPackage(packageDir, {
   product,
   version,
   members,
@@ -1560,8 +1658,16 @@ function writeExtensionMetaPackage(packageDir, {
       .map((item) => [item, extensionNpmTargetPackageForProduct(product, item)]),
   );
   mkdirSync(packageDir, { recursive: true });
-  writeExtensionReadme(packageDir, packageName, members, null);
-  writeJsonFile(path.join(packageDir, IOS_CARRIER_FILENAME), iosCarrier);
+  writeExtensionReadme(packageDir, packageName, product, members, null);
+  if (iosCarrier !== undefined) writeJsonFile(path.join(packageDir, IOS_CARRIER_FILENAME), iosCarrier);
+  const descriptorExports = {};
+  for (const sqlName of members) {
+    const stem = bundle ? sqlName : "index";
+    descriptorExports[bundle ? `./${sqlName}` : "."] = writeNativeDescriptorEntrypoints(
+      packageDir, renderNativeExtensionDescriptor({ product, version, sqlName }), stem,
+    );
+  }
+
   writeJsonFile(path.join(packageDir, "package.json"), {
     name: packageName,
     version,
@@ -1578,17 +1684,20 @@ function writeExtensionMetaPackage(packageDir, {
       ...(bundle ? {} : { sqlName: members[0] }),
       members,
       targetPackageNames,
-      iosCarrierManifest: `./${IOS_CARRIER_FILENAME}`,
+      ...(iosCarrier === undefined ? {} : { iosCarrierManifest: `./${IOS_CARRIER_FILENAME}` }),
       liboliphauntVersion,
       runtimeBound,
     },
     publishConfig: { access: "public", provenance: true },
-    files: ["README.md", IOS_CARRIER_FILENAME, ...carrierLegalMembers(legal)],
+    sideEffects: false,
+    files: ["README.md", "*.js", "*.cjs", "*.d.ts", ...(iosCarrier === undefined ? [] : [IOS_CARRIER_FILENAME]), ...carrierLegalMembers(legal)],
     exports: {
-      "./ios-carriers": `./${IOS_CARRIER_FILENAME}`,
+      ...descriptorExports,
+      ...(iosCarrier === undefined ? {} : { "./ios-carriers": `./${IOS_CARRIER_FILENAME}` }),
       "./package.json": "./package.json",
     },
   });
+  stageExtensionCarrierLegal(packageDir, legal);
 }
 
 function writeExtensionTargetPackage(packageDir, {
@@ -1634,7 +1743,7 @@ function writeExtensionTargetPackage(packageDir, {
     metadata.moduleRelativePath = path.relative(packageDir, moduleDir).split(path.sep).join("/");
   }
   mkdirSync(packageDir, { recursive: true });
-  writeExtensionReadme(packageDir, packageName, members, target);
+  writeExtensionReadme(packageDir, packageName, product, members, target);
   writeJsonFile(
     path.join(packageDir, NPM_EXTENSION_CONTRACT_FILENAME),
     renderNpmExtensionContractManifest({ product, version, target, members: memberContracts }),
@@ -1854,7 +1963,6 @@ export function stageExtensionNativeNpmPackages(roots, stagingRoot, target, resu
       memberModuleRelativePaths: runtimeSet.bundle ? memberModuleRelativePaths : null,
       legal: targetLegal,
     });
-    stageExtensionCarrierLegal(metaDir, metaLegal);
     stageExtensionCarrierLegal(targetDir, targetLegal);
     const targetTarball = pnpmPackForNpmPublish(targetDir, tarballRoot);
     assertExtensionCarrierArchive(targetTarball, targetLegal, "package");
@@ -1971,6 +2079,18 @@ export function stageExtensionWasixNpmPackages(roots, stagingRoot, result) {
       continue;
     }
     stagedIdentities.set(identity, digest);
+
+    for (const target of extensionNpmWasixAotTargets(product)) {
+      const sourceDir = path.join(extensionDir, "wasix-aot", target);
+      if (!isDirectory(sourceDir) || !runtimeSet.members.some(wasixMemberRequiresAot)) continue;
+      if (runtimeSet.members.length !== 1) fail(TOOL, "external WASIX AOT packages must have one SQL owner");
+      const aotDir = path.join(packageRoot, safeNpmPackageFilenamePrefix(`${extensionNpmWasixPackageForProduct(product)}-${target}`));
+      writeWasixExtensionAotNpmPackage(aotDir, {
+        product, version, runtimeVersion, target, sourceDir, sqlName: runtimeSet.members[0].sqlName,
+      });
+      const aotTarball = pnpmPackForNpmPublish(aotDir, tarballRoot);
+      if (npmPackageSizeSafe(aotTarball, result)) result.staged.push(rel(aotTarball));
+    }
 
     const packageDir = path.join(
       packageRoot,

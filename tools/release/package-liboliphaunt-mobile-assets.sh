@@ -87,6 +87,9 @@ stage_runtime_resource_closure() {
     --root "$closure" \
     --target "$seed_target" \
     --icu-data "$icu_data"
+  tools/dev/bun.sh tools/release/native-icu-seeds.mjs \
+    "$closure" "$icu_data" "$seed_target" \
+    "$out_dir/liboliphaunt-${version}-icu-seed-${seed_target}.tar.gz"
 }
 
 package_android() {

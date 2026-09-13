@@ -9,7 +9,7 @@ use crate::database::{AsyncOliphaunt, AsyncOliphauntServer};
 use crate::engine::{EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::executor::EngineExecutor;
-use crate::extension::Extension;
+use crate::extension::{ExtensionDescriptor, IcuData, prepare_selected_resources};
 use crate::liboliphaunt::OliphauntRuntime;
 use crate::server::NativeServerRuntime;
 use crate::storage::DatabaseStorage;
@@ -35,7 +35,8 @@ struct CommonOpenOptions {
     startup_gucs: Vec<PostgresStartupGuc>,
     username: String,
     database: String,
-    extensions: Vec<Extension>,
+    extensions: Vec<ExtensionDescriptor>,
+    icu: Option<IcuData>,
 }
 
 impl Default for CommonOpenOptions {
@@ -46,6 +47,7 @@ impl Default for CommonOpenOptions {
             username: DEFAULT_USERNAME.to_owned(),
             database: DEFAULT_DATABASE.to_owned(),
             extensions: Vec::new(),
+            icu: None,
         }
     }
 }
@@ -57,6 +59,8 @@ impl CommonOpenOptions {
         broker: NativeBrokerConfig,
         server: NativeServerConfig,
     ) -> Result<OpenConfig> {
+        let (extensions, resource_directory) =
+            prepare_selected_resources(&self.extensions, self.icu)?;
         let config = OpenConfig {
             mode,
             storage: self.storage.clone(),
@@ -65,7 +69,9 @@ impl CommonOpenOptions {
             startup_gucs: self.startup_gucs.clone(),
             username: self.username.clone(),
             database: self.database.clone(),
-            extensions: self.extensions.clone(),
+            extensions,
+            resource_directory,
+            icu: self.icu.is_some(),
         };
         config.validate()?;
         Ok(config)
@@ -145,17 +151,28 @@ impl AsyncOliphauntBuilder {
         self
     }
 
-    /// Make one bundled PostgreSQL extension artifact available to the database.
-    /// Database-local installation remains the application's migration concern.
-    pub fn extension(mut self, extension: Extension) -> Self {
-        self.common.extensions.push(extension);
+    /// Select the optional package-owned ICU data.
+    pub fn icu(mut self, data: IcuData) -> Self {
+        self.common.icu = Some(data);
         self
     }
 
-    /// Make bundled PostgreSQL extension artifacts available to the database.
+    /// Make one explicitly selected PostgreSQL extension artifact available to the database.
     /// Database-local installation remains the application's migration concern.
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
-        self.common.extensions.extend(extensions);
+    pub fn extension(mut self, extension: impl Into<ExtensionDescriptor>) -> Self {
+        self.common.extensions.push(extension.into());
+        self
+    }
+
+    /// Make explicitly selected PostgreSQL extension artifacts available to the database.
+    /// Database-local installation remains the application's migration concern.
+    pub fn extensions(
+        mut self,
+        extensions: impl IntoIterator<Item = impl Into<ExtensionDescriptor>>,
+    ) -> Self {
+        self.common
+            .extensions
+            .extend(extensions.into_iter().map(Into::into));
         self
     }
 
@@ -240,17 +257,28 @@ impl AsyncOliphauntServerBuilder {
         self
     }
 
-    /// Make one bundled PostgreSQL extension artifact available to clients.
-    /// Database-local installation remains the application's migration concern.
-    pub fn extension(mut self, extension: Extension) -> Self {
-        self.common.extensions.push(extension);
+    /// Select the optional package-owned ICU data.
+    pub fn icu(mut self, data: IcuData) -> Self {
+        self.common.icu = Some(data);
         self
     }
 
-    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Make one explicitly selected PostgreSQL extension artifact available to clients.
     /// Database-local installation remains the application's migration concern.
-    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
-        self.common.extensions.extend(extensions);
+    pub fn extension(mut self, extension: impl Into<ExtensionDescriptor>) -> Self {
+        self.common.extensions.push(extension.into());
+        self
+    }
+
+    /// Make explicitly selected PostgreSQL extension artifacts available to clients.
+    /// Database-local installation remains the application's migration concern.
+    pub fn extensions(
+        mut self,
+        extensions: impl IntoIterator<Item = impl Into<ExtensionDescriptor>>,
+    ) -> Self {
+        self.common
+            .extensions
+            .extend(extensions.into_iter().map(Into::into));
         self
     }
 
@@ -278,6 +306,7 @@ impl AsyncOliphauntServerBuilder {
 }
 
 pub(crate) fn open_embedded_session(config: OpenConfig) -> Result<Box<dyn EngineSession>> {
+    crate::build_resources::prepare_base_resources()?;
     match config.mode {
         EngineMode::Direct => OliphauntRuntime::from_env().open(config),
         EngineMode::Broker => NativeBrokerRuntime::from_config(&config.broker).open(config),
@@ -286,6 +315,7 @@ pub(crate) fn open_embedded_session(config: OpenConfig) -> Result<Box<dyn Engine
 }
 
 pub(crate) fn start_server_session(config: OpenConfig) -> Result<(Box<dyn EngineSession>, String)> {
+    crate::build_resources::prepare_base_resources()?;
     let session = NativeServerRuntime::from_config(&config.server).open(config)?;
     let connection_string = session.connection_string().ok_or_else(|| {
         Error::Engine("native server did not expose its connection string".to_owned())

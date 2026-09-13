@@ -56,7 +56,7 @@ subpaths add a local endpoint on Node, Bun, Deno, and Electron.
 | Which package do I install? | Package identity determines native versus WASIX runtime ownership. |
 | Which host runs PostgreSQL? | Native process, Rust WASIX host, browser realm, Rust owner, direct realm, and Worker placements have different lifecycle behavior. |
 | What is the storage default? | Sensible defaults avoid configuration while explicit storage opts into persistence. |
-| How do I select extensions? | Native SDKs select exact SQL names; WASIX TypeScript imports exact portable descriptors. |
+| How do I select extensions? | SDKs explicitly select contrib and external descriptors; external packages are independently versioned. |
 | Which APIs are actually present? | Server, tools, transaction-helper, and data-movement support differs by product. |
 
 ## Where To Go Next

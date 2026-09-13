@@ -10,6 +10,22 @@ native hosts the root uses a dedicated Rust owner thread. The explicit
 `/direct` import runs synchronously in the importing realm, while `/worker`
 uses a separate JavaScript Worker on every runtime.
 
+For explicit browser imports, use `@oliphaunt/wasix-ts/browser`. It rejects native
+hosts before opening an engine. Its TypeScript options accept only memory,
+IndexedDB, and OPFS. Native root, `/direct`, `/worker`, and `/server` entrypoints
+accept only memory and directory storage. Restore accepts the same persistent
+storage kinds as open. These restrictions apply to descriptors passed through
+variables, and JavaScript callers receive runtime errors for unsupported storage.
+The default and `/worker` exports select matching types under Node, Bun, and Deno
+TypeScript resolution conditions; browser bundlers use the browser/default types.
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts/browser';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
+
+await using database = await Oliphaunt.open({ storage: indexedDB('app') });
+```
+
 ## Install
 
 ```sh
@@ -20,8 +36,9 @@ The published SDK is one universal browser-and-server package. Its browser host
 files and exact `@oliphaunt/liboliphaunt-wasix` dependency are therefore
 installed on Node.js, Bun, Deno, and Electron too, although native export
 conditions never load them. The matching target-filtered optional platform
-package embeds the runtime, both cluster profiles, tools, and qualified
-extension catalog used on those hosts. Carrier packages have no install scripts
+package embeds PostgreSQL, standard initialization assets, and contrib.
+External extensions, ICU data with its matching seed, and frontend tools are
+provided by their separately installed packages. Carrier packages have no install scripts
 and do not download a binary at install or first use. Applications do not
 configure raw runtime assets.
 
@@ -63,11 +80,9 @@ import icu from '@oliphaunt/wasix-icu';
 await using database = await Oliphaunt.open({ icu });
 ```
 
-Browser conditions load the ICU assets from their portable carrier. Each
-native platform carrier contains one addon with both `standard` and `icu`
-profiles, and the existing `icu` option selects the database profile. The loader checks
-the exact SDK/carrier version, WASIX runtime version, addon ABI, Node-API level,
-target, and ICU profile before running native code.
+Both browser and native conditions load ICU data and the matching seed from the
+selected optional package. The native adapter passes the data through N-API;
+Rust verifies runtime, seed, and ICU tree identities before initialization.
 
 ## Query PostgreSQL
 
@@ -188,8 +203,8 @@ pgdata/
 ```
 
 The descriptor records the shared database-root schema, PostgreSQL major, and
-WASIX physical format. Runtime source fingerprints and package hashes validate
-the asset graph; they are not physical-reopen identity. Native and WASIX roots
+WASIX physical format. Runtime/resource versions determine package compatibility; checksums verify
+artifact integrity. Neither is a physical-reopen identity. Native and WASIX roots
 are not rejected merely because of the originating family.
 
 Rust and WASIX TypeScript bindings use the same root and physical-archive
@@ -254,27 +269,32 @@ thread, and `/worker` uses a temporary package-owned Worker.
 
 ## Extensions
 
-Import package-authored WASIX extension descriptors and pass them at open:
+Install vector independently of the SDK:
 
-```ts
-import Oliphaunt from '@oliphaunt/wasix-ts';
-import pgtap from '@oliphaunt/extension-pgtap-wasix';
-
-await using database = await Oliphaunt.open({ extensions: [pgtap] });
-await database.execute('CREATE EXTENSION pgtap');
-const version = await database.query('select pgtap_version()');
+```sh
+npm install @oliphaunt/wasix-ts @oliphaunt/extension-vector-wasix
 ```
 
-The call shape and lifecycle ownership are host-independent. A browser verifies
-the selected carrier and its dependency closure, installs its artifacts before
-startup, and applies required startup/preload settings. Node.js, Bun, Deno, and Electron
-validate the same descriptor but resolve its SQL name against the extension
-catalog compiled into the platform addon. Release addons contain the complete
-currently supported extension catalog; they do not load arbitrary side-module
-bytes from npm at runtime. Adding or upgrading a server extension therefore
-requires a matching N-API carrier release. This increases the carrier size in
-exchange for eliminating runtime archive expansion and dynamic linking on the
-native path.
+```ts
+import Oliphaunt, { extensions } from '@oliphaunt/wasix-ts';
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+import vector from '@oliphaunt/extension-vector-wasix';
+
+await using database = await Oliphaunt.open({
+  storage: directory('./postgres'),
+  extensions: [vector, extensions.hstore],
+});
+await database.execute('CREATE EXTENSION vector');
+await database.execute('CREATE EXTENSION hstore');
+```
+
+Contrib is supplied by the base dependency and selected explicitly through
+`extensions`. External descriptors bind the imported package's version and
+resources. Browser hosts load portable artifacts. Node.js, Bun, and Deno resolve
+the installed package and matching host AOT dependency, then pass those package
+locations through N-API. Rust validates package ownership, runtime compatibility,
+engine and host identity, and payload hashes before loading executable code.
+A compatible extension update does not require another base addon release.
 
 Neither host runs database-local `CREATE EXTENSION`, `LOAD`, schema,
 post-create, upgrade, or migration SQL. Applications and ORM migrations own
@@ -312,14 +332,21 @@ await using database = await WorkerOliphaunt.open();
 
 All imports expose the same PostgreSQL interface and retain the promise-shaped
 public API. A Promise does not itself imply off-thread execution. In a browser,
-the root steps the Wasmer guest in the importing realm. On native hosts, the
+`/browser` steps the Wasmer guest in the importing realm. On native hosts, the
 root uses one Rust owner actor so PostgreSQL does not block the importing event
-loop. `/direct` calls the synchronous Rust database on the importing thread and
+loop. Resource reads, verification, and startup run on that Rust owner;
+caller-owned byte inputs are copied before crossing threads. Optional tool
+registration uses Node background work before execution on the database owner.
+`/direct` calls the synchronous Rust database on the importing thread and
 removes that actor hop. `/worker` uses a real package-owned JavaScript Worker on
 every runtime and loads the direct implementation inside it.
 
-Importing the browser root or `/direct` from an application Worker blocks only
-that Worker; importing the browser root in a Window can block the page. Browser
+This differs from native `@oliphaunt/ts/direct`: there, “direct” selects an
+in-process database topology and calls still run asynchronously. WASIX
+`/direct` selects execution on the importing thread.
+
+Importing `/browser` from an application Worker blocks only that Worker;
+importing `/browser` in a Window can block the page. Browser
 Worker use requires cross-origin isolation. Chromium Window compilation
 of native side modules larger than 8 MiB requires `/worker`.
 
@@ -342,11 +369,10 @@ await psql(target, { script: sql });
 `pgDump()` runs with the database's existing owner, so it supports root,
 `/direct`, and `/worker` entrypoints where available. In browsers, `psql()` requires `/worker`
 because restoring COPY input is full duplex. Node.js, Bun, Deno, and Electron route both
-tools through the frontend binaries compiled into the native carrier, so
-`psql()` works with root, `/direct`, and `/worker` on those hosts. The optional
-`@oliphaunt/wasix-tools` package remains the public opt-in API even though the
-native carrier includes the tool code at build time. Adding or changing a tool
-requires a matching N-API carrier release.
+tools through the portable modules and matching host AOT artifacts supplied by
+the optional tools package. `psql()` works with root, `/direct`, and `/worker`
+on those hosts. The N-API carrier validates and loads those installed packages;
+it does not embed the tool payloads.
 
 The package preserves PostgreSQL's normal plain SQL and COPY output. It does
 not support interactive psql, custom dump archives, parallel jobs, or

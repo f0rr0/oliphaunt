@@ -517,11 +517,19 @@ test("materializes aggregate and singleton assets into immutable content-address
   assert.equal(existsSync(path.join(value.productRoot(CONTRIB), "member-assets")), false);
 
   for (const target of ["android-arm64-v8a", "android-x86_64"]) {
+    const receipt = path.join(value.materializeRoot, "sdk-resources.properties");
     const files = outputPaths(value.run({
       extensions: "amcheck,cube,vector",
       assetKind: "runtime",
       assetTarget: target,
+      extraArgs: ["--resource-receipt", receipt, "--icu", "1"],
     }));
+    const values = Object.fromEntries(readFileSync(receipt, "utf8").trim().split("\n").map(line => line.split("=")));
+    assert.equal(values.schema, "oliphaunt-sdk-resources-v1");
+    assert.equal(values.icuVersion, NATIVE_RUNTIME_VERSION);
+    assert.equal(values["extension.vector.product"], VECTOR);
+    assert.equal(values["extension.vector.version"], VERSION);
+    assert.equal(values["extension.cube.version"], CONTRIB_VERSION);
     assertContents(files, [
       aggregate.declaredContents.get(`${target}:amcheck:runtime`),
       aggregate.declaredContents.get(`${target}:cube:runtime`),
@@ -562,6 +570,16 @@ test("materializes aggregate and singleton assets into immutable content-address
     aggregate.declaredContents.get("ios-xcframework:cube:ios-xcframework"),
     leaf.contents.get("ios-xcframework:ios-xcframework"),
   ]);
+});
+
+test("writes an ICU-only receipt without extension artifacts", (t) => {
+  const value = fixture(t);
+  const receipt = path.join(value.materializeRoot, "sdk-resources.properties");
+  assert.deepEqual(outputPaths(value.run({ extensions: "", assetKind: "runtime", assetTarget: "android-x86_64",
+    extraArgs: ["--resource-receipt", receipt, "--icu", "1"],
+  })), []);
+  assert.equal(readFileSync(receipt, "utf8"),
+    `icuVersion=${NATIVE_RUNTIME_VERSION}\nruntimeVersion=${NATIVE_RUNTIME_VERSION}\nschema=oliphaunt-sdk-resources-v1\n`);
 });
 
 test("rejects outer and nested carrier tampering independently", (t) => {

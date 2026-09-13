@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
-import Oliphaunt from '@oliphaunt/wasix-ts';
+import Oliphaunt from '@oliphaunt/wasix-ts/browser';
 import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 

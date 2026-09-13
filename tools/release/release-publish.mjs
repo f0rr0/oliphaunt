@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { ensureIndependentSwiftpmTag } from "./publish_swiftpm_source_tag.mjs";
 import { spawn } from "node:child_process";
 import {
   mkdirSync,
@@ -723,6 +724,21 @@ async function publishBootstrapCarrier(carrierId, headRef) {
   await npmPublishTarball(carrier.name, locked.file, carrier.version);
 }
 
+function publishIndependentSwiftPackages(products, headRef) {
+  assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
+  const lockedProducts = new Map(ACTIVE_PUBLICATION_LOCK.products.map(row => [row.id, row]));
+  for (const product of products) {
+    if (!lockedProducts.has(product)) fail(`unlocked SwiftPM package owner: ${product}`);
+    for (const input of lockedProductArtifactPaths(ACTIVE_PUBLICATION_LOCK, product)
+      .filter(({ artifact }) => artifact.kind === "swiftpm-independent-package")) {
+      ensureIndependentSwiftpmTag({
+        sourceTree: input.path, repository: `f0rr0/${input.artifact.identity}`,
+        version: lockedProducts.get(product).version, target: headRef, push: true,
+      });
+    }
+  }
+}
+
 function lockedSwiftSourceInputs(headRef) {
   const product = "oliphaunt-swift";
   assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
@@ -1138,6 +1154,14 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-rele
     );
     process.exit(0);
   }
+}
+
+if (command === "publish" && flagValue(argv.slice(1), "--step") === "swift-package-source-tag"
+    && flagValue(argv.slice(1), "--product") === null) {
+  const products = parseProductsJson(argv.slice(1));
+  if (products === null) fail("standalone SwiftPM publication requires --products-json");
+  publishIndependentSwiftPackages(products, flagValue(argv.slice(1), "--head-ref") ?? "HEAD");
+  process.exit(0);
 }
 
 if (publishProductStep?.product === "oliphaunt-swift" && publishProductStep.step === "github-release") {

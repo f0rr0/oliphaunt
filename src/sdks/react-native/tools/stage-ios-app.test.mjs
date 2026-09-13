@@ -577,6 +577,8 @@ async function baseAssets(root) {
       ],
     },
   ];
+  const seedLegal = { ...baseLegalSpecs[1], assetRole: "icu-seed", root: icuSeed };
+  baseLegalSpecs.push(seedLegal);
   const legal = [];
   for (const spec of baseLegalSpecs) {
     legal.push(await legalGroup(spec.root, {
@@ -597,6 +599,9 @@ async function baseAssets(root) {
   );
   const frameworkArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-apple-spm-xcframework.zip");
   const icuArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-icu-data.tar.gz");
+  const icuSeedArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-icu-seed-ios-datum64.tar.gz");
+  await tarMembers(icuSeed, icuSeedArchive, ["manifest.properties", "files", ...seedLegal.files]);
+  await fs.rm(icuSeed, { recursive: true });
   await tarMembers(path.dirname(runtime), runtimeArchive, [
     path.basename(runtime),
     "LICENSE",
@@ -621,6 +626,7 @@ async function baseAssets(root) {
       await asset("base-xcframework", frameworkArchive, "zip", "liboliphaunt.xcframework"),
       await asset("runtime-resources", runtimeArchive, "tar.gz", "oliphaunt"),
       await asset("icu-data", icuArchive, "tar.gz", "."),
+      await asset("icu-seed", icuSeedArchive, "tar.gz", "."),
     ],
     legal,
   };

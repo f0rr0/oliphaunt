@@ -26,10 +26,12 @@ same direct-mode semantics on each mobile OS.
 ## JavaScript surface
 
 ```ts
-import Oliphaunt from '@oliphaunt/react-native';
+import Oliphaunt, { directory, extensions } from '@oliphaunt/react-native';
+import vector from '@oliphaunt/extension-vector';
+import { Paths } from 'expo-file-system';
 
 await using database = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'main' },
+  storage: directory(Paths.document.uri + 'main.oliphaunt'),
   startupGUCs: { application_name: 'mobile-app' },
 });
 
@@ -66,9 +68,8 @@ payloads binary end to end.
 
 ## Storage and lifecycle
 
-Omitted storage uses an SDK-owned temporary directory. `applicationData(name)`
-lets native platform code resolve an app-private path; `directory(path)` is for
-applications that already own one. Each path names a managed root, not PGDATA.
+Omitted storage uses an SDK-owned temporary directory. Pass an absolute native
+path or local file URI from your filesystem library to `directory()` for persistence. Each path names a managed root, not PGDATA.
 
 The bridge owns one mobile direct database at a time. It rejects another open
 while one is pending, active, or closing. App lifecycle policy calls `cancel()`
@@ -79,7 +80,7 @@ a new or existing-empty destination and does not replace data.
 
 ## Extensions and packaging
 
-The config plugin selects exact extension artifacts at build time. `open()`
-repeats the selected SQL names at runtime so the platform SDK validates that
-the installed app contains them. PostgreSQL `CREATE EXTENSION` remains the SQL
+The config plugin reads installed dependencies to package base contrib and
+external artifacts. `open()` accepts explicit descriptors for each database and
+validates that the app contains their matching artifacts. PostgreSQL `CREATE EXTENSION` remains the SQL
 activation step.

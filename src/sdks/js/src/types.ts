@@ -1,6 +1,11 @@
+import type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
+
 export type DatabaseStorage =
   | { readonly kind: 'temporaryDirectory' }
   | { readonly kind: 'directory'; readonly path: string };
+
+/** Persistent storage that can receive a physical backup. */
+export type RestoreDestination = Exclude<DatabaseStorage, { readonly kind: 'temporaryDirectory' }>;
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
 
@@ -19,7 +24,8 @@ export type OpenConfig = {
   startupGUCs?: Readonly<Record<string, string>>;
   username?: string;
   database?: string;
-  extensions?: ReadonlyArray<string>;
+  extensions?: ReadonlyArray<NativeExtensionDescriptor>;
+  icu?: NativeIcuDescriptor;
   libraryPath?: string;
   runtimeDirectory?: string;
   brokerExecutable?: string;
@@ -120,5 +126,9 @@ export type RestoreOptions = {
 export type OliphauntClient = {
   open(config?: OpenConfig): Promise<OliphauntDatabase>;
   openServer(config?: ServerOpenConfig): Promise<OliphauntServer>;
-  restore(destination: string, backup: BinaryInput, options?: RestoreOptions): Promise<void>;
+  restore(
+    destination: RestoreDestination,
+    backup: BinaryInput,
+    options?: RestoreOptions,
+  ): Promise<void>;
 };

@@ -564,6 +564,17 @@ fn spawn_broker(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .env(ENV_BROKER_AUTH_TOKEN, auth_token.as_str());
+    command.env("OLIPHAUNT_SELECTED_ICU", if config.icu { "1" } else { "0" });
+    if let Some(resources) = &config.resource_directory {
+        command.env("OLIPHAUNT_SELECTED_RESOURCES_DIR", resources);
+    } else {
+        command.env_remove("OLIPHAUNT_SELECTED_RESOURCES_DIR");
+    }
+    if let Some(resources) = crate::build_resources::registered_build_resources_dir()
+        .or_else(crate::build_resources::embedded_base_resources_dir)
+    {
+        command.env("OLIPHAUNT_RESOURCES_DIR", resources);
+    }
     command.spawn().map_err(|err| {
         Error::Engine(format!(
             "spawn native broker {}: {err}",
@@ -760,7 +771,15 @@ fn resolve_broker_executable() -> Option<PathBuf> {
     if let Some(path) = resolve_broker_executable_next_to_current_exe() {
         return Some(path);
     }
-    resolve_broker_executable_from_asset_dir()
+    resolve_broker_executable_from_asset_dir().or_else(|| {
+        let resources = crate::build_resources::registered_build_resources_dir()
+            .or_else(crate::build_resources::embedded_base_resources_dir)?;
+        let target = current_broker_release_target()?;
+        target
+            .unpacked_executable_candidates(&resources.join("broker-helper/oliphaunt-broker"))
+            .into_iter()
+            .find(|path| path.is_file())
+    })
 }
 
 fn resolve_broker_executable_next_to_current_exe() -> Option<PathBuf> {

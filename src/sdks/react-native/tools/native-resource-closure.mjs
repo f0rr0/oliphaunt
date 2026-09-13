@@ -90,7 +90,7 @@ export async function logicalTreeSha256(root) {
   return digest.digest("hex");
 }
 
-async function validateClusterSeed(root, profile) {
+export async function validateClusterSeed(root, profile) {
   const source = path.join(root, "manifest.properties");
   await Promise.all([
     fs.access(path.join(root, "files/PG_VERSION")),
@@ -153,7 +153,9 @@ export async function validateNativeRuntimeClosure(root, { integrated } = {}) {
     : "";
   requireProperty(runtime, "mobileStaticRegistrySource", expectedRegistrySource, source);
   await validateClusterSeed(path.join(root, "cluster-seed"), "standard");
-  const icu = await validateClusterSeed(path.join(root, "cluster-seed-icu"), "icu");
+  const seed = path.join(root, "cluster-seed-icu");
+  const present = await fs.stat(seed).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; });
+  const icu = present ? await validateClusterSeed(seed, "icu") : undefined;
   const features = new Set((runtime.get("runtimeFeatures") ?? "").split(",").filter(Boolean));
   integrated ??= features.has("icu");
   if ([...features].some((feature) => feature !== "icu") || features.has("icu") !== integrated) {
@@ -161,7 +163,7 @@ export async function validateNativeRuntimeClosure(root, { integrated } = {}) {
   }
   const runtimeDigest = runtime.get("icuDataTreeSha256") ?? "";
   if (integrated) {
-    if (runtimeDigest !== icu.digest) {
+    if (icu === undefined || runtimeDigest !== icu.digest) {
       throw new Error(`${source} ICU identity does not match cluster-seed-icu`);
     }
     const data = path.join(root, "runtime/files/share/icu");
@@ -171,7 +173,7 @@ export async function validateNativeRuntimeClosure(root, { integrated } = {}) {
   } else if (runtimeDigest !== "") {
     throw new Error(`${source} selects ICU data without the ICU runtime feature`);
   }
-  return { icuDigest: icu.digest, runtime };
+  return { icuDigest: icu?.digest, runtime };
 }
 
 export async function validateIcuDataCarrier(root) {

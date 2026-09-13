@@ -1,3 +1,4 @@
+import { snapshotNativeExtensions, snapshotNativeIcu } from '@oliphaunt/js-core/resources';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,6 +54,7 @@ import type {
   ServerListen,
   ServerOpenConfig,
   ProtocolChunkCallback,
+  RestoreDestination,
   RestoreOptions,
 } from './types.js';
 
@@ -1109,15 +1111,19 @@ export function createOliphauntClient(
     },
 
     async restore(
-      destination: string,
+      destination: RestoreDestination,
       backup: BinaryInput,
       options: RestoreOptions = {},
     ): Promise<void> {
-      validateDirectoryPath(destination, 'restore destination');
+      if (destination?.kind !== 'directory' || typeof destination.path !== 'string') {
+        throw new TypeError('restore destination must be a directory storage descriptor');
+      }
+      const path = destination.path;
+      validateDirectoryPath(path, 'restore destination');
       const bytes = toUint8Array(backup).slice();
       const binding = await bindingFor({ libraryPath: options.libraryPath });
       await binding.restore({
-        destination,
+        destination: path,
         bytes,
       });
     },
@@ -1180,7 +1186,9 @@ function snapshotCommonOpenConfig(config: OpenConfig | ServerOpenConfig) {
     startupGUCs: config.startupGUCs === undefined ? undefined : { ...config.startupGUCs },
     username: config.username,
     database: config.database,
-    extensions: config.extensions === undefined ? undefined : [...config.extensions],
+    extensions:
+      config.extensions === undefined ? undefined : snapshotNativeExtensions(config.extensions),
+    icu: snapshotNativeIcu(config.icu),
     runtimeDirectory: config.runtimeDirectory,
   };
 }

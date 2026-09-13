@@ -1,5 +1,5 @@
 plugins {
-    alias(libs.plugins.android.library)
+    alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
 }
 
@@ -20,6 +20,13 @@ android {
     defaultConfig {
         minSdk = 24
     }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "consumer.pro")
+        }
+    }
 }
 
 kotlin {
@@ -28,4 +35,17 @@ kotlin {
 
 dependencies {
     implementation(files(consumerAar))
+    implementation(libs.kotlinx.coroutines.core)
+}
+
+tasks.register("checkMinifiedCallbacks") {
+    val callbackMapping = layout.buildDirectory.file("outputs/mapping/release/mapping.txt")
+    dependsOn("assembleRelease")
+    inputs.file(callbackMapping)
+    doLast {
+        val callbacks = callbackMapping.get().asFile.readLines().filter { "int " in it && it.endsWith(" -> onChunk") }
+        check(callbacks.isNotEmpty()) {
+            "R8 removed or renamed the JNI stream callback: $callbacks"
+        }
+    }
 }

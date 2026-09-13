@@ -4,6 +4,8 @@ import path from "node:path";
 import { manualCargoPackageSource } from "./cargo-source-package.mjs";
 import {
   exactExtensionProducts,
+  currentProductVersionSync,
+  extensionMetadata,
   extensionReleaseProduct,
   extensionReleaseVersion,
   extensionRegistryPackageTargetSets,
@@ -13,11 +15,7 @@ import { compareText, ROOT } from "./release-graph.mjs";
 import {
   nativeExtensionCargoPackageName,
 } from "./extension-registry-packages.mjs";
-import {
-  expectedExtensionAotTargets,
-  wasixExtensionAotPackageName,
-  wasixExtensionPackageName,
-} from "./wasix-cargo-artifact-contract.mjs";
+
 import {
   renderUnsupportedNativeTargetGuard,
   rustNativeTargetCfg,
@@ -36,10 +34,6 @@ function fail(message) {
   throw new Error(`package-extension-cargo-facades: ${message}`);
 }
 
-function dependencyFeature(name) {
-  return `dep:${name}`;
-}
-
 function facadeLinksName(product) {
   return `oliphaunt_artifact_relay_extension_${product
     .replace(/^oliphaunt-extension-/u, "")
@@ -54,6 +48,8 @@ const RELAY_PREFIX: &str = "DEP_OLIPHAUNT_ARTIFACT_RELAY_";
 const SUFFIX: &str = "_MANIFEST";
 
 fn main() {
+    let embedded = oliphaunt_build::embed_resolved_artifacts().expect("validate and embed extension resources");
+    println!("cargo::rustc-env=OLIPHAUNT_EMBEDDED_RESOURCES_RS={}", embedded.display());
     let mut manifests = BTreeMap::new();
     for (key, value) in env::vars() {
         if value.is_empty() || key.starts_with(RELAY_PREFIX) {
@@ -86,8 +82,6 @@ export function renderUnsupportedNativeGuard(product, nativeTargets, nativeCfgs)
     product,
     nativeTargets,
     nativeCfgs,
-    feature: "native",
-    featureLabel: "default native feature",
     guidance: "use a declared native target leaf, or depend on the WASIX carrier directly for WASIX builds.",
   });
 }
@@ -97,24 +91,15 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
     fail(`${product} is not an exact extension product`);
   }
   const nativeOwner = extensionReleaseProduct(product, "native", "package-extension-cargo-facades");
-  const wasixOwner = extensionReleaseProduct(product, "wasix", "package-extension-cargo-facades");
-  const nativeOnly = nativeOwner !== wasixOwner;
   const version = extensionReleaseVersion(product, "native", "package-extension-cargo-facades");
   const sqlNames = extensionSqlNames(product, "package-extension-cargo-facades");
+  const sdkVersion = currentProductVersionSync("oliphaunt-rust");
+  const buildVersion = sdkVersion;
+  const runtimeVersion = extensionMetadata(product).compatibility.nativeRuntimeVersion;
   const targets = extensionRegistryPackageTargetSets(product, "package-extension-cargo-facades");
-  const wasixAotTargets = !nativeOnly && targets.includeWasixAot ? expectedExtensionAotTargets() : [];
   const sourceDir = path.join(outputRoot, "sources", product);
   mkdirSync(path.join(sourceDir, "src"), { recursive: true });
 
-  const nativeNames = targets.nativeCargoTargets.map((target) => nativeExtensionCargoPackageName(product, target));
-  const wasixName = nativeOnly ? null : wasixExtensionPackageName(product);
-  const aotNames = wasixAotTargets.map((target) => wasixExtensionAotPackageName(product, target));
-  const features = [
-    `default = ["native"]`,
-    `native = [${nativeNames.map((name) => JSON.stringify(dependencyFeature(name))).join(", ")}]`,
-    ...(wasixName === null ? [] : [`wasix = [${JSON.stringify(dependencyFeature(wasixName))}]`]),
-    ...aotNames.map((name, index) => `${JSON.stringify(`wasix-aot-${wasixAotTargets[index]}`)} = [${JSON.stringify(dependencyFeature(wasixName))}, ${JSON.stringify(dependencyFeature(name))}]`),
-  ];
   const targetDependencies = [];
   const nativeCfgs = [];
   for (const target of targets.nativeCargoTargets) {
@@ -122,12 +107,9 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
     const name = nativeExtensionCargoPackageName(product, target);
     nativeCfgs.push(cfg);
     targetDependencies.push(
-      `[target.'cfg(${cfg})'.dependencies]\n${name} = { version = "=${version}", optional = true${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ""} }`,
+      `[target.'cfg(${cfg})'.dependencies]\n${name} = { version = "=${version}"${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ""} }`,
     );
   }
-  const optionalDependencies = [...(wasixName === null ? [] : [wasixName]), ...aotNames]
-    .map((name) => `${name} = { version = "=${version}", optional = true${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ""} }`)
-    .join("\n");
   const unsupportedNativeGuard = renderUnsupportedNativeGuard(
     product,
     targets.nativeCargoTargets,
@@ -151,11 +133,11 @@ include = ${JSON.stringify(["Cargo.toml", "README.md", "build.rs", "src/**", ...
 [lib]
 path = "src/lib.rs"
 
-[features]
-${features.join("\n")}
-
 [dependencies]
-${optionalDependencies}
+oliphaunt-resources = { version = ${JSON.stringify(sdkVersion)}${dependencyPaths["oliphaunt-resources"] ? `, path = ${JSON.stringify(dependencyPaths["oliphaunt-resources"])}` : ""} }
+
+[build-dependencies]
+oliphaunt-build = { version = ${JSON.stringify(buildVersion)}${dependencyPaths["oliphaunt-build"] ? `, path = ${JSON.stringify(dependencyPaths["oliphaunt-build"])}` : ""} }
 
 ${targetDependencies.join("\n\n")}
 
@@ -166,9 +148,8 @@ ${targetDependencies.join("\n\n")}
 
 Target-selecting Cargo facade for ${sqlNames.length === 1 ? `the \`${sqlNames[0]}\` PostgreSQL extension` : `the PostgreSQL 18 contrib bundle (${sqlNames.length} exact SQL members)`}.
 
-The default \`native\` feature selects the matching native artifact leaf.${nativeOnly ? "" : ` Use
-\`default-features = false, features = ["wasix"]\` (or a host-specific
-\`wasix-aot-*\` feature) for WASIX artifacts.`}
+Cargo selects the matching native artifact automatically. For WASIX, use
+\`${product}-wasix\` and its exported descriptors.
 `);
   writeFileSync(path.join(sourceDir, "src/lib.rs"), `#![forbid(unsafe_code)]
 
@@ -178,6 +159,12 @@ pub const PRODUCT: &str = ${JSON.stringify(product)};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const EXTENSION_SQL_NAMES: &[&str] = &[${sqlNames.map((sqlName) => JSON.stringify(sqlName)).join(", ")}];
 ${sqlNames.length === 1 ? `pub const EXTENSION_SQL_NAME: &str = ${JSON.stringify(sqlNames[0])};` : ""}
+const RESOURCES: &[oliphaunt_resources::EmbeddedResource] = include!(env!("OLIPHAUNT_EMBEDDED_RESOURCES_RS"));
+${sqlNames.map((sqlName) => `pub const ${sqlName.replaceAll("-", "_").toUpperCase()}: oliphaunt_resources::ExtensionDescriptor = oliphaunt_resources::ExtensionDescriptor {
+    sql_name: ${JSON.stringify(sqlName)}, product: PRODUCT, version: Some(VERSION),
+    runtime_version: ${JSON.stringify(runtimeVersion)}, resources: RESOURCES,
+};`).join("\n")}
+
 `);
   stageReleaseNotices(sourceDir, FACADE_NOTICE_OPTIONS);
   assertReleaseNoticesInDirectory(sourceDir, FACADE_NOTICE_OPTIONS);

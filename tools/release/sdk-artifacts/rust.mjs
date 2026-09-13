@@ -36,13 +36,15 @@ export function stageArtifacts(artifactRoot, workRoot) {
   });
   copyFileSync(releaseCrate, path.join(artifactRoot, path.basename(releaseCrate)));
 
+  for (const packageName of ["oliphaunt-build", "oliphaunt-resources"]) {
   const buildManifest = prepareOliphauntBuildReleaseSource({
-    stageDir: path.join(workRoot, "oliphaunt-build-release-source"),
+    stageDir: path.join(workRoot, `${packageName}-release-source`),
     log: false,
+    packageName,
   });
   const buildCrate = manualCargoPackageSource(
     buildManifest,
-    path.join(workRoot, "oliphaunt-build-release-crate"),
+    path.join(workRoot, `${packageName}-release-crate`),
     { root: ROOT, fail, rel },
   );
   requireFile(buildCrate);
@@ -51,5 +53,6 @@ export function stageArtifacts(artifactRoot, workRoot) {
     prefix: path.basename(buildCrate, ".crate"),
   });
   copyFileSync(buildCrate, path.join(artifactRoot, path.basename(buildCrate)));
+  }
   copyFileSync(packageListing, path.join(artifactRoot, "cargo-package-files.txt"));
 }

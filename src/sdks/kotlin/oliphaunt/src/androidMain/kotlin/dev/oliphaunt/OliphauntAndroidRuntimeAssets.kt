@@ -27,6 +27,7 @@ internal data class OliphauntAndroidAssetPackage(
     val target: String = "",
     val compatibilityKey: String = "",
     val icuDataTreeSha256: String = "",
+    val requestedExtensions: Set<String>? = null,
 )
 
 internal data class OliphauntPackageSizeReport(
@@ -172,8 +173,10 @@ internal object OliphauntAndroidRuntimeAssets {
         explicitRuntimeDirectory: String?,
         requestedExtensions: Collection<String> = emptyList(),
         resourceRoot: File? = null,
+        descriptors: List<ExtensionDescriptor> = emptyList(),
+        icu: IcuData? = null,
     ): OliphauntAndroidResolvedRuntime {
-        val requestedExtensionSet = validateExtensionIds(requestedExtensions)
+        val requestedExtensionSet = selectedExtensionClosure(validateExtensionIds(requestedExtensions))
         val explicitRuntime = explicitRuntimeDirectory?.takeIf(String::isNotEmpty)
         if (explicitRuntime != null) {
             val sharedPreloadLibraries =
@@ -182,7 +185,22 @@ internal object OliphauntAndroidRuntimeAssets {
                     requestedExtensionSet,
                 )
             val runtimePackage = releaseShapedRuntimePackageForDirectory(explicitRuntime)
-            val clusterSeed = runtimePackage?.let(::matchingReleaseShapedClusterSeed)
+            if (descriptors.isNotEmpty() || icu != null) {
+                val root = runtimePackage?.resourceRoot
+                    ?: throw OliphauntException("selected package descriptors require a release-shaped explicit runtime directory")
+                val receipt = File(root, "oliphaunt/sdk-resources.properties")
+                validateSelectedResourceReceipt(parseManifestText(receipt.readText(), receipt.path), descriptors, icu)
+            }
+            if (icu != null && runtimePackage?.runtimeFeatures?.contains("icu") != true) {
+                throw OliphauntException("selected ICU resources are absent from the explicit runtime directory")
+            }
+            val clusterSeed = runtimePackage?.let {
+                matchingReleaseShapedClusterSeed(
+                    it.copy(
+                        runtimeFeatures = if (icu == null) it.runtimeFeatures - "icu" else it.runtimeFeatures,
+                    ),
+                )
+            }
             return OliphauntAndroidResolvedRuntime(
                 runtimeDirectory = explicitRuntime,
                 clusterSeed = clusterSeed,
@@ -220,13 +238,44 @@ internal object OliphauntAndroidRuntimeAssets {
             } else {
                 filePackageManifestOrNull(resourceRoot, RUNTIME_ASSET_ROOT)
             }
-        val clusterSeed = matchingClusterSeed(packagedRuntime, standardClusterSeed, icuClusterSeed)
-        val runtimeDirectory = materializePackagedRuntime(context, requestedExtensionSet, packagedRuntime)
+        if (descriptors.isNotEmpty() || icu != null) {
+            val receiptPath = "oliphaunt/sdk-resources.properties"
+            val text = if (resourceRoot == null) {
+                context.assets.open(receiptPath).bufferedReader().use { it.readText() }
+            } else {
+                File(resourceRoot, receiptPath).readText()
+            }
+            validateSelectedResourceReceipt(parseManifestText(text, receiptPath), descriptors, icu)
+        }
+        if (icu != null && packagedRuntime?.runtimeFeatures?.contains("icu") != true) {
+            throw OliphauntException("selected ICU resources are not packaged in this application")
+        }
+        val preloads = requestedExtensionSet.flatMap { generatedExtensionRuntimeContract(it)?.sharedPreloads.orEmpty() }.toSet()
+        val selection = packagedRuntime?.copy(
+            runtimeFeatures = if (icu == null) packagedRuntime.runtimeFeatures - "icu" else packagedRuntime.runtimeFeatures,
+            sharedPreloadLibraries = preloads,
+            requestedExtensions = requestedExtensionSet,
+        )
+        val clusterSeed = matchingClusterSeed(selection, standardClusterSeed, icuClusterSeed)
+        val runtimeDirectory = materializePackagedRuntime(context, requestedExtensionSet, selection)
         return OliphauntAndroidResolvedRuntime(
             runtimeDirectory = runtimeDirectory,
             clusterSeed = clusterSeed,
-            sharedPreloadLibraries = packagedRuntime?.sharedPreloadLibraries.orEmpty(),
+            sharedPreloadLibraries = preloads,
         )
+    }
+
+    internal fun validateSelectedResourceReceipt(values: Properties, descriptors: List<ExtensionDescriptor>, icu: IcuData?) {
+        if (values.getProperty("schema") != "oliphaunt-sdk-resources-v1") throw OliphauntException("unsupported SDK resource receipt")
+        for (descriptor in selectedExtensionDescriptors(descriptors)) {
+            val prefix = "extension.${descriptor.sqlName}"
+            if (values.getProperty("$prefix.product") != descriptor.product ||
+                (descriptor.version != null && values.getProperty("$prefix.version") != descriptor.version)
+            ) {
+                throw OliphauntException("selected extension '${descriptor.sqlName}' does not match packaged product/version")
+            }
+        }
+        if (icu != null && values.getProperty("icuVersion") != icu.version) throw OliphauntException("selected ICU version does not match packaged resources")
     }
 
     internal fun validateExplicitRuntimeDirectory(
@@ -250,7 +299,7 @@ internal object OliphauntAndroidRuntimeAssets {
             requestedExtensions = requestedExtensionSet,
             runtimeFiles = File(runtimeDirectory),
         )
-        return runtimePackage.sharedPreloadLibraries
+        return selectedExtensionClosure(requestedExtensionSet).flatMap { generatedExtensionRuntimeContract(it)?.sharedPreloads.orEmpty() }.toSet()
     }
 
     fun packageSizeReport(assetManager: AssetManager): OliphauntPackageSizeReport? = try {
@@ -373,6 +422,12 @@ internal object OliphauntAndroidRuntimeAssets {
     ): AndroidPgdataPublication {
         validateCompleteAndroidPgdata(staging)
         if (isCompleteAndroidPgdata(destination)) return AndroidPgdataPublication.Existing
+        if (!staging.setReadable(false, false) || !staging.setWritable(false, false) ||
+            !staging.setExecutable(false, false) || !staging.setReadable(true, true) ||
+            !staging.setWritable(true, true) || !staging.setExecutable(true, true)
+        ) {
+            throw OliphauntException("failed to set private PGDATA permissions: ${staging.absolutePath}")
+        }
         syncPublicationTree(staging)
 
         if (destination.exists()) {
@@ -465,10 +520,13 @@ internal object OliphauntAndroidRuntimeAssets {
                         "-PoliphauntRuntimeResourcesDir=<runtime-resource output>.",
                 )
         requirePackagedExtensions(runtimePackage, requestedExtensions)
+        val selectionKey = java.security.MessageDigest.getInstance("SHA-256").digest(
+            (requestedExtensions.sorted().joinToString(",") + ":" + runtimePackage.runtimeFeatures.sorted().joinToString(",")).toByteArray(),
+        ).joinToString("") { "%02x".format(it) }
         val runtimeRoot =
             File(
                 context.noBackupFilesDir,
-                "oliphaunt/runtime/${runtimePackage.cacheKey}",
+                "oliphaunt/runtime/${runtimePackage.cacheKey}/$selectionKey",
             )
         materializeAssetPackage(context.assets, runtimePackage, runtimeRoot)
         requireExtensionInstallFiles(runtimePackage, requestedExtensions, runtimeRoot)
@@ -1297,10 +1355,13 @@ internal object OliphauntAndroidRuntimeAssets {
         destination: File,
     ) {
         val resourceRoot = assetPackage.resourceRoot
+        val include: (String) -> Boolean = { relative ->
+            assetPackage.requestedExtensions?.let { includeSelectedRuntimeFile(relative, it, "icu" in assetPackage.runtimeFeatures) } ?: true
+        }
         if (resourceRoot == null) {
-            copyAssetTree(assetManager, "${assetPackage.assetRoot}/$FILES_DIR_NAME", destination)
+            copyAssetTree(assetManager, "${assetPackage.assetRoot}/$FILES_DIR_NAME", destination, include)
         } else {
-            copyFileTree(File(resourceRoot, "${assetPackage.assetRoot}/$FILES_DIR_NAME"), destination)
+            copyFileTree(File(resourceRoot, "${assetPackage.assetRoot}/$FILES_DIR_NAME"), destination, include)
         }
     }
 
@@ -1315,7 +1376,10 @@ internal object OliphauntAndroidRuntimeAssets {
         assetManager: AssetManager,
         assetPath: String,
         destination: File,
+        include: (String) -> Boolean,
+        relative: String = "",
     ) {
+        if (!include(relative)) return
         val children =
             assetManager.list(assetPath)
                 ?: throw OliphauntException("failed to list Android asset path $assetPath")
@@ -1337,14 +1401,17 @@ internal object OliphauntAndroidRuntimeAssets {
             throw OliphauntException("failed to create directory ${destination.absolutePath}")
         }
         children.sorted().forEach { child ->
-            copyAssetTree(assetManager, "$assetPath/$child", File(destination, child))
+            copyAssetTree(assetManager, "$assetPath/$child", File(destination, child), include, if (relative.isEmpty()) child else "$relative/$child")
         }
     }
 
     private fun copyFileTree(
         source: File,
         destination: File,
+        include: (String) -> Boolean,
+        relative: String = "",
     ) {
+        if (!include(relative)) return
         if (!source.exists()) {
             throw OliphauntException("missing Oliphaunt resource path ${source.absolutePath}")
         }
@@ -1364,7 +1431,7 @@ internal object OliphauntAndroidRuntimeAssets {
             throw OliphauntException("failed to create directory ${destination.absolutePath}")
         }
         source.listFiles().orEmpty().sortedBy(File::getName).forEach { child ->
-            copyFileTree(child, File(destination, child.name))
+            copyFileTree(child, File(destination, child.name), include, if (relative.isEmpty()) child.name else "$relative/${child.name}")
         }
     }
 

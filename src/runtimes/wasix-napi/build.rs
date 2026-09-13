@@ -5,7 +5,6 @@ const RELEASE_INPUT_ENVS: &[&str] = &[
     "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR",
     "OLIPHAUNT_WASM_GENERATED_AOT_DIR",
     "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT",
-    "OLIPHAUNT_ICU_DATA_DIR",
     "OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS",
 ];
 
@@ -14,7 +13,7 @@ fn main() {
     for name in RELEASE_INPUT_ENVS {
         println!("cargo::rerun-if-env-changed={name}");
     }
-    println!("cargo::rustc-env=OLIPHAUNT_WASIX_NAPI_ABI_VERSION=1");
+    println!("cargo::rustc-env=OLIPHAUNT_WASIX_NAPI_ABI_VERSION=2");
     validate_release_inputs();
 }
 
@@ -35,12 +34,8 @@ fn validate_release_inputs() {
         "manifest.json",
         "oliphaunt.wasix.tar.zst",
         "bin/initdb.wasix.wasm",
-        "bin/pg_dump.wasix.wasm",
-        "bin/psql.wasix.wasm",
         "cluster-seeds/standard.tar.zst",
         "cluster-seeds/standard.json",
-        "cluster-seeds/icu.tar.zst",
-        "cluster-seeds/icu.json",
     ] {
         required_file(&portable.join(relative), "portable WASIX release payload");
     }
@@ -54,7 +49,7 @@ fn validate_release_inputs() {
     };
     required_file(
         &target_aot.join("manifest.json"),
-        "target WASIX core/tools AOT manifest",
+        "target WASIX core AOT manifest",
     );
 
     let extension_root = required_directory("OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT");
@@ -66,24 +61,11 @@ fn validate_release_inputs() {
         "exact WASIX extension artifact root {} must not be empty",
         extension_root.display(),
     );
-    let icu_root = required_directory("OLIPHAUNT_ICU_DATA_DIR");
-    assert!(
-        std::fs::read_dir(&icu_root)
-            .expect("read ICU data root")
-            .next()
-            .is_some(),
-        "ICU data root {} must not be empty",
-        icu_root.display(),
-    );
-
     let inventory = required_path("OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS");
     required_file(&inventory, "validated WASIX N-API build-input inventory");
     println!("cargo::rerun-if-changed={}", inventory.display());
 
-    // `oliphaunt-wasix` relays the manifests emitted by the exact payload
-    // crates it compiled. Requiring all four proves Cargo selected embedded
-    // portable/core-AOT/tool/tool-AOT inputs, not only that similarly named
-    // files happened to exist in the workspace.
+    // Require the exact core payload manifests relayed by the SDK build.
     let target_suffix = match target.as_str() {
         "aarch64-apple-darwin" => "MACOS_ARM64",
         "aarch64-unknown-linux-gnu" => "LINUX_ARM64_GNU",
@@ -93,21 +75,11 @@ fn validate_release_inputs() {
     };
     for name in [
         "DEP_OLIPHAUNT_ARTIFACT_WASIX_RELAY_LIBOLIPHAUNT_WASIX_RUNTIME_MANIFEST".to_owned(),
-        "DEP_OLIPHAUNT_ARTIFACT_WASIX_RELAY_OLIPHAUNT_WASIX_TOOLS_MANIFEST".to_owned(),
         format!(
             "DEP_OLIPHAUNT_ARTIFACT_WASIX_RELAY_LIBOLIPHAUNT_WASIX_AOT_{target_suffix}_MANIFEST"
         ),
-        format!(
-            "DEP_OLIPHAUNT_ARTIFACT_WASIX_RELAY_OLIPHAUNT_WASIX_TOOLS_AOT_{target_suffix}_MANIFEST"
-        ),
     ] {
         required_env_file(&name, "relayed WASIX Cargo artifact manifest");
-    }
-    if std::env::var_os("CARGO_FEATURE_ICU").is_some() {
-        required_env_file(
-            "DEP_OLIPHAUNT_ARTIFACT_WASIX_RELAY_OLIPHAUNT_ICU_MANIFEST",
-            "relayed ICU Cargo artifact manifest",
-        );
     }
 }
 

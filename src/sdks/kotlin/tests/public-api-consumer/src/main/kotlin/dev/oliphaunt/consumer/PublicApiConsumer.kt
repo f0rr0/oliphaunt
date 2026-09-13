@@ -17,7 +17,6 @@ import dev.oliphaunt.PostgresErrorField
 import dev.oliphaunt.PostgresException
 import dev.oliphaunt.PostgresNotice
 import dev.oliphaunt.PostgresOid
-import dev.oliphaunt.PostgresStartupGuc
 import dev.oliphaunt.QueryDescription
 import dev.oliphaunt.QueryParam
 import dev.oliphaunt.QueryResult
@@ -48,10 +47,10 @@ internal suspend fun compileOliphauntPublicApi(
     val config =
         OliphauntConfig(
             storage = persistentStorage,
-            startupGucs = listOf(PostgresStartupGuc("application_name", "public-api-consumer")),
+            startupGucs = mapOf("application_name" to "public-api-consumer"),
             username = "postgres",
             database = "postgres",
-            extensions = listOf("vector"),
+            extensions = listOf(dev.oliphaunt.Extensions.HSTORE),
         )
     val database: OliphauntDatabase =
         Oliphaunt.open(

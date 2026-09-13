@@ -23,7 +23,9 @@ export function cargoSdkPackageClosure(product) {
     return {
       cratePath: path.join(artifactRoot, `oliphaunt-${version}.crate`),
       allFeatures: true,
-      stubDependencyPrefixes: ["liboliphaunt-native-", "oliphaunt-broker-"],
+      dependencyCrates: ["oliphaunt-build", "oliphaunt-resources"].map(name =>
+        path.join(artifactRoot, `${name}-${version}.crate`)),
+      stubDependencyPrefixes: ["liboliphaunt-native-", "oliphaunt-broker-", "oliphaunt-extension-contrib-pg18-"],
     };
   }
   if (product === "oliphaunt-wasix-rust") {
@@ -33,7 +35,7 @@ export function cargoSdkPackageClosure(product) {
         path.join(ROOT, "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"),
       ],
       noDefaultFeatures: true,
-      features: ["extensions", "tools", "icu"],
+      features: ["extensions", "tools"],
     };
   }
   throw new Error(`${TOOL}: missing Cargo SDK package-closure configuration: ${product}`);

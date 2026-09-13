@@ -39,7 +39,6 @@ type ClusterSeedManifest = {
     initdbSha256: string;
   };
   source: {
-    fingerprint: string;
     catalogVersion: string;
     lane: string;
     producer: string;
@@ -412,7 +411,6 @@ export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
     requireSafeInteger(seed.size, `WASIX ${profile} cluster seed archive size`);
     requireSha256(seed['runtime-module-sha256'], `WASIX ${profile} seed runtime module`);
     requireString(seed['postgres-version'], `WASIX ${profile} seed PostgreSQL version`);
-    requireString(seed['source-fingerprint'], `WASIX ${profile} seed source fingerprint`);
     if (
       seed['physical-format'] !== 'wasix-pg18-v1' ||
       seed['compatibility-key'] !== 'wasix-pg18-datum32-v1'
@@ -425,7 +423,6 @@ export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
       throw new Error('WASIX standard cluster seed must not identify ICU data');
     }
   }
-  requireString(manifest['source-fingerprint'], 'WASIX asset source fingerprint');
 
   const runtimeSupport = requireArray(manifest['runtime-support'], 'WASIX runtime-support entries');
   for (const [index, value] of runtimeSupport.entries()) {
@@ -736,12 +733,8 @@ function parseClusterSeedManifest(
   }
 
   const source = requireObject(root.source, `${label} source`);
-  requireExactKeys(
-    source,
-    ['catalogVersion', 'fingerprint', 'lane', 'producer'],
-    `${label} source`,
-  );
-  for (const field of ['catalogVersion', 'fingerprint', 'lane', 'producer'] as const) {
+  requireExactKeys(source, ['catalogVersion', 'lane', 'producer'], `${label} source`);
+  for (const field of ['catalogVersion', 'lane', 'producer'] as const) {
     requireString(source[field], `${label} source ${field}`);
   }
 
@@ -888,12 +881,6 @@ function verifyClusterSeedIdentity(
     seed.runtime.consumerSha256 !== selected['runtime-module-sha256']
   ) {
     throw new Error(`WASIX ${profile} cluster seed was produced by a different runtime module`);
-  }
-  if (
-    seed.source.fingerprint !== outer['source-fingerprint'] ||
-    seed.source.fingerprint !== selected['source-fingerprint']
-  ) {
-    throw new Error(`WASIX ${profile} cluster seed has a different source fingerprint`);
   }
   if (
     seed.archive.path !== archive.archive ||

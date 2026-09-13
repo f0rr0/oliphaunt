@@ -222,9 +222,11 @@ OLIPHAUNT_API int32_t oliphaunt_close(OliphauntHandle *handle);
  * Registers statically linked PostgreSQL extension modules for the embedded
  * backend's normal LOAD path.
  *
- * Call this before oliphaunt_init in processes that link extension code directly
- * into the application or SDK library. The registry is process-wide and becomes
- * immutable once backend startup begins. Each extension name is the module stem
+ * Call this before loading a module linked into the application or SDK library.
+ * The process-wide registry permits additions after backend startup; repeating an
+ * identical entry is harmless, while replacing an existing module is rejected.
+ * Registration copies descriptors and retains them for the process lifetime.
+ * Each extension name is the module stem
  * used by SQL, for example AS 'vector', and each symbol row exposes the C
  * symbols PostgreSQL would otherwise resolve with dlsym().
  */

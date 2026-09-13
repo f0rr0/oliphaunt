@@ -49,10 +49,34 @@
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
+      "node": "./lib/index.js",
+      "bun": "./lib/index.js",
+      "deno": "./lib/index.js",
+      "browser": "./lib/native-only.js",
       "default": "./lib/index.js"
     },
     "./package.json": {
       "default": "./package.json"
+    },
+    "./storage/node": {
+      "types": "./lib/storage/node.d.ts",
+      "default": "./lib/storage/node.js"
+    },
+    "./direct": {
+      "types": "./lib/direct.d.ts",
+      "node": "./lib/direct.js",
+      "bun": "./lib/direct.js",
+      "deno": "./lib/direct.js",
+      "browser": "./lib/native-only.js",
+      "default": "./lib/direct.js"
+    },
+    "./broker": {
+      "types": "./lib/broker.d.ts",
+      "node": "./lib/broker.js",
+      "bun": "./lib/broker.js",
+      "deno": "./lib/broker.js",
+      "browser": "./lib/native-only.js",
+      "default": "./lib/broker.js"
     }
   },
   "main": "lib/index.js",

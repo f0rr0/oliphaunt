@@ -1,3 +1,4 @@
+import { NATIVE_CLUSTER_SEED_TARGETS } from "./native-cluster-seed-contract.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -365,6 +366,13 @@ function liboliphauntNativeRows(prefix) {
       _source_file: "Moon release metadata",
     };
     rows.push(row);
+  }
+  for (const target of NATIVE_CLUSTER_SEED_TARGETS) {
+    rows.push({
+      id: `${product}.icu-seed-${target}`, product, kind: "icu-seed", target,
+      asset: `liboliphaunt-{version}-icu-seed-${target}.tar.gz`,
+      surfaces: ["github-release"], _source_file: "Moon release metadata",
+    });
   }
   rows.push(
     {

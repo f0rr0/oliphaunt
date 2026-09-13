@@ -4,11 +4,12 @@ import process from "node:process";
 
 import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { exampleCargoReleaseVersionBindings } from "./example-cargo-policy.mjs";
+import { EXAMPLE_CARGO_POLICIES, exampleCargoReleaseVersionBindings } from "./example-cargo-policy.mjs";
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
+import { loadPublicationCatalog } from "./publication-catalog.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 import {
   releaseDerivedPathInventory,
@@ -397,6 +398,23 @@ function authorizedDerivedStructuredChange(context, rules) {
   const rule = rules.structured.get(structuredRuleKey(context.type, context.file, context.parts));
   if (rule !== undefined) return productTransition(rule, context.before, context.after, context.transitions);
   if (context.type !== "toml") return false;
+  // Historical releases retain the dependency layout that existed in that commit.
+  if (EXAMPLE_CARGO_POLICIES.some(policy => context.file === `${policy.crateDir}/Cargo.toml`)) {
+    const parts = context.parts;
+    const entry = cargoDependencyEntryPath(parts);
+    if (entry !== undefined) {
+      const name = entry.at(-1);
+      const carrier = loadPublicationCatalog(TOOL).carriers.find(row => row.id === `cargo:${name}`);
+      if (carrier && productTransition({ sourceProduct: carrier.product, wrapped: true }, context.before, context.after, context.transitions)) return true;
+    }
+    if (pathKey(parts) === pathKey(["package", "metadata", "oliphaunt", "runtime-version"])) {
+      const runtimePath = ["package", "metadata", "oliphaunt", "runtime"];
+      const product = valueAt(context.beforeRoot, runtimePath);
+      if (product === "liboliphaunt-native" && valueAt(context.afterRoot, runtimePath) === product) {
+        return productTransition({ sourceProduct: product, wrapped: false }, context.before, context.after, context.transitions);
+      }
+    }
+  }
   return cargoDependencyVersionChange(context) || cargoLockVersionChange(context);
 }
 

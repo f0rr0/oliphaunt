@@ -1,7 +1,7 @@
-import { serializeOpenConfig } from './client-common.js';
+import { serializeOpenConfig } from './open-config.js';
 import { requireNodeStorage, restoreNodeWasix } from './node-client-common.js';
 import { openNodeActor } from './node-actor.js';
-import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
+import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './native-public.js';
 
 /** Open PostgreSQL on a dedicated Rust owner while keeping the caller event loop responsive. */
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {

@@ -419,27 +419,12 @@ the applied runtime, tool, contrib, and hot-path patch markers.  The PG18
 source-spine command defaults to source-only validation; `--strict-local` also
 requires the shared non-backend source checkouts to be present, clean, and pinned.
 
-Once those outputs exist, `assets cluster-seeds` and
-`assets package` discover the PG18 build tree,
-derive manifest PostgreSQL versions from the prepared PG18 source markers, and
-write explicit PG18 source-fingerprint and PG18 source pins into
-generated asset manifests.  PG18 packaged asset discovery rejects manifests
-whose fingerprint does not match the current PostgreSQL tarball plus patch
-series hash.  Contrib extension control files are staged from the active
-PostgreSQL source tree, not from the generated PG17 catalog metadata.  The
-default path remains the released PG17.5 lane unless the source selection is
-explicitly selected.
-
-PG18 build outputs must also carry the same source fingerprint and PostgreSQL
-version markers as the prepared source.  The backend Docker entrypoint stamps
-those markers after configure, companion build stages fail closed if either
-marker drifts, and xtask checks the markers again before packaging, template, or
-build-output manifest generation can consume an existing build tree.
-
-Cluster seed manifests produced by `assets cluster-seeds` also carry camelCase
-`sourceLane` metadata, and the asset manifest's `cluster-seeds` entries record
-the same lane. PG18 cluster seeds also carry the same source fingerprint as the
-runtime assets.
+Once those outputs exist, `assets cluster-seeds` and `assets package` discover
+the PG18 build tree and record PostgreSQL versions and source pins. Runtime and
+resource versions govern compatibility. Source hashes remain local build-cache
+markers so patch edits invalidate stale prepared sources and build trees; they
+are not shipped compatibility keys. Contrib control files come from the selected
+PostgreSQL source tree.
 
 The source-spine guard also checks the prepared PG18 tree against the runtime
 assets and promoted contrib build plan.  The required `plpgsql`,
@@ -477,20 +462,8 @@ local discovery.
 Portable assets now write to the stable generated directory
 `target/oliphaunt-wasix/assets`. AOT intermediates remain under
 `target/oliphaunt-wasix/wasix-build/build/aot`, while packaged
-AOT outputs write to the stable generated directory
-`target/oliphaunt-wasix/aot`. Packaged AOT manifests carry explicit
-`source fingerprint`, source-fingerprint, and `postgres-version` metadata, and
-`assets check-aot` verifies those fields before checking module hashes.
-
-The Rust asset parser preserves the same source-fingerprint metadata that xtask
-writes into PG18 asset manifests. Embedded cluster seed manifests must match
-the top-level asset manifest fingerprint, and bundled AOT manifests must match
-the same fingerprint and PostgreSQL version before their module hashes are
-accepted. The `liboliphaunt-wasix-portable` build script probes
-`target/oliphaunt-wasix/assets` plus the publishable payload unless
-`OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` explicitly overrides the asset directory.
-Any selected PG18 manifest must carry a non-empty source-fingerprint plus a
-PostgreSQL 18 runtime version before embedding.
+AOT outputs write to `target/oliphaunt-wasix/aot`. The loader checks runtime,
+PostgreSQL, engine, and target compatibility and verifies artifact checksums.
 
 Runtime reuse has the same fail-closed stance.  A full-local runtime root is
 only reused when its saved runtime source key matches the currently embedded
@@ -506,28 +479,10 @@ Cargo workspace crate as an unrelated final step. Run `moon run repo:package`
 for the workspace crate gate; each release carrier also enforces the registry
 limit while creating the exact package it publishes.
 
-Perf reports now carry WASIX runtime asset provenance when the measured engine
-is the bundled WASIX runtime.  The JSON field is `wasixRuntimeAssets` and
-records the asset source selection, PostgreSQL version, optional PG18 source
-fingerprint, and PGDATA-template lane/fingerprint/version.  Native PostgreSQL,
-SQLite, native liboliphaunt, and Node Oliphaunt controls omit the field.  This
-keeps future PG18-versus-released-lane benchmark reports self-identifying even
-when both lanes can be built from the same xtask binary.
-
-`assets check` and `assets verify-committed` include a source-fingerprint
-isolation guard. It validates lane selection and output paths, rejects legacy
-PG17/Oliphaunt inputs, checks the patch manifest/series and prepared-source
-fingerprints, syntax-checks build scripts, and compiles the C ABI harnesses.
-It deliberately does not grep for exact positive implementation spellings;
-patch application, compilation, artifact/export validation, smoke, and
-regression tasks own those proofs.
-Generated asset manifest
-validation also checks the manifest `source fingerprint` field when a lane is selected,
-so PG18 packaged assets cannot pass as released-lane assets by version inference
-alone.  Build-output manifests carry the same PG18 source fingerprint and are
-ignored by export-list generation if the fingerprint no longer matches the
-current source stack; PG18 build-output manifest module paths must also stay
-under the PG18 build root instead of the released build root.
+`assets check` and `assets verify-committed` validate source selection and output
+paths, the patch series, prepared-source build-cache markers, build-script syntax,
+and C ABI harnesses. Runtime manifests use version compatibility, without source
+fingerprint fields. Build-output module paths must stay under the PG18 build root.
 
 Promoted extension packaging is also fail-closed.  PostgreSQL contrib and PGXS
 style extensions are lane-scoped through the selected build directory.  The PG18
@@ -590,20 +545,8 @@ Verified locally:
   including the PG18 source-prep and backend entrypoint scripts.
 - `assets verify-committed` additionally validates the source-fingerprint isolation
   guard and the source-controlled WASIX export list.
-- Generated asset manifests now carry explicit `source fingerprint` metadata and a
-  source fingerprint that must match the current PG18 tarball plus patch stack.
-- Existing PG18 build trees are accepted only when their stamped source
-  fingerprint and PostgreSQL version markers match the prepared source.
-- Packaged AOT manifests now carry explicit `source fingerprint`, `postgres-version`,
-  and source-fingerprint metadata.
-- Cluster seed manifests and asset-manifest `cluster-seeds` entries now carry
-  lane metadata as well, plus PG18 source fingerprints.
-- Runtime asset parsing preserves PG18 source fingerprints, and embedded cluster
-  seed/AOT manifests are checked against the bundled asset manifest before
-  use.
-- WASIX perf reports include bundled runtime asset provenance, so benchmark JSON
-  identifies the measured source selection, PostgreSQL version, and PG18 source
-  fingerprint before the numbers are compared.
+- Existing PG18 build trees retain producer-local source and version markers.
+- Runtime, seed, and AOT manifests use version compatibility and payload checksums.
 - Unit coverage checks that PG18 extension manifests use packaged control files
   and reject released-lane path leaks; the legacy PG17 source selection is no longer
   selectable.

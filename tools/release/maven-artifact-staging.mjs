@@ -13,6 +13,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 
 import { createDeterministicZip } from "../../src/shared/artifact-packaging/archive-directory.mjs";
 import {
@@ -145,7 +147,7 @@ export function parseMavenArtifactManifest(file) {
     if (coordinates.has(coordinate)) throw error(`${label} repeats Maven coordinate ${coordinate}`);
     coordinates.add(coordinate);
     requiredText(rawArtifact, `${label} artifact path`);
-    if (!rawArtifact.endsWith(".tar.gz")) throw error(`${label} artifact must be a .tar.gz payload`);
+    if (!rawArtifact.endsWith(".tar.gz") && !rawArtifact.endsWith(".java")) throw error(`${label} artifact must be a .tar.gz payload or descriptor .java source`);
     const artifact = path.isAbsolute(rawArtifact) ? rawArtifact : path.resolve(ROOT, rawArtifact);
     requireArtifact(artifact, `${label} artifact ${relative(artifact)}`);
     requiredText(name, `${label} name`);
@@ -174,6 +176,14 @@ export function parseMavenArtifactManifest(file) {
   });
 }
 
+function isIcuDescriptor(row) {
+  return row.groupId === "dev.oliphaunt.runtime" && row.artifactId === "oliphaunt-icu";
+}
+
+function hasDescriptor(row) {
+  return row.artifact.endsWith(".java") || isIcuDescriptor(row);
+}
+
 export function renderMavenArtifactPom(row) {
   const licenses = row.licenses.map((license) => `    <license>
       <name>${xml(license.name)}</name>
@@ -190,7 +200,7 @@ export function renderMavenArtifactPom(row) {
   <groupId>${xml(row.groupId)}</groupId>
   <artifactId>${xml(row.artifactId)}</artifactId>
   <version>${xml(row.version)}</version>
-  <packaging>tar.gz</packaging>
+  <packaging>${hasDescriptor(row) ? "jar" : "tar.gz"}</packaging>
   <name>${xml(row.name)}</name>
   <description>${xml(row.description)}</description>
   <url>https://github.com/f0rr0/oliphaunt</url>
@@ -210,7 +220,16 @@ ${licenses}
     <developerConnection>scm:git:ssh://git@github.com:f0rr0/oliphaunt.git</developerConnection>
     <url>https://github.com/f0rr0/oliphaunt</url>
   </scm>
-  <properties>${runtimeProperties}
+${hasDescriptor(row) ? `  <dependencies>
+    <dependency>
+      <groupId>dev.oliphaunt</groupId>
+      <artifactId>oliphaunt-android</artifactId>
+      <version>${xml(currentProductVersionSync("oliphaunt-kotlin", TOOL))}</version>
+      <type>aar</type>
+      <scope>compile</scope>
+    </dependency>
+  </dependencies>
+` : ""}  <properties>${runtimeProperties}
     <oliphaunt.license.spdx>${xml(row.licenseSpdx)}</oliphaunt.license.spdx>
   </properties>
 </project>
@@ -230,13 +249,15 @@ function exactFiles(directory, expected, label) {
   return names;
 }
 
-async function writeCompanionJar(stageRoot, row, classifier) {
+async function writeCompanionJar(stageRoot, row, classifier, descriptorSource) {
   const coordinate = `${row.groupId}:${row.artifactId}:${row.version}`;
   const root = path.join(stageRoot, `${classifier}-stage`);
   mkdirSync(path.join(root, "META-INF"), { recursive: true });
   stageReleaseNotices(path.join(root, "META-INF"), { profile: "source-sdk" });
   writeFileSync(path.join(root, "META-INF/MANIFEST.MF"), MANIFEST, { mode: 0o644 });
-  if (classifier === "sources") {
+  if (classifier === "sources" && descriptorSource !== undefined) {
+    copyFileSync(descriptorSource, path.join(root, path.basename(descriptorSource)));
+  } else if (classifier === "sources") {
     writeFileSync(
       path.join(root, "README.md"),
       `# ${coordinate}\n\nThis binary carrier has no source API. See https://github.com/f0rr0/oliphaunt.\n`,
@@ -245,18 +266,45 @@ async function writeCompanionJar(stageRoot, row, classifier) {
   } else {
     writeFileSync(
       path.join(root, "index.html"),
-      `<!doctype html><meta charset="utf-8"><title>${xml(coordinate)}</title><p>This binary carrier has no Java API.</p>\n`,
+      `<!doctype html><meta charset="utf-8"><title>${xml(coordinate)}</title><p>${descriptorSource === undefined ? "This binary carrier has no Java API." : "Versioned resource descriptor. See the sources archive."}</p>\n`,
       { mode: 0o644 },
     );
   }
   return createDeterministicZip(root);
 }
 
-/**
- * Materialize the immutable, unsigned Maven Central input closure without
- * Gradle, Java, registry access, credentials, or dependency resolution.
- */
-export async function stageMavenArtifactManifest(manifest, outputRoot) {
+let descriptorSdkJar;
+function localDescriptorSdkJar() {
+  if (descriptorSdkJar !== undefined) return descriptorSdkJar;
+  const buildRoot = path.join(ROOT, "target/release/maven-descriptor-sdk");
+  const result = spawnSync("./gradlew", [":oliphaunt:jvmJar", "--configuration-cache"], {
+    cwd: path.join(ROOT, "src/sdks/kotlin"),
+    env: { ...process.env, OLIPHAUNT_GRADLE_BUILD_ROOT: buildRoot },
+    encoding: "utf8", maxBuffer: 4 * 1024 * 1024,
+  });
+  if (result.status !== 0) throw error(`building descriptor SDK types failed: ${result.error ?? result.stderr ?? result.stdout}`);
+  const directory = path.join(buildRoot, "oliphaunt/libs");
+  const jars = readdirSync(directory).filter(name => /^oliphaunt-jvm-[0-9].*\.jar$/u.test(name) && !/-sources|-javadoc/u.test(name));
+  if (jars.length !== 1) throw error("descriptor SDK build must produce exactly one JVM jar");
+  descriptorSdkJar = path.join(directory, jars[0]);
+  return descriptorSdkJar;
+}
+
+async function writeDescriptorJar(root, source, sdkJar) {
+  const classes = path.join(root, "classes");
+  mkdirSync(classes, { recursive: true });
+  const result = spawnSync("javac", ["--release", "17", "-proc:none", "-classpath", sdkJar, "-d", classes, source], {
+    encoding: "utf8", maxBuffer: 1024 * 1024,
+  });
+  if (result.status !== 0) throw error(`compiling ${source} failed: ${result.error ?? result.stderr}`);
+  stageReleaseNotices(path.join(classes, "META-INF"), { profile: "source-sdk" });
+  writeFileSync(path.join(classes, "META-INF/MANIFEST.MF"), MANIFEST);
+  return createDeterministicZip(classes);
+}
+
+/** Stage unsigned Maven files. Descriptor jars compile against the local SDK;
+ * binary-only carriers need no Gradle or Java invocation. */
+export async function stageMavenArtifactManifest(manifest, outputRoot, { sdkJar } = {}) {
   const rows = parseMavenArtifactManifest(path.resolve(manifest));
   const destination = path.resolve(outputRoot);
   const stage = createSiblingStage(destination, "maven-artifacts");
@@ -266,18 +314,42 @@ export async function stageMavenArtifactManifest(manifest, outputRoot) {
       const directory = path.join(stage, ...row.groupId.split("."), row.artifactId, row.version);
       const prefix = `${row.artifactId}-${row.version}`;
       mkdirSync(directory, { recursive: true });
-      const primary = path.join(directory, `${prefix}.tar.gz`);
+      const descriptor = hasDescriptor(row);
+      const primary = path.join(directory, `${prefix}.${descriptor ? "jar" : "tar.gz"}`);
       const pom = path.join(directory, `${prefix}.pom`);
       const sources = path.join(directory, `${prefix}-sources.jar`);
       const javadoc = path.join(directory, `${prefix}-javadoc.jar`);
-      copyFileSync(row.artifact, primary);
+      const companionRoot = path.join(stage, ".companion-stage", row.artifactId, row.version);
+      mkdirSync(companionRoot, { recursive: true });
+      let descriptorSource;
+      const extraFiles = [];
+      if (descriptor) {
+        descriptorSource = row.artifact;
+        if (isIcuDescriptor(row)) {
+          descriptorSource = path.join(companionRoot, "ICU.java");
+          writeFileSync(descriptorSource, `package dev.oliphaunt.icu;
+/** Optional ICU data supplied by this package. */
+public final class ICU {
+    private ICU() {}
+    public static final dev.oliphaunt.IcuData data = new dev.oliphaunt.IcuData(${JSON.stringify(row.version)});
+}
+`);
+          const payloadName = `${prefix}.tar.gz`;
+          copyFileSync(row.artifact, path.join(directory, payloadName));
+          chmodSync(path.join(directory, payloadName), 0o644);
+          extraFiles.push(payloadName);
+        }
+        writeFileSync(primary, await writeDescriptorJar(companionRoot, descriptorSource, sdkJar ?? localDescriptorSdkJar()));
+      } else {
+        copyFileSync(row.artifact, primary);
+      }
       chmodSync(primary, 0o644);
       writeFileSync(pom, renderMavenArtifactPom(row), { mode: 0o644 });
-      const companionRoot = path.join(stage, ".companion-stage", row.artifactId, row.version);
-      writeFileSync(sources, await writeCompanionJar(companionRoot, row, "sources"), { mode: 0o644 });
-      writeFileSync(javadoc, await writeCompanionJar(companionRoot, row, "javadoc"), { mode: 0o644 });
+      writeFileSync(sources, await writeCompanionJar(companionRoot, row, "sources", descriptorSource), { mode: 0o644 });
+      writeFileSync(javadoc, await writeCompanionJar(companionRoot, row, "javadoc", descriptorSource), { mode: 0o644 });
       rmSync(companionRoot, { recursive: true, force: true });
       const files = exactFiles(directory, [
+        ...extraFiles,
         path.basename(javadoc),
         path.basename(pom),
         path.basename(sources),

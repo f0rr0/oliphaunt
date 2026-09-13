@@ -19,7 +19,7 @@ func compileTransactionFailureAPI(
 func compileOliphauntPublicAPI(restoreDestination: URL) async throws {
     let configuration = OliphauntConfiguration(
         storage: .temporaryDirectory,
-        startupGUCs: [.init("application_name", "public-api-consumer")],
+        startupGUCs: ["application_name": "public-api-consumer"],
         username: "postgres",
         database: "postgres"
     )

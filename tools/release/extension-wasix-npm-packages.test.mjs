@@ -17,6 +17,7 @@ import { createDeterministicTar } from "./cargo-source-package.mjs";
 import {
   stageExtensionNpmPackagesForTargets,
   stageExtensionWasixNpmPackages,
+  writeWasixExtensionAotNpmPackage,
 } from "./package-extension-release-carriers.mjs";
 import {
   extensionNpmPackageForProduct,
@@ -24,6 +25,7 @@ import {
   extensionRegistryPackageEntries,
 } from "./extension-registry-packages.mjs";
 import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
+import { canonicalWasixAotMetadata } from "./wasix-aot-manifest.mjs";
 import {
   currentProductVersionSync,
   extensionReleaseVersion,
@@ -46,6 +48,35 @@ function temporaryRoot(name) {
 function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
+
+test("packages exact host AOT bytes separately and rejects corrupted code before packing", () => {
+  const root = temporaryRoot("oliphaunt-extension-aot-");
+  const sourceDir = path.join(root, "input");
+  const output = path.join(root, "package");
+  mkdirSync(sourceDir);
+  const raw = Buffer.from("trusted-build-fixture");
+  const bytes = zstdCompressSync(raw);
+  writeFileSync(path.join(sourceDir, "vector.bin.zst"), bytes);
+  const canonical = canonicalWasixAotMetadata();
+  const manifest = {
+    "format-version": 1, "source-lane": canonical.sourceLane, engine: canonical.engine,
+    "wasmer-version": canonical.wasmerVersion, "wasmer-wasix-version": canonical.wasmerWasixVersion,
+    "target-triple": "x86_64-unknown-linux-gnu", "postgres-version": "18.3",
+    artifacts: [{ name: "extension:vector", path: "vector.bin.zst", compressed: true,
+      sha256: sha256Bytes(bytes), "raw-sha256": sha256Bytes(raw), "raw-size": raw.length,
+      "module-sha256": "a".repeat(64) }],
+  };
+  writeFileSync(path.join(sourceDir, "manifest.json"), JSON.stringify(manifest));
+  const options = { product: "oliphaunt-extension-vector", version: "0.8.2", runtimeVersion: "0.2.0",
+    sqlName: "vector", target: "linux-x64-gnu", sourceDir };
+  writeWasixExtensionAotNpmPackage(output, options);
+  const metadata = JSON.parse(readFileSync(path.join(output, "package.json")));
+  expect(metadata.name).toBe("@oliphaunt/extension-vector-wasix-linux-x64-gnu");
+  expect(metadata.oliphaunt.manifestSha256).toBe(sha256Bytes(readFileSync(path.join(output, "aot-manifest.json"))));
+  expect(readFileSync(path.join(output, "vector.bin.zst"))).toEqual(bytes);
+  writeFileSync(path.join(sourceDir, "vector.bin.zst"), "corrupt");
+  expect(() => writeWasixExtensionAotNpmPackage(output, options)).toThrow("SHA-256");
+});
 
 function deterministicTar(stage, archiveRoot) {
   return createDeterministicTar(stage, archiveRoot, {
@@ -379,8 +410,8 @@ test("contrib subpath imports carry their exact transitive dependency closure", 
   const cube = inspectDescriptorWithNode(path.join(unpacked, "descriptors", "cube.js")).descriptor;
   expect(cube.carriers.map(({ sqlName }) => sqlName)).toEqual(["cube"]);
   const packageJson = JSON.parse(readFileSync(path.join(unpacked, "package.json"), "utf8"));
-  expect(packageJson.exports["."]).toBeUndefined();
-  expect(Object.keys(packageJson.exports).sort()).toEqual(["./cube", "./earthdistance", "./package.json"]);
+  expect(packageJson.exports["."].import).toBe("./index.js");
+  expect(Object.keys(packageJson.exports).sort()).toEqual([".", "./cube", "./earthdistance", "./package.json"]);
   expect(packageJson.oliphaunt.memberExports).toEqual({
     cube: "./cube",
     earthdistance: "./earthdistance",

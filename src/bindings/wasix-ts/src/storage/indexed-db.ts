@@ -6,7 +6,7 @@ import { defineIndexedDbStorage, type PersistentWasixStorage } from '../storage.
  * Every completed protocol operation commits only journaled PGDATA path
  * changes in one atomic read-write IndexedDB transaction before its Promise resolves.
  */
-export function indexedDB(name: string): PersistentWasixStorage {
+export function indexedDB(name: string): PersistentWasixStorage<'indexed-db'> {
   return defineIndexedDbStorage(name);
 }
 

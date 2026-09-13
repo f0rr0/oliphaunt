@@ -1,3 +1,4 @@
+import { extensions } from '../extensions';
 import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 
@@ -175,6 +176,8 @@ async function testPublicEntrypointIsMinimal(): Promise<void> {
       'array',
       'binary',
       'default',
+      'directory',
+      'extensions',
       'json',
       'postgresOids',
       'text',
@@ -190,21 +193,24 @@ async function testPublicEntrypointIsMinimal(): Promise<void> {
 async function testOpenUsesNativeDirectDefaults(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open({
-    storage: { kind: 'applicationData', name: 'primary' },
+    storage: { kind: 'directory', path: '/data/primary' },
     startupGUCs: { search_path: 'public' },
     username: 'postgres',
     database: 'app',
-    extensions: ['hstore'],
+    extensions: [extensions.hstore],
   });
 
   assert.deepEqual(native.openCalls, [
     {
-      storageKind: 'applicationData',
-      storageName: 'primary',
+      storageKind: 'directory',
+      storagePath: '/data/primary',
       startupGUCs: ['search_path=public'],
       username: 'postgres',
       database: 'app',
-      extensions: ['hstore'],
+      extensions: [
+        { sqlName: 'hstore', product: 'oliphaunt-extension-contrib-pg18', version: undefined },
+      ],
+      icuVersion: undefined,
     },
   ]);
   await db.close();
@@ -1214,9 +1220,8 @@ class MockNative implements Spec {
   readonly forgottenClosedGenerations: number[] = [];
   readonly restoreCalls: Array<{
     destination: {
-      storageKind: 'directory' | 'applicationData';
+      storageKind: 'directory';
       storagePath?: string;
-      storageName?: string;
     };
     payload: string;
   }> = [];
@@ -1405,9 +1410,8 @@ class MockNative implements Spec {
 
   async restoreJsi(
     destination: {
-      storageKind: 'directory' | 'applicationData';
+      storageKind: 'directory';
       storagePath?: string;
-      storageName?: string;
     },
     artifact: Uint8Array,
   ): Promise<void> {
@@ -1453,9 +1457,8 @@ type GlobalWithJsi = typeof globalThis & {
     backup(handle: number): Promise<ArrayBuffer | ArrayBufferView>;
     restore(
       destination: {
-        storageKind: 'directory' | 'applicationData';
+        storageKind: 'directory';
         storagePath?: string;
-        storageName?: string;
       },
       artifact: Uint8Array,
     ): Promise<void>;

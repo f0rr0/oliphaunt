@@ -34,6 +34,12 @@ cross-origin isolated with COOP `same-origin` and COEP `require-corp`.
 
 ## Runtime Shape
 
+Use `@oliphaunt/wasix-ts/browser` for an explicit browser import. Its `open` and
+`restore` types reject directory storage; native entrypoints reject IndexedDB
+and OPFS. Runtime validation also protects JavaScript callers. The `/browser`
+entrypoint fails early on Node.js, Bun, and Deno. One package installation still
+includes both hosts, but native entrypoints do not load the browser engine.
+
 In browsers the root runs the database in the importing JavaScript realm. On
 Node-compatible hosts the root uses a dedicated Rust owner and keeps the event
 loop responsive. `@oliphaunt/wasix-ts/direct` opts into the lowest-overhead

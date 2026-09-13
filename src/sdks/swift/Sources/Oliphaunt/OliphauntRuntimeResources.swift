@@ -85,6 +85,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     var resourceRoot: URL
     var cacheRoot: URL
     var icuResourceDirectories: [URL]?
+    var icuSelected: Bool? = nil
 
     init(
         resourceRoot: URL,
@@ -193,23 +194,26 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     func resolveRuntime(
         requestedExtensions: [String] = []
     ) throws -> ResolvedOliphauntRuntimeResources {
-        let requested = try Self.validateExtensionIds(requestedExtensions)
+        let requested = try selectedOliphauntExtensions(Array(Self.validateExtensionIds(requestedExtensions)))
         let runtime = try assetPackage(kind: .runtime)
         try require(runtime: runtime, contains: requested)
-        let integratedIcu = runtime.runtimeFeatures.contains("icu")
-        let externalIcu = integratedIcu ? nil : try Self.icuDataCarrier(
+        let integratedIcu = runtime.runtimeFeatures.contains("icu") && icuSelected != false
+        let externalIcu = integratedIcu || icuSelected == false ? nil : try Self.icuDataCarrier(
             inResourceDirectories: icuResourceDirectories ?? defaultBundleResourceURLs()
         )
+        if icuSelected == true && !integratedIcu && externalIcu == nil {
+            throw OliphauntError.engine("selected ICU resources are not packaged in this application")
+        }
         let profile: OliphauntNativeCatalogProfile = integratedIcu || externalIcu != nil ? .icu : .standard
         let seed = try matchingClusterSeed(
             profile: profile,
             runtime: runtime,
             icuDataTreeSha256: externalIcu?.treeSha256
         )
-        let target = try materialize(runtime, seed: seed, profile: profile, externalIcu: externalIcu)
+        let target = try materialize(runtime, seed: seed, profile: profile, externalIcu: externalIcu, selectedExtensions: requested)
         return ResolvedOliphauntRuntimeResources(
             directory: target,
-            sharedPreloadLibraries: runtime.sharedPreloadLibraries.sorted(),
+            sharedPreloadLibraries: Set(requested.flatMap { oliphauntExtensionRuntimeContracts[$0]?.sharedPreloads ?? [] }).sorted(),
             catalogProfile: profile,
             owner: self
         )
@@ -227,11 +231,11 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             )
         }
         try require(runtime: runtime, contains: requested)
-        let profile: OliphauntNativeCatalogProfile = runtime.runtimeFeatures.contains("icu") ? .icu : .standard
+        let profile: OliphauntNativeCatalogProfile = runtime.runtimeFeatures.contains("icu") && icuSelected != false ? .icu : .standard
         _ = try matchingClusterSeed(profile: profile, runtime: runtime, icuDataTreeSha256: nil)
         return ResolvedOliphauntRuntimeResources(
             directory: runtimeDirectory,
-            sharedPreloadLibraries: runtime.sharedPreloadLibraries.sorted(),
+            sharedPreloadLibraries: Set(requested.flatMap { oliphauntExtensionRuntimeContracts[$0]?.sharedPreloads ?? [] }).sorted(),
             catalogProfile: profile,
             owner: self
         )
@@ -384,17 +388,20 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         _ runtime: AssetPackage,
         seed: AssetPackage,
         profile: OliphauntNativeCatalogProfile,
-        externalIcu: OliphauntIcuDataCarrier?
+        externalIcu: OliphauntIcuDataCarrier?,
+        selectedExtensions: Set<String>
     ) throws -> URL {
         let digest = profile == .icu ? seed.icuDataTreeSha256 : "none"
         let target = cacheRoot
             .appendingPathComponent("runtime", isDirectory: true)
             .appendingPathComponent(runtime.cacheKey, isDirectory: true)
+            .appendingPathComponent(packagedExtensionFingerprint(selectedExtensions.sorted()), isDirectory: true)
             .appendingPathComponent(profile.rawValue, isDirectory: true)
             .appendingPathComponent(seed.cacheKey, isDirectory: true)
             .appendingPathComponent(digest, isDirectory: true)
         let identity = [
             "runtime=\(runtime.cacheKey)",
+            "extensions=\(selectedExtensions.sorted().joined(separator: ","))",
             "target=\(oliphauntSwiftClusterSeedTarget)",
             "profile=\(profile.rawValue)",
             "seed=\(seed.cacheKey)",
@@ -418,7 +425,9 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             isDirectory: true
         )
         let result: Result<URL, Error> = Result {
-            try copyTree(from: runtime.filesURL, to: temp)
+            try copyTree(from: runtime.filesURL, to: temp, include: {
+                includeSelectedOliphauntRuntimeFile($0, extensions: selectedExtensions, icu: profile == .icu)
+            })
             if let externalIcu {
                 let destination = temp
                     .appendingPathComponent("share", isDirectory: true)
@@ -558,7 +567,13 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         if case .runtime = kind {
             try validateRuntimeCarrierReceipt()
         }
-        let rootURL = kind.root(in: resourceRoot)
+        var rootURL = kind.root(in: resourceRoot)
+        if case .clusterSeed(.icu) = kind,
+           !FileManager.default.fileExists(atPath: rootURL.path),
+           let carrier = try Self.icuDataCarrier(inResourceDirectories: icuResourceDirectories ?? defaultBundleResourceURLs()) {
+            rootURL = carrier.dataURL.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("native-seeds/\(oliphauntSwiftClusterSeedTarget)", isDirectory: true)
+        }
         let manifestURL = rootURL.appendingPathComponent("manifest.properties")
         guard FileManager.default.fileExists(atPath: manifestURL.path) else {
             return nil
@@ -800,7 +815,9 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             )
         }
         _ = try assetPackage(kind: .clusterSeed(.standard))
-        _ = try assetPackage(kind: .clusterSeed(.icu))
+        if FileManager.default.fileExists(atPath: AssetPackageKind.clusterSeed(.icu).root(in: resourceRoot).path) {
+            _ = try assetPackage(kind: .clusterSeed(.icu))
+        }
     }
 
     private func readManifest(_ url: URL) throws -> [String: String] {
@@ -1368,7 +1385,8 @@ private struct AssetPackage {
     var icuDataTreeSha256: String
 }
 
-private func copyTree(from source: URL, to destination: URL) throws {
+private func copyTree(from source: URL, to destination: URL, include: (String) -> Bool = { _ in true }, relative: String = "") throws {
+    guard include(relative) else { return }
     let values = try source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
     if values.isSymbolicLink == true {
         throw OliphauntError.engine("refusing to copy symbolic link in Oliphaunt resources: \(source.path)")
@@ -1381,7 +1399,7 @@ private func copyTree(from source: URL, to destination: URL) throws {
             options: []
         )
         for child in children {
-            try copyTree(from: child, to: destination.appendingPathComponent(child.lastPathComponent))
+            try copyTree(from: child, to: destination.appendingPathComponent(child.lastPathComponent), include: include, relative: relative.isEmpty ? child.lastPathComponent : "\(relative)/\(child.lastPathComponent)")
         }
     } else {
         try FileManager.default.createDirectory(

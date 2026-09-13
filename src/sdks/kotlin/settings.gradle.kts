@@ -39,4 +39,3 @@ if (oliphauntBuildRoot != null) {
 rootProject.name = "oliphaunt-kotlin"
 include(":oliphaunt")
 include(":oliphaunt-android-gradle-plugin")
-include(":oliphaunt-maven-artifacts")

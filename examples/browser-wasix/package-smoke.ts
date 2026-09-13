@@ -1,5 +1,5 @@
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
-import Oliphaunt, { type OliphauntDatabase } from '@oliphaunt/wasix-ts';
+import Oliphaunt, { extensions, type OliphauntDatabase } from '@oliphaunt/wasix-ts/browser';
 import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
@@ -28,11 +28,17 @@ try {
   const storage = indexedDB('packed-browser-smoke');
   let database = await Oliphaunt.open({
     storage,
-    extensions: [pgtap],
+    extensions: [pgtap, extensions.pg_trgm],
   });
   let pgtapVersion: string;
   try {
     await database.execute('CREATE EXTENSION pgtap');
+    await database.execute('CREATE EXTENSION pg_trgm');
+    const similarity = await database.queryRaw(
+      "SELECT similarity('hello', 'hello')::text AS value",
+    );
+    if (similarity.getText(0, 'value') !== '1')
+      throw new Error('packed contrib module did not load');
     await expectAnswer(database);
     await expectStructuredApi(database, 'packed browser direct');
     pgtapVersion = await readPgtapVersion(database);
@@ -48,7 +54,7 @@ try {
 
   database = await WorkerOliphaunt.open({
     storage,
-    extensions: [pgtap],
+    extensions: [pgtap, extensions.pg_trgm],
   });
   try {
     await expectAnswer(database);
@@ -93,7 +99,7 @@ try {
 }
 
 async function expectLogicalTools(): Promise<string> {
-  const source = await WorkerOliphaunt.open({ extensions: [pgtap] });
+  const source = await WorkerOliphaunt.open({ extensions: [pgtap, extensions.pg_trgm] });
   let sql: string;
   try {
     await psql(source, { script: logicalToolsSeed });
@@ -105,7 +111,7 @@ async function expectLogicalTools(): Promise<string> {
     await source.close();
   }
 
-  const target = await WorkerOliphaunt.open({ extensions: [pgtap] });
+  const target = await WorkerOliphaunt.open({ extensions: [pgtap, extensions.pg_trgm] });
   try {
     await psql(target, { script: sql });
     const result = await target.queryRaw(logicalToolsVerify);

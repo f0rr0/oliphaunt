@@ -8,9 +8,10 @@ use the separate WASIX TypeScript package.
 
 ```ts
 import Oliphaunt from '@oliphaunt/ts';
+import { directory } from '@oliphaunt/ts/storage/node';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'directory', path: '.oliphaunt' },
+  storage: directory('.oliphaunt'),
   startupGUCs: { application_name: 'my-app' },
 });
 
@@ -20,6 +21,21 @@ const result = await db.query('SELECT value FROM events');
 console.log(result.rows[0]?.value);
 await db.close();
 ```
+
+Both execution modes come with one installation. Select a mode through its import
+path for stricter options:
+
+```ts
+import Direct from '@oliphaunt/ts/direct';
+import Broker from '@oliphaunt/ts/broker';
+
+await using direct = await Direct.open();
+await using broker = await Broker.open();
+```
+
+These entrypoints share the root client and preserve its database, restore, and
+server APIs. Neither accepts `topology`; `/direct` also rejects `brokerExecutable`.
+Browser bundlers receive an early diagnostic directing them to the WASIX SDK.
 
 Direct topology is the default. Set `topology: 'broker'` to place the embedded
 backend in a helper process while keeping the same database API. If that helper
@@ -43,7 +59,7 @@ The deliberate public vocabulary is:
 - `execProtocolRawStream` for callback delivery of raw backend protocol chunks,
   including COPY responses, without buffering the complete response.
 - `backup()` returning the one physical backup format as `Uint8Array`.
-- `Oliphaunt.restore(destination, bytes)` for an absent or empty destination.
+- `Oliphaunt.restore(directory(path), bytes)` for an absent or empty destination.
 - `Oliphaunt.openServer(config)` for the distinct local-server handle.
 
 `execute` asserts one command with no rows. `query` accepts command-only or
@@ -120,24 +136,26 @@ session when its state is unknown.
 
 ```ts
 const source = await Oliphaunt.open({
-  storage: { kind: 'directory', path: '.oliphaunt-source' },
+  storage: directory('.oliphaunt-source'),
 });
 const bytes = await source.backup();
 await source.close();
 
-await Oliphaunt.restore('.oliphaunt-restored', bytes);
+await Oliphaunt.restore(directory('.oliphaunt-restored'), bytes);
 ```
 
 Backup bytes are a PostgreSQL physical initialization payload containing PGDATA
 and backup metadata. They do not contain the outer `.oliphaunt.json` descriptor.
 Restore stages and validates PGDATA, then creates the receiving root identity.
 There is no archive selector and no replace-existing option.
+Open and restore accept the same `directory(path)` helper, including local
+`file:` URLs. Restore requires persistent storage and does not open a database.
 
 ## Local server
 
 ```ts
 const server = await Oliphaunt.openServer({
-  storage: { kind: 'directory', path: '.oliphaunt-server' },
+  storage: directory('.oliphaunt-server'),
   listen: { transport: 'tcp' },
 });
 console.log(server.connectionString);
@@ -199,15 +217,36 @@ the SDK deliberately does not guess that an owner is stale.
 
 ## Runtime and extensions
 
-Platform native runtime, Node addon, broker, and ICU packages are optional
-dependencies selected for the installed host. Explicit library, runtime, addon,
-broker, or server paths exist for packaging and development scenarios. Native
-client-tool packages remain separate products and are not SDK dependencies.
+The SDK installs PostgreSQL and the supported contrib distribution for the host.
+External extensions and ICU data are separate dependencies:
 
-Extensions are selected by exact PostgreSQL SQL name through `extensions`.
-Runtime artifact discovery remains internal. The package intentionally does not
-publish capability profiles, supported-mode introspection, package-size reports,
-generic streams, protocol parsers, or backup format helpers.
+```sh
+npm install @oliphaunt/ts @oliphaunt/extension-vector
+```
 
-The package has one public code entrypoint, `@oliphaunt/ts`, plus
-`@oliphaunt/ts/package.json` for package metadata.
+```ts
+import Oliphaunt, { extensions } from '@oliphaunt/ts';
+import { directory } from '@oliphaunt/ts/storage/node';
+import vector from '@oliphaunt/extension-vector';
+
+const db = await Oliphaunt.open({
+  storage: directory('./postgres'),
+  extensions: [vector, extensions.hstore],
+});
+try {
+  await db.execute('CREATE EXTENSION vector');
+  await db.execute('CREATE EXTENSION hstore');
+} finally {
+  await db.close();
+}
+```
+
+`directory` accepts a filesystem path or local `file:` URL. Contrib needs no
+additional application dependency, but its descriptor must be passed explicitly.
+The imported external descriptor identifies the installed package and version;
+resource resolution is internal. Selection never runs migration SQL.
+
+For ICU collations, install `@oliphaunt/icu`, import its default `icu` value,
+and pass `icu` to `Oliphaunt.open`. The same extension and ICU options apply to
+broker and local-server configuration. Explicit library and runtime paths remain
+available for advanced packaging and development.

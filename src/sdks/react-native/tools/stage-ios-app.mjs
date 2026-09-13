@@ -19,6 +19,7 @@ import {
   parseProperties,
   requireProperty,
   validateIcuDataCarrier,
+  validateClusterSeed,
   validateNativeRuntimeClosure,
 } from "./native-resource-closure.mjs";
 
@@ -635,10 +636,11 @@ function validateBase(value, label, allowFileUrls) {
   exactKeys(base, ["assets", "product", "tag", "version"], label);
   if (base.product !== "liboliphaunt-native") fail(`${label}.product must be liboliphaunt-native`);
   const assets = validateAssetList(base.assets, `${label}.assets`, allowFileUrls);
-  noOtherRoles(assets, ["base-xcframework", "icu-data", "runtime-resources"], `${label}.assets`);
+  noOtherRoles(assets, ["base-xcframework", "icu-data", "runtime-resources", "icu-seed"], `${label}.assets`);
   const framework = exactlyOneRole(assets, "base-xcframework", `${label}.assets`);
   const runtime = exactlyOneRole(assets, "runtime-resources", `${label}.assets`);
   const icu = exactlyOneRole(assets, "icu-data", `${label}.assets`);
+  const icuSeed = exactlyOneRole(assets, "icu-seed", `${label}.assets`);
   const frameworkName = portable(
     path.posix.basename(framework.member),
     `${label} base-xcframework member basename`,
@@ -655,7 +657,7 @@ function validateBase(value, label, allowFileUrls) {
   const expectedTag = `${base.product}-v${version}`;
   if (base.tag !== expectedTag) fail(`${label}.tag must be ${expectedTag}`);
   return {
-    assets: { framework, icu, runtime },
+    assets: { framework, icu, icuSeed, runtime },
     kind: "base",
     product: base.product,
     tag: base.tag,
@@ -794,7 +796,7 @@ function validateLegalDocument(value, label, base, extensions) {
   if (!Array.isArray(legal.base)) fail(`${label}.base must be an array`);
   const baseGroups = legal.base.map((row, index) =>
     validateLegalGroup(row, `${label}.base[${index}]`));
-  const expectedBaseRoles = ["base-xcframework", "runtime-resources", "icu-data"];
+  const expectedBaseRoles = ["base-xcframework", "runtime-resources", "icu-data", "icu-seed"];
   if (JSON.stringify(baseGroups.map(({ assetRole }) => assetRole)) !== JSON.stringify(expectedBaseRoles)) {
     fail(`${label}.base asset roles must be exactly ${expectedBaseRoles.join(",")}`);
   }
@@ -802,6 +804,7 @@ function validateLegalDocument(value, label, base, extensions) {
     [base.assets.framework.role, base.assets.framework],
     [base.assets.runtime.role, base.assets.runtime],
     [base.assets.icu.role, base.assets.icu],
+    [base.assets.icuSeed.role, base.assets.icuSeed],
   ]);
   for (const group of baseGroups) {
     if (!baseAssets.has(group.assetRole)) {
@@ -1939,10 +1942,11 @@ async function stageSelectedLegalFiles({
     [base.assets.framework.role, base.assets.framework],
     [base.assets.runtime.role, base.assets.runtime],
     [base.assets.icu.role, base.assets.icu],
+    [base.assets.icuSeed.role, base.assets.icuSeed],
   ]);
   const groups = [];
   for (const group of base.legal) {
-    if (group.assetRole === "icu-data" && !args.icu) continue;
+    if (["icu-data", "icu-seed"].includes(group.assetRole) && !args.icu) continue;
     const asset = baseAssets.get(group.assetRole);
     if (asset === undefined) fail(`base legal group references missing ${group.assetRole} asset`);
     groups.push({
@@ -2544,14 +2548,26 @@ async function stage(args, base, selected) {
       "oliphaunt",
     );
     await copyTree(baseResources, resourceRoot);
+    const resourceSelection = {
+      schema: "oliphaunt-sdk-resources-v1", runtimeVersion: base.version, icuVersion: args.icu ? base.version : "",
+    };
+    for (const carrier of selected) {
+      resourceSelection[`extension.${carrier.sqlName}.product`] = carrier.product;
+      resourceSelection[`extension.${carrier.sqlName}.version`] = carrier.version;
+    }
+    await fs.writeFile(path.join(resourceRoot, "sdk-resources.properties"),
+      Object.keys(resourceSelection).sort().map((key) => `${key}=${resourceSelection[key]}\n`).join(""));
     let icuDataTreeSha256 = "";
     if (args.icu) {
       const icuClosure = await resolveAsset(base.assets.icu, args.cacheDir);
       await requirePayloadDirectory(icuClosure, "ICU closure carrier member");
       const icu = await validateIcuDataCarrier(icuClosure);
-      if (icu.digest !== baseClosure.icuDigest) {
+      const seed = await resolveAsset(base.assets.icuSeed, args.cacheDir);
+      const seedIdentity = await validateClusterSeed(seed, "icu");
+      if (icu.digest !== seedIdentity.digest) {
         fail("iOS ICU data does not match the target runtime's cluster-seed-icu");
       }
+      await copyTree(seed, path.join(resourceRoot, "cluster-seed-icu"));
       icuDataTreeSha256 = icu.digest;
       await mergeTree(icu.data, path.join(resourceRoot, "runtime", "files", "share", "icu"));
     }

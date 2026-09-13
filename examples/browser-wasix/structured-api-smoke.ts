@@ -1,4 +1,4 @@
-import { type OliphauntDatabase, postgresOids } from '@oliphaunt/wasix-ts';
+import { type OliphauntDatabase, postgresOids } from '@oliphaunt/wasix-ts/browser';
 
 type StructuredObjectRow = {
   answer: number;

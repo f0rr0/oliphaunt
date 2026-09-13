@@ -161,6 +161,7 @@ tasks:
     deps:
       - "oliphaunt-swift:package"
       - "liboliphaunt-native:finalize-runtime-ios-abi"
+      - "extension-packages:package-mobile"
     inputs:
       - "@group(legal-files)"
       - "@group(release-archive-contract)"
@@ -177,6 +178,7 @@ tasks:
       - "/Package.swift"
       - "/src/extensions/generated/sdk/extensions.json"
       - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
+      - "/target/mobile-extension-artifacts/**/*"
       - "/tools/dev/bun.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
@@ -243,7 +245,6 @@ tasks:
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/sdk-artifacts/wasix-rust.mjs"
       - "/tools/release/wasix-cargo-toolchain-policy.mjs"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
       - project: "liboliphaunt-wasix"
         group: "crates"
       - "/src/sources/toolchains/wasix.toml"
@@ -357,6 +358,9 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs --mutation-tests-only --mutation-scope=release"
     inputs:
+      - "/src/runtimes/liboliphaunt/icu/**/*"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
       - "/.github/scripts/bootstrap-registry-*"
       - "/.github/scripts/download-bootstrap-*"
       - "/.github/scripts/download-build-artifacts*"
@@ -412,6 +416,11 @@ tasks:
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/native-extension-asset-index-contract.mjs"
       - "/tools/release/native-extension-lifecycle-receipts.test.mjs"
+      - "/tools/release/native-icu-seeds.mjs"
+      - "/tools/release/native-cluster-seed-contract.mjs"
+      - "/tools/release/product-version.mjs"
+      - "/src/shared/artifact-packaging/archive-directory.mjs"
+      - "/src/sdks/rust/tools/check-release-consumer.sh"
       - "/tools/release/optimize_native_runtime_payload.mjs"
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/product-task-model.test.mjs"
@@ -607,7 +616,7 @@ tasks:
 
   wasix-napi-runtime:
     tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-napi"]
-    command: "bash -c 'set -e; tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix; exec bash src/runtimes/wasix-napi/tools/build-native.sh'"
+    command: "bash -c 'set -e; tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-contrib-pg18 --family wasix --require-wasix; exec bash src/runtimes/wasix-napi/tools/build-native.sh'"
     deps:
       - "liboliphaunt-wasix:runtime-aot"
       - "extension-artifacts-wasix:build-target"
@@ -631,15 +640,14 @@ tasks:
       - "/src/runtimes/wasix-napi/tools/package-platform.mjs"
       - "/src/runtimes/wasix-napi/tools/portable-command.mjs"
       - "/src/runtimes/wasix-napi/tools/smoke-packaged-addon.mjs"
+      - "/src/runtimes/wasix-napi/tests/native.integration.mjs"
       - "/src/bindings/wasix-ts/tools/pgwire-client.mjs"
       - project: "oliphaunt-wasix-rust"
         group: "code"
       - project: "liboliphaunt-wasix"
         group: "crates"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
       - "/target/oliphaunt-wasix/aot/**/*"
-      - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
       - "/target/extensions/wasix/release-assets/**/*"
       - "/target/extensions/wasix/aot-artifacts/**/*"
       - "/target/extension-artifacts/**/*"
@@ -724,7 +732,6 @@ tasks:
         group: "code"
       - project: "liboliphaunt-wasix"
         group: "crates"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
       - project: "artifact-packaging"
         group: "source"
       - "/tools/release/check-native-helper-aggregate-assets.mjs"

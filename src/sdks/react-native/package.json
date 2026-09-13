@@ -32,7 +32,8 @@
   },
   "oliphaunt": {
     "swiftSdkVersion": "0.7.0",
-    "kotlinSdkVersion": "0.2.0"
+    "kotlinSdkVersion": "0.2.0",
+    "liboliphauntVersion": "0.2.0"
   },
   "files": [
     "android",

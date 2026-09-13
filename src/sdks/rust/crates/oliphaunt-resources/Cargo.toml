@@ -1,0 +1,13 @@
+[package]
+name = "oliphaunt-resources"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Data-only package descriptors shared by Oliphaunt runtimes and optional resource crates."
+readme = "README.md"
+repository.workspace = true
+homepage.workspace = true
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"

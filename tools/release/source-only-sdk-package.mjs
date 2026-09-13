@@ -141,6 +141,11 @@ function assertManifestContract(manifest, { name, scripts, optionalDependencyVer
   if (Object.hasOwn(manifest, "devDependencies")) {
     throw new Error(`${label} must not publish development-only dependencies`);
   }
+  const contribVersion = manifest.oliphaunt?.liboliphauntVersion;
+  if (!/^\d+[.]\d+[.]\d+$/u.test(contribVersion ?? "")
+      || manifest.dependencies?.["@oliphaunt/extension-contrib-pg18"] !== contribVersion) {
+    throw new Error(`${label} must depend on the runtime-compatible contrib distribution`);
+  }
   const expectedOptional = exactOptionalDependencies(manifest, optionalDependencyVersions, label);
   if (
     expectedOptional !== undefined
@@ -216,6 +221,11 @@ export function prepareSourceOnlyNpmPackage(packageDir, contract) {
     }
     manifest.optionalDependencies = exactOptional;
   }
+  const contribVersion = manifest.oliphaunt?.liboliphauntVersion;
+  if (!/^\d+[.]\d+[.]\d+$/u.test(contribVersion ?? "")) {
+    throw new Error("source SDK must identify its native runtime version for contrib");
+  }
+  manifest.dependencies = { ...manifest.dependencies, "@oliphaunt/extension-contrib-pg18": contribVersion };
   delete manifest.devDependencies;
   writeManifest(packageJsonFile, manifest);
   stageReleaseNotices(directory, SOURCE_NOTICE_OPTIONS);

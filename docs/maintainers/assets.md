@@ -16,43 +16,28 @@ artifact products staged by the language build integration.
 The WASIX artifact products contain:
 
 - the portable Oliphaunt/Postgres WASIX runtime tree;
-- `standard` and `icu` cluster seeds for faster new databases;
-- bundled extension archives for supported SQL extensions;
+- the bundled `standard` cluster seed for faster new databases;
+- an optional ICU data package containing the matching `icu` cluster seed;
+- bundled contrib archives and independently installed external extension archives;
 - the packaged `initdb` module used by asset CI and explicit fresh-initdb paths;
 - the packaged `pg_dump` and `psql` modules used by the optional tools APIs and
   maintenance CLI;
 - a target-specific Wasmer AOT pack when the current host target is supported.
 
-Application code depends on `oliphaunt-wasix` plus the selected artifact
-packages. The build integration stages only selected package-manager artifacts
-into the application output.
+Application code depends on `oliphaunt-wasix` plus its selected resource packages.
+Those packages supply their own bytes; the SDK installs the selected resources.
 
-## Feature Flags
+## Application dependencies
 
-Default SDK dependency after the first public release (use the exact version
-selected by the application lockfile):
+The SDK resolves the base runtime, standard seed, contrib archives, and host AOT
+carrier through Cargo. External extensions have independent versioned packages;
+applications pass their exported descriptors alongside the SDK's contrib values.
+See the [WASIX Rust guide](../../src/docs/content/sdk/wasix-rust/guide.mdx) for setup.
 
-```toml
-oliphaunt-wasix = "0.1"
-```
-
-Enable only the extension selectors the application uses:
-
-```toml
-oliphaunt-wasix = { version = "0.1", features = [
-  "extension-vector",
-  "extension-pg-trgm",
-] }
-```
-
-The repository source version remains `0.0.0` until Release Please creates the
-first `0.1.0` release PR. Do not copy the repository source version into a
-consumer manifest and do not reuse the legacy repository-wide `0.5.x` tags;
-they predate the independently versioned Oliphaunt products.
-
-The crate exposes no `bundled` feature. Runtime and AOT assets enter the
-application through package-manager artifact products, not through SDK default
-features or public archive environment variables.
+The optional `tools` feature selects the split tool and tools-AOT carriers.
+ICU data and its matching seed come from `oliphaunt-icu` for native Rust or
+`oliphaunt-wasix-icu` for WASIX Rust. Neither ICU nor external
+extensions use SDK feature flags. Ordinary applications need no build script.
 
 ## Cache Behavior
 
@@ -86,10 +71,11 @@ generated startup configuration, including `shared_preload_libraries`, before
 PostgreSQL starts:
 
 ```rust,no_run
-use oliphaunt_wasix::{Extension, Oliphaunt};
+use oliphaunt_wasix::{extensions, Oliphaunt};
+use oliphaunt_extension_vector_wasix::VECTOR;
 
 let mut db = Oliphaunt::builder()
-    .extensions([Extension::VECTOR, Extension::PG_TRGM])
+    .extensions([VECTOR, extensions::PG_TRGM])
     .open()?;
 # Ok::<_, Box<dyn std::error::Error>>(())
 ```
@@ -117,8 +103,9 @@ uses the same provenance path: ICU code is source-pinned in
 little-endian data archive is independently pinned in
 `src/sources/third-party/shared/icu-data.toml`. Native and WASIX builders compile
 target-specific ICU code but expand that one data archive into the shared
-files-data identity. ICU data is packaged as a separate `oliphaunt-icu`
-payload; standard native and WASIX runtime artifacts do not carry `share/icu`.
+files-data identity. Optional `oliphaunt-icu` and `oliphaunt-wasix-icu` Cargo
+packages carry the data and matching seeds for their respective runtimes;
+standard native and WASIX runtime artifacts do not carry `share/icu`.
 That payload supplies runtime capability; it is distinct
 from the per-database `pg_collation` catalog state created during `initdb`.
 An ICU-enabled new root therefore requires the matching `icu` cluster seed

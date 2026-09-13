@@ -14,7 +14,6 @@
     "initdbSha256": "7777777777777777777777777777777777777777777777777777777777777777"
   },
   "source": {
-    "fingerprint": "postgresql-18.4:test",
     "catalogVersion": "202505281",
     "lane": "stable",
     "producer": "native-initdb"

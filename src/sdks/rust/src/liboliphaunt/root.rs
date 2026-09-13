@@ -111,10 +111,13 @@ impl PreparedNativeRoot {
             )));
         }
         let pgdata = root.join("pgdata");
-        let runtime_closure = runtime::resolve_runtime_closure(
+        let runtime_closure = runtime::resolve_runtime_closure_with_resources(
             NativeRuntimeProfile::for_mode(config.mode),
             extensions,
             None,
+            config.resource_directory.as_deref(),
+            Some(config.icu),
+            !initialized,
         )?;
         let runtime_dir = runtime_closure.runtime_dir;
         let mut pgdata_cleanup = CreatedPgdataCleanup::new();

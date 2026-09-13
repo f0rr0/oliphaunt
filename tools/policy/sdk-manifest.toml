@@ -78,6 +78,14 @@ main_safe = false
 topologies = ["wasix-direct"]
 
 [[sdks.wasix-typescript.surfaces]]
+id = "browser"
+entrypoint = "@oliphaunt/wasix-ts/browser"
+calling_contract = "async"
+execution_owner = "caller"
+main_safe = false
+topologies = ["wasix-direct"]
+
+[[sdks.wasix-typescript.surfaces]]
 id = "default"
 entrypoint = "@oliphaunt/wasix-ts"
 calling_contract = "async"
@@ -182,3 +190,19 @@ calling_contract = "async"
 execution_owner = "sdk-runtime"
 main_safe = true
 topologies = ["native-direct", "native-broker", "native-server"]
+
+[[sdks.typescript.surfaces]]
+id = "direct"
+entrypoint = "@oliphaunt/ts/direct"
+calling_contract = "async"
+execution_owner = "sdk-runtime"
+main_safe = true
+topologies = ["native-direct", "native-server"]
+
+[[sdks.typescript.surfaces]]
+id = "broker"
+entrypoint = "@oliphaunt/ts/broker"
+calling_contract = "async"
+execution_owner = "sdk-runtime"
+main_safe = true
+topologies = ["native-broker", "native-server"]

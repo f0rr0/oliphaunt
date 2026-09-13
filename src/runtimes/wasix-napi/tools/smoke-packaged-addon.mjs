@@ -125,7 +125,7 @@ if (!addonPath.includes('app.asar')) {
 }
 const addon = require(addonPath);
 if (
-  addon.addonAbiVersion() !== 1 ||
+  addon.addonAbiVersion() !== 2 ||
   addon.nodeApiVersion() !== 8 ||
   JSON.stringify(addon.supportedProfiles()) !== JSON.stringify(['standard', 'icu'])
 ) {
@@ -330,6 +330,13 @@ async function main() {
     }
 
     await runWorkerUnloadSmoke(scratch, carrierManifest, options.runtime);
+    if (options.runtime === "node" && options.packageManager === "npm") {
+      const require = createRequire(path.join(scratch, "package.json"));
+      const addonPath = require.resolve(`${carrierManifest.name}/${BINARY}`);
+      const { stdout } = await run(process.execPath,
+        [path.join(PACKAGE_ROOT, "tests/native.integration.mjs"), addonPath], scratch);
+      process.stdout.write(stdout);
+    }
 
     const verification = path.join(scratch, "verify.mjs");
     await writeFile(
@@ -358,7 +365,7 @@ const nativeFiles = readdirSync(prebuilds).filter((name) => name.endsWith('.node
 if (
   manifest.name !== packageName ||
   manifest.oliphaunt?.target !== expectedTarget ||
-  manifest.oliphaunt?.addonAbiVersion !== 1 ||
+  manifest.oliphaunt?.addonAbiVersion !== 2 ||
   manifest.oliphaunt?.nodeApiVersion !== 8 ||
   JSON.stringify(manifest.oliphaunt?.profiles) !== JSON.stringify(['standard', 'icu']) ||
   JSON.stringify(nativeFiles) !== JSON.stringify([${JSON.stringify(BINARY)}])
@@ -371,6 +378,7 @@ for (const name of [
   'extensionIdentity',
   'nodeApiVersion',
   'payloadIdentity',
+  'registerTools',
   'restore',
   'restoreDirect',
   'runtimeVersion',

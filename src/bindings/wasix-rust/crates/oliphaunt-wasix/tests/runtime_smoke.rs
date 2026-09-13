@@ -27,6 +27,38 @@ fn synthetic_sdk_error() -> oliphaunt_wasix::Error {
 }
 
 #[test]
+fn initialization_preserves_storage_and_reopens_existing_rows() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let root = workspace.path().join("database");
+    for storage in [
+        DatabaseStorage::Memory,
+        DatabaseStorage::Directory(root.clone()),
+    ] {
+        let mut database = Oliphaunt::builder().storage(storage).open()?;
+        database.execute("CREATE TABLE initialization_probe(value integer)")?;
+        database.execute("INSERT INTO initialization_probe VALUES (42)")?;
+        assert_eq!(
+            database
+                .query("SELECT value FROM initialization_probe")?
+                .get_text(0, "value")?,
+            Some("42")
+        );
+        database.close()?;
+    }
+    let mut reopened = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root))
+        .open()?;
+    assert_eq!(
+        reopened
+            .query("SELECT value FROM initialization_probe")?
+            .get_text(0, "value")?,
+        Some("42")
+    );
+    reopened.close()?;
+    Ok(())
+}
+
+#[test]
 fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
     let workspace = tempfile::TempDir::new()?;
     let source_root = workspace.path().join("source");

@@ -5,7 +5,6 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -13,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   compareText,
-  exactExtensionProducts,
+  contribCarrierDescriptor,
   extensionArtifactProductRoot,
   extensionSqlNames,
   extensionWasixAotMemberSqlNames,
@@ -44,7 +43,6 @@ function parseArguments(argv) {
     "portable-root",
     "aot-root",
     "extension-root",
-    "icu-root",
   ]) {
     if (!options[required]) fail(`--${required} is required`);
   }
@@ -132,9 +130,6 @@ function portableInputs(portableRoot) {
   const manifestFile = path.join(portableRoot, "manifest.json");
   const manifest = readJson(manifestFile, "portable WASIX manifest");
   if (manifest?.["format-version"] !== 2) fail("portable WASIX manifest must use format-version 2");
-  if (typeof manifest["source-fingerprint"] !== "string" || !manifest["source-fingerprint"]) {
-    fail("portable WASIX manifest must contain a source-fingerprint");
-  }
   const runtimeArchive = safeMember(manifest.runtime?.archive, "portable runtime archive");
   validateDigestFile(
     path.join(portableRoot, runtimeArchive),
@@ -143,7 +138,7 @@ function portableInputs(portableRoot) {
   );
   regularFile(path.join(portableRoot, "bin/initdb.wasix.wasm"), "portable WASIX initdb module");
 
-  for (const profile of ["standard", "icu"]) {
+  for (const profile of ["standard"]) {
     const seed = manifest["cluster-seeds"]?.[profile];
     if (!seed || typeof seed !== "object" || Array.isArray(seed)) {
       fail(`portable WASIX manifest is missing ${profile} cluster seed metadata`);
@@ -158,15 +153,6 @@ function portableInputs(portableRoot) {
     regularFile(path.join(portableRoot, seedManifest), `${profile} cluster seed manifest`);
   }
 
-  const portableTools = [
-    ["pg_dump", "bin/pg_dump.wasix.wasm"],
-    ["psql", "bin/psql.wasix.wasm"],
-  ].map(([name, relative]) => {
-    const file = path.join(portableRoot, relative);
-    regularFile(file, `portable WASIX ${name} module`);
-    return { name, path: repoPath(file, `portable WASIX ${name} module`), sha256: sha256(file) };
-  });
-
   return {
     manifest,
     provenance: {
@@ -174,12 +160,11 @@ function portableInputs(portableRoot) {
         path: repoPath(manifestFile, "portable WASIX manifest"),
         sha256: sha256(manifestFile),
       },
-      portableTools,
     },
   };
 }
 
-function validateAotManifest(file, targetTriple, sourceFingerprint, label, namePredicate) {
+function validateAotManifest(file, targetTriple, label, namePredicate) {
   const manifest = readJson(file, label);
   try {
     assertCanonicalWasixAotManifest(manifest, {
@@ -188,9 +173,6 @@ function validateAotManifest(file, targetTriple, sourceFingerprint, label, nameP
     });
   } catch (error) {
     fail(error.message);
-  }
-  if (manifest["source-fingerprint"] !== sourceFingerprint) {
-    fail(`${label} source-fingerprint does not match the portable WASIX runtime`);
   }
   const names = new Set();
   for (const [index, artifact] of manifest.artifacts.entries()) {
@@ -206,7 +188,7 @@ function validateAotManifest(file, targetTriple, sourceFingerprint, label, nameP
   return { manifest, names };
 }
 
-function runtimeAotInputs(aotRoot, targetTriple, sourceFingerprint) {
+function runtimeAotInputs(aotRoot, targetTriple) {
   directory(aotRoot, "WASIX AOT artifact root");
   const targetRoot = path.basename(path.resolve(aotRoot)) === targetTriple
     ? path.resolve(aotRoot)
@@ -215,13 +197,10 @@ function runtimeAotInputs(aotRoot, targetTriple, sourceFingerprint) {
   const { names } = validateAotManifest(
     manifestFile,
     targetTriple,
-    sourceFingerprint,
+
     "host WASIX AOT manifest",
     (name) => !name.startsWith("extension:"),
   );
-  for (const tool of ["tool:pg_dump", "tool:psql"]) {
-    if (!names.has(tool)) fail(`host WASIX AOT manifest is missing ${tool}`);
-  }
   if (![...names].some((name) => !name.startsWith("tool:"))) {
     fail("host WASIX AOT manifest contains tools but no core runtime artifacts");
   }
@@ -240,9 +219,9 @@ function manifestMembers(manifest, product) {
   fail(`${product} has an unsupported extension-artifacts schema ${JSON.stringify(manifest.schema)}`);
 }
 
-function extensionInputs(extensionRoot, target, targetTriple, sourceFingerprint) {
+function extensionInputs(extensionRoot, target, targetTriple) {
   directory(extensionRoot, "WASIX extension artifact root");
-  return exactExtensionProducts(PREFIX).map((product) => {
+  return [contribCarrierDescriptor(PREFIX).artifactProduct].map((product) => {
     const productRoot = extensionArtifactProductRoot(product, "wasix", extensionRoot, PREFIX);
     const manifestFile = path.join(productRoot, "extension-artifacts.json");
     const manifest = readJson(manifestFile, `${product} extension artifact manifest`);
@@ -283,7 +262,7 @@ function extensionInputs(extensionRoot, target, targetTriple, sourceFingerprint)
       const { names } = validateAotManifest(
         file,
         targetTriple,
-        sourceFingerprint,
+
         `${product}/${sqlName} AOT manifest`,
         (name) => name === `extension:${sqlName}` || name.startsWith(`extension:${sqlName}:`),
       );
@@ -308,37 +287,10 @@ function extensionInputs(extensionRoot, target, targetTriple, sourceFingerprint)
   }).sort((left, right) => compareText(left.product, right.product));
 }
 
-function visitRegularFiles(root, files = []) {
-  for (const entry of readdirSync(root, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name))) {
-    const file = path.join(root, entry.name);
-    if (entry.isSymbolicLink()) fail(`ICU input contains a symlink: ${repoPath(file, "ICU input")}`);
-    if (entry.isDirectory()) visitRegularFiles(file, files);
-    else if (entry.isFile()) files.push(file);
-    else fail(`ICU input contains a non-regular entry: ${repoPath(file, "ICU input")}`);
-  }
-  return files;
-}
-
-function icuInput(icuRoot) {
-  directory(icuRoot, "ICU data root");
-  const files = visitRegularFiles(icuRoot);
-  if (files.length === 0) fail("ICU data root must not be empty");
-  const records = files.map((file) => {
-    const relative = path.relative(icuRoot, file).split(path.sep).join("/");
-    return `${sha256(file)}  ${relative}\n`;
-  });
-  return {
-    path: repoPath(icuRoot, "ICU data root"),
-    sha256: sha256Bytes(Buffer.from(records.join(""), "utf8")),
-    fileCount: files.length,
-  };
-}
-
-function buildInventory(options) {
+export function buildInventory(options) {
   const portableRoot = path.resolve(options["portable-root"]);
   const aotRoot = path.resolve(options["aot-root"]);
   const extensionRoot = path.resolve(options["extension-root"]);
-  const icuRoot = path.resolve(options["icu-root"]);
   const portable = portableInputs(portableRoot);
   return {
     schema: "oliphaunt-wasix-napi-build-inputs-v1",
@@ -349,15 +301,12 @@ function buildInventory(options) {
       runtimeAotManifest: runtimeAotInputs(
         aotRoot,
         options["target-triple"],
-        portable.manifest["source-fingerprint"],
       ),
       extensionArtifacts: extensionInputs(
         extensionRoot,
         options.target,
         options["target-triple"],
-        portable.manifest["source-fingerprint"],
       ),
-      icuData: icuInput(icuRoot),
     },
   };
 }
@@ -379,9 +328,11 @@ function main() {
   console.log(`WASIX Node-API build inputs validated: ${repoPath(destination, "build input inventory")}`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`${PREFIX}: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`${PREFIX}: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 }

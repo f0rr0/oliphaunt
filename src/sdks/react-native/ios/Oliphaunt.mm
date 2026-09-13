@@ -335,11 +335,21 @@ static NSDictionary *OliphauntNativeOpenConfigToDictionary(
   NSMutableDictionary *dictionary = [NSMutableDictionary new];
   dictionary[@"storageKind"] = config.storageKind();
   OliphauntSetIfPresent(dictionary, @"storagePath", config.storagePath());
-  OliphauntSetIfPresent(dictionary, @"storageName", config.storageName());
   OliphauntSetIfPresent(dictionary, @"startupGUCs", RCTConvertOptionalVecToArray(config.startupGUCs()));
   OliphauntSetIfPresent(dictionary, @"username", config.username());
   OliphauntSetIfPresent(dictionary, @"database", config.database());
-  OliphauntSetIfPresent(dictionary, @"extensions", RCTConvertOptionalVecToArray(config.extensions()));
+  if (auto extensions = config.extensions()) {
+    NSMutableArray *values = [NSMutableArray new];
+    for (const auto &extension : *extensions) {
+      NSMutableDictionary *value = [NSMutableDictionary new];
+      value[@"sqlName"] = extension.sqlName();
+      value[@"product"] = extension.product();
+      OliphauntSetIfPresent(value, @"version", extension.version());
+      [values addObject:value];
+    }
+    dictionary[@"extensions"] = values;
+  }
+  OliphauntSetIfPresent(dictionary, @"icuVersion", config.icuVersion());
   return dictionary;
 }
 
@@ -725,13 +735,11 @@ RCT_EXPORT_MODULE(Oliphaunt)
 
 - (void)restoreDataForJsi:(NSString *)storageKind
                 storagePath:(NSString *_Nullable)storagePath
-                storageName:(NSString *_Nullable)storageName
                backupData:(NSData *)backupData
                completion:(OliphauntVoidCompletion)completion
 {
   [OliphauntAdapterDatabase restoreWithStorageKind:storageKind
                                         storagePath:storagePath
-                                        storageName:storageName
                                         backupData:backupData
                                         completion:completion];
 }
@@ -1087,10 +1095,6 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 runtime,
                 destination.getProperty(runtime, "storagePath"),
                 "restore storagePath");
-            NSString *storageName = OliphauntCopyOptionalNSStringArgument(
-                runtime,
-                destination.getProperty(runtime, "storageName"),
-                "restore storageName");
             std::vector<uint8_t> artifact = OliphauntCopyBinaryArgument(runtime, args[1]);
             auto artifactData = [NSData dataWithBytes:artifact.data() length:artifact.size()];
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
@@ -1098,7 +1102,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntRestoreExecutor"),
                 2,
-                [weakSelf, callInvoker, storageKind, storagePath, storageName, artifactData](
+                [weakSelf, callInvoker, storageKind, storagePath, artifactData](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
@@ -1129,7 +1133,6 @@ RCT_EXPORT_MODULE(Oliphaunt)
 
                   [strongSelf restoreDataForJsi:storageKind
                                       storagePath:storagePath
-                                      storageName:storageName
                                       backupData:artifactData
                                       completion:^(NSError *_Nullable error) {
                     if (error != nil) {

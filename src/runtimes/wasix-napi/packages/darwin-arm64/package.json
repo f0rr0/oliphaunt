@@ -20,7 +20,7 @@
     "target": "macos-arm64",
     "runtimeProduct": "liboliphaunt-wasix",
     "runtimeVersion": "0.2.0",
-    "addonAbiVersion": 1,
+    "addonAbiVersion": 2,
     "nodeApiVersion": 8,
     "profiles": [
       "standard",

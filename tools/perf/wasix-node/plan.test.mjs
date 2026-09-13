@@ -38,7 +38,7 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     schema: 'oliphaunt-wasix-napi-host-v1',
     product: 'oliphaunt-wasix-napi',
     binary: 'oliphaunt_wasix_napi.node',
-    addonAbiVersion: 1,
+    addonAbiVersion: 2,
     nodeApiVersion: 8,
     profiles: ['standard', 'icu'],
     build: {
@@ -222,7 +222,7 @@ test('candidate native addon contract rejects ABI, profile, and optimization dri
     plan.engines.candidate.nativeAddon,
   );
   const drifts = [
-    ['addon ABI', (value) => (value.addonAbiVersion = 2), /addonAbiVersion/u],
+    ['addon ABI', (value) => (value.addonAbiVersion = 3), /addonAbiVersion/u],
     ['Node-API floor', (value) => (value.nodeApiVersion = 9), /nodeApiVersion/u],
     ['profiles', (value) => value.profiles.reverse(), /profiles/u],
     ['Cargo profile', (value) => (value.build.cargoProfile = 'debug'), /cargoProfile/u],

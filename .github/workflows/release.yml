@@ -1016,8 +1016,8 @@ jobs:
 
       - name: Prove the exact SwiftPM source tag is remotely collision-free
         id: preflight_swift_source_tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
-        timeout-minutes: 2
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        timeout-minutes: 10
         run: |
           tools/dev/bun.sh tools/release/preflight-swiftpm-source-tag.mjs \
             --publication-lock "$PUBLICATION_LOCK_PATH" \
@@ -1219,6 +1219,25 @@ jobs:
             target/liboliphaunt/release-assets/*.tsv
             target/liboliphaunt/release-assets/*.sha256
             target/extension-artifacts/liboliphaunt-native/oliphaunt-extension-contrib-pg18/release-assets/*
+
+      - name: Create standalone SwiftPM package token
+        id: swift_package_token
+        if: ${{ steps.preflight_swift_source_tag.outputs.repositories != '' && inputs.operation == 'publish' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: ${{ steps.preflight_swift_source_tag.outputs.repositories }}
+          permission-contents: write
+
+      - name: Publish exact standalone SwiftPM package tags
+        if: ${{ steps.preflight_swift_source_tag.outputs.repositories != '' && inputs.operation == 'publish' }}
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ steps.swift_package_token.outputs.token }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --step swift-package-source-tag --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
 
       - name: Create fresh SwiftPM tag token
         id: swift_tag_token

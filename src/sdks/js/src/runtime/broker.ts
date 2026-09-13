@@ -1,3 +1,4 @@
+import type { NativeExtensionDescriptor, NativeIcuDescriptor } from '@oliphaunt/js-core/resources';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5,7 +6,6 @@ import { arch, platform } from 'node:os';
 import { readFile, stat } from 'node:fs/promises';
 
 import type { NormalizedOpenConfig } from '../config.js';
-import type { DenoRuntime } from '../native/assets-deno.js';
 import {
   ICU_DATA_ENV,
   envVar,
@@ -19,7 +19,6 @@ import {
   writeBrokerRequest,
   type BrokerResponseFrame,
 } from './broker-frames.js';
-import type { ByteStream } from './byte-stream.js';
 import {
   connectEndpoint,
   cleanupFailedManagedLaunch,
@@ -34,7 +33,7 @@ import {
   type ManagedChild,
   type FailedManagedLaunch,
 } from './node-adapter.js';
-import type { RuntimeBinding, RuntimeHandle } from './types.js';
+import type { ByteStream, RuntimeBinding, RuntimeHandle } from './types.js';
 import { throwCollectedCloseFailures } from './close.js';
 import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
 import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';
@@ -455,7 +454,7 @@ async function launchBroker(
   try {
     const startupTimeoutMs = brokerStartupTimeoutMs();
     const resolvedExecutable = await resolveBrokerExecutable(executable);
-    const endpoint = await allocateBrokerEndpoint(config);
+    const endpoint = await allocateBrokerEndpoint();
     failedLaunch.paths[0] = endpoint.ipcDir;
     const nativeInstall = await resolveBrokerNativeInstall(config);
     const child = spawnManagedChild({
@@ -524,59 +523,17 @@ async function resolveBrokerNativeInstall(config: {
   libraryPath?: string;
   runtimeDirectory?: string;
   extensions?: readonly string[];
+  extensionDescriptors?: readonly NativeExtensionDescriptor[];
+  icu?: NativeIcuDescriptor;
 }): Promise<BrokerNativeInstall> {
   const extensions = config.extensions ?? [];
-  if (runtimeName() === 'deno') {
-    if (
-      extensions.length > 0 &&
-      config.runtimeDirectory === undefined &&
-      envVar(LIBOLIPHAUNT_RUNTIME_DIR_ENV) === undefined
-    ) {
-      throw new Error(
-        `Deno broker execution does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun broker execution. Selected extensions: ${extensions.join(', ')}`,
-      );
-    }
-    const assets = await import('../native/assets-deno.js');
-    const deno = (globalThis as { Deno?: unknown }).Deno;
-    const install = await assets.resolveDenoNativeInstall(config.libraryPath);
-    const runtimeDirectory = config.runtimeDirectory ?? install.runtimeDirectory;
-    if (
-      extensions.length > 0 &&
-      (runtimeDirectory === undefined ||
-        (install.packageManaged && config.runtimeDirectory === undefined))
-    ) {
-      throw new Error(
-        `Deno broker execution does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun broker execution. Selected extensions: ${extensions.join(', ')}`,
-      );
-    }
-    const validated =
-      extensions.length === 0
-        ? { runtimeDirectory, moduleDirectory: undefined }
-        : await assets.validatePreparedDenoRuntimeExtensions({
-            deno: deno as DenoRuntime,
-            runtimeDirectory,
-            extensions,
-            source: 'Deno broker explicit runtimeDirectory',
-          });
-    const explicitRuntimeDirectory =
-      config.runtimeDirectory !== undefined || install.packageManaged === false;
-    const profile =
-      explicitRuntimeDirectory && validated.runtimeDirectory !== undefined
-        ? await resolveExactNativeRuntimeProfile(validated.runtimeDirectory)
-        : {
-            icuDataDirectory: install.icuDataDirectory,
-            catalogProfile: install.catalogProfile ?? ('standard' as const),
-          };
-    return {
-      libraryPath: install.libraryPath,
-      runtimeDirectory: validated.runtimeDirectory,
-      ...profile,
-      moduleDirectory: validated.moduleDirectory,
-    };
-  }
-
   const assets = await import('../native/assets-node.js');
-  const install = await assets.resolveNodeNativeInstall(config.libraryPath);
+  const install =
+    runtimeName() === 'deno'
+      ? await import('../native/assets-deno.js').then((module) =>
+          module.resolveDenoNativeInstall(config.libraryPath, config.icu),
+        )
+      : await assets.resolveNodeNativeInstall(config.libraryPath, config.icu);
   const explicitRuntimeDirectory =
     config.runtimeDirectory !== undefined || install.packageManaged === false;
   const resolved = {
@@ -587,6 +544,7 @@ async function resolveBrokerNativeInstall(config: {
   };
   const prepared = await assets.prepareNodeExtensionInstall(resolved, extensions, {
     explicitRuntimeDirectory,
+    descriptors: config.extensionDescriptors,
   });
   if (!explicitRuntimeDirectory || prepared.runtimeDirectory === undefined) {
     return {
@@ -682,7 +640,7 @@ type BrokerEndpointPlan =
   | { kind: 'unix'; socket: string; cancelSocket: string; ipcDir: string }
   | { kind: 'tcp'; listen: string; cancelListen: string; ipcDir?: undefined };
 
-async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<BrokerEndpointPlan> {
+async function allocateBrokerEndpoint(): Promise<BrokerEndpointPlan> {
   const canUseUnix = process.platform !== 'win32';
   if (canUseUnix) {
     const ipcDir = await createTempDir('lpgo-');

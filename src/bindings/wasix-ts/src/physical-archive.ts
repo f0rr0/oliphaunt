@@ -252,23 +252,6 @@ export async function snapshotPhysicalBackupBulk(
   );
 }
 
-/** @internal Prove the online backup contains every required start-to-stop WAL segment. */
-export function validateBackupWalRange(
-  snapshot: StoredSnapshot,
-  startName: string,
-  stopName: string,
-  segmentSize: number,
-): void {
-  const names = requiredBackupWalNames(startName, stopName, segmentSize);
-  const files = new Map(snapshot.files.map(({ path, bytes }) => [path, bytes.length]));
-  for (const name of names) {
-    const length = files.get(`pg_wal/${name}`);
-    if (length === undefined) throw new Error(`physical backup is missing WAL segment ${name}`);
-    if (length !== segmentSize)
-      throw new Error(`physical backup WAL segment ${name} has the wrong size`);
-  }
-}
-
 /** @internal Enumerate PostgreSQL's inclusive start-to-stop WAL range. */
 export function requiredBackupWalNames(
   startName: string,

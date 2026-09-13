@@ -9,12 +9,11 @@ typedef struct OliphauntRegisteredStaticExtension {
     OliphauntStaticExtensionSymbol *symbols;
     char *name;
     char **symbol_names;
+    struct OliphauntRegisteredStaticExtension *next;
 } OliphauntRegisteredStaticExtension;
 
 static pthread_mutex_t static_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
 static OliphauntRegisteredStaticExtension *static_registry = NULL;
-static size_t static_registry_count = 0;
-static bool static_registry_frozen = false;
 
 #ifdef _MSC_VER
 extern const OliphauntStaticExtension *liboliphaunt_builtin_static_extensions(size_t *count);
@@ -51,9 +50,9 @@ static const OliphauntStaticExtension *lookup_registered_static_extension(const 
     if (name == NULL) {
         return NULL;
     }
-    for (size_t i = 0; i < static_registry_count; i++) {
-        if (strcmp(static_registry[i].extension.name, name) == 0) {
-            return &static_registry[i].extension;
+    for (OliphauntRegisteredStaticExtension *entry = static_registry; entry != NULL; entry = entry->next) {
+        if (strcmp(entry->extension.name, name) == 0) {
+            return &entry->extension;
         }
     }
     return NULL;
@@ -244,24 +243,18 @@ static int copy_static_extensions(
     return 0;
 }
 
-static bool static_registry_matches(const OliphauntStaticExtension *extensions, size_t count) {
-    if (static_registry_count != count) {
+static bool static_extension_matches(
+    const OliphauntStaticExtension *existing,
+    const OliphauntStaticExtension *incoming) {
+    if (existing->magic != incoming->magic ||
+        existing->init != incoming->init ||
+        existing->symbol_count != incoming->symbol_count) {
         return false;
     }
-    for (size_t i = 0; i < count; i++) {
-        const OliphauntStaticExtension *existing = &static_registry[i].extension;
-        const OliphauntStaticExtension *incoming = &extensions[i];
-        if (strcmp(existing->name, incoming->name) != 0 ||
-            existing->magic != incoming->magic ||
-            existing->init != incoming->init ||
-            existing->symbol_count != incoming->symbol_count) {
+    for (size_t j = 0; j < existing->symbol_count; j++) {
+        if (strcmp(existing->symbols[j].name, incoming->symbols[j].name) != 0 ||
+            existing->symbols[j].address != incoming->symbols[j].address) {
             return false;
-        }
-        for (size_t j = 0; j < existing->symbol_count; j++) {
-            if (strcmp(existing->symbols[j].name, incoming->symbols[j].name) != 0 ||
-                existing->symbols[j].address != incoming->symbols[j].address) {
-                return false;
-            }
         }
     }
     return true;
@@ -271,33 +264,43 @@ static int32_t oliphaunt_register_static_extensions_impl(const OliphauntStaticEx
     if (validate_static_extensions(extensions, count) != 0) {
         return -1;
     }
+    /* Entries live for the process lifetime: PostgreSQL retains descriptor pointers.
+     * Additions never move or replace an entry already visible to a backend. */
     pthread_mutex_lock(&static_registry_mutex);
-    if (static_registry_frozen && static_registry_matches(extensions, count)) {
-        pthread_mutex_unlock(&static_registry_mutex);
-        return 0;
+    OliphauntRegisteredStaticExtension *pending = NULL;
+    for (size_t i = 0; i < count; i++) {
+        const OliphauntStaticExtension *existing = lookup_registered_static_extension(extensions[i].name);
+        if (existing != NULL) {
+            if (!static_extension_matches(existing, &extensions[i])) {
+                set_error(NULL, "conflicting static extension registration for an existing module");
+                goto failure;
+            }
+            continue;
+        }
+        OliphauntRegisteredStaticExtension *entry = NULL;
+        if (copy_static_extensions(&extensions[i], 1, &entry) != 0) {
+            goto failure;
+        }
+        entry->next = pending;
+        pending = entry;
+    }
+    while (pending != NULL) {
+        OliphauntRegisteredStaticExtension *entry = pending;
+        pending = entry->next;
+        entry->next = static_registry;
+        static_registry = entry;
     }
     pthread_mutex_unlock(&static_registry_mutex);
-
-    OliphauntRegisteredStaticExtension *new_entries = NULL;
-    if (copy_static_extensions(extensions, count, &new_entries) != 0) {
-        return -1;
-    }
-
-    pthread_mutex_lock(&static_registry_mutex);
-    if (static_registry_frozen) {
-        pthread_mutex_unlock(&static_registry_mutex);
-        free_static_registry_entries(new_entries, count);
-        set_error(NULL, "static extension registry cannot be changed after backend startup");
-        return -1;
-    }
-    OliphauntRegisteredStaticExtension *old_entries = static_registry;
-    size_t old_count = static_registry_count;
-    static_registry = new_entries;
-    static_registry_count = count;
-    pthread_mutex_unlock(&static_registry_mutex);
-
-    free_static_registry_entries(old_entries, old_count);
     return 0;
+
+failure:
+    while (pending != NULL) {
+        OliphauntRegisteredStaticExtension *entry = pending;
+        pending = entry->next;
+        free_static_registry_entries(entry, 1);
+    }
+    pthread_mutex_unlock(&static_registry_mutex);
+    return -1;
 }
 
 int32_t oliphaunt_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count) {
@@ -315,7 +318,6 @@ const OliphauntStaticExtension *oliphaunt_static_extension_lookup(const char *fi
     const OliphauntStaticExtension *builtins = builtin_static_extensions(&builtin_count);
     const OliphauntStaticExtension *builtin = lookup_static_extension(builtins, builtin_count, name);
     pthread_mutex_lock(&static_registry_mutex);
-    static_registry_frozen = true;
     const OliphauntStaticExtension *registered = lookup_registered_static_extension(name);
     pthread_mutex_unlock(&static_registry_mutex);
     if (builtin != NULL) {

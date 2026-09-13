@@ -1,13 +1,18 @@
 import { Worker } from 'node:worker_threads';
 
-import { serializeOpenConfig } from './client-common.js';
+import { serializeOpenConfig } from './open-config.js';
 import { hostRuntimeName } from './host-runtime.js';
 import { requireNodeStorage } from './node-client-common.js';
 import { nodeWorkerExecArgv } from './node-worker-options.js';
 import { nodeWorkerPort } from './node-worker-port.js';
 import type { SerializedOpenOptions } from './rpc.js';
-import type { PersistentWasixStorage } from './storage.js';
-import type { BinaryInput, OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
+import type { PersistentWasixStorage } from './native-public.js';
+import type {
+  BinaryInput,
+  OliphauntClient,
+  OliphauntDatabase,
+  OpenConfig,
+} from './native-public.js';
 import { openWasixWithWorker, restoreWasixWithWorker, type WasixWorkerPort } from './worker-rpc.js';
 
 /** Open PostgreSQL in a package-owned Node-compatible Worker realm. */
@@ -52,21 +57,5 @@ function withoutNativeAssetPayloads(options: SerializedOpenOptions): SerializedO
       standardSeedManifest: { ...options.runtime.standardSeedManifest, source },
       manifest: { ...options.runtime.manifest, source },
     },
-    ...(options.icu === undefined
-      ? {}
-      : {
-          icu: {
-            ...options.icu,
-            dataArchive: { ...options.icu.dataArchive, source },
-            clusterSeedArchive: { ...options.icu.clusterSeedArchive, source },
-            clusterSeedManifest: { ...options.icu.clusterSeedManifest, source },
-          },
-        }),
-    extensionCarriers: Object.fromEntries(
-      Object.entries(options.extensionCarriers).map(([sqlName, carrier]) => [
-        sqlName,
-        { ...carrier, source },
-      ]),
-    ),
   };
 }

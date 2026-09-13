@@ -214,13 +214,18 @@ oliphaunt_dev_prebuilt_extension_asset_paths_for_selection() {
   local selected_extensions="$1"
   local asset_kind="$2"
   local asset_target="${3:-*}"
+  local resource_receipt="${4:-}" icu_enabled="${5:-0}"
+  local -a receipt_args=()
+  if [ -n "$resource_receipt" ]; then
+    receipt_args=(--resource-receipt "$resource_receipt" --icu "$icu_enabled")
+  fi
   local artifact_root materialize_root
   artifact_root="$(oliphaunt_dev_extension_artifact_root)"
   materialize_root="${OLIPHAUNT_EXPO_EXTENSION_MATERIALIZE_ROOT:-${scratch_root:-$root/target/mobile-extension-artifacts}/extension-members}"
-  if [ -z "$selected_extensions" ]; then
+  if [ -z "$selected_extensions" ] && [ -z "$resource_receipt" ]; then
     return 0
   fi
-  if [ ! -d "$artifact_root" ]; then
+  if [ ! -d "$artifact_root" ] && [ -n "$selected_extensions" ]; then
     if [ "${OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS:-0}" = "1" ]; then
       fail "selected mobile extension(s) require prebuilt exact-extension artifacts, but $artifact_root does not exist"
     fi
@@ -234,11 +239,8 @@ oliphaunt_dev_prebuilt_extension_asset_paths_for_selection() {
     --extensions "$selected_extensions" \
     --asset-kind "$asset_kind" \
     --asset-target "$asset_target" \
-    --required "${OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS:-0}"
-}
-
-oliphaunt_dev_prebuilt_extension_runtime_artifacts_for_selection() {
-  oliphaunt_dev_prebuilt_extension_asset_paths_for_selection "$1" runtime "$2"
+    --required "${OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS:-0}" \
+    ${receipt_args[@]+"${receipt_args[@]}"}
 }
 
 oliphaunt_dev_prebuilt_ios_extension_framework_zips_for_selection() {
@@ -289,12 +291,10 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
       ;;
     *) extension_target="host" ;;
   esac
-  prebuilt_runtime_artifacts=""
-  if [ -n "$selected_extensions" ]; then
-    if ! prebuilt_runtime_artifacts="$(oliphaunt_dev_prebuilt_extension_runtime_artifacts_for_selection "$selected_extensions" "$extension_target")"; then
-      return 1
-    fi
-    [ -n "$prebuilt_runtime_artifacts" ] || return 1
+  local resource_receipt="$package_root.sdk-resources.properties"
+  if ! prebuilt_runtime_artifacts="$(oliphaunt_dev_prebuilt_extension_asset_paths_for_selection \
+    "$selected_extensions" runtime "$extension_target" "$resource_receipt" "$icu_enabled")"; then
+    return 1
   fi
   local module_stems
   module_stems="$(oliphaunt_dev_mobile_module_stems_for_selection "$selected_extensions")"
@@ -342,6 +342,7 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   fi
   grep -Fxq 'mode=native-direct' "$package_root/oliphaunt/runtime/manifest.properties" ||
     fail "prebuilt $platform runtime resource package did not produce a native-direct manifest"
+  mv "$resource_receipt" "$package_root/oliphaunt/sdk-resources.properties"
   touch "$package_root/.prepared"
   printf '%s\n' "$package_root"
 }

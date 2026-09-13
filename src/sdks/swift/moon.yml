@@ -43,10 +43,15 @@ tasks:
     tags: ["quality", "unit"]
     script: |
       set -e
+      node tools/extension-resource-inventory.test.mjs ../../../target/moon/oliphaunt-swift/inventory-test
+      node tools/swift-carrier-resolver.test.mjs ../../../target/moon/oliphaunt-swift/carrier-test
       sh tools/test-c-bridge.sh
       swift test --scratch-path ../../../target/moon/oliphaunt-swift/unit
     inputs:
       - "@group(code)"
+      - "@group(release-archive-contract)"
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/src/shared/extension-runtime-contract/extension-artifact-archive-policy.properties"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
     options:

@@ -54,6 +54,11 @@ runs:
         cargo install ripgrep --version 15.1.0 --locked
         rg --version
 
+    - name: Prepare Linux apt sources
+      if: ${{ runner.os == 'Linux' && inputs.tools != '' }}
+      shell: bash
+      run: .github/scripts/prepare-linux-apt.sh
+
     - name: Install Cargo tools
       if: ${{ inputs.tools != '' }}
       uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853

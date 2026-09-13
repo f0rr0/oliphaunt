@@ -541,12 +541,13 @@ function validateBase(value, label, allowFileUrls) {
   const version = stableVersion(row.version, `${label}.version`);
   if (row.tag !== `${row.product}-v${version}`) fail(`${label}.tag must be ${row.product}-v${version}`);
   const rows = assets(row.assets, `${label}.assets`, allowFileUrls);
-  const allowed = new Set(["base-xcframework", "icu-data", "runtime-resources"]);
+  const allowed = new Set(["base-xcframework", "icu-data", "runtime-resources", "icu-seed"]);
   const unsupported = [...new Set(rows.filter(({ role }) => !allowed.has(role)).map(({ role }) => role))].sort(compareText);
   if (unsupported.length) fail(`${label}.assets has unsupported roles: ${unsupported.join(",")}`);
   const framework = oneRole(rows, "base-xcframework", `${label}.assets`);
   const runtime = oneRole(rows, "runtime-resources", `${label}.assets`);
   oneRole(rows, "icu-data", `${label}.assets`);
+  oneRole(rows, "icu-seed", `${label}.assets`);
   const expectedRuntimeName =
     `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`;
   if (runtime.name !== expectedRuntimeName) {

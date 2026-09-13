@@ -47,18 +47,25 @@ export async function createNodeNativeBinding(
 
   return {
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
+      const selectedInstall =
+        config.icu === undefined
+          ? install
+          : await resolveNodeNativeInstall(options.libraryPath, config.icu);
       const explicitRuntimeDirectory =
         config.runtimeDirectory !== undefined || install.packageManaged === false;
       let extensionInstall = await prepareNodeExtensionInstall(
         {
-          ...install,
-          runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+          ...selectedInstall,
+          runtimeDirectory: config.runtimeDirectory ?? selectedInstall.runtimeDirectory,
           clusterSeedDirectory:
-            config.runtimeDirectory === undefined ? install.clusterSeedDirectory : undefined,
+            config.runtimeDirectory === undefined
+              ? selectedInstall.clusterSeedDirectory
+              : undefined,
         },
         config.extensions,
         {
           explicitRuntimeDirectory,
+          descriptors: config.extensionDescriptors,
         },
       );
       if (explicitRuntimeDirectory && extensionInstall.runtimeDirectory !== undefined) {
@@ -69,6 +76,7 @@ export async function createNodeNativeBinding(
         };
         replaceNativeIcuDataEnvironment(extensionInstall.icuDataDirectory);
       }
+      replaceNativeIcuDataEnvironment(extensionInstall.icuDataDirectory);
       applyNativeRuntimeLibraryEnvironment(extensionInstall.runtimeDirectory);
       await prepareNodePgdata(
         config.pgdata,

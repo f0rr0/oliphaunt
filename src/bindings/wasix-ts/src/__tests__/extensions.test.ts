@@ -310,11 +310,6 @@ describe('WASIX TypeScript extensions', () => {
     expect(() =>
       parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(invalid))),
     ).toThrow('format-version 2');
-
-    const missingFingerprint = { ...expected, 'source-fingerprint': undefined };
-    expect(() =>
-      parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(missingFingerprint))),
-    ).toThrow('WASIX asset source fingerprint');
   });
 });
 
@@ -414,7 +409,7 @@ function carrierMap(
 function manifest(): WasixAssetManifest {
   return {
     'format-version': 2,
-    'source-fingerprint': 'postgres-source-fingerprint',
+
     runtime: {
       archive: 'oliphaunt.wasix.tar.zst',
       sha256: '0'.repeat(64),
@@ -438,7 +433,7 @@ function manifest(): WasixAssetManifest {
         sha256: '4'.repeat(64),
         size: 100,
         'runtime-module-sha256': '1'.repeat(64),
-        'source-fingerprint': 'postgres-source-fingerprint',
+
         'postgres-version': '18',
         'physical-format': 'wasix-pg18-v1',
         'compatibility-key': 'wasix-pg18-datum32-v1',
@@ -451,7 +446,7 @@ function manifest(): WasixAssetManifest {
         sha256: '6'.repeat(64),
         size: 101,
         'runtime-module-sha256': '1'.repeat(64),
-        'source-fingerprint': 'postgres-source-fingerprint',
+
         'postgres-version': '18',
         'physical-format': 'wasix-pg18-v1',
         'compatibility-key': 'wasix-pg18-datum32-v1',

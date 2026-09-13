@@ -71,6 +71,7 @@ test('resolves a real multi-root job with downloaded dependencies', () => {
       }),
       OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: JSON.stringify([
         'liboliphaunt-wasix:runtime-portable',
+        'liboliphaunt-wasix:runtime-aot',
         'release-tools:wasix-napi-runtime',
       ]),
     },

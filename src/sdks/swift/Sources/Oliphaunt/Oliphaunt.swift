@@ -5,16 +5,6 @@ enum OliphauntNativeCatalogProfile: String, Sendable {
     case icu
 }
 
-public struct OliphauntStartupGUC: Equatable, Sendable {
-    public var name: String
-    public var value: String
-
-    public init(_ name: String, _ value: String) {
-        self.name = name
-        self.value = value
-    }
-}
-
 public enum OliphauntDatabaseStorage: Equatable, Sendable {
     case temporaryDirectory
     case directory(URL)
@@ -22,23 +12,26 @@ public enum OliphauntDatabaseStorage: Equatable, Sendable {
 
 public struct OliphauntConfiguration: Equatable, Sendable {
     public var storage: OliphauntDatabaseStorage
-    public var startupGUCs: [OliphauntStartupGUC]
+    public var startupGUCs: [String: String]
     public var username: String?
     public var database: String?
-    public var extensions: [String]
+    public var extensions: [OliphauntExtension]
+    public var icu: OliphauntIcuData?
 
     public init(
         storage: OliphauntDatabaseStorage = .temporaryDirectory,
-        startupGUCs: [OliphauntStartupGUC] = [],
+        startupGUCs: [String: String] = [:],
         username: String? = nil,
         database: String? = nil,
-        extensions: [String] = []
+        extensions: [OliphauntExtension] = [],
+        icu: OliphauntIcuData? = nil
     ) {
         self.storage = storage
         self.startupGUCs = startupGUCs
         self.username = username
         self.database = database
         self.extensions = extensions
+        self.icu = icu
     }
 }
 
@@ -63,18 +56,18 @@ func requireOliphauntFreshRootRole(_ username: String) throws {
     }
 }
 
-func validateOliphauntStartupGUCs(_ gucs: [OliphauntStartupGUC]) throws {
-    for guc in gucs {
-        let name = guc.name.trimmingCharacters(in: .whitespacesAndNewlines)
+func validateOliphauntStartupGUCs(_ gucs: [String: String]) throws {
+    for (key, value) in gucs {
+        let name = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty {
             throw OliphauntError.engine("PostgreSQL startup GUC name must not be empty")
         }
-        if name.utf8.contains(0) || guc.value.utf8.contains(0) {
+        if name.utf8.contains(0) || value.utf8.contains(0) {
             throw OliphauntError.engine("PostgreSQL startup GUC must not contain NUL bytes")
         }
         if !isPortablePostgresGUCName(name) {
             throw OliphauntError.engine(
-                "PostgreSQL startup GUC name '\(guc.name)': each dot-separated component must start " +
+                "PostgreSQL startup GUC name '\(key)': each dot-separated component must start " +
                     "with an ASCII letter or '_', followed by ASCII letters, digits, '_', or '$'"
             )
         }
@@ -372,11 +365,8 @@ public actor OliphauntDatabase {
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database, label: "database")
         try validateOliphauntStartupGUCs(configuration.startupGUCs)
-        var normalized = configuration
-        normalized.extensions = try OliphauntRuntimeResources.normalizedExtensionIds(
-            configuration.extensions
-        )
-        return OliphauntDatabase(session: try await engine.open(configuration: normalized))
+        try configuration.prepareExtensionResources()
+        return OliphauntDatabase(session: try await engine.open(configuration: configuration))
     }
 
     public static func restore(destination: URL, bytes: Data) async throws {
@@ -1240,6 +1230,7 @@ public struct OliphauntTransaction: Sendable {
 
 extension OliphauntConfiguration {
     func postgresStartupArgs(sharedPreloadLibraries: [String] = []) -> [String] {
+        let startupGUCs = startupGUCs.sorted { $0.key < $1.key }.map { (name: $0.key, value: $0.value) }
         let requiredPreloads = Set(sharedPreloadLibraries).sorted()
         if requiredPreloads.isEmpty {
             return startupGUCs.flatMap { guc in

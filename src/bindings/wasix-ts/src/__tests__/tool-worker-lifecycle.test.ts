@@ -5,10 +5,9 @@ import {
   createWasixByteChannel,
   markWasixByteChannelProtocolComplete,
   markWasixByteChannelProtocolStarted,
-  readWasixByteChannel,
   wasixByteChannelProtocolOutcomeUnknown,
-  wasixByteChannelProtocolStarted,
 } from '../byte-channel.js';
+import { readWasixByteChannel } from './byte-channel-reader.js';
 import { WasixDatabaseImpl, type WasixDatabaseSession } from '../database.js';
 import {
   runWasixToolProcess,
@@ -62,7 +61,7 @@ describe('persistent WASIX tool worker lifecycle', () => {
         backend: beforeBackend,
       }),
     ).resolves.toMatchObject({ ok: false, message: 'pre-protocol failure' });
-    expect(wasixByteChannelProtocolStarted(beforeFrontend)).toBe(false);
+    expect(wasixByteChannelProtocolOutcomeUnknown(beforeFrontend)).toBe(false);
     await expect(readWasixByteChannel(beforeFrontend)).resolves.toEqual(new Uint8Array());
 
     enterProtocol = true;
@@ -78,7 +77,7 @@ describe('persistent WASIX tool worker lifecycle', () => {
         backend: afterBackend,
       }),
     ).resolves.toMatchObject({ ok: false, message: 'post-protocol failure' });
-    expect(wasixByteChannelProtocolStarted(afterFrontend)).toBe(true);
+    expect(wasixByteChannelProtocolOutcomeUnknown(afterFrontend)).toBe(true);
     await expect(readWasixByteChannel(afterFrontend)).rejects.toThrow('byte channel failed');
   });
 
@@ -100,7 +99,6 @@ describe('persistent WASIX tool worker lifecycle', () => {
     await expect(
       dispatch({ id: 2, kind: 'run', tool: 'psql', args: [], frontend, backend }),
     ).resolves.toMatchObject({ ok: false, message: 'WASIX tool mount cleanup failed' });
-    expect(wasixByteChannelProtocolStarted(frontend)).toBe(true);
     expect(wasixByteChannelProtocolOutcomeUnknown(frontend)).toBe(false);
     await expect(readWasixByteChannel(frontend)).resolves.toEqual(Uint8Array.of(7));
     await expect(readWasixByteChannel(frontend)).resolves.toEqual(new Uint8Array());

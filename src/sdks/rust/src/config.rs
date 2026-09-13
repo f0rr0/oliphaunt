@@ -125,6 +125,8 @@ pub(crate) struct OpenConfig {
     pub(crate) username: String,
     pub(crate) database: String,
     pub(crate) extensions: Vec<Extension>,
+    pub(crate) resource_directory: Option<PathBuf>,
+    pub(crate) icu: bool,
 }
 
 impl OpenConfig {
@@ -139,6 +141,8 @@ impl OpenConfig {
             username: DEFAULT_USERNAME.to_owned(),
             database: DEFAULT_DATABASE.to_owned(),
             extensions: Vec::new(),
+            resource_directory: None,
+            icu: false,
         }
     }
 

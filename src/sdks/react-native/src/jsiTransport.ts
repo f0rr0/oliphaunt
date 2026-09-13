@@ -28,9 +28,8 @@ export type JsiRawProtocolTransport = {
   readonly backup: (handle: number) => Promise<ArrayBuffer | ArrayBufferView>;
   readonly restore: (
     destination: {
-      storageKind: 'directory' | 'applicationData';
+      storageKind: 'directory';
       storagePath?: string;
-      storageName?: string;
     },
     artifact: Uint8Array,
   ) => Promise<void>;
@@ -135,9 +134,8 @@ export async function backupJsi(
 export async function restoreJsi(
   transport: JsiRawProtocolTransport,
   destination: {
-    storageKind: 'directory' | 'applicationData';
+    storageKind: 'directory';
     storagePath?: string;
-    storageName?: string;
   },
   artifact: Uint8Array,
 ): Promise<void> {

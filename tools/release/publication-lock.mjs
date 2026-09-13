@@ -338,120 +338,7 @@ function mavenArtifact(file) {
   };
 }
 
-const MAVEN_MANIFEST_TOKEN = /^[A-Za-z0-9_.-]+$/u;
-const STABLE_SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
-
-function requiredMavenManifestText(value, label) {
-  if (typeof value !== "string" || value.length === 0 || CONTROL_CHARACTER.test(value)) {
-    throw error(`${label} must be a non-empty string without control characters`);
-  }
-  return value;
-}
-
-function mavenManifestLicenses(value, label) {
-  let licenses;
-  try {
-    licenses = JSON.parse(value);
-  } catch (cause) {
-    throw error(`${label} must be valid JSON: ${cause.message}`);
-  }
-  if (!Array.isArray(licenses) || licenses.length === 0) {
-    throw error(`${label} must be a non-empty JSON array`);
-  }
-  const expectedKeys = ["name", "url", "distribution"];
-  for (const [index, license] of licenses.entries()) {
-    const entryLabel = `${label} entry ${index + 1}`;
-    if (license === null || Array.isArray(license) || typeof license !== "object") {
-      throw error(`${entryLabel} must be an object`);
-    }
-    if (stableJson(Object.keys(license)) !== stableJson(expectedKeys)) {
-      throw error(`${entryLabel} must contain exactly ${expectedKeys.join(", ")} in canonical order`);
-    }
-    requiredMavenManifestText(license.name, `${entryLabel}.name`);
-    const url = requiredMavenManifestText(license.url, `${entryLabel}.url`);
-    if (!url.startsWith("https://")) {
-      throw error(`${entryLabel}.url must use HTTPS`);
-    }
-    if (license.distribution !== "repo") {
-      throw error(`${entryLabel}.distribution must be repo`);
-    }
-  }
-  if (value !== JSON.stringify(licenses)) {
-    throw error(`${label} must use canonical compact JSON`);
-  }
-  return licenses;
-}
-
-function mavenManifestArtifacts(file) {
-  if (!rel(file).includes("/maven-artifacts/")) {
-    return [];
-  }
-  const records = [];
-  const coordinates = new Set();
-  for (const [index, line] of readFileSync(file, "utf8").split(/\r?\n/u).filter(Boolean).entries()) {
-    const values = line.split("\t");
-    const label = `${rel(file)} line ${index + 1}`;
-    if (values.length !== 10) {
-      throw error(`${label} must contain ten Maven publication fields`);
-    }
-    const [
-      group,
-      name,
-      version,
-      artifactPath,
-      displayName,
-      description,
-      runtimeProduct,
-      runtimeVersion,
-      licenseSpdx,
-      licensesJson,
-    ] = values;
-    for (const [field, value] of [["groupId", group], ["artifactId", name], ["version", version]]) {
-      requiredMavenManifestText(value, `${label} ${field}`);
-      if (!MAVEN_MANIFEST_TOKEN.test(value)) {
-        throw error(`${label} ${field} contains non-portable Maven characters`);
-      }
-    }
-    requiredMavenManifestText(artifactPath, `${label} artifact path`);
-    requiredMavenManifestText(displayName, `${label} display name`);
-    requiredMavenManifestText(description, `${label} description`);
-    if ((runtimeProduct.length === 0) !== (runtimeVersion.length === 0)) {
-      throw error(`${label} must declare both runtime product and version or neither`);
-    }
-    if (runtimeProduct.length > 0) {
-      requiredMavenManifestText(runtimeProduct, `${label} runtime product`);
-      requiredMavenManifestText(runtimeVersion, `${label} runtime version`);
-    }
-    requiredMavenManifestText(licenseSpdx, `${label} SPDX expression`);
-    mavenManifestLicenses(licensesJson, `${label} licenses`);
-    if (
-      group === "dev.oliphaunt.extensions"
-      && (runtimeProduct !== "liboliphaunt-native" || !STABLE_SEMVER.test(runtimeVersion))
-    ) {
-      throw error(`${label} extension carrier must bind an exact stable liboliphaunt-native runtime version`);
-    }
-    const coordinate = `${group}:${name}:${version}`;
-    if (coordinates.has(coordinate)) {
-      throw error(`${rel(file)} contains duplicate Maven coordinate ${coordinate}`);
-    }
-    coordinates.add(coordinate);
-    const artifact = path.resolve(ROOT, artifactPath);
-    if (!artifactPath.endsWith(".tar.gz") || !isFile(artifact)) {
-      throw error(`${label} references a missing or non-tar.gz Maven artifact ${artifactPath}`);
-    }
-    records.push({
-      ecosystem: "maven",
-      name: `${group}:${name}`,
-      version,
-      dependencies: [],
-      artifacts: [{ path: rel(artifact), sha256: sha256File(artifact), size: statSync(artifact).size }],
-    });
-  }
-  return records;
-}
-
-function directoryEnvelope(directory) {
+export function directoryEnvelope(directory) {
   const files = walkFiles(directory, { ignoreBuildDirectories: true });
   const hash = createHash("sha256");
   let size = 0;
@@ -526,10 +413,6 @@ function discoverPublicationArtifactsMatching(roots, includeRecord) {
       const key = `${record.name}@${record.version}`;
       if (!mavenPoms.has(key)) {
         mavenPoms.add(key);
-        addRecord(record);
-      }
-    } else if (file.endsWith(".tsv")) {
-      for (const record of mavenManifestArtifacts(file)) {
         addRecord(record);
       }
     }
@@ -1587,6 +1470,26 @@ function runtimeOwnedExtensionGithubReleaseArtifacts(files, product) {
   }));
 }
 
+export function independentSwiftPackageName(product) {
+  if (product.id === "liboliphaunt-native") return "oliphaunt-icu";
+  return product.kind === "exact-extension-artifact" ? product.id : null;
+}
+
+function independentSwiftReleaseInput(files, product) {
+  const name = independentSwiftPackageName(product);
+  if (name === null) return [];
+  const matches = files.filter(file => file.split(path.sep).join("/")
+    .endsWith(`/swift-packages/${name}/Package.swift`));
+  if (matches.length !== 1) {
+    throw error(`${product.id} requires exactly one standalone SwiftPM package ${name}, found ${matches.length}`);
+  }
+  return [productDirectoryArtifact({
+    product: product.id, id: "release-input:swiftpm-independent-package",
+    role: "release-input", kind: "swiftpm-independent-package", target: "portable",
+    identity: name, name, directory: path.dirname(matches[0]),
+  })];
+}
+
 function discoverProductArtifactsForSelection(roots, products, selectedProducts) {
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(compareText);
   const artifacts = [];
@@ -1605,6 +1508,7 @@ function discoverProductArtifactsForSelection(roots, products, selectedProducts)
       artifacts.push(...fixedGithubReleaseArtifacts(files, product));
       artifacts.push(...runtimeOwnedExtensionGithubReleaseArtifacts(files, product));
     }
+    artifacts.push(...independentSwiftReleaseInput(files, product));
     if (product.id === "oliphaunt-swift") {
       artifacts.push(...swiftReleaseInputs(files, product, {
         requireExtensionFixture: hasSelectedExtensionProducts,
@@ -1983,6 +1887,16 @@ function validateExtensionProductArtifactInventory(product, artifacts) {
 }
 
 function validateProductArtifactInventory(product, artifacts, { hasSelectedExtensionProducts }) {
+  const independentPackage = independentSwiftPackageName(product);
+  if (independentPackage !== null) {
+    const sources = artifacts.filter(artifact => artifact.id === "release-input:swiftpm-independent-package");
+    if (sources.length !== 1 || sources[0].kind !== "swiftpm-independent-package"
+        || sources[0].identity !== independentPackage || sources[0].name !== independentPackage
+        || sources[0].role !== "release-input") {
+      throw error(`${product.id} requires its exact standalone SwiftPM package input`);
+    }
+    artifacts = artifacts.filter(artifact => artifact !== sources[0]);
+  }
   if (EXTENSION_PRODUCT_KINDS.has(product.kind)) {
     validateExtensionProductArtifactInventory(product, artifacts);
     return;

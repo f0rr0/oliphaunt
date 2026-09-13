@@ -443,3 +443,11 @@ test("extension package tooling invalidates packaging without changing builders"
     assert.equal(result.tasks.includes(target), false, `${target} does not consume package tooling`);
   }
 });
+
+
+test("Swift package staging receives contrib artifacts through the mobile package producer", () => {
+  const result = effects("tools/release/sdk-artifacts/swift.mjs");
+  for (const job of ["swift-sdk-package", "mobile-extension-packages", "extension-artifacts-native"]) {
+    assert.equal(result.jobs.includes(job), true, job);
+  }
+});

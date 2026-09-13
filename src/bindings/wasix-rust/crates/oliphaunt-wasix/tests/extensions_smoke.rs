@@ -1,4 +1,4 @@
-#![cfg(feature = "extension-vector")]
+#![cfg(feature = "extensions")]
 
 use anyhow::Result;
 use oliphaunt_wasix::{AsyncOliphauntServer, Extension, Oliphaunt};

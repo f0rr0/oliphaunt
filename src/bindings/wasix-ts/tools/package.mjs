@@ -43,6 +43,7 @@ export function prepareWasixTypescriptPackage(packageDir) {
       ...(manifest.dependencies ?? {}),
       [JS_CORE_PACKAGE]: coreManifest.version,
       [RUNTIME]: runtimeVersion,
+      '@oliphaunt/extension-contrib-pg18-wasix': runtimeVersion,
     }).sort(),
   );
   manifest.optionalDependencies = Object.fromEntries(NATIVE.map((name) => [name, nativeVersion]));

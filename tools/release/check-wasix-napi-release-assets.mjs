@@ -16,7 +16,7 @@ import {
   artifactTargets,
   compareText,
   currentProductVersion,
-  exactExtensionProducts,
+  contribCarrierDescriptor,
   expectedAssets,
   extensionSqlNames,
   extensionWasixAotMemberSqlNames,
@@ -147,19 +147,6 @@ function assertBuildInputs(buildInputs, target, label) {
   digestRecord(inputs.portableManifest, `${label} portable WASIX manifest`, {
     expectedPath: "target/oliphaunt-wasix/assets/manifest.json",
   });
-  if (!Array.isArray(inputs.portableTools)) {
-    throw new Error(`${label} portable tool inventory must be an array`);
-  }
-  assertSameStrings(
-    inputs.portableTools.map((row) => row?.name),
-    ["pg_dump", "psql"],
-    `${label} portable tool inventory`,
-  );
-  for (const tool of inputs.portableTools) {
-    digestRecord(tool, `${label} portable tool ${tool.name}`, {
-      expectedPath: `target/oliphaunt-wasix/assets/bin/${tool.name}.wasix.wasm`,
-    });
-  }
   if (inputs.runtimeAotManifest?.targetTriple !== target.triple) {
     throw new Error(`${label} runtime AOT manifest must target ${target.triple}`);
   }
@@ -169,7 +156,7 @@ function assertBuildInputs(buildInputs, target, label) {
   if (!Array.isArray(inputs.extensionArtifacts)) {
     throw new Error(`${label} extension artifact inventory must be an array`);
   }
-  const expectedProducts = exactExtensionProducts(PREFIX);
+  const expectedProducts = [contribCarrierDescriptor(PREFIX).artifactProduct];
   assertSameStrings(
     inputs.extensionArtifacts.map((row) => row?.product),
     expectedProducts,
@@ -212,12 +199,6 @@ function assertBuildInputs(buildInputs, target, label) {
         pathSuffix: "/manifest.json",
       });
     }
-  }
-  digestRecord(inputs.icuData, `${label} ICU data inventory`, {
-    expectedPath: "target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu",
-  });
-  if (!Number.isSafeInteger(inputs.icuData.fileCount) || inputs.icuData.fileCount < 1) {
-    throw new Error(`${label} ICU data inventory must record at least one regular file`);
   }
 }
 

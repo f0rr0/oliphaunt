@@ -909,10 +909,6 @@ class OliphauntModuleJSIBindings
                         runtime,
                         destination.getProperty(runtime, "storagePath"),
                         "restore storagePath");
-                    auto storageName = copyOptionalStringArgument(
-                        runtime,
-                        destination.getProperty(runtime, "storageName"),
-                        "restore storageName");
                     std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);
                     auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
                     auto executor = jsi::Function::createFromHostFunction(
@@ -923,7 +919,6 @@ class OliphauntModuleJSIBindings
                          callInvoker,
                          storageKind = std::move(storageKind),
                          storagePath = std::move(storagePath),
-                         storageName = std::move(storageName),
                          artifact = std::move(artifact)](
                             jsi::Runtime &runtime,
                             const jsi::Value &,
@@ -956,7 +951,6 @@ class OliphauntModuleJSIBindings
                           try {
                             auto storageKindString = jni::make_jstring(storageKind);
                             auto storagePathString = jni::make_jstring(storagePath.value_or(""));
-                            auto storageNameString = jni::make_jstring(storageName.value_or(""));
                             auto artifactArray = makeByteArray(artifact);
                             static const auto callbackConstructor =
                                 OliphauntJsiPromiseCallback::javaClassStatic()
@@ -969,14 +963,12 @@ class OliphauntModuleJSIBindings
                                     ->getMethod<void(
                                         jni::JString::javaobject,
                                         jni::JString::javaobject,
-                                        jni::JString::javaobject,
                                         jbyteArray,
                                         OliphauntJsiPromiseCallback::javaobject)>("restoreBytes");
                             restoreBytes(
                                 moduleGlobal,
                                 storageKindString.get(),
                                 storagePathString.get(),
-                                storageNameString.get(),
                                 artifactArray.get(),
                                 callback.get());
                           } catch (const std::exception &error) {

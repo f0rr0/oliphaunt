@@ -70,19 +70,26 @@ build_consumer() {
   OLIPHAUNT_CARGO_METADATA="$metadata" tools/dev/bun.sh -e '
     const metadata = await Bun.file(process.env.OLIPHAUNT_CARGO_METADATA).json();
     for (const dependency of metadata.packages[0].dependencies) {
-      if (dependency.name.startsWith("liboliphaunt-native-") || dependency.name.startsWith("oliphaunt-broker-")) {
+      if (dependency.name.startsWith("liboliphaunt-native-") || dependency.name.startsWith("oliphaunt-broker-") || dependency.name.startsWith("oliphaunt-extension-contrib-pg18-")) {
         const version = dependency.req.match(/^=([0-9A-Za-z.+-]+)$/)?.[1];
         if (!version) throw new Error(`artifact dependency ${dependency.name} must use an exact version`);
         console.log(`${dependency.name}\t${version}`);
       }
     }
   ' | sort -u >"$dependency_rows"
-  for pattern in '^liboliphaunt-native-' '^oliphaunt-broker-'; do
+  for pattern in '^liboliphaunt-native-' '^oliphaunt-broker-' '^oliphaunt-extension-contrib-pg18-'; do
     rg -q "$pattern" "$dependency_rows" || fail "packed crate is missing artifact dependency $pattern"
   done
 
   {
     printf '[net]\noffline = true\n\n[patch.crates-io]\n'
+    for name in oliphaunt-build oliphaunt-resources; do
+      crate="$(find_one "$sdk_artifacts" "$name-[0-9]*.crate")"
+      mkdir -p "$scratch/dependencies/$name"
+      tar -xzf "$crate" -C "$scratch/dependencies/$name"
+      packed_manifest="$(find_one "$scratch/dependencies/$name" Cargo.toml)"
+      printf '"%s" = { path = "%s" }\n' "$name" "$(dirname "$packed_manifest")"
+    done
     while IFS=$'\t' read -r name version; do
       stub="$scratch/stubs/$name"
       mkdir -p "$stub/src"
@@ -108,13 +115,14 @@ build_consumer() {
 run_consumer() {
   local consumer="$1"
   local native_assets="$2"
-  local runtime_archive tools_archive install_dir tools_dir
+  local runtime_archive tools_archive install_dir tools_dir native_version
   require_linux_x64
   require_file "$consumer"
   [ -x "$consumer" ] || fail "release consumer is not executable: $consumer"
   [ -d "$native_assets" ] || fail "native asset directory is missing: $native_assets"
-  runtime_archive="$(find_one "$native_assets" 'liboliphaunt-*-linux-x64-gnu.tar.gz')"
-  tools_archive="$(find_one "$native_assets" 'oliphaunt-tools-*-linux-x64-gnu.tar.gz')"
+  native_version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
+  runtime_archive="$(find_one "$native_assets" "liboliphaunt-$native_version-linux-x64-gnu.tar.gz")"
+  tools_archive="$(find_one "$native_assets" "oliphaunt-tools-$native_version-linux-x64-gnu.tar.gz")"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-rust-release-consumer-run.XXXXXX")"
 
   mkdir -p "$scratch/native" "$scratch/tools" "$scratch/runtime-cache"

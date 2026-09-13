@@ -7,6 +7,7 @@ import {
 } from './internal-common.js';
 import type { WasixToolWorkerRequest, WasixToolWorkerResponse } from './tool-worker-common.js';
 
+import { getWasixDatabaseIdentity } from './database.js';
 export { getWasixDatabaseIdentity } from './database.js';
 
 export type {
@@ -19,7 +20,31 @@ export function runWasixToolProcess(
   database: OliphauntDatabase,
   options: WasixToolProcessOptions,
 ): Promise<WasixToolProcessResult> {
-  return runTool(database, options, createBrowserToolWorker);
+  const identity = getWasixDatabaseIdentity(database);
+  const managed =
+    options.tool.name === 'pg_dump'
+      ? ['--encoding=UTF8', '--no-password']
+      : ['--no-psqlrc', '--no-password', '--set=ON_ERROR_STOP=1'];
+  return runTool(
+    database,
+    {
+      ...options,
+      args: [
+        ...options.args,
+        ...managed,
+        `--username=${identity.username}`,
+        '--host=127.0.0.1',
+        '--port=65432',
+        `--dbname=${identity.database}`,
+        ...(options.command !== undefined
+          ? ['--command', options.command]
+          : options.stdin !== undefined
+            ? ['--file=-']
+            : []),
+      ],
+    },
+    createBrowserToolWorker,
+  );
 }
 
 function createBrowserToolWorker(): WasixToolWorkerPort {

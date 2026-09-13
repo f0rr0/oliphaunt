@@ -1,3 +1,4 @@
+import COliphaunt
 import Foundation
 @testable @_spi(ExtensionSupport) import Oliphaunt
 import Testing
@@ -59,7 +60,7 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
             nativeDependencies: nativeDependencies,
             sharedPreloadLibraries: sharedPreload
         )
-        #expect(try OliphauntRuntimeResources.registerPackagedExtensionResource(
+        let register = { try OliphauntRuntimeResources.registerPackagedExtensionResource(
             product: product,
             version: version,
             sqlName: sqlName,
@@ -68,7 +69,20 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
             nativeModuleStem: stem,
             sharedPreloadLibraries: sharedPreload,
             resourceRoot: fragment
-        ))
+        ) }
+        if !createsExtension {
+            let manifestURL = fragment.appendingPathComponent("manifest.properties")
+            let manifest = try String(contentsOf: manifestURL, encoding: .utf8)
+            for invalid in [
+                manifest.replacingOccurrences(of: "files=", with: "files=files"),
+                manifest.replacingOccurrences(of: "createsExtension=no", with: "createsExtension=yes"),
+            ] {
+                try writeExtensionCompositionText(manifestURL, invalid)
+                #expect(throws: OliphauntError.self) { try register() }
+            }
+            try writeExtensionCompositionText(manifestURL, manifest)
+        }
+        #expect(try register())
     }
 
     let requested = Set(["auto_explain", "earthdistance", "postgis", "pgtap"])
@@ -639,7 +653,7 @@ private func makeExtensionCompositionFragment(
         nativeModuleStem=\(nativeModuleStem ?? "")
         nativeDependencies=\(nativeDependencies.sorted().joined(separator: ","))
         sharedPreloadLibraries=\(sharedPreloadLibraries.sorted().joined(separator: ","))
-        files=files
+        files=\(createsExtension ? "files" : "")
         """
     )
     if createsExtension {
@@ -650,11 +664,6 @@ private func makeExtensionCompositionFragment(
         try writeExtensionCompositionText(
             root.appendingPathComponent("files/share/postgresql/extension/\(sqlName)--\(version).sql"),
             "SELECT 1;\n"
-        )
-    } else {
-        try writeExtensionCompositionText(
-            root.appendingPathComponent("files/share/postgresql/README.\(sqlName)"),
-            "module-only product \(sqlName)\n"
         )
     }
 }
@@ -675,4 +684,57 @@ private func extensionCompositionProperties(_ url: URL) throws -> [String: Strin
         values[String(text[..<separator])] = String(text[text.index(after: separator)...])
     }
     return values
+}
+
+@Test
+func explicitResourceSelectionKeepsDependenciesAndRejectsConflictingVersions() throws {
+    let selected = try selectedOliphauntExtensions(["earthdistance", "vector"])
+    #expect(selected.contains("cube"))
+    #expect(includeSelectedOliphauntRuntimeFile("lib/postgresql/vector.so", extensions: selected, icu: false))
+    #expect(includeSelectedOliphauntRuntimeFile("share/postgresql/extension/cube--1.5.sql", extensions: selected, icu: false))
+    #expect(!includeSelectedOliphauntRuntimeFile("share/postgresql/extension/hstore.control", extensions: selected, icu: false))
+    #expect(!includeSelectedOliphauntRuntimeFile("lib/postgresql/hstore.so", extensions: selected, icu: false))
+    #expect(!includeSelectedOliphauntRuntimeFile("share/icu/icudt.dat", extensions: selected, icu: false))
+    let configuration = OliphauntConfiguration(extensions: [
+        OliphauntExtension(sqlName: "vector", product: "oliphaunt-extension-vector", version: "0.8.2"),
+        OliphauntExtension(sqlName: "vector", product: "oliphaunt-extension-vector", version: "0.8.3"),
+    ])
+    #expect(throws: OliphauntError.self) { try configuration.prepareExtensionResources() }
+}
+
+@Test
+func staticExtensionRegistrationValidatesDescriptorsAndRollsBackRejectedResources() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {
+        OliphauntRuntimeResources.unregisterPackagedExtensionResource(sqlName: "vector", resourceRoot: root)
+        try? FileManager.default.removeItem(at: root)
+    }
+    try makeExtensionCompositionFragment(
+        at: root, product: "oliphaunt-extension-vector", sqlName: "vector", version: "0.8.2",
+        createsExtension: true, dependencies: [], nativeModuleStem: "vector",
+        nativeDependencies: [], sharedPreloadLibraries: []
+    )
+    func register(_ stem: String?, _ descriptor: UnsafePointer<OliphauntStaticExtension>?) throws {
+        try OliphauntStaticExtensionRegistry.register(
+            product: "oliphaunt-extension-vector", sqlName: "vector", version: "0.8.2",
+            dependencies: [], nativeDependencies: [], sharedPreloadLibraries: [],
+            nativeModuleStem: stem, resourceRoot: root, descriptor: descriptor
+        )
+    }
+    #expect(throws: OliphauntError.self) { try register("vector", nil) }
+    try "vector".withCString { name throws in
+        // A missing magic callback must be rejected even when liboliphaunt is installed.
+        var descriptor = OliphauntStaticExtension(abi_version: UInt32(OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION), name: name, magic: nil, init: nil, symbols: nil, symbol_count: 0, reserved_flags: 0)
+        try withUnsafePointer(to: &descriptor) { pointer throws in
+            #expect(throws: OliphauntError.self) { try register(nil, pointer) }
+            #expect(throws: OliphauntError.self) { try register("wrong", pointer) }
+            #expect(throws: OliphauntError.self) { try register("vector", pointer) }
+            // Native rejection must remove the newly inserted resource as well as its descriptor.
+            #expect(try OliphauntRuntimeResources.registerPackagedExtensionResource(
+                product: "oliphaunt-extension-vector", version: "0.8.2", sqlName: "vector",
+                dependencies: [], nativeDependencies: [], nativeModuleStem: "vector",
+                sharedPreloadLibraries: [], resourceRoot: root
+            ))
+        }
+    }
 }

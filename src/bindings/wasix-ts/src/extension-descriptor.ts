@@ -13,7 +13,6 @@ import type {
   WasixExtensionCarrier,
   WasixExtensionCompatibility,
   WasixExtensionDescriptor,
-  WasixExtensionDescriptorInput,
   WasixExtensionImport,
   WasixExtensionInstall,
   WasixExtensionLifecycle,
@@ -78,18 +77,6 @@ export type SerializedWasixExtensions = {
   selectedSqlNames: string[];
   carriers: Record<string, SerializedExtensionCarrier>;
 };
-
-/** Optional package-author helper that validates and deeply freezes a descriptor. */
-export function defineWasixExtension(
-  input: WasixExtensionDescriptorInput,
-): WasixExtensionDescriptor {
-  validateDescriptor(input, 'WASIX extension descriptor');
-  return Object.freeze({
-    ...input,
-    compatibility: Object.freeze({ ...input.compatibility }),
-    carriers: Object.freeze(input.carriers.map(freezeCarrier)),
-  });
-}
 
 /**
  * Validates imported package values and converts roots plus carrier closures to
@@ -165,7 +152,7 @@ export function serializeWasixExtensionDescriptors(
 function validateDescriptor(
   value: unknown,
   label: string,
-): asserts value is WasixExtensionDescriptorInput {
+): asserts value is WasixExtensionDescriptor {
   const descriptor = requireExactObject(value, DESCRIPTOR_FIELDS, label);
   if (descriptor.schema !== 'oliphaunt-wasix-extension-v1') {
     throw new Error(`${label} has unsupported schema`);
@@ -376,32 +363,6 @@ function serializeCarrier(
       })),
     },
   };
-}
-
-function freezeCarrier(carrier: WasixExtensionCarrier): WasixExtensionCarrier {
-  const lifecycle = carrier.install.lifecycle;
-  return Object.freeze({
-    ...carrier,
-    install: Object.freeze({
-      ...carrier.install,
-      nativeModules: Object.freeze(
-        carrier.install.nativeModules.map((module) => Object.freeze({ ...module })),
-      ),
-      dependencies: Object.freeze([...carrier.install.dependencies]),
-      coreExportsRequired: Object.freeze([...carrier.install.coreExportsRequired]),
-      loadOrder: Object.freeze([...carrier.install.loadOrder]),
-      lifecycle: Object.freeze({
-        ...lifecycle,
-        loadSql: Object.freeze([...lifecycle.loadSql]),
-        postCreateSql: Object.freeze([...lifecycle.postCreateSql]),
-        startupConfig: Object.freeze([...lifecycle.startupConfig]),
-      }),
-      installedFiles: Object.freeze([...carrier.install.installedFiles]),
-      unresolvedImports: Object.freeze(
-        carrier.install.unresolvedImports.map((entry) => Object.freeze({ ...entry })),
-      ),
-    }),
-  });
 }
 
 function requireProduct(value: unknown, label: string): string {

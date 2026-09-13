@@ -10,7 +10,7 @@
         "schema": "oliphaunt-wasix-napi-host-v1",
         "product": "oliphaunt-wasix-napi",
         "binary": "oliphaunt_wasix_napi.node",
-        "addonAbiVersion": 1,
+        "addonAbiVersion": 2,
         "nodeApiVersion": 8,
         "profiles": [
           "standard",

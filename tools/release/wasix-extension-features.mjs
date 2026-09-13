@@ -10,6 +10,8 @@ function invariant(condition, message) {
   if (!condition) throw new Error(`${TOOL}: ${message}`);
 }
 
+// Source-runtime evidence selects fixture bytes in the internal portable crate.
+// Published SDK consumers install independent extension packages instead.
 export function extensionFeatures(manifest) {
   invariant(manifest !== null && typeof manifest === "object" && !Array.isArray(manifest), "asset manifest must be an object");
   invariant(Array.isArray(manifest.extensions), "asset manifest must contain an extensions array");
@@ -22,7 +24,7 @@ export function extensionFeatures(manifest) {
     invariant(typeof sqlName === "string" && SQL_NAME_RE.test(sqlName), "extensions must have a portable sql-name");
     invariant(!sqlNames.has(sqlName), `asset manifest repeats extension ${sqlName}`);
     sqlNames.add(sqlName);
-    features.push(`extension-${sqlName.replaceAll("_", "-")}`);
+    features.push(`liboliphaunt-wasix-portable/extension-${sqlName.replaceAll("_", "-")}`);
   }
 
   invariant(features.length > 0, "full WASIX evidence requires at least one extension");

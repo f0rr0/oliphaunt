@@ -37,6 +37,7 @@ tasks:
       node tools/integration/wasix-ts/smoke-browser.mjs --package-only
     deps:
       - "liboliphaunt-wasix:runtime-portable"
+      - "liboliphaunt-wasix:runtime-aot"
       - "oliphaunt-wasix-tools-ts:package"
       - "oliphaunt-wasix-ts:package"
       - "release-tools:wasix-napi-runtime"
@@ -54,6 +55,8 @@ tasks:
       - "/tools/perf/wasix-node/installed-closure.mjs"
       - "/tools/perf/wasix-node/plan.mjs"
       - "/tools/release/wasix-*.mjs"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/package-extension-release-carriers.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true

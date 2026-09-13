@@ -26,6 +26,7 @@ import {
   NATIVE_EXTENSION_ASSET_INDEX_HEADER,
   isCanonicalNativeExtensionRuntimeIndexRow,
 } from "./native-extension-asset-index-contract.mjs";
+import { nativeIcuSeedAsset } from "./native-icu-seeds.mjs";
 import {
   requiredRuntimeMemberPaths,
   requiredToolsMemberPaths,
@@ -371,7 +372,7 @@ export function selectedExtensionDependencies(metadata) {
   return sorted.join(",");
 }
 
-function stageBaseRuntime(runtimeAssets, output, extensionRows) {
+export function stageBaseRuntime(runtimeAssets, output, extensionRows) {
   const version = currentProductVersionSync("liboliphaunt-native", PREFIX);
   const runtimeArchive = oneFile(runtimeAssets, `liboliphaunt-${version}-${TARGET}.tar.gz`);
   const toolsArchive = oneFile(runtimeAssets, `oliphaunt-tools-${version}-${TARGET}.tar.gz`);
@@ -394,7 +395,9 @@ function stageBaseRuntime(runtimeAssets, output, extensionRows) {
   }
   extract(runtimeEntries, path.join(output, "resources/native-runtime/liboliphaunt-native"));
   extract(toolsEntries, path.join(output, "resources/native-tools/oliphaunt-tools"));
-  assertExactFiles(runtimeAssets, [runtimeArchive, toolsArchive], "Linux runtime artifact download");
+  // The producer also ships an optional ICU seed, which this standard-profile proof does not load.
+  const icuSeedArchive = oneFile(runtimeAssets, nativeIcuSeedAsset(version, TARGET));
+  assertExactFiles(runtimeAssets, [runtimeArchive, toolsArchive, icuSeedArchive], "Linux runtime artifact download");
   return [
     artifactRecord("native-runtime", runtimeArchive),
     artifactRecord("native-tools", toolsArchive),

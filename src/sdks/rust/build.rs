@@ -12,6 +12,14 @@ const PACKAGED_QUERY_CORE: &str = "src/query_core.rs";
 const CHECKOUT_QUERY_CORE: &str = "../../shared/rust-query-core/query_core.rs";
 
 fn main() {
+    #[cfg(not(test))]
+    let embedded = oliphaunt_build::embed_resolved_artifacts()
+        .expect("validate and embed resolved Oliphaunt resource dependencies");
+    #[cfg(not(test))]
+    println!(
+        "cargo::rustc-env=OLIPHAUNT_EMBEDDED_RESOURCES_RS={}",
+        embedded.display()
+    );
     match build_instructions(env::vars()) {
         Ok(instructions) => {
             for instruction in instructions {

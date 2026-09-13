@@ -2,7 +2,6 @@ use super::*;
 
 pub(crate) struct BuildOutputs {
     source_lane: String,
-    source_fingerprint: Option<String>,
     postgres_version: String,
     build_dir: PathBuf,
     source_dir: PathBuf,
@@ -48,40 +47,6 @@ fn postgres_version_for_source_lane(source_lane: &str, source_dir: &Path) -> Res
     }
 }
 
-fn source_fingerprint_for_source_lane(
-    source_lane: &str,
-    source_dir: &Path,
-) -> Result<Option<String>> {
-    match source_lane {
-        "stable" => {
-            let path = source_dir.join(".oliphaunt-wasix-source-fingerprint");
-            let fingerprint =
-                fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-            let fingerprint = fingerprint.trim();
-            ensure!(
-                !fingerprint.is_empty(),
-                "{} must contain a PG18 source fingerprint",
-                path.display()
-            );
-            Ok(Some(fingerprint.to_owned()))
-        }
-        other => bail!("unsupported WASIX asset source lane {other:?}"),
-    }
-}
-
-fn expected_postgres_source_fingerprint() -> Result<String> {
-    let manifest = load_postgres_source_manifest()?;
-    postgres_expected_source_fingerprint(&manifest)
-}
-
-pub(crate) fn ensure_postgres_source_fingerprint_matches_current(
-    actual: Option<&str>,
-    field: &str,
-) -> Result<()> {
-    let expected = expected_postgres_source_fingerprint()?;
-    ensure_eq(actual.unwrap_or("<missing>"), &expected, field)
-}
-
 fn postgres_major_version(postgres_version: &str) -> String {
     postgres_version
         .split('.')
@@ -107,12 +72,6 @@ pub(crate) fn ensure_packaged_asset_matches_source_lane(
         ),
         _ => unreachable!("canonical_source_lane returned an unsupported lane"),
     }
-    if expected == "stable" {
-        ensure_postgres_source_fingerprint_matches_current(
-            manifest.source_fingerprint.as_deref(),
-            "packaged asset manifest source-fingerprint",
-        )?;
-    }
     Ok(())
 }
 
@@ -130,10 +89,6 @@ fn ensure_build_output_manifest_matches_source_lane(
                 manifest.postgres_version.as_deref().unwrap_or("<missing>"),
                 pg18.postgresql.version.as_str(),
                 "WASIX build output manifest postgres-version",
-            )?;
-            ensure_postgres_source_fingerprint_matches_current(
-                manifest.source_fingerprint.as_deref(),
-                "WASIX build output manifest source-fingerprint",
             )?;
             ensure_postgres_build_output_manifest_paths_are_stable(manifest)?;
         }
@@ -320,10 +275,6 @@ impl BuildOutputs {
                 &canonical_source_lane,
                 &source_dir,
             )?,
-            source_fingerprint: source_fingerprint_for_source_lane(
-                &canonical_source_lane,
-                &source_dir,
-            )?,
             source_lane: canonical_source_lane,
             build_dir,
             source_dir,
@@ -469,7 +420,6 @@ impl BuildOutputs {
 
         Ok(Self {
             source_lane: canonical_source_lane.to_owned(),
-            source_fingerprint: manifest.source_fingerprint.clone(),
             postgres_version: manifest.runtime.postgres_version.clone(),
             build_dir: base.clone(),
             source_dir: base.clone(),
@@ -518,14 +468,15 @@ impl BuildOutputs {
     fn ensure_build_source_markers(&self) -> Result<()> {
         match self.source_lane.as_str() {
             "stable" => {
-                let source_fingerprint = self
-                    .source_fingerprint
-                    .as_deref()
-                    .ok_or_else(|| anyhow!("PG18 build outputs are missing source fingerprint"))?;
+                // This local cache key prevents packaging an unrecompiled build after
+                // source changes. It is never shipped or used for SDK compatibility.
+                let source_marker = self.source_dir.join(".oliphaunt-wasix-source-fingerprint");
+                let source_key = fs::read_to_string(&source_marker)
+                    .with_context(|| format!("read {}", source_marker.display()))?;
                 ensure_matching_marker(
-                    source_fingerprint,
+                    source_key.trim(),
                     &self.build_dir.join(".oliphaunt-wasix-source-fingerprint"),
-                    "PG18 build source fingerprint",
+                    "PG18 build cache source key",
                 )?;
                 ensure_matching_marker(
                     &self.postgres_version,
@@ -554,7 +505,6 @@ impl BuildOutputs {
         let manifest = BuildOutputManifestOut {
             format_version: 1,
             source_lane: Some(self.source_lane.clone()),
-            source_fingerprint: self.source_fingerprint.clone(),
             postgres_version: Some(self.postgres_version.clone()),
             build_profile: fs::read_to_string(
                 self.build_dir.join(".oliphaunt-wasix-build-profile"),
@@ -1489,7 +1439,7 @@ pub(crate) fn release_build_assets(
     package_assets_with_options(manifest, target, false, source_lane)?;
     let asset_dir = generated_assets_dir_for_source_lane(source_lane)?;
     check_canonical_asset_layout_in(asset_dir, true)?;
-    let expected_sources = effective_source_pins(manifest, &outputs)?;
+    let expected_sources = effective_source_pins(manifest)?;
     check_generated_manifest_sources_in(asset_dir, &expected_sources, source_lane, true)?;
 
     if !skip_aot {
@@ -1779,11 +1729,7 @@ fn generate_cluster_seed_assets_from_runtime_stage(
     }
     fs::create_dir_all(&output_dir).with_context(|| format!("create {}", output_dir.display()))?;
 
-    let source_pins = effective_source_pins(manifest, outputs)?;
-    let source_fingerprint = outputs
-        .source_fingerprint
-        .as_deref()
-        .ok_or_else(|| anyhow!("cluster seeds require an exact PostgreSQL source fingerprint"))?;
+    let source_pins = effective_source_pins(manifest)?;
     let runtime_sha256 = sha256_file(outputs.module_path("runtime:oliphaunt")?)?;
     let initdb_sha256 = sha256_file(outputs.module_path("tool:initdb")?)?;
     let catalog_version = postgres_catalog_version(&outputs.source_dir)?;
@@ -1850,7 +1796,6 @@ fn generate_cluster_seed_assets_from_runtime_stage(
                 "initdbSha256": initdb_sha256
             },
             "source": {
-                "fingerprint": source_fingerprint,
                 "catalogVersion": catalog_version,
                 "lane": outputs.source_lane,
                 "producer": "wasix-initdb"
@@ -2412,7 +2357,6 @@ fn package_aot_artifacts(
     let manifest = AotManifest {
         format_version: AOT_MANIFEST_FORMAT_VERSION,
         source_lane: Some(outputs.source_lane.clone()),
-        source_fingerprint: outputs.source_fingerprint.clone(),
         postgres_version: Some(outputs.postgres_version.clone()),
         target_triple: target.to_owned(),
         engine: "llvm-opta".to_owned(),
@@ -2505,7 +2449,6 @@ pub(crate) fn package_extension_aot_artifacts(
         let manifest = AotManifest {
             format_version: AOT_MANIFEST_FORMAT_VERSION,
             source_lane: Some(outputs.source_lane.clone()),
-            source_fingerprint: outputs.source_fingerprint.clone(),
             postgres_version: Some(outputs.postgres_version.clone()),
             target_triple: target.to_owned(),
             engine: "llvm-opta".to_owned(),
@@ -2543,16 +2486,6 @@ pub(crate) fn check_aot_package_manifest(target: &str, source_lane: &str) -> Res
         outputs.source_lane.as_str(),
         "AOT manifest source-lane",
     )?;
-    if let Some(source_fingerprint) = outputs.source_fingerprint.as_deref() {
-        ensure_eq(
-            manifest
-                .source_fingerprint
-                .as_deref()
-                .unwrap_or("<missing>"),
-            source_fingerprint,
-            "AOT manifest source-fingerprint",
-        )?;
-    }
     if let Some(postgres_version) = manifest.postgres_version.as_deref() {
         ensure_eq(
             postgres_version,
@@ -2732,11 +2665,10 @@ fn write_asset_manifest(
 ) -> Result<()> {
     let runtime_link = read_wasm_link_metadata(runtime_module)?;
     let extension_metadata = extension_catalog::manifest_metadata_by_sql_name()?;
-    let effective_sources = effective_source_pins(sources, outputs)?;
+    let effective_sources = effective_source_pins(sources)?;
     let manifest = AssetManifestOut {
         format_version: ASSET_MANIFEST_FORMAT_VERSION,
         source_lane: Some(outputs.source_lane.clone()),
-        source_fingerprint: outputs.source_fingerprint.clone(),
         runtime: RuntimeAssetOut {
             archive: "oliphaunt.wasix.tar.zst".to_owned(),
             sha256: sha256_file(runtime_archive)?,
@@ -3218,13 +3150,11 @@ mod tests {
     fn write_downloaded_aot_manifest(
         path: &Path,
         source_lane: Option<&str>,
-        source_fingerprint: Option<&str>,
         postgres_version: Option<&str>,
     ) {
         let manifest = AotManifest {
             format_version: AOT_MANIFEST_FORMAT_VERSION,
             source_lane: source_lane.map(str::to_owned),
-            source_fingerprint: source_fingerprint.map(str::to_owned),
             postgres_version: postgres_version.map(str::to_owned),
             target_triple: "aarch64-apple-darwin".to_owned(),
             engine: "llvm-opta".to_owned(),
@@ -3250,13 +3180,7 @@ mod tests {
     #[test]
     fn downloaded_stable_pg18_aot_manifest_is_validated_before_install() {
         let path = temp_aot_manifest_path("pg18-ok");
-        let fingerprint = expected_postgres_source_fingerprint().expect("PG18 fingerprint");
-        write_downloaded_aot_manifest(
-            &path,
-            Some("stable"),
-            Some(&fingerprint),
-            Some("18.4-wasix-oliphaunt"),
-        );
+        write_downloaded_aot_manifest(&path, Some("stable"), Some("18.4-wasix-oliphaunt"));
 
         ensure_aot_manifest_matches_source_lane(&path, "aarch64-apple-darwin", DEFAULT_SOURCE_LANE)
             .expect("stable downloaded AOT manifest");
@@ -3265,35 +3189,9 @@ mod tests {
     }
 
     #[test]
-    fn downloaded_stable_pg18_aot_manifest_requires_source_fingerprint() {
-        let path = temp_aot_manifest_path("pg18-missing-fingerprint");
-        write_downloaded_aot_manifest(&path, Some("stable"), None, Some("18.4-wasix-oliphaunt"));
-
-        let error = ensure_aot_manifest_matches_source_lane(
-            &path,
-            "aarch64-apple-darwin",
-            DEFAULT_SOURCE_LANE,
-        )
-        .expect_err("PG18 downloaded AOT manifest should require source fingerprint");
-
-        assert!(
-            error
-                .to_string()
-                .contains("PG18 AOT manifest source-fingerprint")
-        );
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
     fn downloaded_stable_aot_manifest_rejects_noncanonical_format_version() {
         let path = temp_aot_manifest_path("wrong-format-version");
-        let fingerprint = expected_postgres_source_fingerprint().expect("PG18 fingerprint");
-        write_downloaded_aot_manifest(
-            &path,
-            Some("stable"),
-            Some(&fingerprint),
-            Some("18.4-wasix-oliphaunt"),
-        );
+        write_downloaded_aot_manifest(&path, Some("stable"), Some("18.4-wasix-oliphaunt"));
         let mut manifest: AotManifest =
             serde_json::from_str(&fs::read_to_string(&path).expect("read AOT manifest"))
                 .expect("parse AOT manifest");
@@ -3321,13 +3219,7 @@ mod tests {
     #[test]
     fn downloaded_stable_aot_manifest_rejects_stale_wasmer_metadata() {
         let path = temp_aot_manifest_path("stale-wasmer");
-        let fingerprint = expected_postgres_source_fingerprint().expect("PG18 fingerprint");
-        write_downloaded_aot_manifest(
-            &path,
-            Some("stable"),
-            Some(&fingerprint),
-            Some("18.4-wasix-oliphaunt"),
-        );
+        write_downloaded_aot_manifest(&path, Some("stable"), Some("18.4-wasix-oliphaunt"));
         let mut manifest: AotManifest =
             serde_json::from_str(&fs::read_to_string(&path).expect("read AOT manifest"))
                 .expect("parse AOT manifest");
@@ -3561,17 +3453,6 @@ fn cluster_seed_asset_out(
         outputs.source_lane.as_str(),
         "cluster seed manifest source.lane",
     )?;
-    if let Some(source_fingerprint) = outputs.source_fingerprint.as_deref() {
-        let seed_source_fingerprint = seed_source
-            .get("fingerprint")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("<missing>");
-        ensure_eq(
-            seed_source_fingerprint,
-            source_fingerprint,
-            "cluster seed manifest source.fingerprint",
-        )?;
-    }
     ensure_eq(
         manifest_json
             .get("catalogProfile")
@@ -3606,7 +3487,7 @@ fn cluster_seed_asset_out(
         &initdb_module_sha256,
         "cluster seed manifest runtime.initdbSha256",
     )?;
-    let source_pins = effective_source_pins(sources, outputs)?;
+    let source_pins = effective_source_pins(sources)?;
     Ok(ClusterSeedAssetOut {
         artifact_role: profile.artifact_role().to_owned(),
         catalog_profile: profile.as_str().to_owned(),
@@ -3620,7 +3501,6 @@ fn cluster_seed_asset_out(
         initdb_module_sha256,
         source_pins_sha256: source_pins_sha256(&source_pins)?,
         source_lane: Some(outputs.source_lane.clone()),
-        source_fingerprint: outputs.source_fingerprint.clone(),
         postgres_version: postgres_major_version(&outputs.postgres_version),
         catalog_version: seed_source
             .get("catalogVersion")
@@ -3648,10 +3528,7 @@ fn cluster_seed_asset_out(
     })
 }
 
-pub(crate) fn effective_source_pins(
-    sources: &SourcesManifest,
-    outputs: &BuildOutputs,
-) -> Result<Vec<SourcePin>> {
+pub(crate) fn effective_source_pins(sources: &SourcesManifest) -> Result<Vec<SourcePin>> {
     let mut pins = sources
         .sources
         .iter()
@@ -3672,23 +3549,7 @@ pub(crate) fn effective_source_pins(
         origin: SourceOrigin::Generated,
     });
 
-    let fingerprint = if let Some(fingerprint) = outputs.source_fingerprint.as_deref() {
-        fingerprint.to_owned()
-    } else {
-        let fingerprint_path = outputs
-            .source_dir
-            .join(".oliphaunt-wasix-source-fingerprint");
-        fs::read_to_string(&fingerprint_path)
-            .with_context(|| format!("read {}", fingerprint_path.display()))?
-            .trim()
-            .to_owned()
-    };
-    let patch_fingerprint = fingerprint
-        .trim()
-        .rsplit(':')
-        .next()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("PG18 source fingerprint is invalid: {fingerprint:?}"))?;
+    let patch_fingerprint = postgres_guard::postgres_patch_series_hash()?;
     pins.push(SourcePin {
         name: "oliphaunt-wasix-stable-patches".to_owned(),
         kind: SourceKind::Git,

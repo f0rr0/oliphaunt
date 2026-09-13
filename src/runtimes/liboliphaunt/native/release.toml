@@ -3,6 +3,7 @@ owner = "@oliphaunt/core"
 kind = "native-core"
 publish_targets = ["github-release-assets", "npm", "maven-central", "crates-io"]
 registry_packages = [
+  "crates:oliphaunt-icu",
   "crates:liboliphaunt-native-linux-arm64-gnu",
   "crates:liboliphaunt-native-linux-x64-gnu",
   "crates:liboliphaunt-native-macos-arm64",
@@ -38,3 +39,11 @@ release_artifacts = [
   "runtime-resources-android-datum64",
   "icu-data",
 ]
+
+derived_version_files = ["src/runtimes/liboliphaunt/icu/Cargo.toml"]
+shared_source_paths = ["src/runtimes/liboliphaunt/icu"]
+
+[compatibility_versions.liboliphaunt-native-icu]
+source_product = "liboliphaunt-native"
+path = "src/runtimes/liboliphaunt/icu/Cargo.toml"
+parser = "toml:package.version"

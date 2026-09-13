@@ -3,8 +3,12 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vitest';
+import { pathToFileURL } from 'node:url';
+
+import { directory } from '../storage/node.js';
 
 import { createOliphauntClient } from '../client.js';
+import { extensions as contrib } from '../extensions.js';
 import type {
   NativeBinding,
   NativeBindingOptions,
@@ -17,6 +21,7 @@ import type {
   OliphauntDatabase,
   OliphauntTransaction,
   OpenConfig,
+  RestoreDestination,
   ServerOpenConfig,
 } from '../types.js';
 import type { RuntimeBinding } from '../runtime/types.js';
@@ -32,7 +37,7 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
   });
   try {
     const db = await client.open({
-      storage: { kind: 'directory', path: root },
+      storage: directory(root),
       startupGUCs: { work_mem: '16MB' },
       username: 'app',
       database: 'appdb',
@@ -43,6 +48,8 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
       username: 'app',
       database: 'appdb',
       extensions: [],
+      extensionDescriptors: [],
+      icu: undefined,
       startupArgs: ['-c', 'work_mem=16MB'],
     });
     assert.deepEqual(await db.execute('UPDATE things SET value = 1'), {
@@ -69,7 +76,7 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
     assert.equal(binding.detachCalls, 1);
     await assert.rejects(() => db.execute('SELECT 1'), /closed/);
 
-    await client.restore(join(root, 'restored'), new Uint8Array([7, 8]), {
+    await client.restore(directory(pathToFileURL(join(root, 'restored'))), new Uint8Array([7, 8]), {
       libraryPath: '/opt/oliphaunt/liboliphaunt.so',
     });
     assert.deepEqual(binding.restoreCalls, [
@@ -94,7 +101,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     return { state: 'closed' };
   };
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
-  const extensions: string[] = [];
+  const extensions: Array<typeof contrib.pg_trgm> = [];
   const config: OpenConfig = {
     topology: 'broker',
     storage: { kind: 'directory', path: root },
@@ -111,7 +118,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     config.username = 'after';
     config.database = 'after';
     startupGUCs.work_mem = '64MB';
-    extensions.push('vector');
+    extensions.push(contrib.pg_trgm);
 
     const database = await opening;
     assert.equal(direct.openCalls.length, 0);
@@ -125,6 +132,8 @@ test('snapshots open configuration before asynchronous storage work', async () =
       username: 'before',
       database: 'before',
       extensions: [],
+      extensionDescriptors: [],
+      icu: undefined,
       libraryPath: undefined,
       runtimeDirectory: undefined,
       brokerExecutable: undefined,
@@ -192,7 +201,7 @@ test('snapshots server storage and nested configuration before asynchronous work
   const storage = { kind: 'directory' as const, path: root };
   const listen = { transport: 'tcp' as const, port: 15432 };
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
-  const extensions: string[] = [];
+  const extensions: Array<typeof contrib.pg_trgm> = [];
   const config: ServerOpenConfig = { storage, listen, startupGUCs, extensions };
   const client = createOliphauntClient(() => new FakeBinding(), { server: serverRuntime });
 
@@ -201,7 +210,7 @@ test('snapshots server storage and nested configuration before asynchronous work
     storage.path = movedRoot;
     listen.port = 25432;
     startupGUCs.work_mem = '64MB';
-    extensions.push('vector');
+    extensions.push(contrib.pg_trgm);
 
     const database = await opening;
     assert.equal(database.connectionString, 'postgresql://postgres@127.0.0.1:15432/postgres');
@@ -229,6 +238,8 @@ test('snapshots server storage and nested configuration before asynchronous work
       username: 'postgres',
       database: 'postgres',
       extensions: [],
+      extensionDescriptors: [],
+      icu: undefined,
       libraryPath: undefined,
       runtimeDirectory: undefined,
       brokerExecutable: undefined,
@@ -266,7 +277,31 @@ test('server open preserves both a missing endpoint and handle cleanup failure',
   }
 });
 
-test('copies restore bytes before asynchronous binding resolution', async () => {
+test('rejects invalid restore destinations before loading native code', async () => {
+  let bindingLoads = 0;
+  const client = createOliphauntClient(() => {
+    bindingLoads += 1;
+    return new FakeBinding();
+  });
+  for (const destination of [
+    undefined,
+    null,
+    './restored',
+    { kind: 'temporaryDirectory' },
+    { kind: 'directory' },
+    { kind: 'directory', path: 42 },
+    { kind: 'directory', path: '  ' },
+    { kind: 'directory', path: 'bad\0path' },
+  ]) {
+    await assert.rejects(
+      client.restore(destination as RestoreDestination, Uint8Array.of(1)),
+      /restore destination/,
+    );
+  }
+  assert.equal(bindingLoads, 0);
+});
+
+test('snapshots restore destination and bytes before asynchronous binding resolution', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-restore-snapshot-'));
   const binding = new FakeBinding();
   const releaseBinding = deferred<void>();
@@ -277,7 +312,9 @@ test('copies restore bytes before asynchronous binding resolution', async () => 
   const backup = new Uint8Array([7, 8]);
 
   try {
-    const restoring = client.restore(join(root, 'restored'), backup);
+    const destination = { kind: 'directory' as const, path: join(root, 'restored') };
+    const restoring = client.restore(destination, backup);
+    destination.path = join(root, 'changed');
     backup.fill(0);
     releaseBinding.resolve();
     await restoring;

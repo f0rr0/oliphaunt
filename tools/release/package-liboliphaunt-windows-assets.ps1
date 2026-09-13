@@ -269,6 +269,9 @@ if ($LASTEXITCODE -ne 0) {
     Fail "failed to stage release notices in the Windows tools asset"
 }
 
+bun tools/release/native-icu-seeds.mjs $Stage (Join-Path $WorkRoot "icu/share/icu") "windows-x64-msvc" (Join-Path $OutDir "liboliphaunt-${Version}-icu-seed-windows-x64-msvc.tar.gz")
+if ($LASTEXITCODE -ne 0) { Fail "failed to split optional ICU seed" }
+
 bun src/shared/artifact-packaging/archive-directory.mjs $Stage (Join-Path $OutDir $Asset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows liboliphaunt asset"

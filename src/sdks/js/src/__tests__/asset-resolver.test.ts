@@ -10,34 +10,25 @@ import {
   rename,
   rm,
   rmdir,
-  stat as fsStat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { arch, platform, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { deflateRawSync, inflateRawSync } from 'node:zlib';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'vitest';
 import { GENERATED_EXTENSION_METADATA } from '../generated/extensions.js';
-import {
-  type DenoRuntime,
-  resolvePackageRelativeUrl,
-  validatePreparedDenoRuntimeExtensions,
-} from '../native/assets-deno.js';
+import { resolvePackageRelativeUrl } from '../native/assets-deno.js';
 import {
   materializeNodeExtensionInstall,
   prepareNodeExtensionInstall,
   type ResolvedNativeInstall,
-  resolveNodeIcuDataDirectory,
   resolveNodeNativeInstall,
   resolvePackageRelativePath,
   validatePreparedNodeRuntimeExtensions,
 } from '../native/assets-node.js';
 import { liboliphauntPackageTarget } from '../native/common.js';
-import { extractTarArchive } from '../native/tar.js';
-import { extractZipArchive } from '../native/zip.js';
 import {
   packageMetadataVersion,
   readTypeScriptPackageJson,
@@ -110,8 +101,6 @@ function fixtureExtensionContractManifest(
 
 async function main(): Promise<void> {
   packageTargetsMatchLiboliphauntPackages();
-  await tarExtractionRejectsTraversal();
-  await zipExtractionWritesFilesAndRejectsTraversal();
   packageMetadataPathsAreConfinedToPackageRoot();
   await nodeResolverUsesInstalledPackages();
   await nodeResolverUsesStandardCarrierRuntime();
@@ -119,46 +108,9 @@ async function main(): Promise<void> {
   await nodeExtensionMaterializationValidatesSelections();
   await nodeExtensionMaterializationAcceptsBuiltInPostgresDependency();
   await explicitRuntimeExtensionValidationUsesPreparedFiles();
-  await denoPreparedRuntimeRequiresSeparateEmbeddedModules();
   await nodeExtensionMaterializationCopiesPackagePayloads();
   await nodeExtensionMaterializationRejectsIncompletePackagePayloads();
   await typeScriptPackageMetadataMatchesRuntimePackages();
-}
-
-async function zipExtractionWritesFilesAndRejectsTraversal(): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-zip-'));
-  const host = {
-    join,
-    dirname,
-    async mkdir(path: string) {
-      await mkdir(path, { recursive: true });
-    },
-    async writeFile(file: { path: string; bytes: Uint8Array; mode: number }) {
-      await writeFile(file.path, file.bytes, { mode: file.mode });
-      await chmod(file.path, file.mode);
-    },
-  };
-  try {
-    await extractZipArchive(
-      zipArchive([{ path: 'bin/oliphaunt.dll', mode: 0o755, bytes: utf8('dll') }]),
-      root,
-      host,
-      (bytes) => Uint8Array.from(inflateRawSync(bytes)),
-    );
-    assert.equal(await readFile(join(root, 'bin/oliphaunt.dll'), 'utf8'), 'dll');
-    await assert.rejects(
-      () =>
-        extractZipArchive(
-          zipArchive([{ path: '../evil', mode: 0o644, bytes: utf8('bad') }]),
-          root,
-          host,
-          (bytes) => Uint8Array.from(inflateRawSync(bytes)),
-        ),
-      /unsafe ZIP entry path/,
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 }
 
 function packageTargetsMatchLiboliphauntPackages(): void {
@@ -219,33 +171,6 @@ function packageMetadataPathsAreConfinedToPackageRoot(): void {
   }
 }
 
-async function tarExtractionRejectsTraversal(): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-tar-'));
-  try {
-    await assert.rejects(
-      () =>
-        extractTarArchive(
-          tarArchive([{ path: '../evil', mode: 0o644, bytes: utf8('bad') }]),
-          root,
-          {
-            join,
-            dirname,
-            async mkdir(path) {
-              await mkdir(path, { recursive: true });
-            },
-            async writeFile(file) {
-              await writeFile(file.path, file.bytes, { mode: file.mode });
-              await chmod(file.path, file.mode);
-            },
-          },
-        ),
-      /escapes/,
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
 async function nodeResolverUsesInstalledPackages(): Promise<void> {
   const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
   const previousRuntimeDir = process.env.OLIPHAUNT_RUNTIME_DIR;
@@ -298,13 +223,14 @@ async function nodeResolverUsesStandardCarrierRuntime(): Promise<void> {
 }
 
 async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
+  const { icuVersion } = await readTypeScriptPackageVersions();
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-icu-'));
   try {
     await writeFile(
       join(root, 'package.json'),
       JSON.stringify({
-        name: root,
-        version: '9.9.9',
+        name: '@oliphaunt/icu',
+        version: icuVersion,
         oliphaunt: {
           product: 'oliphaunt-icu',
           kind: 'icu-data',
@@ -324,9 +250,24 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
       `schema=oliphaunt-icu-data-v1\nartifactRole=icu-data\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256=${'a'.repeat(64)}\n`,
       'utf8',
     );
-    assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), await realpath(dataDirectory));
+    const descriptor = {
+      schema: 'oliphaunt-native-icu-v1' as const,
+      packageName: '@oliphaunt/icu' as const,
+      version: icuVersion,
+      packageJsonUrl: pathToFileURL(join(root, 'package.json')).href,
+    };
+    const install = await resolveNodeNativeInstall('/explicit/liboliphaunt.so', descriptor);
+    assert.equal(install.icuDataDirectory, await realpath(dataDirectory));
+    assert.equal(install.catalogProfile, 'icu');
     await assert.rejects(
-      () => resolveNodeIcuDataDirectory('9.9.8', root),
+      () =>
+        resolveNodeNativeInstall('/explicit/liboliphaunt.so', { ...descriptor, version: '9.9.8' }),
+      /ICU package .* is incompatible with runtime/,
+    );
+    const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+    await writeFile(join(root, 'package.json'), JSON.stringify({ ...metadata, version: '9.9.8' }));
+    await assert.rejects(
+      () => resolveNodeNativeInstall('/explicit/liboliphaunt.so', descriptor),
       /does not match @oliphaunt\/ts icuVersion/,
     );
   } finally {
@@ -488,102 +429,6 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}
-
-async function denoPreparedRuntimeRequiresSeparateEmbeddedModules(): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-prepared-runtime-'));
-  const runtime = join(root, 'runtime');
-  const embeddedModules = join(runtime, 'lib/modules');
-  const deno = fsBackedDenoValidationRuntime();
-  try {
-    await writePreparedHstoreRuntime(runtime, 'linux-x64-gnu');
-
-    const preferred = await validatePreparedDenoRuntimeExtensions({
-      deno,
-      runtimeDirectory: runtime,
-      extensions: ['hstore'],
-      source: 'Deno test runtime',
-    });
-    assert.equal(preferred.runtimeDirectory, runtime);
-    assert.equal(preferred.moduleDirectory, embeddedModules);
-
-    await rm(join(embeddedModules, 'hstore.so'));
-    await assert.rejects(
-      () =>
-        validatePreparedDenoRuntimeExtensions({
-          deno,
-          runtimeDirectory: runtime,
-          extensions: ['hstore'],
-          source: 'Deno test runtime',
-        }),
-      /module directory is missing required file hstore[.]so/,
-    );
-
-    await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
-    await rm(join(embeddedModules, 'dict_snowball.so'));
-    await assert.rejects(
-      () =>
-        validatePreparedDenoRuntimeExtensions({
-          deno,
-          runtimeDirectory: runtime,
-          extensions: ['hstore'],
-          source: 'Deno test runtime',
-        }),
-      /module directory is missing required file dict_snowball[.]so/,
-    );
-
-    await writeFile(join(embeddedModules, 'dict_snowball.so'), 'embedded dict_snowball');
-    await rm(join(embeddedModules, 'plpgsql.so'));
-    await assert.rejects(
-      () =>
-        validatePreparedDenoRuntimeExtensions({
-          deno,
-          runtimeDirectory: runtime,
-          extensions: ['hstore'],
-          source: 'Deno test runtime',
-        }),
-      /module directory is missing required file plpgsql[.]so/,
-    );
-
-    await rm(embeddedModules, { recursive: true });
-    await assert.rejects(
-      () =>
-        validatePreparedDenoRuntimeExtensions({
-          deno,
-          runtimeDirectory: runtime,
-          extensions: ['hstore'],
-          source: 'Deno test runtime',
-        }),
-      /module directory is missing required file hstore[.]so/,
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
-function fsBackedDenoValidationRuntime(): DenoRuntime {
-  return {
-    build: { os: 'linux', arch: 'x86_64' },
-    async readTextFile(path: string | URL) {
-      return readFile(path, 'utf8');
-    },
-    async *readDir(path: string | URL) {
-      for (const entry of await readdir(path, { withFileTypes: true })) {
-        yield {
-          name: entry.name,
-          isFile: entry.isFile(),
-          isDirectory: entry.isDirectory(),
-        };
-      }
-    },
-    async stat(path: string | URL) {
-      const metadata = await fsStat(path);
-      return {
-        isFile: metadata.isFile(),
-        isDirectory: metadata.isDirectory(),
-      };
-    },
-  };
 }
 
 async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void> {
@@ -1656,161 +1501,6 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
     nodeDirectVersion,
     'linux-x64-gnu',
   );
-}
-
-type TarEntry = {
-  path: string;
-  mode: number;
-  bytes?: Uint8Array;
-  directory?: boolean;
-};
-
-type ZipEntry = {
-  path: string;
-  mode: number;
-  bytes: Uint8Array;
-};
-
-function zipArchive(entries: ZipEntry[]): Uint8Array {
-  const chunks: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const name = utf8(entry.path);
-    const compressed = Uint8Array.from(deflateRawSync(entry.bytes));
-    const crc = crc32(entry.bytes);
-    const local = new Uint8Array(30 + name.length);
-    writeUInt32LE(local, 0, 0x04034b50);
-    writeUInt16LE(local, 4, 20);
-    writeUInt16LE(local, 8, 8);
-    writeUInt32LE(local, 14, crc);
-    writeUInt32LE(local, 18, compressed.length);
-    writeUInt32LE(local, 22, entry.bytes.length);
-    writeUInt16LE(local, 26, name.length);
-    local.set(name, 30);
-    chunks.push(local, compressed);
-
-    const header = new Uint8Array(46 + name.length);
-    writeUInt32LE(header, 0, 0x02014b50);
-    writeUInt16LE(header, 4, 20);
-    writeUInt16LE(header, 6, 20);
-    writeUInt16LE(header, 10, 8);
-    writeUInt32LE(header, 16, crc);
-    writeUInt32LE(header, 20, compressed.length);
-    writeUInt32LE(header, 24, entry.bytes.length);
-    writeUInt16LE(header, 28, name.length);
-    writeUInt32LE(header, 38, (entry.mode & 0o777) << 16);
-    writeUInt32LE(header, 42, offset);
-    header.set(name, 46);
-    central.push(header);
-    offset += local.length + compressed.length;
-  }
-  const centralOffset = offset;
-  const centralSize = central.reduce((total, chunk) => total + chunk.length, 0);
-  const eocd = new Uint8Array(22);
-  writeUInt32LE(eocd, 0, 0x06054b50);
-  writeUInt16LE(eocd, 8, entries.length);
-  writeUInt16LE(eocd, 10, entries.length);
-  writeUInt32LE(eocd, 12, centralSize);
-  writeUInt32LE(eocd, 16, centralOffset);
-  return concatBytes([...chunks, ...central, eocd]);
-}
-
-function tarArchive(entries: TarEntry[]): Uint8Array {
-  const blocks: Uint8Array[] = [];
-  for (const entry of entries) {
-    const bytes = entry.bytes ?? new Uint8Array();
-    blocks.push(
-      tarHeader(entry.path, entry.directory === true ? '5' : '0', entry.mode, bytes.length),
-    );
-    if (entry.directory !== true) {
-      blocks.push(bytes);
-      const padding = (512 - (bytes.length % 512)) % 512;
-      if (padding > 0) {
-        blocks.push(new Uint8Array(padding));
-      }
-    }
-  }
-  blocks.push(new Uint8Array(1024));
-  const length = blocks.reduce((total, block) => total + block.byteLength, 0);
-  const archive = new Uint8Array(length);
-  let offset = 0;
-  for (const block of blocks) {
-    archive.set(block, offset);
-    offset += block.byteLength;
-  }
-  return archive;
-}
-
-function tarHeader(path: string, type: '0' | '5', mode: number, size: number): Uint8Array {
-  const header = new Uint8Array(512);
-  writeAscii(header, 0, 100, path);
-  writeOctal(header, 100, 8, mode);
-  writeOctal(header, 108, 8, 0);
-  writeOctal(header, 116, 8, 0);
-  writeOctal(header, 124, 12, size);
-  writeOctal(header, 136, 12, 0);
-  header.fill(0x20, 148, 156);
-  writeAscii(header, 156, 1, type);
-  writeAscii(header, 257, 6, 'ustar');
-  writeAscii(header, 263, 2, '00');
-  let checksum = 0;
-  for (const byte of header) {
-    checksum += byte;
-  }
-  const encoded = checksum.toString(8).padStart(6, '0');
-  writeAscii(header, 148, 8, `${encoded}\0 `);
-  return header;
-}
-
-function writeAscii(buffer: Uint8Array, offset: number, length: number, value: string): void {
-  const encoded = utf8(value);
-  if (encoded.byteLength > length) {
-    throw new Error(`tar test value is too long: ${value}`);
-  }
-  buffer.set(encoded, offset);
-}
-
-function writeOctal(buffer: Uint8Array, offset: number, length: number, value: number): void {
-  writeAscii(buffer, offset, length, `${value.toString(8).padStart(length - 1, '0')}\0`);
-}
-
-function writeUInt16LE(buffer: Uint8Array, offset: number, value: number): void {
-  buffer[offset] = value & 0xff;
-  buffer[offset + 1] = (value >>> 8) & 0xff;
-}
-
-function writeUInt32LE(buffer: Uint8Array, offset: number, value: number): void {
-  buffer[offset] = value & 0xff;
-  buffer[offset + 1] = (value >>> 8) & 0xff;
-  buffer[offset + 2] = (value >>> 16) & 0xff;
-  buffer[offset + 3] = (value >>> 24) & 0xff;
-}
-
-function concatBytes(chunks: Uint8Array[]): Uint8Array {
-  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
-  const out = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out;
-}
-
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function utf8(value: string): Uint8Array {
-  return new TextEncoder().encode(value);
 }
 
 function restoreEnv(name: string, value: string | undefined): void {

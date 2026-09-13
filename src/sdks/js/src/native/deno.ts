@@ -4,7 +4,8 @@ import {
   errorMessage,
   replaceNativeIcuDataEnvironment,
 } from './common.js';
-import { resolveDenoNativeInstall, validatePreparedDenoRuntimeExtensions } from './assets-deno.js';
+import { resolveDenoNativeInstall } from './assets-deno.js';
+import { prepareNodeExtensionInstall } from './assets-node.js';
 import { dirname, join } from 'node:path';
 import {
   copyNativeClusterSeed,
@@ -144,57 +145,43 @@ export async function createDenoNativeBinding(
   return {
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
       assertDenoDirectAdmissionOpen();
+      const selectedInstall =
+        config.icu === undefined
+          ? install
+          : await resolveDenoNativeInstall(options.libraryPath, config.icu);
       const explicitRuntimeDirectory =
         config.runtimeDirectory !== undefined || install.packageManaged === false;
-      let openConfig = {
-        ...config,
-        runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
-      };
-      let moduleDirectory: string | undefined;
-      if (
-        openConfig.extensions.length > 0 &&
-        (openConfig.runtimeDirectory === undefined ||
-          (install.packageManaged && openConfig.runtimeDirectory === install.runtimeDirectory))
-      ) {
-        throw new Error(
-          `Deno direct execution does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun direct execution. Selected extensions: ${openConfig.extensions.join(', ')}`,
-        );
-      }
-      if (openConfig.extensions.length > 0) {
-        const validated = await validatePreparedDenoRuntimeExtensions({
-          deno,
-          runtimeDirectory: openConfig.runtimeDirectory,
-          extensions: openConfig.extensions,
-          source: 'Deno direct explicit runtimeDirectory',
-        });
-        openConfig = {
-          ...openConfig,
-          runtimeDirectory: validated.runtimeDirectory,
+      let extensionInstall = await prepareNodeExtensionInstall(
+        {
+          ...selectedInstall,
+          runtimeDirectory: config.runtimeDirectory ?? selectedInstall.runtimeDirectory,
+          clusterSeedDirectory:
+            config.runtimeDirectory === undefined
+              ? selectedInstall.clusterSeedDirectory
+              : undefined,
+        },
+        config.extensions,
+        { explicitRuntimeDirectory, descriptors: config.extensionDescriptors },
+      );
+      if (explicitRuntimeDirectory && extensionInstall.runtimeDirectory !== undefined) {
+        extensionInstall = {
+          ...extensionInstall,
+          ...(await resolveExactNativeRuntimeProfile(extensionInstall.runtimeDirectory)),
+          clusterSeedDirectory: undefined,
         };
-        // Keep canonical lib/postgresql subprocess-owned during initdb. The
-        // separate lib/modules $libdir is carried in the native config.
-        moduleDirectory = validated.moduleDirectory;
-        applyNativeRuntimeLibraryEnvironment(validated.runtimeDirectory);
       }
-      const runtimeProfile =
-        explicitRuntimeDirectory && openConfig.runtimeDirectory !== undefined
-          ? await resolveExactNativeRuntimeProfile(openConfig.runtimeDirectory)
-          : {
-              icuDataDirectory: install.icuDataDirectory,
-              catalogProfile: install.catalogProfile ?? ('standard' as const),
-            };
-      if (explicitRuntimeDirectory) {
-        replaceNativeIcuDataEnvironment(runtimeProfile.icuDataDirectory);
-        applyNativeRuntimeLibraryEnvironment(openConfig.runtimeDirectory);
-      }
+      replaceNativeIcuDataEnvironment(extensionInstall.icuDataDirectory);
+      applyNativeRuntimeLibraryEnvironment(extensionInstall.runtimeDirectory);
+      const openConfig = { ...config, runtimeDirectory: extensionInstall.runtimeDirectory };
+      const moduleDirectory = extensionInstall.moduleDirectory;
       await prepareDenoPgdata(
         deno,
         openConfig.pgdata,
         openConfig.username,
         openConfig.runtimeDirectory,
-        config.runtimeDirectory === undefined ? install.clusterSeedDirectory : undefined,
-        runtimeProfile.icuDataDirectory,
-        runtimeProfile.catalogProfile,
+        extensionInstall.clusterSeedDirectory,
+        extensionInstall.icuDataDirectory,
+        extensionInstall.catalogProfile,
       );
       const packed = packConfigPointers({ ...openConfig, moduleDirectory }, (value) =>
         pointerOf(deno, value),

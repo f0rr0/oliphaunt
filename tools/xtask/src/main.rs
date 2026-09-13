@@ -32,7 +32,6 @@ use crate::fs_utils::*;
 use crate::postgres_guard::{
     check_postgres_source_spine, check_prepared_postgres_source, check_rust_startup_abi_boundary,
     check_source_lane_isolation, check_wasix_shell_script_syntax, postgres_default_source_dir,
-    postgres_expected_source_fingerprint,
 };
 use crate::release_workspace::{package_release_assets, stage_release_workspace};
 use crate::source_spine::{

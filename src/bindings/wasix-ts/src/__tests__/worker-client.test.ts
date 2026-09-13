@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { openWasix, Oliphaunt } from '../worker-client.js';
 import type { WorkerRequest, WorkerResponse } from '../rpc.js';
+import { directory } from '../storage/node.js';
 import { indexedDB } from '../storage/indexed-db.js';
 
 let crossOriginDescriptor: PropertyDescriptor | undefined;
@@ -103,3 +104,11 @@ function restoreGlobal(name: string, descriptor: PropertyDescriptor | undefined)
   if (descriptor === undefined) Reflect.deleteProperty(globalThis, name);
   else Object.defineProperty(globalThis, name, descriptor);
 }
+
+it('rejects directory storage before starting a browser worker', async () => {
+  await expect(Oliphaunt.open({ storage: directory('/db') } as never)).rejects.toThrow(
+    'native-only',
+  );
+  await expect(Oliphaunt.restore(directory('/db') as never, [])).rejects.toThrow('native-only');
+  expect(FakeBrowserWorker.instances).toHaveLength(0);
+});

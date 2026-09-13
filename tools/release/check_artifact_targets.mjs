@@ -354,6 +354,12 @@ export function expectedArtifactTargetContract() {
       surfaces: [GITHUB, "maven", "react-native-android", "react-native-ios", "rust-native-direct", "swiftpm", "typescript-native-direct"],
       npm: "@oliphaunt/icu",
     }),
+    targetRow({ product: "liboliphaunt-native", id: "icu-seed-android-datum64", kind: "icu-seed", target: "android-datum64", asset: "liboliphaunt-{version}-icu-seed-android-datum64.tar.gz", surfaces: [GITHUB] }),
+    targetRow({ product: "liboliphaunt-native", id: "icu-seed-ios-datum64", kind: "icu-seed", target: "ios-datum64", asset: "liboliphaunt-{version}-icu-seed-ios-datum64.tar.gz", surfaces: [GITHUB] }),
+    targetRow({ product: "liboliphaunt-native", id: "icu-seed-linux-arm64-gnu", kind: "icu-seed", target: "linux-arm64-gnu", asset: "liboliphaunt-{version}-icu-seed-linux-arm64-gnu.tar.gz", surfaces: [GITHUB] }),
+    targetRow({ product: "liboliphaunt-native", id: "icu-seed-linux-x64-gnu", kind: "icu-seed", target: "linux-x64-gnu", asset: "liboliphaunt-{version}-icu-seed-linux-x64-gnu.tar.gz", surfaces: [GITHUB] }),
+    targetRow({ product: "liboliphaunt-native", id: "icu-seed-macos-arm64", kind: "icu-seed", target: "macos-arm64", asset: "liboliphaunt-{version}-icu-seed-macos-arm64.tar.gz", surfaces: [GITHUB] }),
+    targetRow({ product: "liboliphaunt-native", id: "icu-seed-windows-x64-msvc", kind: "icu-seed", target: "windows-x64-msvc", asset: "liboliphaunt-{version}-icu-seed-windows-x64-msvc.tar.gz", surfaces: [GITHUB] }),
     portableRow("liboliphaunt-native", "checksums", "checksums", "liboliphaunt-{version}-release-assets.sha256"),
     portableRow("liboliphaunt-wasix", "runtime-portable", "wasix-runtime", "liboliphaunt-wasix-{version}-runtime-portable.tar.zst"),
     portableRow("liboliphaunt-wasix", "icu-data", "icu-data", "liboliphaunt-wasix-{version}-icu-data.tar.zst"),
@@ -1044,9 +1050,9 @@ export function validateCiArtifactCoverage(workflow, inventory) {
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/assets"
       && wasixNapiBuild.env.OLIPHAUNT_WASM_GENERATED_AOT_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/aot"
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT === "${{ github.workspace }}/target/extension-artifacts"
-      && wasixNapiBuild.env.OLIPHAUNT_ICU_DATA_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu"
+      && wasixNapiBuild.env.OLIPHAUNT_ICU_DATA_DIR === undefined
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}",
-    "WASIX Node-API builds must fail closed on exact same-run portable, ICU, AOT, and extension payload roots",
+    "WASIX Node-API builds must fail closed on exact same-run portable, AOT, and contrib payload roots",
   );
   const releaseTasks = object(
     Bun.YAML.parse(readFileSync(path.join(ROOT, "tools/release/moon.yml"), "utf8")),
@@ -1054,8 +1060,8 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   ).tasks;
   invariant(
     String(releaseTasks?.["wasix-napi-runtime"]?.command ?? "").startsWith("bash ")
-      && String(releaseTasks["wasix-napi-runtime"].command).includes("build-extension-ci-artifacts.mjs --all --family wasix --require-wasix"),
-    "WASIX Node-API builds must stage complete exact-extension portable and target AOT inputs",
+      && String(releaseTasks["wasix-napi-runtime"].command).includes("build-extension-ci-artifacts.mjs oliphaunt-extension-contrib-pg18 --family wasix --require-wasix"),
+    "WASIX Node-API builds must stage only contrib portable and target AOT inputs",
   );
   const wasixNapiAotRestore = namedStep(workflow, "wasix-napi", "Restore exact target core and tool AOT layout");
   invariant(
@@ -1074,7 +1080,7 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   validateWorkflowConsumer(workflow, "extension-packages", ["extension-artifacts-native", "extension-artifacts-wasix", "liboliphaunt-wasix-aot"], [...nativeExtensionArtifacts, ...wasixExtensionArtifacts, ...extensionAot]);
   validateWorkflowConsumer(workflow, "mobile-extension-packages", ["extension-artifacts-native"], nativeExtensionArtifacts);
   const abiCompatibleIosRelease = ["liboliphaunt-native-abi-compatible-release-assets-ios-datum64"];
-  validateWorkflowConsumer(workflow, "swift-sdk-package", ["liboliphaunt-native-ios-abi"], abiCompatibleIosRelease);
+  validateWorkflowConsumer(workflow, "swift-sdk-package", ["liboliphaunt-native-ios-abi", "mobile-extension-packages"], [...abiCompatibleIosRelease, "oliphaunt-mobile-extension-package-artifacts"]);
   validateWorkflowConsumer(workflow, "react-native-sdk-package", ["liboliphaunt-native-ios-abi"], abiCompatibleIosRelease);
   validateWorkflowConsumer(workflow, "mobile-build-android", ["liboliphaunt-native-android", "liboliphaunt-native-android-abi", "mobile-extension-packages", "kotlin-sdk-package", "react-native-sdk-package"], [
     ...matrixRows.reactNativeAndroid.map(({ target }) => `liboliphaunt-native-target-${target}`),

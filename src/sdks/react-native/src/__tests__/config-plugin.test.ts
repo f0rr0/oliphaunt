@@ -18,6 +18,7 @@ const {
   readCarrierSummary,
   releaseOwnerForSqlName,
   resolveInstalledExtensionOwners,
+  resolveInstalledResources,
   resolveIosCarrierManifests,
   selectedExtensionClosure,
   serializeExtensionVersions,
@@ -596,5 +597,41 @@ test('carrier discovery and staging fail closed', () => {
     );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('shipping resources follow resolved dependencies, aliases, and nested versions', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-resource-graph-'));
+  try {
+    writeJson(path.join(root, 'package.json'), {
+      dependencies: { feature: '1.0.0' },
+      optionalDependencies: { absent: '1.0.0' },
+    });
+    const feature = path.join(root, 'node_modules/feature');
+    writeJson(path.join(feature, 'package.json'), {
+      name: 'feature',
+      exports: { './feature': { import: './dist/feature.js' } },
+      dependencies: { vectors: 'npm:@oliphaunt/extension-vector@0.8.2', '@oliphaunt/icu': '0.2.0' },
+    });
+    const vector = path.join(feature, 'node_modules/vectors/package.json');
+    writeJson(vector, { name: '@oliphaunt/extension-vector', version: '0.8.2' });
+    writeJson(path.join(feature, 'node_modules/@oliphaunt/icu/package.json'), {
+      name: '@oliphaunt/icu',
+      version: '0.2.0',
+    });
+    const resources = resolveInstalledResources(root);
+    assert.deepEqual(resources.extensions, ['vector']);
+    assert.equal(resources.icu, true);
+    assert.equal(resources.packageJsonResolver('@oliphaunt/extension-vector', [root]), vector);
+    writeJson(path.join(root, 'package.json'), {
+      dependencies: { feature: '1.0.0', '@oliphaunt/extension-vector': '0.9.0' },
+    });
+    writeJson(path.join(root, 'node_modules/@oliphaunt/extension-vector/package.json'), {
+      name: '@oliphaunt/extension-vector',
+      version: '0.9.0',
+    });
+    assert.throws(() => resolveInstalledResources(root), /conflicting versions/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  appendFileSync,
   mkdtempSync,
   mkdirSync,
   rmSync,
@@ -88,6 +89,20 @@ test("compiles an unpacked crate offline with locked weak-feature carrier stubs"
     }),
     { name: "closure-fixture", version: "0.1.0" },
   );
+});
+
+test("compiles with a dependency extracted from its release crate", (t) => {
+  const root = fixture(t, "cargo-closure-packed-dependency");
+  const cratePath = closureCrate(root);
+  const source = path.join(root, "carrier");
+  writePackage(source, "carrier");
+  appendFileSync(path.join(source, "Cargo.toml"), '\n[features]\nneeded = []\n');
+  const dependencyCrate = manualCargoPackageSource(path.join(source, "Cargo.toml"), path.join(root, "dependency-crate"), {
+    root, rel: String, fail: message => { throw new Error(message); },
+  });
+  assert.deepEqual(verifyPackagedCargoTestClosure({
+    cratePath, dependencyCrates: [dependencyCrate], targetDir: path.join(root, "target"), allFeatures: true, lib: true,
+  }), { name: "closure-fixture", version: "0.1.0" });
 });
 
 test("rejects conflicting path-patch sources for the same package identity", (t) => {

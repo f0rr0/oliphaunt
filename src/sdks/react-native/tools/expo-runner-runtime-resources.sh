@@ -38,6 +38,7 @@ require_mobile_runtime_seed_closure() {
     fail "$configured_env does not contain the exact $target runtime-carrier receipt"
   local name profile role manifest
   for name in cluster-seed cluster-seed-icu; do
+    if [ "$name" = cluster-seed-icu ] && [ ! -d "$root/$name" ]; then continue; fi
     [ "$name" = cluster-seed ] && profile=standard || profile=icu
     role="cluster-seed-$profile"
     manifest="$root/$name/manifest.properties"
@@ -80,7 +81,11 @@ install_mobile_runtime_seed_closure() {
   rm -rf "$package_root/oliphaunt/cluster-seed" "$package_root/oliphaunt/cluster-seed-icu"
   cp "$closure/manifest.properties" "$package_root/oliphaunt/manifest.properties"
   cp -R "$closure/cluster-seed" "$package_root/oliphaunt/cluster-seed"
-  cp -R "$closure/cluster-seed-icu" "$package_root/oliphaunt/cluster-seed-icu"
+  local include_icu="${OLIPHAUNT_EXPO_ANDROID_ICU:-${OLIPHAUNT_EXPO_IOS_ICU:-0}}"
+  if [ "$include_icu" = 1 ] || grep -Fxq runtimeFeatures=icu "$package_root/oliphaunt/runtime/manifest.properties" 2>/dev/null; then
+    [ -d "$closure/cluster-seed-icu" ] || fail "selected ICU qualification requires its optional seed in $closure/cluster-seed-icu"
+    cp -R "$closure/cluster-seed-icu" "$package_root/oliphaunt/cluster-seed-icu"
+  fi
 }
 
 bind_mobile_runtime_manifest_to_seed_closure() {
@@ -89,8 +94,8 @@ bind_mobile_runtime_manifest_to_seed_closure() {
   target="$(sed -n 's/^clusterSeedTarget=//p' "$closure/manifest.properties")"
   features="$(sed -n 's/^runtimeFeatures=//p' "$manifest")"
   digest="$(sed -n 's/^icuDataTreeSha256=//p' "$manifest")"
-  seed_digest="$(sed -n 's/^icuDataTreeSha256=//p' "$closure/cluster-seed-icu/manifest.properties")"
   if [ "$features" = icu ]; then
+    seed_digest="$(sed -n 's/^icuDataTreeSha256=//p' "$package_root/oliphaunt/cluster-seed-icu/manifest.properties")"
     [ -n "$digest" ] && [ "$digest" = "$seed_digest" ] ||
       fail "staged mobile ICU runtime does not match the canonical $target ICU cluster seed"
   else

@@ -1,13 +1,19 @@
-import { serializeOpenConfig } from './client-common.js';
-import type { PersistentWasixStorage } from './storage.js';
-import type { BinaryInput, OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
+import { requireBrowserStorage, serializeOpenConfig } from './open-config.js';
+import type { PersistentWasixStorage } from './browser-public.js';
+import type {
+  BinaryInput,
+  OliphauntClient,
+  OliphauntDatabase,
+  OpenConfig,
+} from './browser-public.js';
 import { openWasixWithWorker, restoreWasixWithWorker, type WasixWorkerPort } from './worker-rpc.js';
 
 /** Open PostgreSQL in a package-owned browser Worker. */
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
   const openOptions = serializeOpenConfig(config);
+  requireBrowserStorage(openOptions);
   assertBrowserWorkerEnvironment();
-  return openWasixWithWorker(createBrowserWorker, openOptions);
+  return openWasixWithWorker(createBrowserWorker, openOptions, requireBrowserStorage);
 }
 
 async function restoreBrowserWasix(
@@ -15,7 +21,7 @@ async function restoreBrowserWasix(
   bytes: BinaryInput,
 ): Promise<void> {
   assertBrowserWorkerEnvironment();
-  return restoreWasixWithWorker(createBrowserWorker, storage, bytes);
+  return restoreWasixWithWorker(createBrowserWorker, storage, bytes, requireBrowserStorage);
 }
 
 function assertBrowserWorkerEnvironment(): void {

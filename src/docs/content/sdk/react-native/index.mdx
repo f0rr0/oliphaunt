@@ -20,32 +20,26 @@ installed-app integration.
 Install the package and build a development client or native app binary:
 
 ```sh
-npx expo install @oliphaunt/react-native
+npx expo install @oliphaunt/react-native expo-file-system
+npm install @oliphaunt/extension-vector
 ```
 
 Oliphaunt includes native Swift and Kotlin code, so React Native apps run it
 from an Expo development build or a native app binary. The config plugin
 selects the native runtime and exact extension artifacts that ship in the app.
 
-Configure selected extensions in app config:
+Enable the plugin; it discovers native resource packages from installed dependencies:
 
 ```json
 {
   "expo": {
-    "plugins": [
-      [
-        "@oliphaunt/react-native",
-        {
-          "extensions": ["vector"]
-        }
-      ]
-    ]
+    "plugins": ["@oliphaunt/react-native"]
   }
 }
 ```
 
 Rebuild the development client or native app binary after changing native
-runtime or extension selections.
+runtime or extension dependencies.
 
 ## Open And Query
 
@@ -53,11 +47,13 @@ Open from TypeScript and keep the handle in app state, a data service, or a
 provider that matches your navigation lifetime:
 
 ```ts
-import Oliphaunt from '@oliphaunt/react-native';
+import Oliphaunt, { directory, extensions } from '@oliphaunt/react-native';
+import vector from '@oliphaunt/extension-vector';
+import { Paths } from 'expo-file-system';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'main' },
-  extensions: ['vector'],
+  storage: directory(Paths.document.uri + 'main.oliphaunt'),
+  extensions: [vector, extensions.hstore],
 });
 
 const rows = await db.query('SELECT 1::text AS value');
@@ -80,10 +76,10 @@ are queued through the platform SDK.
 ## App Responsibilities
 
 - Build with a native app binary or development client.
-- Omit `storage` for temporary work, or select `applicationData` for persistent
-  app data without constructing platform-specific paths.
-- Select exact SQL extension names so only selected extension artifacts and
-  declared dependencies enter the iOS or Android app artifact.
+- Omit `storage` for temporary work, or pass an app-private path from your
+  filesystem library to `directory()` for persistent app data.
+- Install external packages as dependencies, then explicitly select external
+  and contrib descriptors for each database.
 - Use SDK backup and restore APIs for user-visible export/import flows instead
   of copying platform storage directories from JavaScript.
 

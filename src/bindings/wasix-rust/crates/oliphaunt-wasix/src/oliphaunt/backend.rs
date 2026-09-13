@@ -139,12 +139,12 @@ impl WasixBackendSession {
         self.pg.start_protocol_with_startup_packet(message)
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
         self.pg.existing_startup_response()
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn startup_config(&self) -> &StartupConfig {
         self.pg.startup_config()
     }
@@ -238,12 +238,12 @@ impl BackendSession {
         self.0.startup_with_packet(message)
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
         self.0.existing_startup_response()
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn startup_config(&self) -> &StartupConfig {
         self.0.startup_config()
     }

@@ -1,3 +1,5 @@
+import { validateWasixToolDescriptor } from './descriptor-validation.js';
+export { validateWasixToolDescriptor } from './descriptor-validation.js';
 import { assertSha256 } from './extensions.js';
 import type { Directory, RunWasixOptions } from './host/index.mjs';
 import { loadAsset } from './archive.js';
@@ -16,6 +18,7 @@ export type WasixToolProcessOptions = Readonly<{
   args: readonly string[];
   /** @internal An exact ArrayBuffer-backed view is transferred and consumed. */
   stdin?: Uint8Array;
+  command?: string;
 }>;
 
 export type WasixToolProcessResult = Readonly<{
@@ -128,18 +131,6 @@ export function wasixToolRunOptions(
     mount: mounts,
     stdin,
   };
-}
-
-export function validateWasixToolDescriptor(tool: WasixToolDescriptor): void {
-  if (tool.name !== 'pg_dump' && tool.name !== 'psql') {
-    throw new TypeError('unsupported Oliphaunt WASIX tool');
-  }
-  if (!/^[0-9a-f]{64}$/u.test(tool.sha256)) {
-    throw new TypeError(`WASIX ${tool.name} SHA-256 is invalid`);
-  }
-  if (!Number.isSafeInteger(tool.size) || tool.size <= 0) {
-    throw new TypeError(`WASIX ${tool.name} size is invalid`);
-  }
 }
 
 export function wasixToolAssetIdentity(descriptor: WasixToolDescriptor): string {

@@ -5,6 +5,8 @@
 
 typedef struct OliphauntSession OliphauntSession;
 
+int32_t oliphaunt_swift_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count);
+
 int32_t oliphaunt_swift_open(
     const char *library_path,
     const OliphauntConfig *config,

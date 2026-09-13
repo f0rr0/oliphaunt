@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vitest';
@@ -9,6 +9,7 @@ import {
   requireNativeClusterSeedTarget,
 } from '../native/cluster-seed.js';
 import {
+  copyNativeClusterSeed,
   initializeNativePgdata,
   nativeInitdbArgs,
   nativePostgresChildEnvironment,
@@ -212,3 +213,32 @@ async function writeCompletePgdata(pgdata: string): Promise<void> {
   await writeFile(join(pgdata, 'PG_VERSION'), '18\n');
   await writeFile(join(pgdata, 'global', 'pg_control'), new Uint8Array([1]));
 }
+
+test('packaged seed restores empty directories and private permissions without modifying the source', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-seed-copy-'));
+  const seed = join(root, 'seed');
+  const staging = join(root, 'pgdata');
+  try {
+    await mkdir(join(seed, 'files'), { recursive: true });
+    await chmod(join(seed, 'files'), 0o755);
+    const inventory = join(seed, 'directories-v1.txt');
+    await writeFile(inventory, 'pg_notify\npg_wal/archive_status\n');
+    await copyNativeClusterSeed(seed, staging);
+    assert.deepEqual(await readdir(join(staging, 'pg_notify')), []);
+    assert.ok((await stat(join(staging, 'pg_wal', 'archive_status'))).isDirectory());
+    assert.deepEqual(await readdir(join(seed, 'files')), []);
+    if (process.platform !== 'win32') assert.equal((await stat(staging)).mode & 0o777, 0o700);
+    for (const invalid of ['../escape', '/escape', 'pg_wal/../../escape', 'pg_wal\\escape']) {
+      await writeFile(inventory, `${invalid}\n`);
+      await rm(staging, { recursive: true });
+      await assert.rejects(copyNativeClusterSeed(seed, staging), /unsafe seed directory/u);
+    }
+    if (process.platform !== 'win32') {
+      await symlink(root, join(seed, 'files', 'link'));
+      await rm(staging, { recursive: true });
+      await assert.rejects(copyNativeClusterSeed(seed, staging), /regular file or directory/u);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

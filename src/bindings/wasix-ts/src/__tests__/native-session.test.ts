@@ -19,6 +19,15 @@ const nativeMocks = vi.hoisted(() => ({
   pgDump: vi.fn(),
   psql: vi.fn(),
   toolIdentity: vi.fn(),
+  registerTools: vi.fn(),
+}));
+
+vi.mock('../native-extension-packages.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../native-extension-packages.js')>()),
+  nativeToolPackage: () => ({
+    packageJson: '/installed/tools/package.json',
+    aotPackageJson: '/installed/tools-aot/package.json',
+  }),
 }));
 
 vi.mock('../native-addon.js', () => ({
@@ -73,23 +82,29 @@ describe('WASIX native embedded payload compatibility', () => {
     );
   });
 
-  it('accepts an extension descriptor only when its exact archive is embedded', () => {
+  it('accepts a contrib descriptor only when its exact archive is embedded', () => {
     const options = workerOpenOptions();
-    options.extensionCarriers.pgtap = extensionCarrier('pgtap');
+    options.extensionCarriers.hstore = {
+      ...extensionCarrier('hstore'),
+      product: 'oliphaunt-extension-contrib-pg18',
+    };
 
     expect(requireCompatibleNativeWasixAddon(options)).toBe(
       nativeMocks.loadAddon.mock.results[0]?.value,
     );
-    expect(nativeMocks.extensionIdentity).toHaveBeenCalledWith('pgtap');
+    expect(nativeMocks.extensionIdentity).toHaveBeenCalledWith('hstore');
   });
 
-  it('rejects an extension descriptor whose archive differs from the embedded archive', () => {
+  it('rejects a contrib descriptor whose archive differs from the embedded archive', () => {
     const options = workerOpenOptions();
-    options.extensionCarriers.pgtap = extensionCarrier('pgtap');
+    options.extensionCarriers.hstore = {
+      ...extensionCarrier('hstore'),
+      product: 'oliphaunt-extension-contrib-pg18',
+    };
     nativeMocks.extensionIdentity.mockReturnValue(`${'b'.repeat(64)}:7`);
 
     expect(() => requireCompatibleNativeWasixAddon(options)).toThrow(
-      'WASIX extension pgtap descriptor does not match the archive embedded in the native addon',
+      'WASIX extension hstore descriptor does not match the archive embedded in the native addon',
     );
   });
 
@@ -101,11 +116,9 @@ describe('WASIX native embedded payload compatibility', () => {
       session.runTool({
         runtimeVersion: '0.1.1',
         tool: { name: 'pg_dump', sha256: digest, size: 7, source: 'embedded' },
-        args: pgDumpArguments(),
+        args: [],
       }),
-    ).rejects.toThrow(
-      'WASIX pg_dump descriptor does not match the tool embedded in the native addon',
-    );
+    ).rejects.toThrow('WASIX pg_dump descriptor does not match the tool in the installed package');
     expect(nativeMocks.pgDump).not.toHaveBeenCalled();
   });
 
@@ -122,7 +135,7 @@ describe('WASIX native embedded payload compatibility', () => {
     nativeMocks.open.mockImplementation(() => {
       throw Object.assign(new Error('this deliberately says corrupt and available'), {
         oliphauntWasixError: 'storage',
-        oliphauntWasixAddonAbi: 1,
+        oliphauntWasixAddonAbi: 2,
         code: 'busy',
         commitState: 'unchanged',
         phase: 'ownership',
@@ -166,7 +179,7 @@ describe('WASIX native embedded payload compatibility', () => {
     const result = await session.runTool({
       runtimeVersion: '0.1.1',
       tool: { name: 'pg_dump', sha256: digest, size: 7, source: 'embedded' },
-      args: pgDumpArguments(),
+      args: [],
     });
 
     expect(result).toEqual({
@@ -187,9 +200,42 @@ describe('WASIX native embedded payload compatibility', () => {
       expect.objectContaining({ profile: 'standard' }),
     );
     expect(
-      nativeWasixOpenOptions(
-        { ...options, icu: {} as NonNullable<typeof options.icu> },
-        { kind: 'memory' },
+      (
+        await nativeWasixOpenOptions(
+          {
+            ...options,
+            icu: {
+              schema: 'oliphaunt-wasix-icu-v1',
+              runtime: 'wasix',
+              product: 'oliphaunt-icu',
+              version: '0.1.1',
+              compatibility: {
+                runtimeProduct: 'liboliphaunt-wasix',
+                runtimeVersion: '0.1.1',
+                postgresMajor: '18',
+                physicalFormat: 'wasix-pg18-v1',
+                compatibilityKey: 'wasix-pg18-datum32-v1',
+                dataVersion: '76.1',
+                dataForm: 'files-le',
+                dataTreeSha256: digest,
+              },
+              dataArchive: {
+                archive: 'icu.tar.zst',
+                sha256: digest,
+                size: 1,
+                source: Uint8Array.of(1),
+              },
+              clusterSeedArchive: {
+                archive: 'seed.tar.zst',
+                sha256: digest,
+                size: 1,
+                source: Uint8Array.of(2),
+              },
+              clusterSeedManifest: { sha256: digest, size: 1, source: Uint8Array.of(3) },
+            },
+          },
+          { kind: 'memory' },
+        )
       ).profile,
     ).toBe('icu');
   });
@@ -218,7 +264,7 @@ describe('WASIX native embedded payload compatibility', () => {
     const toolOptions = {
       runtimeVersion: '0.1.1',
       tool: { name: 'pg_dump' as const, sha256: digest, size: 7, source: 'embedded' },
-      args: pgDumpArguments(),
+      args: [],
     };
     const directTool = await direct.runTool(toolOptions);
     const actorTool = await actor.runTool(toolOptions);
@@ -345,13 +391,14 @@ function addon(): NativeWasixAddon {
     }) as unknown as NativeWasixAddon['NativeWasixServer'],
     async restore() {},
     restoreDirect() {},
-    addonAbiVersion: () => 1,
+    addonAbiVersion: () => 2,
     nodeApiVersion: () => 8,
     runtimeVersion: () => '0.1.1',
     supportedProfiles: () => ['standard', 'icu'],
     payloadIdentity: nativeMocks.payloadIdentity,
     extensionIdentity: nativeMocks.extensionIdentity,
     toolIdentity: nativeMocks.toolIdentity,
+    registerTools: nativeMocks.registerTools,
   };
 }
 
@@ -476,13 +523,23 @@ function extensionCarrier(sqlName: string): SerializedExtensionCarrier {
   };
 }
 
-function pgDumpArguments(): string[] {
-  return [
-    '--encoding=UTF8',
-    '--no-password',
-    '--username=postgres',
-    '--host=127.0.0.1',
-    '--port=65432',
-    '--dbname=postgres',
-  ];
-}
+it('registers a shared tools package once and passes user arguments and command directly to Rust', async () => {
+  const session = await NativeWasixSession.open(workerOpenOptions());
+  const tool = {
+    name: 'pg_dump' as const,
+    sha256: digest,
+    size: 7,
+    source: 'file:///tools/assets/pg_dump.wasix.wasm',
+  };
+  await session.runTool({ runtimeVersion: '0.1.1', tool, args: ['--schema-only'] });
+  await session.runTool({
+    runtimeVersion: '0.1.1',
+    tool: { ...tool, name: 'psql', source: 'file:///tools/assets/psql.wasix.wasm' },
+    args: ['--quiet'],
+    command: 'select 1',
+  });
+  expect(nativeMocks.registerTools).toHaveBeenCalledOnce();
+  expect(nativeMocks.pgDump).toHaveBeenLastCalledWith(['--schema-only']);
+  expect(nativeMocks.psql).toHaveBeenLastCalledWith(['--quiet'], 'select 1', undefined);
+  await session.close();
+});

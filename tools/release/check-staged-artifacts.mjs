@@ -633,6 +633,7 @@ function requireRegistryTargetDependency(crate, dependencies, cfg, name, version
     || Array.isArray(dependency)
     || typeof dependency !== "object"
     || dependency.version !== `=${version}`
+    || dependency.optional === true
     || ["path", "git", "registry"].some((key) => key in dependency)
   ) {
     fail(
@@ -649,7 +650,7 @@ async function validateRustSdkCrate(crate) {
     fail(`${rel(crate)} must declare a Cargo package`);
   }
   const packageName = packageConfig.name;
-  if (!["oliphaunt", "oliphaunt-build"].includes(packageName)) {
+  if (!["oliphaunt", "oliphaunt-build", "oliphaunt-resources"].includes(packageName)) {
     fail(`${rel(crate)} contains unexpected oliphaunt-rust package ${JSON.stringify(packageName)}`);
   }
   const sdkVersion = await currentProductVersion("oliphaunt-rust", PREFIX);
@@ -680,7 +681,7 @@ async function validateRustSdkCrate(crate) {
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
-  if (packageName === "oliphaunt-build") {
+  if (packageName !== "oliphaunt") {
     return packageName;
   }
 
@@ -702,7 +703,8 @@ async function validateRustSdkCrate(crate) {
     fail(`${rel(crate)} oliphaunt package must declare target-specific native release dependencies`);
   }
   const expectedCfgs = targetIds.map((target) => `cfg(${rustNativeTargetCfg(target)})`);
-  exactSortedStrings(`${rel(crate)} native target tables`, Object.keys(targetTables), expectedCfgs);
+  exactSortedStrings(`${rel(crate)} native target tables`, Object.keys(targetTables).filter(cfg => cfg !== "cfg(unix)"), expectedCfgs);
+  exactSortedStrings(`${rel(crate)} Unix system dependencies`, Object.keys(targetTables["cfg(unix)"]?.dependencies ?? {}), ["libc"]);
 
   const nativeVersion = productCompatibilityVersion("oliphaunt-rust", "liboliphaunt-native", PREFIX);
   const brokerVersion = productCompatibilityVersion("oliphaunt-rust", "oliphaunt-broker", PREFIX);
@@ -718,6 +720,7 @@ async function validateRustSdkCrate(crate) {
     const expectedDependencies = [
       `liboliphaunt-native-${target.target}`,
       `oliphaunt-broker-${target.target}`,
+      `oliphaunt-extension-contrib-pg18-${target.target}`,
     ];
     exactSortedStrings(
       `${rel(crate)} target dependencies for ${cfg}`,
@@ -726,6 +729,7 @@ async function validateRustSdkCrate(crate) {
     );
     requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[0], nativeVersion);
     requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[1], brokerVersion);
+    requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[2], nativeVersion);
   }
 
   const sourceMembers = archiveTarNames(crate).filter((name) => name.endsWith("/src/lib.rs"));
@@ -776,7 +780,8 @@ async function validateWasixSdkCrate(crate) {
   if (dependencies === null || Array.isArray(dependencies) || typeof dependencies !== "object") {
     fail(`${rel(crate)} must declare Cargo dependencies`);
   }
-  for (const name of [WASIX_RUNTIME_PACKAGE, WASIX_TOOLS_PACKAGE, ICU_PACKAGE].sort(compareText)) {
+  if (manifest.dependencies?.[ICU_PACKAGE]) fail(`${rel(crate)} base SDK must not depend on optional ICU bytes`);
+  for (const name of [WASIX_RUNTIME_PACKAGE, WASIX_TOOLS_PACKAGE].sort(compareText)) {
     const dependency = dependencies[name];
     if (dependency === null || Array.isArray(dependency) || typeof dependency !== "object" || dependency.version !== `=${runtimeVersion}` || "path" in dependency) {
       fail(`${rel(crate)} dependency ${name} must use registry version =${runtimeVersion} without a path`);
@@ -1288,7 +1293,7 @@ async function checkSdkProduct(product, { require }) {
       exactSortedStrings(
         `${product} staged Cargo packages`,
         packageNames,
-        ["oliphaunt", "oliphaunt-build"],
+        ["oliphaunt", "oliphaunt-build", "oliphaunt-resources"],
       );
       const version = await currentProductVersion("oliphaunt-rust", PREFIX);
       requireCrateMatchesCargoListing(

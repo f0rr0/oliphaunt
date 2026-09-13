@@ -14,7 +14,6 @@
     "initdbSha256": "3333333333333333333333333333333333333333333333333333333333333333"
   },
   "source": {
-    "fingerprint": "postgresql-18.4:test",
     "catalogVersion": "202505281",
     "lane": "stable",
     "producer": "wasix-initdb"

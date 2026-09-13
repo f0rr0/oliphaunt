@@ -140,6 +140,7 @@ export function validateSelectionNeutralSwiftSourceCarrier(
       name: `liboliphaunt-${base.version}-icu-data.tar.gz`,
       role: "icu-data",
     },
+    { format: "tar.gz", member: ".", name: `liboliphaunt-${base.version}-icu-seed-ios-datum64.tar.gz`, role: "icu-seed" },
   ];
   if (!Array.isArray(base.assets) || base.assets.length !== assetContracts.length) {
     throw error(

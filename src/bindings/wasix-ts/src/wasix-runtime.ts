@@ -50,14 +50,6 @@ export async function materializeWasixMounts(
   return { mounts, baseDirectory };
 }
 
-/** @internal Materialize runtime support mounts for frontend tools. */
-export function materializeWasixSupportMounts(
-  DirectoryConstructor: typeof Directory,
-  layout: Pick<WasixRuntimeLayout, 'mounts'>,
-): Promise<Record<string, Directory>> {
-  return materializeMountMap(DirectoryConstructor, layout);
-}
-
 async function materializeMountMap(
   DirectoryConstructor: typeof Directory,
   layout: Pick<WasixRuntimeLayout, 'mounts'>,

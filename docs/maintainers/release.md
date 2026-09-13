@@ -450,7 +450,7 @@ The post-publication consumer gate is an anonymous public-endpoint probe.
 It derives its products, ecosystem lanes, dependency roots, full carrier
 closure, versions, Maven coordinates, and Git tags from the same frozen lock.
 In parallel clean temporary homes/caches it resolves each Cargo consumer root
-in an independent scratch manifest without compiling payloads, installs each
+in an independent scratch manifest with all published features, installs each
 npm dependency root in an independent project, resolves each Maven entry in an
 isolated Gradle configuration without an Android build, and anonymously fetches
 every product tag. Each lane requires
@@ -458,8 +458,14 @@ the resolver's platform-independent lock graphs to cover every carrier in the
 corresponding frozen dependency closure; a missing carrier cannot be silently
 relabelled as receipt-only. It never invents one all-platform consumer graph.
 Evidence separately identifies npm carriers not installed on the macOS host
-and Cargo payloads intentionally not fetched/compiled; immutable receipts
-prove those bytes. When Swift is
+and records receipt coverage for the complete Cargo closure. If the native Rust
+SDK is selected, a separate application compiles its exact public crate with
+default features. Installed native and WASIX TypeScript SDKs also run through
+their public Node APIs. Each application discovers its packaged runtime without
+workspace overrides, creates bundled hstore, queries it, closes, and reopens
+the same directory. Missing execution evidence blocks promotion. Cargo WASIX
+and non-host payloads remain covered by same-SHA CI and immutable receipts;
+this macOS probe does not compile every Cargo target. When Swift is
 selected it also fetches the unscoped source tag,
 requires its synthetic commit to have the release SHA as its only parent, and
 evaluates that tagged `Package.swift` with `swift package dump-package`.
@@ -533,7 +539,15 @@ before transport. A paced mutation receives its complete configured transport
 timeout only when that timeout still fits the job deadline. Read transports
 recompute and clamp their attempt timeout after journal reservation, and never
 start if the read deadline was exhausted while acquiring the journal lock. The
-SwiftPM source-tag push is likewise
+Independent SwiftPM extension packages publish semantic tags to their matching
+`f0rr0/oliphaunt-extension-*` repositories; ICU publishes to
+`f0rr0/oliphaunt-icu`. Provision these public repositories and grant the release
+GitHub App contents access before enabling their first release. The workflow
+requests a separate token scoped to the selected repositories. Each tag contains
+only its frozen package source, and the anonymous consumer gate checks that
+source against the publication lock and parses its SwiftPM manifest.
+
+The SwiftPM source-tag push is likewise
 noninteractive and bounded; success, rejection, disconnect, and timeout are all
 resolved by an exact remote tag/SHA read before the result is accepted. Before
 any release mutation, a lock-derived SwiftPM preflight constructs the exact
@@ -584,8 +598,8 @@ Target packages are required where package managers select by OS/CPU/libc/ABI or
   the lower macOS 11.0 floor. SwiftPM consumes the XCFramework with runtime
   resources. Every native exact-extension and native-dependency XCFramework
   carries the same three Apple platform slices and is rejected before packaging
-  if any slice is missing. The base Swift package remains extension-free;
-  exact-extension products are generated from their separately released,
+  if any slice is missing. The base Swift package includes contrib descriptors
+  and payloads; external-extension products are generated from their separately released,
   checksum-covered carrier assets. Every extension release publishes one
   immutable `*-swift-extension-carrier.json`: the contrib bundle carrier owns
   exactly 32 SQL-member rows, while each independently versioned external
@@ -595,8 +609,10 @@ Target packages are required where package managers select by OS/CPU/libc/ABI or
   repeatable `--extension-carrier` composition lets an external-only release be
   consumed without a Swift version bump; base mismatch, dependency skew,
   duplicate SQL ownership, or native-dependency byte conflicts fail closed.
-  Hosted macOS qualification final-links and
-  runs a generated native-extension Swift executable against the produced assets.
+  Hosted macOS qualification consumes separate external SwiftPM packages,
+  final-links against the produced assets, and runs the public descriptor API
+  through database open, contrib and external extension migrations, query,
+  close, and reopening persistent storage.
 - WASIX: portable runtime/extension carriers plus native AOT carriers for Linux
   x64/arm64 GNU, macOS arm64, and Windows x64 MSVC.
 - SDK façades: Rust/Cargo, npm, Maven/Gradle, and SwiftPM entry points select

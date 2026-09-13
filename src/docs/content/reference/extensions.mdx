@@ -1,129 +1,112 @@
 ---
 title: Extensions
-description: Select exact PostgreSQL extensions through each SDK's native API and verify the carriers that enter an app.
+description: Install external packages independently and explicitly select external and contrib descriptors in each SDK.
 ---
 
 # Extensions
 
-Oliphaunt uses exact, opt-in PostgreSQL extension selection. Native SDKs accept
-exact SQL names, Rust WASIX exposes exact Cargo features and typed values, and
-WASIX TypeScript accepts selectively imported portable descriptors. Browser
-artifacts contain only the selected extensions plus mandatory dependencies
-declared by extension metadata. The Node/Bun/Deno/Electron Node-API carrier embeds the
-qualified catalog once and validates each selected descriptor against those
-exact bytes.
-
-There are no extension packs, aliases, or grouped selectors. Selection remains
-exact even when a native carrier physically contains the full catalog.
+The base SDK includes PostgreSQL, supported contrib extensions, and the standard
+cluster seed. External extensions come from independently versioned packages.
+Both contrib and external extensions require explicit descriptors in database
+configuration. Installing a package makes its bytes available; migrations own
+`CREATE EXTENSION`, `LOAD`, and upgrades.
 
 <ExactExtensionRule />
 
 <ExtensionArtifactFlow />
 
-## Native selection
-
-Select extensions before opening the database:
-
-```rust
-use oliphaunt::{Extension, Oliphaunt};
-
-# fn demo() -> oliphaunt::Result<()> {
-let mut db = Oliphaunt::builder()
-    .direct()
-    .extension(Extension::VECTOR)
-    .open()?;
-
-db.execute("CREATE EXTENSION vector")?;
-# Ok(())
-# }
-```
-
-`CREATE EXTENSION` succeeds when the selected runtime resources contain that
-extension for the target platform. The SDK loads only the selected extension
-artifacts and their declared dependencies.
-
-## Rust WASIX selection
-
-Enable the exact extension feature and pass its typed value to the WASIX
-builder. The builder makes the artifact available; application migrations must
-still install database-local objects explicitly:
+## Native Rust
 
 ```toml
 [dependencies]
-oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
+oliphaunt = "0.2"
+oliphaunt-extension-vector = "0.2"
 ```
 
 ```rust
-use oliphaunt_wasix::{Extension, Oliphaunt};
+use oliphaunt::{extensions, Oliphaunt};
+use oliphaunt_extension_vector::VECTOR;
 
-let mut database = Oliphaunt::builder().extension(Extension::PGTAP).open()?;
-database.execute("CREATE EXTENSION pgtap")?;
+let mut db = Oliphaunt::builder()
+    .extensions([VECTOR, extensions::HSTORE])
+    .open()?;
+db.execute("CREATE EXTENSION vector; CREATE EXTENSION hstore")?;
 ```
 
-## WASIX TypeScript selection
+The SDK handles target artifacts and embedding internally. Ordinary applications
+need no build script, build dependency, resource registration, or package metadata.
 
-Import only the portable descriptors the browser, Node, Bun, Deno, or Electron application uses:
+## Rust WASIX
+
+```toml
+[dependencies]
+oliphaunt-wasix = "0.2"
+oliphaunt-extension-vector-wasix = "0.2"
+```
+
+```rust
+use oliphaunt_wasix::{extensions, Oliphaunt};
+use oliphaunt_extension_vector_wasix::VECTOR;
+
+let mut db = Oliphaunt::builder()
+    .extensions([VECTOR, extensions::HSTORE])
+    .open()?;
+db.execute("CREATE EXTENSION vector; CREATE EXTENSION hstore")?;
+```
+
+External versions are ordinary Cargo dependency versions. There are no
+per-extension SDK Cargo features.
+
+## TypeScript
+
+For native Node, Bun, or Deno, install `@oliphaunt/ts` and
+`@oliphaunt/extension-vector`:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix-ts';
-import pgtap from '@oliphaunt/extension-pgtap-wasix';
+import { Oliphaunt, extensions } from '@oliphaunt/ts';
+import vector from '@oliphaunt/extension-vector';
 
-const database = await Oliphaunt.open({ extensions: [pgtap] });
+const db = await Oliphaunt.open({ extensions: [vector, extensions.hstore] });
 ```
 
-The descriptor carries the exact dependency and compatibility metadata needed
-by the selected runtime owner. SQL-name strings are intentionally not accepted
-by this API. Use only extensions published for the selected WASIX host.
+For WASIX, install `@oliphaunt/wasix-ts` and
+`@oliphaunt/extension-vector-wasix`:
 
-## Platform Behavior
+```ts
+import { Oliphaunt, extensions } from '@oliphaunt/wasix-ts';
+import vector from '@oliphaunt/extension-vector-wasix';
 
-| Platform | Expected behavior |
-| --- | --- |
-| Rust/Tauri desktop | SDK resolves selected runtime extension artifacts for the target |
-| iOS/macOS Swift | App bundle includes selected extension artifacts and dependencies only |
-| Android Kotlin | Android package includes selected extension artifacts and dependencies only |
-| React Native | Config plugin delegates selection to Swift/Kotlin packaging |
-| TypeScript | SDK resolves selected native artifacts or helper-process resources |
-| Rust WASIX | Exact Cargo features carry selected portable artifacts; typed values select them at open |
-| WASIX TypeScript | Selective `-wasix` imports carry exact descriptors and browser bytes; Node, Bun, Deno, and Electron validate those descriptors against extensions embedded in the matching Node-API carrier |
+const db = await Oliphaunt.open({ extensions: [vector, extensions.hstore] });
+```
 
-## Dependencies
+On native hosts, TypeScript resolves the installed package and passes its
+payload to Rust through N-API. Rust validates compatibility, target, and hashes
+before loading it. The base addon contains runtime and contrib bytes; external
+extension, ICU, and frontend tool bytes remain in their optional packages.
 
-Some PostgreSQL extensions depend on other extensions or runtime files. Those
-dependencies are explicit metadata. If `earthdistance` declares `cube` as a
-dependency, selecting `earthdistance` may include `cube`; selecting `vector`
-includes `vector` and its declared dependencies only.
+## Mobile packaging
 
-## External Extensions
+SwiftPM products and Android Gradle dependencies determine which external
+packages ship with an application. React Native uses the same native npm
+extension packages as Node; its Expo plugin discovers installed dependencies
+and arranges platform resources. Each database still selects external and
+contrib descriptors explicitly. Rebuild mobile apps after changing native
+dependencies.
 
-External extensions are distributed as exact extension artifacts or indexes.
-Native consumers select SQL names; WASIX consumers use the runtime-specific
-typed value or descriptor published for that extension.
+See the [Swift](/docs/sdk/swift/guide), [Kotlin and Java](/docs/sdk/kotlin/guide),
+and [React Native](/docs/sdk/react-native/guide) guides for installation examples.
 
-Each public external extension has its own product tag, changelog, and package
-version. The PostgreSQL contrib bundle is only a logical distribution: its
-native and WASIX carriers inherit the corresponding runtime product version.
-Exact compatibility metadata pins a consumer to a published dependency version
-without causing either product to release. External extension packages own
-independent packaging SemVer; their immutable upstream version/commit and
-compatible Oliphaunt runtime versions are separate metadata.
-Do not assume an external package version matches either its upstream project
-version or the runtime version.
+## Dependencies and versions
 
-The WASIX carrier uses the explicit `-wasix` identifier while the native/default
-package keeps its existing name. Both carriers belong to the same extension
-product version stream; `-wasix` does not create an unrelated second extension
-release line.
+Mandatory extension dependencies are part of the declared package contract.
+Selecting `earthdistance`, for example, also makes its required `cube`
+resources available. SQL migrations still create the corresponding objects.
 
-## Verifying App Artifacts
+Each external extension has its own product tag, changelog, and package version.
+The native package and its `-wasix` counterpart share that version stream.
+Contrib carriers inherit the corresponding runtime version. Package versions,
+upstream extension versions, and compatible runtime versions are separate
+identities.
 
-Before release, app tooling reports:
-
-- selected SQL extension names;
-- included extension files;
-- mandatory dependencies;
-- package-size contribution per extension;
-- target platform and architecture.
-
-That report lets developers confirm that an app using only `vector` ships
-`vector` and its declared dependencies, without unrelated extension artifacts.
+ICU is optional and owns both its data and matching cluster seeds. Installing it
+does not select it for every database; pass the ICU descriptor explicitly.

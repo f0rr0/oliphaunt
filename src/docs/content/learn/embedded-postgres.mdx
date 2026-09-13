@@ -57,10 +57,9 @@ process or local server is the better runtime shape.
 
 ## Extension Selection
 
-Extensions are selected exactly before packaging or opening the database.
-Native SDKs use SQL-name selectors, Rust WASIX uses exact Cargo features and
-typed values, and WASIX TypeScript imports exact `-wasix` descriptors. App
-artifacts include only the selected carrier closure.
+Contrib ships with the base SDK, and external extensions come from independent
+packages. Every SDK selects explicit contrib and external descriptors when
+opening a database. Installed dependencies determine which artifacts ship.
 
 `CREATE EXTENSION` succeeds only when the selected runtime resources include
 that extension for the target platform. See the

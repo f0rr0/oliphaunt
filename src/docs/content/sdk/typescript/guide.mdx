@@ -42,7 +42,7 @@ Install the npm package. Runtime assets and helper executables resolve through
 package configuration.
 
 ```sh
-npm install @oliphaunt/ts
+npm install @oliphaunt/ts @oliphaunt/extension-vector
 ```
 
 </Step>
@@ -56,11 +56,13 @@ database.
 <!-- oliphaunt-snippet: oliphaunt-js -->
 
 ```ts
-import { Oliphaunt } from '@oliphaunt/ts';
+import { extensions, Oliphaunt } from '@oliphaunt/ts';
+import { directory } from '@oliphaunt/ts/storage/node';
+import vector from '@oliphaunt/extension-vector';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
-  extensions: ['vector'],
+  storage: directory('./app-data/main.oliphaunt'),
+  extensions: [vector, extensions.hstore],
 });
 
 const rows = await db.query('SELECT 1::text AS value');
@@ -181,8 +183,9 @@ rejecting.
 
 ### Select extensions
 
-Select exact SQL extension names before open. Generated resources include only
-selected extensions and mandatory dependencies.
+Install external packages and select their descriptors alongside contrib descriptors
+when opening a database. Base contrib ships with the SDK; external bytes come
+from their independently versioned packages.
 
 </Step>
 <Step>

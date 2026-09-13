@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `Oliphaunt.restore` now accepts `directory(path)` instead of a raw path string,
+  matching open, React Native, and WASIX TypeScript storage descriptors. Import
+  `directory` from `@oliphaunt/ts/storage/node`; temporary storage is not a restore
+  destination.
 - Fail broker database objects permanently after helper or IPC failure. Close
   and explicitly open a new object for PostgreSQL WAL recovery; the SDK never
   substitutes a new session or replays uncertain work under the old object.

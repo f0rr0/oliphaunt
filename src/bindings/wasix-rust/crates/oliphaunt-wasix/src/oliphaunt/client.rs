@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail, ensure};
 use tempfile::TempDir;
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 use tokio::io::AsyncWriteExt;
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 use tokio::runtime::Runtime;
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalfRx;
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalfTx;
 
 use crate::oliphaunt::backend::BackendSession;
@@ -39,16 +39,16 @@ use crate::oliphaunt::query::{
 use crate::oliphaunt::storage::PgDataStorage;
 #[cfg(all(feature = "extensions", test))]
 use crate::oliphaunt::storage::StorageRoot;
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 use crate::oliphaunt::tools::{
     DirectToolSocket, PgDumpOptions, PostgresToolOutput, PsqlOptions, decode_tool_output,
     is_direct_tool_outcome_unknown, run_direct_pg_dump_output, run_direct_psql_output,
 };
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 
 const PROTOCOL_CALLBACK_CHUNK_BYTES: usize = 64 * 1024;
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 const DIRECT_TOOL_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Direct, single-session Oliphaunt WASIX database.
@@ -385,7 +385,7 @@ struct CallbackProtocolState {
     callback: Option<ProtocolCallback>,
     error: Option<crate::Error>,
     panic: Option<ProtocolCallbackPanic>,
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     tool_io: Option<DirectToolProtocolIo>,
 }
 
@@ -395,7 +395,7 @@ struct CallbackProtocolStream {
 
 impl Read for CallbackProtocolStream {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        #[cfg(feature = "tools")]
+        #[cfg(feature = "__internal-tools")]
         {
             let mut state = self
                 .state
@@ -416,7 +416,7 @@ impl Write for CallbackProtocolStream {
             .state
             .lock()
             .map_err(|_| io::Error::other("WASIX protocol callback lock poisoned"))?;
-        #[cfg(feature = "tools")]
+        #[cfg(feature = "__internal-tools")]
         if let Some(tool_io) = state.tool_io.as_mut() {
             return tool_io.write(buffer);
         }
@@ -449,7 +449,7 @@ impl Write for CallbackProtocolStream {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        #[cfg(feature = "tools")]
+        #[cfg(feature = "__internal-tools")]
         {
             let mut state = self
                 .state
@@ -465,7 +465,7 @@ impl Write for CallbackProtocolStream {
 
 impl ProtocolStream for CallbackProtocolStream {
     fn read_ready(&mut self) -> io::Result<bool> {
-        #[cfg(feature = "tools")]
+        #[cfg(feature = "__internal-tools")]
         {
             let state = self
                 .state
@@ -1022,13 +1022,13 @@ impl Oliphaunt {
         Ok(())
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn run_pg_dump_tool(&mut self, options: PgDumpOptions) -> Result<String> {
         self.run_pg_dump_tool_output(options)
             .and_then(|output| decode_tool_output("pg_dump", output))
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn run_pg_dump_tool_output(
         &mut self,
         options: PgDumpOptions,
@@ -1043,13 +1043,13 @@ impl Oliphaunt {
         self.finish_tool_session(result)
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn run_psql_tool(&mut self, options: PsqlOptions) -> Result<String> {
         self.run_psql_tool_output(options)
             .and_then(|output| decode_tool_output("psql", output))
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub(crate) fn run_psql_tool_output(
         &mut self,
         options: PsqlOptions,
@@ -1064,7 +1064,7 @@ impl Oliphaunt {
         self.finish_tool_session(result)
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     fn prepare_tool_session(&mut self) -> Result<()> {
         self.check_ready()?;
         if self.in_transaction {
@@ -1076,7 +1076,7 @@ impl Oliphaunt {
             .context("prepare embedded session for WASIX tool")
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     fn finish_tool_session<T>(&mut self, result: Result<T>) -> Result<T> {
         let outcome_unknown = result
             .as_ref()
@@ -1102,7 +1102,7 @@ impl Oliphaunt {
         }
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     fn reset_tool_session(&mut self) -> Result<()> {
         self.execute_inner("ROLLBACK")
             .context("roll back embedded session")?;
@@ -1119,7 +1119,7 @@ impl Oliphaunt {
         Ok(())
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     fn serve_direct_tool_protocol(&mut self, socket: DirectToolSocket) -> Result<()> {
         self.ensure_protocol_stream_attached()?;
         {
@@ -1148,7 +1148,7 @@ impl Oliphaunt {
         result.and(cleanup)
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     fn serve_direct_tool_protocol_inner(&mut self) -> Result<()> {
         let mut reader = FrontendFrameReader::default();
         let mut buffer = [0u8; DIRECT_TOOL_READ_BUFFER_BYTES];
@@ -1189,12 +1189,12 @@ impl Oliphaunt {
         }
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     fn write_direct_tool_protocol(&self, bytes: &[u8]) -> Result<()> {
         self.with_direct_tool_io(|tool_io| tool_io.write_all(bytes))
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     fn with_direct_tool_io<T>(
         &self,
         operation: impl FnOnce(&mut DirectToolProtocolIo) -> io::Result<T>,
@@ -1218,25 +1218,25 @@ impl Oliphaunt {
     }
 
     /// Run packaged `pg_dump` directly against this database.
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub fn pg_dump(&mut self, options: PgDumpOptions) -> crate::Result<String> {
         crate::error::public_result(self.run_pg_dump_tool(options))
     }
 
     /// Run packaged `pg_dump` and return exact stdout/stderr bytes.
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub fn pg_dump_output(&mut self, options: PgDumpOptions) -> crate::Result<PostgresToolOutput> {
         crate::error::public_result(self.run_pg_dump_tool_output(options))
     }
 
     /// Run packaged non-interactive `psql` directly against this database.
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub fn psql(&mut self, options: PsqlOptions) -> crate::Result<String> {
         crate::error::public_result(self.run_psql_tool(options))
     }
 
     /// Run packaged non-interactive `psql` and return exact stdout/stderr bytes.
-    #[cfg(feature = "tools")]
+    #[cfg(feature = "__internal-tools")]
     pub fn psql_output(&mut self, options: PsqlOptions) -> crate::Result<PostgresToolOutput> {
         crate::error::public_result(self.run_psql_tool_output(options))
     }
@@ -1562,7 +1562,7 @@ impl Oliphaunt {
     }
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 fn finish_direct_tool_frontend(reader: &FrontendFrameReader) -> Result<()> {
     ensure!(
         reader.pending().is_empty(),
@@ -1745,14 +1745,14 @@ fn combine_backup_failures(
     primary.context(format!("{cleanup_label}: {cleanup:#}"))
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 struct DirectToolProtocolIo {
     runtime: Runtime,
     writer: TcpSocketHalfTx,
     reader: TcpSocketHalfRx,
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 impl DirectToolProtocolIo {
     fn new(socket: DirectToolSocket) -> Result<Self> {
         let (writer, reader) = socket.split();
@@ -1767,7 +1767,7 @@ impl DirectToolProtocolIo {
     }
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 impl Read for DirectToolProtocolIo {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.runtime.block_on(async {
@@ -1791,7 +1791,7 @@ impl Read for DirectToolProtocolIo {
     }
 }
 
-#[cfg(feature = "tools")]
+#[cfg(feature = "__internal-tools")]
 impl Write for DirectToolProtocolIo {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.runtime.block_on(self.writer.write_all(bytes))?;

@@ -90,12 +90,10 @@ runtime-specific implementation errors or extension catalogs:
   `postgres_error()`, `transaction_rollback_errors()`, and
   `transaction_callback_database_errors()` accessors retain detailed causes;
   WASIX adds `tool_error()` only with its `tools` feature.
-- `Extension` is an opaque `Copy + Eq + Hash + Ord` selector with uppercase
-  associated constants, `Extension::ALL`, `Extension::by_sql_name`, and
-  `sql_name`. Native `ALL` contains the packaged PostgreSQL 18 catalog. WASIX
-  exposes the type and builder methods under `extensions` and includes only
-  Cargo-feature-enabled extensions. Neither product exposes free/module
-  constants or PascalCase compatibility aliases.
+- Both products accept explicit descriptors from `extensions` for bundled
+  contrib and from independently versioned external extension crates. WASIX
+  external crates use the `-wasix` suffix. External versions are chosen through
+  Cargo dependencies; the SDK has no per-extension Cargo features.
 
 Selecting an extension makes its runtime artifact, dependencies, and required
 pre-start preload/GUC settings available. It never executes `CREATE EXTENSION`,

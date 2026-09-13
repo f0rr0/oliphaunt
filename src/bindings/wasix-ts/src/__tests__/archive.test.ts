@@ -5,9 +5,16 @@ import {
   decompressIfNeeded,
   extractTar,
   layoutRuntimeSupport,
+  loadAsset,
 } from '../archive.js';
 
 describe('WASIX TypeScript archives', () => {
+  it('rejects local file assets on the browser host', async () => {
+    await expect(loadAsset('file:///runtime.tar.zst', 'runtime archive')).rejects.toThrow(
+      'cannot read package-relative runtime archive URL',
+    );
+  });
+
   it('preserves uncompressed archive bytes by identity', () => {
     const bytes = Uint8Array.of(1, 2, 3);
 

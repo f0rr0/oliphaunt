@@ -2,7 +2,6 @@
 
 use super::Extension;
 
-#[cfg(feature = "extension-amcheck")]
 const DEFINITION_AMCHECK: Extension = Extension {
     sql_name: "amcheck",
     native_support_modules: &[],
@@ -10,9 +9,9 @@ const DEFINITION_AMCHECK: Extension = Extension {
     aot_name: Some("extension:amcheck"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-auto-explain")]
 const DEFINITION_AUTO_EXPLAIN: Extension = Extension {
     sql_name: "auto_explain",
     native_support_modules: &[],
@@ -20,9 +19,9 @@ const DEFINITION_AUTO_EXPLAIN: Extension = Extension {
     aot_name: Some("extension:auto_explain"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-bloom")]
 const DEFINITION_BLOOM: Extension = Extension {
     sql_name: "bloom",
     native_support_modules: &[],
@@ -30,9 +29,9 @@ const DEFINITION_BLOOM: Extension = Extension {
     aot_name: Some("extension:bloom"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-btree-gin")]
 const DEFINITION_BTREE_GIN: Extension = Extension {
     sql_name: "btree_gin",
     native_support_modules: &[],
@@ -40,9 +39,9 @@ const DEFINITION_BTREE_GIN: Extension = Extension {
     aot_name: Some("extension:btree_gin"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-btree-gist")]
 const DEFINITION_BTREE_GIST: Extension = Extension {
     sql_name: "btree_gist",
     native_support_modules: &[],
@@ -50,9 +49,9 @@ const DEFINITION_BTREE_GIST: Extension = Extension {
     aot_name: Some("extension:btree_gist"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-citext")]
 const DEFINITION_CITEXT: Extension = Extension {
     sql_name: "citext",
     native_support_modules: &[],
@@ -60,9 +59,9 @@ const DEFINITION_CITEXT: Extension = Extension {
     aot_name: Some("extension:citext"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-cube")]
 const DEFINITION_CUBE: Extension = Extension {
     sql_name: "cube",
     native_support_modules: &[],
@@ -70,9 +69,9 @@ const DEFINITION_CUBE: Extension = Extension {
     aot_name: Some("extension:cube"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-dict-int")]
 const DEFINITION_DICT_INT: Extension = Extension {
     sql_name: "dict_int",
     native_support_modules: &[],
@@ -80,9 +79,9 @@ const DEFINITION_DICT_INT: Extension = Extension {
     aot_name: Some("extension:dict_int"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-dict-xsyn")]
 const DEFINITION_DICT_XSYN: Extension = Extension {
     sql_name: "dict_xsyn",
     native_support_modules: &[],
@@ -90,9 +89,9 @@ const DEFINITION_DICT_XSYN: Extension = Extension {
     aot_name: Some("extension:dict_xsyn"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-earthdistance")]
 const DEFINITION_EARTHDISTANCE: Extension = Extension {
     sql_name: "earthdistance",
     native_support_modules: &[],
@@ -100,9 +99,9 @@ const DEFINITION_EARTHDISTANCE: Extension = Extension {
     aot_name: Some("extension:earthdistance"),
     dependencies: &["cube"],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-file-fdw")]
 const DEFINITION_FILE_FDW: Extension = Extension {
     sql_name: "file_fdw",
     native_support_modules: &[],
@@ -110,9 +109,9 @@ const DEFINITION_FILE_FDW: Extension = Extension {
     aot_name: Some("extension:file_fdw"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-fuzzystrmatch")]
 const DEFINITION_FUZZYSTRMATCH: Extension = Extension {
     sql_name: "fuzzystrmatch",
     native_support_modules: &[],
@@ -120,9 +119,9 @@ const DEFINITION_FUZZYSTRMATCH: Extension = Extension {
     aot_name: Some("extension:fuzzystrmatch"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-hstore")]
 const DEFINITION_HSTORE: Extension = Extension {
     sql_name: "hstore",
     native_support_modules: &[],
@@ -130,9 +129,9 @@ const DEFINITION_HSTORE: Extension = Extension {
     aot_name: Some("extension:hstore"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-intarray")]
 const DEFINITION_INTARRAY: Extension = Extension {
     sql_name: "intarray",
     native_support_modules: &[],
@@ -140,9 +139,9 @@ const DEFINITION_INTARRAY: Extension = Extension {
     aot_name: Some("extension:intarray"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-isn")]
 const DEFINITION_ISN: Extension = Extension {
     sql_name: "isn",
     native_support_modules: &[],
@@ -150,9 +149,9 @@ const DEFINITION_ISN: Extension = Extension {
     aot_name: Some("extension:isn"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-lo")]
 const DEFINITION_LO: Extension = Extension {
     sql_name: "lo",
     native_support_modules: &[],
@@ -160,9 +159,9 @@ const DEFINITION_LO: Extension = Extension {
     aot_name: Some("extension:lo"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-ltree")]
 const DEFINITION_LTREE: Extension = Extension {
     sql_name: "ltree",
     native_support_modules: &[],
@@ -170,9 +169,9 @@ const DEFINITION_LTREE: Extension = Extension {
     aot_name: Some("extension:ltree"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pageinspect")]
 const DEFINITION_PAGEINSPECT: Extension = Extension {
     sql_name: "pageinspect",
     native_support_modules: &[],
@@ -180,9 +179,9 @@ const DEFINITION_PAGEINSPECT: Extension = Extension {
     aot_name: Some("extension:pageinspect"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-buffercache")]
 const DEFINITION_PG_BUFFERCACHE: Extension = Extension {
     sql_name: "pg_buffercache",
     native_support_modules: &[],
@@ -190,9 +189,9 @@ const DEFINITION_PG_BUFFERCACHE: Extension = Extension {
     aot_name: Some("extension:pg_buffercache"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-freespacemap")]
 const DEFINITION_PG_FREESPACEMAP: Extension = Extension {
     sql_name: "pg_freespacemap",
     native_support_modules: &[],
@@ -200,9 +199,9 @@ const DEFINITION_PG_FREESPACEMAP: Extension = Extension {
     aot_name: Some("extension:pg_freespacemap"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-hashids")]
 const DEFINITION_PG_HASHIDS: Extension = Extension {
     sql_name: "pg_hashids",
     native_support_modules: &[],
@@ -210,9 +209,9 @@ const DEFINITION_PG_HASHIDS: Extension = Extension {
     aot_name: Some("extension:pg_hashids"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-ivm")]
 const DEFINITION_PG_IVM: Extension = Extension {
     sql_name: "pg_ivm",
     native_support_modules: &[],
@@ -220,9 +219,9 @@ const DEFINITION_PG_IVM: Extension = Extension {
     aot_name: Some("extension:pg_ivm"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-surgery")]
 const DEFINITION_PG_SURGERY: Extension = Extension {
     sql_name: "pg_surgery",
     native_support_modules: &[],
@@ -230,9 +229,9 @@ const DEFINITION_PG_SURGERY: Extension = Extension {
     aot_name: Some("extension:pg_surgery"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-textsearch")]
 const DEFINITION_PG_TEXTSEARCH: Extension = Extension {
     sql_name: "pg_textsearch",
     native_support_modules: &[],
@@ -240,9 +239,9 @@ const DEFINITION_PG_TEXTSEARCH: Extension = Extension {
     aot_name: Some("extension:pg_textsearch"),
     dependencies: &[],
     startup_config: &["shared_preload_libraries=pg_textsearch"],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-trgm")]
 const DEFINITION_PG_TRGM: Extension = Extension {
     sql_name: "pg_trgm",
     native_support_modules: &[],
@@ -250,9 +249,9 @@ const DEFINITION_PG_TRGM: Extension = Extension {
     aot_name: Some("extension:pg_trgm"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-uuidv7")]
 const DEFINITION_PG_UUIDV7: Extension = Extension {
     sql_name: "pg_uuidv7",
     native_support_modules: &[],
@@ -260,9 +259,9 @@ const DEFINITION_PG_UUIDV7: Extension = Extension {
     aot_name: Some("extension:pg_uuidv7"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-visibility")]
 const DEFINITION_PG_VISIBILITY: Extension = Extension {
     sql_name: "pg_visibility",
     native_support_modules: &[],
@@ -270,9 +269,9 @@ const DEFINITION_PG_VISIBILITY: Extension = Extension {
     aot_name: Some("extension:pg_visibility"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pg-walinspect")]
 const DEFINITION_PG_WALINSPECT: Extension = Extension {
     sql_name: "pg_walinspect",
     native_support_modules: &[],
@@ -280,9 +279,9 @@ const DEFINITION_PG_WALINSPECT: Extension = Extension {
     aot_name: Some("extension:pg_walinspect"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pgcrypto")]
 const DEFINITION_PGCRYPTO: Extension = Extension {
     sql_name: "pgcrypto",
     native_support_modules: &[],
@@ -290,9 +289,9 @@ const DEFINITION_PGCRYPTO: Extension = Extension {
     aot_name: Some("extension:pgcrypto"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-pgtap")]
 const DEFINITION_PGTAP: Extension = Extension {
     sql_name: "pgtap",
     native_support_modules: &[],
@@ -300,9 +299,9 @@ const DEFINITION_PGTAP: Extension = Extension {
     aot_name: None,
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-postgis")]
 const DEFINITION_POSTGIS: Extension = Extension {
     sql_name: "postgis",
     native_support_modules: &[super::ExtensionNativeModule {
@@ -313,9 +312,9 @@ const DEFINITION_POSTGIS: Extension = Extension {
     aot_name: Some("extension:postgis"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-seg")]
 const DEFINITION_SEG: Extension = Extension {
     sql_name: "seg",
     native_support_modules: &[],
@@ -323,9 +322,9 @@ const DEFINITION_SEG: Extension = Extension {
     aot_name: Some("extension:seg"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-tablefunc")]
 const DEFINITION_TABLEFUNC: Extension = Extension {
     sql_name: "tablefunc",
     native_support_modules: &[],
@@ -333,9 +332,9 @@ const DEFINITION_TABLEFUNC: Extension = Extension {
     aot_name: Some("extension:tablefunc"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-tcn")]
 const DEFINITION_TCN: Extension = Extension {
     sql_name: "tcn",
     native_support_modules: &[],
@@ -343,9 +342,9 @@ const DEFINITION_TCN: Extension = Extension {
     aot_name: Some("extension:tcn"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-tsm-system-rows")]
 const DEFINITION_TSM_SYSTEM_ROWS: Extension = Extension {
     sql_name: "tsm_system_rows",
     native_support_modules: &[],
@@ -353,9 +352,9 @@ const DEFINITION_TSM_SYSTEM_ROWS: Extension = Extension {
     aot_name: Some("extension:tsm_system_rows"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-tsm-system-time")]
 const DEFINITION_TSM_SYSTEM_TIME: Extension = Extension {
     sql_name: "tsm_system_time",
     native_support_modules: &[],
@@ -363,9 +362,9 @@ const DEFINITION_TSM_SYSTEM_TIME: Extension = Extension {
     aot_name: Some("extension:tsm_system_time"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-unaccent")]
 const DEFINITION_UNACCENT: Extension = Extension {
     sql_name: "unaccent",
     native_support_modules: &[],
@@ -373,9 +372,9 @@ const DEFINITION_UNACCENT: Extension = Extension {
     aot_name: Some("extension:unaccent"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-uuid-ossp")]
 const DEFINITION_UUID_OSSP: Extension = Extension {
     sql_name: "uuid-ossp",
     native_support_modules: &[],
@@ -383,9 +382,9 @@ const DEFINITION_UUID_OSSP: Extension = Extension {
     aot_name: Some("extension:uuid-ossp"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
-#[cfg(feature = "extension-vector")]
 const DEFINITION_VECTOR: Extension = Extension {
     sql_name: "vector",
     native_support_modules: &[],
@@ -393,206 +392,129 @@ const DEFINITION_VECTOR: Extension = Extension {
     aot_name: Some("extension:vector"),
     dependencies: &[],
     startup_config: &[],
+    package: None,
 };
 
 impl Extension {
     /// Select the `amcheck` artifact.
-    #[cfg(feature = "extension-amcheck")]
     pub const AMCHECK: Self = DEFINITION_AMCHECK;
     /// Select the `auto_explain` artifact.
-    #[cfg(feature = "extension-auto-explain")]
     pub const AUTO_EXPLAIN: Self = DEFINITION_AUTO_EXPLAIN;
     /// Select the `bloom` artifact.
-    #[cfg(feature = "extension-bloom")]
     pub const BLOOM: Self = DEFINITION_BLOOM;
     /// Select the `btree_gin` artifact.
-    #[cfg(feature = "extension-btree-gin")]
     pub const BTREE_GIN: Self = DEFINITION_BTREE_GIN;
     /// Select the `btree_gist` artifact.
-    #[cfg(feature = "extension-btree-gist")]
     pub const BTREE_GIST: Self = DEFINITION_BTREE_GIST;
     /// Select the `citext` artifact.
-    #[cfg(feature = "extension-citext")]
     pub const CITEXT: Self = DEFINITION_CITEXT;
     /// Select the `cube` artifact.
-    #[cfg(feature = "extension-cube")]
     pub const CUBE: Self = DEFINITION_CUBE;
     /// Select the `dict_int` artifact.
-    #[cfg(feature = "extension-dict-int")]
     pub const DICT_INT: Self = DEFINITION_DICT_INT;
     /// Select the `dict_xsyn` artifact.
-    #[cfg(feature = "extension-dict-xsyn")]
     pub const DICT_XSYN: Self = DEFINITION_DICT_XSYN;
     /// Select the `earthdistance` artifact.
-    #[cfg(feature = "extension-earthdistance")]
     pub const EARTHDISTANCE: Self = DEFINITION_EARTHDISTANCE;
     /// Select the `file_fdw` artifact.
-    #[cfg(feature = "extension-file-fdw")]
     pub const FILE_FDW: Self = DEFINITION_FILE_FDW;
     /// Select the `fuzzystrmatch` artifact.
-    #[cfg(feature = "extension-fuzzystrmatch")]
     pub const FUZZYSTRMATCH: Self = DEFINITION_FUZZYSTRMATCH;
     /// Select the `hstore` artifact.
-    #[cfg(feature = "extension-hstore")]
     pub const HSTORE: Self = DEFINITION_HSTORE;
     /// Select the `intarray` artifact.
-    #[cfg(feature = "extension-intarray")]
     pub const INTARRAY: Self = DEFINITION_INTARRAY;
     /// Select the `isn` artifact.
-    #[cfg(feature = "extension-isn")]
     pub const ISN: Self = DEFINITION_ISN;
     /// Select the `lo` artifact.
-    #[cfg(feature = "extension-lo")]
     pub const LO: Self = DEFINITION_LO;
     /// Select the `ltree` artifact.
-    #[cfg(feature = "extension-ltree")]
     pub const LTREE: Self = DEFINITION_LTREE;
     /// Select the `pageinspect` artifact.
-    #[cfg(feature = "extension-pageinspect")]
     pub const PAGEINSPECT: Self = DEFINITION_PAGEINSPECT;
     /// Select the `pg_buffercache` artifact.
-    #[cfg(feature = "extension-pg-buffercache")]
     pub const PG_BUFFERCACHE: Self = DEFINITION_PG_BUFFERCACHE;
     /// Select the `pg_freespacemap` artifact.
-    #[cfg(feature = "extension-pg-freespacemap")]
     pub const PG_FREESPACEMAP: Self = DEFINITION_PG_FREESPACEMAP;
     /// Select the `pg_hashids` artifact.
-    #[cfg(feature = "extension-pg-hashids")]
     pub const PG_HASHIDS: Self = DEFINITION_PG_HASHIDS;
     /// Select the `pg_ivm` artifact.
-    #[cfg(feature = "extension-pg-ivm")]
     pub const PG_IVM: Self = DEFINITION_PG_IVM;
     /// Select the `pg_surgery` artifact.
-    #[cfg(feature = "extension-pg-surgery")]
     pub const PG_SURGERY: Self = DEFINITION_PG_SURGERY;
     /// Select the `pg_textsearch` artifact.
-    #[cfg(feature = "extension-pg-textsearch")]
     pub const PG_TEXTSEARCH: Self = DEFINITION_PG_TEXTSEARCH;
     /// Select the `pg_trgm` artifact.
-    #[cfg(feature = "extension-pg-trgm")]
     pub const PG_TRGM: Self = DEFINITION_PG_TRGM;
     /// Select the `pg_uuidv7` artifact.
-    #[cfg(feature = "extension-pg-uuidv7")]
     pub const PG_UUIDV7: Self = DEFINITION_PG_UUIDV7;
     /// Select the `pg_visibility` artifact.
-    #[cfg(feature = "extension-pg-visibility")]
     pub const PG_VISIBILITY: Self = DEFINITION_PG_VISIBILITY;
     /// Select the `pg_walinspect` artifact.
-    #[cfg(feature = "extension-pg-walinspect")]
     pub const PG_WALINSPECT: Self = DEFINITION_PG_WALINSPECT;
     /// Select the `pgcrypto` artifact.
-    #[cfg(feature = "extension-pgcrypto")]
     pub const PGCRYPTO: Self = DEFINITION_PGCRYPTO;
     /// Select the `pgtap` artifact.
-    #[cfg(feature = "extension-pgtap")]
     pub const PGTAP: Self = DEFINITION_PGTAP;
     /// Select the `postgis` artifact.
-    #[cfg(feature = "extension-postgis")]
     pub const POSTGIS: Self = DEFINITION_POSTGIS;
     /// Select the `seg` artifact.
-    #[cfg(feature = "extension-seg")]
     pub const SEG: Self = DEFINITION_SEG;
     /// Select the `tablefunc` artifact.
-    #[cfg(feature = "extension-tablefunc")]
     pub const TABLEFUNC: Self = DEFINITION_TABLEFUNC;
     /// Select the `tcn` artifact.
-    #[cfg(feature = "extension-tcn")]
     pub const TCN: Self = DEFINITION_TCN;
     /// Select the `tsm_system_rows` artifact.
-    #[cfg(feature = "extension-tsm-system-rows")]
     pub const TSM_SYSTEM_ROWS: Self = DEFINITION_TSM_SYSTEM_ROWS;
     /// Select the `tsm_system_time` artifact.
-    #[cfg(feature = "extension-tsm-system-time")]
     pub const TSM_SYSTEM_TIME: Self = DEFINITION_TSM_SYSTEM_TIME;
     /// Select the `unaccent` artifact.
-    #[cfg(feature = "extension-unaccent")]
     pub const UNACCENT: Self = DEFINITION_UNACCENT;
     /// Select the `uuid-ossp` artifact.
-    #[cfg(feature = "extension-uuid-ossp")]
     pub const UUID_OSSP: Self = DEFINITION_UUID_OSSP;
     /// Select the `vector` artifact.
-    #[cfg(feature = "extension-vector")]
     pub const VECTOR: Self = DEFINITION_VECTOR;
 
     /// Extension artifacts enabled in this Cargo build.
     pub const ALL: &'static [Self] = &[
-        #[cfg(feature = "extension-amcheck")]
         Self::AMCHECK,
-        #[cfg(feature = "extension-auto-explain")]
         Self::AUTO_EXPLAIN,
-        #[cfg(feature = "extension-bloom")]
         Self::BLOOM,
-        #[cfg(feature = "extension-btree-gin")]
         Self::BTREE_GIN,
-        #[cfg(feature = "extension-btree-gist")]
         Self::BTREE_GIST,
-        #[cfg(feature = "extension-citext")]
         Self::CITEXT,
-        #[cfg(feature = "extension-cube")]
         Self::CUBE,
-        #[cfg(feature = "extension-dict-int")]
         Self::DICT_INT,
-        #[cfg(feature = "extension-dict-xsyn")]
         Self::DICT_XSYN,
-        #[cfg(feature = "extension-earthdistance")]
         Self::EARTHDISTANCE,
-        #[cfg(feature = "extension-file-fdw")]
         Self::FILE_FDW,
-        #[cfg(feature = "extension-fuzzystrmatch")]
         Self::FUZZYSTRMATCH,
-        #[cfg(feature = "extension-hstore")]
         Self::HSTORE,
-        #[cfg(feature = "extension-intarray")]
         Self::INTARRAY,
-        #[cfg(feature = "extension-isn")]
         Self::ISN,
-        #[cfg(feature = "extension-lo")]
         Self::LO,
-        #[cfg(feature = "extension-ltree")]
         Self::LTREE,
-        #[cfg(feature = "extension-pageinspect")]
         Self::PAGEINSPECT,
-        #[cfg(feature = "extension-pg-buffercache")]
         Self::PG_BUFFERCACHE,
-        #[cfg(feature = "extension-pg-freespacemap")]
         Self::PG_FREESPACEMAP,
-        #[cfg(feature = "extension-pg-hashids")]
         Self::PG_HASHIDS,
-        #[cfg(feature = "extension-pg-ivm")]
         Self::PG_IVM,
-        #[cfg(feature = "extension-pg-surgery")]
         Self::PG_SURGERY,
-        #[cfg(feature = "extension-pg-textsearch")]
         Self::PG_TEXTSEARCH,
-        #[cfg(feature = "extension-pg-trgm")]
         Self::PG_TRGM,
-        #[cfg(feature = "extension-pg-uuidv7")]
         Self::PG_UUIDV7,
-        #[cfg(feature = "extension-pg-visibility")]
         Self::PG_VISIBILITY,
-        #[cfg(feature = "extension-pg-walinspect")]
         Self::PG_WALINSPECT,
-        #[cfg(feature = "extension-pgcrypto")]
         Self::PGCRYPTO,
-        #[cfg(feature = "extension-pgtap")]
         Self::PGTAP,
-        #[cfg(feature = "extension-postgis")]
         Self::POSTGIS,
-        #[cfg(feature = "extension-seg")]
         Self::SEG,
-        #[cfg(feature = "extension-tablefunc")]
         Self::TABLEFUNC,
-        #[cfg(feature = "extension-tcn")]
         Self::TCN,
-        #[cfg(feature = "extension-tsm-system-rows")]
         Self::TSM_SYSTEM_ROWS,
-        #[cfg(feature = "extension-tsm-system-time")]
         Self::TSM_SYSTEM_TIME,
-        #[cfg(feature = "extension-unaccent")]
         Self::UNACCENT,
-        #[cfg(feature = "extension-uuid-ossp")]
         Self::UUID_OSSP,
-        #[cfg(feature = "extension-vector")]
         Self::VECTOR,
     ];
 }
@@ -600,83 +522,44 @@ impl Extension {
 #[cfg(test)]
 pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
     match extension.sql_name() {
-        #[cfg(feature = "extension-amcheck")]
         "amcheck" => true,
-        #[cfg(feature = "extension-auto-explain")]
         "auto_explain" => false,
-        #[cfg(feature = "extension-bloom")]
         "bloom" => true,
-        #[cfg(feature = "extension-btree-gin")]
         "btree_gin" => true,
-        #[cfg(feature = "extension-btree-gist")]
         "btree_gist" => true,
-        #[cfg(feature = "extension-citext")]
         "citext" => true,
-        #[cfg(feature = "extension-cube")]
         "cube" => true,
-        #[cfg(feature = "extension-dict-int")]
         "dict_int" => true,
-        #[cfg(feature = "extension-dict-xsyn")]
         "dict_xsyn" => true,
-        #[cfg(feature = "extension-earthdistance")]
         "earthdistance" => true,
-        #[cfg(feature = "extension-file-fdw")]
         "file_fdw" => true,
-        #[cfg(feature = "extension-fuzzystrmatch")]
         "fuzzystrmatch" => true,
-        #[cfg(feature = "extension-hstore")]
         "hstore" => true,
-        #[cfg(feature = "extension-intarray")]
         "intarray" => true,
-        #[cfg(feature = "extension-isn")]
         "isn" => true,
-        #[cfg(feature = "extension-lo")]
         "lo" => true,
-        #[cfg(feature = "extension-ltree")]
         "ltree" => true,
-        #[cfg(feature = "extension-pageinspect")]
         "pageinspect" => true,
-        #[cfg(feature = "extension-pg-buffercache")]
         "pg_buffercache" => true,
-        #[cfg(feature = "extension-pg-freespacemap")]
         "pg_freespacemap" => true,
-        #[cfg(feature = "extension-pg-hashids")]
         "pg_hashids" => true,
-        #[cfg(feature = "extension-pg-ivm")]
         "pg_ivm" => true,
-        #[cfg(feature = "extension-pg-surgery")]
         "pg_surgery" => true,
-        #[cfg(feature = "extension-pg-textsearch")]
         "pg_textsearch" => true,
-        #[cfg(feature = "extension-pg-trgm")]
         "pg_trgm" => true,
-        #[cfg(feature = "extension-pg-uuidv7")]
         "pg_uuidv7" => true,
-        #[cfg(feature = "extension-pg-visibility")]
         "pg_visibility" => true,
-        #[cfg(feature = "extension-pg-walinspect")]
         "pg_walinspect" => true,
-        #[cfg(feature = "extension-pgcrypto")]
         "pgcrypto" => true,
-        #[cfg(feature = "extension-pgtap")]
         "pgtap" => true,
-        #[cfg(feature = "extension-postgis")]
         "postgis" => true,
-        #[cfg(feature = "extension-seg")]
         "seg" => true,
-        #[cfg(feature = "extension-tablefunc")]
         "tablefunc" => true,
-        #[cfg(feature = "extension-tcn")]
         "tcn" => true,
-        #[cfg(feature = "extension-tsm-system-rows")]
         "tsm_system_rows" => true,
-        #[cfg(feature = "extension-tsm-system-time")]
         "tsm_system_time" => true,
-        #[cfg(feature = "extension-unaccent")]
         "unaccent" => true,
-        #[cfg(feature = "extension-uuid-ossp")]
         "uuid-ossp" => true,
-        #[cfg(feature = "extension-vector")]
         "vector" => true,
         _ => false,
     }
@@ -685,124 +568,85 @@ pub(super) fn creates_database_object_for_test(extension: Extension) -> bool {
 #[cfg(test)]
 pub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'static str] {
     match extension.sql_name() {
-        #[cfg(feature = "extension-amcheck")]
         "amcheck" => &["CREATE EXTENSION IF NOT EXISTS \"amcheck\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-auto-explain")]
         "auto_explain" => &[
             "LOAD 'auto_explain';",
             "SET auto_explain.log_min_duration = '0';",
             "SET auto_explain.log_analyze = 'true';",
             "SET auto_explain.log_level = 'NOTICE';",
         ],
-        #[cfg(feature = "extension-bloom")]
         "bloom" => &["CREATE EXTENSION IF NOT EXISTS \"bloom\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-btree-gin")]
         "btree_gin" => {
             &["CREATE EXTENSION IF NOT EXISTS \"btree_gin\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-btree-gist")]
         "btree_gist" => {
             &["CREATE EXTENSION IF NOT EXISTS \"btree_gist\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-citext")]
         "citext" => &["CREATE EXTENSION IF NOT EXISTS \"citext\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-cube")]
         "cube" => &["CREATE EXTENSION IF NOT EXISTS \"cube\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-dict-int")]
         "dict_int" => &["CREATE EXTENSION IF NOT EXISTS \"dict_int\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-dict-xsyn")]
         "dict_xsyn" => {
             &["CREATE EXTENSION IF NOT EXISTS \"dict_xsyn\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-earthdistance")]
         "earthdistance" => {
             &["CREATE EXTENSION IF NOT EXISTS \"earthdistance\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-file-fdw")]
         "file_fdw" => &["CREATE EXTENSION IF NOT EXISTS \"file_fdw\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-fuzzystrmatch")]
         "fuzzystrmatch" => {
             &["CREATE EXTENSION IF NOT EXISTS \"fuzzystrmatch\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-hstore")]
         "hstore" => &["CREATE EXTENSION IF NOT EXISTS \"hstore\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-intarray")]
         "intarray" => &["CREATE EXTENSION IF NOT EXISTS \"intarray\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-isn")]
         "isn" => &["CREATE EXTENSION IF NOT EXISTS \"isn\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-lo")]
         "lo" => &["CREATE EXTENSION IF NOT EXISTS \"lo\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-ltree")]
         "ltree" => &["CREATE EXTENSION IF NOT EXISTS \"ltree\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-pageinspect")]
         "pageinspect" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pageinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-buffercache")]
         "pg_buffercache" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_buffercache\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-freespacemap")]
         "pg_freespacemap" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_freespacemap\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-hashids")]
         "pg_hashids" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_hashids\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-ivm")]
         "pg_ivm" => &["CREATE EXTENSION IF NOT EXISTS \"pg_ivm\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-pg-surgery")]
         "pg_surgery" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_surgery\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-textsearch")]
         "pg_textsearch" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_textsearch\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-trgm")]
         "pg_trgm" => &["CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-pg-uuidv7")]
         "pg_uuidv7" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_uuidv7\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-visibility")]
         "pg_visibility" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_visibility\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pg-walinspect")]
         "pg_walinspect" => {
             &["CREATE EXTENSION IF NOT EXISTS \"pg_walinspect\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-pgcrypto")]
         "pgcrypto" => &["CREATE EXTENSION IF NOT EXISTS \"pgcrypto\";"],
-        #[cfg(feature = "extension-pgtap")]
         "pgtap" => &["CREATE EXTENSION IF NOT EXISTS \"pgtap\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-postgis")]
         "postgis" => &["CREATE EXTENSION IF NOT EXISTS \"postgis\";"],
-        #[cfg(feature = "extension-seg")]
         "seg" => &["CREATE EXTENSION IF NOT EXISTS \"seg\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-tablefunc")]
         "tablefunc" => {
             &["CREATE EXTENSION IF NOT EXISTS \"tablefunc\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-tcn")]
         "tcn" => &["CREATE EXTENSION IF NOT EXISTS \"tcn\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-tsm-system-rows")]
         "tsm_system_rows" => {
             &["CREATE EXTENSION IF NOT EXISTS \"tsm_system_rows\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-tsm-system-time")]
         "tsm_system_time" => {
             &["CREATE EXTENSION IF NOT EXISTS \"tsm_system_time\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-unaccent")]
         "unaccent" => &["CREATE EXTENSION IF NOT EXISTS \"unaccent\" WITH SCHEMA \"pg_catalog\";"],
-        #[cfg(feature = "extension-uuid-ossp")]
         "uuid-ossp" => {
             &["CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA \"pg_catalog\";"]
         }
-        #[cfg(feature = "extension-vector")]
         "vector" => &["CREATE EXTENSION IF NOT EXISTS \"vector\" WITH SCHEMA \"pg_catalog\";"],
         _ => &[],
     }

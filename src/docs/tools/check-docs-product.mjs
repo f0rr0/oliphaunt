@@ -835,13 +835,11 @@ function assertReferencePageCoverage() {
       title: 'Extensions',
       components: ['ExactExtensionRule', 'ExtensionArtifactFlow'],
       headings: [
-        'Native selection',
-        'Rust WASIX selection',
-        'WASIX TypeScript selection',
-        'Platform Behavior',
-        'Dependencies',
-        'External Extensions',
-        'Verifying App Artifacts',
+        'Native Rust',
+        'Rust WASIX',
+        'TypeScript',
+        'Mobile packaging',
+        'Dependencies and versions',
       ],
     },
     {

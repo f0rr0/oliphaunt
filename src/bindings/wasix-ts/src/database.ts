@@ -404,14 +404,6 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     });
   }
 
-  /** @internal Serialized connection ownership used by optional server/tool packages. */
-  runProtocolConnection(
-    connection: WasixProtocolConnection,
-    mode: WasixProtocolConnectionMode,
-  ): Promise<void> {
-    return this.reserveProtocolConnection(connection, mode).start();
-  }
-
   /** @internal Reserve call order without entering the guest before a client is ready. */
   reserveProtocolConnection(
     connection: WasixProtocolConnection,
@@ -1037,16 +1029,6 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       throw new AggregateError(failures, 'Oliphaunt WASIX database resource cleanup failed');
     }
   }
-}
-
-/** @internal Optional packages acquire exclusive ownership without expanding the public class. */
-export function runWasixProtocolConnection(
-  database: OliphauntDatabase,
-  connection: WasixProtocolConnection,
-  mode: WasixProtocolConnectionMode,
-): Promise<void> {
-  assertWasixProtocolConnectionTarget(database);
-  return database.runProtocolConnection(connection, mode);
 }
 
 /** @internal Execute pg_dump in the realm that owns this database. */

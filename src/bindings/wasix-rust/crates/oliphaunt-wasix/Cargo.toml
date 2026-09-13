@@ -22,60 +22,18 @@ exclude = [
 runtime-version = "0.2.0"
 
 [features]
-default = []
+default = ["extensions"]
 __internal-napi = []
 extensions = []
+__internal-tools = []
 tools = [
+  "__internal-tools",
   "dep:oliphaunt-wasix-tools",
   "dep:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
   "dep:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
   "dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
   "dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
 ]
-extension-amcheck = ["extensions", "liboliphaunt-wasix-portable/extension-amcheck"]
-extension-auto-explain = ["extensions", "liboliphaunt-wasix-portable/extension-auto-explain"]
-extension-bloom = ["extensions", "liboliphaunt-wasix-portable/extension-bloom"]
-extension-btree-gin = ["extensions", "liboliphaunt-wasix-portable/extension-btree-gin"]
-extension-btree-gist = ["extensions", "liboliphaunt-wasix-portable/extension-btree-gist"]
-extension-citext = ["extensions", "liboliphaunt-wasix-portable/extension-citext"]
-extension-cube = ["extensions", "liboliphaunt-wasix-portable/extension-cube"]
-extension-dict-int = ["extensions", "liboliphaunt-wasix-portable/extension-dict-int"]
-extension-dict-xsyn = ["extensions", "liboliphaunt-wasix-portable/extension-dict-xsyn"]
-extension-earthdistance = [
-  "extensions",
-  "extension-cube",
-  "liboliphaunt-wasix-portable/extension-earthdistance",
-]
-extension-file-fdw = ["extensions", "liboliphaunt-wasix-portable/extension-file-fdw"]
-extension-fuzzystrmatch = ["extensions", "liboliphaunt-wasix-portable/extension-fuzzystrmatch"]
-extension-hstore = ["extensions", "liboliphaunt-wasix-portable/extension-hstore"]
-extension-intarray = ["extensions", "liboliphaunt-wasix-portable/extension-intarray"]
-extension-isn = ["extensions", "liboliphaunt-wasix-portable/extension-isn"]
-extension-lo = ["extensions", "liboliphaunt-wasix-portable/extension-lo"]
-extension-ltree = ["extensions", "liboliphaunt-wasix-portable/extension-ltree"]
-extension-pageinspect = ["extensions", "liboliphaunt-wasix-portable/extension-pageinspect"]
-extension-pg-buffercache = ["extensions", "liboliphaunt-wasix-portable/extension-pg-buffercache"]
-extension-pg-freespacemap = ["extensions", "liboliphaunt-wasix-portable/extension-pg-freespacemap"]
-extension-pg-hashids = ["extensions", "liboliphaunt-wasix-portable/extension-pg-hashids"]
-extension-pg-ivm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-ivm"]
-extension-pg-surgery = ["extensions", "liboliphaunt-wasix-portable/extension-pg-surgery"]
-extension-pg-textsearch = ["extensions", "liboliphaunt-wasix-portable/extension-pg-textsearch"]
-extension-pg-trgm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-trgm"]
-extension-pg-uuidv7 = ["extensions", "liboliphaunt-wasix-portable/extension-pg-uuidv7"]
-extension-pg-visibility = ["extensions", "liboliphaunt-wasix-portable/extension-pg-visibility"]
-extension-pg-walinspect = ["extensions", "liboliphaunt-wasix-portable/extension-pg-walinspect"]
-extension-pgcrypto = ["extensions", "liboliphaunt-wasix-portable/extension-pgcrypto"]
-extension-pgtap = ["extensions", "liboliphaunt-wasix-portable/extension-pgtap"]
-extension-postgis = ["extensions", "liboliphaunt-wasix-portable/extension-postgis"]
-extension-seg = ["extensions", "liboliphaunt-wasix-portable/extension-seg"]
-extension-tablefunc = ["extensions", "liboliphaunt-wasix-portable/extension-tablefunc"]
-extension-tcn = ["extensions", "liboliphaunt-wasix-portable/extension-tcn"]
-extension-tsm-system-rows = ["extensions", "liboliphaunt-wasix-portable/extension-tsm-system-rows"]
-extension-tsm-system-time = ["extensions", "liboliphaunt-wasix-portable/extension-tsm-system-time"]
-extension-unaccent = ["extensions", "liboliphaunt-wasix-portable/extension-unaccent"]
-extension-uuid-ossp = ["extensions", "liboliphaunt-wasix-portable/extension-uuid-ossp"]
-extension-vector = ["extensions", "liboliphaunt-wasix-portable/extension-vector"]
-icu = ["dep:oliphaunt-icu"]
 
 [package.metadata.oliphaunt-wasix.assets]
 postgres-version = "18.4"
@@ -90,6 +48,7 @@ cluster-seed-icu-archive-sha256 = "5036966275469d39b665d99ccd59d208fe6e77bcb2509
 initdb-wasix-sha256 = "c2438dd844943811da9de5dd5c2786c7b2cb1b03df41d8b71108dce1d632758b"
 
 [dependencies]
+oliphaunt-resources = { version = "0.2.0", path = "../../../../sdks/rust/crates/oliphaunt-resources" }
 anyhow = "1"
 async-trait = "0.1"
 cap-fs-ext = "4"
@@ -105,9 +64,8 @@ tempfile = "3"
 sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
-liboliphaunt-wasix-portable = { version = "*", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
+liboliphaunt-wasix-portable = { version = "*", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets", features = ["extension-amcheck", "extension-auto-explain", "extension-bloom", "extension-btree-gin", "extension-btree-gist", "extension-citext", "extension-cube", "extension-dict-int", "extension-dict-xsyn", "extension-earthdistance", "extension-file-fdw", "extension-fuzzystrmatch", "extension-hstore", "extension-intarray", "extension-isn", "extension-lo", "extension-ltree", "extension-pageinspect", "extension-pg-buffercache", "extension-pg-freespacemap", "extension-pg-surgery", "extension-pg-trgm", "extension-pg-visibility", "extension-pg-walinspect", "extension-pgcrypto", "extension-seg", "extension-tablefunc", "extension-tcn", "extension-tsm-system-rows", "extension-tsm-system-time", "extension-unaccent", "extension-uuid-ossp"] }
 oliphaunt-wasix-tools = { version = "*", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools", optional = true }
-oliphaunt-icu = { version = "*", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync"] }
 wasmer = { version = "=7.2.1", default-features = false, features = [
   "sys",

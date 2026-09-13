@@ -26,7 +26,7 @@ fn check_generated_manifest_with_outputs(
     outputs: Result<BuildOutputs>,
 ) -> Result<()> {
     let source_lane = DEFAULT_SOURCE_LANE;
-    match outputs.and_then(|outputs| effective_source_pins(manifest, &outputs)) {
+    match outputs.and_then(|_| effective_source_pins(manifest)) {
         Ok(expected_sources) => check_generated_manifest_sources_in(
             generated_assets_dir_for_source_lane(source_lane)?,
             &expected_sources,
@@ -786,42 +786,37 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
         );
     }
 
-    for extension in &manifest.extensions {
-        let rust_constant = supported_constants
-            .get(&extension.sql_name)
-            .ok_or_else(|| {
-                anyhow!(
-                    "extension {} missing from supported catalog",
-                    extension.sql_name
-                )
-            })?;
+    verify_extension_definitions(&generated, &supported_constants)?;
+    println!("generated extension API matches asset manifest and catalog");
+    Ok(())
+}
+
+fn verify_extension_definitions(
+    generated: &str,
+    constants: &BTreeMap<String, String>,
+) -> Result<()> {
+    for (sql_name, rust_constant) in constants {
         let definition_const = format!("DEFINITION_{rust_constant}");
-        let cargo_feature = format!("extension-{}", extension.sql_name.replace('_', "-"));
         for (needle, description) in [
             (
-                format!(
-                    "#[cfg(feature = {cargo_feature:?})]\nconst {definition_const}: Extension ="
-                ),
-                "feature-gated extension definition constant",
+                format!("const {definition_const}: Extension ="),
+                "extension definition constant",
             ),
             (
-                format!(
-                    "#[cfg(feature = {cargo_feature:?})]\n    pub const {rust_constant}: Self = {definition_const};"
-                ),
-                "feature-gated public extension constant",
+                format!("pub const {rust_constant}: Self = {definition_const};"),
+                "public extension constant",
             ),
             (
-                format!("#[cfg(feature = {cargo_feature:?})]\n        Self::{rust_constant},"),
-                "feature-gated Extension::ALL entry",
+                format!("        Self::{rust_constant},"),
+                "Extension::ALL entry",
             ),
-            (format!("{:?}", extension.sql_name), "extension SQL name"),
+            (format!("{sql_name:?}"), "extension SQL name"),
         ] {
             if !generated.contains(&needle) {
                 bail!("generated extension API is stale: missing {description} {needle}");
             }
         }
     }
-    println!("generated extension API matches asset manifest and catalog");
     Ok(())
 }
 
@@ -1494,4 +1489,34 @@ fn check_wasix_initdb_shim_abi_harness() -> Result<()> {
 fn check_wasix_bridge_abi_harness() -> Result<()> {
     eprintln!("warning: skipping POSIX WASIX bridge ABI harness on non-Unix host");
     Ok(())
+}
+
+#[cfg(test)]
+mod generated_extension_tests {
+    use super::*;
+
+    #[test]
+    fn current_descriptor_surface_passes_without_runtime_build_outputs() {
+        let catalog: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/extensions/generated/extensions.catalog.json"
+        ))
+        .unwrap();
+        let constants = catalog["extensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["sql-name"].as_str().unwrap().to_owned(),
+                    entry["rust-constant"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        let generated = include_str!(
+            "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs"
+        );
+        verify_extension_definitions(generated, &constants).unwrap();
+        let missing = generated.replace("pub const HSTORE:", "pub const STALE_HSTORE:");
+        assert!(verify_extension_definitions(&missing, &constants).is_err());
+    }
 }
