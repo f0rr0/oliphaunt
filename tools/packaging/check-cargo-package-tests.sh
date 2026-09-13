@@ -41,6 +41,8 @@ while IFS= read -r name; do
   case "$name" in OLIPHAUNT_*) unset "$name" ;; esac
 done < <(compgen -e)
 cd "$scratch"
-"$timeout_bin" 1800 cargo metadata --manifest-path "$manifest" --offline --format-version 1 > /dev/null
+# Populate the registry cache for the extracted package closure before offline compilation.
+"$timeout_bin" 1800 cargo --config net.offline=false fetch --manifest-path "$manifest"
+"$timeout_bin" 1800 cargo metadata --manifest-path "$manifest" --locked --offline --format-version 1 > /dev/null
 "$timeout_bin" 1800 cargo test --manifest-path "$manifest" --locked --offline --no-run "${test_args[@]}"
 echo "Cargo package test closure verified: $(basename "$(dirname "$manifest")")"

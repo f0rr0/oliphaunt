@@ -30,7 +30,7 @@ if [ -n "${FAIL_BUILD:-}" ]; then exit 19; fi
 if [ -n "${OLIPHAUNT_ANDROID_ARM64_ROOT:-}" ]; then mkdir -p "$OLIPHAUNT_ANDROID_ARM64_ROOT/out"; fi
 if [ -n "${OLIPHAUNT_ANDROID_X86_64_ROOT:-}" ]; then mkdir -p "$OLIPHAUNT_ANDROID_X86_64_ROOT/out"; fi
 host="${OLIPHAUNT_LINUX_WORK_ROOT:-${OLIPHAUNT_WORK_ROOT:-}}"
-if [ -n "$host" ]; then mkdir -p "$host/install" "$host/icu/share/icu" "$host/out/modules"; printf library >"$host/install/library"; fi
+if [ -n "$host" ]; then mkdir -p "$host/install" "$host/icu/share/icu" "$host/out/modules"; printf library >"$host/install/library"; printf data >"$host/icu/share/icu/icudt76l.dat"; fi
 case "$0" in *build-ios-xcframework.sh) mkdir -p target/liboliphaunt-ios-{device,simulator,xcframework}/out ;; esac
 case "$0" in *package-*) printf '%s %s %s\n' "$OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS" "$OLIPHAUNT_RELEASE_BUILD_RUNTIME" "$OLIPHAUNT_RELEASE_FETCH_ASSETS" >>"$CAPTURE" ;; esac
 STUB
@@ -41,6 +41,7 @@ for target in android-arm64-v8a android-x86_64 ios-xcframework; do
   : >"$CAPTURE"
   bash "$owner/tools/build-ci-target.sh" "$target"
   test -f "target/liboliphaunt-native-ci/$target/target/liboliphaunt-mobile-host/$target/install/library"
+  test "$(cat "target/liboliphaunt-native-ci/$target/target/liboliphaunt-mobile-host/$target/icu/share/icu/icudt76l.dat")" = data
   if [ "$target" = android-x86_64 ]; then
     ! grep -q -- '--runtime-only' "$CAPTURE"
     test -d "target/liboliphaunt-native-ci/$target/target/liboliphaunt-mobile-host/$target/out/modules"

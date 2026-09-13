@@ -87,7 +87,6 @@ tasks:
     deps:
       - extension-artifacts-native:build-target
       - extension-artifacts-wasix:build-target
-      - liboliphaunt-wasix:runtime-aot
       - extension-artifacts-wasix:build-aot
     inputs:
       - "@group(legal-files)"

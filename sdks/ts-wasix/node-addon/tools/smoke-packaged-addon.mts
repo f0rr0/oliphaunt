@@ -5,6 +5,8 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { stageLocalNpmTarball } from '../../../../tools/packaging/local-npm-tarball.mts';
+
 const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const PACKAGE_ROOT = path.join(WORKSPACE_ROOT, 'sdks/ts-wasix/node-addon');
 const PACKAGE_OUTPUT = path.join(WORKSPACE_ROOT, 'target/oliphaunt-wasix-napi/npm-packages');
@@ -231,7 +233,7 @@ async function main() {
         version: '0.0.0',
         private: true,
         type: 'module',
-        dependencies: { [carrierManifest.name]: pathToFileURL(tarball).href },
+        dependencies: { [carrierManifest.name]: stageLocalNpmTarball(tarball, scratch) },
       },
       null,
       2,

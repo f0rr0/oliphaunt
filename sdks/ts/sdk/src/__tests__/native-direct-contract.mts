@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { simpleQuery } from '@oliphaunt/ts-query/protocol';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import type { OliphauntClient, OliphauntDatabase, OpenConfig } from '../types.js';
+
+const { simpleQuery } = await import(
+  pathToFileURL(
+    createRequire(process.env.OLIPHAUNT_SMOKE_SDK ?? import.meta.url).resolve(
+      '@oliphaunt/ts-query/protocol',
+    ),
+  ).href
+);
 
 export async function assertNativeDatabaseContract(
   Oliphaunt: OliphauntClient,

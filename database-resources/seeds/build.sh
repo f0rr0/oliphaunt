@@ -37,6 +37,11 @@ case "$family" in
       exit 2
     fi
     runtime="${runtime:-$work_root/install}"
+    if [[ "$target" == *-datum64 && "$profile" == icu ]]; then
+      icu="${icu:-$work_root/icu/share/icu}"
+      source database-resources/icu/tools/data.sh
+      oliphaunt_icu_require_canonical_data "$icu/icudt76l.dat"
+    fi
     ;;
   wasix)
     target=portable

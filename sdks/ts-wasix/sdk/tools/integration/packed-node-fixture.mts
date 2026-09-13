@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { arch, platform } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { WASIX_RUNTIME_NPM_ASSET_PATHS } from '../../../../../runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm-contract.mts';
 import {
   renderWasixRuntimeDescriptorModule,
@@ -17,6 +17,8 @@ import { packWasixToolsNpmCarrier } from '../../../../../postgres-tools/wasix/to
 import { packWasixToolsAotNpmCarriers } from '../../../../../postgres-tools/wasix/tools/wasix-tools-aot-npm.mts';
 import { artifactTargets } from '../../../../../tools/release/release-artifact-targets.mts';
 import { assertWasixTypescriptNpmArchive } from '../wasix-typescript-package.mts';
+
+import { stageLocalNpmTarball } from '../../../../../tools/packaging/local-npm-tarball.mts';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 const packageRoot = resolve(repositoryRoot, 'sdks/ts-wasix/sdk');
@@ -110,23 +112,25 @@ export async function stagePackedWasixConsumer({
   const consumer = resolve(scratch, 'consumer');
   await mkdir(consumer, { recursive: true });
   const dependencies = {
-    [query.name]: pathToFileURL(query.file).href,
-    [runtime.name]: pathToFileURL(runtime.file).href,
-    [binding.name]: pathToFileURL(binding.file).href,
+    [query.name]: stageLocalNpmTarball(query.file, consumer),
+    [runtime.name]: stageLocalNpmTarball(runtime.file, consumer),
+    [binding.name]: stageLocalNpmTarball(binding.file, consumer),
   };
-  for (const resource of resources) dependencies[resource.name] = pathToFileURL(resource.file).href;
+  for (const resource of resources)
+    dependencies[resource.name] = stageLocalNpmTarball(resource.file, consumer);
   if (nativeCarrier !== undefined) {
-    dependencies[nativeCarrier.name] = pathToFileURL(nativeCarrier.file).href;
+    dependencies[nativeCarrier.name] = stageLocalNpmTarball(nativeCarrier.file, consumer);
   }
   if (extension !== undefined) {
-    dependencies[extension.name] = pathToFileURL(extension.file).href;
+    dependencies[extension.name] = stageLocalNpmTarball(extension.file, consumer);
   }
   if (toolsCarrier !== undefined) {
-    dependencies[toolsCarrier.name] = pathToFileURL(toolsCarrier.file).href;
+    dependencies[toolsCarrier.name] = stageLocalNpmTarball(toolsCarrier.file, consumer);
   }
-  if (toolsAot !== undefined) dependencies[toolsAot.name] = pathToFileURL(toolsAot.file).href;
+  if (toolsAot !== undefined)
+    dependencies[toolsAot.name] = stageLocalNpmTarball(toolsAot.file, consumer);
   if (toolsFacade !== undefined) {
-    dependencies[toolsFacade.name] = pathToFileURL(toolsFacade.file).href;
+    dependencies[toolsFacade.name] = stageLocalNpmTarball(toolsFacade.file, consumer);
   }
   await writeJson(resolve(consumer, 'package.json'), {
     name: consumerName,

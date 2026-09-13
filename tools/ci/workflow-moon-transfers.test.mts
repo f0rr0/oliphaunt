@@ -13,6 +13,7 @@ import {
 import path from 'node:path';
 import test from 'node:test';
 import { CI_JOB_TARGETS } from './ci_plan.mts';
+import { resolveExecution } from '../../.github/scripts/resolve-planned-moon-execution.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const workflow = Bun.YAML.parse(readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
@@ -84,6 +85,20 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         }
       }
     }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('extension package assembly consumes transferred artifacts without compiler prerequisites', () => {
+    const step = workflow.jobs['extension-packages'].steps.find(
+      (step) => step.name === 'Assemble exact-extension product packages',
+    );
+    const execution = resolveExecution(
+      ['extension-packages:package'],
+      JSON.parse(step.env.OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON),
+      tasks,
+    );
+    assert.deepEqual(execution.localDependencies, []);
+    assert.deepEqual(execution.targets, ['extension-packages:package']);
   });
 
 function dependencies(target) {

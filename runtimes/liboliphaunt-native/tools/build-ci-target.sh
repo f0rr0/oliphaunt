@@ -52,6 +52,7 @@ case "$target" in
     stage "$simulator/out"
     stage "$device/out"
     stage "$host_root/install"
+    stage "$host_root/icu/share/icu"
     ;;
 esac
 printf 'Staged native CI artifact: %s\n' "$stage_root"

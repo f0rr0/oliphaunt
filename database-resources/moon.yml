@@ -119,9 +119,9 @@ tasks:
 
   build-native-android-icu:
     tags: ["artifact-package", "ci-liboliphaunt-native-android-abi"]
-    deps: ["liboliphaunt-native:build-runtime-android-arm64-v8a","liboliphaunt-native:build-runtime-android-x86_64","database-resources:build-icu-data"]
+    deps: ["liboliphaunt-native:build-runtime-android-arm64-v8a","liboliphaunt-native:build-runtime-android-x86_64"]
     command: "env OLIPHAUNT_CI_TARGET=android-datum64 bash database-resources/seeds/build.sh native icu"
-    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
+    inputs: ["seeds/**/*", "icu/tools/data.sh", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
     outputs: ["/target/database-resources/release-assets/*seed-native-android-datum64-icu.*"]
     options:
       runFromWorkspaceRoot: true
@@ -137,9 +137,9 @@ tasks:
 
   build-native-ios-icu:
     tags: ["artifact-package", "ci-liboliphaunt-native-ios-abi"]
-    deps: ["liboliphaunt-native:build-runtime-ios-xcframework","database-resources:build-icu-data"]
+    deps: ["liboliphaunt-native:build-runtime-ios-xcframework"]
     command: "env OLIPHAUNT_CI_TARGET=ios-datum64 bash database-resources/seeds/build.sh native icu"
-    inputs: ["seeds/**/*", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
+    inputs: ["seeds/**/*", "icu/tools/data.sh", "contracts/**/*", "VERSION", "/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts"]
     outputs: ["/target/database-resources/release-assets/*seed-native-ios-datum64-icu.*"]
     options:
       runFromWorkspaceRoot: true
