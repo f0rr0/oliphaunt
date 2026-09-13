@@ -442,6 +442,14 @@ resource packages; they do not expose packaging implementation APIs.
 Native tool payload validation requires `pg_basebackup`, `pg_dump`, and `psql`
 as one complete tools set; an incomplete payload is rejected before packaging.
 
+SwiftPM's generated `oliphaunt-swift-extension-resource-v1` manifest uses
+`files=files` when it carries PostgreSQL resource files. A native-only extension
+with no SQL or data files uses `createsExtension=no` and an empty `files=` value;
+its resource directory contains only `manifest.properties`. This avoids relying
+on empty directories surviving Git source tags or SwiftPM packaging. A declared
+`files` tree must exist, and SQL extensions still require their control and
+installation SQL files.
+
 Runtime resources are shared by Swift, Kotlin, and React Native:
 
 ```text

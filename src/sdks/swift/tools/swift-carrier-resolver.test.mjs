@@ -691,6 +691,17 @@ async function main() {
   assert.equal((await fs.stat(path.join(bundledOutput, "src/sdks/swift/Sources/Oliphaunt/ContribResources/cube/Resources/extension-artifact/manifest.properties"))).isFile(), true);
   assert.match(renderSwiftTargets(bundled.targets), /generated\/swiftpm\/contrib\/Artifacts/u);
 
+  // Native-only extensions have no resource files. Git source tags cannot
+  // preserve empty directories, so their manifest must stand on its own.
+  const emptyOutput = path.join(root, "bundled-empty-resources");
+  await writeBundledContrib({ ...contrib, extensions: [{ ...contrib.extensions[0],
+    sqlName: "auto_explain", dependencies: [], resources: { files: [], createsExtension: false },
+  }] }, emptyOutput);
+  const emptyResource = path.join(emptyOutput,
+    "src/sdks/swift/Sources/Oliphaunt/ContribResources/auto_explain/Resources/extension-artifact");
+  assert.deepEqual(await fs.readdir(emptyResource), ["manifest.properties"]);
+  assert.match(await fs.readFile(path.join(emptyResource, "manifest.properties"), "utf8"), /^files=$/mu);
+
   // Exercise the bundled writer with a native dependency shared by two members.
   // Dependency archive resolution is already qualified by the PostGIS carrier above.
   const localPostgisInput = await resolveSwiftCarrierSelection({ carrierFile: carrier, cacheDir: cache,

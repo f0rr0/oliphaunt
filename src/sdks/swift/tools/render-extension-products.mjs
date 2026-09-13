@@ -672,12 +672,16 @@ export async function materializeFileSnapshots(
 async function copyResourceArtifact(extension, swiftRoot) {
   const resourceTarget = path.join(swiftRoot, "Resources", "extension-artifact");
   const shareTarget = path.join(resourceTarget, "files", "share", "postgresql");
-  await materializeFileSnapshots(
-    extension.resources.files,
-    shareTarget,
-    `${extension.sqlName} Swift resource artifact`,
-    { mode: 0o644 },
-  );
+  if (extension.resources.files.length > 0) {
+    await materializeFileSnapshots(
+      extension.resources.files,
+      shareTarget,
+      `${extension.sqlName} Swift resource artifact`,
+      { mode: 0o644 },
+    );
+  } else {
+    await fs.mkdir(resourceTarget, { recursive: true });
+  }
   const manifest = [
     "schema=oliphaunt-swift-extension-resource-v1",
     `product=${extension.product}`,
@@ -688,7 +692,7 @@ async function copyResourceArtifact(extension, swiftRoot) {
     `nativeModuleStem=${extension.nativeModuleStem ?? ""}`,
     `nativeDependencies=${extension.nativeDependencies.map(({ name }) => name).join(",")}`,
     `sharedPreloadLibraries=${extension.sharedPreloadLibraries.join(",")}`,
-    "files=files",
+    `files=${extension.resources.files.length > 0 ? "files" : ""}`,
     "",
   ].join("\n");
   await fs.writeFile(path.join(resourceTarget, "manifest.properties"), manifest);
