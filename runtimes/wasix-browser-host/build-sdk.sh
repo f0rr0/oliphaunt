@@ -121,7 +121,7 @@ echo "$wasmer_sha256  $wasmer_archive" | "$sha256sum_command" --check --status
 tar -xzf "$wasmer_archive" -C "$build_root"
 
 for patch_name in "${patch_series[@]}"; do
-  patch_file="$host_dir/patches$patch_name"
+  patch_file="$host_dir/patches/$patch_name"
   case "$patch_name" in
     ????-wasmer-js-*.patch)
       patch_dir="$wasmer_js_dir"

@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { installPackageAssetReader } from './asset-source.js';
 import { loadAsset } from './archive.js';
 import { assertSha256, loadIcuData, loadSeedBytes } from './extensions.js';
 import {
@@ -31,6 +33,8 @@ import type {
   WasixToolProcessResult,
 } from './tool-runtime.js';
 import { validateWasixToolDescriptor } from './tool-runtime.js';
+
+installPackageAssetReader(readFile);
 
 /** @internal A synchronous Rust Oliphaunt owned by the importing JavaScript realm. */
 export class NativeWasixSession implements WasixDatabaseSession {

@@ -10,7 +10,10 @@ export OLIPHAUNT_CI_JOB_TARGETS_JSON='{"wasix-ts-sdk-package":["oliphaunt-wasix-
 export OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON='["liboliphaunt-wasix:runtime-portable","oliphaunt-wasix-napi:build-release-assets","extension-artifacts-wasix:compiler-output","database-resources:build-wasix-standard","database-resources:build-wasix-icu","database-resources:package-icu"]'
 bash tools/dev/bun.sh "$resolver" wasix-ts-sdk-package >"$scratch/output"
 for task in package test-consumer test-browser; do grep -Fx "$(printf 'target\toliphaunt-wasix-ts:%s' "$task")" "$scratch/output"; done
-grep -Fx $'local\tdatabase-resources:package-wasix' "$scratch/output"
+grep -Fx $'target\tdatabase-resources:package-wasix' "$scratch/output"
+for variant in standard icu; do
+  grep -Fx "$(printf 'transferred\tdatabase-resources:build-wasix-%s' "$variant")" "$scratch/output"
+done
 if grep -E $'^(local|target)\tdatabase-resources:build-wasix-' "$scratch/output"; then exit 1; fi
 grep -Fx $'transferred\tliboliphaunt-wasix:runtime-portable' "$scratch/output"
 for platform in android ios; do

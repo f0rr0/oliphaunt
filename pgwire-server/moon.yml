@@ -50,7 +50,7 @@ tasks:
     command: "cargo test --locked -- --ignored --test-threads=1"
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]
     deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot"]
-    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock", "/extensions/catalog/extensions.source.json", "/test-fixtures/extensions/**/*"]
     options:
       cache: false
   test-aot:

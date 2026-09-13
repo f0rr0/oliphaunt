@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { rejects } from 'node:assert/strict';
 import { runWasixPgDumpProcess, WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES } from '../database.js';
+import { runWasixToolProcess } from '../internal.node.js';
 import type { WorkerResponse } from '../rpc.js';
 import { createWorkerSessionDispatcher } from '../worker-dispatch.js';
 import { openWorkerDatabase, WorkerRpc } from '../worker-rpc.js';
@@ -56,6 +57,33 @@ describe('WASIX worker RPC', () => {
 
     const closing = database.close();
     const close = await postedRequest(port, 3);
+    port.respond({ id: close.id, ok: true });
+    await closing;
+  });
+
+  it('preserves separately packaged tool sources across the worker boundary', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+    const tool = {
+      name: 'psql' as const,
+      sha256: '4'.repeat(64),
+      size: 1,
+      source: 'file:///tools/psql.wasm',
+    };
+    const running = runWasixToolProcess(database, { runtimeVersion: '0.1.1', tool, args: [] });
+    const request = await postedRequest(port, 1);
+    expect(request).toMatchObject({ method: 'runTool', options: { tool } });
+    port.respond({
+      id: request.id,
+      ok: true,
+      value: { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() },
+    });
+    await running;
+    const closing = database.close();
+    const close = await postedRequest(port, 2);
     port.respond({ id: close.id, ok: true });
     await closing;
   });

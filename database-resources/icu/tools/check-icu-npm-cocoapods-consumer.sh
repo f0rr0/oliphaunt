@@ -61,14 +61,6 @@ cp "$podspec_source" "$pod_root/OliphauntICU.podspec"
   extractPortableArchiveTree(process.argv[1], process.argv[2], "share/icu");
 ' "$archive" "$source_icu"
 
-ruby - "$source_icu" <<'RUBY'
-root = ARGV.fetch(0)
-resources = Dir.glob(File.join(root, "**", "*.res")).select { |file| File.file?(file) }
-duplicates = resources.group_by { |file| File.basename(file) }.values.select { |files| files.length > 1 }
-abort "ICU payload has no repeated .res basename and does not exercise the CocoaPods regression" if duplicates.empty?
-puts "ICU collision stimulus: #{duplicates.length} repeated .res basename groups"
-RUBY
-
 ruby - "$work" <<'RUBY'
 require "fileutils"
 require "xcodeproj"

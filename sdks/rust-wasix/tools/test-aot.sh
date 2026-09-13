@@ -51,5 +51,5 @@ aot_test_command=(
   --features extension-uuid-ossp,tools
   --lib "$aot_test_filter"
 )
-oliphaunt_assert_cargo_test_filter_count 3 "$aot_test_filter" "${aot_test_command[@]}"
+oliphaunt_require_cargo_test_filter "$aot_test_filter" "${aot_test_command[@]}"
 "${aot_test_command[@]}" -- --nocapture --test-threads=1

@@ -89,6 +89,7 @@ export default defineConfig({
     format: 'es',
   },
   server: {
+    ...(process.env.OLIPHAUNT_WASIX_BROWSER_SMOKE === '1' ? { hmr: false, watch: null } : {}),
     fs: {
       allow: [repositoryRoot, ...(packedConsumer === undefined ? [] : [packedConsumer])],
     },

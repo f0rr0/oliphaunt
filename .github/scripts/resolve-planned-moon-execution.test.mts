@@ -42,16 +42,22 @@ test('preserves local prerequisites while subtracting a transferred producer', (
   });
 });
 
-test('rejects an unrelated or transitively required transferred producer', () => {
+test('isolates intermediate prerequisites that consume a transitive artifact', () => {
+  assert.deepEqual(resolveExecution(['release:package'], ['source:fetch'], tasks), {
+    localDependencies: ['sdk:package'],
+    targets: ['native:ios', 'release:package'],
+    transferred: ['source:fetch'],
+  });
+  const shared = new Map(tasks);
+  shared.set('sdk:package', { deps: ['native:ios', 'sdk:compile'] });
+  assert.deepEqual(resolveExecution(['release:package'], ['native:ios'], shared), {
+    localDependencies: ['sdk:compile'],
+    targets: ['sdk:package', 'release:package'],
+    transferred: ['native:ios'],
+  });
   assert.throws(
-    () => resolveExecution(['release:package'], ['source:fetch'], tasks),
-    /not a direct dependency/u,
-  );
-  const conflicting = new Map(tasks);
-  conflicting.set('sdk:package', { target: 'sdk:package', deps: [{ target: 'native:ios' }] });
-  assert.throws(
-    () => resolveExecution(['release:package'], ['native:ios'], conflicting),
-    /still required by a local prerequisite/u,
+    () => resolveExecution(['release:package'], ['unrelated:producer'], tasks),
+    /not reachable/u,
   );
 });
 

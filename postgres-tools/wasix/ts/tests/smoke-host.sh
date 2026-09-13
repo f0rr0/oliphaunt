@@ -18,6 +18,10 @@ bun run --cwd "$root/sdks/ts-query" build
 bun pm --cwd "$root/sdks/ts-query" pack --filename "$scratch/query.tgz" --quiet
 bun "$root/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts" "$scratch" --pgtap --tools
 cd "$scratch/consumer"
+if [ "$2" = deno ]; then
+  printf '%s\n' '{"nodeModulesDir":"manual"}' > deno.json
+  host+=(--config "$scratch/consumer/deno.json")
+fi
 export NPM_CONFIG_IGNORE_SCRIPTS=true
 "$deadline" --kill-after=3s 120s bun install --ignore-scripts
 "$deadline" --kill-after=3s 300s "${host[@]}" \

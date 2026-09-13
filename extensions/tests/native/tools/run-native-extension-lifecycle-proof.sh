@@ -33,6 +33,7 @@ candidate_tree="$(git rev-parse 'HEAD^{tree}')"
 
 "$root/tools/dev/bun.sh" "$root/extensions/tests/native/tools/stage-native-extension-lifecycle.mts" \
   --runtime-assets "$input_root/runtime" \
+  --tools-assets "$input_root/tools" \
   --extension-assets "$input_root/extensions" \
   --broker-assets "$input_root/broker" \
   --proof-runner "$runner" \
@@ -70,7 +71,7 @@ if [ "$shard_index" = "0" ]; then
     "$runner" --native-tools-npm-smoke -- \
       bash \
       "$root/postgres-tools/native/tools/smoke-packed-tools-npm.sh" \
-      --asset-dir "$input_root/runtime" 2>&1 \
+      --asset-dir "$input_root/tools" 2>&1 \
     | tee "$evidence_root/native-tools-npm-shard-$shard_index.log"
 fi
 "$root/tools/dev/bun.sh" "$root/extensions/tests/native/tools/write-native-extension-lifecycle-receipt.mts" \

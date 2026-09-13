@@ -442,9 +442,6 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
         method: 'runTool',
         options: {
           ...options,
-          // The release addon owns the verified tool payload. Preserve only
-          // the descriptor identity across the Worker boundary.
-          tool: { ...options.tool, source: 'oliphaunt:wasix-napi-embedded' },
           args: [...options.args],
           ...(stdin === undefined ? {} : { stdin }),
         },

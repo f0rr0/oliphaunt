@@ -59,6 +59,8 @@ fileGroups:
     - crates/**/*.rs
     - crates/**/Cargo.toml
   extension-smoke-inputs:
+    - /pgwire-server/Cargo.toml
+    - /pgwire-server/tests/extensions.rs
     - /sdks/rust-query/src/lib.rs
     - /test-fixtures/**/*
     - tools/runtime-smoke.sh

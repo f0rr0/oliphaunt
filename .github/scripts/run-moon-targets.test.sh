@@ -64,3 +64,17 @@ if MOON_FAIL_TARGET=sdk:z-package bash .github/scripts/run-planned-moon-job.sh f
 fi
 printf 'run sdk:build\nrun --upstream none sdk:z-package\n' >"$fixture/expected"
 cmp "$MOON_CALLS" "$fixture/expected"
+
+# A narrowed consumer still needs its intermediate package, but never its transferred producer.
+: >"$MOON_CALLS"
+export OLIPHAUNT_CI_JOB_TARGETS_JSON='{"fixture":["sdk:a-consumer"]}'
+bash .github/scripts/run-planned-moon-job.sh fixture
+printf 'run sdk:build\nrun --upstream none sdk:z-package\nrun --upstream none sdk:a-consumer\n' >"$fixture/expected"
+cmp "$MOON_CALLS" "$fixture/expected"
+: >"$MOON_CALLS"
+if MOON_FAIL_TARGET=sdk:z-package bash .github/scripts/run-planned-moon-job.sh fixture; then
+  echo 'failed intermediate package reached its consumer' >&2
+  exit 1
+fi
+printf 'run sdk:build\nrun --upstream none sdk:z-package\n' >"$fixture/expected"
+cmp "$MOON_CALLS" "$fixture/expected"

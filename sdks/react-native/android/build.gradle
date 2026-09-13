@@ -354,21 +354,14 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
       "target", "compatibilityKey", "initialSuperuser", "runtimeFeatures", "icuDataVersion",
       "icuDataForm", "icuDataTreeSha256", "cacheKey",
     ] as Set<String>
-    File receiptFile = new File(root, "manifest.properties")
-    Map<String, String> receipt = readStrictManifest(receiptFile)
-    Map<String, String> expectedReceipt = [
-      schema: "oliphaunt-native-runtime-carrier-v1",
-      clusterSeedTarget: "android-datum64",
-      clusterSeedRelativePath: "cluster-seed",
-      icuClusterSeedRelativePath: "cluster-seed-icu",
-    ]
-    if (receipt != expectedReceipt) {
-      throw new GradleException("Oliphaunt React Native Android runtime resources have an invalid target seed receipt")
-    }
     String runtimeIcuDigest = ""
     boolean runtimeUsesIcu = false
     String icuSeedDigest = ""
-    ["runtime", "cluster-seed", "cluster-seed-icu"].each { name ->
+    // Mobile apps carry only the seed selected by runtimeFeatures.
+    ["runtime", "cluster-seed"].each { name ->
+      if (name == "cluster-seed" && runtimeUsesIcu) {
+        name = "cluster-seed-icu"
+      }
       File manifest = new File(new File(root, name), "manifest.properties")
       if (!manifest.isFile()) {
         throw new GradleException("Oliphaunt React Native Android runtime resources are missing ${name}/manifest.properties under ${root.absolutePath}")

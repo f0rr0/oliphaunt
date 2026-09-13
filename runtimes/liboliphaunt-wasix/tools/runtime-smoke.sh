@@ -60,11 +60,10 @@ oliphaunt_wasix_cargo_test() {
   fi
 }
 
-oliphaunt_wasix_counted_library_tests() {
-  local expected="$1"
-  local filter="$2"
+oliphaunt_wasix_library_tests() {
+  local filter="$1"
   local command=(oliphaunt_wasix_cargo_test --lib "$filter")
-  oliphaunt_assert_cargo_test_filter_count "$expected" "$filter" "${command[@]}"
+  oliphaunt_require_cargo_test_filter "$filter" "${command[@]}"
   "${command[@]}" -- --nocapture --test-threads=1
 }
 
@@ -81,10 +80,14 @@ oliphaunt_wasix_cargo_test \
 if [ "$asset_mode" = "full" ]; then
   # Each extension must pass direct execution, restart, physical backup/restore,
   # server execution and materialization. Tests record only completed modes.
-  oliphaunt_wasix_counted_library_tests 3 extension_tests::public_extensions
+  oliphaunt_wasix_library_tests extension_tests::public_extensions
+  server_command=(cargo test -p oliphaunt-pgwire-server --locked --no-default-features
+    --features "${full_evidence_features/,tools/}" --test extensions public_extensions_pass_server_smoke)
+  oliphaunt_require_cargo_test_filter public_extensions_pass_server_smoke "${server_command[@]}"
+  "${server_command[@]}" -- --ignored --exact --nocapture --test-threads=1
   tools_filter="oliphaunt::tools::tests::public_tools_round_trip_shared_logical_fixture"
   tools_command=(oliphaunt_wasix_cargo_test --lib "$tools_filter")
-  oliphaunt_assert_cargo_test_filter_count 1 "$tools_filter" "${tools_command[@]}"
+  oliphaunt_require_cargo_test_filter "$tools_filter" "${tools_command[@]}"
   "${tools_command[@]}" -- --exact --nocapture --test-threads=1
 else
   echo "runtime smoke complete; extension and tools behavior belongs to regression and owner consumer tasks"

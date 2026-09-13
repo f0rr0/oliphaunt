@@ -2559,6 +2559,7 @@ dependencies = [
  "anyhow",
  "oliphaunt-query",
  "oliphaunt-wasix",
+ "serde_json",
  "sqlx",
  "tempfile",
  "tokio",

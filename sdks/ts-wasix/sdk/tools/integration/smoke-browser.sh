@@ -65,7 +65,7 @@ else
 fi
 vite_port="$(jq -r '.vitePort' "$configuration")"
 chrome_port="$(jq -r '.chromePort' "$configuration")"
-(cd "$root/sdks/ts-wasix/sdk" && bun x --no-install vite \
+(cd "$root/sdks/ts-wasix/sdk" && OLIPHAUNT_WASIX_BROWSER_SMOKE=1 bun x --no-install vite \
   --config "$root/examples/browser-wasix/vite.config.ts" --host 127.0.0.1 \
   --port "$vite_port" --strictPort) > "$scratch/vite.log" 2>&1 &
 pids+=("$!")

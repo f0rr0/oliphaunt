@@ -45,6 +45,7 @@ function parseArgs(argv) {
   const values = new Map();
   const pathArguments = new Set([
     'runtime-assets',
+    'tools-assets',
     'extension-assets',
     'broker-assets',
     'proof-runner',
@@ -61,6 +62,7 @@ function parseArgs(argv) {
   }
   for (const required of [
     'runtime-assets',
+    'tools-assets',
     'extension-assets',
     'broker-assets',
     'proof-runner',
@@ -395,10 +397,11 @@ export function selectedExtensionDependencies(metadata) {
   return sorted.join(',');
 }
 
-function stageBaseRuntime(runtimeAssets, output, extensionRows) {
+function stageBaseRuntime(runtimeAssets, toolsAssets, output, extensionRows) {
   const version = currentProductVersionSync('liboliphaunt-native', PREFIX);
   const runtimeArchive = oneFile(runtimeAssets, `liboliphaunt-${version}-${TARGET}.tar.gz`);
-  const toolsArchive = oneFile(runtimeAssets, `oliphaunt-tools-${version}-${TARGET}.tar.gz`);
+  const toolsVersion = currentProductVersionSync('postgres-tools-native', PREFIX);
+  const toolsArchive = oneFile(toolsAssets, `oliphaunt-tools-${toolsVersion}-${TARGET}.tar.gz`);
   const runtimeEntries = readCanonicalTarGz(runtimeArchive);
   const toolsEntries = readCanonicalTarGz(toolsArchive);
   for (const required of [
@@ -419,11 +422,8 @@ function stageBaseRuntime(runtimeAssets, output, extensionRows) {
   }
   extract(runtimeEntries, path.join(output, 'resources/native-runtime/liboliphaunt-native'));
   extract(toolsEntries, path.join(output, 'resources/native-tools/oliphaunt-tools'));
-  assertExactFiles(
-    runtimeAssets,
-    [runtimeArchive, toolsArchive],
-    'Linux runtime artifact download',
-  );
+  assertExactFiles(runtimeAssets, [runtimeArchive], 'Linux runtime artifact download');
+  assertExactFiles(toolsAssets, [toolsArchive], 'Linux tools artifact download');
   return [
     artifactRecord('native-runtime', runtimeArchive),
     artifactRecord('native-tools', toolsArchive),
@@ -584,7 +584,7 @@ export function stageNativeExtensionLifecycle(args) {
   rmSync(args.output, { force: true, recursive: true });
   mkdirSync(args.output, { recursive: true });
   const consumedArtifacts = [
-    ...stageBaseRuntime(args['runtime-assets'], args.output, extensionRows),
+    ...stageBaseRuntime(args['runtime-assets'], args['tools-assets'], args.output, extensionRows),
     ...stageBroker(args['broker-assets'], args.output),
     ...stageExtensions(args['extension-assets'], args.output, extensionRows),
     artifactRecord('native-extension-proof-runner', args['proof-runner']),

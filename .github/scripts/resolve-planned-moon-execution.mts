@@ -31,57 +31,49 @@ export function resolveExecution(targets, transferred, tasks) {
   if (transferredSet.size === 0) {
     return { localDependencies: [], targets: [...roots].sort(), transferred: [] };
   }
-  const directDependencies = new Set(
-    targets.flatMap((target) => dependencyTargets(tasks.get(target), tasks)),
-  );
-  for (const target of transferredSet) {
-    if (!directDependencies.has(target)) {
-      throw new Error(
-        `transferred dependency ${target} is not a direct dependency of a selected root`,
-      );
-    }
-  }
-
-  const orderedRoots = [];
+  // Only paths touching an artifact boundary need dependency-free execution.
+  // Leave complete local subtrees to Moon so their normal caching still applies.
+  const affected = new Map();
   const visiting = new Set();
-  const ordered = new Set();
+  const consumed = new Set();
   function visit(target) {
-    if (transferredSet.has(target) || ordered.has(target)) return;
+    if (transferredSet.has(target)) {
+      consumed.add(target);
+      return true;
+    }
+    if (affected.has(target)) return affected.get(target);
     if (visiting.has(target)) throw new Error(`task dependency cycle at ${target}`);
     if (!tasks.has(target))
       throw new Error(`dependency ${target} is missing from the Moon task graph`);
     visiting.add(target);
-    for (const dependency of dependencyTargets(tasks.get(target), tasks)) visit(dependency);
+    const dependencies = dependencyTargets(tasks.get(target), tasks).map(visit);
     visiting.delete(target);
-    ordered.add(target);
-    if (roots.has(target)) orderedRoots.push(target);
+    const needsIsolation = roots.has(target) || dependencies.some(Boolean);
+    affected.set(target, needsIsolation);
+    return needsIsolation;
   }
   for (const target of [...roots].sort()) visit(target);
-
-  const localDependencies = [...directDependencies].filter(
-    (target) => !transferredSet.has(target) && !roots.has(target),
-  );
-  const pending = [...localDependencies];
-  const visited = new Set();
-  while (pending.length > 0) {
-    const target = pending.pop();
-    if (visited.has(target)) continue;
-    visited.add(target);
-    if (!tasks.has(target))
-      throw new Error(`dependency ${target} is missing from the Moon task graph`);
-    if (transferredSet.has(target)) {
-      throw new Error(`transferred dependency ${target} is still required by a local prerequisite`);
-    }
-    if (roots.has(target)) {
-      throw new Error(`selected root ${target} is still required by a local prerequisite`);
-    }
-    pending.push(...dependencyTargets(tasks.get(target), tasks));
+  for (const target of transferredSet) {
+    if (!consumed.has(target))
+      throw new Error(`transferred dependency ${target} is not reachable from a selected root`);
   }
 
+  const localDependencies = new Set();
+  const orderedTargets = new Set();
+  function schedule(target) {
+    if (transferredSet.has(target) || orderedTargets.has(target)) return;
+    if (!affected.get(target)) {
+      localDependencies.add(target);
+      return;
+    }
+    for (const dependency of dependencyTargets(tasks.get(target), tasks)) schedule(dependency);
+    orderedTargets.add(target);
+  }
+  for (const target of [...roots].sort()) schedule(target);
   return {
-    localDependencies: localDependencies.sort(),
-    targets: orderedRoots,
-    transferred: [...transferredSet].sort(),
+    localDependencies: [...localDependencies].sort(),
+    targets: [...orderedTargets],
+    transferred: [...consumed].sort(),
   };
 }
 
@@ -118,11 +110,20 @@ if (import.meta.main) {
     }
     const targets = selectedTarget === undefined ? planned : [selectedTarget];
     const tasks = taskMap();
-    const direct = new Set(
-      targets.flatMap((target) => dependencyTargets(tasks.get(target), tasks)),
-    );
-    // Workflows declare available artifacts; a narrowed plan consumes only its own inputs.
-    const transferred = parseTransferred().filter((target) => direct.has(target));
+    const available = new Set(parseTransferred());
+    const transferred = new Set();
+    const visited = new Set();
+    function collect(target) {
+      if (visited.has(target)) return;
+      visited.add(target);
+      if (available.has(target) && !targets.includes(target)) {
+        transferred.add(target);
+        return;
+      }
+      for (const dependency of dependencyTargets(tasks.get(target), tasks)) collect(dependency);
+    }
+    // A narrowed plan consumes reachable artifacts, stopping at each downloaded producer.
+    for (const target of targets) collect(target);
     const execution = resolveExecution(targets, transferred, tasks);
     for (const target of execution.localDependencies) console.log(`local\t${target}`);
     for (const target of execution.targets) console.log(`target\t${target}`);

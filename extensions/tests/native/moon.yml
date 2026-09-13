@@ -38,6 +38,7 @@ tasks:
     deps:
       - "extension-artifacts-native:build-target"
       - "liboliphaunt-native:build-runtime-desktop-target"
+      - "postgres-tools-native:package-assets"
       - "oliphaunt-broker:build-release-assets"
       - "oliphaunt-rust:package"
     inputs:

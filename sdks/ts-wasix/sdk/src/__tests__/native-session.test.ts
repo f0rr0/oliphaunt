@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { rejects } from 'node:assert/strict';
 
+import { readFile } from 'node:fs/promises';
+import { readPackageAsset } from '../asset-source.js';
+
 import { WasixDatabaseImpl } from '../database.js';
 import { WasixStorageError } from '../errors.js';
 import type {
@@ -32,6 +35,11 @@ import {
   nativeWasixOpenOptions,
   requireCompatibleNativeWasixAddon,
 } from '../native-session.js';
+
+it('loads package-relative assets in the native host realm', async () => {
+  const source = new URL('./native-session.test.ts', import.meta.url);
+  expect(await readPackageAsset(source.href, 'tool AOT')).toEqual(await readFile(source));
+});
 
 const toolBytes = Uint8Array.of(0, 97, 115, 109);
 const toolDescriptor = {
