@@ -6,7 +6,7 @@ import {
   extensionNativeRegistryPackageStrings,
   extensionRegistryPackageStrings,
   extensionWasixRegistryPackageStrings,
-} from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
+} from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import {
   brokerRuntimeMatrix,
   extensionArtifactsNativeMatrix,
@@ -505,9 +505,9 @@ export function validateRepository() {
     graph: inventory.graph,
     catalog: inventory.catalog,
     targets: inventory.targets,
-    jsManifest: readJson('sdks/ts/sdk/package.json'),
-    nativeToolsManifest: readJson('postgres-tools/native/npm/package.json'),
-    rustManifest: readToml('sdks/rust/sdk/Cargo.toml'),
+    jsManifest: readJson('src/sdks/ts/sdk/package.json'),
+    nativeToolsManifest: readJson('src/postgres-tools/native/npm/package.json'),
+    rustManifest: readToml('src/sdks/rust/sdk/Cargo.toml'),
     platformManifests: platformPackageManifests(inventory.graph, inventory.targets),
   });
   validateExtensionCarrierCoverage(inventory.graph, inventory.catalog, inventory.products);

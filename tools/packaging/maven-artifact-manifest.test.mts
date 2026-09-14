@@ -6,7 +6,7 @@ import path from 'node:path';
 import { buildMavenArtifactManifest } from './build-maven-artifact-manifest.mts';
 import { archiveDirectory } from './archive-directory.mts';
 import { createDeterministicTar } from './cargo-source-package.mts';
-import { stageExtensionUpstreamLicenses } from '../../extensions/tools/extension-upstream-licenses.mts';
+import { stageExtensionUpstreamLicenses } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { canonicalGzipSync } from './portable-archive.mts';
 import { parseMavenArtifactManifest } from './maven-artifact-manifest.mts';
 import {

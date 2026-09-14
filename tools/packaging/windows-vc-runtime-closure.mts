@@ -22,7 +22,7 @@ const TOOL = 'windows-vc-runtime-closure.mts';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const POLICY = JSON.parse(
   readFileSync(
-    path.join(ROOT, 'runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json'),
+    path.join(ROOT, 'src/runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json'),
     'utf8',
   ),
 );

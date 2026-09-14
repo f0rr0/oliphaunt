@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   filesystemTreeRows,
   logicalTreeSha256,
-} from '../../database-resources/contracts/native-manifest.mts';
+} from '../../src/database-resources/contracts/native-manifest.mts';
 import { createDeterministicTar } from './cargo-source-package.mts';
 import { extractPortableArchiveTree, releaseZstdCompressSync } from './portable-archive.mts';
 import { packageSpec } from './wasix-cargo-payload.mts';
@@ -15,7 +15,7 @@ const triple = 'x86_64-unknown-linux-gnu';
 const cases = [
   [
     'icu',
-    'database-resources/icu/cargo',
+    'src/database-resources/icu/cargo',
     'icu-data',
     'payload',
     'icu-data',
@@ -24,7 +24,7 @@ const cases = [
   ],
   [
     'runtime',
-    'runtimes/liboliphaunt-wasix/crates/assets',
+    'src/runtimes/liboliphaunt-wasix/crates/assets',
     'wasix-runtime',
     'payload',
     'target/oliphaunt-wasix/assets',
@@ -33,7 +33,7 @@ const cases = [
   ],
   [
     'tools',
-    'postgres-tools/wasix/crates/tools',
+    'src/postgres-tools/wasix/crates/tools',
     'wasix-tools',
     'payload',
     'target/postgres-tools/wasix/assets',
@@ -42,7 +42,7 @@ const cases = [
   ],
   [
     'runtime-aot',
-    `runtimes/liboliphaunt-wasix/crates/aot/${triple}`,
+    `src/runtimes/liboliphaunt-wasix/crates/aot/${triple}`,
     'wasix-aot',
     'artifacts',
     `target/oliphaunt-wasix/aot/${triple}`,
@@ -51,7 +51,7 @@ const cases = [
   ],
   [
     'tools-aot',
-    `postgres-tools/wasix/crates/aot/${triple}`,
+    `src/postgres-tools/wasix/crates/aot/${triple}`,
     'wasix-tools-aot',
     'artifacts',
     `target/postgres-tools/wasix/aot/${triple}`,
@@ -110,8 +110,8 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
   mkdirSync(path.join(base, '.git'));
   for (const marker of [
     'Cargo.toml',
-    'sdks/rust-wasix/Cargo.toml',
-    'runtimes/liboliphaunt-wasix/crates/assets/Cargo.toml',
+    'src/sdks/rust-wasix/Cargo.toml',
+    'src/runtimes/liboliphaunt-wasix/crates/assets/Cargo.toml',
   ]) {
     mkdirSync(path.dirname(path.join(base, marker)), { recursive: true });
     writeFileSync(path.join(base, marker), '');

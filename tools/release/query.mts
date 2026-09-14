@@ -15,7 +15,7 @@ import {
   sdkPackageProducts,
 } from './release-artifact-targets.mts';
 import { compareText, loadProducts, releaseOrder } from './release-graph.mts';
-import { extensionNpmPackageForProduct } from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
+import { extensionNpmPackageForProduct } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 
 const TOOL = 'release_graph_query.mts';
 

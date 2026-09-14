@@ -32,19 +32,19 @@ tasks:
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"
       - "@group(legal-files)"
-      - /extensions/tools/extension-upstream-licenses.mts
-      - /extensions/external/**/upstream-license-data.json
+      - /src/extensions/tools/extension-upstream-licenses.mts
+      - /src/extensions/external/**/upstream-license-data.json
       - "@group(upstream-licenses)"
-      - "/runtimes/liboliphaunt-{native,wasix}/THIRD_PARTY_NOTICES.md"
-      - "/third-party/{icu,openssl}/source.toml"
+      - "/src/runtimes/liboliphaunt-{native,wasix}/THIRD_PARTY_NOTICES.md"
+      - "/src/third-party/{icu,openssl}/source.toml"
       - "**/*.mts"
       - "**/*.sh"
-      - /database-resources/contracts/*.mts
+      - /src/database-resources/contracts/*.mts
       - /tools/release/**/*.mts
-      - /runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json
-      - /runtimes/liboliphaunt-wasix/crates/**/*
-      - /postgres-tools/wasix/crates/**/*
-      - /database-resources/icu/cargo/**/*
+      - /src/runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json
+      - /src/runtimes/liboliphaunt-wasix/crates/**/*
+      - /src/postgres-tools/wasix/crates/**/*
+      - /src/database-resources/icu/cargo/**/*
     options:
       cache: true
       runFromWorkspaceRoot: true

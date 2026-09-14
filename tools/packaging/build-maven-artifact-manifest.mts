@@ -23,7 +23,7 @@ import {
   assertExtensionUpstreamLicensesInEntries,
   extensionMavenLicenses,
   extensionRegistryLicense,
-} from '../../extensions/tools/extension-upstream-licenses.mts';
+} from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { readPortableArchiveEntries } from './portable-archive.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');

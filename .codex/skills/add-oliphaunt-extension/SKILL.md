@@ -11,7 +11,7 @@ Make support claims fail closed. A runtime target existing does not prove an ext
 
 - contrib: source is PostgreSQL 18. The SQL member belongs to the
   `oliphaunt-extension-contrib-pg18` logical distribution at
-  `extensions/contrib/`. It is not an independently versioned release
+  `src/extensions/contrib/`. It is not an independently versioned release
   product: its native and WASIX carriers belong to the corresponding runtime.
   A contrib member does not own a leaf `VERSION`, changelog, `release.toml`,
   tag, or registry identity.
@@ -40,7 +40,7 @@ Keep the SQL extension name distinct from the release product id and upstream pr
    When it does, record that reviewed endpoint as `mirror_url` and prove that
    it serves the exact pinned commit; never infer a mirror or use a community
    fork merely for availability.
-2. The canonical target profiles in `extensions/contracts/extension-target-profiles.toml` apply to every extension on main. A target-specific exception is branch work until its format and shipped behavior are implemented together; do not add status, promotion, or blocker metadata.
+2. The canonical target profiles in `src/extensions/contracts/extension-target-profiles.toml` apply to every extension on main. A target-specific exception is branch work until its format and shipped behavior are implemented together; do not add status, promotion, or blocker metadata.
 3. For an active public product, declare the stable Cargo façade plus native,
    mobile, WASIX portable/AOT, npm, and Maven carriers actually required by the
    owning release product. Contrib members use the shared bundle carriers and
@@ -50,7 +50,7 @@ Keep the SQL extension name distinct from the release product id and upstream pr
 4. Regenerate the shared extension model:
 
 ```sh
-bash extensions/tools/check-extension-model.sh --write
+bash src/extensions/tools/check-extension-model.sh --write
 ```
 
 Source-pin, patch, recipe, compiler-input, or producer-code changes require the
@@ -60,7 +60,7 @@ target-profile edits are package-envelope changes.
 5. Verify the model and release graph:
 
 ```sh
-bash extensions/tools/check-extension-model.sh --check
+bash src/extensions/tools/check-extension-model.sh --check
 bash tools/release/release-check.sh
 ```
 
@@ -69,7 +69,7 @@ fault suite, validate the real manifest, and perform one live exact-commit
 fetch from each newly declared endpoint. The canonical upstream must remain
 the durable origin and every transport must resolve to the same immutable pin.
 
-6. Build the exact extension artifacts for all declared targets. Require package-shape, archive safety, checksums, runtime load/create, restart, and dump/restore evidence where the target contract promises them. The exact-SHA CI lane must run `extensions/tools/collect-wasix-evidence.sh` against portable and host-AOT artifacts from that same workflow run. Only that collector may record `wasix-full-lifecycle-v1`; its immutable record must identify the exact commit, tree, workflow run, attempt, and job, and qualification must pass `--require-current-evidence`.
+6. Build the exact extension artifacts for all declared targets. Require package-shape, archive safety, checksums, runtime load/create, restart, and dump/restore evidence where the target contract promises them. The exact-SHA CI lane must run `src/extensions/tools/collect-wasix-evidence.sh` against portable and host-AOT artifacts from that same workflow run. Only that collector may record `wasix-full-lifecycle-v1`; its immutable record must identify the exact commit, tree, workflow run, attempt, and job, and qualification must pass `--require-current-evidence`.
 7. Run a clean local-registry install for each ecosystem façade. For a contrib
    bundle, select at least two members and prove that only those nested members
    are staged even though one target carrier contains all contrib bytes. Also

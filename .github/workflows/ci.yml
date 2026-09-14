@@ -1725,7 +1725,7 @@ jobs:
         run: |
           PRODUCER_MOON_VERSION="$(moon --version)"
           export PRODUCER_MOON_VERSION
-          bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts sdks/ts-query
+          bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts src/sdks/ts-query
 
   native-consumers:
     name: Builds / Native Product Consumers
@@ -2010,8 +2010,8 @@ jobs:
         if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
-          context: runtimes/liboliphaunt-wasix/assets/build/docker
-          file: runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile
+          context: src/runtimes/liboliphaunt-wasix/assets/build/docker
+          file: src/runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile
           tags: oliphaunt-wasix-wasix-build:ci
           load: true
           cache-from: type=gha,scope=wasix-builder
@@ -2021,8 +2021,8 @@ jobs:
         if: ${{ env.HEAVY_CACHE_SAVE_IF != 'true' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
-          context: runtimes/liboliphaunt-wasix/assets/build/docker
-          file: runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile
+          context: src/runtimes/liboliphaunt-wasix/assets/build/docker
+          file: src/runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile
           tags: oliphaunt-wasix-wasix-build:ci
           load: true
           cache-from: type=gha,scope=wasix-builder
@@ -2111,8 +2111,8 @@ jobs:
             target/oliphaunt-wasix/wasix-build/build/**
             target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**
             target/oliphaunt-wasix/assets/**
-            extensions/generated/**
-            runtimes/liboliphaunt-wasix/assets/generated/**
+            src/extensions/generated/**
+            src/runtimes/liboliphaunt-wasix/assets/generated/**
           if-no-files-found: error
 
   liboliphaunt-wasix-aot:
@@ -2337,6 +2337,29 @@ jobs:
           path: target/oliphaunt-wasix-postmaster/portable-inputs/wasix-postmaster-portable-build-inputs.tar.gz
           if-no-files-found: error
 
+      - name: Pack qualified Linux x64 postmaster runtime
+        if: ${{ contains(fromJson(needs.affected.outputs.liboliphaunt_wasix_postmaster_runtime_matrix).include.*.target_id, 'linux-x64-gnu') }}
+        run: |
+          tar -czf "$RUNNER_TEMP/postmaster-native-linux-x64.tar.gz" \
+            -C target/oliphaunt-wasix-postmaster \
+            runtime/build/wasmer-build.receipt \
+            runtime/build/postmaster-executor-build.receipt \
+            runtime/wasmer/target/release/wasmer \
+            runtime/wasmer/target/release/wasmer-headless \
+            runtime/postmaster-executor-target/release/oliphaunt-wasix-postmaster-executor \
+            runtime/postmaster-executor-target/release/oliphaunt-wasix-start-proof \
+            runtime/postmaster-executor-target/release/oliphaunt-wasix-memory-profile \
+            runtime/postmaster-compiler-target/release/oliphaunt-wasix-postmaster-compiler
+
+      - name: Upload qualified Linux x64 postmaster runtime
+        if: ${{ contains(fromJson(needs.affected.outputs.liboliphaunt_wasix_postmaster_runtime_matrix).include.*.target_id, 'linux-x64-gnu') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-native-linux-x64
+          path: ${{ runner.temp }}/postmaster-native-linux-x64.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
       - name: Upload Postmaster failure diagnostics
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -2404,9 +2427,23 @@ jobs:
           tar -xzf "$archive" --strip-components=1 \
             -C target/oliphaunt-wasix-postmaster
 
+      - name: Download qualified Linux x64 postmaster runtime
+        if: ${{ matrix.target_id == 'linux-x64-gnu' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-postmaster-native-linux-x64
+          path: target/oliphaunt-wasix-postmaster/native-input-download
+
+      - name: Restore qualified Linux x64 postmaster runtime
+        if: ${{ matrix.target_id == 'linux-x64-gnu' }}
+        run: |
+          tar -xzf target/oliphaunt-wasix-postmaster/native-input-download/postmaster-native-linux-x64.tar.gz \
+            -C target/oliphaunt-wasix-postmaster
+
       - name: Build, qualify, and package target WASIX postmaster
         env:
           OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS: "1"
+          OLIPHAUNT_WASIX_POSTMASTER_NATIVE_INPUTS: ${{ matrix.target_id == 'linux-x64-gnu' && '1' || '0' }}
           WASIX_INSTALL_DIR: ${{ github.workspace }}/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets liboliphaunt-wasix-postmaster:immediate-recovery liboliphaunt-wasix-postmaster:linear-memory-integration
 
@@ -2528,7 +2565,7 @@ jobs:
           SHARD_COUNT: ${{ matrix.shard_count }}
         run: |
           mkdir -p target/native-extension-lifecycle/evidence
-          extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh 2>&1 \
+          src/extensions/tests/native/tools/run-native-extension-lifecycle-proof.sh 2>&1 \
             | tee "target/native-extension-lifecycle/evidence/job-shard-${SHARD_INDEX}.log"
 
       - name: Upload native extension lifecycle evidence
@@ -2583,7 +2620,7 @@ jobs:
           fi
           candidate_tree="$(git rev-parse 'HEAD^{tree}')"
           mkdir -p target/native-extension-lifecycle/aggregate/output
-          tools/dev/bun.sh extensions/tests/native/tools/verify-native-extension-lifecycle-receipts.mts \
+          tools/dev/bun.sh src/extensions/tests/native/tools/verify-native-extension-lifecycle-receipts.mts \
             --receipts target/native-extension-lifecycle/aggregate/input \
             --candidate-sha "$CI_HEAD_SHA" \
             --candidate-tree "$candidate_tree" \
@@ -2691,7 +2728,7 @@ jobs:
           rsync -a "$raw_target_dir/" "$destination/"
 
       - name: Stage exact-extension WASIX evidence inputs
-        run: tools/dev/bun.sh extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts --all --family wasix --require-wasix
+        run: tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts --all --family wasix --require-wasix
 
       - name: Collect WASIX extension evidence
         id: regression
@@ -2705,10 +2742,10 @@ jobs:
             exit 1
           fi
           run_id="$(date -u +%Y-%m-%dT%H%M%SZ)-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${CI_HEAD_SHA}"
-          run_path="extensions/evidence/runs/$run_id.json"
+          run_path="src/extensions/evidence/runs/$run_id.json"
           echo "run_path=$run_path" >> "$GITHUB_OUTPUT"
           mkdir -p target/qualification/wasix-release-regression
-          extensions/tools/collect-wasix-evidence.sh "$run_id" 2>&1 \
+          src/extensions/tools/collect-wasix-evidence.sh "$run_id" 2>&1 \
             | tee target/qualification/wasix-release-regression/runtime-smoke.log
 
       - name: Upload WASIX extension evidence
@@ -2718,7 +2755,7 @@ jobs:
           name: wasix-release-regression-evidence
           path: |
             ${{ steps.regression.outputs.run_path }}
-            extensions/generated/docs/extension-evidence.json
+            src/extensions/generated/docs/extension-evidence.json
             target/qualification/wasix-release-regression/runtime-smoke.log
           if-no-files-found: error
           overwrite: true
@@ -2810,7 +2847,7 @@ jobs:
           seed_root=target/database-resources/mobile-android/cluster-seed-icu
           mkdir -p "$icu_root"
           tar -xzf "${icu_archives[0]}" -C "$icu_root"
-          tools/dev/bun.sh database-resources/seeds/package-mobile-carriers.mts stage \
+          tools/dev/bun.sh src/database-resources/seeds/package-mobile-carriers.mts stage \
             --archive "${seed_archives[0]}" --manifest "${seed_archives[0]%.tar.zst}.json" \
             --destination "$seed_root" --target android-datum64 --profile icu --icu-data "$icu_root/share/icu"
           echo "OLIPHAUNT_EXPO_ANDROID_SEED_DIR=$GITHUB_WORKSPACE/$seed_root" >> "$GITHUB_ENV"
@@ -2857,7 +2894,7 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh mobile-build-android
 
       - name: Validate Android mobile app artifacts
-        run: tools/dev/bun.sh sdks/react-native/tools/check-mobile-artifacts.mts android
+        run: tools/dev/bun.sh src/sdks/react-native/tools/check-mobile-artifacts.mts android
 
       - name: Upload Android mobile build logs
         if: ${{ always() }}
@@ -2946,7 +2983,7 @@ jobs:
           path: target/release/npm-packages/oliphaunt-icu
 
       - name: Package selected iOS seed npm carrier
-        run: bash tools/ci/with-projects.sh database-resources/seeds/package-carriers.mts --family native --target ios-datum64 --profile icu
+        run: bash tools/ci/with-projects.sh src/database-resources/seeds/package-carriers.mts --family native --target ios-datum64 --profile icu
 
       - name: Stage selected iOS ICU seed and data
         run: |
@@ -2957,12 +2994,12 @@ jobs:
             echo 'Expected exactly one canonical ICU archive and one iOS ICU seed.' >&2
             exit 1
           fi
-          database-resources/icu/tools/check-icu-npm-cocoapods-consumer.sh "${icu_archives[0]}"
+          src/database-resources/icu/tools/check-icu-npm-cocoapods-consumer.sh "${icu_archives[0]}"
           icu_root=target/database-resources/mobile-ios/icu
           seed_root=target/database-resources/mobile-ios/cluster-seed-icu
           mkdir -p "$icu_root"
           tar -xzf "${icu_archives[0]}" -C "$icu_root"
-          tools/dev/bun.sh database-resources/seeds/package-mobile-carriers.mts stage \
+          tools/dev/bun.sh src/database-resources/seeds/package-mobile-carriers.mts stage \
             --archive "${seed_archives[0]}" --manifest "${seed_archives[0]%.tar.zst}.json" \
             --destination "$seed_root" --target ios-datum64 --profile icu --icu-data "$icu_root/share/icu"
           {
@@ -2997,7 +3034,7 @@ jobs:
 
       - name: Render exact-SHA cache-warm iOS carrier manifest
         run: |
-          tools/dev/bun.sh sdks/swift/tools/ios-carrier-manifest.mts \
+          tools/dev/bun.sh src/sdks/swift/tools/ios-carrier-manifest.mts \
             --base-asset-dir target/liboliphaunt/release-assets \
             --extension-root target/mobile-extension-artifacts \
             --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json \
@@ -3010,7 +3047,7 @@ jobs:
           IOS_CARRIER_CACHE: target/qualification/react-native-ios-carrier-cache
           PLANNED_EXTENSION_SQL_NAMES: ${{ needs.affected.outputs.extension_package_sql_names_csv }}
         run: |
-          bash sdks/react-native/tools/qualify-ios-carriers.sh
+          bash src/sdks/react-native/tools/qualify-ios-carriers.sh
 
       - name: Run exact-extension Swift release consumer
         env:
@@ -3019,7 +3056,7 @@ jobs:
           OLIPHAUNT_SWIFT_SDK_ARTIFACT_DIR: ${{ github.workspace }}/target/sdk-artifacts/oliphaunt-swift
           PLANNED_EXTENSION_PRODUCTS: ${{ needs.affected.outputs.extension_package_products_csv }}
         run: |
-          source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
+          source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
           react_native_source_carrier=target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json
           cache_warm_carrier=target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
           if ! cmp -s "$source_carrier" "$react_native_source_carrier"; then
@@ -3065,7 +3102,7 @@ jobs:
           fi
 
           printf '%s\n' "${consumer_args[@]}" > "$evidence_dir/consumer-arguments.txt"
-          sdks/swift/tools/check-extension-release-consumer.sh "${consumer_args[@]}"
+          src/sdks/swift/tools/check-extension-release-consumer.sh "${consumer_args[@]}"
 
       - name: Build iOS mobile app
         env:
@@ -3085,11 +3122,11 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh mobile-build-ios
 
       - name: Validate iOS mobile app artifacts
-        run: tools/dev/bun.sh sdks/react-native/tools/check-mobile-artifacts.mts ios
+        run: tools/dev/bun.sh src/sdks/react-native/tools/check-mobile-artifacts.mts ios
 
       - name: Pack fidelity-preserving iOS app transport
         run: |
-          bash sdks/react-native/tools/ios-app-transport.sh pack \
+          bash src/sdks/react-native/tools/ios-app-transport.sh pack \
             --app-dir target/mobile-build/react-native/ios \
             --transport-dir target/mobile-build/react-native/ios-transport
 
@@ -3251,7 +3288,7 @@ jobs:
           OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
           OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-        run: bash sdks/react-native/tools/mobile-e2e.sh android
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh android
 
       - name: Upload Android E2E reports
         if: ${{ always() }}
@@ -3299,7 +3336,7 @@ jobs:
         id: ios_app_transport_verify
         run: |
           rm -rf target/mobile-build/react-native/ios
-          bash sdks/react-native/tools/ios-app-transport.sh verify-extract \
+          bash src/sdks/react-native/tools/ios-app-transport.sh verify-extract \
             --transport-dir target/mobile-build/react-native/ios-transport \
             --output-dir target/mobile-build/react-native/ios
 
@@ -3315,7 +3352,7 @@ jobs:
           OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-        run: bash sdks/react-native/tools/mobile-e2e.sh ios
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
 
       - name: Upload iOS E2E reports
         if: ${{ always() }}

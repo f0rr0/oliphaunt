@@ -145,7 +145,7 @@ jobs:
           OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
           OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-        run: bash sdks/react-native/tools/mobile-e2e.sh android
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh android
 
       - name: Upload Android E2E reports
         if: ${{ always() }}
@@ -202,7 +202,7 @@ jobs:
         id: verify_ios_app_transport
         run: |
           rm -rf target/mobile-build/react-native/ios
-          bash sdks/react-native/tools/ios-app-transport.sh verify-extract \
+          bash src/sdks/react-native/tools/ios-app-transport.sh verify-extract \
             --transport-dir target/mobile-build/react-native/ios-transport \
             --output-dir target/mobile-build/react-native/ios
           find target/mobile-build/react-native/ios -maxdepth 2 -print
@@ -217,7 +217,7 @@ jobs:
           OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-        run: bash sdks/react-native/tools/mobile-e2e.sh ios
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
 
       - name: Upload iOS E2E reports
         if: ${{ always() }}

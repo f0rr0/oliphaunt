@@ -10,6 +10,7 @@ if (phase === 'prepare') {
     [
       ['compile', ['quality', 'static'], {}],
       ['smoke', ['quality', 'smoke'], {}],
+      ...Array.from({ length: 6 }, (_, index) => [`static-${index}`, ['quality', 'static'], {}]),
       ['unit', ['quality', 'unit'], {}],
       ['coverage', ['coverage'], {}],
       ['local-unit', ['quality', 'unit'], { runInCI: false }],
@@ -44,7 +45,7 @@ if (phase === 'prepare') {
   tasks.extension = {
     target: 'alpha:extension',
     command: 'bash',
-    args: ['extensions/tools/check-extension-example.sh'],
+    args: ['src/extensions/tools/check-extension-example.sh'],
     tags: ['quality', 'static'],
   };
   tasks.policy = {
@@ -81,7 +82,15 @@ if (phase === 'prepare') {
         return [line.slice(0, separator), line.slice(separator + 1)];
       }),
   );
-  assert.equal(values.get('check_count'), '4');
+  assert.equal(values.get('check_count'), '10');
+  const checkGroups = JSON.parse(values.get('check_matrix')).include;
+  assert.ok(checkGroups.some(({ target_count }) => target_count > 4));
+  assert.ok(checkGroups.every(({ target_count }) => target_count <= 8));
+  const checkTargets = checkGroups.flatMap(({ targets_json }) =>
+    JSON.parse(targets_json).include.map(({ target }) => target),
+  );
+  assert.equal(checkTargets.length, 10);
+  assert.equal(new Set(checkTargets).size, 10);
   assert.equal(values.get('test_count'), '2');
   const policies = JSON.parse(values.get('policy_matrix')).include;
   assert.deepEqual(

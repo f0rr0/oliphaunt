@@ -20,6 +20,8 @@ test('real Git snapshots preserve nested tags, reject reused versions and bind S
     'false',
     'liboliphaunt-native-v0.2.0',
     'true',
+    'liboliphaunt-native-v0.3.0',
+    'true',
     '',
   ]);
   expect(validateVersionTags('product', '0.2.0', { tag_prefix: 'product-v' }, state)).toBe(true);

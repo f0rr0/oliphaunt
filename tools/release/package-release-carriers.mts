@@ -1,26 +1,26 @@
 #!/usr/bin/env bun
-import { packageBrokerCargoArtifacts } from '../../broker/tools/package_broker_cargo_artifacts.mts';
-import { BROKER_PRODUCT, packageBrokerCarriers } from '../../broker/tools/package-carriers.mts';
-import { packageDatabaseResourceCarriers } from '../../database-resources/tools/package-carriers.mts';
-import { packageExtensionCarriers } from '../../extensions/artifacts/packages/tools/package-carriers.mts';
-import { packageNativeToolsCarriers } from '../../postgres-tools/native/tools/package-carriers.mts';
-import { packageWasixToolsCarriers } from '../../postgres-tools/wasix/tools/package-carriers.mts';
+import { packageBrokerCargoArtifacts } from '../../src/broker/tools/package_broker_cargo_artifacts.mts';
+import { BROKER_PRODUCT, packageBrokerCarriers } from '../../src/broker/tools/package-carriers.mts';
+import { packageDatabaseResourceCarriers } from '../../src/database-resources/tools/package-carriers.mts';
+import { packageExtensionCarriers } from '../../src/extensions/artifacts/packages/tools/package-carriers.mts';
+import { packageNativeToolsCarriers } from '../../src/postgres-tools/native/tools/package-carriers.mts';
+import { packageWasixToolsCarriers } from '../../src/postgres-tools/wasix/tools/package-carriers.mts';
 import {
   LIBOLIPHAUNT_NATIVE_PRODUCT,
   packageLiboliphauntNativeCarriers,
-} from '../../runtimes/liboliphaunt-native/tools/package-carriers.mts';
+} from '../../src/runtimes/liboliphaunt-native/tools/package-carriers.mts';
 import {
   packageWasixRuntimeCarriers,
   WASIX_PRODUCT,
-} from '../../runtimes/liboliphaunt-wasix/tools/package-carriers.mts';
+} from '../../src/runtimes/liboliphaunt-wasix/tools/package-carriers.mts';
 import {
   NODE_DIRECT_PRODUCT,
   packageNodeDirectCarriers,
-} from '../../sdks/ts/node-addon/tools/check-carriers.mts';
+} from '../../src/sdks/ts/node-addon/tools/check-carriers.mts';
 import {
   packageWasixNapiCarriers,
   WASIX_NAPI_PRODUCT,
-} from '../../sdks/ts-wasix/node-addon/tools/check-carriers.mts';
+} from '../../src/sdks/ts-wasix/node-addon/tools/check-carriers.mts';
 import { fail, TOOL } from '../packaging/release-carrier.mts';
 import { exactExtensionReleaseProducts } from './release-artifact-targets.mts';
 

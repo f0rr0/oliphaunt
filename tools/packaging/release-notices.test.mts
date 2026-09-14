@@ -47,9 +47,9 @@ test('defines stable canonical member names in deterministic order', () => {
       ['THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md'],
       [
         'THIRD_PARTY_NOTICES.liboliphaunt-native.md',
-        'runtimes/liboliphaunt-native/THIRD_PARTY_NOTICES.md',
+        'src/runtimes/liboliphaunt-native/THIRD_PARTY_NOTICES.md',
       ],
-      ['THIRD_PARTY_NOTICES.oliphaunt-wasix.md', 'sdks/rust-wasix/THIRD_PARTY_NOTICES.md'],
+      ['THIRD_PARTY_NOTICES.oliphaunt-wasix.md', 'src/sdks/rust-wasix/THIRD_PARTY_NOTICES.md'],
     ],
   );
   assert.throws(

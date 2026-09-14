@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { exampleCargoPolicy } from './example-cargo-versions.mts';
 
 test('release bindings follow renamed packages and target scopes without controlling local dependencies', () => {
-  const policy = exampleCargoPolicy('examples/new-app/Cargo.toml', {
+  const policy = exampleCargoPolicy('src/examples/new-app/Cargo.toml', {
     dependencies: {
       database: { package: 'oliphaunt', version: '=0.2.0' },
       'oliphaunt-local': { path: '../local', version: '*' },

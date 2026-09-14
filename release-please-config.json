@@ -42,7 +42,7 @@
     }
   ],
   "packages": {
-    "runtimes/liboliphaunt-native": {
+    "src/runtimes/liboliphaunt-native": {
       "release-type": "simple",
       "component": "liboliphaunt-native",
       "package-name": "liboliphaunt-native",
@@ -75,7 +75,7 @@
         }
       ]
     },
-    "sdks/rust/sdk": {
+    "src/sdks/rust/sdk": {
       "release-type": "rust",
       "component": "oliphaunt-rust",
       "package-name": "oliphaunt",
@@ -88,7 +88,7 @@
         }
       ]
     },
-    "broker": {
+    "src/broker": {
       "release-type": "rust",
       "component": "oliphaunt-broker",
       "package-name": "oliphaunt-broker",
@@ -136,7 +136,7 @@
         }
       ]
     },
-    "sdks/ts/node-addon": {
+    "src/sdks/ts/node-addon": {
       "release-type": "node",
       "component": "oliphaunt-node-direct",
       "package-name": "@oliphaunt/node-direct",
@@ -164,7 +164,7 @@
         }
       ]
     },
-    "sdks/ts-wasix/node-addon": {
+    "src/sdks/ts-wasix/node-addon": {
       "release-type": "node",
       "component": "oliphaunt-wasix-napi",
       "package-name": "@oliphaunt/wasix-napi",
@@ -197,7 +197,7 @@
         }
       ]
     },
-    "sdks/swift": {
+    "src/sdks/swift": {
       "release-type": "simple",
       "component": "oliphaunt-swift",
       "package-name": "oliphaunt-swift",
@@ -206,7 +206,7 @@
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "sdks/kotlin": {
+    "src/sdks/kotlin": {
       "release-type": "simple",
       "component": "oliphaunt-kotlin",
       "package-name": "dev.oliphaunt:oliphaunt-android",
@@ -219,68 +219,68 @@
         }
       ]
     },
-    "sdks/react-native": {
+    "src/sdks/react-native": {
       "release-type": "node",
       "component": "oliphaunt-react-native",
       "package-name": "@oliphaunt/react-native",
       "changelog-path": "CHANGELOG.md"
     },
-    "sdks/ts/sdk": {
+    "src/sdks/ts/sdk": {
       "release-type": "node",
       "component": "oliphaunt-js",
       "package-name": "@oliphaunt/ts",
       "changelog-path": "CHANGELOG.md"
     },
-    "extensions/external/pg_hashids": {
+    "src/extensions/external/pg_hashids": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-hashids",
       "package-name": "oliphaunt-extension-pg-hashids",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "extensions/external/pg_ivm": {
+    "src/extensions/external/pg_ivm": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-ivm",
       "package-name": "oliphaunt-extension-pg-ivm",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "extensions/external/pg_textsearch": {
+    "src/extensions/external/pg_textsearch": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-textsearch",
       "package-name": "oliphaunt-extension-pg-textsearch",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "extensions/external/pg_uuidv7": {
+    "src/extensions/external/pg_uuidv7": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-uuidv7",
       "package-name": "oliphaunt-extension-pg-uuidv7",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "extensions/external/pgtap": {
+    "src/extensions/external/pgtap": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pgtap",
       "package-name": "oliphaunt-extension-pgtap",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "extensions/external/postgis": {
+    "src/extensions/external/postgis": {
       "release-type": "simple",
       "component": "oliphaunt-extension-postgis",
       "package-name": "oliphaunt-extension-postgis",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "extensions/external/vector": {
+    "src/extensions/external/vector": {
       "release-type": "simple",
       "component": "oliphaunt-extension-vector",
       "package-name": "oliphaunt-extension-vector",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "runtimes/liboliphaunt-wasix": {
+    "src/runtimes/liboliphaunt-wasix": {
       "release-type": "simple",
       "component": "liboliphaunt-wasix",
       "package-name": "liboliphaunt-wasix",
@@ -314,44 +314,44 @@
         }
       ]
     },
-    "runtimes/liboliphaunt-wasix-postmaster": {
+    "src/runtimes/liboliphaunt-wasix-postmaster": {
       "release-type": "simple",
       "component": "liboliphaunt-wasix-postmaster",
       "package-name": "liboliphaunt-wasix-postmaster",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     },
-    "sdks/rust-wasix": {
+    "src/sdks/rust-wasix": {
       "release-type": "rust",
       "component": "oliphaunt-wasix-rust",
       "package-name": "oliphaunt-wasix",
       "changelog-path": "CHANGELOG.md"
     },
-    "sdks/ts-wasix/sdk": {
+    "src/sdks/ts-wasix/sdk": {
       "release-type": "node",
       "component": "oliphaunt-wasix-ts",
       "package-name": "@oliphaunt/wasix-ts",
       "changelog-path": "CHANGELOG.md"
     },
-    "sdks/rust-query": {
+    "src/sdks/rust-query": {
       "release-type": "rust",
       "component": "oliphaunt-query",
       "package-name": "oliphaunt-query",
       "changelog-path": "CHANGELOG.md"
     },
-    "sdks/ts-query": {
+    "src/sdks/ts-query": {
       "release-type": "node",
       "component": "oliphaunt-query-ts",
       "package-name": "@oliphaunt/ts-query",
       "changelog-path": "CHANGELOG.md"
     },
-    "sdks/rust/liboliphaunt-native": {
+    "src/sdks/rust/liboliphaunt-native": {
       "release-type": "rust",
       "component": "liboliphaunt-native-bindings",
       "package-name": "liboliphaunt-native-bindings",
       "changelog-path": "CHANGELOG.md"
     },
-    "postgres-tools/native": {
+    "src/postgres-tools/native": {
       "release-type": "simple",
       "component": "postgres-tools-native",
       "version-file": "VERSION",
@@ -390,7 +390,7 @@
         }
       ]
     },
-    "postgres-tools/wasix": {
+    "src/postgres-tools/wasix": {
       "release-type": "simple",
       "component": "postgres-tools-wasix",
       "version-file": "VERSION",
@@ -454,7 +454,7 @@
         }
       ]
     },
-    "database-resources": {
+    "src/database-resources": {
       "release-type": "simple",
       "component": "database-resources",
       "version-file": "VERSION",
@@ -477,7 +477,7 @@
         }
       ]
     },
-    "pgwire-server": {
+    "src/pgwire-server": {
       "release-type": "rust",
       "component": "oliphaunt-pgwire-server",
       "package-name": "oliphaunt-pgwire-server",

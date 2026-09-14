@@ -1,12 +1,12 @@
 {
   "globs": [
     "README.md",
-    "docs/**/*.md",
+    "src/docs/**/*.md",
     "src/**/README.md",
-    "examples/react-native-expo/README.md",
-    "examples/tauri-wasix/README.md"
+    "src/examples/react-native-expo/README.md",
+    "src/examples/tauri-wasix/README.md"
   ],
-  "ignores": ["target/**", "**/node_modules/**", "runtimes/liboliphaunt-wasix/assets/build/**"],
+  "ignores": ["target/**", "**/node_modules/**", "src/runtimes/liboliphaunt-wasix/assets/build/**"],
   "config": {
     "default": true,
     "MD013": false,

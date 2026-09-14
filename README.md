@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/oliphaunt.png" alt="Oliphaunt" width="360">
+  <img src="src/docs/assets/oliphaunt.png" alt="Oliphaunt" width="360">
 </p>
 
 <p align="center">
@@ -59,7 +59,7 @@ the boundary.
 
 Exact-extension support is target-specific too. An extension is publishable
 for a target only when its own target manifest and evidence declare that row.
-The public [release reference](docs/content/reference/releases.mdx)
+The public [release reference](src/docs/content/reference/releases.mdx)
 publishes the enforced OS/API/ABI floors and distinguishes built package
 coverage from installed-app execution evidence, including the Android arm64
 and physical-iOS boundaries.
@@ -135,12 +135,12 @@ promote releases.
 
 ## Documentation
 
-- [Public SDK documentation](docs/content/sdk/index.mdx)
-- [Runtime support](docs/content/reference/capabilities.mdx)
-- [Exact extension model](docs/content/reference/extensions.mdx)
-- [Source architecture](docs/architecture/final-product-source-architecture.md)
-- [Maintainer documentation index](docs/maintainers/README.md)
-- [Release process](docs/maintainers/release.md)
+- [Public SDK documentation](src/docs/content/sdk/index.mdx)
+- [Runtime support](src/docs/content/reference/capabilities.mdx)
+- [Exact extension model](src/docs/content/reference/extensions.mdx)
+- [Source architecture](src/docs/architecture/final-product-source-architecture.md)
+- [Maintainer documentation index](src/docs/maintainers/README.md)
+- [Release process](src/docs/maintainers/release.md)
 - [Contributing](CONTRIBUTING.md)
 
 Oliphaunt is licensed under the terms recorded in [LICENSE](LICENSE).

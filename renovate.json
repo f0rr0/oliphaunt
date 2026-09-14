@@ -13,29 +13,18 @@
     "gradle",
     "gradle-wrapper",
     "npm",
-    "pep621",
     "swift"
   ],
   "packageRules": [
     {
-      "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions"
-    },
-    {
       "matchManagers": ["cargo"],
-      "groupName": "Rust crates"
-    },
-    {
-      "matchManagers": ["gradle", "gradle-wrapper"],
-      "groupName": "Android and Kotlin"
+      "matchPackageNames": ["napi", "napi-derive", "napi-build"],
+      "groupName": "Node-API bindings"
     },
     {
       "matchManagers": ["npm"],
-      "groupName": "JavaScript and React Native"
-    },
-    {
-      "matchManagers": ["swift", "cocoapods"],
-      "groupName": "Apple SDK"
+      "matchPackageNames": ["react", "react-dom", "@types/react", "@types/react-dom"],
+      "groupName": "React"
     }
   ]
 }

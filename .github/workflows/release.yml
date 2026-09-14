@@ -637,7 +637,7 @@ jobs:
           includes_swift: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') }}
           includes_react_native: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-react-native') }}
         run: |
-          swift_source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
+          swift_source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
           react_native_source_carrier=target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json
           extension_manifest_args=()
           extension_carrier_args=()
@@ -679,7 +679,7 @@ jobs:
               "${extension_manifest_args[@]}"
               --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
             )
-            tools/dev/bun.sh sdks/swift/tools/ios-carrier-manifest.mts "${public_args[@]}"
+            tools/dev/bun.sh src/sdks/swift/tools/ios-carrier-manifest.mts "${public_args[@]}"
           fi
 
           if [[ "$includes_swift" == true && ${#extension_manifest_args[@]} -gt 0 ]]; then
@@ -691,22 +691,22 @@ jobs:
               --output "$local_aggregate_carrier"
               --local-urls
             )
-            tools/dev/bun.sh sdks/swift/tools/ios-carrier-manifest.mts "${local_args[@]}"
-            extensions_csv="$(bun sdks/swift/tools/ios-carrier-manifest.mts list-extensions "$local_aggregate_carrier")"
+            tools/dev/bun.sh src/sdks/swift/tools/ios-carrier-manifest.mts "${local_args[@]}"
+            extensions_csv="$(bun src/sdks/swift/tools/ios-carrier-manifest.mts list-extensions "$local_aggregate_carrier")"
             if [[ -z "$extensions_csv" || ${#extension_carrier_args[@]} == 0 ]]; then
               echo 'Swift extension validation requires selected extension carrier assets.' >&2
               exit 1
             fi
             swift_version="$(tools/dev/bun.sh tools/release/product-version.mts version oliphaunt-swift)"
             cache=target/release-work/swiftpm-extension-cache
-            bun sdks/swift/tools/render-extension-products.mts \
+            bun src/sdks/swift/tools/render-extension-products.mts \
               --carrier "$local_aggregate_carrier" \
               --extensions "$extensions_csv" \
               --cache-dir "$cache" \
               --allow-file-urls \
               --base-package-version "$swift_version" \
               --output-dir target/release-work/swiftpm-extension-cache-warm
-            bun sdks/swift/tools/render-extension-products.mts \
+            bun src/sdks/swift/tools/render-extension-products.mts \
               --carrier "$swift_source_carrier" \
               "${extension_carrier_args[@]}" \
               --extensions "$extensions_csv" \
@@ -1789,11 +1789,11 @@ jobs:
             --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
             --base main
   request-docs-refresh:
-    name: Request docs refresh
+    name: Refresh published docs
     needs: publish
     if: ${{ needs.publish.outputs.promoted == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     environment: Production
     permissions:
       contents: read
@@ -1805,27 +1805,43 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+      - name: Record completed public releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/docs
+          bun src/docs/tools/verify-live.mts snapshot target/docs/expected-products.json
       - name: Request main-branch docs rebuild
         id: request_docs
         env:
           VERCEL_DOCS_DEPLOY_HOOK: ${{ secrets.VERCEL_DOCS_DEPLOY_HOOK }}
-        run: bash docs/tools/request-refresh.sh target/docs/deploy-hook.json
-      - name: Preserve accepted request receipt
+        run: bash src/docs/tools/request-refresh.sh target/docs/deploy-hook.json
+      - name: Verify live published versions
+        id: verify_docs
+        run: bun src/docs/tools/verify-live.mts verify target/docs/expected-products.json
+      - name: Preserve docs refresh evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: docs-refresh-request-${{ github.run_id }}-${{ github.run_attempt }}
-          path: target/docs/deploy-hook.json
-          if-no-files-found: error
+          path: |
+            target/docs/deploy-hook.json
+            target/docs/expected-products.json
+          if-no-files-found: ignore
           retention-days: 30
       - name: Report docs refresh separately from publication
         if: ${{ always() }}
         env:
           REQUEST_OUTCOME: ${{ steps.request_docs.outcome }}
+          LIVE_OUTCOME: ${{ steps.verify_docs.outcome }}
         run: |
           {
             echo '### Documentation refresh'
             echo 'Product publication completed successfully before this job.'
             echo "Refresh request: $REQUEST_OUTCOME."
-            echo 'Vercel deployment completion and live-site verification remain separate; an accepted hook is not deployment success.'
+            echo "Live published-version check: $LIVE_OUTCOME."
+            echo 'The live check requires the version page to link the expected completed public releases or newer stable releases; hook acceptance alone is insufficient.'
             echo 'Retry this docs job only after checking the Vercel deployment; do not republish products to refresh documentation.'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -26,7 +26,7 @@ elif [ "${1:-}" = run ]; then
       mkdir -p "$FAKE_TARGET_DIR/release"
       printf '#!/bin/sh\nexit 0\n' > "$FAKE_TARGET_DIR/release/oliphaunt-broker"
       chmod 755 "$FAKE_TARGET_DIR/release/oliphaunt-broker" ;;
-    *'cargo build --locked --offline --manifest-path /workspace/sdks/ts-wasix/node-addon/Cargo.toml'*)
+    *'cargo build --locked --offline --manifest-path /workspace/src/sdks/ts-wasix/node-addon/Cargo.toml'*)
       mkdir -p "$FAKE_TARGET_DIR/$FAKE_RUST_HOST/release"
       printf 'fixture\n' > "$FAKE_TARGET_DIR/$FAKE_RUST_HOST/release/liboliphaunt_wasix_napi.so" ;;
   esac
@@ -50,8 +50,8 @@ assert_isolated() {
   done
   ! grep -Eq 'docker\.sock|credentials|config\.json' "$FAKE_DOCKER_LOG"
 }
-broker=broker/tools/build-linux-broker-baseline.sh
-wasix=sdks/ts-wasix/node-addon/tools/build-linux-wasix-napi-baseline.sh
+broker=src/broker/tools/build-linux-broker-baseline.sh
+wasix=src/sdks/ts-wasix/node-addon/tools/build-linux-wasix-napi-baseline.sh
 consumer=tools/packaging/check-linux-consumer-baseline.sh
 bash "$broker" "$FAKE_TARGET_DIR"
 assert_isolated

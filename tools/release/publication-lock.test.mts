@@ -16,13 +16,13 @@ import { gunzipSync } from 'node:zlib';
 import {
   extensionCarrierLegalContract,
   stageExtensionUpstreamLicenses,
-} from '../../extensions/tools/extension-upstream-licenses.mts';
-import { extensionDependencyRequirement } from '../../runtimes/liboliphaunt-wasix/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
+} from '../../src/extensions/tools/extension-upstream-licenses.mts';
+import { extensionDependencyRequirement } from '../../src/runtimes/liboliphaunt-wasix/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
-} from '../../sdks/swift/tools/ios-carrier-manifest.mts';
+} from '../../src/sdks/swift/tools/ios-carrier-manifest.mts';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { canonicalGzipSync } from '../packaging/portable-archive.mts';
@@ -324,12 +324,12 @@ function extensionGithubReleaseFixture(
   const compatibility = releaseMetadata.compatibility;
   const generated = JSON.parse(
     readFileSync(
-      path.join(import.meta.dir, '../../extensions/generated/sdk/extensions.json'),
+      path.join(import.meta.dir, '../../src/extensions/generated/sdk/extensions.json'),
       'utf8',
     ),
   );
   const staticLines = readFileSync(
-    path.join(import.meta.dir, '../../extensions/generated/mobile/static-extensions.tsv'),
+    path.join(import.meta.dir, '../../src/extensions/generated/mobile/static-extensions.tsv'),
     'utf8',
   )
     .split(/\r?\n/u)
@@ -1326,7 +1326,7 @@ describe('publication artifact discovery and freezing', () => {
     const sdk = path.join(workspaceRoot, 'sdk-artifacts/oliphaunt-swift');
     const fixture = path.join(workspaceRoot, 'release/swiftpm-extension-consumer-fixture');
     mkdirSync(path.join(sdk, 'extension-generator'), { recursive: true });
-    mkdirSync(path.join(sdk, 'release-tree/sdks/swift/Carriers'), { recursive: true });
+    mkdirSync(path.join(sdk, 'release-tree/src/sdks/swift/Carriers'), { recursive: true });
     mkdirSync(path.join(fixture, 'Sources/OliphauntExtensionPgtap/Resources/extension-artifact'), {
       recursive: true,
     });
@@ -1343,13 +1343,13 @@ describe('publication artifact discovery and freezing', () => {
         path.join(sdk, 'extension-generator', name),
         name === 'extension-owner-catalog.json'
           ? readFileSync(
-              path.join(import.meta.dir, '../../extensions/generated/sdk/extensions.json'),
+              path.join(import.meta.dir, '../../src/extensions/generated/sdk/extensions.json'),
             )
           : name === 'extension-resource-inventory.mjs'
             ? releaseJavaScript(
                 path.join(
                   import.meta.dir,
-                  '../../sdks/swift/tools/extension-resource-inventory.mts',
+                  '../../src/sdks/swift/tools/extension-resource-inventory.mts',
                 ),
               )
             : `${name}\n`,
@@ -1357,7 +1357,7 @@ describe('publication artifact discovery and freezing', () => {
     }
     const sourceCarrier = path.join(
       sdk,
-      'release-tree/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
+      'release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json',
     );
     const canonicalSourceCarrier = selectionNeutralSwiftSourceCarrier(
       productCompatibilityVersion(

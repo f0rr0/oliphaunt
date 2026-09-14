@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { seedCarrierIdentities } from '../../database-resources/seeds/carrier-identities.mts';
-import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../sdks/rust/mobile-bindings/tools/dependency-license-contract.mts';
+import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
+import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../src/sdks/rust/mobile-bindings/tools/dependency-license-contract.mts';
 
 import {
   PLATFORM_COMPATIBILITY_POLICY,
@@ -10,12 +10,12 @@ import {
 import {
   extensionNativeRegistryPackageStrings,
   extensionWasixRegistryPackageStrings,
-} from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
-import { loadContribCarriers } from '../../extensions/artifacts/packages/tools/contrib-carriers.mts';
+} from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
+import { loadContribCarriers } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import {
   EXTENSION_TARGET_PROFILES_RELATIVE_PATH,
   loadExtensionTargetProfiles,
-} from '../../extensions/contracts/extension-target-profiles.mts';
+} from '../../src/extensions/contracts/extension-target-profiles.mts';
 import { loadProducts, versionFiles } from './release-graph.mts';
 
 export { PLATFORM_COMPATIBILITY_POLICY };
@@ -143,7 +143,7 @@ const EXTENSION_VERSIONING_BY_CLASS = {
   'first-party': 'repo-bound',
 };
 const EXTENSION_PRODUCT_KINDS = new Set(['exact-extension-artifact', 'exact-extension-bundle']);
-const EXTENSION_CATALOG_PATH = path.join(ROOT, 'extensions/generated/extensions.catalog.json');
+const EXTENSION_CATALOG_PATH = path.join(ROOT, 'src/extensions/generated/extensions.catalog.json');
 
 const productsCache = new Map();
 let extensionCatalogRowsCache;
@@ -730,7 +730,7 @@ function databaseResourceRows() {
       target: 'portable',
       asset: 'database-resources-{version}-swift.zip',
       surfaces: ['github-release', 'swiftpm'],
-      _source_file: 'database-resources/seeds/package-mobile-carriers.mts',
+      _source_file: 'src/database-resources/seeds/package-mobile-carriers.mts',
     },
     {
       id: 'database-resources.icu-data',
@@ -752,7 +752,7 @@ function databaseResourceRows() {
         target,
         asset: `database-resources-{version}-seed-${suffix}.${extension}`,
         surfaces: ['github-release'],
-        _source_file: 'database-resources/contracts/contract.json',
+        _source_file: 'src/database-resources/contracts/contract.json',
       });
     }
   }
@@ -778,7 +778,7 @@ export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
       asset: 'oliphaunt-swift-{version}-bindings.xcframework.zip',
       surfaces: ['github-release', 'swiftpm'],
       license: MOBILE_BINDINGS_LICENSE,
-      _source_file: 'sdks/swift/tools/build-bindings-xcframework.sh',
+      _source_file: 'src/sdks/swift/tools/build-bindings-xcframework.sh',
     },
     {
       id: 'oliphaunt-swift.checksums',
@@ -787,7 +787,7 @@ export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
       target: 'portable',
       asset: 'oliphaunt-swift-{version}-release-assets.sha256',
       surfaces: ['github-release'],
-      _source_file: 'sdks/swift/tools/build-bindings-xcframework.sh',
+      _source_file: 'src/sdks/swift/tools/build-bindings-xcframework.sh',
     },
     ...databaseResourceRows(),
     ...liboliphauntNativeRows(prefix),

@@ -168,7 +168,7 @@ test('only the retired contrib release path may disappear without fabricating a 
   assert.deepEqual(
     releasePleaseManifestTransitions(
       config,
-      { 'packages/native': '1.0.0', 'extensions/contrib': '1.0.0' },
+      { 'packages/native': '1.0.0', 'src/extensions/contrib': '1.0.0' },
       { 'packages/native': '1.0.0' },
       { prefix: 'transition-test' },
     ),
@@ -188,21 +188,21 @@ test('only the retired contrib release path may disappear without fabricating a 
 
 test('moving a release owner preserves its baseline and cannot hide a version regression', () => {
   const beforeConfig = { packages: { 'old/sdk': { component: 'sdk' } } };
-  const config = { packages: { 'sdks/sdk': { component: 'sdk' } } };
+  const config = { packages: { 'src/sdks/sdk': { component: 'sdk' } } };
   const before = { 'old/sdk': '1.2.3' };
   const transitions = (version) =>
-    releasePleaseManifestTransitions(config, before, { 'sdks/sdk': version }, { beforeConfig });
+    releasePleaseManifestTransitions(config, before, { 'src/sdks/sdk': version }, { beforeConfig });
   assert.deepEqual(transitions('1.2.3'), []);
   assert.deepEqual(transitions('1.2.4'), [
-    { product: 'sdk', packagePath: 'sdks/sdk', before: '1.2.3', after: '1.2.4' },
+    { product: 'sdk', packagePath: 'src/sdks/sdk', before: '1.2.3', after: '1.2.4' },
   ]);
   assert.throws(() => transitions('1.0.0'), /regressed/);
   assert.throws(
     () =>
       releasePleaseManifestTransitions(
-        { packages: { 'sdks/sdk': { component: 'replacement' } } },
+        { packages: { 'src/sdks/sdk': { component: 'replacement' } } },
         before,
-        { 'sdks/sdk': '1.2.3' },
+        { 'src/sdks/sdk': '1.2.3' },
         { beforeConfig },
       ),
     /packages cannot disappear/,

@@ -59,18 +59,18 @@ tasks:
     command: bash tools/release/release-metadata-check.sh
     inputs:
       - /tools/packaging/**/*
-      - /database-resources/contracts/**/*
+      - /src/database-resources/contracts/**/*
       - /tools/release/**/*
       - /.moon/workspace.yml
       - /.moon/toolchains.yml
       - /.github/workflows/ci.yml
       - /.github/workflows/release.yml
       - /.release-please-manifest.json
-      - /benchmarks/moon.yml
+      - /src/benchmarks/moon.yml
       - /Cargo.lock
       - /Cargo.toml
-      - /examples/moon.yml
-      - /examples/**/Cargo.toml
+      - /src/examples/moon.yml
+      - /src/examples/**/Cargo.toml
       - /moon.yml
       - /Package.swift
       - "@group(bun-workspace)"
@@ -85,25 +85,25 @@ tasks:
       - /**/package.json
       - /**/release.toml
       - /**/targets/**/*.toml
-      - /extensions/catalog/**/*
-      - /extensions/contrib/*.toml
-      - /extensions/evidence/**/*.toml
-      - /extensions/external/**/recipe.toml
-      - /extensions/external/**/source.toml
-      - /extensions/external/**/tools/**/*
-      - /extensions/external/**/upstream-license-data.json
-      - /extensions/generated/**/*
-      - /extensions/model/**/*
-      - /extensions/schemas/**/*
-      - /extensions/tools/**/*
-      - /third-party/postgres/source.toml
+      - /src/extensions/catalog/**/*
+      - /src/extensions/contrib/*.toml
+      - /src/extensions/evidence/**/*.toml
+      - /src/extensions/external/**/recipe.toml
+      - /src/extensions/external/**/source.toml
+      - /src/extensions/external/**/tools/**/*
+      - /src/extensions/external/**/upstream-license-data.json
+      - /src/extensions/generated/**/*
+      - /src/extensions/model/**/*
+      - /src/extensions/schemas/**/*
+      - /src/extensions/tools/**/*
+      - /src/third-party/postgres/source.toml
       - "@group(upstream-licenses)"
-      - /sdks/ts-wasix/node-addon/tools/build-native.sh
+      - /src/sdks/ts-wasix/node-addon/tools/build-native.sh
       - project: shared-test-fixtures
         group: fixtures
-      - /third-party/**/source.toml
-      - /runtimes/*/sources/*.toml
-      - /runtimes/*/toolchain.toml
+      - /src/third-party/**/source.toml
+      - /src/runtimes/*/sources/*.toml
+      - /src/runtimes/*/toolchain.toml
       - /tools/dev/*.toml
       - /tools/release/npm-publisher.toml
       - /tools/**/moon.yml
@@ -122,10 +122,10 @@ tasks:
       - requires-rust
     command: bash tools/release/release-check.sh --mutation-tests-only
     inputs:
-      - /runtimes/liboliphaunt-wasix/tools/download-assets.sh
-      - /runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
+      - /src/runtimes/liboliphaunt-wasix/tools/download-assets.sh
+      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
       - /tools/packaging/**/*
-      - /database-resources/contracts/**/*
+      - /src/database-resources/contracts/**/*
       - /tools/release/**/*
       - /.github/scripts/bootstrap-registry-*
       - /.github/scripts/download-bootstrap-*
@@ -144,7 +144,7 @@ tasks:
       - /tools/ci/with-projects.sh
       - /.prototools
       - /tools/dev/bun.sh
-      - /sdks/kotlin/tools/kotlin-maven-staging.mts
+      - /src/sdks/kotlin/tools/kotlin-maven-staging.mts
       - "**/*"
       - "!/tools/release/**/*.md"
     options:
@@ -158,8 +158,8 @@ tasks:
       - /.moon/tasks/**/*
       - /.moon/toolchains.yml
       - /.moon/workspace.yml
-      - /benchmarks/moon.yml
-      - /examples/moon.yml
+      - /src/benchmarks/moon.yml
+      - /src/examples/moon.yml
       - /moon.yml
       - /.release-please-manifest.json
       - /Cargo.toml
@@ -171,25 +171,25 @@ tasks:
       - /**/moon.yml
       - /tools/ci/**/*
       - /tools/**/moon.yml
-      - /third-party/tools/source-fetch-core.mts
+      - /src/third-party/tools/source-fetch-core.mts
       - /tools/release/artifact-target-matrix.mts
-      - /extensions/artifacts/packages/tools/contrib-carriers.mts
-      - /extensions/tools/extension-artifact-archive-policy.mts
+      - /src/extensions/artifacts/packages/tools/contrib-carriers.mts
+      - /src/extensions/tools/extension-artifact-archive-policy.mts
       - project: extension-runtime-contract
         group: contract
-      - /extensions/artifacts/packages/tools/extension-artifact-inventory.mts
-      - /extensions/artifacts/packages/tools/extension-registry-packages.mts
-      - /extensions/contracts/extension-target-profiles.mts
-      - /extensions/tools/extension-upstream-licenses.mts
-      - /extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
-      - /runtimes/liboliphaunt-native/tools/native-runtime-payload.mts
+      - /src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts
+      - /src/extensions/artifacts/packages/tools/extension-registry-packages.mts
+      - /src/extensions/contracts/extension-target-profiles.mts
+      - /src/extensions/tools/extension-upstream-licenses.mts
+      - /src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
+      - /src/runtimes/liboliphaunt-native/tools/native-runtime-payload.mts
       - /tools/release/platform-compatibility-policy.mts
       - /tools/release/release-artifact-targets.mts
       - /tools/release/prepare-release-candidate.mts
       - /tools/release/prepare-release-candidate.test.mts
       - "@group(release-archive-contract)"
       - /tools/release/release-graph.mts
-      - /runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
+      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
       - /tools/packaging/windows-vc-runtime-closure.mts
       - package.json
       - /bun.lock

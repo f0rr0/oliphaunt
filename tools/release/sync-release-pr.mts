@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { electronReleaseDependencies } from '../../examples/tools/example-release-dependencies.mts';
-import { extensionRegistryPackageStrings } from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
-import { currentEvidenceTable } from '../../extensions/tools/extension-evidence.mts';
-import { catalogPath, readJson } from '../../extensions/tools/extension-projections.mts';
+import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
+import { extensionRegistryPackageStrings } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
+import { currentEvidenceTable } from '../../src/extensions/tools/extension-evidence.mts';
+import { catalogPath, readJson } from '../../src/extensions/tools/extension-projections.mts';
 import {
   compareText,
   currentProductVersion,
@@ -34,24 +34,24 @@ const LOCKFILES = [path.join(ROOT, 'Cargo.lock')];
 const BUN_LOCKFILE = path.join(ROOT, 'bun.lock');
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, 'release-please-config.json');
 const RELEASE_PLEASE_MANIFEST = path.join(ROOT, '.release-please-manifest.json');
-const ELECTRON_EXAMPLE_PACKAGE = path.join(ROOT, 'examples/electron/package.json');
-const NATIVE_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'postgres-tools/native/npm/package.json');
-const WASIX_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'postgres-tools/wasix/ts/package.json');
+const ELECTRON_EXAMPLE_PACKAGE = path.join(ROOT, 'src/examples/electron/package.json');
+const NATIVE_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'src/postgres-tools/native/npm/package.json');
+const WASIX_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'src/postgres-tools/wasix/ts/package.json');
 const PACKAGE_START_RE = /^\s*\[\[package\]\]\s*$/u;
 const STRING_KEY_RE = /^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$/u;
 const VERSION_LINE_RE = /^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$/u;
 const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
   ROOT,
-  'extensions/generated/docs/extension-evidence.json',
+  'src/extensions/generated/docs/extension-evidence.json',
 );
 export const SDK_INSTALL_VERSION_RULES = Object.freeze([
   {
     product: 'oliphaunt-swift',
-    file: 'sdks/swift/README.md',
+    file: 'src/sdks/swift/README.md',
     prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "',
     suffix: '")',
   },
-  ...['sdks/kotlin/README.md'].map((file) => ({
+  ...['src/sdks/kotlin/README.md'].map((file) => ({
     product: 'oliphaunt-kotlin',
     file,
     prefix: 'implementation("dev.oliphaunt:oliphaunt-android:',
@@ -970,7 +970,7 @@ export function releaseDerivedPathInventory() {
         ...exactExtensionReleaseProducts(PREFIX).map((product) =>
           path.join(ROOT, packagePath(product), 'release.toml'),
         ),
-        path.join(ROOT, 'sdks/ts/sdk/package.json'),
+        path.join(ROOT, 'src/sdks/ts/sdk/package.json'),
         ...cargoManifestPaths(),
       ].map(rel),
     ),

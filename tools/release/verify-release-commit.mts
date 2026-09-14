@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } fr
 import path from 'node:path';
 import process from 'node:process';
 
-import { electronReleaseDependencies } from '../../examples/tools/example-release-dependencies.mts';
+import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
@@ -324,7 +324,7 @@ function derivedVersionRules() {
   for (const { packageName, product } of nativeToolsOptionalPackageProducts(TOOL)) {
     addStructured(
       'json',
-      'postgres-tools/native/npm/package.json',
+      'src/postgres-tools/native/npm/package.json',
       ['optionalDependencies', packageName],
       product,
       true,
@@ -344,7 +344,7 @@ function derivedVersionRules() {
     }
     addStructured(
       'json',
-      'examples/electron/package.json',
+      'src/examples/electron/package.json',
       ['dependencies', packageName],
       owners[0],
     );

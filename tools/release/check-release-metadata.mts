@@ -5,7 +5,7 @@ import path from 'node:path';
 import {
   extensionNativeRegistryPackageStrings,
   extensionWasixRegistryPackageStrings,
-} from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
+} from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import {
   compatibilityVersionSource,
   requireCompatibilityVersionBinding,

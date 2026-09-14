@@ -11,12 +11,12 @@ import {
 } from './ci_plan.mts';
 import { combinedNativeWasix, paths, taskRoots } from './ci-plan-test-inputs.mts';
 import { affectedObservation, taskObservation } from './ci-plan-test-observations.mts';
-import { loadExtensionTargetProfiles } from '../../extensions/contracts/extension-target-profiles.mts';
+import { loadExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
 import {
   contribCarrierDescriptor,
   extensionProductForSqlName,
 } from '../release/release-artifact-targets.mts';
-import { publishedConsumerDependencies } from '../../sdks/ts/sdk/tools/published-consumer.mts';
+import { publishedConsumerDependencies } from '../../src/sdks/ts/sdk/tools/published-consumer.mts';
 
 const GRAPH = loadGraph('ci-plan-node-products.test.mts');
 const NATIVE_TS_CONSUMER_JOBS = [
@@ -440,7 +440,7 @@ test('combined JavaScript SDK and WASIX N-API changes release only changed produ
 test('shared contrib source releases only its two runtime owners', () => {
   const release = buildPlan(
     GRAPH,
-    ['extensions/contrib/postgres18.toml'],
+    ['src/extensions/contrib/postgres18.toml'],
     'ci-plan-node-products.test.mts',
   );
   assert.deepEqual(release.directProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
@@ -481,7 +481,7 @@ test('external extension release selects shared producers and same-run lifecycle
   assert(plan.jobs.includes('liboliphaunt-wasix-runtime'));
   assert(plan.jobs.includes('liboliphaunt-wasix-aot'));
   const profiles = loadExtensionTargetProfiles({
-    file: new URL('../../extensions/contracts/extension-target-profiles.toml', import.meta.url),
+    file: new URL('../../src/extensions/contracts/extension-target-profiles.toml', import.meta.url),
   });
   for (const { family, target } of profiles.targets) {
     const rows =
@@ -571,10 +571,10 @@ test('WASIX extension staging follows its own code and produced runtime artifact
   );
 });
 
-test('extension artifact builders materialize overlapping source scopes once', () => {
+test('extension artifact builders materialize their runtime and extension sources', () => {
   const native = actionTargets(taskRoots.extensionArtifactsNativeBuildTarget);
   assert.equal(native.has('source-inputs:source-fetch-native-runtime'), true);
-  assert.equal(native.has('source-inputs:source-fetch-extensions'), false);
+  assert.equal(native.has('source-inputs:source-fetch-extensions'), true);
 
   const wasix = actionTargets(taskRoots.extensionArtifactsWasixBuildTarget);
   assert.equal(wasix.has('source-inputs:source-fetch-wasix-runtime'), true);
@@ -655,7 +655,7 @@ test('source acquisition and WASIX browser-host ownership stay narrow', () => {
   assert.equal(extensionPin.directTasks.includes('source-inputs:source-fetch-extensions'), true);
   assert.equal(
     extensionPin.directTasks.includes('source-inputs:source-fetch-native-runtime'),
-    true,
+    false,
   );
   assert.equal(extensionPin.directTasks.includes('source-inputs:source-fetch-wasix-runtime'), true);
 

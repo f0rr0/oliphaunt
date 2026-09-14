@@ -75,8 +75,8 @@ artifact checks; do not provision, remove or relabel registry credentials to
 make an unrelated source run pass.
 
 For source-acquisition policy or a source `mirror_url`, run
-`bash third-party/tools/source-fetch-core.test.sh` and
-`bash third-party/tools/fetch-sources.sh production-all --validate-only`, or the
+`bash src/third-party/tools/source-fetch-core.test.sh` and
+`bash src/third-party/tools/fetch-sources.sh production-all --validate-only`, or the
 complete owner task `moon run source-inputs:test`. The paired Shell test owns
 actual Git/archive operations and invokes its TypeScript assertions once. Prove a
 new endpoint with a live exact-commit fetch, but keep reachability out of the
@@ -115,7 +115,7 @@ For a WASIX Docker, APT snapshot, or bootstrap trust change, also run the
 product-owned fault test and source verifier before the expensive build:
 
 ```sh
-bash third-party/tools/fetch-sources.sh wasix-runtime --verify-only
+bash src/third-party/tools/fetch-sources.sh wasix-runtime --verify-only
 moon run liboliphaunt-wasix:build-orchestration-test liboliphaunt-wasix:test
 ```
 
@@ -168,7 +168,7 @@ implementation-source spellings.
 - When WASIX or an extension is selected, require the same-run full lifecycle evidence artifact. It must cover every catalogued extension in direct, server, restart, materialization, and physical backup/restore modes and satisfy `--require-current-evidence` for the candidate source digest.
 - Ensure artifact attestations and the publication lock reference the same SHA/tree.
 - Require artifact evidence for the compatibility floors in
-  `docs/maintainers/release.md`: inspect Mach-O load commands, Android API/ELF
+  `src/docs/maintainers/release.md`: inspect Mach-O load commands, Android API/ELF
   metadata, and Linux ELF symbol versions rather than inferring support from a
   runner or package label.
 - Do not rerun duplicate downstream E2E workflows when the same evidence is already part of the required gate.

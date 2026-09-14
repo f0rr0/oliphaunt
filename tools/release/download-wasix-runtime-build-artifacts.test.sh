@@ -62,7 +62,7 @@ for mode in frozen selected failed public corrupt; do
   esac
   status=0
   if [[ "$mode" = public || "$mode" = corrupt ]]; then
-    bash runtimes/liboliphaunt-wasix/tools/download-assets.sh --release liboliphaunt-wasix-v1.0.0 --all-targets > "$scratch/log" 2>&1 || status=$?
+    bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --release liboliphaunt-wasix-v1.0.0 --all-targets > "$scratch/log" 2>&1 || status=$?
   else
     bash .github/scripts/download-wasix-runtime-build-artifacts.sh > "$scratch/log" 2>&1 || status=$?
   fi

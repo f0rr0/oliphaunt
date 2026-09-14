@@ -16,18 +16,18 @@ let package = Package(
     targets: [
         .target(
             name: "COliphaunt",
-            path: "sdks/swift/Sources/COliphaunt",
+            path: "src/sdks/swift/Sources/COliphaunt",
             publicHeadersPath: "include"
         ),
         .target(
             name: "Oliphaunt",
             dependencies: ["COliphaunt"],
-            path: "sdks/swift/Sources/Oliphaunt"
+            path: "src/sdks/swift/Sources/Oliphaunt"
         ),
         .testTarget(
             name: "OliphauntTests",
             dependencies: ["Oliphaunt"],
-            path: "sdks/swift/Tests/OliphauntTests"
+            path: "src/sdks/swift/Tests/OliphauntTests"
         )
     ]
 )

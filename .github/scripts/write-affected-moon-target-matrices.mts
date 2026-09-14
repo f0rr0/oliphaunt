@@ -170,7 +170,8 @@ for (const task of selectedScopeTasks.values()) {
   }
 }
 
-const checkGroups = groupTargets([...checkTargets.values()]);
+// Static checks are setup-bound; keep heavier unit suites in the smaller default groups.
+const checkGroups = groupTargets([...checkTargets.values()], { maxTargets: 8 });
 const testGroups = groupTargets([...testTargets.values()]);
 output('check_count', String(checkTargets.size));
 output('check_job_count', String(checkGroups.length));

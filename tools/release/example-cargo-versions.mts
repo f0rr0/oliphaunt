@@ -49,7 +49,7 @@ export function exampleCargoPolicy(file, manifest) {
 export function exampleCargoPolicies() {
   return cargoManifestPaths().flatMap((file) => {
     const relative = path.relative(ROOT, file).split(path.sep).join('/');
-    if (!relative.startsWith('examples/')) return [];
+    if (!relative.startsWith('src/examples/')) return [];
     return [exampleCargoPolicy(relative, Bun.TOML.parse(readFileSync(file, 'utf8')))];
   });
 }

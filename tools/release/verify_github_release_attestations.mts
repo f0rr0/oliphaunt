@@ -30,8 +30,8 @@ import { assertPublicationLockSource, loadPublicationLock } from './publication-
 
 export { requestBoundedGithubJson, requestGithubJsonWithRetry } from './github-read.mts';
 
-import { swiftExtensionCarrierAssetName } from '../../sdks/swift/tools/ios-carrier-manifest.mts';
-import { assertWasixExtensionMemberInstall } from '../../extensions/contracts/wasix-extension-install.mts';
+import { swiftExtensionCarrierAssetName } from '../../src/sdks/swift/tools/ios-carrier-manifest.mts';
+import { assertWasixExtensionMemberInstall } from '../../src/extensions/contracts/wasix-extension-install.mts';
 import { assertPublicationController } from './publication-controller.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -720,7 +720,7 @@ let canonicalIosDependenciesCache;
 
 function canonicalExtensionRows() {
   canonicalExtensionRowsCache ??= JSON.parse(
-    readFileSync(path.join(ROOT, 'extensions/generated/sdk/extensions.json'), 'utf8'),
+    readFileSync(path.join(ROOT, 'src/extensions/generated/sdk/extensions.json'), 'utf8'),
   ).extensions;
   if (!Array.isArray(canonicalExtensionRowsCache)) {
     throw new Error('generated React Native extension catalog has no extensions array');
@@ -731,7 +731,7 @@ function canonicalExtensionRows() {
 function canonicalIosDependencies() {
   if (canonicalIosDependenciesCache !== undefined) return canonicalIosDependenciesCache;
   const lines = readFileSync(
-    path.join(ROOT, 'extensions/generated/mobile/static-extensions.tsv'),
+    path.join(ROOT, 'src/extensions/generated/mobile/static-extensions.tsv'),
     'utf8',
   )
     .split(/\r?\n/u)

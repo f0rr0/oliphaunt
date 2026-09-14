@@ -3,7 +3,7 @@ import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { BROKER_PAYLOAD_LICENSE } from '../../broker/tools/broker-dependency-license-contract.mts';
+import { BROKER_PAYLOAD_LICENSE } from '../../src/broker/tools/broker-dependency-license-contract.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const CODE_LICENSE = 'MIT';
@@ -53,27 +53,27 @@ function assertNpmLicenses(files, expected) {
 }
 
 test('broker source is MIT and compiled payload carriers declare their exact dependency license closure', () => {
-  assertCargoLicenses(['broker/Cargo.toml'], CODE_LICENSE);
-  assertCargoLicenses(childManifests('broker/crates', 'Cargo.toml'), BROKER_PAYLOAD_LICENSE);
-  assertNpmLicenses(childManifests('broker/packages', 'package.json'), BROKER_PAYLOAD_LICENSE);
+  assertCargoLicenses(['src/broker/Cargo.toml'], CODE_LICENSE);
+  assertCargoLicenses(childManifests('src/broker/crates', 'Cargo.toml'), BROKER_PAYLOAD_LICENSE);
+  assertNpmLicenses(childManifests('src/broker/packages', 'package.json'), BROKER_PAYLOAD_LICENSE);
 });
 
 test('native source facades and payload carriers declare their exact role licenses', () => {
-  assertCargoLicenses(['postgres-tools/native/crates/tools/Cargo.toml'], CODE_LICENSE);
+  assertCargoLicenses(['src/postgres-tools/native/crates/tools/Cargo.toml'], CODE_LICENSE);
   assertNpmLicenses(
-    childManifests('runtimes/liboliphaunt-native/packages', 'package.json'),
+    childManifests('src/runtimes/liboliphaunt-native/packages', 'package.json'),
     NATIVE_RUNTIME_LICENSE,
   );
   assertNpmLicenses(
-    childManifests('postgres-tools/native/npm-platforms', 'package.json'),
+    childManifests('src/postgres-tools/native/npm-platforms', 'package.json'),
     NATIVE_TOOLS_LICENSE,
   );
 });
 
 test('portable ICU carrier declares its exact data-only license closure', () => {
-  assertNpmLicenses(['database-resources/icu/npm/package.json'], ICU_CARRIER_LICENSE);
+  assertNpmLicenses(['src/database-resources/icu/npm/package.json'], ICU_CARRIER_LICENSE);
   const podspec = readFileSync(
-    path.join(ROOT, 'database-resources/icu/npm/OliphauntICU.podspec'),
+    path.join(ROOT, 'src/database-resources/icu/npm/OliphauntICU.podspec'),
     'utf8',
   );
   const declarations = [

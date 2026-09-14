@@ -7,6 +7,24 @@ trap 'rm -rf "$scratch"' EXIT
 fixture=tools/ci/workflow-moon-transfers.test.mts
 bash tools/dev/bun.sh test "./$fixture"
 OLIPHAUNT_TRANSFER_FIXTURE_PHASE=prepare bash tools/dev/bun.sh "$fixture" "$scratch"
+(
+  cd "$scratch/postmaster-producer"
+  RUNNER_TEMP="$scratch/postmaster-temp" bash -euo pipefail "$scratch/postmaster-produce.sh"
+)
+cp "$scratch/postmaster-temp/postmaster-native-linux-x64.tar.gz" \
+  "$scratch/postmaster-consumer/target/oliphaunt-wasix-postmaster/native-input-download/"
+(
+  cd "$scratch/postmaster-consumer"
+  bash -euo pipefail "$scratch/postmaster-restore.sh"
+)
+(
+  cd "$scratch/postmaster-producer"
+  rm target/oliphaunt-wasix-postmaster/runtime/build/wasmer-build.receipt
+  if RUNNER_TEMP="$scratch/postmaster-temp" bash -euo pipefail "$scratch/postmaster-produce.sh" >/dev/null 2>&1; then
+    echo 'native transfer must reject missing build receipts' >&2
+    exit 1
+  fi
+)
 for platform in android ios; do
   target=ios-xcframework
   [[ "$platform" != android ]] || target=android-x86_64

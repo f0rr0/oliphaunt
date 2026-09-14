@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   readlinkSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -183,6 +184,52 @@ const phase = process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE;
 const scratch = process.argv[2];
 if (phase) {
   assert.ok(scratch);
+  const postmasterRoot = 'target/oliphaunt-wasix-postmaster';
+  const nativeFiles = [
+    'runtime/build/wasmer-build.receipt',
+    'runtime/build/postmaster-executor-build.receipt',
+    'runtime/wasmer/target/release/wasmer',
+    'runtime/wasmer/target/release/wasmer-headless',
+    'runtime/postmaster-executor-target/release/oliphaunt-wasix-postmaster-executor',
+    'runtime/postmaster-executor-target/release/oliphaunt-wasix-start-proof',
+    'runtime/postmaster-executor-target/release/oliphaunt-wasix-memory-profile',
+    'runtime/postmaster-compiler-target/release/oliphaunt-wasix-postmaster-compiler',
+  ];
+  if (phase === 'prepare') {
+    for (const file of nativeFiles) {
+      const destination = path.join(scratch, 'postmaster-producer', postmasterRoot, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, file);
+      chmodSync(destination, file.endsWith('.receipt') ? 0o644 : 0o755);
+    }
+    mkdirSync(path.join(scratch, 'postmaster-temp'));
+    mkdirSync(path.join(scratch, 'postmaster-consumer', postmasterRoot, 'native-input-download'), {
+      recursive: true,
+    });
+    for (const [job, name, script] of [
+      [
+        'wasix-postmaster-portable',
+        'Pack qualified Linux x64 postmaster runtime',
+        'postmaster-produce.sh',
+      ],
+      [
+        'wasix-postmaster-target',
+        'Restore qualified Linux x64 postmaster runtime',
+        'postmaster-restore.sh',
+      ],
+    ]) {
+      writeFileSync(
+        path.join(scratch, script),
+        workflow.jobs[job].steps.find((step) => step.name === name).run,
+      );
+    }
+  } else {
+    for (const file of nativeFiles) {
+      const restored = path.join(scratch, 'postmaster-consumer', postmasterRoot, file);
+      assert.equal(readFileSync(restored, 'utf8'), file);
+      assert.equal(statSync(restored).mode & 0o777, file.endsWith('.receipt') ? 0o644 : 0o755);
+    }
+  }
   for (const [platform, title, target] of [
     ['android', 'Android', 'android-x86_64'],
     ['ios', 'iOS', 'ios-xcframework'],

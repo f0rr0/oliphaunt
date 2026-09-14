@@ -69,6 +69,12 @@ test('selected-product evidence binds scope and candidate SHA and rejects uncove
     };
     const recorded = { ...candidate, runId: '77', runAttempt: 2, producers: [receipt] };
     expect(() => assertCandidateBindingShape(recorded)).not.toThrow();
+    expect(() =>
+      assertCandidateBindingShape({
+        ...recorded,
+        producers: [{ ...receipt, taskHash: undefined, hashes: [] }],
+      }),
+    ).toThrow(/producer hash chain is inconsistent/);
     expect(() => assertCandidateBindingShape({ ...recorded, runAttempt: 3 })).toThrow(
       /qualification run and attempt/,
     );
@@ -80,7 +86,9 @@ test('selected-product evidence binds scope and candidate SHA and rejects uncove
 });
 
 function publicExtensions() {
-  const catalog = JSON.parse(readFileSync('extensions/generated/extensions.catalog.json', 'utf8'));
+  const catalog = JSON.parse(
+    readFileSync('src/extensions/generated/extensions.catalog.json', 'utf8'),
+  );
   return catalog.extensions.map((extension) => extension.id).sort();
 }
 
@@ -98,7 +106,7 @@ function writeEvidence(
     },
   } = {},
 ) {
-  const runDirectory = path.join(root, 'extensions/evidence/runs');
+  const runDirectory = path.join(root, 'src/extensions/evidence/runs');
   mkdirSync(runDirectory, { recursive: true });
   const run = {
     schema: 'oliphaunt-extension-evidence-v1',
@@ -110,7 +118,7 @@ function writeEvidence(
     sourceCommit: 'a'.repeat(40),
     sourceTree: 'c'.repeat(40),
     observedAt: '2026-07-14T12:00:00Z',
-    collector: 'extensions/tools/collect-wasix-evidence.sh',
+    collector: 'src/extensions/tools/collect-wasix-evidence.sh',
     github: {
       repository: 'f0rr0/oliphaunt',
       workflow: 'CI',

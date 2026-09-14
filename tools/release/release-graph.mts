@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   CONTRIB_CARRIERS_PATH,
   loadContribCarriers,
-} from '../../extensions/artifacts/packages/tools/contrib-carriers.mts';
+} from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import {
   historyAncestor,
   historyChanges,

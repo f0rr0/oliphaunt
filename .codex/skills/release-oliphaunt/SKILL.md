@@ -46,9 +46,9 @@ and do not treat target/ecosystem carriers as additional products.
 
 ## Start
 
-1. Read `docs/maintainers/release.md` and `references/invariants.md`.
+1. Read `src/docs/maintainers/release.md` and `references/invariants.md`.
 2. For registry/GitHub setup, identity bootstrap, or trusted-publisher work,
-   also read `docs/maintainers/release-setup.md`.
+   also read `src/docs/maintainers/release-setup.md`.
 3. For a failed or partially public release, also read `references/recovery.md` before changing state.
 4. Record the candidate commit with `git rev-parse HEAD`; keep that SHA
    unchanged through qualification, lock creation, publish, and any retry. A
@@ -156,7 +156,7 @@ Run these from the repository root:
 
 ```sh
 bash tools/release/release-check.sh
-bash extensions/tools/check-extension-model.sh --check
+bash src/extensions/tools/check-extension-model.sh --check
 ```
 
 Release Please selects direct candidates from configured product paths. The

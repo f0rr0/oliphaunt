@@ -25,6 +25,10 @@ printf fixture > extensions/contrib/carriers.toml
 git add extensions/contrib/carriers.toml
 git commit -qm 'add contrib carrier'
 git tag -a liboliphaunt-native-v0.2.0 -m 'with contrib'
+mkdir src
+git mv extensions src/extensions
+git commit -qm 'move source under src'
+git tag liboliphaunt-native-v0.3.0
 cp "$source_root/tools/release/with-release-tags.sh" tools/release/
 cp "$source_root/tools/release/check-release-versions.sh" check.sh
 cat > tools/dev/bun.sh <<'SH'

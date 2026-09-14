@@ -104,11 +104,11 @@ const BASE_ROWS = Object.freeze([
 const PRODUCT_NOTICE_ROWS = Object.freeze({
   native: Object.freeze({
     member: 'THIRD_PARTY_NOTICES.liboliphaunt-native.md',
-    source: path.join(ROOT, 'runtimes/liboliphaunt-native/THIRD_PARTY_NOTICES.md'),
+    source: path.join(ROOT, 'src/runtimes/liboliphaunt-native/THIRD_PARTY_NOTICES.md'),
   }),
   wasix: Object.freeze({
     member: 'THIRD_PARTY_NOTICES.oliphaunt-wasix.md',
-    source: path.join(ROOT, 'sdks/rust-wasix/THIRD_PARTY_NOTICES.md'),
+    source: path.join(ROOT, 'src/sdks/rust-wasix/THIRD_PARTY_NOTICES.md'),
   }),
 });
 
@@ -118,8 +118,8 @@ const LICENSE_COMPONENT_ROWS = Object.freeze({
     spdx: 'PostgreSQL',
     name: 'PostgreSQL License',
     member: 'THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT',
-    source: path.join(ROOT, 'third-party/postgres/COPYRIGHT'),
-    sourceManifest: path.join(ROOT, 'third-party/postgres/source.toml'),
+    source: path.join(ROOT, 'src/third-party/postgres/COPYRIGHT'),
+    sourceManifest: path.join(ROOT, 'src/third-party/postgres/source.toml'),
     sourceVersion: '18.4',
     sha256: '3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd',
     sourceUrl: 'https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2',
@@ -131,8 +131,8 @@ const LICENSE_COMPONENT_ROWS = Object.freeze({
     spdx: 'Unicode-3.0',
     name: 'Unicode License v3',
     member: 'THIRD_PARTY_LICENSES/ICU-LICENSE',
-    source: path.join(ROOT, 'third-party/icu/LICENSE'),
-    sourceManifest: path.join(ROOT, 'third-party/icu/source.toml'),
+    source: path.join(ROOT, 'src/third-party/icu/LICENSE'),
+    sourceManifest: path.join(ROOT, 'src/third-party/icu/source.toml'),
     sourceVersion: '76.1',
     sourceBranch: 'release-76-1',
     sourceCommit: '8eca245c7484ac6cc179e3e5f7c1ea7680810f39',
@@ -147,8 +147,8 @@ const LICENSE_COMPONENT_ROWS = Object.freeze({
     spdx: 'Apache-2.0',
     name: 'Apache License 2.0 (OpenSSL)',
     member: 'THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt',
-    source: path.join(ROOT, 'third-party/openssl/LICENSE.txt'),
-    sourceManifest: path.join(ROOT, 'third-party/openssl/source.toml'),
+    source: path.join(ROOT, 'src/third-party/openssl/LICENSE.txt'),
+    sourceManifest: path.join(ROOT, 'src/third-party/openssl/source.toml'),
     sourceVersion: '3.5.6',
     sourceBranch: 'openssl-3.5.6',
     sourceCommit: '286ddeaac037533bbdce65b3c689e3f7ffebf0f6',

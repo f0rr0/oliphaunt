@@ -44,7 +44,7 @@ authoritative.
 ## Assets
 
 Bundled runtime assets must stay aligned with product-local runtime metadata
-under `runtimes/` and extension metadata under `extensions/`. If a
+under `src/runtimes/` and extension metadata under `src/extensions/`. If a
 runtime or extension artifact target changes, update the owning product
 metadata and run the affected Moon checks.
 
@@ -55,7 +55,7 @@ Actions `Release` workflow. Release Please manifest mode owns version bumps,
 changelog updates, and the generated release PR. The protected publish workflow
 owns exact-SHA product tags and draft GitHub releases. Product-local release
 metadata owns publish targets and artifact shape; Moon dependency scopes
-provide release coupling. See `docs/maintainers/release.md` for release intent,
+provide release coupling. See `src/docs/maintainers/release.md` for release intent,
 trusted publishing, and workflow details.
 
 A pure control-plane `ci:` change has no release-semantic owners, so preparing

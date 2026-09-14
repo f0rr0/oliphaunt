@@ -6,13 +6,13 @@ import { registryPackageRows } from './release-artifact-targets.mts';
 import {
   EXTENSION_AOT_PACKAGE_SUFFIXES,
   EXTENSION_PORTABLE_TARGET,
-} from '../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
-import { extensionNpmWasixPackageForProduct } from '../../extensions/artifacts/packages/tools/extension-registry-packages.mts';
+} from '../../src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
+import { extensionNpmWasixPackageForProduct } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import {
   WASIX_RUNTIME_NPM_PACKAGE,
   WASIX_RUNTIME_NPM_TARGET,
   WASIX_RUNTIME_PRODUCT,
-} from '../../runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm-contract.mts';
+} from '../../src/runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm-contract.mts';
 
 export const PUBLICATION_CATALOG_SCHEMA = 'oliphaunt-publication-catalog-v1';
 

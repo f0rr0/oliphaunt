@@ -29,7 +29,7 @@ newer="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$newer"
 bash "$owner/publication-controller.sh" --changes-only "$source" "$controller"
 reject 'checkout|HEAD' "$source" "$controller"
-for file in product extensions/artifacts/packages/tools/package-extension-release-carriers.mts Cargo.lock .github/workflows/ci.yml tools/release/moon.yml; do
+for file in product src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts Cargo.lock .github/workflows/ci.yml tools/release/moon.yml; do
   git checkout --quiet --detach "$controller"
   mkdir -p "$(dirname "$file")"
   printf changed > "$file"

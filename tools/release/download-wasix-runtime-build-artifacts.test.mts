@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { AOT_TARGET_TRIPLES } from '../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
+import { AOT_TARGET_TRIPLES } from '../../src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
 
 const mode = process.argv[2];
 if (mode === 'targets') {

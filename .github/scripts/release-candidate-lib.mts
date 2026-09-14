@@ -219,7 +219,7 @@ export function wasixEvidenceBinding(
     runAttempt,
     sha,
     tree,
-    catalogPath = 'extensions/generated/extensions.catalog.json',
+    catalogPath = 'src/extensions/generated/extensions.catalog.json',
   },
 ) {
   const expectedRunId = Number.parseInt(String(runId), 10);
@@ -349,7 +349,9 @@ export function assertCandidateBindingShape(candidate) {
       );
       const hashes = new Map(receipt.hashes.map((entry) => [entry.target, entry.hash]));
       assert(
-        hashes.size === receipt.hashes.length && hashes.get(receipt.target) === receipt.taskHash,
+        /^[0-9a-f]{64}$/.test(receipt.taskHash ?? '') &&
+          hashes.size === receipt.hashes.length &&
+          hashes.get(receipt.target) === receipt.taskHash,
         'producer hash chain is inconsistent',
       );
       for (const entry of receipt.hashes) {

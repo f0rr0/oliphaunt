@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { CONTRIB_CARRIERS_PATH } from '../../extensions/artifacts/packages/tools/contrib-carriers.mts';
+import { CONTRIB_CARRIERS_PATH } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import { compareText, ROOT } from './release-graph.mts';
 
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;

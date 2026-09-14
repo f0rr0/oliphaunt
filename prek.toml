@@ -3,9 +3,9 @@ default_install_hook_types = ["pre-commit", "commit-msg"]
 fail_fast = true
 exclude = { glob = [
   "target/**",
-  "examples/**/node_modules/**",
-  "examples/**/dist/**",
-  "examples/**/src-tauri/target/**",
+  "src/examples/**/node_modules/**",
+  "src/examples/**/dist/**",
+  "src/examples/**/src-tauri/target/**",
 ] }
 
 [[repos]]
