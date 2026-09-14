@@ -16,6 +16,7 @@ Pod::Spec.new do |s|
   s.platforms = { :ios => "17.0" }
   s.swift_version = "6.0"
   s.source_files = "ios/*.{h,m,mm,swift}", "cpp/*.{h,cpp}"
+  s.private_header_files = "cpp/*.h", "ios/OliphauntReactNative.h"
   s.exclude_files = "cpp/*.test.cpp"
   s.requires_arc = true
   s.dependency "Oliphaunt", native_sdk_version

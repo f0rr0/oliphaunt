@@ -79,6 +79,7 @@ done
   "--user-data-dir=$scratch/profile" "--remote-debugging-port=$chrome_port" \
   about:blank > "$scratch/chrome.log" 2>&1 &
 pids+=("$!")
+printf '%s\n' "$!" > "$scratch/chrome.pid"
 seconds="$(jq -r '(.timeoutMs / 1000 | ceil) + 90' "$configuration")"
 "$deadline" --kill-after=3s "${seconds}s" bun "$tool" --run "$scratch"
 for pid in "${pids[@]}"; do kill -0 "$pid"; done

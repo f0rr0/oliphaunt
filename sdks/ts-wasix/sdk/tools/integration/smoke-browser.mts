@@ -129,7 +129,14 @@ if (phase === '--prepare') {
   const { chromePort, smokeUrl, timeoutMs, benchmark, packageOnly } = JSON.parse(
     await readFile(resolve(scratch, 'browser.json'), 'utf8'),
   );
-  const targets = await waitForChrome(`http://127.0.0.1:${chromePort}/json/list`);
+  // Cold Chrome startup shares the smoke budget instead of a separate 30-second cutoff.
+  const deadline = Date.now() + timeoutMs;
+  const chromePid = Number(await readFile(resolve(scratch, 'chrome.pid'), 'utf8'));
+  const targets = await waitForChrome(
+    `http://127.0.0.1:${chromePort}/json/list`,
+    chromePid,
+    deadline,
+  );
   const page = targets.find((candidate) => candidate.type === 'page');
   if (!page?.webSocketDebuggerUrl)
     throw new Error('headless Chrome did not expose a page debugging target');
@@ -142,7 +149,6 @@ if (phase === '--prepare') {
     });
 
     const browserFailures = [];
-    const deadline = Date.now() + timeoutMs;
     const cdp = createCdpClient(socket, (failure) => browserFailures.push(failure), deadline);
     await Promise.all([
       cdp.send('Runtime.enable'),
@@ -321,19 +327,31 @@ function formatCdpException(details) {
   return [description, location].filter(Boolean).join('\n');
 }
 
-async function waitForChrome(url) {
-  const deadline = Date.now() + 30_000;
+async function waitForChrome(url, chromePid, deadline) {
+  let lastFailure;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      process.kill(chromePid, 0);
+    } catch (cause) {
+      throw new Error('Chrome exited before its debugging endpoint became ready', { cause });
+    }
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(Math.max(1, Math.min(5000, deadline - Date.now()))),
+      });
       if (response.ok) {
         return await response.json();
       }
+      lastFailure = new Error(`Chrome debugging endpoint returned HTTP ${response.status}`);
       await response.body?.cancel();
-    } catch {}
+    } catch (error) {
+      lastFailure = error;
+    }
     await delay(200);
   }
-  throw new Error(`browser endpoint did not become ready: ${url}`);
+  throw new Error(`browser endpoint did not become ready within the smoke budget: ${url}`, {
+    cause: lastFailure,
+  });
 }
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
