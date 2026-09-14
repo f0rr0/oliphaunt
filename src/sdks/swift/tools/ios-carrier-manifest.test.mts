@@ -14,14 +14,15 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { stageExtensionUpstreamLicenses } from '../../../extensions/tools/extension-upstream-licenses.mts';
 import { archiveDirectory } from '../../../../tools/packaging/archive-directory.mts';
 import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
 import {
   currentProductVersionSync,
+  extensionMetadata,
   extensionReleaseProduct,
   extensionSqlNames,
 } from '../../../../tools/release/release-artifact-targets.mts';
+import { stageExtensionUpstreamLicenses } from '../../../extensions/tools/extension-upstream-licenses.mts';
 import {
   buildIosCarrierManifest,
   buildSwiftExtensionCarrierManifest,
@@ -96,15 +97,8 @@ function compatibility(
   ),
 ) {
   return {
-    extensionRuntimeContract: 'extensions/contracts/contract.toml',
-    nativeRuntimeProduct: 'liboliphaunt-native',
+    ...extensionMetadata('oliphaunt-extension-contrib-pg18').compatibility,
     nativeRuntimeVersion,
-    postgresMajor: '18',
-    wasixRuntimeProduct: 'liboliphaunt-wasix',
-    wasixRuntimeVersion: currentProductVersionSync(
-      'liboliphaunt-wasix',
-      'ios-carrier-manifest.test',
-    ),
   };
 }
 

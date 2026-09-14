@@ -16,22 +16,19 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { gunzipSync } from 'node:zlib';
+import { canonicalGzipSync } from '../../../../tools/packaging/portable-archive.mts';
+import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
+import { extensionMetadata } from '../../../../tools/release/release-artifact-targets.mts';
 import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from '../../../extensions/tools/extension-upstream-licenses.mts';
-import { canonicalGzipSync } from '../../../../tools/packaging/portable-archive.mts';
-import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
 import { resolveMobileExtensionArtifactPaths } from './mobile-extension-artifact-paths.mts';
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../../..');
 const VERSION = '1.2.3';
 const NATIVE_RUNTIME_VERSION = readFileSync(
   path.join(REPOSITORY_ROOT, 'src/runtimes/liboliphaunt-native/VERSION'),
-  'utf8',
-).trim();
-const WASIX_RUNTIME_VERSION = readFileSync(
-  path.join(REPOSITORY_ROOT, 'src/runtimes/liboliphaunt-wasix/VERSION'),
   'utf8',
 ).trim();
 const CONTRIB_VERSION = NATIVE_RUNTIME_VERSION;
@@ -71,14 +68,7 @@ const IOS_DEPENDENCIES_BY_SQL_NAME = new Map(
     ];
   }),
 );
-const COMPATIBILITY = {
-  extensionRuntimeContract: 'extensions/contracts/contract.toml',
-  nativeRuntimeProduct: 'liboliphaunt-native',
-  nativeRuntimeVersion: NATIVE_RUNTIME_VERSION,
-  postgresMajor: '18',
-  wasixRuntimeProduct: 'liboliphaunt-wasix',
-  wasixRuntimeVersion: WASIX_RUNTIME_VERSION,
-};
+const COMPATIBILITY = extensionMetadata('oliphaunt-extension-contrib-pg18').compatibility;
 const CONTRIB = 'oliphaunt-extension-contrib-pg18';
 const VECTOR = 'oliphaunt-extension-vector';
 const TARGETS = ['android-arm64-v8a', 'android-x86_64', 'ios-xcframework'];

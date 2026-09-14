@@ -26,6 +26,8 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - "**/*"
+      - "/src/extensions/generated/extensions.catalog.json"
+      - "/src/extensions/external/*/targets/wasix.toml"
     options:
       cache: true
       runFromWorkspaceRoot: true

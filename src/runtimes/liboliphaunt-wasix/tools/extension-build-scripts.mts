@@ -7,7 +7,7 @@ const { extensions } = JSON.parse(
   readFileSync(path.join(root, 'src/extensions/generated/extensions.catalog.json'), 'utf8'),
 );
 for (const name of extensions.map((row) => row['sql-name']).sort()) {
-  const recipe = path.join(root, 'extensions/external', name, 'targets/wasix.toml');
+  const recipe = path.join(root, 'src/extensions/external', name, 'targets/wasix.toml');
   if (!existsSync(recipe)) continue;
   const target = Bun.TOML.parse(readFileSync(recipe, 'utf8'));
   if (target.build_kind !== 'autotools') continue;

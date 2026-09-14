@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 const CATALOG_PATH: &str = "src/extensions/generated/extensions.catalog.json";
 const POSTGRES_CONTRIB: &str = "src/third-party/postgres/contrib";
-const EXTERNAL_EXTENSION_RECIPE_ROOT: &str = "extensions/external";
+const EXTERNAL_EXTENSION_RECIPE_ROOT: &str = "src/extensions/external";
 const PGVECTOR_CHECKOUT: &str = "target/oliphaunt-sources/checkouts/pgvector";
 const EXTERNAL_EXTENSION_CHECKOUT_ROOT: &str = "target/oliphaunt-sources/checkouts";
 
@@ -355,4 +355,26 @@ pub(crate) struct ExtensionLifecycle {
 fn read_catalog() -> Result<ExtensionCatalog> {
     let text = fs::read_to_string(CATALOG_PATH).context("read generated extension catalog")?;
     serde_json::from_str(&text).context("parse generated extension catalog")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repository_catalog_resolves_external_wasix_recipes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../..");
+        let catalog: ExtensionCatalog =
+            serde_json::from_str(&fs::read_to_string(root.join(CATALOG_PATH)).unwrap()).unwrap();
+        let specs = build_specs_at(&catalog, &root).unwrap();
+        let postgis = specs.iter().find(|spec| spec.id == "postgis").unwrap();
+        assert_eq!(postgis.build_kind, "autotools");
+        assert!(postgis.staging.is_some());
+        assert!(
+            postgis
+                .native_support_modules
+                .iter()
+                .any(|module| module.name == "postgis_deps")
+        );
+    }
 }

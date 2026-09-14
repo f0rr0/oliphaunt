@@ -469,7 +469,7 @@ function validateCompatibility(manifest, manifestPath, repositoryContract) {
     );
   }
   const expected = {
-    extensionRuntimeContract: 'extensions/contracts/contract.toml',
+    extensionRuntimeContract: 'src/extensions/contracts/contract.toml',
     nativeRuntimeProduct: 'liboliphaunt-native',
     nativeRuntimeVersion: repositoryContract.nativeRuntimeVersion,
     postgresMajor: owner.postgresMajor,

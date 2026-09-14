@@ -211,8 +211,11 @@ fn validate_source_pin(source: &SourcePin) -> Result<()> {
             }
         }
         SourceKind::Archive => {
-            if source.mirror_url.is_some() {
-                bail!("archive source '{}' must not set mirror_url", source.name);
+            if source.mirror_url.as_deref() == Some(source.url.as_str()) {
+                bail!(
+                    "archive source '{}' mirror URL must differ from its primary URL",
+                    source.name
+                );
             }
             let sha256 = archive_sha256(source)?;
             archive_strip_prefix(source)?;
@@ -243,7 +246,7 @@ fn validate_source_pin(source: &SourcePin) -> Result<()> {
 }
 
 fn extension_source_pin_paths() -> Result<Vec<PathBuf>> {
-    let root = Path::new("extensions/external");
+    let root = Path::new("src/extensions/external");
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -392,9 +395,9 @@ mod tests {
     }
 
     #[test]
-    fn archive_sources_reject_git_mirror_metadata() {
+    fn archive_sources_allow_distinct_https_mirrors_with_the_same_pin() {
         let sha256 = "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6";
-        let source = SourcePin {
+        let mut source = SourcePin {
             name: "libiconv".to_owned(),
             kind: SourceKind::Archive,
             url: "https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz".to_owned(),
@@ -406,13 +409,17 @@ mod tests {
             strip_prefix: Some("libiconv-1.19".to_owned()),
         };
 
-        let error = validate_source_pin(&source).expect_err("archive mirror metadata must fail");
-        assert!(
-            error
-                .to_string()
-                .contains("archive source 'libiconv' must not set mirror_url"),
-            "unexpected error: {error:#}"
-        );
+        validate_source_pin(&source).expect("pinned HTTPS archive mirror must pass");
+        for mirror in [
+            source.url.clone(),
+            "http://example.test/archive.tar.gz".to_owned(),
+        ] {
+            source.mirror_url = Some(mirror);
+            assert!(validate_source_pin(&source).is_err());
+        }
+        source.mirror_url = Some("https://example.test/archive.tar.gz".to_owned());
+        source.sha256 = Some("0".repeat(64));
+        assert!(validate_source_pin(&source).is_err());
     }
 
     #[test]

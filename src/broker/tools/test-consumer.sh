@@ -19,5 +19,5 @@ tar -xzf "${broker_archives[0]}" -C "$consumer/broker" --no-same-owner
 export LIBOLIPHAUNT_PATH="$consumer/native/lib/liboliphaunt.so"
 export OLIPHAUNT_INSTALL_DIR="$consumer/native/runtime"
 export OLIPHAUNT_EMBEDDED_MODULE_DIR="$consumer/native/lib/modules"
-export OLIPHAUNT_BROKER="$consumer/src/broker/bin/oliphaunt-broker"
+export OLIPHAUNT_BROKER="$consumer/broker/bin/oliphaunt-broker"
 cargo test -p oliphaunt-broker --locked --test postgres_client -- --ignored

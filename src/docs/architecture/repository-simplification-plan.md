@@ -80,6 +80,29 @@ Implemented and verified locally:
   Real Rust, WASIX Rust, pgwire, TS SDK, Swift source and rebuilt Kotlin package
   checks pass. Old Apple artifacts correctly reject changed notices and require
   current hosted producers; they were not rewritten to appear qualified.
+- Run `34861280576` exposed archive-relative broker paths incorrectly prefixed
+  with `src/`, three stale WASIX extension recipe/source lookups, and a mobile
+  resolver expecting the pre-move contract path. These are corrected at their
+  existing owners. Restored external source discovery also exposed an outdated
+  WASIX validator rejecting the fetcher's supported pinned archive mirrors.
+  Mobile fixtures now consume producer metadata instead of repeating stale
+  compatibility expectations. The run's actual artifacts pass all 39 native
+  extension lifecycle cases across direct/broker/server, including restart and
+  backup/restore, plus packed Rust and pinned Node/Bun/Deno consumers locally.
+  All 39 same-run extensions materialize for both Android ABIs, and the complete
+  Android runtime resource package stages with ICU and all extensions. Rust
+  tooling tests/format/lint and mobile resolver/carrier tests pass.
+  The actual Android x86_64 release APK build passes with pinned Node 22.22.3
+  and same-run SDK/runtime inputs, including all 39 static extension links,
+  APK alignment/signature and packaged Kotlin bytecode verification. No device
+  execution is claimed by this local build.
+  Actual WASIX extension compilation, including PostGIS and its dependencies,
+  and downstream packaging of all 39 extension artifacts also pass locally.
+  The hosted iOS extension producer and Linux x64 postmaster qualification pass;
+  the latter confirms receipt-validated import of same-run native binaries.
+  The relocated hosted proof binary needed a temporary local fixture-path
+  symlink, removed after testing; no production lookup behavior was changed.
+  These local results do not constitute hosted qualification of the fixes.
 
 Remaining execution checklist (grouped from the detailed tasks below):
 
