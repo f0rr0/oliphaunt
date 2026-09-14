@@ -1,4 +1,5 @@
 require "json"
+require "shellwords"
 
 package = JSON.parse(File.read(File.expand_path("../../package.json", __dir__)))
 swift_sdk_version = ENV.fetch("OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION") do
@@ -18,21 +19,17 @@ else
 end
 
 Pod::Spec.new do |s|
-  s.name = "COliphaunt"
+  s.name = "OliphauntNativeBindings"
   s.version = swift_sdk_version
-  s.summary = "C bridge for the Oliphaunt Swift SDK."
+  s.summary = "Generated native bindings for the Oliphaunt Swift SDK."
   s.license = package["license"]
   s.homepage = "https://oliphaunt.dev"
   s.authors = { "Oliphaunt" => "opensource@oliphaunt.dev" }
   s.source = swift_sdk_source
-  # CocoaPods exports flattened public headers, so materialize the runtime ABI
-  # in the downloaded source before it copies the bridge headers.
-  s.prepare_command = "if test -f runtimes/liboliphaunt-native/include/oliphaunt.h; then cp runtimes/liboliphaunt-native/include/oliphaunt.h sdks/swift/Sources/COliphaunt/include/oliphaunt.h; fi; test -s sdks/swift/Sources/COliphaunt/include/oliphaunt.h"
   s.platforms = { :ios => "17.0" }
-  s.source_files = "sdks/swift/Sources/COliphaunt/**/*.{c,h}"
-  s.public_header_files = "sdks/swift/Sources/COliphaunt/include/COliphaunt.h", "sdks/swift/Sources/COliphaunt/include/oliphaunt.h"
-  s.header_mappings_dir = "sdks/swift/Sources/COliphaunt/include"
-  s.module_map = "sdks/swift/Sources/COliphaunt/include/module.modulemap"
-  s.module_name = "COliphaunt"
-  s.requires_arc = false
+  s.swift_version = "6.0"
+  s.source_files = "sdks/swift/Sources/OliphauntNativeBindings/**/*.swift"
+  s.vendored_frameworks = "Artifacts/OliphauntNativeBindingsFFI.xcframework"
+  s.requires_arc = true
+  s.prepare_command = "set -- #{Shellwords.escape(swift_sdk_version)}\n" + File.read(File.join(__dir__, "prepare-native-bindings.sh"))
 end

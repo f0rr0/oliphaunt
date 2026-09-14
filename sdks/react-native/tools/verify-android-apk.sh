@@ -126,4 +126,7 @@ apk_classes="$("$apkanalyzer" dex packages "$apk")" ||
 if ! grep -Eq '^C d [^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+dev\.oliphaunt\.DatabaseStorage\$TemporaryDirectory$' <<<"$apk_classes"; then
   fail "APK does not define the staged Kotlin SDK storage class; a stale Maven artifact may have won dependency resolution"
 fi
+if ! grep -Eq '^C d [^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+com\.sun\.jna\.Native$' <<<"$apk_classes"; then
+  fail "APK does not define the Kotlin SDK JNA runtime class"
+fi
 echo "Verified APK alignment, signature, and staged Kotlin SDK bytecode: $apk"

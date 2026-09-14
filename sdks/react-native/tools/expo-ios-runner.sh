@@ -459,9 +459,15 @@ prepare_swift_sdk_artifact_git_repo_if_required() {
   cp -R "$package_archive_root/." "$source_root/"
   [ -f "$source_root/Sources/Oliphaunt/Oliphaunt.swift" ] ||
     fail "Swift SDK source artifact did not unpack to Sources/Oliphaunt/Oliphaunt.swift: $archive"
-  if [ -f "$(expo_sdk_artifact_product_root oliphaunt-swift)/Package.swift.release" ]; then
-    cp "$(expo_sdk_artifact_product_root oliphaunt-swift)/Package.swift.release" "$artifact_repo/Package.swift"
-  fi
+  local swift_version bindings_archive
+  swift_version="$(cat "$source_root/VERSION")"
+  bindings_archive="$(expo_sdk_artifact_product_root oliphaunt-swift)/release-assets/oliphaunt-swift-$swift_version-bindings.xcframework.zip"
+  [ -s "$bindings_archive" ] || fail "Swift SDK bindings artifact is missing: $bindings_archive"
+  mkdir -p "$artifact_repo/Artifacts"
+  cp "$bindings_archive" "$artifact_repo/Artifacts/"
+  cp "$(expo_sdk_artifact_product_root oliphaunt-swift)/Package.swift.release" "$artifact_repo/Package.swift"
+  [ -s "$source_root/Sources/OliphauntNativeBindings/OliphauntNativeBindings.swift" ] ||
+    fail "Swift SDK source artifact is missing generated native bindings"
   (
     cd "$artifact_repo"
     git init -q

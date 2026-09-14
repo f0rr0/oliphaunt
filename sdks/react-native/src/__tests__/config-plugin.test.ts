@@ -174,6 +174,10 @@ test('Podfile patch is app-owned, fail-closed, and idempotent', () => {
   );
   assert.match(
     patchedPodfile,
+    /pod 'OliphauntNativeBindings', :podspec => File\.join\(oliphaunt_podspecs_path, 'OliphauntNativeBindings\.podspec'\)/,
+  );
+  assert.match(
+    patchedPodfile,
     /pod 'Oliphaunt', :podspec => File\.join\(oliphaunt_podspecs_path, 'Oliphaunt\.podspec'\)/,
   );
   assert.match(

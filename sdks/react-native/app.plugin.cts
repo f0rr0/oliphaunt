@@ -840,6 +840,7 @@ function iosPodfileBlock(options = {}) {
     IOS_PODFILE_START,
     "oliphaunt_podspecs_path = File.expand_path('../node_modules/@oliphaunt/react-native/ios/podspecs', __dir__)",
     "pod 'COliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'COliphaunt.podspec'), :modular_headers => true",
+    "pod 'OliphauntNativeBindings', :podspec => File.join(oliphaunt_podspecs_path, 'OliphauntNativeBindings.podspec')",
     "pod 'Oliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'Oliphaunt.podspec')",
     "oliphaunt_payload_path = File.expand_path('oliphaunt', __dir__)",
     "oliphaunt_payload_podspec = File.join(oliphaunt_payload_path, 'OliphauntReactNativePayload.podspec')",
