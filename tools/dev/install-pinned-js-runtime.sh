@@ -284,7 +284,7 @@ for candidate_url in "$url" ${mirror_url:+"$mirror_url"}; do
   curl_args=(
     --fail --location --silent --show-error
     --proto '=https' --proto-redir '=https'
-    --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 120
+    --retry 6 --retry-all-errors --retry-max-time 120
     --connect-timeout 20 --max-time 180 --max-filesize 200000000
   )
   if [ -n "$curl_platform_tls_flag" ]; then

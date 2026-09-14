@@ -36,7 +36,7 @@ runs:
         echo "execution-envelope=$output_envelope" >> "$GITHUB_OUTPUT"
 
     - name: Save verified Node.js archive
-      if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_verified_node_runtime.outputs.cache-hit != 'true' }}
+      if: ${{ steps.restore_verified_node_runtime.outputs.cache-hit != 'true' }}
       continue-on-error: true
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:

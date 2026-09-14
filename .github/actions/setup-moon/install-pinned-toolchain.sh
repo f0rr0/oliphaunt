@@ -257,7 +257,7 @@ curl_tls_flag="$(oliphaunt_curl_platform_tls_flag)"
 curl_common=(
   --fail --location --silent --show-error
   --proto '=https' --proto-redir '=https' --tlsv1.2
-  --retry 5 --retry-all-errors --retry-connrefused --retry-delay 2 --retry-max-time 300
+  --retry 6 --retry-all-errors --retry-connrefused --retry-max-time 300
   --connect-timeout 20 --max-time 300 --speed-limit 1024 --speed-time 30
   --remove-on-error
 )

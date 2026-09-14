@@ -62,6 +62,13 @@ Implemented and verified locally:
   about 15 minutes total. Swift's 94 tests pass. Existing compiler outputs were
   retained where valid; this is not a cold native rebuild. Only the Apple-only
   Swift test is unavailable locally; product/platform builds remain hosted proof.
+- The subsequent hosted run passed the corrected extension/resource groups but
+  six jobs failed before source checks when Bun/Moon downloads returned HTTP
+  504. Verified Moon/Bun, Node and npm tool caches now save on PRs using GitHub's
+  existing cache isolation, rather than inheriting the heavy-build cache gate.
+  Existing installers still verify restored bytes. Bun/Moon downloaders use
+  curl's bounded exponential backoff instead of exhausting retries in ten seconds.
+  No alternate download service or cache framework was added.
 
 Remaining execution checklist (grouped from the detailed tasks below):
 
