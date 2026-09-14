@@ -3130,8 +3130,10 @@ jobs:
       - extension-packages
       - mobile-extension-packages
       - liboliphaunt-native-android
+      - liboliphaunt-native-android-abi
       - liboliphaunt-native-desktop
       - liboliphaunt-native-ios
+      - liboliphaunt-native-ios-abi
       - liboliphaunt-native-release-assets
       - rust-sdk-package
       - broker-runtime
