@@ -139,9 +139,10 @@ export function packageSeedCarriers(argv = [], { assetDir, outputDir, sourceDir 
           path.join(stage, `${name}.podspec`),
           `Pod::Spec.new do |s|\n  s.name = '${name}'\n  s.version = '${version}'\n  s.summary = 'Selectable native PostgreSQL ${identity.profile} seed for iOS.'\n  s.homepage = 'https://oliphaunt.dev'\n  s.license = { :type => '${license}' }\n  s.author = { 'Oliphaunt Maintainers' => 'https://github.com/f0rr0' }\n  s.source = { :path => '.' }\n  s.platforms = { :ios => '17.0' }\n  s.resources = '${bundle}'\nend\n`,
         );
+        // The React Native plugin registers only the selected resource pods.
         writeFileSync(
           path.join(stage, 'react-native.config.js'),
-          `module.exports = { dependency: { platforms: { ios: {}, android: null } } };\n`,
+          `module.exports = { dependency: { platforms: { ios: null, android: null } } };\n`,
         );
         npm.files.push(bundle, `${name}.podspec`, 'react-native.config.js');
       } else {

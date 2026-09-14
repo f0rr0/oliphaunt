@@ -78,8 +78,10 @@ seed, and data packages do not restrict the installation host's OS or CPU.
 Native npm leaves contain unpacked PGDATA and expose `./pgdata/PG_VERSION` and
 `./manifest.json`; the manifest includes the digest of the complete directory.
 Cargo and WASIX npm leaves retain their compressed seed archive. The iOS npm
-leaves also expose a resource-only CocoaPod that React Native autolinks. Install
-one iOS profile; its seed bundle is separate from the SDK and canonical ICU data.
+leaves also expose a resource-only CocoaPod. The React Native plugin registers
+the selected `seedProfile` and ICU pods; resource packages opt out of automatic
+linking. Install the selected iOS profile; its seed bundle is separate from the
+SDK and canonical ICU data.
 
 WASIX seed production uses `liboliphaunt-wasix:compiler-output`, whose prepared
 runtime lives at `target/oliphaunt-wasix/wasix-build/build/install`. Runtime
