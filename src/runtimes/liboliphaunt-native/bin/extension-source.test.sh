@@ -3,7 +3,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-extension-source.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
-mkdir -p "$fixture/extensions/generated"
+mkdir -p "$fixture/src/extensions/generated"
 printf 'name\tmodule\tsource\nfixture_sql\tfixture_module\ttarget/oliphaunt-sources/checkouts/fixture_upstream\n' > "$fixture/src/extensions/generated/pgxs-build.tsv"
 # Both SQL identity and upstream alias locate the same checkout from another cwd.
 cd "$fixture"

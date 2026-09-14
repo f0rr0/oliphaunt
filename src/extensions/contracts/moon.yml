@@ -28,7 +28,7 @@ fileGroups:
 tasks:
   test:
     tags: ["quality", "unit"]
-    command: "bun test ./extensions/contracts"
+    command: "bun test ./src/extensions/contracts"
     inputs:
       - "@group(contract)"
       - "*.test.mts"

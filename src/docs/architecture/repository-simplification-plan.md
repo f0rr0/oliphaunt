@@ -1,7 +1,7 @@
 # Repository simplification implementation plan
 
-Status: implementation in progress. The `src/` migration and its local checks
-are complete in the staged working tree, not yet committed or hosted-qualified.
+Status: implementation in progress. The `src/` migration is committed in
+`e15e05d0`; final hosted qualification remains pending.
 Product/resource separation, shared Rust/query/mobile implementations, broker
 PostgreSQL wire transport, Bun tooling, and CI/release machinery are implemented.
 Deno addon teardown, native cross-commit reuse, release-scope narrowing, final
@@ -51,6 +51,17 @@ Implemented and verified locally:
   acquisition failure has a checksum-verified GNU-listed mirror fallback with
   bounded retries; actual mirror bytes and corrupt/unavailable fallback cases
   pass. Required Android PostGIS inputs remain included.
+- Vercel's preview build passed for `e15e05d0`. Its first CI run exposed three
+  missed migration paths, including the shared external-extension recipe lookup
+  that dropped ancillary SQL metadata. The corrected source-test matrix also
+  caught a fourth path in the database-resources launcher. These are corrected
+  at their existing owners; no compatibility directories or new path checks
+  were added. A forced local pass covers 175 selected source/unit/policy targets
+  and 21 prerequisite tasks, without Moon result-cache reuse. All pass after the
+  fixes and a one-time clean of relocated Kotlin/Swift generated caches, in
+  about 15 minutes total. Swift's 94 tests pass. Existing compiler outputs were
+  retained where valid; this is not a cold native rebuild. Only the Apple-only
+  Swift test is unavailable locally; product/platform builds remain hosted proof.
 
 Remaining execution checklist (grouped from the detailed tasks below):
 

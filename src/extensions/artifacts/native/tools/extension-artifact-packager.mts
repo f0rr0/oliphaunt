@@ -183,7 +183,7 @@ function sharedPreloadLibraries(extension) {
 }
 
 async function externalRecipe(sqlName) {
-  const recipePath = path.join(root, 'extensions/external', sqlName, 'recipe.toml');
+  const recipePath = path.join(root, 'src/extensions/external', sqlName, 'recipe.toml');
   if (!(await isFile(recipePath))) {
     return null;
   }
