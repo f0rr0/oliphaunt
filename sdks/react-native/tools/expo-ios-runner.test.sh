@@ -3,16 +3,31 @@ set -euo pipefail
 tool="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/expo-ios-runner.mts"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
+fixture="${tool%.mts}.test.mts"
+bun "$fixture" prepare "$scratch"
+bun "$tool" configure-resource-dependencies "$scratch/workspace.json" "$scratch/example.json" "$scratch/icu.tgz" "$scratch/data.tgz"
+bun "$fixture" icu "$scratch"
+for invalid in "$scratch/wrong.tgz" "$scratch/standard.tgz"; do
+  if bun "$tool" configure-resource-dependencies "$scratch/workspace.json" "$scratch/example.json" "$scratch/icu.tgz" "$invalid" > "$scratch/resource-failure.log" 2>&1; then
+    echo 'incompatible ICU resource carrier was accepted' >&2
+    exit 1
+  fi
+  bun "$fixture" icu "$scratch"
+done
+bun "$tool" configure-resource-dependencies "$scratch/workspace.json" "$scratch/example.json" "$scratch/standard.tgz"
+bun "$fixture" standard "$scratch"
+bun "$tool" configure-resource-dependencies "$scratch/single.json" "$scratch/single.json" "$scratch/icu.tgz" "$scratch/data.tgz"
+bun "$fixture" single "$scratch"
 valid='EXTERNAL SOURCES:
   OliphauntReactNativePayload:
     :path: oliphaunt'
 printf '%s\n' "$valid" > "$scratch/Podfile.lock"
 bun "$tool" validate-pod-source "$scratch/Podfile.lock" "$scratch/oliphaunt" 1
+printf '%s\n' "$valid"$'\nPODS:\n  - OliphauntICU (1.0)\n  - OliphauntSeedNativeIOSICU (1.0)' > "$scratch/Podfile.lock"
+bun "$tool" validate-pod-source "$scratch/Podfile.lock" "$scratch/oliphaunt"
 for value in \
   "${valid/:path: oliphaunt/:path: ../elsewhere}" \
-  "$valid"$'\n    :git: https://example.invalid/payload.git' \
-  "$valid"$'\nPODS:\n  - OliphauntICU (1.0)' \
-  "$valid"$'\nSPEC CHECKSUMS:\n  OliphauntICU: abc'; do
+  "$valid"$'\n    :git: https://example.invalid/payload.git'; do
   printf '%s\n' "$value" > "$scratch/Podfile.lock"
   if bun "$tool" validate-pod-source "$scratch/Podfile.lock" "$scratch/oliphaunt" 1 > "$scratch/failure.log" 2>&1; then
     echo 'invalid CocoaPods source unexpectedly accepted' >&2

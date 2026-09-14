@@ -10,6 +10,55 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-ios-runner-test.XXXXXX")"
 trap 'rm -rf "$test_root"' EXIT
+app="$test_root/fixture.app"
+for profile in standard icu; do
+  rm -rf "$app"
+  seed_name=Standard
+  seed_resource=cluster-seed
+  expected_icu=0
+  if [ "$profile" = icu ]; then
+    seed_name=ICU
+    seed_resource=cluster-seed-icu
+    expected_icu=1
+    mkdir -p "$app/OliphauntICU.bundle/share/icu"
+    printf data >"$app/OliphauntICU.bundle/share/icu/icudt.dat"
+    printf receipt >"$app/OliphauntICU.bundle/manifest.properties"
+  fi
+  seed="$app/OliphauntSeedNativeIOS$seed_name.bundle/$seed_resource"
+  mkdir -p "$seed/files"
+  printf '18\n' >"$seed/files/PG_VERSION"
+  printf 'catalogProfile=%s\n' "$profile" >"$seed/manifest.properties"
+  export_mobile_e2e_icu_expectation_from_ios_app "$app"
+  [ "$OLIPHAUNT_MOBILE_E2E_EXPECT_ICU" = "$expected_icu" ]
+  [ "$OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE" = "$profile" ]
+  other=ICU
+  [ "$seed_name" != ICU ] || other=Standard
+  mkdir "$app/OliphauntSeedNativeIOS$other.bundle"
+  if export_mobile_e2e_icu_expectation_from_ios_app "$app" >/dev/null 2>&1; then
+    echo "iOS app accepted two seed carriers" >&2
+    exit 1
+  fi
+  rmdir "$app/OliphauntSeedNativeIOS$other.bundle"
+  printf 'catalogProfile=wrong\n' >"$seed/manifest.properties"
+  if export_mobile_e2e_icu_expectation_from_ios_app "$app" >/dev/null 2>&1; then
+    echo "iOS app accepted a mismatched seed profile" >&2
+    exit 1
+  fi
+  printf 'catalogProfile=%s\n' "$profile" >"$seed/manifest.properties"
+  rm "$seed/files/PG_VERSION"
+  if export_mobile_e2e_icu_expectation_from_ios_app "$app" >/dev/null 2>&1; then
+    echo "iOS app accepted missing seed data" >&2
+    exit 1
+  fi
+  if [ "$profile" = icu ]; then
+    printf '18\n' >"$seed/files/PG_VERSION"
+    rm "$app/OliphauntICU.bundle/share/icu/icudt.dat"
+    if export_mobile_e2e_icu_expectation_from_ios_app "$app" >/dev/null 2>&1; then
+      echo "iOS app accepted empty ICU data" >&2
+      exit 1
+    fi
+  fi
+done
 scratch_root="$test_root/scratch"
 maestro_flow="$test_root/installed-smoke.yaml"
 app_id="dev.oliphaunt.test"

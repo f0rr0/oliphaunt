@@ -158,53 +158,86 @@ test('normalizes exact extension selection', () => {
 });
 
 test('Podfile patch is app-owned, fail-closed, and idempotent', () => {
-  const podfile = [
-    "target 'OliphauntExample' do",
-    '  use_expo_modules!',
-    '  config = use_native_modules!',
-    'end',
-    '',
-  ].join('\n');
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-pod-resources-'));
+  try {
+    for (const [name, pod] of [
+      ['@oliphaunt/icu', 'OliphauntICU'],
+      ['@oliphaunt/seed-native-ios-datum64-icu', 'OliphauntSeedNativeIOSICU'],
+      ['@oliphaunt/seed-native-ios-datum64-standard', 'OliphauntSeedNativeIOSStandard'],
+    ] as const) {
+      const packageRoot = path.join(projectRoot, 'node_modules', name);
+      writeJson(path.join(packageRoot, 'package.json'), { name, version: '1.2.3' });
+      fs.writeFileSync(path.join(packageRoot, `${pod}.podspec`), 'Pod::Spec.new {}');
+    }
+    const options = { icu: true, seedProfile: 'icu', projectRoot };
+    const podfile = [
+      "target 'OliphauntExample' do",
+      '  use_expo_modules!',
+      '  config = use_native_modules!',
+      'end',
+      '',
+    ].join('\n');
 
-  const patchedPodfile = insertIosPodfileBlock(podfile, { icu: true });
-  assert.match(patchedPodfile, /# @oliphaunt\/react-native begin/);
-  assert.match(
-    patchedPodfile,
-    /pod 'COliphaunt', :podspec => File\.join\(oliphaunt_podspecs_path, 'COliphaunt\.podspec'\), :modular_headers => true/,
-  );
-  assert.match(
-    patchedPodfile,
-    /pod 'OliphauntNativeBindings', :podspec => File\.join\(oliphaunt_podspecs_path, 'OliphauntNativeBindings\.podspec'\)/,
-  );
-  assert.match(
-    patchedPodfile,
-    /pod 'Oliphaunt', :podspec => File\.join\(oliphaunt_podspecs_path, 'Oliphaunt\.podspec'\)/,
-  );
-  assert.match(
-    patchedPodfile,
-    /oliphaunt_payload_path = File\.expand_path\('oliphaunt', __dir__\)/,
-  );
-  assert.match(
-    patchedPodfile,
-    /oliphaunt_payload_podspec = File\.join\(oliphaunt_payload_path, 'OliphauntReactNativePayload\.podspec'\)/,
-  );
-  assert.match(patchedPodfile, /raise 'Oliphaunt iOS payload is missing/);
-  assert.match(
-    patchedPodfile,
-    /pod 'OliphauntReactNativePayload', :path => oliphaunt_payload_path/,
-  );
-  assert.doesNotMatch(patchedPodfile, /pod 'OliphauntReactNativePayload', :podspec/);
-  assert.doesNotMatch(patchedPodfile, /OliphauntICU/);
-  assert.equal(insertIosPodfileBlock(patchedPodfile, { icu: true }), patchedPodfile);
+    const patchedPodfile = insertIosPodfileBlock(podfile, options);
+    assert.match(patchedPodfile, /# @oliphaunt\/react-native begin/);
+    assert.match(
+      patchedPodfile,
+      /pod 'COliphaunt', :podspec => File\.join\(oliphaunt_podspecs_path, 'COliphaunt\.podspec'\), :modular_headers => true/,
+    );
+    assert.match(
+      patchedPodfile,
+      /pod 'OliphauntNativeBindings', :podspec => File\.join\(oliphaunt_podspecs_path, 'OliphauntNativeBindings\.podspec'\)/,
+    );
+    assert.match(
+      patchedPodfile,
+      /pod 'Oliphaunt', :podspec => File\.join\(oliphaunt_podspecs_path, 'Oliphaunt\.podspec'\)/,
+    );
+    assert.match(
+      patchedPodfile,
+      /oliphaunt_payload_path = File\.expand_path\('oliphaunt', __dir__\)/,
+    );
+    assert.match(
+      patchedPodfile,
+      /oliphaunt_payload_podspec = File\.join\(oliphaunt_payload_path, 'OliphauntReactNativePayload\.podspec'\)/,
+    );
+    assert.match(patchedPodfile, /raise 'Oliphaunt iOS payload is missing/);
+    assert.match(
+      patchedPodfile,
+      /pod 'OliphauntReactNativePayload', :path => oliphaunt_payload_path/,
+    );
+    assert.doesNotMatch(patchedPodfile, /pod 'OliphauntReactNativePayload', :podspec/);
+    assert.ok(
+      patchedPodfile.includes(
+        "pod 'OliphauntICU', :path => File.expand_path('../node_modules/@oliphaunt/icu', __dir__)",
+      ),
+    );
+    assert.ok(
+      patchedPodfile.includes(
+        "pod 'OliphauntSeedNativeIOSICU', :path => File.expand_path('../node_modules/@oliphaunt/seed-native-ios-datum64-icu', __dir__)",
+      ),
+    );
+    assert.equal(insertIosPodfileBlock(patchedPodfile, options), patchedPodfile);
+    const standard = insertIosPodfileBlock(patchedPodfile, {
+      icu: false,
+      seedProfile: 'standard',
+      projectRoot,
+    });
+    assert.match(standard, /pod 'OliphauntSeedNativeIOSStandard'/);
+    assert.doesNotMatch(standard, /OliphauntICU|OliphauntSeedNativeIOSICU/);
+    fs.unlinkSync(path.join(projectRoot, 'node_modules/@oliphaunt/icu/OliphauntICU.podspec'));
+    assert.throws(() => insertIosPodfileBlock(podfile, options), /missing OliphauntICU.podspec/);
 
-  assert.throws(
-    () => insertIosPodfileBlock("target 'App' do\nend\n"),
-    /use_native_modules! or use_expo_modules!/,
-  );
-  assert.throws(
-    () => insertIosPodfileBlock('# @oliphaunt/react-native begin\n'),
-    /partial @oliphaunt\/react-native managed block/,
-  );
+    assert.throws(
+      () => insertIosPodfileBlock("target 'App' do\nend\n"),
+      /use_native_modules! or use_expo_modules!/,
+    );
+    assert.throws(
+      () => insertIosPodfileBlock('# @oliphaunt/react-native begin\n'),
+      /partial @oliphaunt\/react-native managed block/,
+    );
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
 });
 
 test('Expo iOS deployment target meets the packaged pod minimum without lowering newer apps', () => {

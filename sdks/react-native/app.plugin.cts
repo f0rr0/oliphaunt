@@ -847,6 +847,27 @@ function iosPodfileBlock(options = {}) {
     "raise 'Oliphaunt iOS payload is missing; rerun Expo prebuild' unless File.file?(oliphaunt_payload_podspec)",
     "pod 'OliphauntReactNativePayload', :path => oliphaunt_payload_path",
   ];
+  const resources = [];
+  if (options.seedProfile) {
+    resources.push([
+      `@oliphaunt/seed-native-ios-datum64-${options.seedProfile}`,
+      `OliphauntSeedNativeIOS${options.seedProfile === 'icu' ? 'ICU' : 'Standard'}`,
+    ]);
+  }
+  if (options.icu) resources.push(['@oliphaunt/icu', 'OliphauntICU']);
+  for (const [packageName, podName] of resources) {
+    const projectRoot = options.projectRoot ?? process.cwd();
+    const packageRoot = path.dirname(resolvePackageJson(packageName, [projectRoot]));
+    if (!fs.existsSync(path.join(packageRoot, `${podName}.podspec`))) {
+      throw new Error(`${packageName} is missing ${podName}.podspec`);
+    }
+    const relative = path
+      .relative(path.join(projectRoot, 'ios'), packageRoot)
+      .split(path.sep)
+      .join('/');
+    const rubyPath = relative.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    lines.push(`pod '${podName}', :path => File.expand_path('${rubyPath}', __dir__)`);
+  }
   lines.push(IOS_PODFILE_END);
   return lines.join('\n');
 }
@@ -900,7 +921,10 @@ function patchIosPodfile(file, options = {}) {
     return false;
   }
   const before = fs.readFileSync(file, 'utf8');
-  const after = insertIosPodfileBlock(before, options);
+  const after = insertIosPodfileBlock(before, {
+    ...options,
+    projectRoot: path.dirname(path.dirname(file)),
+  });
   if (after !== before) {
     fs.writeFileSync(file, after);
   }

@@ -2931,19 +2931,28 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: database-resources-icu-data-portable
-          path: target/database-resources/mobile-inputs
+          path: target/database-resources/release-assets
 
       - name: Download iOS database seed
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: database-resources-native-seeds-ios-datum64
-          path: target/database-resources/mobile-inputs
+          path: target/database-resources/release-assets
+
+      - name: Download canonical ICU npm carrier
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: database-resources-icu-npm
+          path: target/release/npm-packages/oliphaunt-icu
+
+      - name: Package selected iOS seed npm carrier
+        run: bash tools/ci/with-projects.sh database-resources/seeds/package-carriers.mts --family native --target ios-datum64 --profile icu
 
       - name: Stage selected iOS ICU seed and data
         run: |
           shopt -s nullglob
-          icu_archives=(target/database-resources/mobile-inputs/*-icu-data.tar.gz)
-          seed_archives=(target/database-resources/mobile-inputs/*-seed-native-ios-datum64-icu.tar.zst)
+          icu_archives=(target/database-resources/release-assets/*-icu-data.tar.gz)
+          seed_archives=(target/database-resources/release-assets/*-seed-native-ios-datum64-icu.tar.zst)
           if [ "${#icu_archives[@]}" -ne 1 ] || [ "${#seed_archives[@]}" -ne 1 ]; then
             echo 'Expected exactly one canonical ICU archive and one iOS ICU seed.' >&2
             exit 1

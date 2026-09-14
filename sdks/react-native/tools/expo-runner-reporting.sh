@@ -42,6 +42,37 @@ require_nonempty_json_file() {
   fi
 }
 
+export_mobile_e2e_icu_expectation_from_ios_app() {
+  # iOS keeps the base runtime selection-neutral; CocoaPods installs the
+  # selected ICU and seed carriers as sibling resource bundles.
+  local app="$1"
+  local profile=standard seed_name=Standard seed_resource=cluster-seed
+  local icu="$app/OliphauntICU.bundle"
+  if [ -d "$icu" ]; then
+    profile=icu
+    seed_name=ICU
+    seed_resource=cluster-seed-icu
+    [ -s "$icu/manifest.properties" ] &&
+      [ -n "$(find "$icu/share/icu" -type f -print -quit 2>/dev/null)" ] || {
+      echo "iOS app has an incomplete ICU resource carrier: $icu" >&2
+      return 1
+    }
+  fi
+  local seed="$app/OliphauntSeedNativeIOS$seed_name.bundle/$seed_resource"
+  local other=ICU
+  [ "$seed_name" != ICU ] || other=Standard
+  [ ! -e "$app/OliphauntSeedNativeIOS$other.bundle" ] &&
+    [ -s "$seed/files/PG_VERSION" ] &&
+    [ "$(grep -c '^catalogProfile=' "$seed/manifest.properties" 2>/dev/null || true)" = 1 ] &&
+    grep -Fxq "catalogProfile=$profile" "$seed/manifest.properties" || {
+    echo "iOS app must contain exactly its selected $profile cluster seed carrier: $seed" >&2
+    return 1
+  }
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
+  [ "$profile" != icu ] || export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=1
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE="$profile"
+}
+
 export_mobile_e2e_icu_expectation_from_manifest() {
   local manifest="$1"
   local label="$2"

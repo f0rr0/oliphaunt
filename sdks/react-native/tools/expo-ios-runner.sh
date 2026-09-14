@@ -350,6 +350,29 @@ validate_ios_static_extension_linkage() {
   fi
 }
 
+install_ios_resource_carriers() {
+  local profile=standard version seed_archive icu_archive
+  if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then profile=icu; fi
+  version="$(tr -d '\r\n' <"$root/database-resources/VERSION")"
+  seed_archive="$root/target/database-resources/seed-carriers/npm/oliphaunt-seed-native-ios-datum64-$profile/oliphaunt-seed-native-ios-datum64-$profile-$version.tgz"
+  [ -f "$seed_archive" ] ||
+    fail "missing iOS $profile seed npm carrier; run moon run database-resources:package-ios"
+  local packages=("$seed_archive")
+  if [ "$profile" = icu ]; then
+    icu_archive="$root/target/release/npm-packages/oliphaunt-icu/oliphaunt-icu-$version.tgz"
+    [ -f "$icu_archive" ] ||
+      fail "missing ICU npm carrier; run moon run database-resources:package-icu"
+    packages+=("$icu_archive")
+  fi
+  local workspace_manifest="$example_dir/package.json"
+  if [ "$example_dir" = "$scratch_root/examples/react-native-expo" ]; then
+    workspace_manifest="$scratch_root/package.json"
+  fi
+  bun "$root/sdks/react-native/tools/expo-ios-runner.mts" configure-resource-dependencies \
+    "$workspace_manifest" "$example_dir/package.json" "${packages[@]}"
+  install_expo_example_dependencies
+}
+
 install_react_native_sdk_tarball() {
   patch_expo_example_react_native_dependency "file:$tarball"
   rm -rf "$example_dir/node_modules/@oliphaunt/react-native"
@@ -484,6 +507,7 @@ prepare_swift_sdk_artifact_git_repo_if_required() {
 }
 
 configure_ios_carrier_inputs() {
+  install_ios_resource_carriers
   local carrier_manifest="${OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER:-}"
   if [ -z "$carrier_manifest" ]; then
     local candidate="$root/target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json"
@@ -552,16 +576,10 @@ install_pods() {
 validate_app_owned_payload_pod_source() {
   local lockfile="$example_dir/ios/Podfile.lock"
   local expected_root="$example_dir/ios/oliphaunt"
-  local require_icu=0
   [ -f "$lockfile" ] || fail "CocoaPods did not produce $lockfile"
   [ -f "$expected_root/OliphauntReactNativePayload.podspec" ] ||
     fail "app-owned iOS payload podspec is missing from $expected_root"
-  if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then
-    require_icu=1
-
-  fi
-
-  "$root/tools/dev/bun.sh" "$root/sdks/react-native/tools/expo-ios-runner.mts" validate-pod-source "$lockfile" "$expected_root" "$require_icu"
+  "$root/tools/dev/bun.sh" "$root/sdks/react-native/tools/expo-ios-runner.mts" validate-pod-source "$lockfile" "$expected_root"
 }
 
 patch_expo_modules_jsi_for_host_toolchain() {
@@ -721,24 +739,13 @@ build_ios_app() {
   [ -d "$resource_root" ] ||
     fail "iOS app is missing OliphauntReactNativeResources.bundle/oliphaunt resource root"
   echo "bundled: $resource_root ($(directory_files "$resource_root") files, $(directory_bytes "$resource_root") bytes)" >&2
-  local selected_seed=cluster-seed
-  if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then selected_seed=cluster-seed-icu; fi
-  for required in \
-    "$resource_root/$selected_seed/files/PG_VERSION" \
-    "$resource_root/runtime/files/share/postgresql/postgres.bki"; do
-    [ -e "$required" ] || fail "iOS app is missing packaged Oliphaunt resource: $required"
-    echo "bundled: $required" >&2
-  done
-  if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then
-    local built_icu_root="$resource_root/runtime/files/share/icu"
-    local built_icu_file
-    [ -d "$built_icu_root" ] ||
-      fail "iOS app is missing selected ICU data: $built_icu_root"
-    built_icu_file="$(find "$built_icu_root" -type f -print -quit)"
-    [ -n "$built_icu_file" ] ||
-      fail "iOS app contains an empty selected ICU data directory: $built_icu_root"
-    echo "bundled ICU: $built_icu_root ($(directory_files "$built_icu_root") files, $(directory_bytes "$built_icu_root") bytes)" >&2
-  fi
+  [ -s "$resource_root/runtime/files/share/postgresql/postgres.bki" ] ||
+    fail "iOS app is missing packaged PostgreSQL runtime data"
+  export_mobile_e2e_icu_expectation_from_ios_app "$app" || return 1
+  local expected_icu=0
+  if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then expected_icu=1; fi
+  [ "$OLIPHAUNT_MOBILE_E2E_EXPECT_ICU" = "$expected_icu" ] ||
+    fail "iOS app resource carriers do not match the requested ICU selection"
   if [ -e "$resource_root/lib/liboliphaunt.dylib" ]; then
     echo "bundled: $resource_root/lib/liboliphaunt.dylib" >&2
   fi
@@ -862,9 +869,7 @@ main() {
   if is_truthy "$e2e_only"; then
     local app
     app="$(resolve_prebuilt_ios_app)"
-    export_mobile_e2e_icu_expectation_from_manifest \
-      "$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties" \
-      "iOS app"
+    export_mobile_e2e_icu_expectation_from_ios_app "$app"
     install_and_launch "$app"
     local ios_app_bytes rn_package_bytes
     ios_app_bytes="$(directory_bytes "$app")"
@@ -913,9 +918,7 @@ main() {
   validate_app_owned_payload_pod_source
   stamp_expo_modules_jsi_prebuilt
   app="$(build_ios_app)"
-  export_mobile_e2e_icu_expectation_from_manifest \
-    "$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties" \
-    "iOS app"
+  export_mobile_e2e_icu_expectation_from_ios_app "$app"
   local selected_extensions
   selected_extensions="$(normalize_mobile_extensions)"
   write_ios_build_artifact_report "$app" "$selected_extensions"
