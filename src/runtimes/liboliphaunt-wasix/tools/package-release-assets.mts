@@ -168,7 +168,7 @@ async function main() {
     const portable = path.join(staging, 'portable');
     stagePortableAssets(path.join(ROOT, ASSETS), path.join(portable, ASSETS), fingerprint);
     for (const generated of [
-      'extensions/generated',
+      'src/extensions/generated',
       'src/runtimes/liboliphaunt-wasix/assets/generated',
     ]) {
       copyTree(path.join(ROOT, generated), path.join(portable, generated));

@@ -103,6 +103,11 @@ Implemented and verified locally:
   The relocated hosted proof binary needed a temporary local fixture-path
   symlink, removed after testing; no production lookup behavior was changed.
   These local results do not constitute hosted qualification of the fixes.
+- Run `34868625206` passed 112 jobs; its sole underlying failure was the final
+  WASIX runtime release packager reading the old `extensions/generated` path.
+  The corrected task passes locally with that run's portable and four-platform
+  AOT artifacts, including archive validation. Two uncached executions produce
+  identical release checksums. Hosted qualification of this correction is pending.
 
 Remaining execution checklist (grouped from the detailed tasks below):
 
