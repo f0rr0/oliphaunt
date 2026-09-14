@@ -22,6 +22,7 @@ import {
   packageGeneratedCargoSource,
 } from './cargo-source-package.mts';
 import { readPortableArchiveEntries } from './portable-archive.mts';
+import { assertReleaseNoticesInArchive } from './release-notices.mts';
 
 function fixture(t, name) {
   const root = mkdtempSync(path.join(os.tmpdir(), `oliphaunt-${name}-`));
@@ -58,6 +59,7 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
     writeFileSync(path.join(source, 'src/lib.rs'), 'pub fn selected() {}\n');
     chmodSync(path.join(source, 'src/lib.rs'), 0o755);
     writeFileSync(path.join(source, 'forbidden.txt'), 'must not ship\n');
+    writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'), 'stale source notice\n');
     mkdirSync(path.join(source, 'tools'));
     writeFileSync(path.join(source, 'tools/check.sh'), 'must not ship\n');
 
@@ -92,7 +94,19 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
     const entries = readPortableArchiveEntries(first);
     assert.deepEqual(
       [...entries].filter(([, entry]) => entry.isFile).map(([name]) => name),
-      ['selected-package-0.1.0/Cargo.toml', 'selected-package-0.1.0/src/lib.rs'],
+      [
+        'selected-package-0.1.0/Cargo.toml',
+        'selected-package-0.1.0/THIRD_PARTY_NOTICES.md',
+        'selected-package-0.1.0/src/lib.rs',
+      ],
+    );
+    assertReleaseNoticesInArchive(readFileSync(path.join(root, 'notices.path'), 'utf8').trim(), {
+      profile: 'source-sdk',
+      prefix: 'selected-package-0.1.0',
+    });
+    assert.equal(
+      readFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'), 'utf8'),
+      'stale source notice\n',
     );
     const sourceMode = statSync(path.join(source, 'src/lib.rs')).mode & 0o777;
     assert.equal(entries.get('selected-package-0.1.0/src/lib.rs').mode, sourceMode);

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# OLIPHAUNT_CARGO_NOTICE_PROFILE stages canonical notices in the private copy.
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
   echo 'usage: package-cargo-source.sh MANIFEST OUTPUT_DIRECTORY [PACKAGE_LIST]' >&2
   exit 1

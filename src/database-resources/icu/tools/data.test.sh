@@ -11,6 +11,13 @@ if [ -z "${OLIPHAUNT_ICU_DATA_ARCHIVE:-}" ]; then
     printf '%s\n' 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
   }
 fi
+mkdir -p "$scratch/checkouts/icu/icu4c/source" "$scratch/checkouts/icu-data"
+cp "$archive" "$scratch/checkouts/icu-data/icudt76l.dat"
+(
+  unset OLIPHAUNT_ICU_DATA_ARCHIVE
+  oliphaunt_icu_require_canonical_data \
+    "$(oliphaunt_icu_canonical_data_archive "$scratch/checkouts/icu/icu4c/source")"
+)
 mkdir "$scratch/bin"
 for tool in basename find grep sort rm mkdir cp mv; do
   ln -s "$(command -v "$tool")" "$scratch/bin/$tool"

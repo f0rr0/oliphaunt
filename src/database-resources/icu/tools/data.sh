@@ -2,7 +2,7 @@
 
 oliphaunt_icu_canonical_data_archive() {
   local source_dir="${1:?ICU source dir is required}"
-  printf '%s\n' "${OLIPHAUNT_ICU_DATA_ARCHIVE:-$source_dir/../../../../icu-data/icudt76l.dat}"
+  printf '%s\n' "${OLIPHAUNT_ICU_DATA_ARCHIVE:-$source_dir/../../../icu-data/icudt76l.dat}"
 }
 
 oliphaunt_icu_canonical_data_sha256() {

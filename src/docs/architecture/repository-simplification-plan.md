@@ -69,6 +69,17 @@ Implemented and verified locally:
   Existing installers still verify restored bytes. Bun/Moon downloaders use
   curl's bounded exponential backoff instead of exhausting retries in ten seconds.
   No alternate download service or cache framework was added.
+- Hosted setup on `daded1e4` recovered from six HTTP 504s, then saved verified
+  tools; later jobs restored the same PR-scoped caches. All source/test gates
+  passed. Product builds exposed the shared ICU data lookup climbing one parent
+  too far, and pgwire packaging copying a stale notice. The ICU lookup is fixed
+  and validates data before host compilation; pgwire stages canonical notices
+  and deletes its stale duplicate. Forward review corrected the iOS packaging
+  task's old path. Actual local Android x86_64 build, Linux native rebuild/package/
+  extracted-artifact tests, and WASIX core compile/link/package checks pass.
+  Real Rust, WASIX Rust, pgwire, TS SDK, Swift source and rebuilt Kotlin package
+  checks pass. Old Apple artifacts correctly reject changed notices and require
+  current hosted producers; they were not rewritten to appear qualified.
 
 Remaining execution checklist (grouped from the detailed tasks below):
 

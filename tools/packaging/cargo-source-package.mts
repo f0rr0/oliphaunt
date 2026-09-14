@@ -12,6 +12,7 @@ import {
 import path from 'node:path';
 import { tarHeader } from './archive-directory.mts';
 import { canonicalGzipSync, readPortableArchiveEntries } from './portable-archive.mts';
+import { stageReleaseNotices } from './release-notices.mts';
 
 export const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 
@@ -338,14 +339,22 @@ export function prepareCargoPackageSource(
   manifest,
   outputDir,
   files,
-  { fail = null, rel = String } = {},
+  { fail = null, rel = String, noticeProfile = null } = {},
 ) {
   const { name, version } = readCargoPackageNameVersion(manifest, { fail, rel });
   const packageRoot = `${name}-${version}`;
   cargoPackageRelativePathParts(packageRoot);
   const stageDir = path.resolve(outputDir, 'manual-package-stage', packageRoot);
   const cratePath = path.resolve(outputDir, `${packageRoot}.crate`);
-  const expectedMembers = [...copyCargoPackageSource(manifest, stageDir, files, { fail, rel })];
+  let expectedMembers = [...copyCargoPackageSource(manifest, stageDir, files, { fail, rel })];
+  if (noticeProfile !== null) {
+    stageReleaseNotices(stageDir, { profile: noticeProfile });
+    // Notice staging may add or remove profile-owned members. Cargo still owns
+    // every other source member; archive validation uses the final staged set.
+    expectedMembers = listArchiveEntries(stageDir)
+      .filter((file) => statSync(file).isFile())
+      .map((file) => path.relative(stageDir, file).split(path.sep).join('/'));
+  }
   const stagedManifest = path.join(stageDir, 'Cargo.toml');
   writeFileSync(stagedManifest, packagedCargoManifestText(readFileSync(stagedManifest, 'utf8')));
   return { name, version, packageRoot, stageDir, cratePath, expectedMembers, stagedManifest };
@@ -400,6 +409,7 @@ if (import.meta.main) {
       manifest,
       outputDir,
       parseCargoPackageFiles(readFileSync(listing, 'utf8'), manifest, { fail: null, rel: String }),
+      { noticeProfile: process.env.OLIPHAUNT_CARGO_NOTICE_PROFILE ?? null },
     );
     writeFileSync(stateFile, JSON.stringify(state));
     console.log(state.stagedManifest);

@@ -251,8 +251,8 @@ oliphaunt_icu_build_target() (
   local cxxflags="${13:-}"
   local ldflags="${14:-}"
 
-  oliphaunt_icu_build_native_tools "$source_dir" "$native_build_dir" "$jobs"
   oliphaunt_icu_require_canonical_data "$(oliphaunt_icu_canonical_data_archive "$source_dir")"
+  oliphaunt_icu_build_native_tools "$source_dir" "$native_build_dir" "$jobs"
 
   local stamp_file="$prefix/.oliphaunt-icu-build"
   local stamp

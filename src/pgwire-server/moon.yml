@@ -64,7 +64,7 @@ tasks:
   package:
     command: "bash src/pgwire-server/tools/package.sh"
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
-    inputs: ["**/*", "/Cargo.toml", "/Cargo.lock", "/tools/packaging/*.{mts,sh}"]
+    inputs: ["**/*", "@group(legal-files)", "/Cargo.toml", "/Cargo.lock", "/tools/packaging/*.{mts,sh}"]
     outputs: ["/target/sdk-artifacts/oliphaunt-pgwire-server/**/*"]
     options:
       runFromWorkspaceRoot: true

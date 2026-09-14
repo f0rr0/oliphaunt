@@ -493,7 +493,12 @@ tasks:
       - release
       - artifact-package
       - ci-liboliphaunt-native-ios
-    script: "set -e\nexport OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS=\"target/liboliphaunt/mobile-release-assets/ios-xcframework\"\nexport OLIPHAUNT_WORK_ROOT=\"$PWD/target/liboliphaunt-mobile-host/ios-xcframework\"\nruntimes/liboliphaunt-native/tools/package-liboliphaunt-mobile-assets.sh ios-xcframework\nbun src/runtimes/liboliphaunt-native/tools/validate-ios-carrier-zips.mts --root \"$OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS\"\n"
+    script: |
+      set -e
+      export OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/mobile-release-assets/ios-xcframework"
+      export OLIPHAUNT_WORK_ROOT="$PWD/target/liboliphaunt-mobile-host/ios-xcframework"
+      src/runtimes/liboliphaunt-native/tools/package-liboliphaunt-mobile-assets.sh ios-xcframework
+      bun src/runtimes/liboliphaunt-native/tools/validate-ios-carrier-zips.mts --root "$OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS"
     deps:
       - liboliphaunt-native:build-runtime-ios-xcframework
     inputs:
