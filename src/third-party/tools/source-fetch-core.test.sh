@@ -7,6 +7,7 @@ trap 'rm -rf "$scratch"' EXIT
 test_data="$tools/source-fetch-core.test.mts"
 archive_tool="$tools/source-archive.mts"
 export FETCH_TEST_GIT="$(command -v git)"
+export FETCH_TEST_SLEEP="$(command -v sleep)"
 base_path="$PATH"
 for scope in icu native-runtime wasix-runtime wasix-postmaster-runtime production-all; do
   plan="$scratch/plan-$scope"
@@ -68,6 +69,30 @@ fetch() {
     bash -c 'source "$1"; fetch_source "$2" "$3" "$4" "$5"' \
     source-fetch-test "$tools/fetch-sources.sh" "$pin" "$root/checkouts" "$root/archives" "$mode"
 }
+# Hold the first transport open until the second fetch is actually waiting on
+# the shared checkout. Both must succeed with one verified download/promotion.
+wait_for_file() {
+  local attempt
+  for attempt in {1..100}; do
+    [[ ! -e "$1" ]] || return 0
+    "$FETCH_TEST_SLEEP" 0.1
+  done
+  echo "timed out waiting for test barrier: $1" >&2; return 1
+}
+root="$scratch/concurrent"
+mkdir -p "$root"
+FETCH_TEST_BARRIER=1 FETCH_TEST_ARCHIVE="$fixtures/valid.tar.gz" fetch "$root" "$fixtures/valid.json" > "$root/first.log" 2>&1 &
+first_fetch=$!
+wait_for_file "$root/downloading"
+FETCH_TEST_ARCHIVE="$fixtures/valid.tar.gz" fetch "$root" "$fixtures/valid.json" > "$root/second.log" 2>&1 &
+second_fetch=$!
+wait_for_file "$root/lock-waiting"
+touch "$root/release-download"
+wait "$first_fetch" || { cat "$root/first.log" >&2; exit 1; }
+wait "$second_fetch" || { cat "$root/second.log" >&2; exit 1; }
+[[ "$(wc -l < "$root/requests")" -eq 1 ]]
+[[ "$(ls -A "$root/checkouts")" == libiconv ]]
+cmp "$scratch/trusted" "$root/checkouts/libiconv/file.txt"
 root="$scratch/archive"
 mkdir -p "$root/archives"
 sha="$(jq -r .sha256 "$fixtures/valid.json")"

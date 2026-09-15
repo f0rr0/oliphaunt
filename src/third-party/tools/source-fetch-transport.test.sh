@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}" in
-  sleep) printf '%s\n' "$1" >> "$FETCH_TEST_ROOT/sleeps" ;;
+  sleep)
+    printf '%s\n' "$1" >> "$FETCH_TEST_ROOT/sleeps"
+    if [[ "$1" == 0.1 ]]; then
+      touch "$FETCH_TEST_ROOT/lock-waiting"
+      exec "$FETCH_TEST_SLEEP" "$1"
+    fi
+    ;;
   git)
     args=("$@")
     if [[ " $* " == *' fetch '* ]]; then
@@ -31,6 +37,10 @@ case "${0##*/}" in
       shift
     done
     printf '%s\n' "$url" >> "$FETCH_TEST_ROOT/requests"
+    if [[ ${FETCH_TEST_BARRIER:-} == 1 ]]; then
+      touch "$FETCH_TEST_ROOT/downloading"
+      while [[ ! -e "$FETCH_TEST_ROOT/release-download" ]]; do "$FETCH_TEST_SLEEP" 0.1; done
+    fi
     if [[ ${FETCH_TEST_FAULT:-} == all || (${FETCH_TEST_FAULT:-} == primary && "$url" == https://ftp.gnu.org/*) || (${FETCH_TEST_FAULT:-} == gnu && "$url" != https://mirror.example.invalid/libiconv.tar.gz) ]]; then
       echo "transport fault: $url" >&2; exit 1
     fi

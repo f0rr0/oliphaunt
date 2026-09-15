@@ -47,9 +47,10 @@ fetch_source() (
   set -euo pipefail
   local pin=$1 checkout_root=$2 archive_root=$3 mode=$4
   local name kind url mirror branch commit archive_name canonical checkout readiness fetched
+  local source_lock='' lock_deadline
   mkdir -p "$checkout_root" "$archive_root"
   source_stage=$(mktemp -d "$checkout_root/.source-stage-XXXXXX")
-  trap 'rm -rf "$source_stage"' EXIT
+  trap 'rm -rf "$source_stage"; if [[ -n "$source_lock" ]]; then rmdir "$source_lock"; fi' EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -59,6 +60,16 @@ fetch_source() (
     IFS= read -r -d '' archive_name; IFS= read -r -d '' canonical
   } < "$source_stage/fields"
   checkout="$checkout_root/$name"
+  # Scopes overlap (notably ICU data). Serialize inspection through promotion,
+  # so a waiter reuses the complete checkout instead of replacing it concurrently.
+  lock_deadline=$((SECONDS + 3600))
+  until mkdir "$checkout.lock" 2>/dev/null; do
+    if (( SECONDS >= lock_deadline )); then
+      echo "timed out waiting for source checkout lock: $checkout.lock" >&2; exit 1
+    fi
+    sleep 0.1
+  done
+  source_lock="$checkout.lock"
   # Ignore ambient Git configuration, hooks, credentials, and alternate stores.
   while IFS= read -r variable; do
     case "$variable" in GIT_*) unset "$variable" ;; esac
