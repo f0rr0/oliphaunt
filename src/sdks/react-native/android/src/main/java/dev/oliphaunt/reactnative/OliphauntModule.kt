@@ -59,6 +59,9 @@ internal fun requireReactNativeHandle(handle: Long): Long {
 class OliphauntModule(
   private val reactContext: ReactApplicationContext,
 ) : NativeOliphauntSpec(reactContext), TurboModuleWithJSIBindings {
+  @DoNotStrip
+  private var jsiOwnerId: Long = 0
+
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val sessions = ConcurrentHashMap<Long, OliphauntDatabase>()
   private val sessionMutex = Mutex()

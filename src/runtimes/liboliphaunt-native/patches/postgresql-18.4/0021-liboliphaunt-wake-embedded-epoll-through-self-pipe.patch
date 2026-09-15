@@ -1,0 +1,49 @@
+--- a/src/backend/storage/ipc/waiteventset.c
++++ b/src/backend/storage/ipc/waiteventset.c
+@@ -103,6 +103,10 @@
+  * By default, we use a self-pipe with poll() and a signalfd with epoll(), if
+  * available.  For testing the choice can also be manually specified.
+  */
++#if defined(OLIPHAUNT_EMBEDDED) && defined(WAIT_USE_EPOLL)
++/* The embedded host cancels from another thread, without PostgreSQL signals. */
++#define WAIT_USE_SELF_PIPE
++#endif
+ #if defined(WAIT_USE_POLL) || defined(WAIT_USE_EPOLL)
+ #if defined(WAIT_USE_SELF_PIPE) || defined(WAIT_USE_SIGNALFD)
+ /* don't overwrite manual choice */
+@@ -185,7 +189,9 @@
+ static int	selfpipe_owner_pid = 0;
+ 
+ /* Private function prototypes */
++#if !defined(OLIPHAUNT_EMBEDDED) || !defined(WAIT_USE_EPOLL)
+ static void latch_sigurg_handler(SIGNAL_ARGS);
++#endif
+ static void sendSelfPipeByte(void);
+ #endif
+ 
+@@ -311,8 +317,10 @@
+ 	ReserveExternalFD();
+ 	ReserveExternalFD();
+ 
++#if !defined(OLIPHAUNT_EMBEDDED) || !defined(WAIT_USE_EPOLL)
+ 	pqsignal(SIGURG, latch_sigurg_handler);
+ #endif
++#endif
+ 
+ #ifdef WAIT_USE_SIGNALFD
+ 	sigset_t	signalfd_mask;
+@@ -1892,12 +1900,14 @@
+  *
+  * Wake up WaitLatch, if we're waiting.
+  */
++#if !defined(OLIPHAUNT_EMBEDDED) || !defined(WAIT_USE_EPOLL)
+ static void
+ latch_sigurg_handler(SIGNAL_ARGS)
+ {
+ 	if (waiting)
+ 		sendSelfPipeByte();
+ }
++#endif
+ 
+ /* Send one byte to the self-pipe, to wake up WaitLatch */
+ static void

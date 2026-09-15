@@ -1,0 +1,24 @@
+[package]
+name = "oliphaunt-native-packaging"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+flate2 = "1"
+liboliphaunt-native-bindings = { path = "../../../sdks/rust/liboliphaunt-native", features = ["internal-native-packaging"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+toml = "0.9"
+zstd = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "oliphaunt-resources"
+path = "./src/bin/package_resources.rs"

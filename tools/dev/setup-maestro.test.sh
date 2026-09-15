@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/tools/dev/setup-maestro.sh"
-manifest="$root/src/sources/toolchains/maestro.toml"
+manifest="$root/tools/dev/maestro.toml"
 configured_version="$(sed -n 's/^[[:space:]]*maestro[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' "$manifest")"
 expected_version="${configured_version#cli-}"
 expected_sha256="$(sed -n 's/^[[:space:]]*sha256[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' "$manifest")"
@@ -88,17 +88,19 @@ fi
 exec /bin/mv "$@"
 SH
 
+pinned_bun="$(bash "$root/tools/dev/bun.sh" "$root/tools/dev/node-info.mts" executable)"
+ln -s "$pinned_bun" "$fake_bin/bun"
 chmod 0755 "$fake_bin"/*
 
 fallback_bin="$test_root/fallback-bin"
 no_hash_bin="$test_root/no-hash-bin"
 mkdir -p "$fallback_bin" "$no_hash_bin"
-for command_name in bash git grep sed tr awk mkdir mktemp python3 chmod rm cp cat; do
+for command_name in bash git grep sed tr awk mkdir mktemp dirname chmod rm cp cat; do
   command_path="$(command -v "$command_name")"
   ln -s "$command_path" "$fallback_bin/$command_name"
   ln -s "$command_path" "$no_hash_bin/$command_name"
 done
-for helper in curl java maestro mv; do
+for helper in bun curl java maestro mv; do
   cp "$fake_bin/$helper" "$fallback_bin/$helper"
   cp "$fake_bin/$helper" "$no_hash_bin/$helper"
 done
@@ -108,40 +110,15 @@ make_archive() {
   local output="$1"
   local launcher_version="$2"
   local shape="$3"
-  python3 - "$output" "$launcher_version" "$shape" "$expected_version" <<'PY'
-import stat
-import sys
-import zipfile
-from pathlib import Path
-
-output = Path(sys.argv[1])
-version = sys.argv[2]
-shape = sys.argv[3]
-archive_version = sys.argv[4]
-
-def entry(name, contents, mode):
-    info = zipfile.ZipInfo(name)
-    info.external_attr = mode << 16
-    archive.writestr(info, contents)
-
-with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-    entry("maestro/", b"", stat.S_IFDIR | 0o755)
-    entry("maestro/bin/", b"", stat.S_IFDIR | 0o755)
-    entry(
-        "maestro/bin/maestro",
-        f"#!/usr/bin/env bash\nprintf '{version}\\n'\n".encode(),
-        stat.S_IFREG | 0o755,
-    )
-    entry("maestro/lib/", b"", stat.S_IFDIR | 0o755)
-    if shape != "missing-jar":
-        entry(
-            f"maestro/lib/maestro-cli-{archive_version}.jar",
-            b"mock jar",
-            stat.S_IFREG | 0o644,
-        )
-    if shape == "traversal":
-        entry("maestro/../escape", b"escape", stat.S_IFREG | 0o644)
-PY
+  bash "$root/tools/dev/bun.sh" - "$output" "$launcher_version" "$shape" "$expected_version" <<'TS'
+import {writeFileSync} from 'node:fs';
+import {zipArchive} from './tools/packaging/testdata/zip-fixture.mts';
+const [output,version,shape,archiveVersion] = process.argv.slice(2);
+const rows = [{name:'maestro/bin/maestro',data:"#!/usr/bin/env bash\nprintf '" + version + "\\n'\n",externalAttributes:0o100755<<16}];
+if (shape !== 'missing-jar') rows.push({name:'maestro/lib/maestro-cli-'+archiveVersion+'.jar',data:'mock jar'});
+if (shape === 'traversal') rows.push({name:'maestro/../escape',data:'escape'});
+writeFileSync(output,zipArchive(rows));
+TS
 }
 
 valid_archive="$test_root/valid.zip"
@@ -179,27 +156,32 @@ run_case() {
   CASE_LOG="$CASE_ROOT/setup.log"
   CASE_CURL_ARGS="$CASE_ROOT/curl-args"
   CASE_GITHUB_PATH="$CASE_ROOT/github-path"
-  mkdir -p "$CASE_REPO/tools/dev" "$CASE_REPO/src/sources/toolchains" "$CASE_HOME/.maestro"
+  mkdir -p "$CASE_REPO/tools/dev" "$CASE_REPO/tools/dev" "$CASE_HOME/.maestro"
   cp "$installer" "$CASE_REPO/tools/dev/setup-maestro.sh"
+  cp "$root/tools/dev/extract-maestro.mts" "$CASE_REPO/tools/dev/extract-maestro.mts"
+  cp "$root/tools/dev/bun.sh" "$CASE_REPO/tools/dev/bun.sh"
+  cp "$root/.prototools" "$CASE_REPO/.prototools"
+  mkdir -p "$CASE_REPO/tools/packaging"
+  cp "$root/tools/packaging/portable-archive.mts" "$CASE_REPO/tools/packaging/portable-archive.mts"
   case "$manifest_mode" in
     pinned)
       printf '[toolchain]\nmaestro = "%s"\ninstall_url = "%s"\nsha256 = "%s"\n' \
         "$configured_version" "$expected_url" "$expected_sha256" \
-        >"$CASE_REPO/src/sources/toolchains/maestro.toml"
+        >"$CASE_REPO/tools/dev/maestro.toml"
       ;;
     unpinned)
       printf '[toolchain]\nmaestro = "%s"\n' \
-        "$configured_version" >"$CASE_REPO/src/sources/toolchains/maestro.toml"
+        "$configured_version" >"$CASE_REPO/tools/dev/maestro.toml"
       ;;
     wrong-url)
       printf '[toolchain]\nmaestro = "%s"\ninstall_url = "https://example.invalid/maestro.zip"\nsha256 = "%s"\n' \
         "$configured_version" "$expected_sha256" \
-        >"$CASE_REPO/src/sources/toolchains/maestro.toml"
+        >"$CASE_REPO/tools/dev/maestro.toml"
       ;;
     invalid-sha)
       printf '[toolchain]\nmaestro = "%s"\ninstall_url = "%s"\nsha256 = "not-a-sha256"\n' \
         "$configured_version" "$expected_url" \
-        >"$CASE_REPO/src/sources/toolchains/maestro.toml"
+        >"$CASE_REPO/tools/dev/maestro.toml"
       ;;
     *) fail "unknown manifest mode: $manifest_mode" ;;
   esac
@@ -295,7 +277,7 @@ assert_no_staging_dirs
 
 run_case missing-layout "$expected_version" "$missing_jar_archive" "$expected_sha256"
 [ "$CASE_STATUS" != "0" ] || fail "archive with a missing CLI jar unexpectedly succeeded"
-assert_contains "$CASE_LOG" "missing expected archive entries"
+assert_contains "$CASE_LOG" "missing expected archive entry"
 assert_previous_preserved
 assert_no_staging_dirs
 
@@ -307,7 +289,7 @@ assert_no_staging_dirs
 
 run_case traversal "$expected_version" "$traversal_archive" "$expected_sha256"
 [ "$CASE_STATUS" != "0" ] || fail "archive with path traversal unexpectedly succeeded"
-assert_contains "$CASE_LOG" "unsafe archive path"
+assert_contains "$CASE_LOG" "unsafe archive member"
 assert_previous_preserved
 assert_no_staging_dirs
 

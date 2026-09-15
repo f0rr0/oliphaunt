@@ -6,19 +6,20 @@ import android.os.Process
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
-import kotlinx.coroutines.ExecutorCoroutineDispatcher
-import kotlinx.coroutines.asCoroutineDispatcher
+import dev.oliphaunt.bindings.ChunkSink
+import dev.oliphaunt.bindings.NativeDatabase
+import dev.oliphaunt.bindings.NativeException
+import dev.oliphaunt.bindings.OpenOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.lang.ref.PhantomReference
-import java.lang.ref.ReferenceQueue
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipFile
-import kotlin.coroutines.suspendCoroutine
 
 private const val OWNER_READ_WRITE_MODE = 384 // 0600
 
@@ -30,124 +31,115 @@ internal class AndroidNativeDirectEngine(
 ) : OliphauntEngine {
     private val appContext = context.applicationContext
 
-    override suspend fun open(config: EngineConfig): OliphauntSession {
-        val executionDispatcher =
-            newAndroidNativeOwnerDispatcher("oliphaunt-android-direct")
-        return try {
-            runOnAndroidNativeOwner(executionDispatcher) {
-                validateDatabaseStorage(config.storage)
-                validateStartupIdentity(config.username, "username")
-                validateStartupIdentity(config.database, "database")
-                validateStartupGucs(config.startupGucs)
-                val runtime =
-                    OliphauntAndroidRuntimeAssets.resolve(
-                        context = appContext,
-                        explicitRuntimeDirectory =
-                        runtimeDirectory
-                            ?: env("OLIPHAUNT_INSTALL_DIR")
-                            ?: env("OLIPHAUNT_RUNTIME_DIR"),
-                        requestedExtensions = config.extensions,
-                        resourceRoot = resourceRoot,
-                    )
-                val storageDirectory =
-                    when (val storage = config.storage) {
-                        EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
-                        is EngineStorage.Directory -> File(storage.path)
-                    }
-                var nativeOpenAttempted = false
-                try {
-                    if (isAndroidSymbolicLink(storageDirectory)) {
-                        throw OliphauntException(
-                            "database storage directory must be a real directory: ${storageDirectory.absolutePath}",
-                        )
-                    }
-                    if (!storageDirectory.mkdirs() && !storageDirectory.isDirectory) {
-                        throw OliphauntException(
-                            "failed to create database storage directory at ${storageDirectory.absolutePath}",
-                        )
-                    }
-                    val pgdata = File(storageDirectory, "pgdata")
-                    val rootState = classifyAndroidManagedRoot(storageDirectory)
-                    val effectiveUsername = config.username ?: "postgres"
-                    val effectiveDatabase = config.database ?: "postgres"
-                    when (rootState) {
-                        AndroidManagedRootState.Managed -> {
-                            validateCompleteAndroidPgdata(pgdata)
-                        }
+    override suspend fun open(config: EngineConfig): OliphauntSession = withContext(Dispatchers.IO) {
+        validateDatabaseStorage(config.storage)
+        validateStartupIdentity(config.username, "username")
+        validateStartupIdentity(config.database, "database")
+        validateStartupGucs(config.startupGucs)
+        val runtime =
+            OliphauntAndroidRuntimeAssets.resolve(
+                context = appContext,
+                explicitRuntimeDirectory =
+                runtimeDirectory
+                    ?: env("OLIPHAUNT_INSTALL_DIR")
+                    ?: env("OLIPHAUNT_RUNTIME_DIR"),
+                requestedExtensions = config.extensions,
+                resourceRoot = resourceRoot,
+            )
+        val storageDirectory =
+            when (val storage = config.storage) {
+                EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
+                is EngineStorage.Directory -> File(storage.path)
+            }
+        var nativeOpenAttempted = false
+        try {
+            if (isAndroidSymbolicLink(storageDirectory)) {
+                throw OliphauntException(
+                    "database storage directory must be a real directory: ${storageDirectory.absolutePath}",
+                )
+            }
+            if (!storageDirectory.mkdirs() && !storageDirectory.isDirectory) {
+                throw OliphauntException(
+                    "failed to create database storage directory at ${storageDirectory.absolutePath}",
+                )
+            }
+            val pgdata = File(storageDirectory, "pgdata")
+            val rootState = classifyAndroidManagedRoot(storageDirectory)
+            val effectiveUsername = config.username ?: "postgres"
+            val effectiveDatabase = config.database ?: "postgres"
+            when (rootState) {
+                AndroidManagedRootState.Managed -> {
+                    validateCompleteAndroidPgdata(pgdata)
+                }
 
-                        AndroidManagedRootState.Empty -> {
-                            requireAndroidFreshRootRole(effectiveUsername)
-                            var ownsPublishedPgdata = false
-                            try {
-                                OliphauntAndroidRuntimeAssets.preparePgdata(
-                                    assetManager = appContext.assets,
-                                    pgdata = pgdata,
-                                    clusterSeed = runtime.clusterSeed,
-                                    didPublishDestination = { ownsPublishedPgdata = true },
-                                )
-                                validateCompleteAndroidPgdata(pgdata)
-                                writeAndroidManagedRootDescriptor(storageDirectory)
-                            } catch (publicationError: Throwable) {
-                                recoverAndroidManagedRootPublicationFailure(
-                                    publicationError = publicationError,
-                                    ownsPublishedPgdata = ownsPublishedPgdata,
-                                    descriptorDefinitelyAbsent = {
-                                        isAndroidPathDefinitelyAbsent(
-                                            File(storageDirectory, ".oliphaunt.json"),
-                                        )
-                                    },
-                                    removePublishedPgdata = {
-                                        if (
-                                            !isAndroidPathDefinitelyAbsent(pgdata) &&
-                                            !pgdata.deleteRecursively()
-                                        ) {
-                                            throw OliphauntException(
-                                                "failed to remove uncommitted PGDATA at ${pgdata.absolutePath}",
-                                            )
-                                        }
-                                    },
-                                    syncRoot = {
-                                        OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory)
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    val effectiveLibraryPath =
-                        resolveAndroidLiboliphauntLibraryPath(
-                            explicitLibraryPath = libraryPath,
-                            nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
-                            sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
-                            supportedAbis = Build.SUPPORTED_ABIS.asList(),
+                AndroidManagedRootState.Empty -> {
+                    requireAndroidFreshRootRole(effectiveUsername)
+                    var ownsPublishedPgdata = false
+                    try {
+                        OliphauntAndroidRuntimeAssets.preparePgdata(
+                            assetManager = appContext.assets,
+                            pgdata = pgdata,
+                            clusterSeed = runtime.clusterSeed,
+                            didPublishDestination = { ownsPublishedPgdata = true },
                         )
-                    nativeOpenAttempted = true
-                    val nativeHandle =
-                        OliphauntAndroidNativeBridge.openNative(
-                            effectiveLibraryPath,
-                            pgdata.absolutePath,
-                            runtime.runtimeDirectory,
-                            effectiveUsername,
-                            effectiveDatabase,
-                            config.postgresStartupArgs(runtime.sharedPreloadLibraries).toTypedArray(),
+                        validateCompleteAndroidPgdata(pgdata)
+                        writeAndroidManagedRootDescriptor(storageDirectory)
+                    } catch (publicationError: Throwable) {
+                        recoverAndroidManagedRootPublicationFailure(
+                            publicationError = publicationError,
+                            ownsPublishedPgdata = ownsPublishedPgdata,
+                            descriptorDefinitelyAbsent = {
+                                isAndroidPathDefinitelyAbsent(
+                                    File(storageDirectory, ".oliphaunt.json"),
+                                )
+                            },
+                            removePublishedPgdata = {
+                                if (
+                                    !isAndroidPathDefinitelyAbsent(pgdata) &&
+                                    !pgdata.deleteRecursively()
+                                ) {
+                                    throw OliphauntException(
+                                        "failed to remove uncommitted PGDATA at ${pgdata.absolutePath}",
+                                    )
+                                }
+                            },
+                            syncRoot = {
+                                OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory)
+                            },
                         )
-                    AndroidNativeDirectSession(
-                        nativeHandle = nativeHandle,
-                        executionDispatcher = executionDispatcher,
-                    )
-                } catch (error: Throwable) {
-                    executionDispatcher.close()
-                    // Preparation failures are safe to clean. Once control reaches the
-                    // process-resident runtime, a rejected logical reopen may leave it
-                    // owning the same directory.
-                    if (config.storage == EngineStorage.TemporaryDirectory && !nativeOpenAttempted) {
-                        storageDirectory.deleteRecursively()
                     }
-                    throw error
                 }
             }
+            val effectiveLibraryPath =
+                resolveAndroidLiboliphauntLibraryPath(
+                    explicitLibraryPath = libraryPath,
+                    nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
+                    sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
+                    supportedAbis = Build.SUPPORTED_ABIS.asList(),
+                )
+            nativeOpenAttempted = true
+            val database = NativeDatabase.open(
+                OpenOptions(
+                    libraryPath = effectiveLibraryPath,
+                    pgdata = pgdata.absolutePath,
+                    runtimeDirectory = runtime.runtimeDirectory,
+                    moduleDirectory = null,
+                    icuDataDirectory = File(runtime.runtimeDirectory, "share/icu")
+                        .takeIf { it.isDirectory }?.absolutePath,
+                    username = effectiveUsername,
+                    database = effectiveDatabase,
+                    startupArgs = config.postgresStartupArgs(runtime.sharedPreloadLibraries),
+                ),
+            )
+            AndroidNativeDirectSession(database)
         } catch (error: Throwable) {
-            executionDispatcher.close()
-            throw error
+            // Preparation failures are safe to clean. Once control reaches the
+            // process-resident runtime, a rejected logical reopen may leave it
+            // owning the same directory.
+            if (config.storage == EngineStorage.TemporaryDirectory && !nativeOpenAttempted) {
+                storageDirectory.deleteRecursively()
+            }
+            throw if (error is NativeException.Database) OliphauntException(error.detail) else error
         }
     }
 
@@ -155,24 +147,18 @@ internal class AndroidNativeDirectEngine(
         destination: String,
         bytes: ByteArray,
     ) {
-        val owner = newAndroidNativeOwnerDispatcher("oliphaunt-android-direct-restore")
-        runOnAndroidNativeOwner(owner) {
-            try {
-                validateDirectoryPath(destination, "restore destination")
-                OliphauntAndroidNativeBridge.restoreNative(
-                    destination = destination,
-                    bytes = bytes,
-                    libraryPath =
-                    resolveAndroidLiboliphauntLibraryPath(
-                        explicitLibraryPath = libraryPath,
-                        nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
-                        sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
-                        supportedAbis = Build.SUPPORTED_ABIS.asList(),
-                    ),
-                )
-            } finally {
-                owner.close()
-            }
+        validateDirectoryPath(destination, "restore destination")
+        nativeOperation {
+            dev.oliphaunt.bindings.restore(
+                destination = destination,
+                bytes = bytes,
+                libraryPath = resolveAndroidLiboliphauntLibraryPath(
+                    explicitLibraryPath = libraryPath,
+                    nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
+                    sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
+                    supportedAbis = Build.SUPPORTED_ABIS.asList(),
+                ),
+            )
         }
     }
 }
@@ -527,320 +513,73 @@ private object AndroidDirectTemporaryStorage {
     }
 }
 
-internal fun newAndroidNativeOwnerDispatcher(name: String): ExecutorCoroutineDispatcher = Executors
-    .newSingleThreadExecutor { runnable ->
-        Thread(runnable, name).apply { isDaemon = true }
-    }.asCoroutineDispatcher()
-
-/**
- * Dispatches work without linking native ownership to caller cancellation.
- * Once admitted, a native operation reaches a definite result before its
- * continuation resumes, so handle transitions are never half-applied.
- */
-internal suspend fun <T> runOnAndroidNativeOwner(
-    dispatcher: ExecutorCoroutineDispatcher,
-    operation: () -> T,
-): T = suspendCoroutine { continuation ->
-    val task = Runnable { continuation.resumeWith(runCatching(operation)) }
-    try {
-        dispatcher.executor.execute(task)
-    } catch (error: Throwable) {
-        continuation.resumeWith(Result.failure(error))
-    }
-}
-
-internal fun interface AndroidNativeCleanable {
-    fun clean()
-}
-
-/**
- * Android's supported API floor predates `java.lang.ref.Cleaner`. This small
- * phantom-reference registry provides the same one-shot reachability signal
- * without finalizers. Cleanup actions must only enqueue work: its daemon must
- * never perform a blocking native close itself.
- */
-internal object AndroidNativeCleaner {
-    private val queue = ReferenceQueue<Any>()
-    private val references = ConcurrentHashMap<CleanupReference, Unit>()
-
-    init {
-        Thread(
-            cleanerLoop@{
-                while (true) {
-                    try {
-                        (queue.remove() as CleanupReference).clean()
-                    } catch (_: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        return@cleanerLoop
-                    } catch (_: Throwable) {
-                        // Best-effort forgotten-handle cleanup must not stop
-                        // cleanup for later unreachable sessions.
-                    }
-                }
-            },
-            "oliphaunt-android-cleaner",
-        ).apply {
-            isDaemon = true
-            start()
-        }
-    }
-
-    fun register(
-        owner: Any,
-        cleanup: () -> Unit,
-    ): AndroidNativeCleanable = CleanupReference(owner, cleanup).also { references[it] = Unit }
-
-    private class CleanupReference(
-        owner: Any,
-        cleanup: () -> Unit,
-    ) : PhantomReference<Any>(owner, queue),
-        AndroidNativeCleanable {
-        private val claimed = AtomicBoolean()
-        private var cleanup: (() -> Unit)? = cleanup
-
-        override fun clean() {
-            if (!claimed.compareAndSet(false, true)) return
-            references.remove(this)
-            clear()
-            val action = cleanup
-            cleanup = null
-            action?.invoke()
-        }
-    }
-}
-
-private object AndroidNativeCleanerFallbackOwner {
-    private val executor =
-        Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "oliphaunt-android-cleaner-fallback").apply { isDaemon = true }
-        }
-
-    fun execute(task: Runnable) {
-        executor.execute(task)
-    }
-}
-
-private class AndroidNativeDirectSession(
-    nativeHandle: Long,
-    executionDispatcher: ExecutorCoroutineDispatcher,
+internal class AndroidNativeDirectSession(
+    private val database: NativeDatabase,
 ) : OliphauntSession {
-    private val cancellationDispatcher =
-        newAndroidNativeOwnerDispatcher("oliphaunt-android-direct-cancel")
-    private val state =
-        AndroidNativeSessionState(
-            nativeHandle = nativeHandle,
-            executionDispatcher = executionDispatcher,
-            cancellationDispatcher = cancellationDispatcher,
-            closeNative = OliphauntAndroidNativeBridge::closeNative,
-        )
-    private val cleanable = AndroidNativeCleaner.register(this, state::scheduleForgottenClose)
-
-    override suspend fun execProtocolRaw(request: ByteArray): ByteArray = state.runOnExecutionOwner { current ->
-        OliphauntAndroidNativeBridge.execProtocolRawNative(current, request)
+    private suspend fun <T> runRequest(block: suspend (dev.oliphaunt.bindings.NativeRequest) -> T): T {
+        val request = database.request()
+        // A child Job observes cancellation immediately, while the native
+        // future remains alive until its confirmed protocol outcome arrives.
+        val context = currentCoroutineContext()
+        val cancellation = Job(context[OliphauntOperationCancellation]?.caller ?: context[Job])
+        val cancellationFailure = AtomicReference<Throwable?>()
+        val observer = cancellation.invokeOnCompletion { cause ->
+            if (cause != null) runCatching { request.cancel() }.exceptionOrNull()?.let(cancellationFailure::set)
+        }
+        try {
+            val result = withContext(NonCancellable) { block(request) }
+            cancellationFailure.get()?.let { throw OliphauntException("native cancellation failed", it) }
+            return result
+        } catch (_: NativeException.NotSubmitted) {
+            throw OliphauntRequestNotSubmitted()
+        } catch (error: NativeException.Database) {
+            throw OliphauntException(error.detail)
+        } finally {
+            observer.dispose()
+            cancellation.complete()
+            request.destroy()
+        }
     }
+
+    override suspend fun execProtocolRaw(request: ByteArray): ByteArray = runRequest { it.execute(request) }
 
     override suspend fun execProtocolRawStream(
         request: ByteArray,
         onChunk: (ByteArray) -> Unit,
-    ): ProtocolStreamOutcome = state.runOnExecutionOwner { current ->
-        var callbackError: Throwable? = null
-        val callbackAborted =
-            OliphauntAndroidNativeBridge.execProtocolRawStreamNative(
-                current,
-                request,
-                OliphauntAndroidProtocolStreamSink { chunk ->
-                    try {
-                        onChunk(chunk)
-                        0
-                    } catch (error: Throwable) {
-                        callbackError = error
-                        -1
-                    }
-                },
-            )
-        when {
-            !callbackAborted && callbackError == null -> ProtocolStreamOutcome.Complete
-
-            callbackAborted && callbackError != null ->
-                ProtocolStreamOutcome.CallbackAborted(requireNotNull(callbackError))
-
-            callbackAborted ->
-                throw OliphauntException(
-                    "liboliphaunt reported a recovered callback abort without a callback failure",
+    ): ProtocolStreamOutcome {
+        val callbackError = AtomicReference<Throwable?>()
+        val deliver = onChunk
+        return runRequest { operation ->
+            try {
+                operation.stream(
+                    request,
+                    object : ChunkSink {
+                        override fun onChunk(bytes: ByteArray): Boolean = try {
+                            deliver(bytes)
+                            true
+                        } catch (error: Throwable) {
+                            callbackError.set(error)
+                            false
+                        }
+                    },
                 )
-
-            else ->
-                throw OliphauntException(
-                    "liboliphaunt returned protocol stream success after the callback failed",
-                )
+                ProtocolStreamOutcome.Complete
+            } catch (error: NativeException.Callback) {
+                // Rust only returns Callback after recovery reaches ReadyForQuery.
+                ProtocolStreamOutcome.CallbackAborted(callbackError.get() ?: throw error)
+            }
         }
     }
 
-    override suspend fun backup(): ByteArray = state.runOnExecutionOwner { current ->
-        OliphauntAndroidNativeBridge.backupNative(current)
-    }
-
-    override suspend fun cancel() {
-        state.runOnCancellationOwner { current ->
-            OliphauntAndroidNativeBridge.cancelNative(current)
-        }
-    }
-
-    override suspend fun close() {
-        state.close()
-        cleanable.clean()
-    }
+    override suspend fun backup(): ByteArray = nativeOperation { database.backup() }
+    override suspend fun cancel() = nativeOperation { database.cancel() }
+    override suspend fun close() = nativeOperation { database.detach() }
 }
 
-internal class AndroidNativeSessionState(
-    nativeHandle: Long,
-    private val executionDispatcher: ExecutorCoroutineDispatcher,
-    private val cancellationDispatcher: ExecutorCoroutineDispatcher,
-    private val closeNative: (Long) -> Unit,
-) {
-    private val lock = ReentrantLock()
-    private val noActiveCalls = lock.newCondition()
-    private var handle: Long = nativeHandle
-    private var closing = false
-    private var closed = false
-    private var activeCalls = 0
-    private val forgottenCloseScheduled = AtomicBoolean()
-
-    suspend fun <T> runOnExecutionOwner(operation: (Long) -> T): T = runOnAndroidNativeOwner(executionDispatcher) {
-        val current = beginCall()
-        try {
-            operation(current)
-        } finally {
-            endCall()
-        }
-    }
-
-    suspend fun <T> runOnCancellationOwner(operation: (Long) -> T): T = runOnAndroidNativeOwner(cancellationDispatcher) {
-        val current = beginCall()
-        try {
-            operation(current)
-        } finally {
-            endCall()
-        }
-    }
-
-    suspend fun close() {
-        runOnAndroidNativeOwner(executionDispatcher) {
-            val current = beginClose() ?: return@runOnAndroidNativeOwner
-            try {
-                closeNative(current)
-                finishClose(detached = true)
-                cancellationDispatcher.close()
-                executionDispatcher.close()
-            } catch (error: Throwable) {
-                finishClose(detached = false)
-                throw error
-            }
-        }
-    }
-
-    /** Schedules best-effort close behind every operation already on the owner. */
-    fun scheduleForgottenClose() {
-        if (!forgottenCloseScheduled.compareAndSet(false, true)) return
-        val task = Runnable { closeForgottenBestEffort() }
-        try {
-            executionDispatcher.executor.execute(task)
-        } catch (_: Throwable) {
-            if (!isClosed()) AndroidNativeCleanerFallbackOwner.execute(task)
-        }
-    }
-
-    private fun closeForgottenBestEffort() {
-        try {
-            val current = beginClose() ?: return
-            try {
-                closeNative(current)
-                finishClose(detached = true)
-            } catch (_: Throwable) {
-                finishClose(detached = false)
-            }
-        } finally {
-            cancellationDispatcher.close()
-            executionDispatcher.close()
-        }
-    }
-
-    private fun isClosed(): Boolean {
-        lock.lock()
-        return try {
-            closed || handle == 0L
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    private fun beginCall(): Long {
-        lock.lock()
-        try {
-            checkOpen()
-            activeCalls += 1
-            return handle
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    private fun endCall() {
-        lock.lock()
-        try {
-            activeCalls -= 1
-            noActiveCalls.signalAll()
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    private fun beginClose(): Long? {
-        lock.lock()
-        try {
-            if (closed) {
-                return null
-            }
-            if (closing) {
-                throw OliphauntException("database close is already in progress")
-            }
-            closing = true
-            val current = handle.takeIf { it != 0L }
-            while (activeCalls > 0) {
-                try {
-                    noActiveCalls.await()
-                } catch (error: InterruptedException) {
-                    closing = false
-                    noActiveCalls.signalAll()
-                    Thread.currentThread().interrupt()
-                    throw OliphauntException("interrupted while closing database")
-                }
-            }
-            return current
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    private fun finishClose(detached: Boolean) {
-        lock.lock()
-        try {
-            if (detached) {
-                handle = 0
-                closed = true
-            }
-            closing = false
-            noActiveCalls.signalAll()
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    private fun checkOpen() {
-        if (closing || closed || handle == 0L) {
-            throw OliphauntException("database is closed")
-        }
-    }
+private suspend fun <T> nativeOperation(block: suspend () -> T): T = try {
+    block()
+} catch (error: NativeException.Database) {
+    throw OliphauntException(error.detail)
 }
 
 internal fun resolveAndroidLiboliphauntLibraryPath(

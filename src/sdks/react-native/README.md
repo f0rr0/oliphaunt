@@ -17,13 +17,22 @@ them:
 ```json
 {
   "expo": {
-    "plugins": [["@oliphaunt/react-native", { "icu": true }]]
+    "plugins": [["@oliphaunt/react-native", { "seedProfile": "icu", "icu": true }]]
   }
 }
 ```
 
-The plugin packages ICU data with the matching platform cluster seed; this is a
-build-time choice and does not add a database-open option.
+Initialization seeds are optional dependencies owned by `database-resources`.
+On Android, `seedProfile` selects the standard or ICU Maven seed; omit it when
+opening an existing database or supplying application-owned seed resources.
+On iOS, install exactly one `@oliphaunt/seed-native-ios-datum64-standard` or
+`@oliphaunt/seed-native-ios-datum64-icu` npm package. Its resource-only CocoaPod
+is autolinked into the application. `seedProfile` declares the selected resource
+dependency in the app-owned podspec; omit it when using an existing database or
+application-owned resources. An ICU profile also requires the separately installed
+`@oliphaunt/icu` package. Its data bundle stays separate from the runtime payload;
+the Swift initializer validates and uses it with the selected seed.
+These are build-time choices and do not add a database-open option.
 
 ```typescript
 import Oliphaunt from '@oliphaunt/react-native';
@@ -101,6 +110,11 @@ speculative SDK `COMMIT` or `ROLLBACK`.
 
 ## Backup and storage
 
+`directory` from `@oliphaunt/react-native/storage` converts an absolute native
+path or a local `file:` URI into a directory storage descriptor for open or
+restore. For example, `directory('file:///data/my%20database')` selects
+`/data/my database`. It performs no filesystem operations.
+
 Backup has one representation: PostgreSQL physical initialization bytes.
 Restore requires an absent or empty destination and never replaces an existing
 root. The payload contains PGDATA and backup metadata, not the outer
@@ -147,6 +161,28 @@ facade. Both use exact generated PostgreSQL extension names and selected package
 artifacts. Runtime manifests, static registries, package reports, and link
 evidence remain internal packaging concerns.
 
-Run `pnpm typecheck`, `pnpm test`, and the platform package checks before
-publishing. The Expo example is an executable smoke application, not an
-additional public API layer.
+## Working on this package
+
+After installing the workspace's pinned tools and workspace dependencies, run
+from this directory:
+
+```sh
+moon run oliphaunt-react-native:build
+bun run format-check
+bun run lint
+bun run typecheck
+bun run codegen:check
+bun run test
+```
+
+Moon builds the independently versioned query dependency before the SDK.
+`moon run oliphaunt-react-native:package` assembles its distributable archive
+and requires Apple carrier inputs. `moon run oliphaunt-react-native:test-consumer`
+separately verifies packaged ICU autolinking. Neither is a prerequisite for
+TypeScript tests. `bun run package` runs assembly against already built inputs.
+Installed Android/iOS app tests live in the Expo example and require their
+platform tools and runtime artifacts.
+
+The platform bridges share JSI marshalling, promise settlement and stream acknowledgement code in `cpp/`. An installed runtime owns its pending callbacks and waits; invalidating or replacing that runtime releases blocked producers and prevents queued callbacks from touching its JavaScript objects. JNI and Objective-C conversions, storage, and platform process isolation stay in their respective adapters.
+
+`bun run test-cpp` checks acknowledgement delivery and teardown races with a local C++17 compiler. `bun run typecheck`, `bun run test`, and `bun run build` cover the source package. These checks do not replace the installed Android/iOS Hermes and lifecycle tests; final release packaging also requires the prepared iOS carrier assets declared by its Moon task.

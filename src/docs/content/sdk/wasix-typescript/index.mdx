@@ -3,6 +3,10 @@ title: WASIX TypeScript SDK
 description: Run portable PostgreSQL in browsers, Node.js, Bun, Deno, and Electron with one small asynchronous API.
 ---
 
+> **Development checkout:** This section describes unreleased package separation. Published installation versions elsewhere on this site refer only to completed public releases.
+
+
+
 # WASIX TypeScript SDK
 
 <SdkLanding id="wasix-typescript" />
@@ -14,7 +18,7 @@ browser, Node.js, Bun, Deno, or Electron. It is a separate product from native
 ## Install
 
 ```sh
-pnpm add @oliphaunt/wasix-ts
+bun add @oliphaunt/wasix-ts@{{release:oliphaunt-wasix-ts}}
 ```
 
 Deno uses the same npm package through an `npm:` import.
@@ -51,6 +55,9 @@ on Node, Bun, Deno, and Electron. Cancellation and a dedicated typed COPY API re
 absent.
 
 ## App Responsibilities
+
+- In the development API, supply an independent seed for new browser storage.
+  Reopening existing storage needs no seed; ICU roots still need their ICU data.
 
 - Import only the persistent-storage adapter and exact WASIX extension packages
   the application uses.

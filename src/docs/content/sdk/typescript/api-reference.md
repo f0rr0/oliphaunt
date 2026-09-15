@@ -5,7 +5,7 @@ description: TypeScript API map for desktop JavaScript, native engines, SQL, lif
 
 # TypeScript API Reference
 
-Use the TypeDoc reference for exact declarations. This page maps native
+This page maps native
 `@oliphaunt/ts` by task; WASIX TypeScript is documented separately.
 
 | Area | Public surface | Use it for |
@@ -30,7 +30,7 @@ const description = await db.describe('SELECT $1::uuid', [2950]);
 ```
 
 The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/architecture/stable-database-api.md).
 
 Inside a callback transaction, do not issue manual `BEGIN`, `START
 TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`.

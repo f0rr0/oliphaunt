@@ -1,0 +1,11 @@
+[package]
+name = "oliphaunt-query"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+description = "PostgreSQL query encoding, result decoding and shared types for Oliphaunt SDKs."
+readme = "README.md"
+exclude = ["moon.yml", "release.toml"]

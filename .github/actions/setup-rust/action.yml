@@ -13,7 +13,7 @@ inputs:
   cache-save-if:
     description: Expression string passed to Swatinem/rust-cache save-if.
     required: false
-    default: "false"
+    default: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
   cache:
     description: Whether to enable the Cargo cache.
     required: false

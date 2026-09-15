@@ -5,6 +5,13 @@ description: Rust WASIX memory, persistent storage, startup, server, tools, and 
 
 # Rust WASIX Runtime Guide
 
+<Callout type="info" title="Development checkout APIs">
+The resource and package separation shown below is unreleased. Installation
+versions on this site come from completed public releases; they do not make the
+new seed, resource, or pgwire packages available. Use a coordinated source
+checkout for these examples until those products are published.
+</Callout>
+
 `oliphaunt-wasix` is the Rust host for the portable runtime. It shares the
 PostgreSQL guest and physical contracts with
 [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript), while keeping Rust-native
@@ -26,7 +33,7 @@ Sync` handle. Open constructs the direct database on a dedicated owner thread;
 every clone submits work to that same session through `&self` and awaits the
 result.
 
-Use the root `OliphauntServer` when an existing PostgreSQL client library needs
+Use `oliphaunt_pgwire_server::OliphauntServer` when an existing PostgreSQL client library needs
 a local endpoint. Loopback TCP is available on every supported host;
 Unix-domain sockets are available only on Unix hosts. Its `start()` and
 `close()` lifecycle is synchronous; `AsyncOliphauntServer` provides async
@@ -43,7 +50,8 @@ PostgreSQL-style Unix socket directory.
 
 ## Explicit asynchronous surface
 
-Use the root `AsyncOliphaunt` or `AsyncOliphauntServer` type when the application
+Use `oliphaunt_wasix::AsyncOliphaunt` or the separate
+`oliphaunt_pgwire_server::AsyncOliphauntServer` type when the application
 deliberately wants a dedicated execution owner. The async database and server wrap the same direct
 implementations with async methods. Database clones share one physical session
 and one ordered FIFO. Do not mix synchronous and async handles or infer that
@@ -57,7 +65,7 @@ only in ownership and calling semantics.
 
 `DatabaseStorage::Memory` is the default true Wasmer memory filesystem.
 `DatabaseStorage::Directory(path)` is a caller-owned managed root. A new store
-is hydrated from the packaged cluster seed; reopening validates the descriptor
+uses initdb or an explicitly selected seed; reopening needs no seed and validates the descriptor
 and minimal PostgreSQL markers. The caller-supplied Rust path must be nonempty
 and contain no NUL bytes. Incomplete or descriptorless nonempty roots fail
 without mutation.
@@ -67,8 +75,7 @@ Physical restore on the root surface is the synchronous static
 destination and returns after publication finishes or fails. The async
 `AsyncOliphaunt::restore(...).await` performs the same work on a temporary
 owner thread; once publication starts, abandoning the future does not promise
-cancellation. Tests that specifically need `initdb` invoke the packaged tool
-instead of selecting an initialization mode.
+cancellation. The runtime retains its initializer, so omitting a seed is a supported new-store path.
 
 ## Startup and extensions
 

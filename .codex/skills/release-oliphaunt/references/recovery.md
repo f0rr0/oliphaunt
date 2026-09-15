@@ -9,9 +9,10 @@
    link. Confirm the source SHA/tree, lock/catalog digests, package envelope,
    and selected products are unchanged. Never hand-edit or truncate the chain.
 3. Query every expected identity and GitHub tag/release. Classify it as absent, present-and-byte-matching, or conflicting. An existence-only response is not matching evidence.
-4. Do not modify the release commit. A required code or configuration fix
-   creates a new version, source commit, and qualification. Never attach an old
-   lock, artifacts, or ledger to a newer commit.
+4. Keep the candidate source and bytes unchanged. Product or packaging fixes
+   require a new candidate and qualification. For a publication-only fix, the
+   controller allowlist may authorize a new current-main workflow to publish
+   the original candidate using explicit `release_commit` and `approval_run_id`.
 5. For normal publication, use GitHub's rerun on the original Release run; it
    re-inventories the complete lock and publishes only identities still absent
    after byte verification. For bootstrap, use the failed job's reported rerun
@@ -27,11 +28,13 @@ Normal recovery is an exact-commit rerun, not a new recovery commit:
 
 1. Use GitHub's rerun for the original failed root `publish` run at the same
    release commit and approved publication candidate. Do not create a fresh
-   dispatch after `main` moves. The original run and every referenced dry-run
+   dispatch after `main` moves. The original run and every referenced candidate
    artifact must remain available.
 2. Re-inventory every selected Cargo/npm/Maven identity and GitHub
    tag/release/asset. Skip an existing item only after its bytes and metadata
    match the lock.
 3. Publish or stage only missing state. Any mismatch stops the release.
-4. A later commit cannot finish the release. If a code fix is required, create
-   a new release candidate and follow normal versioning and qualification.
+4. For a publication-only controller fix, dispatch `publish` with the original
+   source SHA and candidate run ID. A failed prior run is accepted only if its
+   candidate preparation job succeeded; active or cancelled runs are rejected.
+   Product, packaging, CI, or lockfile changes require fresh qualification.

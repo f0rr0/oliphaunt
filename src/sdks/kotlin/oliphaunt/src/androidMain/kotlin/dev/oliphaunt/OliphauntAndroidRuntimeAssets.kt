@@ -99,8 +99,6 @@ internal fun removeAndroidStagingIfPresent(staging: File) {
 
 internal object OliphauntAndroidRuntimeAssets {
     private const val RUNTIME_ASSET_ROOT = "oliphaunt/runtime"
-    private const val CARRIER_MANIFEST_ASSET = "oliphaunt/manifest.properties"
-    private const val CARRIER_SCHEMA = "oliphaunt-native-runtime-carrier-v1"
     private const val CLUSTER_SEED_TARGET = "android-datum64"
     private const val CLUSTER_SEED_COMPATIBILITY_KEY = "native-pg18-android-datum64-v1"
     private const val STANDARD_CLUSTER_SEED_ASSET_ROOT = "oliphaunt/cluster-seed"
@@ -190,18 +188,6 @@ internal object OliphauntAndroidRuntimeAssets {
             )
         }
 
-        if (resourceRoot == null) {
-            validateCarrierReceipt(
-                context.assets
-                    .open(CARRIER_MANIFEST_ASSET)
-                    .bufferedReader()
-                    .use { it.readText() },
-                CARRIER_MANIFEST_ASSET,
-            )
-        } else {
-            val receipt = File(resourceRoot, CARRIER_MANIFEST_ASSET)
-            validateCarrierReceipt(receipt.readText(), receipt.absolutePath)
-        }
         val standardClusterSeed =
             if (resourceRoot == null) {
                 packageManifestOrNull(context.assets, STANDARD_CLUSTER_SEED_ASSET_ROOT)
@@ -268,7 +254,7 @@ internal object OliphauntAndroidRuntimeAssets {
         runtime: OliphauntAndroidAssetPackage?,
         standard: OliphauntAndroidAssetPackage?,
         icu: OliphauntAndroidAssetPackage?,
-    ): OliphauntAndroidAssetPackage {
+    ): OliphauntAndroidAssetPackage? {
         val resolvedRuntime =
             runtime
                 ?: throw OliphauntException("Kotlin Android Oliphaunt runtime resources are not present")
@@ -280,9 +266,7 @@ internal object OliphauntAndroidRuntimeAssets {
         val profile = if ("icu" in resolvedRuntime.runtimeFeatures) "icu" else "standard"
         val selected =
             (if (profile == "icu") icu else standard)
-                ?: throw OliphauntException(
-                    "Kotlin Android Oliphaunt runtime resources are missing the $profile cluster seed for $CLUSTER_SEED_TARGET",
-                )
+                ?: return null
         if (profile == "icu" && resolvedRuntime.icuDataTreeSha256 != selected.icuDataTreeSha256) {
             throw OliphauntException(
                 "Kotlin Android Oliphaunt ICU data does not match the $CLUSTER_SEED_TARGET ICU cluster seed",
@@ -291,7 +275,7 @@ internal object OliphauntAndroidRuntimeAssets {
         return selected
     }
 
-    private fun matchingReleaseShapedClusterSeed(runtime: OliphauntAndroidAssetPackage): OliphauntAndroidAssetPackage {
+    private fun matchingReleaseShapedClusterSeed(runtime: OliphauntAndroidAssetPackage): OliphauntAndroidAssetPackage? {
         val resourceRoot =
             runtime.resourceRoot
                 ?: throw OliphauntException("release-shaped Android runtime resources have no resource root")
@@ -373,6 +357,15 @@ internal object OliphauntAndroidRuntimeAssets {
     ): AndroidPgdataPublication {
         validateCompleteAndroidPgdata(staging)
         if (isCompleteAndroidPgdata(destination)) return AndroidPgdataPublication.Existing
+        if (!staging.setReadable(false, false) ||
+            !staging.setWritable(false, false) ||
+            !staging.setExecutable(false, false) ||
+            !staging.setReadable(true, true) ||
+            !staging.setWritable(true, true) ||
+            !staging.setExecutable(true, true)
+        ) {
+            throw OliphauntException("failed to make PGDATA private at ${staging.absolutePath}")
+        }
         syncPublicationTree(staging)
 
         if (destination.exists()) {
@@ -513,30 +506,6 @@ internal object OliphauntAndroidRuntimeAssets {
             throw OliphauntException("Oliphaunt asset manifest $source is empty")
         }
         return properties
-    }
-
-    private fun validateCarrierReceipt(
-        text: String,
-        source: String,
-    ) {
-        val properties = parseManifestText(text, source)
-        val expected =
-            setOf(
-                "schema",
-                "clusterSeedTarget",
-                "clusterSeedRelativePath",
-                "icuClusterSeedRelativePath",
-            )
-        if (properties.stringPropertyNames() != expected ||
-            properties.getProperty("schema") != CARRIER_SCHEMA ||
-            properties.getProperty("clusterSeedTarget") != CLUSTER_SEED_TARGET ||
-            properties.getProperty("clusterSeedRelativePath") != "cluster-seed" ||
-            properties.getProperty("icuClusterSeedRelativePath") != "cluster-seed-icu"
-        ) {
-            throw OliphauntException(
-                "Oliphaunt runtime carrier $source does not contain the exact $CLUSTER_SEED_TARGET seed receipt",
-            )
-        }
     }
 
     internal fun parseManifestProperties(
@@ -1133,9 +1102,6 @@ internal object OliphauntAndroidRuntimeAssets {
         if (filesDir.canonicalPathOrAbsolute() != expectedFiles.canonicalPathOrAbsolute()) {
             return null
         }
-        val receipt = File(resourceRoot, CARRIER_MANIFEST_ASSET)
-        if (!receipt.isFile) return null
-        validateCarrierReceipt(receipt.readText(), receipt.absolutePath)
         return filePackageManifestOrNull(resourceRoot, RUNTIME_ASSET_ROOT)
     }
 

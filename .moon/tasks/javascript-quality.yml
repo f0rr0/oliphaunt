@@ -1,0 +1,25 @@
+$schema: "https://moonrepo.dev/schemas/tasks.json"
+
+inheritedBy:
+  tags: [javascript-quality]
+
+fileGroups:
+  javascript-quality:
+    - "**/*.{js,mjs,cjs,ts,mts,cts,tsx,json,jsonc,css}"
+    - /biome.json
+
+tasks:
+  js-format-check:
+    tags: [quality, static, format]
+    command: bun x --no-install biome format --no-errors-on-unmatched .
+    inputs: ["@group(javascript-quality)"]
+  js-lint:
+    tags: [quality, static]
+    command: bun x --no-install biome lint --diagnostic-level=error --no-errors-on-unmatched .
+    inputs: ["@group(javascript-quality)"]
+  js-format:
+    command: bun x --no-install biome format --write --no-errors-on-unmatched .
+    inputs: ["@group(javascript-quality)"]
+    options:
+      cache: false
+      runInCI: false

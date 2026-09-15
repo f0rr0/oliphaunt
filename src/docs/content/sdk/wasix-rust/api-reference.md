@@ -3,16 +3,20 @@ title: Rust WASIX API Reference
 description: Rust WASIX API map for protocol types, storage, extensions, and dump/restore.
 ---
 
+> **Development checkout:** This section describes unreleased package separation. Published installation versions elsewhere on this site refer only to completed public releases.
+
+
+
 # Rust WASIX API Reference
 
-Use the `oliphaunt-wasix` rustdoc reference for exact declarations. This page
+This page
 maps the Rust binding by task; it does not describe the separate
 [`@oliphaunt/wasix-ts` TypeScript API](/docs/sdk/wasix-typescript/api-reference).
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
 | Direct opening | root `Oliphaunt`, `OliphauntBuilder`, `OliphauntServerBuilder` | Open a `!Send + !Sync` database on the calling thread with memory storage by default |
-| Asynchronous handles | root `AsyncOliphaunt`, `AsyncOliphauntBuilder`, `AsyncOliphauntServer`, `AsyncOliphauntServerBuilder` | Keep an async executor responsive through cloneable handles backed by dedicated owner threads |
+| Asynchronous handles | root `AsyncOliphaunt`, `AsyncOliphauntBuilder` | Keep an async executor responsive through cloneable handles backed by dedicated owner threads |
 | Storage | `DatabaseStorage` | Select memory or a caller-supplied host directory |
 | Single-statement SQL | `query`, `execute`, parameterized variants, fluent `sql(...).bind(...)` | Run one extended-query command and return decoded rows or a command result |
 | Multi-statement and metadata | `exec`, `describe`, fluent `describe` | Return ordered simple-query results or parameter/result OIDs without executing |
@@ -20,7 +24,7 @@ maps the Rust binding by task; it does not describe the separate
 | Raw protocol | `exec_protocol_raw`, `exec_protocol_raw_stream`, `RawStreamResult`, `RawStreamError` | Send PostgreSQL protocol bytes or feed bounded chunks to `()` / typed `Result<(), E>` callbacks; COPY output uses the guest stream pump |
 | Transactions | synchronous or async callback `transaction`, `TransactionResult`, `TransactionError`, `rollback`, `is_closed` | Pin the physical session, use `?` through `E: From<Error>`, and retain typed callback plus settlement failures; managed handles omit raw protocol and reject manual lifecycle ownership |
 | Lifecycle | synchronous `is_closed`, `close`; async `Clone + Send + Sync`, async `close` | Choose exclusive caller ownership or one shared FIFO, with replayable terminal teardown |
-| Server/proxy | root `OliphauntServer` or `AsyncOliphauntServer`, `connection_string`, `is_closed`, `close` | Use an exclusive `Send + !Sync` blocking server handle or cloneable `Send + Sync` async lifecycle handle |
+| Server/proxy | separate `oliphaunt-pgwire-server` package: `OliphauntServer` or `AsyncOliphauntServer`, `connection_string`, `is_closed`, `close` | Use an exclusive `Send + !Sync` blocking server handle or cloneable `Send + Sync` async lifecycle handle |
 | Extensions | root `Extension`, per-feature associated constants, enabled-set `ALL`, `by_sql_name` | Select WASIX-built extension artifacts by SQL name; unavailable selectors do not compile and migrations still own `CREATE EXTENSION` |
 | Backup/restore | `Oliphaunt::backup` / `restore`; `AsyncOliphaunt::backup` / `restore` | Move the one WASIX physical archive between compatible stores |
 | Tools | database `pg_dump` / `psql`; root `tools::{PgDumpOptions, PsqlOptions, PostgresToolError}` | Run packaged PostgreSQL logical dump and non-interactive psql synchronously or asynchronously through the selected handle |
@@ -99,7 +103,7 @@ Transaction callbacks return ordinary `Result<T, E>` with `E: From<Error>`.
 the transaction and host ownership was retired without sending rollback.
 
 The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/architecture/stable-database-api.md).
 
 The Rust WASIX binding owns its packaged PostgreSQL runtime assets and Rust host
 behavior. Native direct, broker, and server topologies are documented in the

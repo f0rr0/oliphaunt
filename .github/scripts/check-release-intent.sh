@@ -32,7 +32,7 @@ if [[ "${event_name}" == "workflow_dispatch" ]] &&
     exit 1
   fi
   dispatch_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
-  read -r -a dispatch_commit_and_parents <<< "${dispatch_parents}"
+  read -r -a dispatch_commit_and_parents <<<"${dispatch_parents}"
   if [[ "${#dispatch_commit_and_parents[@]}" -ne 2 ]]; then
     echo "manual main qualification requires an exact one-parent commit" >&2
     exit 1
@@ -54,20 +54,7 @@ fi
 
 release_types="$({
   git show "${head_ref}:release-please-config.json" |
-    bun -e '
-const config = JSON.parse(await Bun.stdin.text());
-const sections = config["changelog-sections"];
-if (!Array.isArray(sections) || sections.length === 0) {
-  console.error("release-please-config.json must define changelog-sections");
-  process.exit(1);
-}
-const types = [...new Set(sections.map((section) => section?.type))];
-if (types.some((type) => typeof type !== "string" || !/^[a-z][a-z0-9-]*$/.test(type))) {
-  console.error("release-please changelog section types must be conventional lowercase identifiers");
-  process.exit(1);
-}
-console.log(types.join("|"));
-'
+    bun "$(dirname "${BASH_SOURCE[0]}")/release-intent-data.mts" types
 })"
 if [[ -z "${release_types}" ]]; then
   echo "could not derive release-impact types from release-please-config.json" >&2
@@ -87,82 +74,24 @@ if [[ "${subject}" =~ ${release_pr_pattern} ]]; then
   fi
 fi
 
-package_versions_from_ref() {
-  local ref="${1:?package_versions_from_ref requires a git ref}"
-  local files
-
-  files="$(
-    git ls-tree -r --name-only "${ref}" |
-      grep -E '(^Cargo.toml$|^src/.*/Cargo.toml$|^tools/xtask/Cargo.toml$)' || true
-  )"
-
-  while IFS= read -r file; do
-    [[ -z "${file}" ]] && continue
-    git show "${ref}:${file}" | awk -v file="${file}" '
-    /^\[package\][[:space:]]*$/ {
-      in_package = 1
-      next
-    }
-    /^\[/ && in_package {
-      exit
-    }
-    in_package && $0 ~ /^[[:space:]]*name[[:space:]]*=/ {
-      name = $0
-      sub(/^[^=]*=[[:space:]]*"/, "", name)
-      sub(/".*$/, "", name)
-    }
-    in_package && $0 ~ /^[[:space:]]*version[[:space:]]*=/ {
-      line = $0
-      sub(/^[^=]*=[[:space:]]*"/, "", line)
-      sub(/".*$/, "", line)
-      if (name == "") {
-        name = file
-      }
-      print name "=" line
-      exit
-    }
-  '
-  done <<< "${files}" | sort
-}
-
-base_versions="$(package_versions_from_ref "${base_ref}")"
-head_versions="$(package_versions_from_ref "${head_ref}")"
 release_manifest_versions_from_ref() {
   local ref="${1:?release_manifest_versions_from_ref requires a git ref}"
   local manifest
   if ! manifest="$(git show "${ref}:.release-please-manifest.json" 2>/dev/null)"; then
     return 0
   fi
-  # shellcheck disable=SC2016
   printf '%s\n' "${manifest}" |
-    bun -e '
-let data;
-try {
-  data = JSON.parse(await Bun.stdin.text());
-} catch {
-  process.exit(0);
-}
-for (const [path, version] of Object.entries(data).sort(([left], [right]) =>
-  left < right ? -1 : left > right ? 1 : 0)) {
-  console.log(`${path}=${version}`);
-}
-'
+    bun "$(dirname "${BASH_SOURCE[0]}")/release-intent-data.mts" versions
 }
 
 base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref}")"
 head_release_manifest_versions="$(release_manifest_versions_from_ref "${head_ref}")"
 
-if [[ -z "${base_versions}" || -z "${head_versions}" || -z "${head_release_manifest_versions}" ]]; then
-  echo "could not read package versions or release-please manifest versions" >&2
+if [[ -z "${head_release_manifest_versions}" ]]; then
+  echo "could not read release-please manifest versions" >&2
   exit 1
 fi
 
-changed_existing_versions="$(
-  join -t $'\t' \
-    <(printf '%s\n' "${base_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) \
-    <(printf '%s\n' "${head_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) |
-    awk -F '\t' '$2 != $3 { print $1 "=" $2 " -> " $3 }'
-)"
 if [[ -n "${base_release_manifest_versions}" ]]; then
   changed_existing_release_manifest_versions="$(
     join -t $'\t' \
@@ -174,13 +103,12 @@ else
   changed_existing_release_manifest_versions=""
 fi
 
-if [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" ]] &&
+if [[ -n "${changed_existing_release_manifest_versions}" ]] &&
   [[ "${is_release_pr}" != true ]]; then
   cat >&2 <<EOF
-This PR changes one or more workspace package versions or release-please
-manifest versions.
+This PR changes one or more Release Please manifest versions.
 
-Package and release-please manifest version bumps are release owned. Run the
+Release Please manifest version bumps are release owned. Run the
 Release workflow with prepare-release-pr and merge the generated release PR
 instead of changing versions in a feature/fix PR.
 
@@ -190,15 +118,6 @@ chore(release):.
 
 Received:
   ${subject}
-
-Base package versions:
-${base_versions}
-
-Head package versions:
-${head_versions}
-
-Changed existing package versions:
-${changed_existing_versions}
 
 Base release-please manifest versions:
 ${base_release_manifest_versions}
@@ -221,18 +140,18 @@ if [[ "${is_release_pr}" == true ]]; then
     exit 1
   fi
   release_products_json="$(
-    tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+    bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
       --derive-products \
       --head-ref "${head_ref}"
   )"
-  tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+  bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
     --products-json "${release_products_json}" \
     --head-ref "${head_ref}"
 fi
 
-release_plan="$(tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
+release_plan="$(bash tools/release/release-plan.sh --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
 release_products="$(
-  bun -e 'const data = JSON.parse(await Bun.stdin.text()); console.log((data.releaseProducts ?? []).join("\n"));' <<< "${release_plan}"
+  bun "$(dirname "${BASH_SOURCE[0]}")/release-intent-data.mts" products <<<"${release_plan}"
 )"
 
 if [[ -z "${release_products}" ]]; then

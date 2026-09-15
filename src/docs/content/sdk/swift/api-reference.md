@@ -5,7 +5,7 @@ description: Swift SDK API map for Apple app storage, async database calls, life
 
 # API Reference
 
-Use the Swift DocC reference for exact declarations. This page maps the Apple
+This page maps the Apple
 SDK surface by task.
 
 | Area | Public surface | Use it for |
@@ -29,7 +29,7 @@ let answer: Int32? = try result.rows[0].value(named: "answer")
 ```
 
 The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/architecture/stable-database-api.md).
 
 Managed transaction callbacks must not issue outer-lifecycle SQL: `BEGIN`/`START
 TRANSACTION`, `COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND

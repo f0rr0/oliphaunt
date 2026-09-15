@@ -510,6 +510,10 @@ class OliphauntAndroidRuntimeAssetsTest {
             assertEquals(AndroidPgdataPublication.Published, publication)
             assertTrue(didPublish)
             assertFalse(staging.exists())
+            assertEquals(
+                java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"),
+                Files.getPosixFilePermissions(destination.toPath()),
+            )
             validateCompleteAndroidPgdata(destination)
         } finally {
             parent.deleteRecursively()
@@ -1167,20 +1171,11 @@ class OliphauntAndroidRuntimeAssetsTest {
 }
 
 private fun databaseRootFixture(): JSONObject {
-    val configured =
-        System
-            .getProperty("oliphaunt.sharedFixturesDir")
-            ?.takeIf(String::isNotBlank)
-            ?.let { Path.of(it, "storage", "database-root.json") }
-    val cwd = Path.of("").toAbsolutePath()
-    val fixture =
-        listOfNotNull(
-            configured,
-            cwd.resolve("src/shared/fixtures/storage/database-root.json").normalize(),
-            cwd.resolve("../../shared/fixtures/storage/database-root.json").normalize(),
-        ).firstOrNull(Files::isRegularFile)
-    checkNotNull(fixture) { "shared database-root fixture was not found from the repository checkout" }
-    return JSONObject(fixture.toFile().readText())
+    val directory =
+        checkNotNull(System.getProperty("oliphaunt.sharedFixturesDir")?.takeIf(String::isNotBlank)) {
+            "Run fixture tests through Gradle to configure oliphaunt.sharedFixturesDir"
+        }
+    return JSONObject(Path.of(directory, "storage", "database-root.json").toFile().readText())
 }
 
 private fun manifestProperties(vararg entries: Pair<String, String>): Properties = Properties().apply {
@@ -1264,12 +1259,6 @@ private fun writeReleaseShapedRuntime(
 ): java.io.File {
     val oliphauntRoot = resourceRoot.resolve("oliphaunt")
     oliphauntRoot.mkdirs()
-    oliphauntRoot.resolve("manifest.properties").writeText(
-        "schema=oliphaunt-native-runtime-carrier-v1\n" +
-            "clusterSeedTarget=android-datum64\n" +
-            "clusterSeedRelativePath=cluster-seed\n" +
-            "icuClusterSeedRelativePath=cluster-seed-icu\n",
-    )
     writeTestClusterSeed(oliphauntRoot.resolve("cluster-seed"), "standard", "")
     writeTestClusterSeed(oliphauntRoot.resolve("cluster-seed-icu"), "icu", "a".repeat(64))
     val runtimeRoot = oliphauntRoot.resolve("runtime")

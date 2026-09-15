@@ -1,0 +1,6 @@
+id = "liboliphaunt-native-bindings"
+owner = "@oliphaunt/sdk-rust"
+kind = "sdk"
+publish_targets = ["crates-io"]
+registry_packages = ["crates:liboliphaunt-native-bindings"]
+release_artifacts = ["cargo-crate"]

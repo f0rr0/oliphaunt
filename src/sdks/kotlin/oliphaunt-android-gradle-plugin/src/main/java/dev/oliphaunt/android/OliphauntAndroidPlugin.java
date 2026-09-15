@@ -19,6 +19,8 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
     OliphauntAndroidExtension extension =
         project.getExtensions().create("oliphaunt", OliphauntAndroidExtension.class);
     String defaultVersion = defaultLiboliphauntVersion();
+    extension.getSeedProfile().convention(project.getProviders().gradleProperty("oliphauntSeedProfile").orElse(""));
+    extension.getDatabaseResourcesVersion().convention(project.getProviders().gradleProperty("oliphauntDatabaseResourcesVersion").orElse(defaultDatabaseResourcesVersion()));
     extension
         .getLiboliphauntVersion()
         .convention(
@@ -107,7 +109,12 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
                   configuration.setDescription("Optional Oliphaunt Android ICU data artifact resolved from Maven.");
                 });
 
-    project.afterEvaluate(ignored -> addDefaultArtifactDependencies(project, extension, runtimeArtifacts, extensionArtifacts, icuArtifacts));
+    Configuration seedArtifacts = project.getConfigurations().create("oliphauntAndroidSeedArtifacts", configuration -> {
+      configuration.setCanBeConsumed(false);
+      configuration.setCanBeResolved(true);
+      configuration.setDescription("Optional selected native PostgreSQL cluster seed.");
+    });
+    project.afterEvaluate(ignored -> addDefaultArtifactDependencies(project, extension, runtimeArtifacts, extensionArtifacts, icuArtifacts, seedArtifacts));
 
     TaskProvider<ResolveOliphauntAndroidAssetsTask> resolve =
         project
@@ -131,6 +138,8 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
                   task.getRuntimeArtifacts().from(runtimeArtifacts);
                   task.getExtensionArtifacts().from(extensionArtifacts);
                   task.getIcuArtifacts().from(icuArtifacts);
+                  task.getSeedArtifacts().from(seedArtifacts);
+                  task.getDatabaseResourcesVersion().set(extension.getDatabaseResourcesVersion());
                   task.getRuntimeResourcesDir().set(resolvedRoot.map(dir -> dir.dir("runtime-resources")));
                   task.getJniLibsDir().set(resolvedRoot.map(dir -> dir.dir("jniLibs")));
                   task.getExtensionArchivesDir().set(resolvedRoot.map(dir -> dir.dir("extensionArchives")));
@@ -276,7 +285,8 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
       OliphauntAndroidExtension extension,
       Configuration runtimeArtifacts,
       Configuration extensionArtifacts,
-      Configuration icuArtifacts) {
+      Configuration icuArtifacts,
+      Configuration seedArtifacts) {
     String runtimeVersion = extension.getLiboliphauntVersion().get();
     project
         .getDependencies()
@@ -293,10 +303,16 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
       };
       project.getDependencies().add(runtimeArtifacts.getName(), "dev.oliphaunt.runtime:" + artifact + ":" + runtimeVersion + "@tar.gz");
     }
-    if (extension.getIcu().get()) {
+    String resourceVersion = extension.getDatabaseResourcesVersion().get();
+    String seedProfile = extension.getSeedProfile().get();
+    if (!List.of("", "standard", "icu").contains(seedProfile)) throw new GradleException("seedProfile must be empty, standard or icu");
+    if (!seedProfile.isEmpty()) {
+      project.getDependencies().add(seedArtifacts.getName(), "dev.oliphaunt.runtime:oliphaunt-seed-native-android-datum64-" + seedProfile + ":" + resourceVersion + "@tar.gz");
+    }
+    if (extension.getIcu().get() || seedProfile.equals("icu")) {
       project
           .getDependencies()
-          .add(icuArtifacts.getName(), "dev.oliphaunt.runtime:oliphaunt-icu:" + runtimeVersion + "@tar.gz");
+          .add(icuArtifacts.getName(), "dev.oliphaunt.runtime:oliphaunt-icu:" + resourceVersion + "@tar.gz");
     }
     List<OliphauntExtensionCatalog.Owner> extensionOwners =
         OliphauntExtensionCatalog.resolveOwners(
@@ -395,10 +411,18 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
   }
 
   private static String defaultLiboliphauntVersion() {
+    return embeddedVersion("liboliphaunt.version");
+  }
+
+  private static String defaultDatabaseResourcesVersion() {
+    return embeddedVersion("database-resources.version");
+  }
+
+  private static String embeddedVersion(String name) {
     try (java.io.InputStream stream =
-        OliphauntAndroidPlugin.class.getResourceAsStream("/dev/oliphaunt/android/liboliphaunt.version")) {
+        OliphauntAndroidPlugin.class.getResourceAsStream("/dev/oliphaunt/android/" + name)) {
       if (stream == null) {
-        throw new GradleException("Oliphaunt Android plugin is missing liboliphaunt.version");
+        throw new GradleException("Oliphaunt Android plugin is missing " + name);
       }
       return new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
     } catch (java.io.IOException error) {

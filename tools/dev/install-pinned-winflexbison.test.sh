@@ -8,77 +8,28 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir -p "$tmp/fixtures" "$tmp/config" "$tmp/bin"
 
-python_bin=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1 &&
-    "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
-    python_bin="$candidate"
-    break
-  fi
-done
-[ -n "$python_bin" ] || { echo "Python 3.8 or newer is required" >&2; exit 1; }
 
-"$python_bin" - "$tmp" <<'PY'
-import hashlib
-import stat
-import sys
-import zipfile
-from pathlib import Path
+bash "$root/tools/dev/bun.sh" - "$tmp" <<'TS'
+import {createHash} from 'node:crypto';
+import {writeFileSync} from 'node:fs';
+import {zipArchive} from './tools/packaging/testdata/zip-fixture.mts';
+const root = process.argv[2];
+const sha = data => createHash('sha256').update(data).digest('hex');
+const write = (name, data) => writeFileSync(root + '/' + name, data);
 
-root = Path(sys.argv[1])
-files = {
-    "win_flex.exe": b"fixture-flex\n",
-    "win_bison.exe": b"fixture-bison\n",
-    "data/README.md": b"fixture-data\n",
-}
-archive = root / "fixtures" / "winflex.zip"
-with zipfile.ZipFile(archive, "w") as output:
-    for name, contents in files.items():
-        info = zipfile.ZipInfo(name)
-        info.external_attr = (stat.S_IFREG | (0o755 if name.endswith(".exe") else 0o644)) << 16
-        info.compress_type = zipfile.ZIP_DEFLATED
-        output.writestr(info, contents)
-tree = hashlib.sha256()
-for name, contents in sorted(files.items(), key=lambda item: item[0].encode("utf-8")):
-    digest = hashlib.sha256(contents).hexdigest()
-    tree.update(f"{name}\0{len(contents)}\0{digest}\n".encode("utf-8"))
-values = {
-    "archive_sha": hashlib.sha256(archive.read_bytes()).hexdigest(),
-    "archive_bytes": archive.stat().st_size,
-    "expanded_bytes": sum(map(len, files.values())),
-    "tree_sha": tree.hexdigest(),
-    "flex_sha": hashlib.sha256(files["win_flex.exe"]).hexdigest(),
-    "bison_sha": hashlib.sha256(files["win_bison.exe"]).hexdigest(),
-}
-manifest = f'''[toolchain]
-version = "1.2.3"
-repository = "lexxmark/winflexbison"
+const files = {'win_flex.exe':'fixture-flex\n','win_bison.exe':'fixture-bison\n','data/README.md':'fixture-data\n'};
+const bytes = zipArchive(Object.entries(files).map(([name,data]) => ({name,data,method:8,externalAttributes:(name.endsWith('.exe') ? 0o100755 : 0o100644) << 16})));
+write('fixtures/winflex.zip',bytes);
+const tree = createHash('sha256');
+for (const [name, data] of Object.entries(files).sort(([a],[b]) => Buffer.compare(Buffer.from(a),Buffer.from(b)))) tree.update(name + '\0' + Buffer.byteLength(data) + '\0' + sha(data) + '\n');
+const values = {archive_sha:sha(bytes), archive_bytes:bytes.length, expanded_bytes:Object.values(files).reduce((sum,data)=>sum+Buffer.byteLength(data),0), tree_sha:tree.digest('hex'), flex_sha:sha(files['win_flex.exe']), bison_sha:sha(files['win_bison.exe'])};
+const manifest = "[toolchain]\nversion = \"1.2.3\"\nrepository = \"lexxmark/winflexbison\"\n\n[assets.windows-x64]\nurl = \"https://github.com/lexxmark/winflexbison/releases/download/v1.2.3/win_flex_bison-1.2.3.zip\"\nsha256 = \"{values['archive_sha']}\"\nbytes = \"{values['archive_bytes']}\"\nentry_count = \"3\"\nfile_count = \"3\"\nexpanded_bytes = \"{values['expanded_bytes']}\"\ntree_sha256 = \"{values['tree_sha']}\"\nflex_path = \"win_flex.exe\"\nflex_sha256 = \"{values['flex_sha']}\"\nbison_path = \"win_bison.exe\"\nbison_sha256 = \"{values['bison_sha']}\"\n".replace(/\{values\['([^']+)'\]\}/g, (_,key)=>String(values[key]));
+write('config/winflexbison.toml',manifest);
+write('config/bad-sha.toml',manifest.replace(values.archive_sha,'0'.repeat(64)));
+write('config/bad-tree.toml',manifest.replace(values.tree_sha,'0'.repeat(64)));
+write('config/bad-url.toml',manifest.replace('https://github.com/lexxmark/winflexbison/','https://example.invalid/'));
 
-[assets.windows-x64]
-url = "https://github.com/lexxmark/winflexbison/releases/download/v1.2.3/win_flex_bison-1.2.3.zip"
-sha256 = "{values['archive_sha']}"
-bytes = "{values['archive_bytes']}"
-entry_count = "3"
-file_count = "3"
-expanded_bytes = "{values['expanded_bytes']}"
-tree_sha256 = "{values['tree_sha']}"
-flex_path = "win_flex.exe"
-flex_sha256 = "{values['flex_sha']}"
-bison_path = "win_bison.exe"
-bison_sha256 = "{values['bison_sha']}"
-'''
-(root / "config" / "winflexbison.toml").write_text(manifest, encoding="utf-8")
-(root / "config" / "bad-sha.toml").write_text(
-    manifest.replace(values["archive_sha"], "0" * 64), encoding="utf-8"
-)
-(root / "config" / "bad-tree.toml").write_text(
-    manifest.replace(values["tree_sha"], "0" * 64), encoding="utf-8"
-)
-(root / "config" / "bad-url.toml").write_text(
-    manifest.replace("https://github.com/lexxmark/winflexbison/", "https://example.invalid/"),
-    encoding="utf-8",
-)
-PY
+TS
 
 cat >"$tmp/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -107,7 +58,6 @@ run_installer() {
     "OLIPHAUNT_PINNED_ZIP_EXTRACTOR=$extractor" \
     "OLIPHAUNT_PINNED_NATIVE_TOOL_CACHE_ROOT=${CACHE_ROOT:-$tmp/cache}" \
     "OLIPHAUNT_WINFLEXBISON_CURL=$tmp/bin/curl" \
-    "OLIPHAUNT_WINFLEXBISON_PYTHON=$python_bin" \
     "WINFLEX_ARCHIVE=$tmp/fixtures/winflex.zip" \
     "CURL_ARGS_LOG=$tmp/curl-args.log" \
     "CURL_MODE=${CURL_MODE:-good}" \

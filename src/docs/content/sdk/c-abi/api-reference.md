@@ -5,7 +5,7 @@ description: C ABI API map for native runtime initialization, protocol execution
 
 # API Reference
 
-Use the Doxygen reference for exact declarations. This page maps the C ABI by
+This page maps the C ABI by
 task.
 
 | Area | Public surface | Use it for |
@@ -26,7 +26,14 @@ Most app developers use a language SDK instead of calling the C ABI directly.
 The C ABI is primarily for binding authors and applications that need the native
 runtime boundary itself.
 
-ABI v10 retains the optional embedded module directory at
+**Unreleased checkout ABI v11:** `OliphauntConfig` appends the nullable
+`const char *icu_data_dir` field. Binding authors must use the matching v11
+header and ABI version; an older struct must not be passed as v11. Supply the
+selected canonical ICU data directory explicitly for an ICU database. The field
+is optional for configurations that do not select external ICU data. This is a
+checkout change, not a claim that ABI v11 has been publicly released.
+
+The optional embedded module directory remains at
 `OliphauntConfig.module_dir`. A non-empty path is copied into the handle and is
 authoritative over process environment and release-layout discovery. Set it to
 `NULL` for the sensible default: a valid `OLIPHAUNT_EMBEDDED_MODULE_DIR`, then

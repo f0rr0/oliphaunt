@@ -1,0 +1,115 @@
+[package]
+name = "oliphaunt-wasix-postmaster-executor"
+description = "Compiler-free sealed executor for the Oliphaunt WASIX PostgreSQL postmaster product"
+publish = false
+authors = ["Oliphaunt contributors"]
+edition = "2024"
+homepage = "https://oliphaunt.dev"
+license = "MIT"
+repository = "https://github.com/f0rr0/oliphaunt"
+rust-version = "1.93"
+version = "7.2.0-alpha.2"
+
+[[bin]]
+name = "oliphaunt-wasix-postmaster-executor"
+path = "src/bin/executor.rs"
+doc = false
+required-features = ["product-executor"]
+
+[[bin]]
+name = "oliphaunt-wasix-start-proof"
+path = "src/bin/start-proof.rs"
+doc = false
+required-features = ["start-proof-tool"]
+
+[[bin]]
+name = "oliphaunt-wasix-memory-profile"
+path = "src/bin/memory-profile.rs"
+doc = false
+required-features = ["memory-profile-tool"]
+
+[[bin]]
+name = "oliphaunt-wasix-postmaster-compiler"
+path = "src/bin/compiler.rs"
+doc = false
+required-features = ["product-compiler"]
+
+[features]
+default = []
+product-executor = [
+	"memory-profile-core",
+	"dep:tokio",
+	"wasmer-wasix/ctrlc",
+	"wasmer-wasix/disable-all-logging",
+	"wasmer-wasix/host-fs",
+	"wasmer-wasix/host-threads",
+	"wasmer-wasix/host-vnet",
+	"wasmer-wasix/sys-poll",
+]
+# Build-time-only analyzer for the exact raw executable's WebAssembly start
+# closure. This binary is never copied into the compiler-free carrier.
+start-proof-tool = ["dep:wasmparser"]
+# Build-time-only exact WebAssembly memory-contract sealer. This binary is
+# never copied into the compiler-free carrier.
+memory-profile-core = ["dep:wasmer-vm"]
+memory-profile-tool = ["memory-profile-core", "dep:wasmparser"]
+# Build-time-only LLVM AOT producer with the product's explicit static-memory
+# tunables. Build it in a target directory separate from product-executor so
+# the shipped executor remains compiler-free.
+product-compiler = [
+	"memory-profile-tool",
+	"dep:wasmer-compiler-llvm",
+	"wasmer/llvm",
+]
+# Preserve the generic CLI's historical writable-snapshot search path without
+# making a user cache-directory resolver part of the product executor closure.
+compat-cache-dir = ["dep:dirs"]
+# These features exist only for the sealed artifact loader's positive-path
+# tests. Production builds must use --no-default-features and never enable
+# either compiler-bearing test feature.
+cranelift = ["memory-profile-core", "dep:wasmer-compiler-cranelift", "wasmer/cranelift"]
+wat = ["wasmer/wat"]
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1.68"
+dirs = { version = "6.0.0", optional = true }
+hex = "0.4"
+libc = { version = "0.2.178", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11.0"
+tempfile = "3.6.0"
+tokio = { version = "1.39.0", default-features = false, optional = true, features = [
+	"rt-multi-thread",
+	"time",
+] }
+tracing = { version = "0.1", default-features = false }
+wasmer = { version = "=7.2.0-alpha.2", default-features = false, features = [
+	"headless",
+	"sys",
+] }
+wasmer-compiler-cranelift = { version = "=7.2.0-alpha.2", optional = true }
+wasmer-compiler-llvm = { version = "=7.2.0-alpha.2", optional = true }
+wasmer-types = { version = "=7.2.0-alpha.2", default-features = false, features = [
+	"std",
+] }
+wasmer-vm = { version = "=7.2.0-alpha.2", default-features = false, optional = true }
+wasmparser = { version = "0.247.0", default-features = false, features = ["validate", "features", "simd"], optional = true }
+wasmer-wasix = { version = "=0.702.0-alpha.2", default-features = false, features = [
+	"sys-minimal",
+] }
+
+[dev-dependencies]
+futures = "0.3.30"
+wat = "1.247.0"
+
+[package.metadata.oliphaunt-executor-policy]
+compiler-free = true
+exact-module-count = 29
+network = "host-only"
+package-resolution = false
+runtime-compilation = false
+
+# This product consumes a separately prepared, patched Wasmer workspace.
+[workspace]

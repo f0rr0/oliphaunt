@@ -13,7 +13,7 @@ oliphaunt_postgis_bootstrap_repo_root() {
   repo_root="$SCRIPT_DIR"
   while [ "$repo_root" != "/" ]; do
     if [ -f "$repo_root/package.json" ] &&
-       [ -d "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build" ]; then
+       [ -d "$repo_root/src/runtimes/liboliphaunt-wasix/assets/build" ]; then
       printf '%s\n' "$repo_root"
       return 0
     fi
@@ -25,7 +25,7 @@ oliphaunt_postgis_bootstrap_repo_root() {
 }
 
 BOOTSTRAP_REPO_ROOT="$(oliphaunt_postgis_bootstrap_repo_root)"
-ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$BOOTSTRAP_REPO_ROOT/src/runtimes/liboliphaunt/wasix/assets/build}"
+ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$BOOTSTRAP_REPO_ROOT/src/runtimes/liboliphaunt-wasix/assets/build}"
 . "$ROOT/wasix_third_party.sh"
 . "$ROOT/source_lane.sh"
 
@@ -51,7 +51,7 @@ while IFS= read -r flag; do
 done < <(oliphaunt_wasix_extension_wasix_configure_flags "$REPO_ROOT" postgis)
 
 if [ ! -f "$POSTGIS_SOURCE_DIR/configure.ac" ]; then
-  echo "missing PostGIS source checkout at $POSTGIS_SOURCE_DIR; run assets fetch/source-spine first" >&2
+  echo "missing PostGIS source checkout at $POSTGIS_SOURCE_DIR; run bash src/third-party/tools/fetch-sources.sh wasix-runtime --force first" >&2
   exit 1
 fi
 if [ ! -f "$BUILD_DIR/config.status" ]; then

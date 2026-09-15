@@ -8,17 +8,19 @@
   distribution is not an independently versioned release product. External extensions own
   independent packaging SemVer and record their upstream version/commit
   separately.
-- The generated release-bump commit, qualified workflow head, artifact
-  attestations, publication lock source SHA/tree, product tags, and every retry
-  agree exactly. A later commit cannot control or finish the release.
+- The generated release-bump commit, qualified source SHA/tree, publication
+  lock, product tags, and package bytes agree exactly. An explicitly approved
+  publication-only controller fix may use a later workflow SHA; attestations
+  record that publishing identity separately.
 - Extension evidence runs are immutable observations. Claim regeneration never changes them, and current WASIX support is qualified only by the full lifecycle collector running against same-workflow exact-SHA artifacts and recording that commit/tree/run identity.
 - The publication lock is exhaustive: reject undeclared and missing packages/assets as well as hash, size, dependency, target, or version drift.
-- Release Please selects direct candidates from configured product paths.
-  Shared byte producers must live in, or be represented by, every product whose
-  shipped behavior they change. Do not create repository-meta fingerprints to
-  force selection.
-- Dry-run generates the lock after complete artifact assembly and freezes every
-  locked file in one approved candidate. Bootstrap and normal publish install
+- Release Please selects direct candidates from configured product paths and
+  receives shared shipped-source commits from the declared release-ownership
+  graph, bounded by each product's published history. Ordinary task dependency
+  edges alone do not bump consumers. Correct missing ownership instead of copying
+  source or creating repository-meta fingerprints to force selection.
+- The preparation job generates the lock after artifact assembly and freezes
+  every locked file in one candidate. Bootstrap and normal publish install
   that same candidate; they never rebuild it. Preserve its approval identity,
   lock, and ledger.
 - Publish leaves/parts before aggregators, target carriers before façades, runtime artifacts before SDKs, and packages before public GitHub release promotion.

@@ -1,0 +1,20 @@
+[package]
+name = "oliphaunt-broker"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Oliphaunt broker helper process for process-isolated embedded PostgreSQL."
+readme = "README.md"
+repository.workspace = true
+homepage.workspace = true
+license = "MIT"
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[[bin]]
+name = "oliphaunt-broker"
+path = "src/main.rs"
+
+[dependencies]
+liboliphaunt-native-bindings = { path = "../sdks/rust/liboliphaunt-native", version = "0.1.0" }
+oliphaunt-query = { path = "../sdks/rust-query", version = "0.1.0" }
+getrandom = "0.3"

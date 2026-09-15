@@ -15,7 +15,6 @@ release_artifacts = [
   "maven-publication",
   "runtime-assets-external",
 ]
-derived_version_files = ["src/sdks/kotlin/oliphaunt/build.gradle.kts", "src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts"]
 
 [compatibility_versions.oliphaunt-kotlin-liboliphaunt]
 source_product = "liboliphaunt-native"

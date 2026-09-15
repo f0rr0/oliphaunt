@@ -55,6 +55,7 @@ set -euo pipefail
 if [ "${OLIPHAUNT_ANDROID_APK_VERIFY_TEST_STALE_KOTLIN_AAR:-0}" != "1" ]; then
   printf 'C d 1\t1\t1\tdev.oliphaunt.DatabaseStorage$TemporaryDirectory\n'
 fi
+printf 'C %s 1\t1\t1\tcom.sun.jna.Native\n' "${OLIPHAUNT_ANDROID_APK_VERIFY_TEST_JNA_STATE:-d}"
 EOF
 chmod +x "$tools/zipalign" "$tools/apksigner" "$command_line_tools/apkanalyzer"
 
@@ -156,6 +157,14 @@ expect_failure stale-kotlin-aar 'APK does not define the staged Kotlin SDK stora
   OLIPHAUNT_ANDROID_APK_VERIFY_TEST_STALE_KOTLIN_AAR=1 \
   "$verifier" "$apk"
 cmp "$tmp/expected.log" "$log"
+
+# A reference to JNA does not supply its missing runtime implementation.
+expect_failure missing-jna 'APK does not define the Kotlin SDK JNA runtime class' env \
+  ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk" \
+  OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST="$manifest" \
+  OLIPHAUNT_ANDROID_APK_VERIFY_TEST_LOG="$log" \
+  OLIPHAUNT_ANDROID_APK_VERIFY_TEST_JNA_STATE=r \
+  "$verifier" "$apk"
 
 # Installed package identity, SDK-root identity, manifest shape, and artifact
 # type are independently fail-closed.

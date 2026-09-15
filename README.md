@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/oliphaunt.png" alt="Oliphaunt" width="360">
+  <img src="src/docs/assets/oliphaunt.png" alt="Oliphaunt" width="360">
 </p>
 
 <p align="center">
@@ -111,11 +111,13 @@ surface:
 proto upgrade 0.61.3
 proto install
 tools/dev/bootstrap-tools.sh
-moon run dev-tools:doctor
-moon run policy-tools:js-format-check policy-tools:rust-format-check
-moon run :check :compile :format-check :lint :tools-compile --affected
-moon run :test :unit :tools-unit --affected
+moon query tasks --project oliphaunt-rust
+moon run oliphaunt-rust:build oliphaunt-rust:test oliphaunt-rust:package
 ```
+
+Choose the project you are changing; its tasks own the required checks and
+build tools. For workflow checks alone, `tools/dev/bootstrap-tools.sh --workflows`
+installs Actionlint and Zizmor. The default also installs Prek and cargo-nextest.
 
 For a product metadata change, also run the metadata gate:
 
@@ -123,7 +125,7 @@ For a product metadata change, also run the metadata gate:
 moon run release-tools:metadata
 ```
 
-Use `release-tools:unit`, `policy-tools:unit`, or `ci-workflows:check` when its
+Use `release-tools:test` or `ci-workflows:check` when its
 corresponding machinery changes. Reserve `release-tools:check` for an exact
 release candidate.
 
@@ -136,9 +138,9 @@ promote releases.
 - [Public SDK documentation](src/docs/content/sdk/index.mdx)
 - [Runtime support](src/docs/content/reference/capabilities.mdx)
 - [Exact extension model](src/docs/content/reference/extensions.mdx)
-- [Source architecture](docs/architecture/final-product-source-architecture.md)
-- [Maintainer documentation index](docs/maintainers/README.md)
-- [Release process](docs/maintainers/release.md)
+- [Source architecture](src/docs/architecture/final-product-source-architecture.md)
+- [Maintainer documentation index](src/docs/maintainers/README.md)
+- [Release process](src/docs/maintainers/release.md)
 - [Contributing](CONTRIBUTING.md)
 
 Oliphaunt is licensed under the terms recorded in [LICENSE](LICENSE).

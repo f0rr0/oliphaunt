@@ -11,8 +11,8 @@ if [ -z "$root" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
     fail "must run inside the Oliphaunt checkout"
 fi
-manifest="${OLIPHAUNT_NPM_PUBLISHER_MANIFEST:-$root/src/sources/toolchains/npm-publisher.toml}"
-extractor="${OLIPHAUNT_NPM_PUBLISHER_ARCHIVE_EXTRACTOR:-$root/.github/actions/setup-moon/toolchain-archive.py}"
+manifest="${OLIPHAUNT_NPM_PUBLISHER_MANIFEST:-$root/tools/release/npm-publisher.toml}"
+extractor="${OLIPHAUNT_NPM_PUBLISHER_ARCHIVE_EXTRACTOR:-$root/.github/actions/setup-moon/toolchain-archive.mts}"
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_NPM_PUBLISHER_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-npm-publisher}"
 
@@ -30,11 +30,6 @@ done
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
 
-python=""
-for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then python="$candidate"; break; fi
-done
-[ -n "$python" ] || fail "python3 or python is required for safe archive extraction"
 command -v node >/dev/null 2>&1 || fail "the verified Node.js runtime must be on PATH"
 
 manifest_value() {
@@ -68,16 +63,7 @@ hash_file() {
       sha512) shasum -a 512 "$path" | awk '{print $1}' ;;
     esac
   else
-    "$python" - "$algorithm" "$path" <<'PY'
-import hashlib
-import pathlib
-import sys
-digest = hashlib.new(sys.argv[1])
-with pathlib.Path(sys.argv[2]).open("rb") as stream:
-    while block := stream.read(1024 * 1024):
-        digest.update(block)
-print(digest.hexdigest())
-PY
+    fail "sha256sum/sha512sum or shasum is required"
   fi
 }
 
@@ -195,7 +181,7 @@ cache_valid() {
   esac
   local args=(tree-digest --root "$candidate/npm") executable
   for executable in "${executables[@]}"; do args+=(--executable "$executable"); done
-  [ "$("$python" "$extractor" "${args[@]}" 2>/dev/null)" = "$file_count $tree_sha256" ] || return 1
+  [ "$(node "$extractor" "${args[@]}" 2>/dev/null)" = "$file_count $tree_sha256" ] || return 1
   [ "$(node_script_version "$candidate/npm/$binary_path" 2>/dev/null)" = "$version" ] || return 1
   [ "$(cat "$candidate/receipt")" = "$receipt_text" ] || return 1
 }
@@ -251,7 +237,7 @@ extract_args=(extract --archive "$archive" --format "$format" --prefix "$prefix"
 for executable in "${executables[@]}"; do
   extract_args+=(--required "$executable" --executable "$executable")
 done
-"$python" "$extractor" "${extract_args[@]}"
+node "$extractor" "${extract_args[@]}"
 mkdir -p "$stage/bin"
 printf '%s\n' "$npm_wrapper_text" >"$stage/bin/npm"
 printf '%s\n' "$npx_wrapper_text" >"$stage/bin/npx"

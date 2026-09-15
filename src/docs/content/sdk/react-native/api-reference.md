@@ -5,7 +5,7 @@ description: React Native SDK API map for TypeScript, config plugin, TurboModule
 
 # API Reference
 
-Use the TypeDoc reference for exact declarations. This page maps the React Native
+This page maps the React Native
 SDK by task.
 
 | Area | Public surface | Use it for |
@@ -29,7 +29,7 @@ const fields = (await db.describe('SELECT $1::uuid', [2950])).fields;
 ```
 
 The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/architecture/stable-database-api.md).
 
 Inside a callback transaction, do not issue manual `BEGIN`, `START
 TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`.

@@ -34,7 +34,7 @@ through configuration:
 
 ```toml
 [dependencies]
-oliphaunt = "0.1"
+oliphaunt = "={{release:oliphaunt-rust}}"
 ```
 
 </Step>
@@ -44,8 +44,6 @@ oliphaunt = "0.1"
 
 Create a builder, choose storage, select exact extensions, open, query, and
 close.
-
-<!-- oliphaunt-snippet: oliphaunt-rust -->
 
 ```rust
 use oliphaunt::{DatabaseStorage, Extension, Oliphaunt};
@@ -275,3 +273,19 @@ design, while independent sessions require server mode. If the issue is a
 blocked async executor rather than database topology, confirm the type:
 `oliphaunt::Oliphaunt` blocks its caller and `oliphaunt::AsyncOliphaunt` owns a
 dedicated SDK thread.
+
+## Development resource inputs
+
+The resource separation is unreleased. In the coordinated checkout, direct and
+async builders accept `.seed(NativeClusterSeed)` and
+`.icu_data(NativeResourceDirectory)`. These types are exported by `oliphaunt`:
+applications do not need to install an internal adapter crate to configure them.
+
+Select a Cargo carrier's archive and manifest with
+`NativeClusterSeed::new(archive, manifest)`, or an explicitly unpacked native
+seed directory. The shared native binding validates those inputs before it
+initializes the managed root. Supported desktop opens can initialize without a
+seed; reopening an existing root needs no seed. ICU roots still require ICU data.
+Runtime libraries, seeds, and optional PostgreSQL tools have separate ownership
+and versions. The installation commands above continue to use completed public
+releases, not these unpublished resource candidates.

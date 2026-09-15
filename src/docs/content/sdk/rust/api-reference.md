@@ -72,7 +72,7 @@ a root raw-protocol adapter that owns the complete lifecycle. Savepoints and
 `ROLLBACK TO SAVEPOINT` remain valid.
 
 The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/architecture/stable-database-api.md).
 
 The Rust SDK is the full native topology surface for Tauri and Rust desktop
 apps. Use server mode when you need independent PostgreSQL clients. Choosing an

@@ -11,7 +11,7 @@ if [ -z "$root" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "must run inside the Oliphaunt checkout"
 fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-manifest="${OLIPHAUNT_WINFLEXBISON_MANIFEST:-$root/src/sources/toolchains/winflexbison.toml}"
+manifest="${OLIPHAUNT_WINFLEXBISON_MANIFEST:-$root/tools/dev/winflexbison.toml}"
 extractor="${OLIPHAUNT_PINNED_ZIP_EXTRACTOR:-$root/tools/dev/extract-pinned-zip.sh}"
 curl_platform_flags="$script_dir/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_PINNED_NATIVE_TOOL_CACHE_ROOT:-$root/target/oliphaunt-native-tools}"
@@ -90,18 +90,6 @@ done
 [ "$expanded_bytes" -ge 1 ] && [ "$expanded_bytes" -le 10000000 ] ||
   fail "expanded byte bound is invalid"
 
-python_bin="${OLIPHAUNT_WINFLEXBISON_PYTHON:-}"
-if [ -z "$python_bin" ]; then
-  for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 &&
-      "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
-      python_bin="$candidate"
-      break
-    fi
-  done
-fi
-[ -n "$python_bin" ] || fail "Python 3.8 or newer is required"
-
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print tolower($1)}'
@@ -113,47 +101,7 @@ sha256_file() {
 }
 
 payload_identity() {
-  "$python_bin" - "$1" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-if not root.is_dir() or root.is_symlink():
-    raise SystemExit(1)
-files = []
-for current, directories, names in os.walk(root, topdown=True, followlinks=False):
-    current_path = Path(current)
-    for name in directories:
-        path = current_path / name
-        mode = os.lstat(path).st_mode
-        if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
-            raise SystemExit(1)
-    for name in names:
-        path = current_path / name
-        mode = os.lstat(path).st_mode
-        if not stat.S_ISREG(mode) or stat.S_ISLNK(mode):
-            raise SystemExit(1)
-        relative = path.relative_to(root).as_posix()
-        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in relative):
-            raise SystemExit(1)
-        files.append((relative, path))
-digest = hashlib.sha256()
-expanded = 0
-for relative, path in sorted(files, key=lambda item: item[0].encode("utf-8")):
-    file_digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            size += len(chunk)
-            file_digest.update(chunk)
-    expanded += size
-    row = f"{relative}\0{size}\0{file_digest.hexdigest()}\n".encode("utf-8")
-    digest.update(row)
-print(f"{digest.hexdigest()}\t{len(files)}\t{expanded}")
-PY
+  bash "$script_dir/bun.sh" "$script_dir/winflexbison-identity.mts" "$1"
 }
 
 receipt_text="$(printf 'tool=winflexbison\nversion=%s\narchive_sha256=%s\ntree_sha256=%s\nflex_sha256=%s\nbison_sha256=%s' \

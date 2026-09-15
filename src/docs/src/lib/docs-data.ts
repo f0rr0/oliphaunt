@@ -1,3 +1,5 @@
+import published from '../../../../target/docs/generated/published-products.json';
+
 import {
   Boxes,
   Braces,
@@ -12,6 +14,11 @@ import {
   Smartphone,
   type LucideIcon,
 } from 'lucide-react';
+
+function publishedInstall(product: string, command: string) {
+  const release = (published as Record<string, { version: string } | null>)[product];
+  return release ? command.replaceAll('VERSION', release.version) : 'Not yet published';
+}
 
 export type SdkSurface = {
   id: string;
@@ -34,12 +41,13 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'Rust',
     href: '/docs/sdk/rust',
     packageName: 'oliphaunt',
-    install: 'cargo add oliphaunt',
+    install: publishedInstall('oliphaunt-rust', 'cargo add oliphaunt@=VERSION'),
     target: 'Tauri and native Rust desktop apps',
     startWith: 'Direct, broker, and server modes',
     owns: 'Rust-native synchronous and explicit async APIs, helper processes, and desktop runtime selection.',
     modes: ['direct', 'broker', 'server'],
-    verifyFirst: 'Run a direct query, then use broker or server when the documented target support fits.',
+    verifyFirst:
+      'Run a direct query, then use broker or server when the documented target support fits.',
     guideOutcomes: [
       'Open persistent or temporary storage from the synchronous root or explicit async owner handle.',
       'Choose direct, broker, or server mode deliberately.',
@@ -52,7 +60,7 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'Swift',
     href: '/docs/sdk/swift',
     packageName: 'Oliphaunt',
-    install: 'Add package in Xcode or Package.swift',
+    install: publishedInstall('oliphaunt-swift', 'Add package VERSION in Xcode or Package.swift'),
     target: 'iOS and macOS apps',
     startWith: 'Swift concurrency and app storage',
     owns: 'Apple app storage, actors, and native runtime resources.',
@@ -70,12 +78,16 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'Kotlin',
     href: '/docs/sdk/kotlin',
     packageName: 'dev.oliphaunt:oliphaunt-android',
-    install: 'id("dev.oliphaunt.android") + implementation("dev.oliphaunt:oliphaunt-android:0.1.1")',
+    install: publishedInstall(
+      'oliphaunt-kotlin',
+      'implementation("dev.oliphaunt:oliphaunt-android:VERSION")',
+    ),
     target: 'Android apps',
     startWith: 'Coroutines, Android resources, and ABI artifacts',
     owns: 'Android resource hydration, ABI selection, coroutines, and native runtime ownership.',
     modes: ['direct'],
-    verifyFirst: 'Build the Android app, open from app-private storage, and confirm selected ABI assets.',
+    verifyFirst:
+      'Build the Android app, open from app-private storage, and confirm selected ABI assets.',
     guideOutcomes: [
       'Add the Android package through Gradle.',
       'Open from coroutine code using app-private storage.',
@@ -88,12 +100,16 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'React Native',
     href: '/docs/sdk/react-native',
     packageName: '@oliphaunt/react-native',
-    install: 'npx expo install @oliphaunt/react-native',
+    install: publishedInstall(
+      'oliphaunt-react-native',
+      'npx expo install @oliphaunt/react-native@VERSION',
+    ),
     target: 'Expo and React Native New Architecture apps',
     startWith: 'Config plugin, TurboModule, and JSI transport',
     owns: 'TypeScript DX, config plugin behavior, JSI bytes, and platform delegation.',
     modes: ['direct'],
-    verifyFirst: 'Build a development client, confirm native module loading, and move bytes through JSI.',
+    verifyFirst:
+      'Build a development client, confirm native module loading, and move bytes through JSI.',
     guideOutcomes: [
       'Install the package and build a native app binary or development client.',
       'Use the config plugin for exact extension artifacts.',
@@ -106,7 +122,7 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'TypeScript',
     href: '/docs/sdk/typescript',
     packageName: '@oliphaunt/ts',
-    install: 'npm install @oliphaunt/ts',
+    install: publishedInstall('oliphaunt-js', 'npm install @oliphaunt/ts@VERSION'),
     target: 'Node.js, Bun, and Deno',
     startWith: 'Desktop JavaScript over the native runtime family',
     owns: 'JavaScript API shape, native runtime asset resolution, and native engine modes.',
@@ -124,7 +140,7 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'Rust WASIX',
     href: '/docs/sdk/wasix-rust',
     packageName: 'oliphaunt-wasix',
-    install: 'cargo add oliphaunt-wasix',
+    install: publishedInstall('oliphaunt-wasix-rust', 'cargo add oliphaunt-wasix@=VERSION'),
     target: 'Rust applications hosting the portable WASIX runtime',
     startWith: 'Direct Rust calls or a local PostgreSQL-compatible endpoint',
     owns: 'Rust WASIX hosting, storage, server mode, and dump/restore tooling.',
@@ -142,12 +158,14 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'WASIX TypeScript',
     href: '/docs/sdk/wasix-typescript',
     packageName: '@oliphaunt/wasix-ts',
-    install: 'pnpm add @oliphaunt/wasix-ts',
+    install: publishedInstall('oliphaunt-wasix-ts', 'bun add @oliphaunt/wasix-ts@VERSION'),
     target: 'Cross-origin-isolated browser, Node.js, Bun, Deno, and Electron applications',
-    startWith: 'Browser caller-realm or native-host Rust-owner root; import /direct or /worker for explicit placement',
+    startWith:
+      'Browser caller-realm or native-host Rust-owner root; import /direct or /worker for explicit placement',
     owns: 'Browser caller-realm, native-host actor/direct/Worker hosting, bounded pgwire streaming, optional tools, a host-only local server, selective extensions, and persistence.',
     modes: ['WASIX browser', 'WASIX actor', 'WASIX direct', 'WASIX Worker', 'WASIX local server'],
-    verifyFirst: 'Open memory storage on the chosen execution surface, recover from a SQL error, and close cleanly.',
+    verifyFirst:
+      'Open memory storage on the chosen execution surface, recover from a SQL error, and close cleanly.',
     guideOutcomes: [
       'Install the same npm package on every host, including Deno.',
       'Use the responsive native-host root, explicit /direct, or /worker without importing the native TypeScript SDK.',
@@ -162,7 +180,10 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'C ABI',
     href: '/docs/sdk/c-abi',
     packageName: 'liboliphaunt',
-    install: 'Use released headers, libraries, and runtime assets',
+    install: publishedInstall(
+      'liboliphaunt-native',
+      'Use released headers, libraries, and runtime assets from VERSION',
+    ),
     target: 'New language bindings',
     startWith: 'Native runtime ownership and ABI rules',
     owns: 'Opaque handles, raw protocol bytes, response ownership, and lifecycle.',
@@ -223,8 +244,10 @@ export const runtimeModes: RuntimeMode[] = [
     name: 'wasix-typescript',
     label: 'WASIX TypeScript',
     href: '/docs/sdk/wasix-typescript',
-    useWhen: 'A browser caller realm or Node, Bun, Deno, or Electron actor/direct/Worker owns one portable PostgreSQL instance.',
-    boundary: 'Memory by default, optional host persistence and tools, one Node/Bun/Deno/Electron-only local server subpath, and no native fallback.',
+    useWhen:
+      'A browser caller realm or Node, Bun, Deno, or Electron actor/direct/Worker owns one portable PostgreSQL instance.',
+    boundary:
+      'Memory by default, optional host persistence and tools, one Node/Bun/Deno/Electron-only local server subpath, and no native fallback.',
     icon: Boxes,
   },
 ];
@@ -232,22 +255,26 @@ export const runtimeModes: RuntimeMode[] = [
 export const productPillars = [
   {
     title: 'PostgreSQL semantics',
-    description: 'Use PostgreSQL storage, WAL, SQL, protocol behavior, and selected extensions inside app-owned storage.',
+    description:
+      'Use PostgreSQL storage, WAL, SQL, protocol behavior, and selected extensions inside app-owned storage.',
     icon: Database,
   },
   {
     title: 'Runtime modes with clear boundaries',
-    description: 'Direct optimizes embedded latency, broker optimizes desktop isolation, and server optimizes independent client sessions.',
+    description:
+      'Direct optimizes embedded latency, broker optimizes desktop isolation, and server optimizes independent client sessions.',
     icon: Server,
   },
   {
     title: 'Exact extension packaging',
-    description: 'Apps select SQL extension names explicitly so release artifacts include only what the app uses.',
+    description:
+      'Apps select SQL extension names explicitly so release artifacts include only what the app uses.',
     icon: ShieldCheck,
   },
   {
     title: 'App-grade data movement',
-    description: 'SDK backup and restore APIs keep PostgreSQL directory mechanics out of application code.',
+    description:
+      'SDK backup and restore APIs keep PostgreSQL directory mechanics out of application code.',
     icon: HardDrive,
   },
 ];

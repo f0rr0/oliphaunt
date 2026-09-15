@@ -118,3 +118,70 @@ fi
 [ "$(cat "$tmp/sleep-calls.log")" = $'15\n30' ] || fail "bounded retry backoff mismatch"
 grep -Fq 'apt tool installation failed after 3 attempts' "$tmp/failure.err" ||
   fail "terminal apt diagnostic missing"
+
+# Exercise the Windows setup with executable tool shims. The official Windows
+# wheel has a different Kitware suffix from the Linux wheel of the same pin.
+mkdir -p "$tmp/windows/tools/dev" "$tmp/windows/flex" \
+  "$tmp/windows/cache/oliphaunt-native-tools/meson-1.10.0-ninja-1.13.0/Scripts"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$WINDOWS_FIXTURE/flex"\n' \
+  >"$tmp/windows/tools/dev/install-pinned-winflexbison.sh"
+windows_scripts="$tmp/windows/cache/oliphaunt-native-tools/meson-1.10.0-ninja-1.13.0/Scripts"
+for tool in python.exe meson.exe ninja.exe; do
+  printf '#!/usr/bin/env bash\nexit 99\n' >"$windows_scripts/$tool"
+done
+printf '#!/usr/bin/env bash\nprintf "1.10.0\\r\\n"\n' >"$windows_scripts/meson"
+printf '#!/usr/bin/env bash\nprintf "%%s\\r\\n" "$NINJA_FIXTURE_VERSION"\n' >"$windows_scripts/ninja"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2"\n' >"$tmp/bin/cygpath"
+touch "$tmp/windows/flex/win_flex.exe" "$tmp/windows/flex/win_bison.exe"
+chmod +x "$windows_scripts/"* "$tmp/bin/cygpath" "$tmp/windows/flex/"*
+
+# These command shims are invoked indirectly by the sourced installer.
+# shellcheck disable=SC2317
+run_windows_installer() (
+  # Loading the entrypoint on an unrecognized fixture host only defines its
+  # functions. Windows file checks are mocked solely for the fixed Perl path.
+  uname() { printf 'FixtureHost\n'; }
+  export PATH="$tmp/bin:/usr/bin:/bin"
+  unset CCACHE_DIR
+  export CCACHE_CALL_LOG="$tmp/ccache-calls.log"
+  # shellcheck source=.github/scripts/setup-native-build-tools.sh
+  source "$installer"
+  unset -f uname
+  repo_root="$tmp/windows"
+  export RUNNER_TEMP="$repo_root/cache" WINDOWS_FIXTURE="$repo_root"
+  export NINJA_FIXTURE_VERSION="$1"
+  unset GITHUB_PATH
+  function [() {
+    if [[ "${1:-}" == -x && "${2:-}" == /c/Strawberry/perl/bin/perl.exe ]]; then
+      return 0
+    fi
+    builtin [ "$@"
+  }
+  install_windows_tools
+)
+run_windows_installer 1.13.0.git.kitware.jobserver-pipe-1 >"$tmp/windows.out" 2>"$tmp/windows.err" ||
+  fail "official Windows Ninja wheel was rejected: $(cat "$tmp/windows.err")"
+if run_windows_installer 1.14.0 >"$tmp/windows-wrong.out" 2>"$tmp/windows-wrong.err"; then
+  fail "wrong Ninja version was accepted"
+fi
+grep -Fq 'got 1.14.0' "$tmp/windows-wrong.err" || fail "observed Ninja version missing from diagnostic"
+
+# Runner-provided browser and Microsoft feeds must not block unrelated build
+# packages. Exercise the real source filter against an isolated apt layout.
+mkdir -p "$tmp/apt/sources.list.d" "$tmp/apt-bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' >"$tmp/apt-bin/sudo"
+chmod 0555 "$tmp/apt-bin/sudo"
+printf '%s\n' \
+  'deb https://archive.ubuntu.com/ubuntu noble main' \
+  'deb https://dl.google.com/linux/chrome-stable/deb stable main' \
+  'deb https://packages.microsoft.com/repos/code stable main' >"$tmp/apt/sources.list"
+printf '%s\n' 'deb https://dl.google.com/linux/chrome/deb stable main' >"$tmp/apt/sources.list.d/chrome.list"
+printf '%s\n' 'Types: deb' 'URIs: https://dl.google.com/linux/chrome-stable/deb' 'Suites: stable' 'Components: main' >"$tmp/apt/sources.list.d/chrome.sources"
+printf '%s\n' 'deb https://archive.ubuntu.com/ubuntu noble-updates main' >"$tmp/apt/sources.list.d/ubuntu.list"
+sed "s|/etc/apt|$tmp/apt|g" "$root/.github/scripts/prepare-linux-apt.sh" >"$tmp/prepare-linux-apt.sh"
+PATH="$tmp/apt-bin:$tmp/bin:/usr/bin:/bin" bash "$tmp/prepare-linux-apt.sh"
+[ "$(grep -c '^deb ' "$tmp/apt/sources.list")" = "1" ] || fail "unrelated apt sources remain enabled"
+grep -q '^deb https://archive.ubuntu.com/' "$tmp/apt/sources.list" || fail "Ubuntu source was disabled"
+[ -f "$tmp/apt/sources.list.d/ubuntu.list" ] || fail "Ubuntu source file was disabled"
+[ -f "$tmp/apt/sources.list.d/chrome.list.disabled" ] || fail "Chrome list remains enabled"
+[ -f "$tmp/apt/sources.list.d/chrome.sources.disabled" ] || fail "Chrome deb822 source remains enabled"

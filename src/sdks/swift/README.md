@@ -24,12 +24,14 @@ PostgreSQL, or copy local Oliphaunt artifacts. SwiftPM resolves the Swift API
 and checksum-pinned binary/runtime assets for the selected release.
 
 Base Apple packages do not include full ICU data. Applications that need
-PostgreSQL ICU collations add the `OliphauntICU` SwiftPM product to the same app
-target as `Oliphaunt`. The generated release manifest exposes `OliphauntICU` as
-a resource-only product containing the canonical ICU data. The target runtime
-resources carry the matching platform-qualified cluster seed, and `Oliphaunt`
-resolves the pair as one checked closure. Do not add `OliphauntICU` for
-applications that do not use ICU collations.
+PostgreSQL ICU collations select `OliphauntICU` from the independent database
+resources package. First-open iOS initialization also selects
+`OliphauntSeedNativeIOSStandard` or `OliphauntSeedNativeIOSICU`; the ICU seed
+product depends on the canonical ICU data product. Existing PGDATA does not
+require a seed dependency. The SDK discovers selected resource bundles and
+validates their native compatibility and ICU data binding. See
+[database resources](../../database-resources/README.md) for its source archive
+and distribution status.
 
 Optional PostgreSQL extensions are exact-extension artifacts. PostgreSQL 18
 contrib members share the logical `oliphaunt-extension-contrib-pg18` artifact;
@@ -314,35 +316,38 @@ the extracted PGDATA.
 
 ## Local Development
 
+Build and source tests run on Linux and macOS. Linux CI installs the exact Swift
+version in `.swift-version`; Apple qualification uses the pinned Xcode toolchain.
 For local contributor tests from this repository:
 
 ```bash
 cd src/sdks/swift
-swift test
+bash tools/swift.sh test
 ```
 
-To run the native C ABI smoke from Swift:
+To run the native first-open smoke on macOS with built runtime assets:
 
 ```bash
+OLIPHAUNT_SWIFT_REQUIRE_NATIVE=1 \
 LIBOLIPHAUNT_PATH=/path/to/liboliphaunt.dylib \
 OLIPHAUNT_INSTALL_DIR=/path/to/postgres/install \
-swift test
+bash tools/swift.sh test --filter NativeRuntimeTests
 ```
 
-The native-direct env-backed test opens temporary storage, executes `SELECT 1`
-through PostgreSQL protocol bytes, cancels an active
-`pg_sleep`, creates a
-same-version physical backup through the C ABI, restores it into a new destination, and
-closes the runtime. Exact extensions are accepted when the app links their
-generated SwiftPM products and calls each product's `register()` method before
-opening the database. Extension names are validated before loading native code.
+The native test opens fresh storage, executes a parameterized query, checks a
+PostgreSQL error, and closes the database. Other platforms require a packaged
+cluster seed for first open. `moon run oliphaunt-swift:test-native` first builds
+the runtime, then runs this suite; it does not rerun runtime-owner tests.
+
+`package-source` creates a portable source ZIP without invoking Swift. `package`
+stages the release manifest and carrier metadata from completed Apple assets.
+Actual Apple binary linking and app/device execution remain Apple checks.
 
 For iOS and app-bundled macOS builds, generated products package resources using
 this layout; the SDK discovers them automatically:
 
 ```text
 oliphaunt/
-  manifest.properties
   runtime/
     manifest.properties
     files/
@@ -365,8 +370,9 @@ application receives one target-qualified closure. React Native uses the separat
 composes its app-owned resource bundle; there is no generic or multi-target
 runtime-resource archive.
 
-The root receipt binds the closure to one seed target and the two sibling seed
-paths. Both seed manifests use the exact native cluster-seed contract; extension
+The runtime manifest identifies its physical target. Initialization seed packages
+are selected separately; they are not bundled into the SDK or runtime.
+Selected seed manifests use the exact native cluster-seed contract; extension
 selection and static-registry metadata belong only to the runtime manifest.
 `runtime/manifest.properties` must include
 `schema=oliphaunt-runtime-resources-v1`,
@@ -397,7 +403,7 @@ storage whose `pgdata` child contains `PG_VERSION`; they do not rely on executin
 When a selected extension contains native modules, the Swift package must
 link those modules with the generated static-registry source. Complete Rust
 runtime-resource generator output includes
-`static-registry/oliphaunt_static_registry.c`; the Swift C bridge discovers
+`static-registry/oliphaunt_static_registry.c`; the shared Rust binding discovers
 `liboliphaunt_selected_static_extensions` and registers the returned rows
 through `oliphaunt_register_static_extensions` before the first database open.
 The manifest state is a release gate, not a loader substitute.
@@ -417,3 +423,18 @@ SQL symbols. If an app selects `vector` but omits the matching prebuilt
 shipping an app that fails later at `CREATE EXTENSION vector`.
 The generated resource root also includes `package-size.tsv` for release and
 bundle-size auditing.
+
+For checkout builds, run `bash tools/swift.sh build` or `bash tools/swift.sh test`
+inside `src/sdks/swift`, or use the corresponding Moon tasks. The Shell entry point
+builds the Rust dependency and generates the Swift bridge before invoking SwiftPM.
+Published packages use the SDK-owned bindings XCFramework and require no Rust
+toolchain. Runtime assets and optional database resources remain independent.
+
+`moon run oliphaunt-swift:build` and `moon run oliphaunt-swift:test` prepare the
+Rust bridge before invoking SwiftPM. These source checks work on Linux with
+Swift, Rust and Bun installed. `moon run oliphaunt-swift:test-native` additionally
+builds the host PostgreSQL runtime and exercises the native facade.
+`moon run oliphaunt-swift:package` produces the source and bindings carriers plus
+their native runtime prerequisites; its Apple XCFramework tasks require macOS,
+Xcode and the declared Apple Rust targets. Source checks do not imply that this
+Apple package or an installed iOS application has been qualified.

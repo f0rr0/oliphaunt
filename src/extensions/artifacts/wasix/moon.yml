@@ -4,10 +4,8 @@ id: "extension-artifacts-wasix"
 language: "unknown"
 layer: "tool"
 stack: "systems"
-tags: ["extensions", "artifacts", "wasix"]
+tags: ["javascript-quality", "extensions", "artifacts", "wasix"]
 dependsOn:
-  - id: "artifact-packaging"
-    scope: "build"
   - id: "extension-runtime-contract"
     scope: "build"
   - id: "extensions"
@@ -23,20 +21,33 @@ project:
   owner: "oliphaunt"
 
 tasks:
+  compiler-output:
+    tags: ["artifact", "ci-liboliphaunt-wasix-runtime"]
+    command: "bash src/extensions/artifacts/wasix/tools/build-portable.sh"
+    deps: ["liboliphaunt-wasix:runtime-portable"]
+    inputs: ["tools/build-portable.sh", "/src/runtimes/liboliphaunt-wasix/assets/build/**/*", "/src/runtimes/liboliphaunt-wasix/tools/extension-build-scripts.mts", "/src/runtimes/liboliphaunt-wasix/tools/xtask/**/*", {project: "extensions", group: "build"}]
+    outputs: ["/target/extensions/wasix/assets/**/*"]
+    options: {runFromWorkspaceRoot: true, cache: local}
+  build-aot:
+    command: "bash src/extensions/artifacts/wasix/tools/build-aot.sh"
+    deps: ["compiler-output"]
+    tags: ["artifact", "ci-liboliphaunt-wasix-aot"]
+    inputs: ["tools/build-aot.sh", "/src/runtimes/liboliphaunt-wasix/tools/serialize-aot.sh", "/src/runtimes/liboliphaunt-wasix/tools/xtask/**/*", "$AOT_TARGET"]
+    outputs: ["/target/extensions/wasix/aot-artifacts/**/*"]
+    options: {runFromWorkspaceRoot: true, cache: local}
   build-target:
     tags: ["release", "artifact-builder", "ci-extension-artifacts-wasix"]
     command: "bash src/extensions/artifacts/wasix/tools/package-release-assets.sh"
     deps:
-      - "liboliphaunt-wasix:runtime-portable"
+      - "compiler-output"
     inputs:
       - project: "extensions"
         group: "build"
       - project: "liboliphaunt-wasix"
         group: "version"
-      - "tools/package-release-assets.mjs"
+      - "tools/package-release-assets.mts"
       - "tools/package-release-assets.sh"
-      - project: "artifact-packaging"
-        group: "source"
+      - "/tools/packaging/*.{mjs,mts}"
       - project: "extension-runtime-contract"
         group: "contract"
     outputs:

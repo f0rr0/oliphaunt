@@ -25,7 +25,12 @@ Keep the SQL extension name distinct from the release product id and upstream pr
    metadata. For a public external extension, also maintain its product-local
    `release.toml`, `VERSION`, and empty first-release `CHANGELOG.md`. Every
    external extension must own
-   `upstream-license-data.json` beside that metadata. Freeze exactly the source
+   `upstream-license-data.json` beside that metadata. After changing source or
+   license pins, fetch the selected pinned sources and run
+   `moon run extensions:audit-license-sources` to compare the actual upstream
+   bytes. `extensions:packaging-unit` remains a cold-checkout packaging proof
+   and does not silently expand its coverage when a local source cache exists.
+   Freeze exactly the source
    identities and license/notice rows used by that extension, include only the
    referenced content-addressed blobs, and audit those bytes against the clean
    pinned checkout. Never put independently versioned extensions into one
@@ -35,7 +40,7 @@ Keep the SQL extension name distinct from the release product id and upstream pr
    When it does, record that reviewed endpoint as `mirror_url` and prove that
    it serves the exact pinned commit; never infer a mirror or use a community
    fork merely for availability.
-2. The canonical target profiles in `tools/release/extension-target-profiles.toml` apply to every extension on main. A target-specific exception is branch work until its format and shipped behavior are implemented together; do not add status, promotion, or blocker metadata.
+2. The canonical target profiles in `src/extensions/contracts/extension-target-profiles.toml` apply to every extension on main. A target-specific exception is branch work until its format and shipped behavior are implemented together; do not add status, promotion, or blocker metadata.
 3. For an active public product, declare the stable Cargo façade plus native,
    mobile, WASIX portable/AOT, npm, and Maven carriers actually required by the
    owning release product. Contrib members use the shared bundle carriers and
@@ -45,8 +50,7 @@ Keep the SQL extension name distinct from the release product id and upstream pr
 4. Regenerate the shared extension model:
 
 ```sh
-tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --write
-cargo run -p xtask -- assets verify-committed
+bash src/extensions/tools/check-extension-model.sh --write
 ```
 
 Source-pin, patch, recipe, compiler-input, or producer-code changes require the
@@ -56,8 +60,8 @@ target-profile edits are package-envelope changes.
 5. Verify the model and release graph:
 
 ```sh
-tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check
-tools/dev/bun.sh tools/release/release-check.mjs
+bash src/extensions/tools/check-extension-model.sh --check
+bash tools/release/release-check.sh
 ```
 
 When source acquisition or `mirror_url` changes, also run the source-fetch

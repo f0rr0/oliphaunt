@@ -200,6 +200,7 @@ enum OliphauntProtocolStreamOutcome: @unchecked Sendable {
 
 protocol OliphauntSession: Sendable {
     func execProtocolRaw(_ bytes: Data) async throws -> Data
+    func execProtocolRawUncancelled(_ bytes: Data) async throws -> Data
     func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
@@ -207,6 +208,14 @@ protocol OliphauntSession: Sendable {
     func backup() async throws -> Data
     func cancel() async throws
     func close() async throws
+}
+
+struct OliphauntRequestNotSubmitted: Error {}
+
+extension OliphauntSession {
+    func execProtocolRawUncancelled(_ bytes: Data) async throws -> Data {
+        try await execProtocolRaw(bytes)
+    }
 }
 
 struct OliphauntDefaultEngine: OliphauntEngine {
@@ -667,7 +676,7 @@ public actor OliphauntDatabase {
             }
             let response: Data
             do {
-                response = try await session.execProtocolRaw(request)
+                response = try await session.execProtocolRawUncancelled(request)
             } catch {
                 if settlement == nil {
                     try throwUnknownTypedOperation(transactionToken: token, error: error)
@@ -768,7 +777,7 @@ public actor OliphauntDatabase {
     ) async throws {
         guard status != .idle else { return }
         let request = try OliphauntProtocol.simpleQuery("ROLLBACK")
-        let response = try await session.execProtocolRaw(request)
+        let response = try await session.execProtocolRawUncancelled(request)
         let terminalStatus = try inspectOliphauntTerminalReadyStatus(response)
         let rollback = try parseOliphauntCommandResponse(
             response,
@@ -1017,7 +1026,7 @@ public actor OliphauntDatabase {
         do {
             let request = try OliphauntProtocol.simpleQuery("ROLLBACK")
             let rollback = try parseOliphauntCommandResponse(
-                try await session.execProtocolRaw(request),
+                try await session.execProtocolRawUncancelled(request),
                 expectedProtocol: .simple
             )
             guard rollback.commandTag == "ROLLBACK", rollback.readyStatus == .idle else {
@@ -1060,6 +1069,7 @@ public actor OliphauntDatabase {
         transactionToken: UInt64?,
         error: any Error
     ) throws -> Never {
+        if error is OliphauntRequestNotSubmitted { throw CancellationError() }
         poisonUnknownTypedOperation(
             transactionToken: transactionToken,
             error: error
@@ -1092,6 +1102,7 @@ public actor OliphauntDatabase {
             do {
                 result = try await body(session)
             } catch {
+                if error is OliphauntRequestNotSubmitted { throw CancellationError() }
                 if failurePolicy == .poisonRawProtocol {
                     poisonUnknownRawProtocolOperation(error: error)
                 }

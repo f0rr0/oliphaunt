@@ -13,7 +13,6 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
-import org.jetbrains.dokka.gradle.engine.parameters.VisibilityModifier
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -62,7 +61,6 @@ abstract class CheckMavenPublicationContractTask : DefaultTask() {
 plugins {
     id("com.android.library")
     alias(libs.plugins.detekt)
-    alias(libs.plugins.dokka)
     id("org.jetbrains.kotlin.multiplatform")
     alias(libs.plugins.kover)
     alias(libs.plugins.maven.publish)
@@ -108,27 +106,6 @@ kover {
                     "dev.oliphaunt.OliphauntAndroidNativeBridge",
                 )
             }
-        }
-    }
-}
-
-dokka {
-    dokkaPublications.html {
-        moduleName.set("Oliphaunt Kotlin SDK")
-        moduleVersion.set(project.version.toString())
-        outputDirectory.set(rootProject.layout.projectDirectory.dir("../../target/docs/generated/api/kotlin/html"))
-        failOnWarning.set(false)
-        suppressObviousFunctions.set(true)
-    }
-    dokkaSourceSets.configureEach {
-        documentedVisibilities.set(setOf(VisibilityModifier.Public))
-        reportUndocumented.set(false)
-        skipEmptyPackages.set(true)
-        suppressGeneratedFiles.set(true)
-        sourceLink {
-            localDirectory.set(project.layout.projectDirectory.dir("src"))
-            remoteUrl("https://github.com/f0rr0/oliphaunt/tree/main/src/sdks/kotlin/oliphaunt/src")
-            remoteLineSuffix.set("#L")
         }
     }
 }
@@ -183,6 +160,14 @@ mavenPublishing {
 
 val generatedAndroidAssetsDir = layout.buildDirectory.dir("generated/oliphaunt-android-assets")
 val generatedAndroidJniLibsDir = layout.buildDirectory.dir("generated/oliphaunt-android-jniLibs")
+val mobileBindingsRoot = rootProject.layout.projectDirectory.dir("../../../target/mobile-bindings")
+val generateNativeBindings by tasks.registering(Exec::class) {
+    workingDir(rootProject.layout.projectDirectory.dir("../../.."))
+    commandLine("bash", "src/sdks/rust/mobile-bindings/tools/generate.sh")
+    // Cargo tracks the complete Rust dependency graph, including local crates.
+    outputs.upToDateWhen { false }
+    outputs.dir(mobileBindingsRoot.dir("generated"))
+}
 val configuredCxxBuildRoot =
     (
         oliphauntProperty("oliphauntCxxBuildRoot")
@@ -747,6 +732,12 @@ kotlin {
     jvm()
 
     sourceSets {
+        androidMain {
+            kotlin.srcDir(generateNativeBindings.map { mobileBindingsRoot.dir("generated/dev") })
+            dependencies {
+                implementation("net.java.dev.jna:jna:5.14.0@aar")
+            }
+        }
         commonMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
         }
@@ -756,6 +747,7 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
         }
         androidUnitTest.dependencies {
+            implementation("net.java.dev.jna:jna:5.14.0")
             // Android's SDK jar contains only throwing org.json stubs on the host JVM.
             implementation("org.json:json:20240303")
         }
@@ -771,7 +763,7 @@ val baseReleaseNoticeFiles =
     )
 val publishedArchiveTaskNames =
     setOf(
-        "androidReleaseDokkaJavadocJar",
+        "androidReleaseEmptyJavadocJar",
         "androidReleaseSourcesJar",
         "bundleReleaseAar",
     )
@@ -876,31 +868,16 @@ gradle.projectsEvaluated {
 }
 
 val sharedFixturesDirectory =
-    listOf(
-        rootProject.layout.projectDirectory
-            .dir("../../shared/fixtures")
-            .asFile,
-        project.layout.projectDirectory
-            .dir("../../../shared/fixtures")
-            .asFile,
-    ).firstOrNull { it.isDirectory }
-        ?: rootProject.layout.projectDirectory
-            .dir("../../shared/fixtures")
-            .asFile
+    rootProject.layout.projectDirectory
+        .dir("../../test-fixtures")
+        .asFile
 val sharedClusterSeedFixturesDirectory =
-    listOf(
-        rootProject.layout.projectDirectory
-            .dir("../../shared/cluster-seed-contract/fixtures")
-            .asFile,
-        project.layout.projectDirectory
-            .dir("../../../shared/cluster-seed-contract/fixtures")
-            .asFile,
-    ).firstOrNull { it.isDirectory }
-        ?: rootProject.layout.projectDirectory
-            .dir("../../shared/cluster-seed-contract/fixtures")
-            .asFile
+    rootProject.layout.projectDirectory
+        .dir("../../database-resources/contracts/fixtures")
+        .asFile
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    inputs.property("nativeBindingsPgdata", providers.environmentVariable("OLIPHAUNT_MOBILE_TEST_PGDATA").orElse(""))
     systemProperty(
         "oliphaunt.sharedFixturesDir",
         sharedFixturesDirectory.absolutePath,
@@ -917,6 +894,7 @@ android {
 
     defaultConfig {
         minSdk = 24
+        consumerProguardFiles("consumer-rules.pro")
         if (androidAbiFilters.isNotEmpty()) {
             ndk {
                 abiFilters.addAll(androidAbiFilters)
@@ -958,9 +936,54 @@ android {
 
     sourceSets["main"].assets.srcDir(generatedAndroidAssetsDir)
     sourceSets["main"].jniLibs.srcDir(generatedAndroidJniLibsDir)
+    sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("generated/oliphaunt-rust-jniLibs"))
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/oliphaunt-rust-assets"))
 }
 
+val mobileNdkDirectory = androidComponents.sdkComponents.ndkDirectory
+val buildNativeBindings =
+    (androidAbiFilters.ifEmpty { listOf("arm64-v8a", "x86_64") }).map { abi ->
+        tasks.register<Exec>("buildNativeBindings${abi.replace("-", "").replace("_", "")}") {
+            val output = layout.buildDirectory.dir("generated/oliphaunt-rust-jniLibs")
+            workingDir(rootProject.layout.projectDirectory.dir("../../.."))
+            commandLine(
+                "bash",
+                "src/sdks/rust/mobile-bindings/tools/build-android.sh",
+                abi,
+                output.get().asFile.absolutePath,
+                layout.buildDirectory
+                    .dir("generated/oliphaunt-rust-assets")
+                    .get()
+                    .asFile.absolutePath,
+            )
+            val ndkDirectory = mobileNdkDirectory
+            doFirst {
+                (this as Exec).environment("ANDROID_NDK_HOME", ndkDirectory.get().asFile.absolutePath)
+            }
+            // Cargo owns the transitive source fingerprint and incremental rebuild.
+            // Do not invent a second handwritten list of Rust dependency inputs.
+        }
+    }
+
 tasks.named("preBuild") {
+    dependsOn(generateNativeBindings)
     dependsOn(prepareOliphauntAndroidAssets)
     dependsOn(prepareOliphauntAndroidJniLibs)
+}
+
+tasks.matching { it.name.startsWith("merge") && (it.name.endsWith("JniLibFolders") || it.name.endsWith("Assets")) }.configureEach {
+    // Source checks also merge resources. Only an AAR needs the Rust payload;
+    // when packaging, generate it before Gradle snapshots the merge inputs.
+    mustRunAfter(buildNativeBindings)
+}
+
+androidComponents.onVariants { variant ->
+    val bundleTask = "bundle${variant.name.replaceFirstChar { it.uppercaseChar() }}Aar"
+    tasks.matching { it.name == bundleTask }.configureEach {
+        dependsOn(buildNativeBindings)
+    }
+}
+
+tasks.matching { it.name.startsWith("compile") && it.name.contains("KotlinAndroid") }.configureEach {
+    dependsOn(generateNativeBindings)
 }

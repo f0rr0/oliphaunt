@@ -28,11 +28,11 @@ packages native runtime artifacts, Android ABIs, and exact extension files.
 ```kotlin
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "0.1.1"
+    id("dev.oliphaunt.android") version "{{release:oliphaunt-kotlin}}"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.2.0")
+    implementation("dev.oliphaunt:oliphaunt-android:{{release:oliphaunt-kotlin}}")
 }
 
 oliphaunt {
@@ -50,8 +50,6 @@ directory when data must persist.
 
 Create an `OliphauntConfig`, open a database, run SQL, and close it from
 coroutines.
-
-<!-- oliphaunt-snippet: oliphaunt-kotlin -->
 
 ```kotlin
 val database =
@@ -203,3 +201,22 @@ rejects nonempty data without mutation.
 Check app storage permissions, storage ownership, missing native libraries, missing
 runtime resources, runtime errors, selected-extension artifacts, and
 SQLSTATE-bearing PostgreSQL errors.
+
+## Development resource packaging
+
+These resource-package changes are unreleased. The published installation
+versions above do not include this new package arrangement; use a coordinated
+checkout for this section.
+
+The Android Gradle plugin selects initialization resources at build time:
+
+```kotlin
+oliphaunt {
+    seedProfile.set("standard") // Or "icu" for an ICU seed and canonical ICU data.
+}
+```
+
+The default includes no seed. Select one for first-open initialization, or omit
+it when opening existing storage or supplying application-owned resources.
+Runtime libraries, seed carriers, and canonical ICU data are separate packages.
+Actual device qualification of the new seed carriers remains pending.

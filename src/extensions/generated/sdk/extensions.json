@@ -1480,7 +1480,7 @@
     },
     {
       "name": "extension-recipes",
-      "path": "src/extensions"
+      "path": "extensions"
     },
     {
       "name": "release-products",

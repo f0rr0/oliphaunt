@@ -2,8 +2,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)"
-runner="$root/extensions/artifacts/native/tools/run-observed-phase.sh"
+runner="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/run-observed-phase.sh"
 tmp="$(mktemp -d)"
 wrapper_pid=""
 child_pid=""

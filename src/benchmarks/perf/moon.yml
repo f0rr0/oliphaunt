@@ -1,0 +1,151 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "perf-tools"
+language: "rust"
+layer: "tool"
+stack: "systems"
+tags: ["javascript-quality", "tools", "performance", "bench"]
+dependsOn:
+  - id: "oliphaunt-rust"
+    scope: "development"
+  - id: "oliphaunt-wasix-rust"
+    scope: "development"
+  - id: "liboliphaunt-wasix"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "oliphaunt-query"
+    scope: "development"
+  - id: "benchmarks"
+    scope: "build"
+
+project:
+  title: "Performance Tools"
+  description: "Native, WASM, mobile, and SQLite benchmark orchestration and reporting."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/perf"
+  paths:
+    "**/*": ["@oliphaunt/perf"]
+
+tasks:
+  native-measure:
+    tags: ["bench", "measured"]
+    script: |
+      bash src/benchmarks/perf/run-native.sh "target/perf/native-$(date -u +%Y%m%dT%H%M%SZ)" native-liboliphaunt --suite rtt
+    deps:
+      - "liboliphaunt-native:build-runtime-desktop-target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "/src/runtimes/liboliphaunt-native/**/*"
+      - "/src/sdks/rust/sdk/**/*"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "/src/benchmarks/perf/run-native.sh"
+      - "/src/benchmarks/perf/runner/**/*"
+      - project: "benchmarks"
+        group: "native-sql"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  wasix-plan:
+    tags: ["bench", "plan"]
+    script: |
+      set -e
+      node --test src/benchmarks/perf/wasix-browser/plan.test.mts
+      node --test src/benchmarks/perf/wasix-node/plan.test.mts
+      node --check src/benchmarks/perf/wasix-browser/plan.mts
+      node --check src/benchmarks/perf/wasix-node/engine-runner.mts
+      node --check src/benchmarks/perf/wasix-node/benchmark.mts
+      node --check src/benchmarks/perf/wasix-node/pglite-node-worker.mts
+      node --check src/sdks/ts-wasix/sdk/tools/pgwire-client.mts
+      node src/benchmarks/perf/wasix-node/benchmark.mts --validate
+    inputs:
+      - "@group(bun-workspace)"
+      - "/src/benchmarks/wasix/**/*"
+      - "/src/runtimes/wasix-browser-host/**/*"
+      - "/src/sdks/ts-wasix/sdk/package.json"
+      - "/src/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts"
+      - "/src/sdks/ts-wasix/sdk/tools/pgwire-client.mts"
+      - "/src/sdks/ts-wasix/node-addon/package.json"
+      - "/src/benchmarks/perf/wasix-browser/*.{mjs,mts}"
+      - "/src/benchmarks/perf/wasix-node/*.{mts,sh}"
+      - "/src/benchmarks/perf/wasix-node/package.json"
+      - "@group(release-archive-contract)"
+      - "/src/runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm-*.mts"
+      - "/src/postgres-tools/wasix/ts/tools/wasix-tools-typescript-package.mts"
+      - "/src/sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  wasix-node-measure:
+    tags: ["bench", "measured", "local-only"]
+    script: |
+      set -e
+      bun run --cwd src/sdks/ts-wasix/sdk build
+      bun src/sdks/ts-wasix/sdk/tools/stage-host.mts
+      bash src/benchmarks/perf/wasix-node/benchmark.sh --run
+    deps:
+      - "perf-tools:wasix-plan"
+      - "liboliphaunt-wasix:runtime-portable"
+      - "database-resources:package-wasix"
+      - "wasix-browser-host:build"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(bun-workspace)"
+      - "/src/benchmarks/wasix/node-pglite-memory-v2.json"
+      - "/src/sdks/ts-wasix/sdk/**/*"
+      - "/src/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts"
+      - "/src/benchmarks/perf/wasix-node/*.{mts,sh}"
+      - "/src/benchmarks/perf/wasix-node/package.json"
+      - "@group(release-archive-contract)"
+      - "/src/runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm-*.mts"
+      - "/src/postgres-tools/wasix/ts/tools/wasix-tools-typescript-package.mts"
+      - "/src/sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  wasix-browser-measure:
+    tags: ["bench", "measured", "browser", "local-only"]
+    script: |
+      set -e
+      bun run --cwd src/sdks/ts-wasix/sdk build
+      bun src/sdks/ts-wasix/sdk/tools/stage-host.mts
+      bash src/sdks/ts-wasix/sdk/tools/integration/smoke-browser.sh --benchmark
+    deps:
+      - "perf-tools:wasix-plan"
+      - "liboliphaunt-wasix:runtime-portable"
+      - "database-resources:build-wasix-standard"
+      - "wasix-browser-host:build"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(bun-workspace)"
+      - "/src/benchmarks/wasix/browser-pglite-memory-v2.json"
+      - "/src/sdks/ts-wasix/sdk/**/*"
+      - "/src/sdks/ts-wasix/sdk/tools/integration/*.{mts,sh}"
+      - "/src/benchmarks/perf/wasix-browser/*.{mjs,mts}"
+      - "/src/benchmarks/perf/wasix-node/installed-closure.mts"
+      - "/src/benchmarks/perf/wasix-node/plan.mts"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  rust-format-check:
+    tags: ["quality", "static", "format", "requires-rust"]
+    command: "cargo fmt -p oliphaunt-perf --check"
+    inputs: ["/src/benchmarks/perf/runner/**/*.rs","/src/benchmarks/perf/runner/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
+  rust-lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "cargo clippy -p oliphaunt-perf --all-targets --locked -- -D warnings"
+    env:
+      CARGO_TARGET_DIR: "target"
+    inputs: ["/src/benchmarks/perf/runner/**/*.rs","/src/benchmarks/perf/runner/Cargo.toml","/clippy.toml","@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true

@@ -31,7 +31,7 @@ resources before JavaScript calls `Oliphaunt.open()`.
 Expo apps:
 
 ```sh
-npx expo install @oliphaunt/react-native
+npx expo install @oliphaunt/react-native@{{release:oliphaunt-react-native}}
 npx expo prebuild
 npx expo run:ios
 npx expo run:android
@@ -67,8 +67,6 @@ installed app binary.
 
 Open a database from TypeScript, run SQL, and close it when the app no longer
 needs the handle.
-
-<!-- oliphaunt-snippet: oliphaunt-react-native -->
 
 ```ts
 import Oliphaunt from '@oliphaunt/react-native';
@@ -210,3 +208,22 @@ Check the development build, Expo config plugin output, autolinking,
 TurboModule codegen, native module availability, selected extension artifacts,
 and platform SDK errors. For database runtime behavior, follow the Swift or
 Kotlin SDK page for the target platform.
+
+## Development resource packaging
+
+These resource-package changes are unreleased. The published installation
+versions above do not include this new package arrangement; use a coordinated
+checkout for this section.
+
+For Android, the Expo plugin selects one resource profile at build time:
+
+```json
+{ "plugins": [["@oliphaunt/react-native", { "seedProfile": "icu", "icu": true }]] }
+```
+
+For iOS, select exactly one development npm carrier:
+`@oliphaunt/seed-native-ios-datum64-standard` or
+`@oliphaunt/seed-native-ios-datum64-icu`. Its resource-only CocoaPod autolinks;
+keep `icu: true` for an ICU database. These are app packaging choices, not
+JavaScript database-open modes. Existing storage does not require a seed.
+Mobile device qualification of the new seed carriers remains pending.

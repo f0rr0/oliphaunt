@@ -1,0 +1,17 @@
+id = "postgres-tools-native"
+owner = "@oliphaunt/core"
+kind = "postgres-tools"
+publish_targets = ["github-release-assets", "crates-io", "npm"]
+registry_packages = [
+  "crates:oliphaunt-tools",
+  "crates:oliphaunt-tools-linux-arm64-gnu",
+  "crates:oliphaunt-tools-linux-x64-gnu",
+  "crates:oliphaunt-tools-macos-arm64",
+  "crates:oliphaunt-tools-windows-x64-msvc",
+  "npm:@oliphaunt/tools-darwin-arm64",
+  "npm:@oliphaunt/tools-linux-x64-gnu",
+  "npm:@oliphaunt/tools-linux-arm64-gnu",
+  "npm:@oliphaunt/tools-win32-x64-msvc",
+  "npm:@oliphaunt/tools",
+]
+release_artifacts = ["postgres-tools"]

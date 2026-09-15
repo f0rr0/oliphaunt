@@ -47,7 +47,6 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   private static final String ANDROID_CLUSTER_SEED_COMPATIBILITY_KEY =
       "native-pg18-android-datum64-v1";
   private static final String ICU_DATA_SCHEMA = "oliphaunt-icu-data-v1";
-  private static final String RUNTIME_CARRIER_SCHEMA = "oliphaunt-native-runtime-carrier-v1";
   private static final Set<String> RUNTIME_RESOURCE_MANIFEST_KEYS =
       Set.of(
           "schema",
@@ -157,6 +156,9 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   @Input
   public abstract Property<Boolean> getIcu();
 
+  @Input
+  public abstract Property<String> getDatabaseResourcesVersion();
+
   @InputFiles
   @PathSensitive(PathSensitivity.RELATIVE)
   public abstract ConfigurableFileCollection getRuntimeArtifacts();
@@ -168,6 +170,10 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   @InputFiles
   @PathSensitive(PathSensitivity.RELATIVE)
   public abstract ConfigurableFileCollection getIcuArtifacts();
+
+  @InputFiles
+  @PathSensitive(PathSensitivity.RELATIVE)
+  public abstract ConfigurableFileCollection getSeedArtifacts();
 
   @OutputDirectory
   public abstract DirectoryProperty getRuntimeResourcesDir();
@@ -195,10 +201,11 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     List<Map<String, String>> selectedRows = selectedExtensionRows(extensionArtifacts, selectedExtensionFiles, abis);
     List<File> icuArtifacts = sortedFiles(getIcuArtifacts().getFiles());
     boolean includeIcu = Boolean.TRUE.equals(getIcu().get()) || !icuArtifacts.isEmpty();
-    File icuArtifact = includeIcu ? findIcuDataArtifact(icuArtifacts, releaseVersion) : null;
+    File icuArtifact = includeIcu ? findIcuDataArtifact(icuArtifacts, getDatabaseResourcesVersion().get()) : null;
 
     unpackRuntimeResources(runtimeResources);
     File resourceRoot = runtimeResourcesRoot(getRuntimeResourcesDir().get().getAsFile());
+    mergeSeedArtifact(resourceRoot);
     validateAndroidRuntimeClosure(resourceRoot);
     if (icuArtifact != null) {
       mergeIcuDataArtifact(icuArtifact);
@@ -259,7 +266,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   private static File findIcuDataArtifact(List<File> artifacts, String version) {
     return findArtifact(
         artifacts,
-        List.of("liboliphaunt-" + version + "-icu-data.tar.gz", "oliphaunt-icu-" + version + ".tar.gz"),
+        List.of("database-resources-" + version + "-icu-data.tar.gz", "oliphaunt-icu-" + version + ".tar.gz"),
         List.of("icu"),
         "Oliphaunt ICU data");
   }
@@ -955,7 +962,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
         compatibility,
         "extensionRuntimeContract",
         source,
-        "src/shared/extension-runtime-contract/contract.toml");
+        "extensions/contracts/contract.toml");
     requireJsonString(compatibility, "nativeRuntimeProduct", source, "liboliphaunt-native");
     String runtimeVersion =
         requireJsonString(compatibility, "nativeRuntimeVersion", source, null);
@@ -2046,6 +2053,25 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
         });
   }
 
+  private void mergeSeedArtifact(File root) {
+    List<File> seeds = sortedFiles(getSeedArtifacts().getFiles());
+    if (seeds.size() > 1) throw new GradleException("Select at most one native cluster seed profile");
+    if (seeds.isEmpty()) return;
+    File archive = validatedTarGzSnapshot(seeds.get(0));
+    File extracted = new File(getTemporaryDir(), "selected-seed");
+    fileSystemOperations.delete(spec -> spec.delete(extracted));
+    fileSystemOperations.copy(spec -> { spec.from(archiveOperations.tarTree(archiveOperations.gzip(archive))); spec.into(extracted); });
+    boolean standard = new File(extracted, "cluster-seed").isDirectory();
+    boolean icu = new File(extracted, "cluster-seed-icu").isDirectory();
+    if (standard == icu) throw new GradleException("A seed carrier must contain exactly one selected profile");
+    String name = standard ? "cluster-seed" : "cluster-seed-icu";
+    File source = new File(extracted, name);
+    validateClusterSeed(source, standard ? "standard" : "icu", standard ? "" : null);
+    File destination = new File(root, name);
+    fileSystemOperations.delete(spec -> spec.delete(destination));
+    copyTree(source.toPath(), destination.toPath());
+  }
+
   private void mergeIcuDataArtifact(File archive) {
     File validatedArchive = validatedTarGzSnapshot(archive);
     File extractRoot = new File(getTemporaryDir(), "icu-artifact-" + archive.getName());
@@ -2071,13 +2097,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     copyTree(icuRoot.toPath(), destination.toPath());
     File icuClusterSeed = new File(root, "cluster-seed-icu");
     File icuClusterSeedManifest = new File(icuClusterSeed, "manifest.properties");
-    if (!new File(icuClusterSeed, "files/PG_VERSION").isFile()
-        || !new File(icuClusterSeed, "files/global/pg_control").isFile()
-        || !icuClusterSeedManifest.isFile()) {
-      throw new GradleException(
-          "liboliphaunt Android runtime resources do not contain the ICU cluster seed");
-    }
-    validateClusterSeed(icuClusterSeed, "icu", icuDigest);
+    if (icuClusterSeedManifest.exists()) validateClusterSeed(icuClusterSeed, "icu", icuDigest);
     updateRuntimeIcu(new File(runtimePackage, "manifest.properties"), icuDigest);
   }
 
@@ -2376,22 +2396,6 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   }
 
   private static void validateAndroidRuntimeClosure(File root) {
-    File receiptFile = new File(root, "manifest.properties");
-    Properties receipt = readProperties(receiptFile);
-    Set<String> receiptKeys =
-        Set.of(
-            "schema",
-            "clusterSeedTarget",
-            "clusterSeedRelativePath",
-            "icuClusterSeedRelativePath");
-    if (!receipt.stringPropertyNames().equals(receiptKeys)
-        || !RUNTIME_CARRIER_SCHEMA.equals(receipt.getProperty("schema"))
-        || !ANDROID_CLUSTER_SEED_TARGET.equals(receipt.getProperty("clusterSeedTarget"))
-        || !"cluster-seed".equals(receipt.getProperty("clusterSeedRelativePath"))
-        || !"cluster-seed-icu".equals(receipt.getProperty("icuClusterSeedRelativePath"))) {
-      throw new GradleException(
-          "liboliphaunt Android runtime carrier must contain the exact target seed receipt");
-    }
     File runtimeManifest = new File(root, "runtime/manifest.properties");
     if (!runtimeManifest.isFile() || !new File(root, "runtime/files").isDirectory()) {
       throw new GradleException(
@@ -2421,14 +2425,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       throw new GradleException(
           "liboliphaunt Android runtime resources have inconsistent mobileStaticRegistrySource");
     }
-    validateClusterSeed(new File(root, "cluster-seed"), "standard", "");
-    Properties icuSeed =
-        validateClusterSeed(new File(root, "cluster-seed-icu"), "icu", null);
-    String icuDigest = icuSeed.getProperty("icuDataTreeSha256", "");
-    if (!icuDigest.matches("[0-9a-f]{64}")) {
-      throw new GradleException(
-          "liboliphaunt Android ICU cluster seed must bind a lowercase ICU data tree SHA-256");
-    }
+    if (new File(root, "cluster-seed").exists()) validateClusterSeed(new File(root, "cluster-seed"), "standard", "");
+    if (new File(root, "cluster-seed-icu").exists()) validateClusterSeed(new File(root, "cluster-seed-icu"), "icu", null);
   }
 
   static void validateAndroidRuntimeClosureForContractTest(File root) {

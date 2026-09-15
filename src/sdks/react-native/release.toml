@@ -8,7 +8,6 @@ release_artifacts = [
   "react-native-podspec",
   "expo-dev-client-example",
 ]
-derived_version_files = ["src/sdks/react-native/OliphauntReactNative.podspec"]
 
 [compatibility_versions.oliphaunt-react-native-swift-sdk]
 source_product = "oliphaunt-swift"
@@ -19,3 +18,8 @@ parser = "json:oliphaunt.swiftSdkVersion"
 source_product = "oliphaunt-kotlin"
 path = "src/sdks/react-native/package.json"
 parser = "json:oliphaunt.kotlinSdkVersion"
+
+[compatibility_versions.oliphaunt-react-native-query]
+source_product = "oliphaunt-query-ts"
+path = "src/sdks/react-native/package.json"
+parser = "json:dependencies.@oliphaunt/ts-query"

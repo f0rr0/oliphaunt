@@ -1,12 +1,13 @@
 format-version = 1
 source-digest-inputs = [
-  "src/postgres/versions/18/source.toml",
+  "src/third-party/postgres/source.toml",
   "src/extensions/catalog/extensions.source.json",
   "src/extensions/catalog/native-components.toml",
   "src/extensions/contrib/postgres18.toml",
   "src/extensions/generated/extensions.catalog.json",
   "src/extensions/generated/contrib-build.tsv",
   "src/extensions/generated/pgxs-build.tsv",
+  "src/database-resources/icu/source.toml",
   "src/extensions/external/pg_hashids/source.toml",
   "src/extensions/external/pg_ivm/source.toml",
   "src/extensions/external/pg_textsearch/source.toml",
@@ -20,10 +21,9 @@ source-digest-inputs = [
   "src/extensions/external/postgis/dependencies/sqlite/source.toml",
   "src/extensions/external/postgis/source.toml",
   "src/extensions/external/vector/source.toml",
-  "src/sources/third-party/native/icu-windows.toml",
-  "src/sources/third-party/shared/icu-data.toml",
-  "src/sources/third-party/shared/icu.toml",
-  "src/sources/third-party/shared/openssl.toml",
+  "src/runtimes/liboliphaunt-native/sources/icu-windows.toml",
+  "src/third-party/icu/source.toml",
+  "src/third-party/openssl/source.toml",
   "src/extensions/external/README.md",
   "src/extensions/external/pg_hashids/upstream-license-data.json",
   "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
@@ -42,52 +42,57 @@ source-digest-inputs = [
   "src/extensions/external/postgis/targets/native-static-registry.toml",
   "src/extensions/external/postgis/targets/native.toml",
   "src/extensions/external/postgis/targets/wasix.toml",
-  "src/extensions/external/postgis/tests/regression.sql",
   "src/extensions/external/postgis/tools/build_wasix.sh",
+  "src/extensions/external/postgis/tools/preprocess-sql.mts",
   "src/extensions/external/postgis/tools/reproducible-bin/date",
   "src/extensions/external/postgis/tools/reproducible-time.sh",
+  "src/extensions/external/postgis/tools/windows/build-sql.sh",
+  "src/extensions/external/postgis/tools/windows/flatgeobuf-compat.h",
+  "src/extensions/external/postgis/tools/windows/meson.build.in",
+  "src/extensions/external/postgis/tools/windows/postgis-compat.h",
+  "src/extensions/external/postgis/tools/windows/postgis_config.h.in",
   "src/extensions/external/postgis/upstream-license-data.json",
   "src/extensions/external/vector/upstream-license-data.json",
-  "src/shared/fixtures/extensions/manifest.json",
-  "src/shared/fixtures/extensions/amcheck.sql",
-  "src/shared/fixtures/extensions/auto_explain.sql",
-  "src/shared/fixtures/extensions/bloom.sql",
-  "src/shared/fixtures/extensions/btree_gin.sql",
-  "src/shared/fixtures/extensions/btree_gist.sql",
-  "src/shared/fixtures/extensions/citext.sql",
-  "src/shared/fixtures/extensions/cube.sql",
-  "src/shared/fixtures/extensions/dict_int.sql",
-  "src/shared/fixtures/extensions/dict_xsyn.sql",
-  "src/shared/fixtures/extensions/earthdistance.sql",
-  "src/shared/fixtures/extensions/file_fdw.sql",
-  "src/shared/fixtures/extensions/fuzzystrmatch.sql",
-  "src/shared/fixtures/extensions/hstore.sql",
-  "src/shared/fixtures/extensions/intarray.sql",
-  "src/shared/fixtures/extensions/isn.sql",
-  "src/shared/fixtures/extensions/lo.sql",
-  "src/shared/fixtures/extensions/ltree.sql",
-  "src/shared/fixtures/extensions/pageinspect.sql",
-  "src/shared/fixtures/extensions/pg_buffercache.sql",
-  "src/shared/fixtures/extensions/pg_freespacemap.sql",
-  "src/shared/fixtures/extensions/pg_hashids.sql",
-  "src/shared/fixtures/extensions/pg_ivm.sql",
-  "src/shared/fixtures/extensions/pg_surgery.sql",
-  "src/shared/fixtures/extensions/pg_textsearch.sql",
-  "src/shared/fixtures/extensions/pg_trgm.sql",
-  "src/shared/fixtures/extensions/pg_uuidv7.sql",
-  "src/shared/fixtures/extensions/pg_visibility.sql",
-  "src/shared/fixtures/extensions/pg_walinspect.sql",
-  "src/shared/fixtures/extensions/pgcrypto.sql",
-  "src/shared/fixtures/extensions/pgtap.sql",
-  "src/shared/fixtures/extensions/postgis.sql",
-  "src/shared/fixtures/extensions/seg.sql",
-  "src/shared/fixtures/extensions/tablefunc.sql",
-  "src/shared/fixtures/extensions/tcn.sql",
-  "src/shared/fixtures/extensions/tsm_system_rows.sql",
-  "src/shared/fixtures/extensions/tsm_system_time.sql",
-  "src/shared/fixtures/extensions/unaccent.sql",
-  "src/shared/fixtures/extensions/uuid-ossp.sql",
-  "src/shared/fixtures/extensions/vector.sql",
+  "src/test-fixtures/extensions/manifest.json",
+  "src/test-fixtures/extensions/amcheck.sql",
+  "src/test-fixtures/extensions/auto_explain.sql",
+  "src/test-fixtures/extensions/bloom.sql",
+  "src/test-fixtures/extensions/btree_gin.sql",
+  "src/test-fixtures/extensions/btree_gist.sql",
+  "src/test-fixtures/extensions/citext.sql",
+  "src/test-fixtures/extensions/cube.sql",
+  "src/test-fixtures/extensions/dict_int.sql",
+  "src/test-fixtures/extensions/dict_xsyn.sql",
+  "src/test-fixtures/extensions/earthdistance.sql",
+  "src/test-fixtures/extensions/file_fdw.sql",
+  "src/test-fixtures/extensions/fuzzystrmatch.sql",
+  "src/test-fixtures/extensions/hstore.sql",
+  "src/test-fixtures/extensions/intarray.sql",
+  "src/test-fixtures/extensions/isn.sql",
+  "src/test-fixtures/extensions/lo.sql",
+  "src/test-fixtures/extensions/ltree.sql",
+  "src/test-fixtures/extensions/pageinspect.sql",
+  "src/test-fixtures/extensions/pg_buffercache.sql",
+  "src/test-fixtures/extensions/pg_freespacemap.sql",
+  "src/test-fixtures/extensions/pg_hashids.sql",
+  "src/test-fixtures/extensions/pg_ivm.sql",
+  "src/test-fixtures/extensions/pg_surgery.sql",
+  "src/test-fixtures/extensions/pg_textsearch.sql",
+  "src/test-fixtures/extensions/pg_trgm.sql",
+  "src/test-fixtures/extensions/pg_uuidv7.sql",
+  "src/test-fixtures/extensions/pg_visibility.sql",
+  "src/test-fixtures/extensions/pg_walinspect.sql",
+  "src/test-fixtures/extensions/pgcrypto.sql",
+  "src/test-fixtures/extensions/pgtap.sql",
+  "src/test-fixtures/extensions/postgis.sql",
+  "src/test-fixtures/extensions/seg.sql",
+  "src/test-fixtures/extensions/tablefunc.sql",
+  "src/test-fixtures/extensions/tcn.sql",
+  "src/test-fixtures/extensions/tsm_system_rows.sql",
+  "src/test-fixtures/extensions/tsm_system_time.sql",
+  "src/test-fixtures/extensions/unaccent.sql",
+  "src/test-fixtures/extensions/uuid-ossp.sql",
+  "src/test-fixtures/extensions/vector.sql",
 ]
 
 [[claims]]
@@ -95,7 +100,7 @@ extension = "amcheck"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -103,7 +108,7 @@ extension = "auto_explain"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -111,7 +116,7 @@ extension = "bloom"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -119,7 +124,7 @@ extension = "btree_gin"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -127,7 +132,7 @@ extension = "btree_gist"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -135,7 +140,7 @@ extension = "citext"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -143,7 +148,7 @@ extension = "cube"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -151,7 +156,7 @@ extension = "dict_int"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -159,7 +164,7 @@ extension = "dict_xsyn"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -167,7 +172,7 @@ extension = "earthdistance"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -175,7 +180,7 @@ extension = "file_fdw"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -183,7 +188,7 @@ extension = "fuzzystrmatch"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -191,7 +196,7 @@ extension = "hstore"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -199,7 +204,7 @@ extension = "intarray"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -207,7 +212,7 @@ extension = "isn"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -215,7 +220,7 @@ extension = "lo"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -223,7 +228,7 @@ extension = "ltree"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -231,7 +236,7 @@ extension = "pageinspect"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -239,7 +244,7 @@ extension = "pg_buffercache"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -247,7 +252,7 @@ extension = "pg_freespacemap"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -255,7 +260,7 @@ extension = "pg_hashids"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -263,7 +268,7 @@ extension = "pg_ivm"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -271,7 +276,7 @@ extension = "pg_surgery"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -279,7 +284,7 @@ extension = "pg_textsearch"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -287,7 +292,7 @@ extension = "pg_trgm"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -295,7 +300,7 @@ extension = "pg_uuidv7"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -303,7 +308,7 @@ extension = "pg_visibility"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -311,7 +316,7 @@ extension = "pg_walinspect"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -319,7 +324,7 @@ extension = "pgcrypto"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -327,7 +332,7 @@ extension = "pgtap"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -335,7 +340,7 @@ extension = "postgis"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -343,7 +348,7 @@ extension = "seg"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -351,7 +356,7 @@ extension = "tablefunc"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -359,7 +364,7 @@ extension = "tcn"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -367,7 +372,7 @@ extension = "tsm_system_rows"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -375,7 +380,7 @@ extension = "tsm_system_time"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -383,7 +388,7 @@ extension = "unaccent"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -391,7 +396,7 @@ extension = "uuid_ossp"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
 
 [[claims]]
@@ -399,5 +404,5 @@ extension = "vector"
 postgres-major = 18
 artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
-runtime-modes = ["direct", "server", "restart", "dump-restore"]
+runtime-modes = ["direct", "server", "restart", "backup-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]

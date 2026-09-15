@@ -36,10 +36,14 @@ java {
 }
 
 tasks.processResources {
-    from(file("../../../runtimes/liboliphaunt/native/include/oliphaunt.h")) {
+    from(file("../../../database-resources/VERSION")) {
+        into("dev/oliphaunt/android")
+        rename { "database-resources.version" }
+    }
+    from(file("../../../runtimes/liboliphaunt-native/include/oliphaunt.h")) {
         into("dev/oliphaunt/android")
     }
-    from(file("../../../shared/extension-runtime-contract/extension-artifact-archive-policy.properties")) {
+    from(file("../../../extensions/contracts/extension-artifact-archive-policy.properties")) {
         into("dev/oliphaunt/android")
     }
 }
