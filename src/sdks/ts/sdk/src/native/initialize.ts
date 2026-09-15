@@ -124,6 +124,13 @@ export async function copyNativeClusterSeed(
   await cp(clusterSeedDirectory, stagingPgdata, {
     errorOnExist: true,
     recursive: true,
+    filter: async (source) => {
+      const stat = await lstat(source);
+      if (!stat.isFile() && !stat.isDirectory()) {
+        throw new Error(`cluster seed contains unsupported entry: ${source}`);
+      }
+      return true;
+    },
   });
   for (const path of emptyDirectories)
     await mkdir(join(stagingPgdata, path), { recursive: true, mode: 0o700 });

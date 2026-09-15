@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   bindNativeClusterSeedManifest,
   logicalTreeSha256,
+  NATIVE_PGDATA_DIRECTORIES,
   validateNativeClusterSeedDirectory,
   validateNativeClusterSeedManifest,
 } from './native-manifest.mts';
@@ -135,8 +136,8 @@ test('requires a complete regular native PGDATA seed tree', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-native-seed-contract-'));
   const seed = path.join(root, 'seed');
   try {
-    mkdirSync(path.join(seed, 'files/global'), { recursive: true });
-    mkdirSync(path.join(seed, 'files/pg_wal'));
+    for (const directory of NATIVE_PGDATA_DIRECTORIES)
+      mkdirSync(path.join(seed, 'files', directory), { recursive: true });
     writeFileSync(path.join(seed, 'files/PG_VERSION'), '18\n');
     writeFileSync(path.join(seed, 'files/global/pg_control'), 'control\n');
     writeFileSync(
@@ -149,6 +150,13 @@ test('requires a complete regular native PGDATA seed tree', () => {
       }),
     ).not.toThrow();
 
+    for (const directory of ['pg_notify', 'pg_wal/archive_status', 'pg_multixact/offsets']) {
+      rmSync(path.join(seed, 'files', directory), { recursive: true });
+      expect(() =>
+        validateNativeClusterSeedDirectory(seed, 'standard', { target: 'linux-x64-gnu' }),
+      ).toThrow();
+      mkdirSync(path.join(seed, 'files', directory));
+    }
     writeFileSync(path.join(seed, 'files/postmaster.pid'), '1\n');
     expect(() =>
       validateNativeClusterSeedDirectory(seed, 'standard', {

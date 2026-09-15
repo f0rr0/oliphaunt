@@ -1,15 +1,47 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'bun:test';
 
 import {
+  copyNativeClusterSeed,
   initializeNativePgdata,
   nativeInitdbArgs,
   nativePostgresChildEnvironment,
 } from '../native/initialize.js';
 import { publishNativeDescriptor } from '../root-descriptor.js';
+
+test('native seed copy restores empty directories and makes PGDATA private', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-native-seed-'));
+  try {
+    const seed = join(root, 'seed');
+    const pgdata = join(root, 'pgdata');
+    await mkdir(seed, { mode: 0o755 });
+    await writeFile(join(seed, 'PG_VERSION'), '18\n');
+    await copyNativeClusterSeed(seed, pgdata, ['pg_wal/archive_status', 'pg_logical/snapshots']);
+    assert.ok((await stat(join(pgdata, 'pg_wal/archive_status'))).isDirectory());
+    assert.ok((await stat(join(pgdata, 'pg_logical/snapshots'))).isDirectory());
+    assert.deepEqual(await readdir(seed), ['PG_VERSION']);
+    if (process.platform !== 'win32') assert.equal((await stat(pgdata)).mode & 0o777, 0o700);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native seed copy rejects symbolic links', async () => {
+  if (process.platform === 'win32') return;
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-native-seed-'));
+  try {
+    const seed = join(root, 'seed');
+    await mkdir(seed);
+    await writeFile(join(root, 'outside'), 'external');
+    await symlink(join(root, 'outside'), join(seed, 'linked'));
+    await assert.rejects(copyNativeClusterSeed(seed, join(root, 'pgdata')), /unsupported entry/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('fresh native roots reject a non-bootstrap role before PGDATA mutation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-native-initialize-'));

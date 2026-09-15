@@ -10,6 +10,7 @@ import {
   filesystemTreeRows,
   logicalTreeSha256,
   nativeClusterSeedCompatibilityKey,
+  validatePgdataDirectories,
 } from '../contracts/native-manifest.mts';
 
 const { values } = parseArgs({
@@ -35,6 +36,7 @@ const contract = JSON.parse(
   readFileSync(new URL('../contracts/contract.json', import.meta.url), 'utf8'),
 );
 const postgresMajor = Number(readFileSync(path.join(pgdata, 'PG_VERSION'), 'utf8').trim());
+validatePgdataDirectories(pgdata);
 if (postgresMajor !== 18 || statSync(path.join(pgdata, 'global/pg_control')).size === 0)
   throw new Error('seed is not a complete PostgreSQL 18 cluster');
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');

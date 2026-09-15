@@ -1,14 +1,16 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const CONTRACT = JSON.parse(readFileSync(new URL('./contract.json', import.meta.url), 'utf8'));
 const SHA256 = /^[0-9a-f]{64}$/u;
 const CACHE_KEY = new RegExp(CONTRACT.manifests.native.cacheKeyPattern, 'u');
 const DISALLOWED_CACHE_KEYS = new Set(CONTRACT.manifests.native.cacheKeyDisallowedValues);
+export const NATIVE_PGDATA_DIRECTORIES: readonly string[] = Object.freeze(
+  CONTRACT.pgdataDirectories,
+);
 
 /** Package installers may discard empty tar directories; retain their actual paths. */
 export function emptyDirectoryPaths(root) {
@@ -231,18 +233,23 @@ function visitRegularFileTree(root, label, onFile) {
   visit(root);
 }
 
+export function validatePgdataDirectories(pgdata) {
+  for (const directory of NATIVE_PGDATA_DIRECTORIES) {
+    const metadata = lstatSync(path.join(pgdata, directory));
+    if (!metadata.isDirectory()) throw new Error(`${pgdata} has an unsafe or missing ${directory}`);
+  }
+}
+
 export function validateNativeClusterSeedDirectory(seed, profile, options = {}) {
+  validatePgdataDirectories(path.join(seed, 'files'));
   for (const relative of [
     'files',
-    'files/global',
-    'files/pg_wal',
     'files/PG_VERSION',
     'files/global/pg_control',
     'manifest.properties',
   ]) {
     const file = path.join(seed, ...relative.split('/'));
-    const expectedDirectory =
-      relative === 'files' || relative === 'files/global' || relative === 'files/pg_wal';
+    const expectedDirectory = relative === 'files';
     const metadata = lstatSync(file);
     if (
       metadata.isSymbolicLink() ||

@@ -510,6 +510,10 @@ class OliphauntAndroidRuntimeAssetsTest {
             assertEquals(AndroidPgdataPublication.Published, publication)
             assertTrue(didPublish)
             assertFalse(staging.exists())
+            assertEquals(
+                java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"),
+                Files.getPosixFilePermissions(destination.toPath()),
+            )
             validateCompleteAndroidPgdata(destination)
         } finally {
             parent.deleteRecursively()

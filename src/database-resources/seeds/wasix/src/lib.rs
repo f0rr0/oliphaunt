@@ -42,6 +42,22 @@ pub fn default_initdb_profile() -> &'static str {
 }
 
 pub fn clean_generated_cluster_seed(pgdata: &Path) -> Result<()> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Contract {
+        pgdata_directories: Vec<String>,
+    }
+    let contract: Contract =
+        serde_json::from_str(include_str!("../../../contracts/contract.json"))?;
+    for directory in contract.pgdata_directories {
+        let metadata = fs::symlink_metadata(pgdata.join(&directory)).with_context(|| {
+            format!("cluster seed is missing required PostgreSQL directory {directory}")
+        })?;
+        anyhow::ensure!(
+            metadata.is_dir(),
+            "cluster seed has an unsafe PostgreSQL directory {directory}"
+        );
+    }
     for name in ["postmaster.pid", "postmaster.opts"] {
         let path = pgdata.join(name);
         if path.exists() {
@@ -585,4 +601,31 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_missing_empty_pgdata_directory() -> Result<()> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-seed-layout-{}-{nonce}",
+            std::process::id()
+        ));
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/contract.json"))?;
+        for directory in contract["pgdataDirectories"].as_array().unwrap() {
+            fs::create_dir_all(root.join(directory.as_str().unwrap()))?;
+        }
+        clean_generated_cluster_seed(&root)?;
+        fs::remove_dir(root.join("pg_notify"))?;
+        let error = clean_generated_cluster_seed(&root).unwrap_err();
+        fs::remove_dir_all(root)?;
+        assert!(error.to_string().contains("pg_notify"));
+        Ok(())
+    }
 }

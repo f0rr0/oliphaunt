@@ -1,6 +1,6 @@
 # Cluster seeds and ICU
 
-Status: locked architecture and implemented contract, updated 2026-08-24.
+Status: current split-resource architecture, updated 2026-09-15.
 
 This document is the source of truth for preinitialized PostgreSQL clusters,
 ICU data, their public selection, and their release qualification.
@@ -53,17 +53,19 @@ The four conceptual cases are:
 | `initdb` | present | Correct ICU database; slower initialization. |
 
 The last case is important for explicit or locally built runtimes. ICU does not
-require a seed. A seed is an optimization; ICU data is a capability. Published
-package-managed defaults use a seed so users normally avoid `initdb`.
+require a seed. A seed is an optimization; ICU data is a capability.
+Desktop SDKs can initialize without downloading a seed. New browser and mobile
+databases require an explicitly selected seed; existing databases do not need one.
 
 ## User-visible behavior
 
-There is no public initialization-mode enum and no raw seed/archive injection
-API. Package-managed SDKs resolve the correct seed transitively.
+Runtime, seed, and ICU data are selected independently. Installing a runtime
+does not install either seed profile or ICU data. A seed package contains one
+profile for one compatibility domain.
 
-- Installing/selecting the ordinary runtime resolves the `standard` seed.
-- Selecting the language-native ICU package or feature resolves `icu-data` and
-  the matching `icu` seed as one checked closure.
+- Selecting a standard seed avoids `initdb` and has no ICU dependency.
+- Selecting an ICU seed also requires the exact canonical ICU data. Selecting
+  ICU data alone does not implicitly select a seed.
 - Every seed and `initdb` fallback creates PostgreSQL's fixed `postgres`
   bootstrap role. Public `username` options consistently select an existing
   connection role; they never create a superuser as a side effect.
@@ -77,34 +79,38 @@ API. Package-managed SDKs resolve the correct seed transitively.
 - Existing nonempty roots are opened as they are. They are never replaced,
   re-seeded, or silently catalog-migrated.
 
-WASIX TypeScript uses an explicit descriptor, following the useful part of
-PGlite's end-user shape without exposing a raw filesystem option:
+WASIX TypeScript accepts an explicit archive/manifest pair. For a browser bundler:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
-import icu from '@oliphaunt/wasix-icu';
+import archive from '@oliphaunt/seed-wasix-standard/seed.tar.zst?url';
+import manifest from '@oliphaunt/seed-wasix-standard/manifest.json?url';
 
-const db = await Oliphaunt.open({ icu });
+const db = await Oliphaunt.open({ seed: { archive, manifest } });
 ```
 
-Without `icu`, the matching runtime package supplies the `standard` seed.
-With `icu`, `@oliphaunt/wasix-icu` supplies the shared ICU data and the WASIX
-`icu` seed. Its descriptor is versioned and runtime-bound; arbitrary paths and
-untyped objects are not accepted.
+For ICU, select `@oliphaunt/seed-wasix-icu` and pass `icu: { data, manifest }`,
+using `@oliphaunt/icu/data` and `@oliphaunt/icu/manifest`. Node, Bun, and Deno
+can initialize without a seed; new browser storage requires one. Incomplete
+archive/manifest pairs fail closed rather than silently selecting `initdb`.
 
 Other SDKs retain language-native package selection:
 
 | SDK | Ordinary selection | ICU selection |
 | --- | --- | --- |
-| Native Rust | target runtime artifact selected by `oliphaunt-build` | Cargo ICU feature/artifact stages `oliphaunt-icu` |
-| Native TypeScript | target runtime npm package | optional `@oliphaunt/icu` package |
-| Swift | ordinary runtime resources | `OliphauntICU` SwiftPM/CocoaPods resources |
-| Kotlin | ordinary Maven runtime resources | Gradle ICU dependency/selection |
-| React Native | ordinary generated native carrier | `@oliphaunt/icu` native resource carrier |
-| Rust WASIX | portable runtime artifact | Cargo ICU feature/artifact |
-| WASIX TypeScript | default runtime descriptor | explicit `@oliphaunt/wasix-icu` descriptor |
+| Native Rust | separately selected runtime and optional seed resources | independently selected `oliphaunt-icu` data |
+| Native TypeScript | optional `seed` resource directory; desktop `initdb` when absent | `icuData` resource directory |
+| Swift | explicit `OliphauntSeedNativeIOSStandard` resource target | `OliphauntSeedNativeIOSICU` and `OliphauntICU` |
+| Kotlin | explicit Android standard seed Maven dependency | Android ICU seed and canonical ICU data dependencies |
+| React Native | explicit mobile `seedProfile` and resource package | ICU profile and `@oliphaunt/icu` resource carrier |
+| Rust WASIX | optional `.seed(ClusterSeed::new(archive, manifest))` | `.icu_data(IcuData::new(data_bytes, manifest_bytes)?)` |
+| WASIX TypeScript | explicit `seed: { archive, manifest }` | independent `icu: { data, manifest }` |
 
-This is semantic parity, not identical signatures.
+Rust WASIX memory/directory stores support split `initdb` when no seed is
+selected. Mobile applications still select a seed; this does not imply a
+seed-free mobile initialization path. Existing ICU databases continue to need
+their ICU data on reopen. Resource package names and exports are maintained in
+[database-resources](../../database-resources/README.md).
 
 ## Why the catalog matters
 
@@ -129,49 +135,32 @@ application migration work.
 
 ## Runtime and data distribution
 
-ICU has two physical components:
+Target-compiled ICU code is linked into each native or WASIX runtime. The
+canonical little-endian ICU 76.1 data file, `icudt76l.dat`, is packaged
+separately by `database-resources`. Its producer copies the verified upstream
+file into `share/icu`; it does not expand thousands of resource files or build
+PostgreSQL or ICU libraries.
 
-1. target-compiled ICU code is linked into each native or WASIX runtime; and
-2. the large files-data tree is distributed separately as `icu-data`.
+Native and WASIX consumers use the same canonical data. `@oliphaunt/icu` and
+`oliphaunt-icu` are data-only. Standard seed leaves have no ICU dependency;
+ICU seed leaves reference the exact canonical data identity and depend on that
+carrier. Neither seed profile is bundled into the runtime carrier.
 
-Compiled code cannot be shared between native machine code and wasm32-WASIX.
-The data files are shared from ICU's pinned official 76.1 little-endian data
-archive. Every producer expands that same verified `icudt76l.dat` into the
-same 4,136 paths and 31,723,424 content bytes; native and WASIX builds do not
-regenerate separate target-dependent trees. Carriers normalize files to
-`0644`, directories to `0755`, reject links/special files, and bind the logical
-tree (`0523cc164d698d95d844e3683bbe23d415b575b84f4a04287d372e1c132cf1d1`)
-with
-`SHA-256(path NUL size NUL bytes LF)` in bytewise path order.
+The ICU `manifest.properties` records its schema, artifact role, version/form,
+and logical tree SHA-256. The digest remains
+`SHA-256(path NUL size NUL bytes LF)` in bytewise path order. Seed manifests
+bind the required ICU digest separately from their physical runtime identity.
+Producer and unmanaged-resource checks verify actual bytes.
 
-There is one logical `icu-data` artifact. Ecosystem wrappers may differ:
+Native npm seed leaves expose `./pgdata/PG_VERSION` and `./manifest.json`.
+The manifest preserves empty-directory paths through package installation.
+Cargo and WASIX npm leaves retain the compressed seed archive; Cargo leaves
+expose `seed_archive()` and `seed_manifest()`. Each carrier contains one
+profile and compatibility domain. The resource-owned Swift source archive
+contains both iOS profiles, while target selection controls app resources.
 
-- `@oliphaunt/icu`, SwiftPM resources, Maven resources, and the shared Rust
-  `oliphaunt-icu` crate carry native-consumable data;
-- `@oliphaunt/wasix-icu` and the WASIX Cargo assembly carry the same logical
-  data behind WASIX-specific descriptors/archives; and
-- every wrapper must prove the same logical tree digest.
-
-The shared Rust `oliphaunt-icu` crate and other platform-neutral native ICU
-wrappers remain data-only. They cannot safely carry one native physical seed
-for every operating system and architecture. Each target-specific native
-runtime carrier transports its own small matching `icu` seed as
-`cluster-seed-icu`; the runtime resolver pairs it with the independently staged
-`icu-data` artifact.
-
-The data-only carrier exposes one canonical `manifest.properties` containing
-only its `oliphaunt-icu-data-v1` schema, `icu-data` role, ICU version/form, and
-logical tree SHA-256. A target seed repeats that digest in its own manifest.
-Comparing the two receipts binds the closure without rereading 31.7 MB on every
-open; full tree hashing remains a producer check and an unmanaged-path check.
-Each WASIX release verifies its seed identity against the actual ICU archive.
-Cross-family qualification hashes and compares the paths and bytes in both ICU
-data archives after both release families have been assembled;
-single-family focused builds do not manufacture a cross-family proof.
-
-The native ICU release asset records only `icu-data`. Each target runtime report
-records `cluster-seed` and `cluster-seed-icu` separately from runtime bytes.
-Cargo and npm package limits continue to apply to the final carrier bytes.
+Database-resource release assets account for standard seed, ICU seed, and ICU
+data independently of runtime bytes. Registry limits apply to final carriers.
 
 ## Seed compatibility
 
@@ -197,7 +186,7 @@ Every desktop native target and WASIX therefore receive separately qualified
 candidate only after exact ABI receipts prove equality across the producer and
 both target builds; the carrier then binds it to that mobile domain. No seed is
 silently relabelled on pointer-width or operating-system assumptions alone.
-The ICU files-data tree remains shared.
+The canonical ICU data remains shared.
 
 The v1 native compatibility targets are deliberately finite:
 
@@ -245,7 +234,7 @@ The implementation has four layers:
 2. **Release graph** — generated metadata binds runtime, profile, seed, ICU
    data, target ABI, source lane, and ecosystem carrier by exact identity.
 3. **Resolved runtime closure** — each SDK resolves runtime, catalog profile,
-   optional ICU data, matching seed, and extensions before seed loading or
+   optional ICU data, optional matching seed, and extensions before seed loading or
    PGDATA mutation/publication.
 4. **Provider-local hydrator** — native filesystems, WASIX memory, IndexedDB,
    OPFS, and host directories copy/extract into private staging and publish
@@ -256,8 +245,8 @@ The implementation has four layers:
 The cross-language contract lives in
 `src/database-resources/contracts/contract.json`. It owns profile names,
 artifact roles, ICU form/version, readiness signal, physical formats,
-compatibility keys, and the logical digest algorithm. The independently
-product tests validate canonical fixtures through the real seed readers. Release tools
+compatibility keys, required PGDATA directories, and the logical digest algorithm.
+The product tests validate canonical fixtures through the real seed readers. Release tools
 reuse one native manifest/digest validator rather than reimplementing it.
 
 Filesystem hot paths deliberately remain provider-local. A universal
@@ -279,9 +268,9 @@ These rules are locked:
   `initdb`; ambient `ICU_DATA` alone cannot select a catalog profile.
 - The internal readiness variable is removed or set deterministically for every
   runtime instance. It is not a public feature switch.
-- A published package with a missing, malformed, wrong-profile, or incompatible
-  seed fails closed. Maintainer/source builds may use the explicit local
-  `initdb` fallback.
+- A selected seed with missing members, malformed metadata, the wrong profile,
+  or incompatible physical identity fails closed. Omitting a seed selects
+  `initdb` only on SDK/provider paths that support it.
 - Manifest cache keys are single portable path components; `.` and `..` are
   invalid even though dot is otherwise allowed in an identifier.
 - A seed is copied into a private destination. Hydration never hardlinks mutable
@@ -306,73 +295,24 @@ PGlite's `@electric-sql/pglite-prepopulatedfs` demonstrates the startup value
 of shipping initialized PGDATA. Its public helper returns an archive through
 `loadDataDir`, while ICU is supplied separately through `icuDataDir`.
 
-Oliphaunt adopts runtime-bound preinitialization but makes two stricter choices:
+Oliphaunt also keeps seed state and ICU data separate. Applications may select
+a packaged archive and manifest explicitly, while SDKs validate physical
+compatibility, profile, archive integrity, and the required ICU identity.
+Adding ICU bytes to a standard seed does not retroactively create its predefined
+ICU catalog; catalog changes to existing databases remain explicit.
 
-- users do not manually align or inject a raw seed archive; the runtime carrier
-  supplies it; and
-- selecting packaged ICU also selects a seed whose catalog was initialized
-  with that exact ICU data.
+## Distribution boundaries
 
-PGlite's separate `loadDataDir` and `icuDataDir` concepts are valid. The risky
-combination is an arbitrary prepopulated archive plus ICU data when the archive
-was initialized without ICU: the bytes are available, but the predefined
-catalog is not retroactively created. Oliphaunt prevents that mismatch in its
-package-managed path.
-
-## Implemented shipment checklist
-
-The repository implementation must keep every item below true:
-
-- [x] Canonical names are `standard`, `icu`, and `icu-data`; artifact roles are
-  `cluster-seed-standard`, `cluster-seed-icu`, and `icu-data`.
-- [x] Each native target and WASIX Datum32 use separately qualified physical
-  seed products.
-- [x] Native and WASIX PostgreSQL patch stacks use the same exact internal ICU
-  readiness rule during `initdb`.
-- [x] Native and WASIX producers generate both profiles through one
-  parameterized pipeline per runtime family.
-- [x] Producers clear ambient ICU selection, require exact data for `icu`, and
-  emit extension-free, clean-shutdown seeds.
-- [x] WASIX runtime manifests use format v2 and carry both seed descriptors and
-  archives under `cluster-seeds/`.
-- [x] Native target release assets carry target-qualified `standard` and `icu`
-  seeds.
-- [x] Target-specific native runtime assets carry their matching `icu` seed;
-  platform-neutral native ICU data assets stay data-only and carry an exact
-  logical tree binding.
-- [x] The WASIX ICU carrier carries shared ICU data plus the WASIX `icu` seed;
-  it never carries a native seed.
-- [x] Every native carrier declares `clusterSeedTarget` and the fixed sibling
-  paths `cluster-seed` and `cluster-seed-icu`. A SwiftPM application receives
-  the closure embedded in its selected XCFramework slice; React Native stages
-  the one app-selected closure and removes embedded copies from its staged base
-  framework.
-- [x] Native Cargo target carriers aggregate both native seeds while the shared
-  `oliphaunt-icu` crate and every other platform-neutral ICU wrapper stay
-  data-only.
-- [x] npm, Cargo, SwiftPM, Maven, Kotlin, React Native, Rust, native TypeScript,
-  Rust WASIX, and WASIX TypeScript carrier/resolver paths reject missing or
-  wrong-profile closure members.
-- [x] Every SDK treats `username` as an existing connection role, bootstraps
-  only `postgres`, and rejects a fresh non-`postgres` open before seed loading
-  or PGDATA mutation/publication.
-- [x] Native Rust, native TypeScript, Swift, Kotlin, React Native, Rust WASIX,
-  and WASIX TypeScript hydrate only new/empty roots and leave existing roots
-  untouched.
-- [x] Hydration copies mutable files, rejects unsafe archive members, uses
-  private staging, and publishes through provider-appropriate atomicity.
-- [x] ICU data composition occurs before extensions; extension selection remains
-  independent and generated from the canonical extension model.
-- [x] Release validators compare exact manifest fields and ICU logical tree
-  digests instead of accepting directory names or substring matches.
-- [x] Release notice closures include PostgreSQL for derived seed files and ICU
-  for data files.
-- [x] Package footprint reports separate runtime, standard seed, ICU seed, and
-  ICU data bytes where those products are assembled.
-- [x] The cluster-seed contract is exercised by SDK and runtime seed-reader tests; source-free
-  asset and release checks cover the generated graph.
-- [x] Negative tests cover profile mismatches, missing members, changed data
-  digests, unsafe inputs, and fail-closed package resolution.
+- `database-resources` owns seed profiles and canonical ICU data; runtime
+  packages contain executable runtime assets.
+- Each seed carrier contains one qualified profile and physical domain. There
+  is no default carrier that installs every seed.
+- Producers and archive packaging validate the shared PGDATA directory
+  contract, including empty directories. Carrier transport preserves them.
+- Seeds are copied into private mutable storage; package files are never
+  hardlinked into PGDATA. Existing databases do not need seed downloads.
+- Selected resources are checked for compatibility and integrity before use.
+  Installed-app qualification remains required for Android and iOS.
 
 ## Per-release qualification checklist
 
@@ -403,8 +343,8 @@ These are recurring release gates, not unfinished architecture:
 
 Performance is a feature, but it does not weaken correctness:
 
-- standard users do not download the 31.7 MB uncompressed ICU data tree;
-- package-managed new roots avoid end-user `initdb`;
+- standard users do not download optional ICU data;
+- selecting a seed avoids `initdb`; supported seed-free paths avoid its download;
 - seed manifests and descriptor hashes are validated before seed loading or
   PGDATA mutation/publication;
 - persistent WASIX stores are inspected before seed archives are fetched or

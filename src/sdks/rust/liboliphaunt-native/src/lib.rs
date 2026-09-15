@@ -9,6 +9,8 @@ pub mod storage;
 #[cfg(test)]
 mod test_fixtures;
 pub use build_resources::register_build_resources_dir;
+#[doc(hidden)]
+pub use build_resources::registered_build_resources_dir;
 pub use config::{NativeClusterSeed, NativeConfig, NativeResourceDirectory, PostgresStartupGuc};
 pub use error::{Error, Result};
 pub use extension::Extension;

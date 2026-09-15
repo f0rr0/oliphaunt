@@ -85,12 +85,28 @@ fn exercise(profile: CatalogProfile) -> Result<()> {
     ] {
         let mut database = builder.clone().storage(storage).open()?;
         check_profile(&mut database, profile)?;
+        database.execute("CREATE TABLE initialized_proof(value integer)")?;
+        database.execute("INSERT INTO initialized_proof VALUES (17)")?;
         assert_eq!(
-            database.query("SELECT 17 AS value")?.get_text(0, "value")?,
+            database
+                .query("SELECT value FROM initialized_proof")?
+                .get_text(0, "value")?,
             Some("17")
         );
         database.close()?;
     }
+    let mut reopened = builder
+        .storage(DatabaseStorage::Directory(
+            workspace.path().join("initialized"),
+        ))
+        .open()?;
+    assert_eq!(
+        reopened
+            .query("SELECT value FROM initialized_proof")?
+            .get_text(0, "value")?,
+        Some("17")
+    );
+    reopened.close()?;
     Ok(())
 }
 

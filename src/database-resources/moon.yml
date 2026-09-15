@@ -15,6 +15,12 @@ project:
 fileGroups:
   cargo-carrier-sources: ["icu/cargo/**/*.rs", "icu/cargo/Cargo.toml"]
 tasks:
+  seed-producer-test:
+    tags: ["quality", "unit", "requires-rust"]
+    command: "cargo test -p oliphaunt-wasix-seed-producer --locked"
+    inputs: ["seeds/wasix/**/*", "contracts/contract.json", "@group(cargo-workspace)"]
+    options:
+      runFromWorkspaceRoot: true
   format-check:
     tags: ["quality", "static", "format", "requires-rust"]
     command: "cargo fmt -p oliphaunt-icu --check"
@@ -29,7 +35,7 @@ tasks:
       runFromWorkspaceRoot: true
   test:
     tags: ["quality", "unit"]
-    deps: ["cluster-seed-contract:test"]
+    deps: ["cluster-seed-contract:test", "seed-producer-test"]
     command: "bash test.sh"
     inputs: ["test.sh", "seeds/*.mts", "icu/tools/**/*", "icu/npm/**/*", "contracts/**/*", "/tools/packaging/**/*.mts", "!/tools/packaging/**/*.test.*"]
   package-native:

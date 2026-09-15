@@ -9,8 +9,9 @@ static BUILD_RESOURCES_DIR: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
 ///
 /// Applications usually call their SDK registration macro once during startup
 /// after their `build.rs` has called `oliphaunt_build::configure()`. The native
-/// runtime locator uses this directory before falling back to explicit
-/// environment variables and source-tree build layouts.
+/// runtime locator uses this directory before falling back to
+/// `OLIPHAUNT_RESOURCES_DIR` and source-tree build layouts. Explicit library
+/// and install-directory environment overrides retain precedence.
 pub fn register_build_resources_dir(path: impl Into<PathBuf>) -> Result<()> {
     let path = path.into();
     if path.as_os_str().is_empty() {
@@ -37,10 +38,17 @@ pub fn register_build_resources_dir(path: impl Into<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn registered_build_resources_dir() -> Option<PathBuf> {
+pub fn registered_build_resources_dir() -> Option<PathBuf> {
     BUILD_RESOURCES_DIR
         .get()
         .and_then(|lock| lock.read().ok().and_then(|guard| guard.clone()))
+}
+
+pub(crate) fn resources_dir_candidates() -> Vec<PathBuf> {
+    registered_build_resources_dir()
+        .into_iter()
+        .chain(std::env::var_os("OLIPHAUNT_RESOURCES_DIR").map(PathBuf::from))
+        .collect()
 }
 
 #[cfg(test)]

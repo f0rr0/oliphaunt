@@ -286,18 +286,33 @@ fn decode_error_text(length: usize, message: &[c_char]) -> Option<String> {
 }
 
 fn resolve_library_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os(ENV_OLIPHAUNT) {
+        return Ok(PathBuf::from(path));
+    }
     resolve_library_path_candidates()
         .into_iter()
-        .next()
+        .find(|path| path.is_file())
         .ok_or_else(|| {
             Error::Engine(format!(
-                "{ENV_OLIPHAUNT} is not set; set it to a native liboliphaunt dynamic library"
+                "native liboliphaunt dynamic library was not found; set {ENV_OLIPHAUNT} or register oliphaunt-build resources; searched {:?}",
+                resolve_library_path_candidates()
             ))
         })
 }
 
 pub(super) fn resolve_library_path_candidates() -> Vec<PathBuf> {
-    env_path_candidates([ENV_OLIPHAUNT])
+    let mut candidates = env_path_candidates([ENV_OLIPHAUNT]);
+    candidates.extend(
+        crate::build_resources::resources_dir_candidates()
+            .into_iter()
+            .map(|root| {
+                root.join("native-runtime")
+                    .join("liboliphaunt-native")
+                    .join(if cfg!(windows) { "bin" } else { "lib" })
+                    .join(libloading::library_filename("oliphaunt"))
+            }),
+    );
+    candidates
 }
 
 pub(super) fn env_path_candidates<const N: usize>(names: [&str; N]) -> Vec<PathBuf> {

@@ -513,6 +513,9 @@ fn spawn_broker(
     auth_token: &BrokerAuthToken,
 ) -> Result<Child> {
     let mut command = Command::new(executable);
+    if let Some(resources) = liboliphaunt_native_bindings::registered_build_resources_dir() {
+        command.env("OLIPHAUNT_RESOURCES_DIR", resources);
+    }
     command
         .args(broker_spawn_args(config, root, extensions, endpoint))
         .stdin(Stdio::null())

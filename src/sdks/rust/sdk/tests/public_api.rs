@@ -7,6 +7,16 @@ use oliphaunt::{
     Transaction, TransactionError, TransactionResult, TypeOid, ValueFormat, ValueRef,
 };
 
+#[test]
+fn build_resources_macro_is_callable_from_an_application() {
+    if option_env!("OLIPHAUNT_RESOURCES_DIR").is_none() {
+        assert_eq!(
+            oliphaunt::register_build_resources!().unwrap_err().kind(),
+            ErrorKind::InvalidConfiguration,
+        );
+    }
+}
+
 #[derive(Debug)]
 enum ApplicationError {
     Database(Error),

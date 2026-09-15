@@ -118,7 +118,7 @@ run_consumer() {
   local native_assets="$2"
   local tools_assets="$3"
   local broker_assets="$4"
-  local runtime_archive tools_archive broker_archive install_dir tools_dir
+  local runtime_archive tools_archive broker_archive install_dir tools_dir native_dir
   require_linux_x64
   require_file "$consumer"
   [ -x "$consumer" ] || fail "release consumer is not executable: $consumer"
@@ -128,25 +128,27 @@ run_consumer() {
   broker_archive="$(find_one "$broker_assets" 'oliphaunt-broker-*-linux-x64-gnu.tar.gz')"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-rust-release-consumer-run.XXXXXX")"
 
-  mkdir -p "$scratch/native" "$scratch/tools" "$scratch/broker" "$scratch/runtime-cache"
-  tar -xzf "$runtime_archive" -C "$scratch/native"
+  native_dir="$scratch/resources/native-runtime/liboliphaunt-native"
+  mkdir -p "$native_dir" "$scratch/tools" "$scratch/broker" "$scratch/runtime-cache"
+  tar -xzf "$runtime_archive" -C "$native_dir"
   tar -xzf "$tools_archive" -C "$scratch/tools"
   tar -xzf "$broker_archive" -C "$scratch/broker"
-  install_dir="$scratch/native/runtime"
+  install_dir="$native_dir/runtime"
   tools_dir="$scratch/tools/runtime"
-  for file in "$scratch/native/lib/liboliphaunt.so" "$scratch/broker/bin/oliphaunt-broker" "$install_dir/bin/postgres" "$install_dir/bin/initdb" "$install_dir/bin/pg_ctl" \
+  for file in "$native_dir/lib/liboliphaunt.so" "$scratch/broker/bin/oliphaunt-broker" "$install_dir/bin/postgres" "$install_dir/bin/initdb" "$install_dir/bin/pg_ctl" \
     "$tools_dir/bin/pg_basebackup" "$tools_dir/bin/pg_dump" "$tools_dir/bin/psql"; do
     require_file "$file"
   done
 
   env \
-    LIBOLIPHAUNT_PATH="$scratch/native/lib/liboliphaunt.so" \
-    OLIPHAUNT_EMBEDDED_MODULE_DIR="$scratch/native/lib/modules" \
+    -u LIBOLIPHAUNT_PATH -u OLIPHAUNT_RESOURCES_DIR \
+    OLIPHAUNT_CONSUMER_RESOURCES_DIR="$scratch/resources" \
+    OLIPHAUNT_EMBEDDED_MODULE_DIR="$native_dir/lib/modules" \
     OLIPHAUNT_BROKER="$scratch/broker/bin/oliphaunt-broker" \
     OLIPHAUNT_INSTALL_DIR="$install_dir" \
     OLIPHAUNT_TOOLS_DIR="$tools_dir" \
     OLIPHAUNT_RUNTIME_CACHE_DIR="$scratch/runtime-cache" \
-    LD_LIBRARY_PATH="$install_dir/lib:$scratch/native/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    LD_LIBRARY_PATH="$install_dir/lib:$native_dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     "$consumer" "$scratch/database"
 }
 

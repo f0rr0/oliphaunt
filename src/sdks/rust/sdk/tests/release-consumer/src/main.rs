@@ -11,6 +11,9 @@ use std::time::Duration;
 use oliphaunt::{AsyncOliphauntServer, DatabaseStorage, IntoParameter, Oliphaunt, ServerListen};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    if let Some(resources) = std::env::var_os("OLIPHAUNT_CONSUMER_RESOURCES_DIR") {
+        oliphaunt::register_build_resources_dir(PathBuf::from(resources))?;
+    }
     let root = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)

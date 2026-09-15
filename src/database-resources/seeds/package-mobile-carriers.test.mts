@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createDeterministicTar } from '../../../tools/packaging/archive-directory.mts';
 import { releaseZstdCompressSync } from '../../../tools/packaging/portable-archive.mts';
 import {
+  NATIVE_PGDATA_DIRECTORIES,
   nativeClusterSeedCompatibilityKey,
   parseProperties,
 } from '../contracts/native-manifest.mts';
@@ -15,8 +16,8 @@ test('mobile carrier preserves seed bytes and rejects wrong target, profile and 
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-mobile-carrier-'));
   try {
     const source = path.join(scratch, 'fixture');
-    mkdirSync(path.join(source, 'global'), { recursive: true });
-    mkdirSync(path.join(source, 'pg_wal'));
+    for (const directory of NATIVE_PGDATA_DIRECTORIES)
+      mkdirSync(path.join(source, directory), { recursive: true });
     writeFileSync(path.join(source, 'PG_VERSION'), '18\n');
     writeFileSync(path.join(source, 'global/pg_control'), 'archive-layout-fixture-only');
     const archive = path.join(scratch, 'seed.tar.zst');

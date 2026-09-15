@@ -109,6 +109,44 @@ Implemented and verified locally:
   AOT artifacts, including archive validation. Two uncached executions produce
   identical release checksums. Hosted qualification of this correction is pending.
 
+### PR #210 reconciliation — 2026-09-15
+
+Reviewed `5a7ed4ca` from PR #210 against the current split-resource tree;
+port behavior rather than its old paths and bundled-runtime seed format.
+
+- Native Rust: share registered resource discovery with the dynamic library
+  loader and make exported resource-macro error construction callable by external
+  crates. Keep that implementation in the current shared native Rust package.
+  Forward the registered root to broker children; the normal packed consumer
+  now tests registration without a library-path override.
+- Native TypeScript and Android: reject links/special files while copying seed
+  input and publish Android PGDATA with owner-only permissions. TypeScript and
+  WASIX already apply private root permissions; keep the corresponding tests.
+- Seed production: native and WASIX validate the same complete PostgreSQL
+  directory layout, including empty directories. Preserve the current carrier
+  `emptyDirectories` manifest/archive transport instead of adding the PR's
+  separate `directories-v1.txt` format or bundling seeds back into runtimes.
+- WASIX initialization: explicit seed selection, seed-free memory/directory
+  creation, and existing-root preservation already implement the PR's behavior.
+  Extend the existing resource integration test to prove durable rows after
+  reopening seed-free storage; reuse the restore permission helper for seed copies.
+  Runtime assets no longer own seed archive/manifest pairs, so the old runtime
+  build-script assertion is superseded by resource-owned validation.
+- The optional-download intent belongs to tasks 15–18 below. Native mobile still
+  requires an explicitly selected seed; do not imply seed-free mobile support.
+  Swift source archive download granularity remains an explicit limitation.
+  No old JavaScript release tools, package identities, or duplicate meta-checks
+  are restored from PR #210.
+
+Local validation passes: the fresh packed Rust consumer exercises direct,
+broker and server behavior with backup/restore/restart; native Rust tests,
+Android resource tests, TypeScript initialization/type/lint checks, WASIX's
+148 unit tests and standard/ICU resource integration tests pass. Actual native
+seed npm/Cargo packaging preserves empty directories. The separate ICU-fetch
+race in run `34881596962` is fixed with per-source serialization and a real
+concurrent-fetch regression. Hosted qualification of this combined tree remains
+pending; these checks do not claim installed Android/iOS execution.
+
 Remaining execution checklist (grouped from the detailed tasks below):
 
 - [ ] **Current-tree qualification (03,06,24b,30):** commit the reviewed move and
