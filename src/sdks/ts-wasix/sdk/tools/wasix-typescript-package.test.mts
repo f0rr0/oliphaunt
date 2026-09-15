@@ -8,6 +8,7 @@ function manifest() {
     version: '1.2.3',
     license: 'MIT',
     type: 'module',
+    sideEffects: ['./lib/browser.js', './lib/native-only.js'],
     publishConfig: { access: 'public', provenance: true },
     dependencies: {
       '@oliphaunt/ts-query': '0.1.0',
@@ -19,67 +20,6 @@ function manifest() {
       '@oliphaunt/wasix-napi-linux-arm64-gnu': '1.2.3',
       '@oliphaunt/wasix-napi-linux-x64-gnu': '1.2.3',
       '@oliphaunt/wasix-napi-win32-x64-msvc': '1.2.3',
-    },
-    exports: {
-      '.': {
-        types: './lib/index.d.ts',
-        deno: './lib/index.deno.js',
-        bun: './lib/index.bun.js',
-        node: './lib/index.node.js',
-        browser: './lib/index.js',
-        default: './lib/index.js',
-      },
-      './worker': {
-        types: './lib/worker-entry.d.ts',
-        deno: './lib/worker-entry.deno.js',
-        bun: './lib/worker-entry.bun.js',
-        node: './lib/worker-entry.node.js',
-        browser: './lib/worker-entry.js',
-        default: './lib/worker-entry.js',
-      },
-      './direct': {
-        types: './lib/direct.node.d.ts',
-        deno: './lib/direct.node.js',
-        bun: './lib/direct.node.js',
-        node: './lib/direct.node.js',
-      },
-      './internal/tools': {
-        types: './lib/internal.d.ts',
-        deno: './lib/internal.node.js',
-        bun: './lib/internal.node.js',
-        node: './lib/internal.node.js',
-        browser: './lib/internal.js',
-        default: './lib/internal.js',
-      },
-      './server': {
-        types: './lib/server.node.d.ts',
-        deno: './lib/server.node.js',
-        bun: './lib/server.node.js',
-        node: './lib/server.node.js',
-      },
-      './storage/node': {
-        types: './lib/storage/node.d.ts',
-        node: './lib/storage/node.js',
-      },
-      './storage/bun': {
-        types: './lib/storage/bun.d.ts',
-        bun: './lib/storage/bun.js',
-      },
-      './storage/deno': {
-        types: './lib/storage/deno.d.ts',
-        deno: './lib/storage/deno.js',
-      },
-      './storage/indexed-db': {
-        types: './lib/storage/indexed-db.d.ts',
-        default: './lib/storage/indexed-db.js',
-      },
-      './storage/opfs': {
-        types: './lib/storage/opfs.d.ts',
-        default: './lib/storage/opfs.js',
-      },
-      './package.json': {
-        default: './package.json',
-      },
     },
     engines: {
       node: '>=22.13 <25',
@@ -129,92 +69,6 @@ describe('WASIX TypeScript package dependency contract', () => {
     candidate.oliphaunt.nodeApiVersion = 9;
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
       'runtime compatibility metadata differs from its exact dependencies',
-    );
-  });
-
-  test('rejects a root condition order that lets Node shadow Deno or Bun', () => {
-    const candidate = manifest();
-    candidate.exports['.'] = {
-      types: './lib/index.d.ts',
-      node: './lib/index.node.js',
-      deno: './lib/index.deno.js',
-      bun: './lib/index.bun.js',
-      browser: './lib/index.js',
-      default: './lib/index.js',
-    };
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose exact browser, Node, Bun, and Deno conditional entrypoints',
-    );
-  });
-
-  test('rejects a worker condition order that lets Node shadow Deno or Bun', () => {
-    const candidate = manifest();
-    candidate.exports['./worker'] = {
-      types: './lib/worker-entry.d.ts',
-      node: './lib/worker-entry.node.js',
-      deno: './lib/worker-entry.deno.js',
-      bun: './lib/worker-entry.bun.js',
-      browser: './lib/worker-entry.js',
-      default: './lib/worker-entry.js',
-    };
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose the exact browser, Node, Bun, and Deno worker entrypoint',
-    );
-  });
-
-  test('rejects a server condition order that lets Node shadow Deno or Bun', () => {
-    const candidate = manifest();
-    candidate.exports['./server'] = {
-      types: './lib/server.node.d.ts',
-      node: './lib/server.node.js',
-      deno: './lib/server.node.js',
-      bun: './lib/server.node.js',
-    };
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose one exact host-only conditional local-server entrypoint',
-    );
-  });
-
-  test('rejects a browser fallback for the host-only server', () => {
-    const candidate = manifest();
-    candidate.exports['./server'].default = './lib/server.node.js';
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose one exact host-only conditional local-server entrypoint',
-    );
-  });
-
-  test('rejects a browser fallback for the blocking host-only direct placement', () => {
-    const candidate = manifest();
-    candidate.exports['./direct'].default = './lib/direct.node.js';
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose one exact host-only conditional direct entrypoint',
-    );
-  });
-
-  test('rejects a cross-runtime directory storage fallback', () => {
-    const candidate = manifest();
-    candidate.exports['./storage/deno'].default = './lib/storage/deno.js';
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose Deno directory storage only under the Deno condition',
-    );
-  });
-
-  test('rejects an accidental low-level query entrypoint', () => {
-    const candidate = manifest();
-    candidate.exports['./query'] = {
-      types: './lib/query.d.ts',
-      default: './lib/query.js',
-    };
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'exports do not match the deliberate public package surface',
-    );
-  });
-
-  test('rejects an extra Node storage export condition', () => {
-    const candidate = manifest();
-    candidate.exports['./storage/node'].development = './lib/storage/node.js';
-    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose directory storage only under the Node condition',
     );
   });
 

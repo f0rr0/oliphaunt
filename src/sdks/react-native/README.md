@@ -110,6 +110,11 @@ speculative SDK `COMMIT` or `ROLLBACK`.
 
 ## Backup and storage
 
+`directory` from `@oliphaunt/react-native/storage` converts an absolute native
+path or a local `file:` URI into a directory storage descriptor for open or
+restore. For example, `directory('file:///data/my%20database')` selects
+`/data/my database`. It performs no filesystem operations.
+
 Backup has one representation: PostgreSQL physical initialization bytes.
 Restore requires an absent or empty destination and never replaces an existing
 root. The payload contains PGDATA and backup metadata, not the outer

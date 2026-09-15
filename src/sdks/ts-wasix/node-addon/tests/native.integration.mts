@@ -61,6 +61,25 @@ const assertTransferable = (bytes) => {
   return moved;
 };
 
+for (const server of [false, true]) {
+  const backing = Buffer.from('padding:invalid-manifest:padding');
+  const manifest = backing.subarray(8, 24);
+  const options = {
+    ...openOptions(),
+    icuData: { data: Uint8Array.from([1, 2, 3]), manifest },
+    ...(server ? { listen: { transport: 'tcp', port: 54321 } } : {}),
+  };
+  let opening;
+  assert.doesNotThrow(() => {
+    opening = server
+      ? addon.NativeWasixServer.open(options)
+      : addon.NativeWasixActorDatabase.open(options);
+  }, 'resource preparation errors must reject the asynchronous open');
+  manifest.fill(10);
+  await assert.rejects(opening, /invalid ICU manifest entry/u);
+}
+if (process.argv.includes('--resource-preparation-only')) process.exit(0);
+
 const direct = addon.NativeWasixDatabase.open(openOptions());
 const directResponse = direct.execProtocolRaw(queryMessage('select 4101'));
 assertResponse(directResponse, 4101);

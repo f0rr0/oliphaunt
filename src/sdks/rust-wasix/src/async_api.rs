@@ -458,8 +458,9 @@ impl Drop for DatabaseOwnerInner {
 }
 
 impl DatabaseOwner {
-    fn open_with_completion<C>(builder: DirectOliphauntBuilder, completion: C)
+    fn open_with_completion<F, C>(configure: F, completion: C)
     where
+        F: FnOnce() -> Result<DirectOliphauntBuilder> + Send + 'static,
         C: FnOnce(Result<Self>) + Send + 'static,
     {
         let completion = SharedCompletion::new(completion);
@@ -481,7 +482,7 @@ impl DatabaseOwner {
                     "WASIX database owner stopped before open completed",
                 );
                 let opened =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| builder.open()));
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| configure()?.open()));
                 let database = match opened {
                     Ok(Ok(database)) => {
                         completion.complete(Ok(Self {
@@ -1818,9 +1819,12 @@ impl AsyncOliphauntBuilder {
     /// Construct the Wasmer runtime and PostgreSQL session on its permanent owner thread.
     pub async fn open(self) -> Result<AsyncOliphaunt> {
         let (reply, receiver) = oneshot::channel();
-        DatabaseOwner::open_with_completion(self.inner, move |result| {
-            let _ = reply.send(result.map(|owner| AsyncOliphaunt { owner }));
-        });
+        DatabaseOwner::open_with_completion(
+            move || Ok(self.inner),
+            move |result| {
+                let _ = reply.send(result.map(|owner| AsyncOliphaunt { owner }));
+            },
+        );
         receiver
             .await
             .map_err(|_| Error::lifecycle("WASIX database owner stopped before open completed"))?
@@ -1838,9 +1842,27 @@ impl AsyncOliphauntBuilder {
     where
         C: FnOnce(Result<AsyncOliphaunt>) + Send + 'static,
     {
-        DatabaseOwner::open_with_completion(self.inner, move |result| {
-            completion(result.map(|owner| AsyncOliphaunt { owner }));
-        });
+        Self::open_configured_with_completion(move || Ok(self), completion);
+    }
+
+    /// Prepare resources and open on the permanent owner thread.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn open_configured_with_completion<F, C>(configure: F, completion: C)
+    where
+        F: FnOnce() -> std::result::Result<Self, String> + Send + 'static,
+        C: FnOnce(Result<AsyncOliphaunt>) + Send + 'static,
+    {
+        DatabaseOwner::open_with_completion(
+            move || {
+                configure()
+                    .map(|builder| builder.inner)
+                    .map_err(|error| Error::from_anyhow(crate::error::invalid_configuration(error)))
+            },
+            move |result| {
+                completion(result.map(|owner| AsyncOliphaunt { owner }));
+            },
+        );
     }
 }
 
@@ -3275,5 +3297,35 @@ mod close_tests {
             harness.started.try_recv(),
             Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected)
         ));
+    }
+}
+
+#[cfg(test)]
+mod configured_owner_tests {
+    use super::*;
+
+    #[test]
+    fn preparation_runs_on_owner_and_failure_completes_once() {
+        let caller = thread::current().id();
+        let (sent, received) = mpsc::channel();
+        AsyncOliphauntBuilder::open_configured_with_completion(
+            move || {
+                assert_ne!(thread::current().id(), caller);
+                Err("invalid database resources".to_owned())
+            },
+            move |result| {
+                sent.send(result.err().unwrap()).unwrap();
+            },
+        );
+        let error = received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfiguration);
+        assert!(error.to_string().contains("invalid database resources"));
+        assert!(
+            received
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_err()
+        );
     }
 }

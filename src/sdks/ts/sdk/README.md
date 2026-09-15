@@ -6,6 +6,10 @@ use the separate WASIX TypeScript package.
 
 ## Open and query
 
+Import `@oliphaunt/ts/direct` or `@oliphaunt/ts/broker` to select execution mode
+through the import path. These entrypoints retain the default API and reject a
+`topology` option; `/direct` also rejects `brokerExecutable`.
+
 ```ts
 import Oliphaunt from '@oliphaunt/ts';
 

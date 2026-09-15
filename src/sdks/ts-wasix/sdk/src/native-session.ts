@@ -144,18 +144,17 @@ export class NativeWasixSession implements WasixDatabaseSession {
     const assets = await loadNativeToolAssets(this.#runtimeVersion, options);
     if (options.tool.name === 'pg_dump') {
       try {
-        return toolProcessResult(
-          this.#handle.pgDump(userPgDumpArguments(options.args, this.identity), assets),
-        );
+        return toolProcessResult(this.#handle.pgDump(options.args, assets));
       } catch (error) {
         throw this.#mapFailure(error);
       }
     }
-    const parsed = userPsqlArguments(options.args, options.stdin, this.identity);
+    const script =
+      options.stdin === undefined
+        ? undefined
+        : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
     try {
-      return toolProcessResult(
-        this.#handle.psql(parsed.args, assets, parsed.command, parsed.script),
-      );
+      return toolProcessResult(this.#handle.psql(options.args, assets, options.command, script));
     } catch (error) {
       throw this.#mapFailure(error);
     }
@@ -282,13 +281,14 @@ export class NativeWasixActorSession implements WasixDatabaseSession {
     const assets = await loadNativeToolAssets(this.#runtimeVersion, options);
     try {
       if (options.tool.name === 'pg_dump') {
-        return toolProcessResult(
-          await this.#handle.pgDump(userPgDumpArguments(options.args, this.identity), assets),
-        );
+        return toolProcessResult(await this.#handle.pgDump(options.args, assets));
       }
-      const parsed = userPsqlArguments(options.args, options.stdin, this.identity);
+      const script =
+        options.stdin === undefined
+          ? undefined
+          : new TextDecoder('utf-8', { fatal: true }).decode(options.stdin);
       return toolProcessResult(
-        await this.#handle.psql(parsed.args, assets, parsed.command, parsed.script),
+        await this.#handle.psql(options.args, assets, options.command, script),
       );
     } catch (error) {
       throw this.#mapFailure(error);
@@ -586,70 +586,6 @@ function toolProcessResult(result: NativeWasixToolResult): WasixToolProcessResul
     stdout: binaryView(result.stdout),
     stderr: binaryView(result.stderr),
   };
-}
-
-function userPgDumpArguments(args: readonly string[], identity: WasixDatabaseIdentity): string[] {
-  const suffix = [
-    '--encoding=UTF8',
-    '--no-password',
-    `--username=${identity.username}`,
-    '--host=127.0.0.1',
-    '--port=65432',
-    `--dbname=${identity.database}`,
-  ];
-  return stripManagedSuffix('pg_dump', args, suffix);
-}
-
-function userPsqlArguments(
-  args: readonly string[],
-  stdin: Uint8Array | undefined,
-  identity: WasixDatabaseIdentity,
-): Readonly<{ args: string[]; command?: string; script?: string }> {
-  const managed = [
-    '--no-psqlrc',
-    '--no-password',
-    '--set=ON_ERROR_STOP=1',
-    `--username=${identity.username}`,
-    '--host=127.0.0.1',
-    '--port=65432',
-    `--dbname=${identity.database}`,
-  ];
-  const start = findExactSequence(args, managed);
-  if (start < 0) throw new Error('Oliphaunt WASIX psql call has an invalid managed argument set');
-  const user = args.slice(0, start);
-  const input = args.slice(start + managed.length);
-  if (input.length === 0) return { args: user };
-  if (input.length === 2 && input[0] === '--command' && input[1] !== undefined) {
-    return { args: user, command: input[1] };
-  }
-  if (input.length === 1 && input[0] === '--file=-' && stdin !== undefined) {
-    return {
-      args: user,
-      script: new TextDecoder('utf-8', { fatal: true }).decode(stdin),
-    };
-  }
-  throw new Error('Oliphaunt WASIX psql call has invalid managed input arguments');
-}
-
-function stripManagedSuffix(
-  tool: string,
-  args: readonly string[],
-  suffix: readonly string[],
-): string[] {
-  if (
-    args.length < suffix.length ||
-    !suffix.every((argument, index) => args[args.length - suffix.length + index] === argument)
-  ) {
-    throw new Error(`Oliphaunt WASIX ${tool} call has an invalid managed argument set`);
-  }
-  return args.slice(0, -suffix.length);
-}
-
-function findExactSequence(values: readonly string[], expected: readonly string[]): number {
-  for (let start = values.length - expected.length; start >= 0; start -= 1) {
-    if (expected.every((value, offset) => values[start + offset] === value)) return start;
-  }
-  return -1;
 }
 
 /** @internal Translate only the exact tagged native storage contract. */

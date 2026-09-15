@@ -10,7 +10,7 @@ import {
   type WasixProtocolConnectionMode,
   type WasixProtocolStreamOutcome,
 } from './database.js';
-import { serializeOpenConfig } from './client-common.js';
+import { serializeOpenConfig } from './open-config.js';
 import { toUint8Array } from './query.js';
 import type {
   SerializedAssetSource,

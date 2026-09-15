@@ -24,6 +24,7 @@ vi.mock('../native-session.js', () => ({
 }));
 
 import { openWasixWithHost } from '../client.js';
+import { directory } from '../storage/node.js';
 import type { OliphauntDatabase } from '../types.js';
 
 let crossOriginDescriptor: PropertyDescriptor | undefined;
@@ -80,6 +81,19 @@ afterEach(() => {
 });
 
 describe('WASIX browser root execution surface', () => {
+  it('rejects explicit browser entrypoint imports on native hosts', async () => {
+    await expect(import('../browser.js')).rejects.toThrow('requires a browser or browser worker');
+  });
+
+  it('rejects native storage before loading the browser host', async () => {
+    const loadHost = vi.fn();
+    // @ts-expect-error Exercise the JavaScript boundary with native-only storage.
+    await expect(openWasixWithHost({ storage: directory('/db') }, loadHost)).rejects.toThrow(
+      'directory storage is native-only',
+    );
+    expect(loadHost).not.toHaveBeenCalled();
+  });
+
   it('opens through the caller-realm engine and never constructs a Worker', async () => {
     const database = await openWasixWithHost(
       { username: 'application' },

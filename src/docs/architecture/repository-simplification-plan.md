@@ -147,6 +147,53 @@ race in run `34881596962` is fixed with per-source serialization and a real
 concurrent-fetch regression. Hosted qualification of this combined tree remains
 pending; these checks do not claim installed Android/iOS execution.
 
+### PR #211 reconciliation — 2026-09-15
+
+Reviewed PR #211 through `9608b2da`, including its follow-up fixes, against
+the current product owners. This is a selective integration, not adoption of
+the PR's alternative bundled-resource architecture.
+
+- TypeScript: add native `/direct` and `/broker` entrypoints, explicit WASIX
+  `/browser`, and host-specific storage types. Native entrypoints no longer
+  load browser storage/archive providers. Installed-package consumers check
+  the exported declarations. Preserve the existing default APIs.
+- Binary inputs: normalize Buffer views before deferred query snapshots and
+  copy descriptor bytes correctly, including nonzero offsets. WASIX N-API
+  snapshots seed/ICU views before moving validation and preparation onto the
+  database/server owner thread. Async resource failures reject promises.
+- WASIX tools: pass user arguments directly to native execution; append browser
+  connection/input flags at the browser execution boundary. Delete the reverse
+  parser for managed argument suffixes. Retain independent validated tool/AOT
+  assets. Component-wise backup paths reject traversal and remain portable.
+- Mobile: add the Java blocking facade over the existing Kotlin session and
+  an RN directory/file-URI helper. Swift native-only extensions explicitly
+  declare an empty resource payload, so source archives need not preserve
+  empty directories. Missing declared payloads and empty SQL-extension payloads
+  remain errors.
+- CI/public consumers: isolate unrelated APT feeds and inherited local
+  Cargo/Rust/runtime/Node/loader settings. Preserve prebuilt ripgrep setup.
+- Already covered: ABI 2, tools AOT carriers and packed-consumer selection,
+  explicit independent seeds/ICU, PR #210 discovery/permissions, verified Android
+  artifact versions, and Swift native dependency linkage/registration rollback.
+  Keep UUID's feature selection: the current AOT proof still needs that feature.
+- Not adopted: bundled standard seeds/contrib, runtime-owned duplicate ICU
+  products, old paths/tooling, wholesale provenance removal, or weaker Cargo
+  version checks. The PR's automatic Rust embedding and cross-SDK descriptor
+  API replacement are separate API designs, not required fixes to these ports.
+- Deferred external cutover: standalone Swift repository publication requires
+  explicit repository identities and publisher permissions aligned with the
+  current resource products. The PR's generic anonymous database-execution
+  publication probe is not implemented here; existing packed runtime consumers
+  and public installation checks retain their separate responsibilities.
+
+Local evidence includes the full WASIX TypeScript suite, native TypeScript
+tests/package checks, shared query tests, Swift tests/carrier composition,
+Android unit tests and a Java consumer compiled against the AAR, RN checks,
+WASIX/pgwire/N-API Rust tests and Clippy, and a rebuilt addon's asynchronous
+resource regression. The full pinned workflow gate and public-consumer
+environment tests pass. These results do not claim hosted qualification,
+Apple device execution, or implementation of the deferred API/publication work.
+
 Remaining execution checklist (grouped from the detailed tasks below):
 
 - [ ] **Current-tree qualification (03,06,24b,30):** commit the reviewed move and

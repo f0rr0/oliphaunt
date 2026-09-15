@@ -91,6 +91,12 @@ recovery, so the session remains reusable. A buffered or streaming transport or
 recovery failure is authoritative and poisons the database; close it instead of
 assuming a later operation can recover the physical session.
 
+Java callers can use `OliphauntJava.open(context)` or
+`OliphauntJava.open(context, config)` on an application worker thread. The
+returned `BlockingOliphauntDatabase` supports `execute`, `query`, `exec`,
+`backup`, `cancel`, and `close`, and implements `AutoCloseable` for
+try-with-resources. These methods block the calling thread.
+
 Suspending calls never execute embedded PostgreSQL or storage preparation on
 the Android UI thread. One single-thread owner dispatcher performs open,
 protocol calls, backup, and close in admission order. A transaction or close

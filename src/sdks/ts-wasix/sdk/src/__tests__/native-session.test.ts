@@ -117,7 +117,7 @@ describe('WASIX native embedded payload compatibility', () => {
       session.runTool({
         runtimeVersion: '0.1.1',
         tool: { ...toolDescriptor, sha256: 'b'.repeat(64) },
-        args: pgDumpArguments(),
+        args: ['--schema-only'],
       }),
     ).rejects.toThrow('SHA-256');
     expect(nativeMocks.pgDump).not.toHaveBeenCalled();
@@ -180,7 +180,7 @@ describe('WASIX native embedded payload compatibility', () => {
     const result = await session.runTool({
       runtimeVersion: '0.1.1',
       tool: toolDescriptor,
-      args: pgDumpArguments(),
+      args: ['--schema-only'],
     });
 
     expect(result).toEqual({
@@ -188,6 +188,44 @@ describe('WASIX native embedded payload compatibility', () => {
       stdout: Uint8Array.of(0xff, 0, 0x61),
       stderr: Uint8Array.of(0x80, 0xfe),
     });
+  });
+
+  it('passes user arguments and explicit psql input directly to both native owners', async () => {
+    for (const owner of [NativeWasixSession, NativeWasixActorSession]) {
+      const session = await owner.open(workerOpenOptions());
+      await session.runTool({
+        runtimeVersion: '0.1.1',
+        tool: toolDescriptor,
+        args: ['--schema-only'],
+      });
+      expect(nativeMocks.pgDump.mock.calls.at(-1)?.[0]).toEqual(['--schema-only']);
+      const tool = { ...toolDescriptor, name: 'psql' as const };
+      await session.runTool({
+        runtimeVersion: '0.1.1',
+        tool,
+        args: ['--tuples-only'],
+        command: 'select 1',
+      });
+      expect(nativeMocks.psql.mock.calls.at(-1)).toEqual([
+        ['--tuples-only'],
+        expect.anything(),
+        'select 1',
+        undefined,
+      ]);
+      await session.runTool({
+        runtimeVersion: '0.1.1',
+        tool,
+        args: [],
+        stdin: new TextEncoder().encode('select 2'),
+      });
+      expect(nativeMocks.psql.mock.calls.at(-1)).toEqual([
+        [],
+        expect.anything(),
+        undefined,
+        'select 2',
+      ]);
+      await session.close();
+    }
   });
 
   it('passes an immutable profile to direct and actor opens', async () => {
@@ -232,7 +270,7 @@ describe('WASIX native embedded payload compatibility', () => {
     const toolOptions = {
       runtimeVersion: '0.1.1',
       tool: toolDescriptor,
-      args: pgDumpArguments(),
+      args: ['--schema-only'],
     };
     const directTool = await direct.runTool(toolOptions);
     const actorTool = await actor.runTool(toolOptions);
@@ -491,15 +529,4 @@ function extensionCarrier(sqlName: string): SerializedExtensionCarrier {
       unresolvedImports: [],
     },
   };
-}
-
-function pgDumpArguments(): string[] {
-  return [
-    '--encoding=UTF8',
-    '--no-password',
-    '--username=postgres',
-    '--host=127.0.0.1',
-    '--port=65432',
-    '--dbname=postgres',
-  ];
 }

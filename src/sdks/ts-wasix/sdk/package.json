@@ -4,7 +4,10 @@
   "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, Deno, and Electron.",
   "license": "MIT",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./lib/browser.js",
+    "./lib/native-only.js"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/f0rr0/oliphaunt.git",
@@ -30,26 +33,56 @@
   },
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
-      "deno": "./lib/index.deno.js",
-      "bun": "./lib/index.bun.js",
-      "node": "./lib/index.node.js",
-      "browser": "./lib/index.js",
-      "default": "./lib/index.js"
+      "deno": {
+        "types": "./lib/index.deno.d.ts",
+        "default": "./lib/index.deno.js"
+      },
+      "bun": {
+        "types": "./lib/index.bun.d.ts",
+        "default": "./lib/index.bun.js"
+      },
+      "node": {
+        "types": "./lib/index.node.d.ts",
+        "default": "./lib/index.node.js"
+      },
+      "browser": {
+        "types": "./lib/index.d.ts",
+        "default": "./lib/index.js"
+      },
+      "default": {
+        "types": "./lib/index.d.ts",
+        "default": "./lib/index.js"
+      }
     },
     "./worker": {
-      "types": "./lib/worker-entry.d.ts",
-      "deno": "./lib/worker-entry.deno.js",
-      "bun": "./lib/worker-entry.bun.js",
-      "node": "./lib/worker-entry.node.js",
-      "browser": "./lib/worker-entry.js",
-      "default": "./lib/worker-entry.js"
+      "deno": {
+        "types": "./lib/worker-entry.deno.d.ts",
+        "default": "./lib/worker-entry.deno.js"
+      },
+      "bun": {
+        "types": "./lib/worker-entry.bun.d.ts",
+        "default": "./lib/worker-entry.bun.js"
+      },
+      "node": {
+        "types": "./lib/worker-entry.node.d.ts",
+        "default": "./lib/worker-entry.node.js"
+      },
+      "browser": {
+        "types": "./lib/worker-entry.d.ts",
+        "default": "./lib/worker-entry.js"
+      },
+      "default": {
+        "types": "./lib/worker-entry.d.ts",
+        "default": "./lib/worker-entry.js"
+      }
     },
     "./direct": {
       "types": "./lib/direct.node.d.ts",
       "deno": "./lib/direct.node.js",
       "bun": "./lib/direct.node.js",
-      "node": "./lib/direct.node.js"
+      "node": "./lib/direct.node.js",
+      "browser": "./lib/native-only.js",
+      "default": "./lib/native-only.js"
     },
     "./internal/tools": {
       "types": "./lib/internal.d.ts",
@@ -63,7 +96,9 @@
       "types": "./lib/server.node.d.ts",
       "deno": "./lib/server.node.js",
       "bun": "./lib/server.node.js",
-      "node": "./lib/server.node.js"
+      "node": "./lib/server.node.js",
+      "browser": "./lib/native-only.js",
+      "default": "./lib/native-only.js"
     },
     "./storage/indexed-db": {
       "types": "./lib/storage/indexed-db.d.ts",
@@ -87,6 +122,10 @@
     },
     "./package.json": {
       "default": "./package.json"
+    },
+    "./browser": {
+      "types": "./lib/browser.d.ts",
+      "default": "./lib/browser.js"
     }
   },
   "main": "lib/index.js",

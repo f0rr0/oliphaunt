@@ -1,5 +1,6 @@
 import NativeOliphaunt from './specs/NativeOliphaunt';
 import { createOliphauntClient } from './client';
+export { directory } from './storage';
 
 export type {
   BinaryInput,

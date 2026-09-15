@@ -13,7 +13,7 @@ import type {
   SerializedRuntimeDescriptor,
   SerializedToolRuntimeDescriptor,
 } from './rpc.js';
-import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from './storage-provider.js';
+import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from './database-root.js';
 import type { WasixAssetManifest } from './types.js';
 
 const decoder = new TextDecoder('utf-8', { fatal: true });

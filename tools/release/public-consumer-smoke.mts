@@ -13,10 +13,10 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { compareText, loadProducts, ROOT } from './release-graph.mts';
 import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
 import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
 import { validateRegistryReceiptEvidence } from './registry-integrity.mts';
+import { compareText, loadProducts, ROOT } from './release-graph.mts';
 import { validateGithubAttestationReceipt } from './verify_github_release_attestations.mts';
 
 export const PUBLIC_CONSUMER_EVIDENCE_SCHEMA = 'oliphaunt-public-consumer-smoke-v1';
@@ -379,10 +379,15 @@ export function sanitizedPublicEnvironment(overrides = {}, inherited = process.e
   for (const name of Object.keys(env)) {
     if (
       /(?:^|_)(?:AUTH|PASSWORD|PASSPHRASE|SECRET|TOKEN|USERNAME)(?:_|$)/iu.test(name) ||
-      /^CARGO_(?:REGISTRIES|REGISTRY|SOURCE)_/iu.test(name) ||
+      /^CARGO_/iu.test(name) ||
+      /^(?:RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|RUSTFLAGS|RUSTDOC|RUSTDOCFLAGS)$/u.test(
+        name,
+      ) ||
       /^GIT_/iu.test(name) ||
       /^NPM_CONFIG_/iu.test(name) ||
       /^ORG_GRADLE_PROJECT_/iu.test(name) ||
+      /^(?:OLIPHAUNT_|LIBOLIPHAUNT_|DYLD_)/u.test(name) ||
+      /^(?:NODE_OPTIONS|NODE_PATH|LD_LIBRARY_PATH)$/u.test(name) ||
       /^(?:DENO_CONFIG|DENO_DIR|DENO_IMPORT_MAP|DENO_LOCK|GRADLE_OPTS|JAVA_OPTS|JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS|_JAVA_OPTIONS)$/iu.test(
         name,
       )

@@ -18,6 +18,7 @@ export type WasixToolProcessOptions = Readonly<{
   args: readonly string[];
   /** @internal An exact ArrayBuffer-backed view is transferred and consumed. */
   stdin?: Uint8Array;
+  command?: string;
 }>;
 
 export type WasixToolProcessResult = Readonly<{

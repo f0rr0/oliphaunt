@@ -1,25 +1,11 @@
 import type { WasixDirectoryMount } from './archive.js';
-import { DATABASE_ROOT_POSTGRES_MAJOR, WASIX_PHYSICAL_FORMAT } from './database-root.js';
+import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from './database-root.js';
+export { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from './database-root.js';
 import { WasixStorageError } from './errors.js';
 import type { Directory } from './host/index.mjs';
 import type { SerializedWasixStorage } from './storage.js';
 import type { StoredSnapshot } from './storage-snapshot.js';
 import { validateIndexedDbDatabaseName, validateOpfsDatabaseName } from './storage.js';
-
-/** Stable fields that determine whether a WASIX runtime may open stored PGDATA. */
-export type WasixPhysicalIdentity = Readonly<{
-  schema: 'oliphaunt-physical-format-v1';
-  engineFamily: 'wasix';
-  postgresMajor: number;
-  physicalFormat: string;
-}>;
-
-export const WASIX_PHYSICAL_IDENTITY: WasixPhysicalIdentity = Object.freeze({
-  schema: 'oliphaunt-physical-format-v1',
-  engineFamily: 'wasix',
-  postgresMajor: DATABASE_ROOT_POSTGRES_MAJOR,
-  physicalFormat: WASIX_PHYSICAL_FORMAT,
-});
 
 export type StorageDirectoryEntry = Readonly<{
   type: 'dir' | 'file' | 'unknown';

@@ -1,3 +1,4 @@
+import { rejects } from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const fixture: {
   candidate: string;
@@ -16,6 +17,7 @@ const fixture: {
 import { Worker } from 'node:worker_threads';
 
 const candidate = fixture.candidate;
+await rejects(import(candidate + '/browser'), /requires a browser or browser worker/);
 const extension = fixture.extension;
 const runtime = fixture.runtime;
 const storageCondition = fixture.storageCondition;

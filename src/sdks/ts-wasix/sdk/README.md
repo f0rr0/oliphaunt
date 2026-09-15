@@ -10,6 +10,14 @@ native hosts the root uses a dedicated Rust owner thread. The explicit
 `/direct` import runs synchronously in the importing realm, while `/worker`
 uses a separate JavaScript Worker on every runtime.
 
+Use `@oliphaunt/wasix-ts/browser` for explicit browser imports; it rejects native
+hosts. Browser open and restore accept memory (open only), IndexedDB, and OPFS.
+Native root, `/direct`, `/worker`, and `/server` accept memory and directory
+storage. Host-specific declarations enforce these storage choices even when
+storage descriptors pass through variables; JavaScript callers receive runtime
+errors for unsupported storage.
+
+
 ## Install
 
 ```sh

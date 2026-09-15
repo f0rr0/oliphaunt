@@ -69,6 +69,18 @@ pub struct NativeIcuInput {
     pub manifest: Uint8Array,
 }
 
+// Snapshot caller-owned views before resource preparation moves off the JS thread.
+fn snapshot_resources(seed: &mut Option<NativeSeedInput>, icu: &mut Option<NativeIcuInput>) {
+    if let Some(seed) = seed {
+        seed.archive = Uint8Array::new(seed.archive.to_vec());
+        seed.manifest = Uint8Array::new(seed.manifest.to_vec());
+    }
+    if let Some(icu) = icu {
+        icu.data = Uint8Array::new(icu.data.to_vec());
+        icu.manifest = Uint8Array::new(icu.manifest.to_vec());
+    }
+}
+
 #[napi(object)]
 pub struct NativeOpenOptions {
     pub profile: String,
@@ -522,16 +534,19 @@ impl ObjectFinalize for NativeWasixServer {}
 #[napi]
 impl NativeWasixServer {
     #[napi(catch_unwind, ts_return_type = "Promise<NativeWasixServer>")]
-    pub fn open(env: Env, options: NativeServerOpenOptions) -> Result<Object<'static>> {
-        let builder = configure_async_server(options)?;
+    pub fn open(env: Env, mut options: NativeServerOpenOptions) -> Result<Object<'static>> {
+        snapshot_resources(&mut options.seed, &mut options.icu_data);
         let (deferred, promise) = env.create_deferred()?;
-        builder.start_with_completion(move |result| {
-            deferred.resolve(move |env| {
-                result
-                    .map(|server| Self { server })
-                    .map_err(|error| native_runtime_error(&env, "open WASIX server", error))
-            });
-        });
+        AsyncOliphauntServerBuilder::start_configured_with_completion(
+            move || configure_async_server(options).map_err(|error| error.reason),
+            move |result| {
+                deferred.resolve(move |env| {
+                    result
+                        .map(|server| Self { server })
+                        .map_err(|error| native_runtime_error(&env, "open WASIX server", error))
+                });
+            },
+        );
         Ok(static_object(&env, promise))
     }
 
@@ -1231,17 +1246,20 @@ impl ObjectFinalize for NativeWasixActorDatabase {}
 #[napi]
 impl NativeWasixActorDatabase {
     #[napi(catch_unwind, ts_return_type = "Promise<NativeWasixActorDatabase>")]
-    pub fn open(env: Env, options: NativeOpenOptions) -> Result<Object<'static>> {
-        let builder = configure_actor_database(options)?;
+    pub fn open(env: Env, mut options: NativeOpenOptions) -> Result<Object<'static>> {
+        snapshot_resources(&mut options.seed, &mut options.icu_data);
         let (deferred, promise) = env.create_deferred()?;
-        builder.open_with_completion(move |result| {
-            deferred.resolve(move |env| {
-                let database = result.map_err(|error| {
-                    native_runtime_error(&env, "open WASIX actor database", error)
-                })?;
-                Self::attach(&env, database)
-            });
-        });
+        AsyncOliphauntBuilder::open_configured_with_completion(
+            move || configure_actor_database(options).map_err(|error| error.reason),
+            move |result| {
+                deferred.resolve(move |env| {
+                    let database = result.map_err(|error| {
+                        native_runtime_error(&env, "open WASIX actor database", error)
+                    })?;
+                    Self::attach(&env, database)
+                });
+            },
+        );
         Ok(static_object(&env, promise))
     }
 

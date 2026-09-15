@@ -5,12 +5,16 @@ declare const persistentStorageDescriptorBrand: unique symbol;
  * An opaque storage selection created by this package's storage factories.
  * The descriptor is deliberately not a bag of user-authored paths or assets.
  */
-export type WasixStorage = Readonly<{
-  [storageDescriptorBrand]: 'oliphaunt-wasix-storage';
+export type WasixStorageKind = 'memory' | 'directory' | 'indexed-db' | 'opfs';
+
+export type WasixStorage<Kind extends WasixStorageKind = WasixStorageKind> = Readonly<{
+  [storageDescriptorBrand]: Kind;
 }>;
 
 /** Opaque persistent storage accepted by static physical restore. */
-export type PersistentWasixStorage = WasixStorage &
+export type PersistentWasixStorage<
+  Kind extends Exclude<WasixStorageKind, 'memory'> = Exclude<WasixStorageKind, 'memory'>,
+> = WasixStorage<Kind> &
   Readonly<{
     [persistentStorageDescriptorBrand]: 'oliphaunt-wasix-persistent-storage';
   }>;
@@ -42,7 +46,7 @@ const descriptorValues = new WeakMap<object, SerializedWasixStorage>();
  * Select a fresh in-memory database. This is also the default when `storage`
  * is omitted. Reusing the descriptor does not preserve data.
  */
-export function memory(): WasixStorage {
+export function memory(): WasixStorage<'memory'> {
   return defineStorage({
     schema: 'oliphaunt-wasix-storage-v1',
     kind: 'memory',
@@ -50,33 +54,33 @@ export function memory(): WasixStorage {
 }
 
 /** @internal Used by the selectively imported IndexedDB adapter. */
-export function defineIndexedDbStorage(name: string): PersistentWasixStorage {
+export function defineIndexedDbStorage(name: string): PersistentWasixStorage<'indexed-db'> {
   validateIndexedDbDatabaseName(name);
   return defineStorage({
     schema: 'oliphaunt-wasix-storage-v1',
     kind: 'indexed-db',
     name,
-  }) as PersistentWasixStorage;
+  }) as PersistentWasixStorage<'indexed-db'>;
 }
 
 /** @internal Used by the selectively imported OPFS adapter. */
-export function defineOpfsStorage(name: string): PersistentWasixStorage {
+export function defineOpfsStorage(name: string): PersistentWasixStorage<'opfs'> {
   validateOpfsDatabaseName(name);
   return defineStorage({
     schema: 'oliphaunt-wasix-storage-v1',
     kind: 'opfs',
     name,
-  }) as PersistentWasixStorage;
+  }) as PersistentWasixStorage<'opfs'>;
 }
 
 /** @internal Used by the selectively imported Node directory adapter. */
-export function defineDirectoryStorage(path: string): PersistentWasixStorage {
+export function defineDirectoryStorage(path: string): PersistentWasixStorage<'directory'> {
   validateHostDirectoryPath(path);
   return defineStorage({
     schema: 'oliphaunt-wasix-storage-v1',
     kind: 'directory',
     path,
-  }) as PersistentWasixStorage;
+  }) as PersistentWasixStorage<'directory'>;
 }
 
 /** @internal Validate and project the opaque main-thread value for the worker. */
@@ -129,8 +133,10 @@ export function validateHostDirectoryPath(path: unknown): asserts path is string
   }
 }
 
-function defineStorage(value: SerializedWasixStorage): WasixStorage {
+function defineStorage<Value extends SerializedWasixStorage>(
+  value: Value,
+): WasixStorage<Value['kind']> {
   const descriptor = Object.freeze({});
-  descriptorValues.set(descriptor, Object.freeze(value));
-  return descriptor as WasixStorage;
+  descriptorValues.set(descriptor, Object.freeze<SerializedWasixStorage>(value));
+  return descriptor as WasixStorage<Value['kind']>;
 }

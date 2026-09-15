@@ -190,19 +190,31 @@ impl AsyncOliphauntServerBuilder {
         self,
         completion: impl FnOnce(Result<AsyncOliphauntServer>) + Send + 'static,
     ) {
+        Self::start_configured_with_completion(move || Ok(self), completion);
+    }
+    /// Prepare resources and start on the permanent server owner thread.
+    #[doc(hidden)]
+    pub fn start_configured_with_completion(
+        configure: impl FnOnce() -> std::result::Result<Self, String> + Send + 'static,
+        completion: impl FnOnce(Result<AsyncOliphauntServer>) + Send + 'static,
+    ) {
         let completion = Arc::new(Mutex::new(Some(completion)));
         let callback = completion.clone();
         let spawned = thread::Builder::new()
             .name("oliphaunt-pgwire-owner".into())
             .spawn(move || {
-                let result =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.inner.start()))
-                        .unwrap_or_else(|_| {
-                            Err(Error::classified(
-                                ErrorKind::Lifecycle,
-                                "WASIX server startup panicked",
-                            ))
-                        });
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    configure()
+                        .map_err(|error| Error::classified(ErrorKind::InvalidConfiguration, error))?
+                        .inner
+                        .start()
+                }))
+                .unwrap_or_else(|_| {
+                    Err(Error::classified(
+                        ErrorKind::Lifecycle,
+                        "WASIX server startup panicked",
+                    ))
+                });
                 let callback = callback
                     .lock()
                     .unwrap_or_else(|error| error.into_inner())
@@ -252,6 +264,30 @@ impl AsyncOliphauntServerBuilder {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preparation_runs_on_owner_and_failure_completes_once() {
+        let caller = std::thread::current().id();
+        let (sent, received) = std::sync::mpsc::channel();
+        super::AsyncOliphauntServerBuilder::start_configured_with_completion(
+            move || {
+                assert_ne!(std::thread::current().id(), caller);
+                Err("invalid server resources".to_owned())
+            },
+            move |result| {
+                sent.send(result.err().unwrap()).unwrap();
+            },
+        );
+        let error = received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfiguration);
+        assert!(error.to_string().contains("invalid server resources"));
+        assert!(
+            received
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_err()
+        );
+    }
     use super::*;
     use std::future::Future;
     use std::task::{Context, Poll, Waker};

@@ -46,6 +46,14 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./direct": {
+      "types": "./lib/direct.d.ts",
+      "default": "./lib/direct.js"
+    },
+    "./broker": {
+      "types": "./lib/broker.d.ts",
+      "default": "./lib/broker.js"
+    },
     "./package.json": {
       "default": "./package.json"
     }

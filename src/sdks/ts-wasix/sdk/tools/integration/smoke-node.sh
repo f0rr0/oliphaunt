@@ -19,6 +19,10 @@ bun "$root/src/sdks/ts-wasix/sdk/tools/integration/smoke-node.mts" "$scratch" "$
 cd "$scratch/consumer"
 export NPM_CONFIG_IGNORE_SCRIPTS=true
 "$deadline" --kill-after=3s 120s bun install --ignore-scripts
+cp "$root/src/sdks/ts-wasix/sdk/tools/entrypoint-consumer.ts" "$scratch/consumer/entrypoint-consumer.mts"
+"$root/src/sdks/ts-wasix/sdk/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck \
+  --target ES2022 --module NodeNext --moduleResolution NodeNext \
+  --customConditions "$runtime" "$scratch/consumer/entrypoint-consumer.mts"
 case "$runtime" in
   node) host=(node) ;;
   bun) host=(bash "$root/tools/dev/bun.sh") ;;

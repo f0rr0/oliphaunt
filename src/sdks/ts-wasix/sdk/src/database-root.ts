@@ -8,6 +8,21 @@ export const DATABASE_ROOT_SCHEMA = 'oliphaunt-database-root-v1';
 export const DATABASE_ROOT_PGDATA = 'pgdata';
 export const DATABASE_ROOT_POSTGRES_MAJOR = CARRIER_POSTGRES_MAJOR;
 export const WASIX_PHYSICAL_FORMAT = CARRIER_PHYSICAL_FORMAT;
+/** Stable fields that determine whether a WASIX runtime may open stored PGDATA. */
+export type WasixPhysicalIdentity = Readonly<{
+  schema: 'oliphaunt-physical-format-v1';
+  engineFamily: 'wasix';
+  postgresMajor: number;
+  physicalFormat: string;
+}>;
+
+export const WASIX_PHYSICAL_IDENTITY: WasixPhysicalIdentity = Object.freeze({
+  schema: 'oliphaunt-physical-format-v1',
+  engineFamily: 'wasix',
+  postgresMajor: DATABASE_ROOT_POSTGRES_MAJOR,
+  physicalFormat: WASIX_PHYSICAL_FORMAT,
+});
+
 export const NATIVE_PHYSICAL_FORMAT = 'native-pg18-v1';
 
 export type DatabaseRootDescriptor = Readonly<{

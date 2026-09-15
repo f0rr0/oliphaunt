@@ -11,7 +11,7 @@ const nativeMocks = {
   serialize: vi.fn(),
 };
 
-vi.mock('../client-common.js', () => ({
+vi.mock('../open-config.js', () => ({
   serializeOpenConfig: nativeMocks.serialize,
 }));
 vi.mock('../native-session.js', () => ({

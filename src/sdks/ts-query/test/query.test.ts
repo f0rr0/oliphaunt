@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { test } from 'bun:test';
 
@@ -48,6 +49,16 @@ test('parameter plans infer OIDs without exposing mutable values across the awai
 
   assert.throws(() => plan.bind([postgresOids.text]), /cannot safely encode object/);
   assert.throws(() => planQuery('SELECT $1', [undefined as never]), /must not be undefined/);
+});
+
+test('deferred binding owns Buffer views with offsets', () => {
+  const bytes = Buffer.from([0, 1, 2, 3]);
+  const plan = planQuery('SELECT $1, $2', [bytes.subarray(1, 3), 'text']);
+  assert.equal(plan.kind, 'describe');
+  if (plan.kind !== 'describe') throw new Error('expected describe plan');
+  const expected = plan.bind([postgresOids.bytea, postgresOids.text]);
+  bytes.fill(9);
+  assert.deepEqual(plan.bind([postgresOids.bytea, postgresOids.text]), expected);
 });
 
 test('typed helpers make a one-exchange OID-aware plan', () => {

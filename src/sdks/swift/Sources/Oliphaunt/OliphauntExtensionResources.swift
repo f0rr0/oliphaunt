@@ -295,7 +295,7 @@ private func readPackagedExtensionResource(
     )
     let allowedRootEntries = Set(["files", "manifest.properties"])
     let actualRootEntries = Set(rootEntries.map(\.lastPathComponent))
-    guard actualRootEntries == allowedRootEntries else {
+    guard actualRootEntries.isSubset(of: allowedRootEntries), actualRootEntries.contains("manifest.properties") else {
         let unexpected = actualRootEntries.subtracting(allowedRootEntries).sorted()
         let missing = allowedRootEntries.subtracting(actualRootEntries).sorted()
         throw OliphauntError.engine(
@@ -351,7 +351,6 @@ private func readPackagedExtensionResource(
         expected: sharedPreloadLibraries.joined(separator: ","),
         source: manifestURL
     )
-    try requirePackagedExtensionProperty(manifest, key: "files", expected: "files", source: manifestURL)
     let createsExtension: Bool
     switch manifest["createsExtension"] {
     case "yes": createsExtension = true
@@ -362,8 +361,16 @@ private func readPackagedExtensionResource(
         )
     }
 
-    let filesRoot = standardizedRoot.appendingPathComponent("files", isDirectory: true)
-    let files = try packagedExtensionFiles(in: filesRoot)
+    let files: [OliphauntPackagedExtensionResource.File]
+    switch manifest["files"] {
+    case "files":
+        let filesRoot = standardizedRoot.appendingPathComponent("files", isDirectory: true)
+        files = try packagedExtensionFiles(in: filesRoot)
+    case "" where !createsExtension && !actualRootEntries.contains("files"):
+        files = []
+    default:
+        throw OliphauntError.engine("SwiftPM exact-extension resource \(sqlName) has an invalid files declaration")
+    }
     if createsExtension {
         let control = "share/postgresql/extension/\(sqlName).control"
         let installPrefix = "share/postgresql/extension/\(sqlName)--"

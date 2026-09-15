@@ -28,7 +28,13 @@
       "require": "./lib/commonjs/index.js",
       "default": "./lib/module/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./storage": {
+      "types": "./lib/typescript/storage.d.ts",
+      "import": "./lib/module/storage.js",
+      "require": "./lib/commonjs/storage.js",
+      "default": "./lib/module/storage.js"
+    }
   },
   "oliphaunt": {
     "swiftSdkVersion": "0.7.0",

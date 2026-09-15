@@ -59,7 +59,7 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
             nativeDependencies: nativeDependencies,
             sharedPreloadLibraries: sharedPreload
         )
-        #expect(try OliphauntRuntimeResources.registerPackagedExtensionResource(
+        let register = { try OliphauntRuntimeResources.registerPackagedExtensionResource(
             product: product,
             version: version,
             sqlName: sqlName,
@@ -68,7 +68,20 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
             nativeModuleStem: stem,
             sharedPreloadLibraries: sharedPreload,
             resourceRoot: fragment
-        ))
+        ) }
+        if !createsExtension {
+            let manifestURL = fragment.appendingPathComponent("manifest.properties")
+            let manifest = try String(contentsOf: manifestURL, encoding: .utf8)
+            for invalid in [
+                manifest.replacingOccurrences(of: "files=", with: "files=files"),
+                manifest.replacingOccurrences(of: "createsExtension=no", with: "createsExtension=yes"),
+            ] {
+                try writeExtensionCompositionText(manifestURL, invalid)
+                #expect(throws: OliphauntError.self) { try register() }
+            }
+            try writeExtensionCompositionText(manifestURL, manifest)
+        }
+        #expect(try register())
     }
 
     let requested = Set(["auto_explain", "earthdistance", "postgis", "pgtap"])
@@ -645,7 +658,7 @@ private func makeExtensionCompositionFragment(
         nativeModuleStem=\(nativeModuleStem ?? "")
         nativeDependencies=\(nativeDependencies.sorted().joined(separator: ","))
         sharedPreloadLibraries=\(sharedPreloadLibraries.sorted().joined(separator: ","))
-        files=files
+        files=\(createsExtension ? "files" : "")
         """
     )
     if createsExtension {
@@ -656,11 +669,6 @@ private func makeExtensionCompositionFragment(
         try writeExtensionCompositionText(
             root.appendingPathComponent("files/share/postgresql/extension/\(sqlName)--\(version).sql"),
             "SELECT 1;\n"
-        )
-    } else {
-        try writeExtensionCompositionText(
-            root.appendingPathComponent("files/share/postgresql/README.\(sqlName)"),
-            "module-only product \(sqlName)\n"
         )
     }
 }

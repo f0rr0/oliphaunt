@@ -274,7 +274,7 @@ test('copies restore bytes before asynchronous binding resolution', async () => 
     await releaseBinding.promise;
     return binding;
   });
-  const backup = new Uint8Array([7, 8]);
+  const backup = Buffer.from([0, 7, 8, 0]).subarray(1, 3);
 
   try {
     const restoring = client.restore(join(root, 'restored'), backup);
