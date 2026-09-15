@@ -194,6 +194,25 @@ resource regression. The full pinned workflow gate and public-consumer
 environment tests pass. These results do not claim hosted qualification,
 Apple device execution, or implementation of the deferred API/publication work.
 
+Robustness follow-up: run `34957705991` at `224ba8d1` exposed an incomplete
+local RN validation: the new storage tests passed, but the full suite rejected
+the additive export through a handwritten exact-name list. Replace that list
+with public-entrypoint directory/open/close behavior and run the full RN task,
+including its packaging/transport Shell tests. Native TypeScript's existing
+clean installed-consumer task also compiles and executes the new subpaths;
+packaging itself does not acquire another test phase. Fresh browser packages
+pass actual pg_dump/psql execution. The rebuilt WASIX addon passes its complete
+integration suite, and registered Rust resources and concurrent source fetching
+pass their behavioral checks. Mixed local runtime/extension/addon artifacts
+were correctly rejected; they are not qualifying evidence for installed hosts.
+After restoring matching producer artifacts and rebuilding the full-feature
+release addon, the installed WASIX SDK passes Node, Bun, Deno and Electron
+actor/direct/worker/server, extension, persistence and backup/restore checks.
+Native TypeScript's clean packed consumer passes Node/Bun/Deno; the full RN
+suite, lint/codegen/typecheck/build and Kotlin's both-ABI Maven packaging pass.
+These local results close the missed test coverage; hosted qualification of
+the follow-up commit remains required.
+
 Remaining execution checklist (grouped from the detailed tasks below):
 
 - [ ] **Current-tree qualification (03,06,24b,30):** commit the reviewed move and

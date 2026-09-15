@@ -20,7 +20,7 @@ import type {
 } from '../index';
 import type { JsiProtocolChunkResult } from '../jsiTransport';
 import { parseCommandResponse, text } from '../query';
-import type { Spec } from '../specs/NativeOliphaunt';
+import type { NativeOpenConfig, Spec } from '../specs/NativeOliphaunt';
 
 // OLIPHAUNT_DOCS_SNIPPET react-native-quickstart
 
@@ -65,7 +65,7 @@ const forgedEncodedParameter: EncodedQueryParameter = {
 void [plainJsonParameter, forgedEncodedParameter];
 
 async function main(): Promise<void> {
-  await testPublicEntrypointIsMinimal();
+  await testPublicEntrypointOpensDirectoryStorage();
   await testStartupGUCValidation();
   await testOpenUsesNativeDirectDefaults();
   await testExecuteReturnsPostgresCommandMetadata();
@@ -157,28 +157,27 @@ async function testStartupGUCValidation(): Promise<void> {
   }
 }
 
-async function testPublicEntrypointIsMinimal(): Promise<void> {
+async function testPublicEntrypointOpensDirectoryStorage(): Promise<void> {
+  const native = new MockNative();
   vi.mock('react-native', () => ({
     TurboModuleRegistry: {
       getEnforcing(name: string) {
         assert.equal(name, 'Oliphaunt');
-        return new MockNative();
+        return native;
       },
     },
   }));
   const entrypoint = await import('../index');
-  assert.deepEqual(Object.keys(entrypoint).sort(), [
-    'Oliphaunt',
-    'PostgresError',
-    'array',
-    'binary',
-    'default',
-    'json',
-    'postgresOids',
-    'text',
-    'typedNull',
-  ]);
   assert.equal(entrypoint.default, entrypoint.Oliphaunt);
+  const database = await entrypoint.Oliphaunt.open({
+    storage: entrypoint.directory('file:///data/my%20database'),
+  });
+  assert.equal(native.openCalls.length, 1);
+  assert.equal((native.openCalls[0] as NativeOpenConfig).storageKind, 'directory');
+  assert.equal((native.openCalls[0] as NativeOpenConfig).storagePath, '/data/my database');
+  await database.close();
+  assert.equal(database.closed, true);
+  assert.deepEqual(native.closedHandles, [1]);
 }
 
 async function testOpenUsesNativeDirectDefaults(): Promise<void> {

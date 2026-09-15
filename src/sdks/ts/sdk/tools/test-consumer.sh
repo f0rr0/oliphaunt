@@ -16,6 +16,11 @@ if [[ "${1:-}" == --published-dependencies ]]; then
 else
   bun install --cwd "$consumer" --ignore-scripts --omit optional
 fi
+cp src/sdks/ts/sdk/tools/entrypoint-consumer.mts "$consumer/entrypoints.mts"
+bun src/sdks/ts/sdk/node_modules/typescript/bin/tsc --ignoreConfig --noEmit --strict --skipLibCheck \
+  --target ES2022 --module NodeNext --types node \
+  --typeRoots "$root/src/sdks/ts/sdk/node_modules/@types" "$consumer/entrypoints.mts"
+bun "$consumer/entrypoints.mts"
 export OLIPHAUNT_SMOKE_SDK="$consumer/node_modules/@oliphaunt/ts/lib/index.js"
 if [[ "${1:-}" == --published-dependencies ]]; then
   bun src/sdks/ts/sdk/tools/published-consumer.mts "$consumer"

@@ -147,6 +147,7 @@ tasks:
     inputs:
       - tools/test-consumer.sh
       - tools/prepare-consumer.mts
+      - tools/entrypoint-consumer.mts
       - tools/test-native.sh
       - src/__tests__/native-*.{ts,mts}
       - /src/runtimes/liboliphaunt-native/tools/runtime-preflight.sh
@@ -165,6 +166,7 @@ tasks:
       - tools/test-consumer.sh
       - tools/prepare-consumer.mts
       - tools/published-consumer.mts
+      - tools/entrypoint-consumer.mts
       - tools/test-native.sh
       - src/__tests__/native-*.{ts,mts}
       - /src/runtimes/liboliphaunt-native/tools/runtime-preflight.sh
