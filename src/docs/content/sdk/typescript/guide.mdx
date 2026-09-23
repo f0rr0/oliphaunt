@@ -42,7 +42,7 @@ Install the npm package. Runtime assets and helper executables resolve through
 package configuration.
 
 ```sh
-npm install @oliphaunt/ts
+npm install @oliphaunt/ts@{{release:oliphaunt-js}}
 ```
 
 </Step>
@@ -52,8 +52,6 @@ npm install @oliphaunt/ts
 
 Open the package client, choose persistent storage, run SQL, and close the
 database.
-
-<!-- oliphaunt-snippet: oliphaunt-js -->
 
 ```ts
 import { Oliphaunt } from '@oliphaunt/ts';
@@ -221,3 +219,23 @@ const sql = await pgDump(server.connectionString, {
 Check runtime asset resolution, helper executable availability, storage ownership,
 unsupported-mode errors, extension selection, and SQLSTATE-bearing PostgreSQL
 errors.
+
+## Development resource inputs
+
+The following options describe the unreleased checkout API. They do not imply
+that new database-resource packages are available with the published version
+in the installation command above.
+
+Native Node/Bun/Deno use the same seed-validation and initialization rules.
+Pass `seed: { directory, manifestPath }` for an independently selected native
+seed directory and its producer receipt. Pass
+`icuData: { directory, manifestPath }` for the canonical ICU data directory
+and receipt. Keep these immutable resources separate from mutable database
+storage. Without a seed, supported desktop paths initialize with initdb; an
+existing database does not need its initialization seed again. ICU databases
+still require their selected ICU data. The server API uses its ordinary
+PostgreSQL initializer and does not accept a seed option.
+
+Node and Bun share the Rust-backed Node-API adapter. Deno retains its FFI host
+boundary; all three consume the same resource contract rather than separate
+package-discovery rules.

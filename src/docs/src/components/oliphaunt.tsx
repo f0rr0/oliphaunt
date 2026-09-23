@@ -484,17 +484,16 @@ const referenceRows = [
   },
   {
     need: 'Update an installed app',
-    answer:
-      'Match SDK versions, runtime artifacts, selected extensions, docs versions, and release notes.',
+    answer: 'Match SDK versions, runtime artifacts, selected extensions and release notes.',
     href: '/docs/reference/releases',
     label: 'Releases',
     icon: PackageCheck,
   },
   {
     need: 'Match versions',
-    answer: 'Use the generated version matrix for product compatibility and release contents.',
+    answer: 'Use the published products page for completed releases.',
     href: '/docs/reference/version-matrix',
-    label: 'Version Matrix',
+    label: 'Published Products',
     icon: GitBranch,
   },
   {
@@ -555,7 +554,7 @@ const releaseLookupRows = [
     question: 'Which package version fits my app?',
     answer: 'Start with the SDK package, then check the runtime dependency it carries.',
     href: '/docs/reference/version-matrix',
-    label: 'Version Matrix',
+    label: 'Published Products',
     icon: PackageCheck,
   },
   {

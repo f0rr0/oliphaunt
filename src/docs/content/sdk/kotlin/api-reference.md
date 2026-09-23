@@ -5,7 +5,7 @@ description: Kotlin and Android SDK API map for configuration, coroutine executi
 
 # API Reference
 
-Use the Dokka reference for exact declarations. This page maps the Kotlin SDK
+This page maps the Kotlin SDK
 surface by task.
 
 | Area | Public surface | Use it for |
@@ -30,7 +30,7 @@ val answer = result.rows.first().value("answer", PostgresDecoders.int)
 ```
 
 The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/architecture/stable-database-api.md).
 
 Managed transaction callbacks must not issue outer-lifecycle SQL: `BEGIN`/`START
 TRANSACTION`, `COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND

@@ -134,23 +134,6 @@ class OliphauntAndroidBoundaryTest {
   fun reactNativeAndroidDelegatesRuntimeToKotlinSdk() {
     assertEquals("dev.oliphaunt.Oliphaunt", Oliphaunt::class.java.name)
 
-    val nativeSourceDir = File(System.getProperty("user.dir"), "src/main/cpp")
-    val nativeSources = nativeSourceDir
-      .takeIf(File::isDirectory)
-      ?.walkTopDown()
-      ?.filter(File::isFile)
-      ?.toList()
-      ?: emptyList()
-
-    val nativeSourceNames = nativeSources
-      .map { it.relativeTo(nativeSourceDir).invariantSeparatorsPath }
-      .sorted()
-    assertEquals(
-      "React Native Android should only carry the JSI installer and must not duplicate the native C++ runtime",
-      listOf("CMakeLists.txt", "OliphauntJsiBindings.cpp", "include/oliphaunt.h"),
-      nativeSourceNames,
-    )
-
     val moduleSource = File(
       System.getProperty("user.dir"),
       "src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt",

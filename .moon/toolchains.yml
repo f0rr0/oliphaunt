@@ -5,7 +5,7 @@ proto:
 
 javascript:
   plugin: "registry://ghcr.io/moonrepo/javascript_toolchain@sha256:81c26ebeae43fb130ad3ce0411cbdfd3bc4aa9d5e488e25b43a08fda5e790176"
-  packageManager: "pnpm"
+  packageManager: "bun"
   installDependencies: false
   syncProjectWorkspaceDependencies: false
 
@@ -13,8 +13,8 @@ node:
   plugin: "registry://ghcr.io/moonrepo/node_toolchain@sha256:1ac2fab8bf5297bea9361132612b0dd70c63a9482606d06c15e48704643934ec"
   versionFromPrototools: true
 
-pnpm:
-  plugin: "registry://ghcr.io/moonrepo/node_depman_toolchain@sha256:9337febf5b59f5a789a252179a7c2b1dd7c05be79905e311366a016d9f6f8677"
+bun:
+  plugin: "registry://ghcr.io/moonrepo/bun_toolchain@sha256:d19bd0a3c223c8dcbcb7db71492761bc55fa799120f935289a788cb4c3c2128b"
   versionFromPrototools: true
 
 rust:

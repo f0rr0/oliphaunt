@@ -21,7 +21,7 @@ inputs:
   cache-save-if:
     description: Expression string passed to Swatinem/rust-cache save-if.
     required: false
-    default: "false"
+    default: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
   tools:
     description: Comma-separated tools for taiki-e/install-action.
     required: false
@@ -43,16 +43,26 @@ runs:
         workspaces: ${{ inputs.cache-workspaces }}
         save-if: ${{ inputs.cache-save-if }}
 
-    - name: Install ripgrep
+    - name: Find ripgrep
+      id: ripgrep
       shell: bash
       run: |
         set -euo pipefail
         if command -v rg >/dev/null 2>&1; then
           rg --version
-          exit 0
+          echo 'installed=true' >> "$GITHUB_OUTPUT"
         fi
-        cargo install ripgrep --version 15.1.0 --locked
-        rg --version
+
+    - name: Prepare Linux apt sources
+      if: ${{ runner.os == 'Linux' && (inputs.tools != '' || steps.ripgrep.outputs.installed != 'true') }}
+      shell: bash
+      run: .github/scripts/prepare-linux-apt.sh
+
+    - name: Install prebuilt ripgrep
+      if: ${{ steps.ripgrep.outputs.installed != 'true' }}
+      uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
+      with:
+        tool: ripgrep@15.1.0
 
     - name: Install Cargo tools
       if: ${{ inputs.tools != '' }}

@@ -25,7 +25,7 @@ Swift API plus the platform runtime artifacts required for the selected target.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.7.0")
+    .package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "{{release:oliphaunt-swift}}")
 ]
 ```
 
@@ -39,8 +39,6 @@ SDK package carries the runtime files it needs.
 
 Open an `OliphauntDatabase` with a persistent file URL, run SQL with async calls, and
 close when the app no longer needs the handle.
-
-<!-- oliphaunt-snippet: oliphaunt-swift -->
 
 ```swift
 let appSupport = FileManager.default.urls(
@@ -107,7 +105,8 @@ database actor.
 Configure storage, selected exact extensions, startup identity, and PostgreSQL
 startup GUCs through the Swift configuration API. Storage defaults to
 `.temporaryDirectory`; choose `.directory(url)` for persistence. Advanced
-resource overrides retain packaged defaults for normal apps.
+resource overrides allow app-owned resources. Released versions retain their
+packaged defaults; the development resource selection is described below.
 
 </Step>
 <Step>
@@ -190,3 +189,17 @@ data without mutation.
 Most Apple failures come from invalid file URLs, missing runtime resources, storage
 locks, runtime errors, or extension selection mismatches. PostgreSQL
 errors preserve SQLSTATE where the backend returns it.
+
+## Development resource packaging
+
+These resource-package changes are unreleased. The published installation
+versions above do not include this new package arrangement; use a coordinated
+checkout for this section.
+
+Select `OliphauntSeedNativeIOSStandard` or `OliphauntSeedNativeIOSICU` from the
+independent database-resources Swift source package for a new iOS database. The
+ICU product depends on `OliphauntICU`; an existing ICU database still needs that
+data even when the seed is omitted. The SDK discovers the selected bundles.
+The resource archive can be added as a local Swift package; no separate remote
+Swift repository URL has been published. Device qualification of the new seed
+carriers remains pending.

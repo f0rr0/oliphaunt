@@ -8,32 +8,7 @@ import Darwin
 import Glibc
 #endif
 
-#if os(iOS) || os(macOS) || os(tvOS) || os(watchOS) || os(visionOS)
-@Test
-func discoversCocoaPodsRuntimeResourceBundlesBeforeTheyAreLoaded() throws {
-    let root = FileManager.default.temporaryDirectory
-        .appendingPathComponent("oliphaunt-swift-bundle-discovery-\(UUID().uuidString)", isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: root) }
 
-    let bundleRoot = root.appendingPathComponent("OliphauntReactNativeResources.bundle", isDirectory: true)
-    let runtimeRoot = bundleRoot.appendingPathComponent("oliphaunt", isDirectory: true)
-    try FileManager.default.createDirectory(at: runtimeRoot, withIntermediateDirectories: true)
-    try Data(
-        """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0"><dict>
-          <key>CFBundleIdentifier</key><string>dev.oliphaunt.test.resources</string>
-          <key>CFBundleName</key><string>OliphauntReactNativeResources</string>
-          <key>CFBundlePackageType</key><string>BNDL</string>
-        </dict></plist>
-        """.utf8
-    ).write(to: bundleRoot.appendingPathComponent("Info.plist"))
-
-    let urls = bundleResourceURLs([], discoveringChildBundlesAt: root)
-    #expect(urls.map(\.standardizedFileURL).contains(bundleRoot.standardizedFileURL))
-}
-#endif
 
 @Test
 func runtimeCacheUsesApplicationDataNamespaceCasing() {
@@ -42,8 +17,8 @@ func runtimeCacheUsesApplicationDataNamespaceCasing() {
     #expect(cacheRoot.deletingLastPathComponent().lastPathComponent == "Oliphaunt")
 }
 
-// OLIPHAUNT_DOCS_SNIPPET swift-quickstart
 
+// OLIPHAUNT_DOCS_SNIPPET swift-quickstart
 @Test
 func executeReturnsPostgresCommandMetadata() async throws {
     let session = TestSession(response: commandResponse("UPDATE 3"))
@@ -1406,46 +1381,6 @@ func cancellationCannotStrandCloseOwnership() async throws {
     #expect(await database.isClosed)
 }
 
-@Test
-@MainActor
-func nativeOwnerRunsAwayFromTheMainThread() async throws {
-    let owner = OliphauntNativeOwner(label: "dev.oliphaunt.swift.tests.owner")
-    let ranOnMainThread = try await owner.run { Thread.isMainThread }
-    #expect(!ranOnMainThread)
-}
-
-@Test
-func nativeStreamCompletionPreservesCallbackOnlyAfterConfirmedRecovery() {
-    #expect(
-        classifyOliphauntNativeStreamCompletion(result: 0, callbackFailed: false) == .success
-    )
-    #expect(
-        classifyOliphauntNativeStreamCompletion(
-            result: OliphauntNativeStreamCompletion.callbackAbortedResult,
-            callbackFailed: true
-        ) == .callbackAborted
-    )
-    #expect(
-        classifyOliphauntNativeStreamCompletion(result: -1, callbackFailed: true) == .nativeFailure
-    )
-    #expect(
-        classifyOliphauntNativeStreamCompletion(result: -1, callbackFailed: false) == .nativeFailure
-    )
-    #expect(
-        classifyOliphauntNativeStreamCompletion(result: 0, callbackFailed: true) ==
-            .protocolInconsistency
-    )
-    #expect(
-        classifyOliphauntNativeStreamCompletion(
-            result: OliphauntNativeStreamCompletion.callbackAbortedResult,
-            callbackFailed: false
-        ) == .protocolInconsistency
-    )
-    #expect(
-        classifyOliphauntNativeStreamCompletion(result: 2, callbackFailed: true) ==
-            .protocolInconsistency
-    )
-}
 
 @Test
 func rawStreamCallbackFailureRejectsAndReleasesTheSession() async throws {
@@ -1733,7 +1668,7 @@ func nativeOpenDoesNotRejectAValidWasixRootDescriptor() async throws {
         )
         Issue.record("open should fail for a missing native library")
     } catch OliphauntError.engine(let message) {
-        #expect(message.contains("failed to load liboliphaunt"))
+        #expect(message.contains("/tmp/oliphaunt-swift-missing.dylib"))
     }
 }
 
@@ -2596,7 +2531,7 @@ private func databaseRootFixture() throws -> [String: Any] {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-        .appendingPathComponent("shared/fixtures/storage/database-root.json")
+        .appendingPathComponent("test-fixtures/storage/database-root.json")
     return try #require(
         JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any]
     )

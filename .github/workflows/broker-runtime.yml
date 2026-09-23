@@ -1,0 +1,56 @@
+name: broker-runtime
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        required: true
+        type: string
+      job-targets:
+        required: true
+        type: string
+permissions:
+  contents: read
+env:
+  OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ inputs.job-targets }}
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  HEAVY_CACHE_SAVE_IF: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: Builds / Broker Runtime (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up MSVC
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-msvc
+
+      - name: Build broker runtime release asset
+        run: .github/scripts/run-planned-moon-job.sh broker-runtime
+
+      - name: Upload broker release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-broker-release-assets-${{ matrix.target }}
+          path: target/oliphaunt-broker/release-assets
+          if-no-files-found: error
+

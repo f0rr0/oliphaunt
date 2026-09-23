@@ -17,7 +17,7 @@ usage() {
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
   fail "must run inside the Oliphaunt git checkout"
-manifest="${OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST:-$root/src/sources/toolchains/android-sdk.toml}"
+manifest="${OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST:-$root/tools/dev/android-sdk.toml}"
 if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
   fail "missing regular Android toolchain manifest: $manifest"
 fi
@@ -125,5 +125,8 @@ apk_classes="$("$apkanalyzer" dex packages "$apk")" ||
   fail "Android SDK apkanalyzer could not inspect APK bytecode: $apk"
 if ! grep -Eq '^C d [^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+dev\.oliphaunt\.DatabaseStorage\$TemporaryDirectory$' <<<"$apk_classes"; then
   fail "APK does not define the staged Kotlin SDK storage class; a stale Maven artifact may have won dependency resolution"
+fi
+if ! grep -Eq '^C d [^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+com\.sun\.jna\.Native$' <<<"$apk_classes"; then
+  fail "APK does not define the Kotlin SDK JNA runtime class"
 fi
 echo "Verified APK alignment, signature, and staged Kotlin SDK bytecode: $apk"

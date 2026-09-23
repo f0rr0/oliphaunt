@@ -73,9 +73,7 @@ case "$platform" in
     export OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER="${OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER:-maestro}"
     export OLIPHAUNT_EXPO_IOS_SCRATCH="$mobile_scratch"
     if [ "$mobile_runner" = "smoke" ]; then
-      export_mobile_e2e_icu_expectation_from_manifest \
-        "$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties" \
-        "iOS app"
+      export_mobile_e2e_icu_expectation_from_ios_app "$app"
       rm -f \
         "$mobile_scratch/reports/smoke-report.json" \
         "$mobile_scratch/reports/smoke-extension-receipt.json"

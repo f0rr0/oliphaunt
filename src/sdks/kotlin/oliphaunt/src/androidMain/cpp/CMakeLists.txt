@@ -2,24 +2,11 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project(liboliphaunt_kotlin_android LANGUAGES C CXX)
 
-add_library(oliphaunt_kotlin_android SHARED
-  oliphaunt_android_bridge.cpp
-)
-
-target_compile_features(oliphaunt_kotlin_android PRIVATE cxx_std_17)
-
-target_include_directories(oliphaunt_kotlin_android PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/include"
-)
-
-target_link_libraries(oliphaunt_kotlin_android PRIVATE
-  dl
-  log
-)
-
-target_link_options(oliphaunt_kotlin_android PRIVATE
-  "-Wl,-z,max-page-size=16384"
-)
+# Checkout builds use the runtime owner; source distributions carry this header.
+set(OLIPHAUNT_NATIVE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../runtimes/liboliphaunt-native/include")
+if(NOT EXISTS "${OLIPHAUNT_NATIVE_INCLUDE}/oliphaunt.h")
+  set(OLIPHAUNT_NATIVE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+endif()
 
 function(oliphaunt_find_file out_var)
   foreach(candidate IN LISTS ARGN)
@@ -74,7 +61,7 @@ if(DEFINED OLIPHAUNT_MOBILE_STATIC_MODULES AND NOT "${OLIPHAUNT_MOBILE_STATIC_MO
     LINKER_LANGUAGE CXX
   )
   target_include_directories(oliphaunt_extensions PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${OLIPHAUNT_NATIVE_INCLUDE}"
   )
   target_link_libraries(oliphaunt_extensions PRIVATE
     oliphaunt_imported

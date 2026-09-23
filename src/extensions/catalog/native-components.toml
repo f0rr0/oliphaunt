@@ -80,7 +80,7 @@ archive-candidates = ["openssl/libcrypto.a", "openssl/lib/libcrypto.a"]
 
 [[components]]
 id = "portable-uuid"
-source-path = "src/runtimes/liboliphaunt/native/portable-uuid"
+source-path = "src/runtimes/liboliphaunt-native/portable-uuid"
 depends-on = []
 runtime-files = []
 

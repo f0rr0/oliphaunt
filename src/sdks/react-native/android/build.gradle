@@ -63,7 +63,7 @@ def reactNativeCodegenDir = findNodeModuleDir("@react-native/codegen")
 if (reactNativeDir == null || reactNativeCodegenDir == null) {
   throw new GradleException(
     "Could not resolve react-native and @react-native/codegen from node_modules. " +
-    "Run pnpm install for @oliphaunt/react-native before building the Android package."
+    "Run bun install for @oliphaunt/react-native before building the Android package."
   )
 }
 def nodeExecutable = (project.findProperty("nodeExecutable") ?: System.getenv("NODE_BINARY") ?: "node").toString()
@@ -354,21 +354,14 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
       "target", "compatibilityKey", "initialSuperuser", "runtimeFeatures", "icuDataVersion",
       "icuDataForm", "icuDataTreeSha256", "cacheKey",
     ] as Set<String>
-    File receiptFile = new File(root, "manifest.properties")
-    Map<String, String> receipt = readStrictManifest(receiptFile)
-    Map<String, String> expectedReceipt = [
-      schema: "oliphaunt-native-runtime-carrier-v1",
-      clusterSeedTarget: "android-datum64",
-      clusterSeedRelativePath: "cluster-seed",
-      icuClusterSeedRelativePath: "cluster-seed-icu",
-    ]
-    if (receipt != expectedReceipt) {
-      throw new GradleException("Oliphaunt React Native Android runtime resources have an invalid target seed receipt")
-    }
     String runtimeIcuDigest = ""
     boolean runtimeUsesIcu = false
     String icuSeedDigest = ""
-    ["runtime", "cluster-seed", "cluster-seed-icu"].each { name ->
+    // Mobile apps carry only the seed selected by runtimeFeatures.
+    ["runtime", "cluster-seed"].each { name ->
+      if (name == "cluster-seed" && runtimeUsesIcu) {
+        name = "cluster-seed-icu"
+      }
       File manifest = new File(new File(root, name), "manifest.properties")
       if (!manifest.isFile()) {
         throw new GradleException("Oliphaunt React Native Android runtime resources are missing ${name}/manifest.properties under ${root.absolutePath}")
@@ -926,6 +919,8 @@ dependencies {
     // the staged AAR directly so an already-published artifact with the same
     // coordinate cannot win through another Gradle repository or cache.
     implementation files(kotlinSdkAar)
+    // File dependencies have no Maven metadata; supply the Kotlin SDK's JNA runtime.
+    implementation "net.java.dev.jna:jna:5.14.0@aar"
   } else {
     implementation kotlinSdkDependency
   }

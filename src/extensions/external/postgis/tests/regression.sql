@@ -1,3 +1,0 @@
--- Full upstream PostGIS regression coverage is declared in upstream.toml.
--- This file reserves the Oliphaunt-owned regression slot for runtime-specific
--- additions that are not covered by the smoke path.

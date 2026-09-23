@@ -18,6 +18,11 @@ public abstract class OliphauntAndroidExtension {
 
   public abstract Property<Boolean> getIcu();
 
+  /** Optional fresh-database seed profile: empty, standard or icu. */
+  public abstract Property<String> getSeedProfile();
+
+  public abstract Property<String> getDatabaseResourcesVersion();
+
   /** Extension SQL names selected for exact runtime and native packaging. */
   public abstract ListProperty<String> getSelectedExtensions();
 

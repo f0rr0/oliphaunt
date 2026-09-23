@@ -1,0 +1,8 @@
+{
+  "name": "@oliphaunt/release-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "release-please": "17.3.0"
+  }
+}

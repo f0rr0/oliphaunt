@@ -1,0 +1,19 @@
+{
+  "name": "@oliphaunt/liboliphaunt-wasix-tools-linux-arm64-gnu",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  }
+}

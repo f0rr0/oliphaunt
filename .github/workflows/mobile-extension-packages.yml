@@ -1,0 +1,63 @@
+name: Mobile extension packages
+on:
+  workflow_call:
+    inputs:
+      family:
+        type: string
+        required: true
+      targets:
+        type: string
+        required: true
+      products:
+        type: string
+        required: true
+      job-targets:
+        type: string
+        required: true
+permissions:
+  contents: read
+env:
+  OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ inputs.job-targets }}
+defaults:
+  run:
+    shell: bash
+jobs:
+  package:
+    name: Builds / Mobile Extension Packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Download native exact-extension artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: liboliphaunt-native-extension-artifacts-${{ inputs.family == 'ios' && 'ios-*' || 'android-*' }}
+          path: target/extensions/native/release-assets
+          merge-multiple: true
+
+      - name: Build mobile exact-extension package artifacts
+        env:
+          OLIPHAUNT_EXTENSION_PACKAGE_NATIVE_TARGETS: ${{ inputs.targets }}
+          OLIPHAUNT_EXTENSION_PACKAGE_PRODUCTS: ${{ inputs.products }}
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["extension-artifacts-native:build-target"]'
+        run: .github/scripts/run-planned-moon-job.sh mobile-extension-packages
+
+      - name: Upload mobile exact-extension package artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-mobile-extension-package-artifacts-${{ inputs.family }}
+          path: target/mobile-extension-artifacts
+          if-no-files-found: error
+

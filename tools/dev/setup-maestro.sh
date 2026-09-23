@@ -17,12 +17,11 @@ need_cmd() {
 need_cmd curl
 need_cmd java
 need_cmd mktemp
-need_cmd python3
 
 export MAESTRO_CLI_NO_ANALYTICS=true
 export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
 maestro_bin="$HOME/.maestro/bin/maestro"
-maestro_manifest="src/sources/toolchains/maestro.toml"
+maestro_manifest="tools/dev/maestro.toml"
 
 manifest_value() {
   local key="$1"
@@ -145,64 +144,7 @@ if [ "$actual_sha256" != "$maestro_sha256" ]; then
   exit 1
 fi
 
-python3 - "$archive" "$extract_root" "$normalized_version" <<'PY'
-import stat
-import sys
-import zipfile
-from pathlib import Path
-
-archive_path = Path(sys.argv[1])
-extract_root = Path(sys.argv[2])
-version = sys.argv[3]
-required = {
-    "maestro/bin/maestro",
-    f"maestro/lib/maestro-cli-{version}.jar",
-}
-seen = set()
-
-try:
-    with zipfile.ZipFile(archive_path) as archive:
-        entries = archive.infolist()
-        if not entries or len(entries) > 4096:
-            raise ValueError(f"unexpected entry count: {len(entries)}")
-        expanded_size = sum(entry.file_size for entry in entries)
-        if expanded_size > 800_000_000:
-            raise ValueError(f"expanded archive is too large: {expanded_size} bytes")
-
-        for entry in entries:
-            name = entry.filename
-            if not name or "\\" in name or "\x00" in name:
-                raise ValueError(f"unsafe archive path: {name!r}")
-            trimmed = name[:-1] if name.endswith("/") else name
-            parts = trimmed.split("/")
-            if (
-                not trimmed
-                or name.startswith("/")
-                or any(part in {"", ".", ".."} for part in parts)
-                or parts[0] != "maestro"
-            ):
-                raise ValueError(f"unsafe archive path: {name!r}")
-            canonical = "/".join(parts)
-            if canonical in seen:
-                raise ValueError(f"duplicate archive path: {canonical}")
-            seen.add(canonical)
-            if entry.flag_bits & 0x1:
-                raise ValueError(f"encrypted archive entry: {name}")
-            mode = (entry.external_attr >> 16) & 0xFFFF
-            file_type = stat.S_IFMT(mode)
-            if file_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
-                raise ValueError(f"unsupported archive entry type: {name}")
-
-        missing = sorted(required - seen)
-        if missing:
-            raise ValueError(f"missing expected archive entries: {', '.join(missing)}")
-        corrupt = archive.testzip()
-        if corrupt is not None:
-            raise ValueError(f"archive CRC validation failed at {corrupt}")
-        archive.extractall(extract_root)
-except (OSError, ValueError, zipfile.BadZipFile) as error:
-    raise SystemExit(f"invalid Maestro archive: {error}")
-PY
+bash tools/dev/bun.sh tools/dev/extract-maestro.mts "$archive" "$extract_root" "$normalized_version"
 
 candidate_root="$extract_root/maestro"
 candidate_bin="$candidate_root/bin/maestro"

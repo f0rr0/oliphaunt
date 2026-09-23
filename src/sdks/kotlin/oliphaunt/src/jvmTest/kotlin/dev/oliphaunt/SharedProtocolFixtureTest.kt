@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 class SharedProtocolFixtureTest {
     @Test
     fun structuredSqlScannerMatchesSharedFixtures() {
-        val path = sharedStructuredSqlFixturePath() ?: return
+        val path = sharedProtocolFixturePath("structured-sql-cases.json")
         val corpus = Json.parseToJsonElement(Files.readString(path)).jsonObject
         assertEquals(2, corpus.requiredInt("schemaVersion"))
         assertEquals("postgres-structured-sql-preflight", corpus.requiredString("kind"))
@@ -45,7 +45,7 @@ class SharedProtocolFixtureTest {
 
     @Test
     fun queryParserMatchesSharedProtocolFixtures() {
-        val path = sharedProtocolFixturePath() ?: return
+        val path = sharedProtocolFixturePath("query-response-cases.json")
         val corpus = Json.parseToJsonElement(Files.readString(path)).jsonObject
         assertEquals(1, corpus.requiredInt("schemaVersion"))
         assertEquals("postgres-backend-query-response", corpus.requiredString("kind"))
@@ -146,34 +146,12 @@ class SharedProtocolFixtureTest {
     }
 }
 
-private fun sharedProtocolFixturePath(): Path? {
-    val configured =
-        System
-            .getProperty("oliphaunt.sharedFixturesDir")
-            ?.takeIf(String::isNotBlank)
-            ?.let { Path.of(it, "protocol", "query-response-cases.json") }
-    val cwdCandidate =
-        Path
-            .of("")
-            .toAbsolutePath()
-            .resolve("../../shared/fixtures/protocol/query-response-cases.json")
-            .normalize()
-    return listOfNotNull(configured, cwdCandidate).firstOrNull(Files::isRegularFile)
-}
-
-private fun sharedStructuredSqlFixturePath(): Path? {
-    val configured =
-        System
-            .getProperty("oliphaunt.sharedFixturesDir")
-            ?.takeIf(String::isNotBlank)
-            ?.let { Path.of(it, "protocol", "structured-sql-cases.json") }
-    val cwdCandidate =
-        Path
-            .of("")
-            .toAbsolutePath()
-            .resolve("../../shared/fixtures/protocol/structured-sql-cases.json")
-            .normalize()
-    return listOfNotNull(configured, cwdCandidate).firstOrNull(Files::isRegularFile)
+private fun sharedProtocolFixturePath(name: String): Path {
+    val directory =
+        checkNotNull(System.getProperty("oliphaunt.sharedFixturesDir")?.takeIf(String::isNotBlank)) {
+            "Run fixture tests through Gradle to configure oliphaunt.sharedFixturesDir"
+        }
+    return Path.of(directory, "protocol", name)
 }
 
 private fun parseFixtures(cases: JsonArray): List<SharedProtocolFixture> = cases.map { element ->

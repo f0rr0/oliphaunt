@@ -5,7 +5,7 @@ swift_sdk_version = ENV.fetch("OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION") do
   package.fetch("oliphaunt", {}).fetch("swiftSdkVersion", package["version"])
 end
 swift_sdk_git = ENV.fetch("OLIPHAUNT_SWIFT_SDK_GIT_URL", "https://github.com/f0rr0/oliphaunt.git")
-swift_sdk_tag = ENV.fetch("OLIPHAUNT_SWIFT_SDK_TAG", "oliphaunt-swift-v#{swift_sdk_version}")
+swift_sdk_tag = ENV.fetch("OLIPHAUNT_SWIFT_SDK_TAG", swift_sdk_version)
 swift_sdk_commit = ENV["OLIPHAUNT_SWIFT_SDK_COMMIT"]
 swift_sdk_branch = ENV["OLIPHAUNT_SWIFT_SDK_BRANCH"]
 swift_sdk_source = { :git => swift_sdk_git }
@@ -30,4 +30,5 @@ Pod::Spec.new do |s|
   s.source_files = "src/sdks/swift/Sources/Oliphaunt/**/*.swift"
   s.requires_arc = true
   s.dependency "COliphaunt", swift_sdk_version
+  s.dependency "OliphauntNativeBindings", swift_sdk_version
 end

@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project(liboliphaunt_reactnative LANGUAGES C CXX)
 
+# Checkout builds use the runtime owner; source distributions carry this header.
+set(OLIPHAUNT_NATIVE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../runtimes/liboliphaunt-native/include")
+if(NOT EXISTS "${OLIPHAUNT_NATIVE_INCLUDE}/oliphaunt.h")
+  set(OLIPHAUNT_NATIVE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+endif()
+
 find_package(fbjni REQUIRED CONFIG)
 find_package(ReactAndroid REQUIRED CONFIG)
 
@@ -73,7 +79,7 @@ if(DEFINED OLIPHAUNT_MOBILE_STATIC_MODULES AND NOT "${OLIPHAUNT_MOBILE_STATIC_MO
     LINKER_LANGUAGE CXX
   )
   target_include_directories(oliphaunt_extensions PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${OLIPHAUNT_NATIVE_INCLUDE}"
   )
   target_link_libraries(oliphaunt_extensions PRIVATE
     oliphaunt_imported

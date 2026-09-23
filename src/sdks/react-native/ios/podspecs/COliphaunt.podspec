@@ -5,7 +5,7 @@ swift_sdk_version = ENV.fetch("OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION") do
   package.fetch("oliphaunt", {}).fetch("swiftSdkVersion", package["version"])
 end
 swift_sdk_git = ENV.fetch("OLIPHAUNT_SWIFT_SDK_GIT_URL", "https://github.com/f0rr0/oliphaunt.git")
-swift_sdk_tag = ENV.fetch("OLIPHAUNT_SWIFT_SDK_TAG", "oliphaunt-swift-v#{swift_sdk_version}")
+swift_sdk_tag = ENV.fetch("OLIPHAUNT_SWIFT_SDK_TAG", swift_sdk_version)
 swift_sdk_commit = ENV["OLIPHAUNT_SWIFT_SDK_COMMIT"]
 swift_sdk_branch = ENV["OLIPHAUNT_SWIFT_SDK_BRANCH"]
 swift_sdk_source = { :git => swift_sdk_git }
@@ -25,6 +25,9 @@ Pod::Spec.new do |s|
   s.homepage = "https://oliphaunt.dev"
   s.authors = { "Oliphaunt" => "opensource@oliphaunt.dev" }
   s.source = swift_sdk_source
+  # CocoaPods exports flattened public headers, so materialize the runtime ABI
+  # in the downloaded source before it copies the bridge headers.
+  s.prepare_command = "if test -f src/runtimes/liboliphaunt-native/include/oliphaunt.h; then cp src/runtimes/liboliphaunt-native/include/oliphaunt.h src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h; fi; test -s src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h"
   s.platforms = { :ios => "17.0" }
   s.source_files = "src/sdks/swift/Sources/COliphaunt/**/*.{c,h}"
   s.public_header_files = "src/sdks/swift/Sources/COliphaunt/include/COliphaunt.h", "src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h"

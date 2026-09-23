@@ -1,0 +1,16 @@
+id = "liboliphaunt-wasix"
+owner = "@oliphaunt/wasix"
+kind = "wasm-runtime"
+publish_targets = ["github-release-assets", "crates-io", "npm"]
+registry_packages = [
+  "crates:liboliphaunt-wasix-portable",
+  "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
+  "crates:liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+  "npm:@oliphaunt/liboliphaunt-wasix",
+  "npm:@oliphaunt/wasix-icu",
+]
+release_artifacts = [
+  "release-assets",
+]

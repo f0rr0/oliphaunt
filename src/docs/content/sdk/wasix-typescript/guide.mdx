@@ -5,6 +5,13 @@ description: Open, persist, transact, back up, and restore portable PostgreSQL f
 
 # Build With WASIX TypeScript
 
+<Callout type="info" title="Development checkout APIs">
+The resource and package separation shown below is unreleased. Installation
+versions on this site come from completed public releases; they do not make the
+new seed, resource, or pgwire packages available. Use a coordinated source
+checkout for these examples until those products are published.
+</Callout>
+
 <SdkGuideSummary id="wasix-typescript" />
 
 <Steps>
@@ -15,7 +22,7 @@ description: Open, persist, transact, back up, and restore portable PostgreSQL f
 Install the same package for browsers, Node.js, Bun, Deno, and Electron:
 
 ```sh
-pnpm add @oliphaunt/wasix-ts
+bun add @oliphaunt/wasix-ts@{{release:oliphaunt-wasix-ts}}
 ```
 
 Deno uses the same npm package as browsers, Node.js, Bun, and Electron:
@@ -36,15 +43,27 @@ companions in one directory.
 
 ### Open and query
 
-<!-- oliphaunt-snippet: oliphaunt-wasix-typescript -->
-
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
+import archive from '@oliphaunt/seed-wasix-standard/seed.tar.zst?url';
+import manifest from '@oliphaunt/seed-wasix-standard/manifest.json?url';
 
-await using database = await Oliphaunt.open();
+const seed = { archive, manifest };
+await using database = await Oliphaunt.open({ seed });
 const result = await database.query('select $1::int + 1 as answer', [41]);
 console.log(result.rows[0]?.answer);
 ```
+
+New browser storage requires a seed. The imports above use a browser bundler's
+asset URL support; seed packages are independently installed development
+carriers, not part of the SDK. Existing IndexedDB or OPFS storage reopens without
+`seed`. Node/Bun/Deno can initialize without a seed using the runtime's initdb.
+
+For ICU, use `@oliphaunt/seed-wasix-icu` instead and pass
+`icu: { data, manifest }`, where `data` is the raw `@oliphaunt/icu/data`
+asset and `manifest` is `@oliphaunt/icu/manifest`. Load both with `?url`
+in a browser bundler, or pass their bytes on a native host. ICU data remains
+required when reopening an ICU database; the seed does not.
 
 Browser pages must send these response headers. Bundlers using the explicit
 Worker surface must also preserve its module Worker asset:
@@ -96,6 +115,7 @@ import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
 const database = await Oliphaunt.open({
   storage: indexedDB('notes'),
+  seed,
   startupGUCs: { application_name: 'notes' },
 });
 ```
@@ -128,7 +148,7 @@ lowest dispatch overhead, or `/worker` for a separate JavaScript realm:
 import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
 import OliphauntDirect from '@oliphaunt/wasix-ts/direct';
 
-const database = await OliphauntWorker.open();
+const database = await OliphauntWorker.open({ seed });
 ```
 
 All placements return the same Promise-shaped `OliphauntDatabase` contract.
@@ -181,7 +201,7 @@ Import exact WASIX extension descriptors and pass them to `open()`:
 ```ts
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
-const database = await Oliphaunt.open({ extensions: [pgtap] });
+const database = await Oliphaunt.open({ seed, extensions: [pgtap] });
 await database.execute('CREATE EXTENSION pgtap');
 ```
 
@@ -219,10 +239,12 @@ descriptor; `.oliphaunt.json` is not carried in the archive.
 
 ### Use PostgreSQL tools
 
-Add the optional package when standard logical SQL is needed:
+The tools package now has its own `postgres-tools-wasix` release owner. Until
+that owner has a completed release, use the checkout carrier for the examples
+below; do not substitute the SDK version. Add it when standard logical SQL is needed:
 
 ```sh
-pnpm add @oliphaunt/wasix-tools
+bun add @oliphaunt/wasix-tools@{{release:postgres-tools-wasix}}
 ```
 
 ```ts
@@ -230,9 +252,9 @@ import Oliphaunt from '@oliphaunt/wasix-ts';
 import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
-await using source = await Oliphaunt.open();
+await using source = await Oliphaunt.open({ seed });
 const sql = await pgDump(source, { args: ['--schema-only'] });
-await using target = await OliphauntWorker.open();
+await using target = await OliphauntWorker.open({ seed });
 await psql(target, { script: sql });
 ```
 

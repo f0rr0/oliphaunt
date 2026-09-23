@@ -1,30 +1,6 @@
 import Foundation
 import COliphaunt
-
-enum OliphauntNativeStreamCompletion: Equatable {
-    case success
-    case callbackAborted
-    case nativeFailure
-    case protocolInconsistency
-
-    static let callbackAbortedResult = Int32(OLIPHAUNT_STREAM_CALLBACK_ABORTED)
-}
-
-func classifyOliphauntNativeStreamCompletion(
-    result: Int32,
-    callbackFailed: Bool
-) -> OliphauntNativeStreamCompletion {
-    if result < 0 {
-        return .nativeFailure
-    }
-    if result == OliphauntNativeStreamCompletion.callbackAbortedResult {
-        return callbackFailed ? .callbackAborted : .protocolInconsistency
-    }
-    if result == 0 {
-        return callbackFailed ? .protocolInconsistency : .success
-    }
-    return .protocolInconsistency
-}
+import OliphauntNativeBindings
 
 struct OliphauntNativeDirectEngine: OliphauntEngine {
     var libraryURL: URL?
@@ -41,15 +17,23 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         self.runtimeResources = runtimeResources
     }
 
-    func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
-        let owner = OliphauntNativeOwner(label: "dev.oliphaunt.swift.native-direct")
-        let box = try await owner.run { [self] in
-            try openOnOwner(configuration: configuration)
-        }
-        return NativeDirectSession(box: box, owner: owner)
+    private var resolvedLibraryPath: String? {
+        libraryURL?.path ?? ["OLIPHAUNT_SWIFT_LIBRARY", "LIBOLIPHAUNT_PATH", "OLIPHAUNT_LIBRARY"]
+            .compactMap { ProcessInfo.processInfo.environment[$0] }
+            .first { !$0.isEmpty }
     }
 
-    private func openOnOwner(configuration: OliphauntConfiguration) throws -> NativeSessionBox {
+    func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
+        oliphaunt_swift_link_runtime()
+        let options = try await Task.detached { [self] in
+            try prepare(configuration: configuration)
+        }.value
+        do {
+            return NativeDirectSession(database: try await NativeDatabase.open(options: options))
+        } catch { throw nativeError(error) }
+    }
+
+    private func prepare(configuration: OliphauntConfiguration) throws -> OpenOptions {
         try validateOliphauntStorage(configuration.storage)
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database, label: "database")
@@ -128,69 +112,27 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         let startupArgs = configuration.postgresStartupArgs(
             sharedPreloadLibraries: resolvedRuntime.sharedPreloadLibraries
         )
-        let libraryPath = libraryURL?.path
-        let runtimePath = resolvedRuntime.directory?.path ?? ""
-        var session: OpaquePointer?
-        let rc = withCStringArray(startupArgs) { startupArgPointers in
-            pgdata.path.withCString { pgdataCString in
-                runtimePath.withCString { runtimeCString in
-                    username.withCString { usernameCString in
-                        database.withCString { databaseCString in
-                            libraryPath.withOptionalCString { libraryCString in
-                                var config = OliphauntConfig(
-                                    abi_version: UInt32(OLIPHAUNT_ABI_VERSION),
-                                    pgdata: pgdataCString,
-                                    runtime_dir: runtimeCString,
-                                    module_dir: nil,
-                                    username: usernameCString,
-                                    database: databaseCString,
-                                    flags: 0,
-                                    startup_args: startupArgPointers,
-                                    startup_arg_count: startupArgs.count
-                                )
-                                return oliphaunt_swift_open(libraryCString, &config, &session)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        guard rc == 0, let session else {
-            // The native direct runtime is process-resident and may still own
-            // this directory after rejecting an incompatible logical reopen.
-            // Process-temporary storage is therefore reclaimed only with the
-            // process, never on a failed native open.
-            throw OliphauntError.engine(Self.lastError(nil))
-        }
-        return NativeSessionBox(pointer: session)
+        return OpenOptions(
+            libraryPath: resolvedLibraryPath,
+            pgdata: pgdata.path,
+            runtimeDirectory: resolvedRuntime.directory?.path,
+            moduleDirectory: nil,
+            icuDataDirectory: resolvedRuntime.catalogProfile == .icu
+                ? resolvedRuntime.directory?.appendingPathComponent("share/icu").path : nil,
+            username: username,
+            database: database,
+            startupArgs: startupArgs
+        )
     }
 
     func restore(destination: URL, bytes: Data) async throws {
-        let owner = OliphauntNativeOwner(label: "dev.oliphaunt.swift.native-direct.restore")
-        try await owner.run { [self] in
-            try restoreOnOwner(destination: destination, bytes: bytes)
-        }
-    }
-
-    private func restoreOnOwner(destination: URL, bytes: Data) throws {
+        oliphaunt_swift_link_runtime()
         try validateOliphauntDirectory(destination, label: "restore destination")
-        let libraryPath = libraryURL?.path
-        let rc = destination.path.withCString { destinationCString in
-            libraryPath.withOptionalCString { libraryCString in
-                bytes.withUnsafeBytes { rawBuffer in
-                    var options = OliphauntRestoreOptions(
-                        abi_version: UInt32(OLIPHAUNT_ABI_VERSION),
-                        destination: destinationCString,
-                        data: rawBuffer.bindMemory(to: UInt8.self).baseAddress,
-                        len: bytes.count
-                    )
-                    return oliphaunt_swift_restore(libraryCString, &options)
-                }
-            }
-        }
-        guard rc == 0 else {
-            throw OliphauntError.engine(Self.lastError(nil))
-        }
+        do {
+            try await OliphauntNativeBindings.restore(
+                libraryPath: resolvedLibraryPath, destination: destination.path, bytes: bytes
+            )
+        } catch { throw nativeError(error) }
     }
 
     private func resolveRuntime(
@@ -299,7 +241,7 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         username: String,
         catalogProfile: OliphauntNativeCatalogProfile
     ) throws {
-#if os(macOS)
+#if os(macOS) || os(Linux)
         let environment = ProcessInfo.processInfo.environment
         let initdb: URL
         if let configured = environment["OLIPHAUNT_INITDB"]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -337,8 +279,13 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         }
         if let runtimeDirectory {
             let libraryDirectory = runtimeDirectory.appendingPathComponent("lib", isDirectory: true).path
-            let inherited = environment["DYLD_LIBRARY_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-            childEnvironment["DYLD_LIBRARY_PATH"] = [libraryDirectory, inherited]
+            #if os(Linux)
+            let libraryVariable = "LD_LIBRARY_PATH"
+            #else
+            let libraryVariable = "DYLD_LIBRARY_PATH"
+            #endif
+            let inherited = environment[libraryVariable]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            childEnvironment[libraryVariable] = [libraryDirectory, inherited]
                 .compactMap { $0 }
                 .filter { !$0.isEmpty }
                 .joined(separator: ":")
@@ -501,26 +448,6 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
             )
     }()
 
-    fileprivate static func lastError(_ session: OpaquePointer?) -> String {
-        let required = oliphaunt_swift_copy_last_error(session, nil, 0)
-        guard required > 0, required < Int.max else {
-            return "unknown liboliphaunt Swift runtime error"
-        }
-        var bytes = [CChar](repeating: 0, count: required + 1)
-        let currentRequired = bytes.withUnsafeMutableBufferPointer { buffer in
-            oliphaunt_swift_copy_last_error(session, buffer.baseAddress, buffer.count)
-        }
-        if currentRequired >= bytes.count {
-            bytes = [CChar](repeating: 0, count: currentRequired + 1)
-            bytes.withUnsafeMutableBufferPointer { buffer in
-                _ = oliphaunt_swift_copy_last_error(session, buffer.baseAddress, buffer.count)
-            }
-        }
-        let message = bytes.withUnsafeBufferPointer { buffer in
-            String(cString: buffer.baseAddress!)
-        }
-        return message.isEmpty ? "unknown liboliphaunt Swift runtime error" : message
-    }
 
 }
 
@@ -656,345 +583,82 @@ private struct OliphauntFlatJSONParser {
     }
 }
 
-private final class NativeDirectSession: OliphauntSession, @unchecked Sendable {
-    private let box: NativeSessionBox
-    private let owner: OliphauntNativeOwner
-    private let cancellationOwner = OliphauntNativeOwner(
-        label: "dev.oliphaunt.swift.native-direct.cancel"
-    )
+private final class NativeDirectSession: OliphauntSession, Sendable {
+    private let database: NativeDatabase
 
-    init(box: NativeSessionBox, owner: OliphauntNativeOwner) {
-        self.box = box
-        self.owner = owner
-    }
-
-    deinit {
-        let box = box
-        owner.enqueue {
-            box.closeBestEffort()
-        }
-    }
+    init(database: NativeDatabase) { self.database = database }
 
     func execProtocolRaw(_ bytes: Data) async throws -> Data {
-        try await owner.run { [box] in
-            try box.execProtocolRaw(bytes)
-        }
+        let request = database.request()
+        return try await withTaskCancellationHandler {
+            do {
+                let result = try await request.execute(bytes: bytes)
+                return result
+            } catch NativeError.NotSubmitted {
+                throw OliphauntRequestNotSubmitted()
+            } catch {
+                throw nativeError(error)
+            }
+        } onCancel: { try? request.cancel() }
+    }
+
+    func execProtocolRawUncancelled(_ bytes: Data) async throws -> Data {
+        do { return try await database.request().execute(bytes: bytes) }
+        catch { throw nativeError(error) }
     }
 
     func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws -> OliphauntProtocolStreamOutcome {
-        try await owner.run { [box] in
-            try box.execProtocolRawStream(bytes, onChunk: onChunk)
-        }
+        let request = database.request()
+        let sink = NativeStreamSink(onChunk: onChunk)
+        return try await withTaskCancellationHandler {
+            do {
+                try await request.stream(bytes: bytes, sink: sink)
+                return .complete
+            } catch NativeError.Callback {
+                // Rust reports Callback only after confirming ReadyForQuery.
+                guard let error = sink.callbackError else {
+                    throw OliphauntError.engine("stream callback failed without its original error")
+                }
+                return .callbackAborted(error)
+            } catch NativeError.NotSubmitted {
+                throw OliphauntRequestNotSubmitted()
+            } catch {
+                throw nativeError(error)
+            }
+        } onCancel: { try? request.cancel() }
     }
 
     func backup() async throws -> Data {
-        try await owner.run { [box] in
-            try box.backup()
-        }
+        do { return try await database.backup() }
+        catch { throw nativeError(error) }
     }
-
     func cancel() async throws {
-        try await cancellationOwner.run { [box] in
-            try box.cancel()
-        }
+        do { try await database.cancel() }
+        catch { throw nativeError(error) }
     }
-
     func close() async throws {
-        try await owner.run { [box] in
-            try box.close()
-        }
+        do { try await database.detach() }
+        catch { throw nativeError(error) }
     }
 }
 
-final class OliphauntNativeOwner: @unchecked Sendable {
-    private let queue: DispatchQueue
+private final class NativeStreamSink: ChunkSink, @unchecked Sendable {
+    private let lock = NSLock()
+    private let onChunk: @Sendable (Data) throws -> Void
+    private var error: Error?
 
-    init(label: String) {
-        queue = DispatchQueue(label: label, qos: .userInitiated)
-    }
-
-    func run<Value: Sendable>(
-        _ operation: @escaping @Sendable () throws -> Value
-    ) async throws -> Value {
-        try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                continuation.resume(with: Result(catching: operation))
-            }
-        }
-    }
-
-    func enqueue(_ operation: @escaping @Sendable () -> Void) {
-        queue.async(execute: operation)
+    init(onChunk: @escaping @Sendable (Data) throws -> Void) { self.onChunk = onChunk }
+    var callbackError: Error? { lock.withLock { error } }
+    func onChunk(bytes: Data) -> Bool {
+        do { try onChunk(bytes); return true }
+        catch { lock.withLock { self.error = error }; return false }
     }
 }
 
-private final class NativeSessionBox: @unchecked Sendable {
-    private let condition = NSCondition()
-    private var pointer: OpaquePointer?
-    private var closing = false
-    private var closed = false
-    private var activeCalls = 0
-
-    init(pointer: OpaquePointer) {
-        self.pointer = pointer
-    }
-
-    deinit {
-        closeBestEffort()
-    }
-
-    func execProtocolRaw(_ bytes: Data) throws -> Data {
-        let pointer = try beginCall()
-        defer {
-            endCall()
-        }
-
-        var response = OliphauntResponse(data: nil, len: 0)
-        let rc = bytes.withUnsafeBytes { rawBuffer in
-            let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress
-            return oliphaunt_swift_exec_protocol(pointer, base, bytes.count, &response)
-        }
-        guard rc == 0 else {
-            throw OliphauntError.engine(OliphauntNativeDirectEngine.lastError(pointer))
-        }
-        defer {
-            oliphaunt_swift_free_response(pointer, &response)
-        }
-        guard let data = response.data, response.len > 0 else {
-            return Data()
-        }
-        return Data(bytes: data, count: response.len)
-    }
-
-    func execProtocolRawStream(
-        _ bytes: Data,
-        onChunk: @escaping @Sendable (Data) throws -> Void
-    ) throws -> OliphauntProtocolStreamOutcome {
-        let pointer = try beginCall()
-        defer {
-            endCall()
-        }
-
-        let callbackBox = NativeStreamCallbackBox(onChunk: onChunk)
-        let context = Unmanaged.passUnretained(callbackBox).toOpaque()
-        let rc = bytes.withUnsafeBytes { rawBuffer in
-            let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress
-            return oliphaunt_swift_exec_protocol_raw_stream(
-                pointer,
-                base,
-                bytes.count,
-                { context, data, len in
-                    guard let context else {
-                        return -1
-                    }
-                    let callbackBox = Unmanaged<NativeStreamCallbackBox>
-                        .fromOpaque(context)
-                        .takeUnretainedValue()
-                    do {
-                        if let data, len > 0 {
-                            try callbackBox.onChunk(Data(bytes: data, count: len))
-                        } else {
-                            try callbackBox.onChunk(Data())
-                        }
-                        return 0
-                    } catch {
-                        callbackBox.error = error
-                        return -1
-                    }
-                },
-                context
-            )
-        }
-        switch classifyOliphauntNativeStreamCompletion(
-            result: rc,
-            callbackFailed: callbackBox.error != nil
-        ) {
-        case .success:
-            return .complete
-        case .callbackAborted:
-            // The positive status proves liboliphaunt drained through
-            // ReadyForQuery; only this outcome may preserve callback identity.
-            guard let callbackError = callbackBox.error else {
-                throw OliphauntError.engine(
-                    "liboliphaunt reported a recovered callback abort without a callback failure"
-                )
-            }
-            return .callbackAborted(callbackError)
-        case .nativeFailure:
-            // A negative result means transport or recovery failed. Its native
-            // diagnostic is authoritative even when the callback also threw.
-            throw OliphauntError.engine(OliphauntNativeDirectEngine.lastError(pointer))
-        case .protocolInconsistency:
-            throw OliphauntError.engine(
-                "liboliphaunt returned protocol stream result \(rc) with " +
-                    (callbackBox.error == nil ? "no callback failure" : "an unconfirmed callback failure")
-            )
-        }
-    }
-
-    func backup() throws -> Data {
-        let pointer = try beginCall()
-        defer {
-            endCall()
-        }
-
-        var response = OliphauntResponse(data: nil, len: 0)
-        let rc = oliphaunt_swift_backup(pointer, &response)
-        guard rc == 0 else {
-            throw OliphauntError.engine(OliphauntNativeDirectEngine.lastError(pointer))
-        }
-        defer {
-            oliphaunt_swift_free_response(pointer, &response)
-        }
-        guard let data = response.data, response.len > 0 else {
-            return Data()
-        }
-        return Data(bytes: data, count: response.len)
-    }
-
-    func cancel() throws {
-        let pointer = try beginCancellation()
-        defer {
-            endCall()
-        }
-        let rc = oliphaunt_swift_cancel(pointer)
-        guard rc == 0 else {
-            throw OliphauntError.engine(OliphauntNativeDirectEngine.lastError(pointer))
-        }
-    }
-
-    func close() throws {
-        let pointer = beginClose()
-        guard let pointer else {
-            return
-        }
-        let rc = oliphaunt_swift_close(pointer)
-        if rc == 0 {
-            finishClose(detached: true)
-            return
-        }
-        let message = OliphauntNativeDirectEngine.lastError(pointer)
-        finishClose(detached: false)
-        throw OliphauntError.engine(message)
-    }
-
-    func closeBestEffort() {
-        let pointer = beginClose()
-        if let pointer {
-            let rc = oliphaunt_swift_close(pointer)
-            finishClose(detached: rc == 0)
-        }
-    }
-
-    private func beginCall() throws -> OpaquePointer {
-        condition.lock()
-        defer {
-            condition.unlock()
-        }
-        while !closing && !closed && activeCalls > 0 {
-            condition.wait()
-        }
-        guard let pointer, !closing, !closed else {
-            throw OliphauntError.databaseClosed
-        }
-        activeCalls += 1
-        return pointer
-    }
-
-    private func beginCancellation() throws -> OpaquePointer {
-        condition.lock()
-        defer {
-            condition.unlock()
-        }
-        guard let pointer, !closing, !closed else {
-            throw OliphauntError.databaseClosed
-        }
-        // Cancellation is intentionally out of band and may overlap the
-        // serialized query call it interrupts. Counting it here still makes
-        // close wait until the native cancel call has released the pointer.
-        activeCalls += 1
-        return pointer
-    }
-
-    private func endCall() {
-        condition.lock()
-        activeCalls -= 1
-        condition.broadcast()
-        condition.unlock()
-    }
-
-    private func beginClose() -> OpaquePointer? {
-        condition.lock()
-        while closing {
-            condition.wait()
-        }
-        if closed {
-            condition.unlock()
-            return nil
-        }
-        closing = true
-        let pointer = self.pointer
-        while activeCalls > 0 {
-            condition.wait()
-        }
-        condition.unlock()
-        return pointer
-    }
-
-    private func finishClose(detached: Bool) {
-        condition.lock()
-        if detached {
-            pointer = nil
-            closed = true
-        }
-        closing = false
-        condition.broadcast()
-        condition.unlock()
-    }
-
-}
-
-private final class NativeStreamCallbackBox: @unchecked Sendable {
-    let onChunk: @Sendable (Data) throws -> Void
-    var error: Error?
-
-    init(onChunk: @escaping @Sendable (Data) throws -> Void) {
-        self.onChunk = onChunk
-    }
-}
-
-
-private func withCStringArray<T>(
-    _ strings: [String],
-    _ body: (UnsafePointer<UnsafePointer<CChar>?>?) throws -> T
-) rethrows -> T {
-    let cStrings = strings.map { strdup($0) }
-    defer {
-        for cString in cStrings {
-            free(cString)
-        }
-    }
-    let pointers = cStrings.map { cString -> UnsafePointer<CChar>? in
-        guard let cString else {
-            return nil
-        }
-        return UnsafePointer(cString)
-    }
-    return try pointers.withUnsafeBufferPointer { buffer in
-        try body(buffer.baseAddress)
-    }
-}
-
-private extension Optional where Wrapped == String {
-    func withOptionalCString<T>(_ body: (UnsafePointer<CChar>?) throws -> T) rethrows -> T {
-        switch self {
-        case .some(let value):
-            return try value.withCString(body)
-        case .none:
-            return try body(nil)
-        }
-    }
+private func nativeError(_ error: Error) -> OliphauntError {
+    if case NativeError.Database(let detail) = error { return .engine(detail) }
+    return .engine(String(describing: error))
 }

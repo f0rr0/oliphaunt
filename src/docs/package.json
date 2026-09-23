@@ -3,24 +3,17 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "node tools/run-docs-task.mjs generate && next dev --hostname 127.0.0.1",
-    "generate": "node tools/run-docs-task.mjs generate",
-    "api-reference": "node tools/generate-api-reference.mjs --mode=release",
-    "api-reference:check": "pnpm run api-reference && node tools/check-docs-product.mjs --api-reference",
-    "check": "node tools/run-docs-task.mjs check",
-    "build": "node tools/run-docs-task.mjs build",
-    "smoke": "node tools/smoke-built-site.mjs",
-    "release-check": "node tools/run-docs-task.mjs release-check",
-    "start": "next start",
-    "types:check": "node tools/run-docs-task.mjs check",
-    "postinstall": "fumadocs-mdx",
+    "dev": "bun run generate && next dev --hostname 127.0.0.1",
+    "generate": "bun tools/generate-content.mts && fumadocs-mdx",
+    "check": "bun tools/check-docs-product.mts && next typegen && fumadocs-mdx && tsc --noEmit",
+    "build": "bun run generate && next build && bun tools/publish-next-export.mts",
+    "smoke": "bun tools/smoke-built-site.mts",
     "lint": "biome check",
-    "format": "biome format --write"
+    "format": "biome format --write",
+    "test": "bun test tools/published-products.test.mts tools/verify-live.test.mts && bash tools/request-refresh.test.sh"
   },
   "dependencies": {
     "@mdx-js/react": "^3.1.0",
-    "@oliphaunt/react-native": "workspace:*",
-    "@oliphaunt/ts": "workspace:*",
     "clsx": "^2.1.1",
     "fumadocs-core": "16.9.3",
     "fumadocs-mdx": "15.0.10",
@@ -31,11 +24,9 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "simple-icons": "16.28.0",
-    "smol-toml": "^1.4.2",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.16",
     "@tailwindcss/postcss": "^4.3.0",
     "@types/mdx": "^2.0.13",
     "@types/node": "22.19.19",

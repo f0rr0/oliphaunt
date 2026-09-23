@@ -40,7 +40,7 @@ path = "src/extensions/external/pg_hashids/source.toml"
 
 [extension.compatibility]
 postgres_major = "18"
-extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+extension_runtime_contract = "src/extensions/contracts/contract.toml"
 native_runtime_product = "liboliphaunt-native"
 native_runtime_version = "0.2.0"
 wasix_runtime_product = "liboliphaunt-wasix"

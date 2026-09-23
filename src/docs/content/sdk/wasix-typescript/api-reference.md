@@ -3,9 +3,12 @@ title: WASIX TypeScript API Reference
 description: Public API map for portable TypeScript database, storage, query, and physical archive operations.
 ---
 
+> **Development checkout:** This section describes unreleased package separation. Published installation versions elsewhere on this site refer only to completed public releases.
+
+
+
 # WASIX TypeScript API Reference
 
-Use the generated TypeDoc reference for exact declarations.
 
 | Area | Public surface | Purpose |
 | --- | --- | --- |
@@ -21,6 +24,7 @@ Use the generated TypeDoc reference for exact declarations.
 | Storage | `memory`, plus the `storage/indexed-db`, `storage/opfs`, `storage/node`, `storage/bun`, and `storage/deno` subpaths | Select one host-appropriate storage provider |
 | Query values | `QueryParam`, `QueryResult`, `RawQueryResult`, `QueryField`, `CommandResult`, `ExecResult`, `DescribeResult` | Use decoded or lossless PostgreSQL parameter and result values |
 | Diagnostics | query-scoped `notices`, `PostgresError`, `WasixStorageError` | Distinguish PostgreSQL diagnostics from host persistence failures |
+| Initialization resources | `OpenConfig.seed`, `WasixSeed`, `OpenConfig.icu` | Select independent archive/manifest inputs; new browser storage requires a seed, reopening does not, and ICU data remains required for ICU roots |
 | Extensions | `WasixExtensionDescriptor` | Materialize an exact independently packaged WASIX extension and its startup config; run normal database-local `CREATE EXTENSION`/`LOAD` explicitly in app or ORM migrations |
 | Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run a standard plain logical dump against root, direct, or Worker handles; non-interactive psql accepts any native-host placement and requires a Worker handle in browsers |
 | Optional local server | `openServer`, `ServerListen`, `OliphauntServer.connectionString`, read-only `OliphauntServer.closed`, `close`, and `Symbol.asyncDispose` from `@oliphaunt/wasix-ts/server` | Publish and lifecycle-manage one loopback TCP or PostgreSQL-named Unix endpoint on Node, Bun, Deno, or Electron |
@@ -32,7 +36,7 @@ const raw = await database.queryRaw('select $1::bytea as payload', [new Uint8Arr
 ```
 
 The cross-SDK behavior follows the
-[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+[stable database API](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/architecture/stable-database-api.md).
 
 Inside a callback transaction, do not issue manual `BEGIN`, `START
 TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`.

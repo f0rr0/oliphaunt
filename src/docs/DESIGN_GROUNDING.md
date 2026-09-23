@@ -1,7 +1,7 @@
 # Oliphaunt Docs Design Grounding
 
 This file keeps the docs-site work scoped to the visual and UX foundation for
-`src/docs`.
+`docs`.
 
 ## Goal
 
@@ -59,13 +59,13 @@ Observed from `https://motion.dev/docs`, `/docs/react`, and deeper docs pages:
 ## Review Protocol
 
 - Revisit the docs app on mobile and desktop after substantial layout edits.
-- Run `pnpm --dir src/docs check` before handing off docs changes.
-- Use `pnpm --dir src/docs build` when changes touch route composition,
+- Run `bun run --cwd docs check` before handing off docs changes.
+- Use `bun run --cwd docs build` when changes touch route composition,
   metadata, generated content, or Next.js boundaries.
 
 ## Implementation Checklist
 
-- [x] Scope remains inside `src/docs`.
+- [x] Scope remains inside `docs`.
 - [ ] Landing page and every docs route reach Motion-level cleanliness on mobile
   and desktop.
 - [x] Light and dark mode both have intentional contrast and texture.
@@ -76,13 +76,13 @@ Observed from `https://motion.dev/docs`, `/docs/react`, and deeper docs pages:
 - [x] Browser screenshots reviewed full-page on mobile and desktop after each
   major slice.
 - [x] Motion reference pages reviewed during each active implementation turn.
-- [x] `pnpm --dir src/docs run check` or best available equivalent is
+- [x] `bun run --cwd docs check` or best available equivalent is
   run before final handoff.
 
 ## Current Slice Notes
 
 - Landing was reduced to hero, SDK choices, and reference paths; standalone
-  landing code comparisons and repeated runtime/docs/CTA sections were removed.
+  landing code comparisons and repeated runtime/src/docs/CTA sections were removed.
 - `/docs/start` was reduced to quickstart, first-query comparison, and next
   steps; redundant outcome and verify panels were removed.
 - `/docs/learn` was converted from card-heavy maps/tabs to divider rows and

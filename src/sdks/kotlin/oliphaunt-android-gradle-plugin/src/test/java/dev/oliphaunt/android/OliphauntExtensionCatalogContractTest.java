@@ -127,33 +127,9 @@ public final class OliphauntExtensionCatalogContractTest {
 
   private static void writeAndroidRuntimeClosure(Path root, String runtimeManifest)
       throws Exception {
-    writeInventoryFile(
-        root,
-        "manifest.properties",
-        "schema=oliphaunt-native-runtime-carrier-v1\n"
-            + "clusterSeedTarget=android-datum64\n"
-            + "clusterSeedRelativePath=cluster-seed\n"
-            + "icuClusterSeedRelativePath=cluster-seed-icu\n");
     writeInventoryFile(root, "runtime/manifest.properties", runtimeManifest);
     writeInventoryFile(root, "runtime/files/README", "runtime\n");
-    writeInventoryFile(
-        root,
-        "cluster-seed/manifest.properties",
-        androidClusterSeedManifest("cluster-seed-standard", "standard", "", "", "", ""));
-    writeInventoryFile(root, "cluster-seed/files/PG_VERSION", "18\n");
-    writeInventoryFile(root, "cluster-seed/files/global/pg_control", "control\n");
-    writeInventoryFile(
-        root,
-        "cluster-seed-icu/manifest.properties",
-        androidClusterSeedManifest(
-            "cluster-seed-icu",
-            "icu",
-            "icu",
-            "76.1",
-            "files-le",
-            "a".repeat(64)));
-    writeInventoryFile(root, "cluster-seed-icu/files/PG_VERSION", "18\n");
-    writeInventoryFile(root, "cluster-seed-icu/files/global/pg_control", "control\n");
+
   }
 
   private static void validatesPublicTarGzArchivePreflight() throws Exception {
@@ -374,55 +350,6 @@ public final class OliphauntExtensionCatalogContractTest {
     return new TarFixtureEntry(path, '0', contents.getBytes(StandardCharsets.UTF_8));
   }
 
-  private static TarFixtureEntry standardAndroidClusterSeedManifestTarFile() {
-    return tarFile(
-        "oliphaunt/cluster-seed/manifest.properties",
-        androidClusterSeedManifest("cluster-seed-standard", "standard", "", "", "", ""));
-  }
-
-  private static TarFixtureEntry androidRuntimeCarrierReceiptTarFile() {
-    return tarFile(
-        "oliphaunt/manifest.properties",
-        "schema=oliphaunt-native-runtime-carrier-v1\n"
-            + "clusterSeedTarget=android-datum64\n"
-            + "clusterSeedRelativePath=cluster-seed\n"
-            + "icuClusterSeedRelativePath=cluster-seed-icu\n");
-  }
-
-  private static TarFixtureEntry icuAndroidClusterSeedManifestTarFile() {
-    return tarFile(
-        "oliphaunt/cluster-seed-icu/manifest.properties",
-        androidClusterSeedManifest(
-            "cluster-seed-icu",
-            "icu",
-            "icu",
-            "76.1",
-            "files-le",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
-  }
-
-  private static String androidClusterSeedManifest(
-      String artifactRole,
-      String profile,
-      String runtimeFeatures,
-      String icuVersion,
-      String icuForm,
-      String icuDigest) {
-    return "schema=oliphaunt-runtime-resources-v1\n"
-        + "layout=oliphaunt-cluster-seed-v1\n"
-        + "artifactRole=" + artifactRole + "\n"
-        + "catalogProfile=" + profile + "\n"
-        + "postgresMajor=18\n"
-        + "physicalFormat=native-pg18-v1\n"
-        + "target=android-datum64\n"
-        + "compatibilityKey=native-pg18-android-datum64-v1\n"
-        + "initialSuperuser=postgres\n"
-        + "cacheKey=fixture-" + profile + "-cluster-seed\n"
-        + "runtimeFeatures=" + runtimeFeatures + "\n"
-        + "icuDataVersion=" + icuVersion + "\n"
-        + "icuDataForm=" + icuForm + "\n"
-        + "icuDataTreeSha256=" + icuDigest + "\n";
-  }
 
   private static String androidRuntimeManifest(String cacheKey) {
     return "schema=oliphaunt-runtime-resources-v1\n"
@@ -1342,17 +1269,14 @@ public final class OliphauntExtensionCatalogContractTest {
             carriers.resolve("liboliphaunt-1.2.3-runtime-resources-android-datum64.tar.gz"),
             tarBytes(
                 List.of(
-                    androidRuntimeCarrierReceiptTarFile(),
                     tarFile(
                         "oliphaunt/runtime/manifest.properties",
                         androidRuntimeManifest("canonical-runtime-fixture")),
                     tarFile("oliphaunt/runtime/files/README.fixture", "runtime\n"),
-                    standardAndroidClusterSeedManifestTarFile(),
-                    tarFile("oliphaunt/cluster-seed/files/PG_VERSION", "18\n"),
-                    tarFile("oliphaunt/cluster-seed/files/global/pg_control", "control\n"),
-                    icuAndroidClusterSeedManifestTarFile(),
-                    tarFile("oliphaunt/cluster-seed-icu/files/PG_VERSION", "18\n"),
-                    tarFile("oliphaunt/cluster-seed-icu/files/global/pg_control", "control\n"),
+
+
+
+
                     tarFile(
                         "oliphaunt/static-registry/manifest.properties",
                         canonicalEmptyStaticRegistryManifest()))));
@@ -1380,17 +1304,14 @@ public final class OliphauntExtensionCatalogContractTest {
               carriers.resolve("liboliphaunt-1.2.3-runtime-resources-android-datum64.tar.gz"),
               tarBytes(
                   List.of(
-                      androidRuntimeCarrierReceiptTarFile(),
                       tarFile(
                           "oliphaunt/runtime/manifest.properties",
                           androidRuntimeManifest("aggregate-resolve-fixture")),
                       tarFile("oliphaunt/runtime/files/README.fixture", "runtime\n"),
-                      standardAndroidClusterSeedManifestTarFile(),
-                      tarFile("oliphaunt/cluster-seed/files/PG_VERSION", "18\n"),
-                      tarFile("oliphaunt/cluster-seed/files/global/pg_control", "control\n"),
-                      icuAndroidClusterSeedManifestTarFile(),
-                      tarFile("oliphaunt/cluster-seed-icu/files/PG_VERSION", "18\n"),
-                      tarFile("oliphaunt/cluster-seed-icu/files/global/pg_control", "control\n"),
+
+
+
+
                       tarFile(
                           "oliphaunt/static-registry/manifest.properties",
                           canonicalEmptyStaticRegistryManifest()))));
@@ -1947,7 +1868,7 @@ public final class OliphauntExtensionCatalogContractTest {
 
     Map<String, Object> compatibility = new LinkedHashMap<>();
     compatibility.put(
-        "extensionRuntimeContract", "src/shared/extension-runtime-contract/contract.toml");
+        "extensionRuntimeContract", "extensions/contracts/contract.toml");
     compatibility.put("nativeRuntimeProduct", "liboliphaunt-native");
     compatibility.put("nativeRuntimeVersion", "1.2.3");
     compatibility.put("postgresMajor", "18");
@@ -2919,11 +2840,11 @@ public final class OliphauntExtensionCatalogContractTest {
       case "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT" ->
           Files.readAllBytes(
               repository.resolve(
-                  "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"));
+                  "src/third-party/postgres/COPYRIGHT"));
       case "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt" ->
           Files.readAllBytes(
               repository.resolve(
-                  "src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"));
+                  "src/third-party/openssl/LICENSE.txt"));
       default -> canonicalUpstreamLegalBytes(repository, contract.product(), logicalPath);
     };
   }
@@ -3206,7 +3127,7 @@ public final class OliphauntExtensionCatalogContractTest {
       String target, List<Map<String, Object>> members) {
     Map<String, Object> compatibility = new LinkedHashMap<>();
     compatibility.put(
-        "extensionRuntimeContract", "src/shared/extension-runtime-contract/contract.toml");
+        "extensionRuntimeContract", "extensions/contracts/contract.toml");
     compatibility.put("nativeRuntimeProduct", "liboliphaunt-native");
     compatibility.put("nativeRuntimeVersion", "1.2.3");
     compatibility.put("postgresMajor", "18");
@@ -3368,7 +3289,7 @@ public final class OliphauntExtensionCatalogContractTest {
     Map<String, Object> compatible =
         Map.of(
             "extensionRuntimeContract",
-            "src/shared/extension-runtime-contract/contract.toml",
+            "extensions/contracts/contract.toml",
             "nativeRuntimeProduct",
             "liboliphaunt-native",
             "nativeRuntimeVersion",

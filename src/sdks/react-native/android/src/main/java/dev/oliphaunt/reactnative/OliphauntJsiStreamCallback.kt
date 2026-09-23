@@ -4,34 +4,36 @@ import com.facebook.proguard.annotations.DoNotStrip
 
 @DoNotStrip
 class OliphauntJsiStreamCallback @DoNotStrip constructor(
+  private val ownerId: Long,
   private val token: Long,
 ) {
   fun emitChunk(chunk: ByteArray) {
-    nativeEmitChunk(token, chunk)?.let { error ->
+    nativeEmitChunk(ownerId, token, chunk)?.let { error ->
       throw IllegalStateException(error)
     }
   }
 
   fun resolveUnit() {
-    nativeResolveUnit(token)
+    nativeResolveUnit(ownerId, token)
   }
 
   fun rejectCallbackAborted(message: String?) {
     nativeRejectCallbackAborted(
+      ownerId,
       token,
       message ?: "protocol stream callback aborted after recovery to ReadyForQuery",
     )
   }
 
   fun reject(code: String, message: String?) {
-    nativeReject(token, if (message.isNullOrBlank()) code else "$code: $message")
+    nativeReject(ownerId, token, if (message.isNullOrBlank()) code else "$code: $message")
   }
 
-  private external fun nativeEmitChunk(token: Long, chunk: ByteArray): String?
+  private external fun nativeEmitChunk(ownerId: Long, token: Long, chunk: ByteArray): String?
 
-  private external fun nativeResolveUnit(token: Long)
+  private external fun nativeResolveUnit(ownerId: Long, token: Long)
 
-  private external fun nativeRejectCallbackAborted(token: Long, message: String)
+  private external fun nativeRejectCallbackAborted(ownerId: Long, token: Long, message: String)
 
-  private external fun nativeReject(token: Long, message: String)
+  private external fun nativeReject(ownerId: Long, token: Long, message: String)
 }

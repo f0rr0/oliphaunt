@@ -8,7 +8,6 @@ release_artifacts = [
   "apple-assets-via-liboliphaunt",
   "exact-extension-xcframework-inputs",
 ]
-derived_version_files = ["Package.swift"]
 
 [compatibility_versions.oliphaunt-swift-liboliphaunt]
 source_product = "liboliphaunt-native"

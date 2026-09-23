@@ -4,6 +4,7 @@
 #import <React/RCTUtils.h>
 
 #ifdef RCT_NEW_ARCH_ENABLED
+#include "../cpp/Jsi.h"
 #include <ReactCommon/CallInvoker.h>
 #include <jsi/jsi.h>
 #include <react/bridging/Function.h>
@@ -25,93 +26,7 @@ NSString * const OliphauntProtocolStreamCallbackAbortedErrorDomain =
     @"dev.oliphaunt.reactnative.ios.protocolStreamCallbackAborted";
 
 #ifdef RCT_NEW_ARCH_ENABLED
-class OliphauntChunkAcknowledgement final {
- public:
-  void resolve()
-  {
-    finish(std::nullopt);
-  }
-
-  void reject(std::string message)
-  {
-    finish(std::move(message));
-  }
-
-  std::optional<std::string> wait()
-  {
-    std::unique_lock<std::mutex> lock(mutex_);
-    condition_.wait(lock, [this]() { return complete_; });
-    return error_;
-  }
-
- private:
-  void finish(std::optional<std::string> error)
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (complete_) {
-        return;
-      }
-      error_ = std::move(error);
-      complete_ = true;
-    }
-    condition_.notify_one();
-  }
-
-  std::mutex mutex_;
-  std::condition_variable condition_;
-  bool complete_ = false;
-  std::optional<std::string> error_;
-};
-
-static std::mutex gOliphauntChunkAcknowledgementsMutex;
-static std::vector<std::weak_ptr<OliphauntChunkAcknowledgement>> gOliphauntChunkAcknowledgements;
-
-static void OliphauntRegisterChunkAcknowledgement(
-    const std::shared_ptr<OliphauntChunkAcknowledgement> &acknowledgement)
-{
-  std::lock_guard<std::mutex> lock(gOliphauntChunkAcknowledgementsMutex);
-  gOliphauntChunkAcknowledgements.erase(
-      std::remove_if(
-          gOliphauntChunkAcknowledgements.begin(),
-          gOliphauntChunkAcknowledgements.end(),
-          [](const auto &entry) { return entry.expired(); }),
-      gOliphauntChunkAcknowledgements.end());
-  gOliphauntChunkAcknowledgements.emplace_back(acknowledgement);
-}
-
-static void OliphauntUnregisterChunkAcknowledgement(
-    const std::shared_ptr<OliphauntChunkAcknowledgement> &acknowledgement)
-{
-  std::lock_guard<std::mutex> lock(gOliphauntChunkAcknowledgementsMutex);
-  gOliphauntChunkAcknowledgements.erase(
-      std::remove_if(
-          gOliphauntChunkAcknowledgements.begin(),
-          gOliphauntChunkAcknowledgements.end(),
-          [&acknowledgement](const auto &entry) {
-            auto current = entry.lock();
-            return current == nullptr || current == acknowledgement;
-          }),
-      gOliphauntChunkAcknowledgements.end());
-}
-
-static void OliphauntAbortChunkAcknowledgements(void)
-{
-  std::vector<std::shared_ptr<OliphauntChunkAcknowledgement>> acknowledgements;
-  {
-    std::lock_guard<std::mutex> lock(gOliphauntChunkAcknowledgementsMutex);
-    acknowledgements.reserve(gOliphauntChunkAcknowledgements.size());
-    for (const auto &entry : gOliphauntChunkAcknowledgements) {
-      if (auto acknowledgement = entry.lock()) {
-        acknowledgements.push_back(std::move(acknowledgement));
-      }
-    }
-    gOliphauntChunkAcknowledgements.clear();
-  }
-  for (const auto &acknowledgement : acknowledgements) {
-    acknowledgement->reject("React Native Oliphaunt module has been invalidated");
-  }
-}
+using namespace oliphaunt::reactnative;
 
 static NSError *OliphauntProtocolStreamCallbackError(const std::string &message)
 {
@@ -343,34 +258,6 @@ static NSDictionary *OliphauntNativeOpenConfigToDictionary(
   return dictionary;
 }
 
-class OliphauntMutableBuffer final : public facebook::jsi::MutableBuffer {
- public:
-  explicit OliphauntMutableBuffer(std::vector<uint8_t> bytes)
-      : bytes_(std::move(bytes)) {}
-
-  size_t size() const override
-  {
-    return bytes_.size();
-  }
-
-  uint8_t *data() override
-  {
-    return bytes_.data();
-  }
-
- private:
-  std::vector<uint8_t> bytes_;
-};
-
-static facebook::jsi::ArrayBuffer OliphauntArrayBufferFromBytes(
-    facebook::jsi::Runtime &runtime,
-    std::vector<uint8_t> bytes)
-{
-  return facebook::jsi::ArrayBuffer(
-      runtime,
-      std::make_shared<OliphauntMutableBuffer>(std::move(bytes)));
-}
-
 static std::vector<uint8_t> OliphauntBytesFromNSData(NSData *_Nullable data)
 {
   std::vector<uint8_t> bytes;
@@ -379,95 +266,6 @@ static std::vector<uint8_t> OliphauntBytesFromNSData(NSData *_Nullable data)
     bytes.assign(begin, begin + data.length);
   }
   return bytes;
-}
-
-static size_t OliphauntCopySizeArgument(
-    facebook::jsi::Runtime &runtime,
-    double value,
-    const char *name)
-{
-  constexpr double kMaxSafeInteger = 9007199254740991.0;
-  if (!std::isfinite(value) ||
-      value < 0 ||
-      std::trunc(value) != value ||
-      value > kMaxSafeInteger ||
-      value > static_cast<double>(std::numeric_limits<size_t>::max())) {
-    throw facebook::jsi::JSError(
-        runtime,
-        std::string("liboliphaunt JSI ") + name + " must be a non-negative integer");
-  }
-  return static_cast<size_t>(value);
-}
-
-static double OliphauntCopyHandleArgument(
-    facebook::jsi::Runtime &runtime,
-    const facebook::jsi::Value &value)
-{
-  if (!value.isNumber()) {
-    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI handle must be a number");
-  }
-  double handle = value.asNumber();
-  if (!OliphauntIsValidHandle(handle)) {
-    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI handle must be a positive safe integer");
-  }
-  return handle;
-}
-
-static std::vector<uint8_t> OliphauntCopyBinaryArgument(
-    facebook::jsi::Runtime &runtime,
-    const facebook::jsi::Value &value)
-{
-  if (!value.isObject()) {
-    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI request must be an ArrayBuffer or typed array");
-  }
-
-  auto object = value.asObject(runtime);
-  size_t byteOffset = 0;
-  size_t byteLength = 0;
-  facebook::jsi::ArrayBuffer buffer = [&]() {
-    if (object.isArrayBuffer(runtime)) {
-      auto arrayBuffer = object.getArrayBuffer(runtime);
-      byteLength = arrayBuffer.size(runtime);
-      return arrayBuffer;
-    }
-
-    auto bufferValue = object.getProperty(runtime, "buffer");
-    if (!bufferValue.isObject() || !bufferValue.asObject(runtime).isArrayBuffer(runtime)) {
-      throw facebook::jsi::JSError(runtime, "liboliphaunt JSI request must be an ArrayBuffer or typed array");
-    }
-    auto offsetValue = object.getProperty(runtime, "byteOffset");
-    auto lengthValue = object.getProperty(runtime, "byteLength");
-    if (!offsetValue.isNumber() || !lengthValue.isNumber()) {
-      throw facebook::jsi::JSError(runtime, "liboliphaunt JSI typed-array request is missing byteOffset/byteLength");
-    }
-    byteOffset = OliphauntCopySizeArgument(
-        runtime,
-        offsetValue.asNumber(),
-        "typed-array byteOffset");
-    byteLength = OliphauntCopySizeArgument(
-        runtime,
-        lengthValue.asNumber(),
-        "typed-array byteLength");
-    return bufferValue.asObject(runtime).getArrayBuffer(runtime);
-  }();
-
-  if (byteOffset > buffer.size(runtime) || byteLength > buffer.size(runtime) - byteOffset) {
-    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI typed-array request is out of bounds");
-  }
-
-  const uint8_t *begin = buffer.data(runtime) + byteOffset;
-  return std::vector<uint8_t>(begin, begin + byteLength);
-}
-
-static std::string OliphauntCopyStringArgument(
-    facebook::jsi::Runtime &runtime,
-    const facebook::jsi::Value &value,
-    const char *name)
-{
-  if (!value.isString()) {
-    throw facebook::jsi::JSError(runtime, std::string("liboliphaunt JSI ") + name + " must be a string");
-  }
-  return value.asString(runtime).utf8(runtime);
 }
 
 static NSString *OliphauntNSStringFromString(const std::string &value)
@@ -483,27 +281,9 @@ static NSString *_Nullable OliphauntCopyOptionalNSStringArgument(
   if (value.isNull() || value.isUndefined()) {
     return nil;
   }
-  return OliphauntNSStringFromString(OliphauntCopyStringArgument(runtime, value, name));
+  return OliphauntNSStringFromString(copyStringArgument(runtime, value, name));
 }
 
-static facebook::jsi::Value OliphauntCreateError(
-    facebook::jsi::Runtime &runtime,
-    const std::string &message)
-{
-  return runtime.global()
-      .getPropertyAsFunction(runtime, "Error")
-      .callAsConstructor(runtime, facebook::jsi::String::createFromUtf8(runtime, message));
-}
-
-static facebook::jsi::Value OliphauntCreateProtocolCallbackAbortedError(
-    facebook::jsi::Runtime &runtime,
-    const std::string &message)
-{
-  auto value = OliphauntCreateError(runtime, message);
-  auto object = value.asObject(runtime);
-  object.setProperty(runtime, "__oliphauntProtocolCallbackAborted", true);
-  return object;
-}
 #endif
 
 @interface Oliphaunt ()
@@ -515,6 +295,9 @@ static facebook::jsi::Value OliphauntCreateProtocolCallbackAbortedError(
   dispatch_queue_t _methodQueue;
   uint64_t _nativeDirectClaim;
   BOOL _invalidated;
+#ifdef RCT_NEW_ARCH_ENABLED
+  std::shared_ptr<RuntimeLifetime> _jsiLifetime;
+#endif
 }
 
 RCT_EXPORT_MODULE(Oliphaunt)
@@ -528,6 +311,9 @@ RCT_EXPORT_MODULE(Oliphaunt)
 {
   if (self = [super init]) {
     _sessions = [NSMutableDictionary new];
+#ifdef RCT_NEW_ARCH_ENABLED
+    _jsiLifetime = std::make_shared<RuntimeLifetime>();
+#endif
     _methodQueue = dispatch_queue_create("dev.oliphaunt.reactnative.ios.module", DISPATCH_QUEUE_SERIAL);
   }
   return self;
@@ -741,6 +527,13 @@ RCT_EXPORT_MODULE(Oliphaunt)
                           callInvoker:(const std::shared_ptr<facebook::react::CallInvoker> &)callInvoker
 {
   __weak Oliphaunt *weakSelf = self;
+  std::shared_ptr<RuntimeLifetime> lifetime;
+  @synchronized (self) {
+    _jsiLifetime->invalidate();
+    lifetime = std::make_shared<RuntimeLifetime>();
+    if (_invalidated) lifetime->invalidate();
+    _jsiLifetime = lifetime;
+  }
   auto transport = facebook::jsi::Object(runtime);
   transport.setProperty(runtime, "version", 1);
   transport.setProperty(
@@ -760,7 +553,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                   runtime,
                   "liboliphaunt JSI closeIfGeneration expects a generation");
             }
-            double generation = OliphauntCopyHandleArgument(runtime, args[0]);
+            double generation = copyHandleArgument(runtime, args[0]);
             Oliphaunt *strongSelf = weakSelf;
             if (strongSelf != nil) {
               [strongSelf closeIfGeneration:generation];
@@ -774,7 +567,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
           runtime,
           facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolRaw"),
           1,
-          [weakSelf, callInvoker](
+          [lifetime, weakSelf, callInvoker](
               facebook::jsi::Runtime &runtime,
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
@@ -783,39 +576,26 @@ RCT_EXPORT_MODULE(Oliphaunt)
               throw facebook::jsi::JSError(runtime, "liboliphaunt JSI execProtocolRaw expects handle and request");
             }
 
-            double handle = OliphauntCopyHandleArgument(runtime, args[0]);
-            std::vector<uint8_t> request = OliphauntCopyBinaryArgument(runtime, args[1]);
+            double handle = copyHandleArgument(runtime, args[0]);
+            std::vector<uint8_t> request = copyBinaryArgument(runtime, args[1]);
             auto requestData = [NSData dataWithBytes:request.data() length:request.size()];
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
             auto executor = facebook::jsi::Function::createFromHostFunction(
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolRawExecutor"),
                 2,
-                [weakSelf, callInvoker, handle, requestData](
+                [lifetime, weakSelf, callInvoker, handle, requestData](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
                     size_t promiseArgCount) -> facebook::jsi::Value {
-                  if (promiseArgCount < 2 ||
-                      !promiseArgs[0].isObject() ||
-                      !promiseArgs[0].asObject(runtime).isFunction(runtime) ||
-                      !promiseArgs[1].isObject() ||
-                      !promiseArgs[1].asObject(runtime).isFunction(runtime)) {
-                    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI Promise executor received invalid callbacks");
-                  }
-
-                  auto resolve = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[0].asObject(runtime).getFunction(runtime),
-                      callInvoker);
-                  auto reject = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[1].asObject(runtime).getFunction(runtime),
-                      callInvoker);
+                  auto pending = promiseCallbacks(runtime, promiseArgs, promiseArgCount, callInvoker, lifetime);
+                  auto resolve = pending.resolve;
+                  auto reject = pending.reject;
                   Oliphaunt *strongSelf = weakSelf;
                   if (strongSelf == nil) {
                     reject->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                      rejectFunction.call(runtime, OliphauntCreateError(runtime, "liboliphaunt native module is unavailable"));
+                      rejectFunction.call(runtime, createError(runtime, "liboliphaunt native module is unavailable"));
                     });
                     return facebook::jsi::Value::undefined();
                   }
@@ -827,7 +607,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt exec failed";
                       reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                        rejectFunction.call(runtime, OliphauntCreateError(runtime, message));
+                        rejectFunction.call(runtime, createError(runtime, message));
                       });
                       return;
                     }
@@ -835,7 +615,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                     resolve->call([bytes = std::move(bytes)](
                                       facebook::jsi::Runtime &runtime,
                                       facebook::jsi::Function &resolveFunction) mutable {
-                      resolveFunction.call(runtime, OliphauntArrayBufferFromBytes(runtime, std::move(bytes)));
+                      resolveFunction.call(runtime, arrayBufferFromBytes(runtime, std::move(bytes)));
                     });
                   }];
                   return facebook::jsi::Value::undefined();
@@ -849,7 +629,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
           runtime,
           facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolStream"),
           3,
-          [weakSelf, callInvoker](
+          [lifetime, weakSelf, callInvoker](
               facebook::jsi::Runtime &runtime,
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
@@ -858,44 +638,30 @@ RCT_EXPORT_MODULE(Oliphaunt)
               throw facebook::jsi::JSError(runtime, "liboliphaunt JSI execProtocolStream expects handle, request, and onChunk");
             }
 
-            double handle = OliphauntCopyHandleArgument(runtime, args[0]);
-            std::vector<uint8_t> request = OliphauntCopyBinaryArgument(runtime, args[1]);
+            double handle = copyHandleArgument(runtime, args[0]);
+            std::vector<uint8_t> request = copyBinaryArgument(runtime, args[1]);
             auto requestData = [NSData dataWithBytes:request.data() length:request.size()];
-            auto chunkCallback = std::make_shared<facebook::react::AsyncCallback<>>(
+            auto chunkCallback = std::make_shared<RuntimeCallback>(
                 runtime,
                 args[2].asObject(runtime).getFunction(runtime),
-                callInvoker);
+                callInvoker, lifetime);
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
             auto executor = facebook::jsi::Function::createFromHostFunction(
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolStreamExecutor"),
                 2,
-                [weakSelf, callInvoker, handle, requestData, chunkCallback](
+                [lifetime, weakSelf, callInvoker, handle, requestData, chunkCallback](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
                     size_t promiseArgCount) -> facebook::jsi::Value {
-                  if (promiseArgCount < 2 ||
-                      !promiseArgs[0].isObject() ||
-                      !promiseArgs[0].asObject(runtime).isFunction(runtime) ||
-                      !promiseArgs[1].isObject() ||
-                      !promiseArgs[1].asObject(runtime).isFunction(runtime)) {
-                    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI Promise executor received invalid callbacks");
-                  }
-
-                  auto resolve = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[0].asObject(runtime).getFunction(runtime),
-                      callInvoker);
-                  auto reject = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[1].asObject(runtime).getFunction(runtime),
-                      callInvoker);
-                  auto settled = std::make_shared<std::atomic<bool>>(false);
+                  auto pending = promiseCallbacks(runtime, promiseArgs, promiseArgCount, callInvoker, lifetime);
+                  auto resolve = pending.resolve;
+                  auto reject = pending.reject;
                   Oliphaunt *strongSelf = weakSelf;
                   if (strongSelf == nil) {
                     reject->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                      rejectFunction.call(runtime, OliphauntCreateError(runtime, "liboliphaunt native module is unavailable"));
+                      rejectFunction.call(runtime, createError(runtime, "liboliphaunt native module is unavailable"));
                     });
                     return facebook::jsi::Value::undefined();
                   }
@@ -911,8 +677,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       }
                     }
                     std::vector<uint8_t> bytes = OliphauntBytesFromNSData(chunk);
-                    auto acknowledgement = std::make_shared<OliphauntChunkAcknowledgement>();
-                    OliphauntRegisterChunkAcknowledgement(acknowledgement);
+                    auto acknowledgement = lifetime->acknowledge();
                     try {
                       chunkCallback->call([strongSelf, bytes = std::move(bytes), acknowledgement](
                                               facebook::jsi::Runtime &runtime,
@@ -923,28 +688,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                             return;
                           }
                         }
-                        try {
-                          auto result = chunkFunction.call(
-                              runtime,
-                              OliphauntArrayBufferFromBytes(runtime, std::move(bytes)));
-                          if (result.isObject()) {
-                            auto resultObject = result.asObject(runtime);
-                            auto failureMarker = resultObject.getProperty(
-                                runtime,
-                                "__oliphauntProtocolChunkFailure");
-                            if (failureMarker.isBool() && failureMarker.getBool()) {
-                              acknowledgement->reject("protocol stream callback failed");
-                              return;
-                            }
-                          }
-                          acknowledgement->resolve();
-                        } catch (const facebook::jsi::JSError &error) {
-                          acknowledgement->reject(error.what());
-                        } catch (const std::exception &error) {
-                          acknowledgement->reject(error.what());
-                        } catch (...) {
-                          acknowledgement->reject("protocol stream callback failed");
-                        }
+                        deliverChunk(runtime, chunkFunction, std::move(bytes), acknowledgement);
                       });
                     } catch (const std::exception &error) {
                       acknowledgement->reject(error.what());
@@ -952,7 +696,6 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       acknowledgement->reject("failed to schedule protocol stream callback");
                     }
                     auto error = acknowledgement->wait();
-                    OliphauntUnregisterChunkAcknowledgement(acknowledgement);
                     return error ? OliphauntProtocolStreamCallbackError(*error) : nil;
                   }
                                                 completion:^(NSError *_Nullable error) {
@@ -960,9 +703,6 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       if (strongSelf->_invalidated) {
                         return;
                       }
-                    }
-                    if (settled->exchange(true)) {
-                      return;
                     }
                     if (error != nil) {
                       const char *errorMessage = error.localizedDescription.UTF8String;
@@ -973,8 +713,8 @@ RCT_EXPORT_MODULE(Oliphaunt)
                         rejectFunction.call(
                             runtime,
                             callbackAborted
-                                ? OliphauntCreateProtocolCallbackAbortedError(runtime, message)
-                                : OliphauntCreateError(runtime, message));
+                                ? createProtocolCallbackAbortedError(runtime, message)
+                                : createError(runtime, message));
                       });
                       return;
                     }
@@ -993,7 +733,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
           runtime,
           facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntBackup"),
           2,
-          [weakSelf, callInvoker](
+          [lifetime, weakSelf, callInvoker](
               facebook::jsi::Runtime &runtime,
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
@@ -1002,37 +742,24 @@ RCT_EXPORT_MODULE(Oliphaunt)
               throw facebook::jsi::JSError(runtime, "liboliphaunt JSI backup expects a handle");
             }
 
-            double handle = OliphauntCopyHandleArgument(runtime, args[0]);
+            double handle = copyHandleArgument(runtime, args[0]);
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
             auto executor = facebook::jsi::Function::createFromHostFunction(
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntBackupExecutor"),
                 2,
-                [weakSelf, callInvoker, handle](
+                [lifetime, weakSelf, callInvoker, handle](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
                     size_t promiseArgCount) -> facebook::jsi::Value {
-                  if (promiseArgCount < 2 ||
-                      !promiseArgs[0].isObject() ||
-                      !promiseArgs[0].asObject(runtime).isFunction(runtime) ||
-                      !promiseArgs[1].isObject() ||
-                      !promiseArgs[1].asObject(runtime).isFunction(runtime)) {
-                    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI Promise executor received invalid callbacks");
-                  }
-
-                  auto resolve = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[0].asObject(runtime).getFunction(runtime),
-                      callInvoker);
-                  auto reject = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[1].asObject(runtime).getFunction(runtime),
-                      callInvoker);
+                  auto pending = promiseCallbacks(runtime, promiseArgs, promiseArgCount, callInvoker, lifetime);
+                  auto resolve = pending.resolve;
+                  auto reject = pending.reject;
                   Oliphaunt *strongSelf = weakSelf;
                   if (strongSelf == nil) {
                     reject->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                      rejectFunction.call(runtime, OliphauntCreateError(runtime, "liboliphaunt native module is unavailable"));
+                      rejectFunction.call(runtime, createError(runtime, "liboliphaunt native module is unavailable"));
                     });
                     return facebook::jsi::Value::undefined();
                   }
@@ -1043,7 +770,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt backup failed";
                       reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                        rejectFunction.call(runtime, OliphauntCreateError(runtime, message));
+                        rejectFunction.call(runtime, createError(runtime, message));
                       });
                       return;
                     }
@@ -1051,7 +778,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                     resolve->call([bytes = std::move(bytes)](
                                       facebook::jsi::Runtime &runtime,
                                       facebook::jsi::Function &resolveFunction) mutable {
-                      resolveFunction.call(runtime, OliphauntArrayBufferFromBytes(runtime, std::move(bytes)));
+                      resolveFunction.call(runtime, arrayBufferFromBytes(runtime, std::move(bytes)));
                     });
                   }];
                   return facebook::jsi::Value::undefined();
@@ -1065,7 +792,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
           runtime,
           facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntRestore"),
           2,
-          [weakSelf, callInvoker](
+          [lifetime, weakSelf, callInvoker](
               facebook::jsi::Runtime &runtime,
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
@@ -1079,7 +806,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
             }
             auto destination = args[0].asObject(runtime);
             NSString *storageKind = OliphauntNSStringFromString(
-                OliphauntCopyStringArgument(
+                copyStringArgument(
                     runtime,
                     destination.getProperty(runtime, "storageKind"),
                     "restore storageKind"));
@@ -1091,38 +818,25 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 runtime,
                 destination.getProperty(runtime, "storageName"),
                 "restore storageName");
-            std::vector<uint8_t> artifact = OliphauntCopyBinaryArgument(runtime, args[1]);
+            std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);
             auto artifactData = [NSData dataWithBytes:artifact.data() length:artifact.size()];
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
             auto executor = facebook::jsi::Function::createFromHostFunction(
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntRestoreExecutor"),
                 2,
-                [weakSelf, callInvoker, storageKind, storagePath, storageName, artifactData](
+                [lifetime, weakSelf, callInvoker, storageKind, storagePath, storageName, artifactData](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
                     size_t promiseArgCount) -> facebook::jsi::Value {
-                  if (promiseArgCount < 2 ||
-                      !promiseArgs[0].isObject() ||
-                      !promiseArgs[0].asObject(runtime).isFunction(runtime) ||
-                      !promiseArgs[1].isObject() ||
-                      !promiseArgs[1].asObject(runtime).isFunction(runtime)) {
-                    throw facebook::jsi::JSError(runtime, "liboliphaunt JSI Promise executor received invalid callbacks");
-                  }
-
-                  auto resolve = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[0].asObject(runtime).getFunction(runtime),
-                      callInvoker);
-                  auto reject = std::make_shared<facebook::react::AsyncCallback<>>(
-                      runtime,
-                      promiseArgs[1].asObject(runtime).getFunction(runtime),
-                      callInvoker);
+                  auto pending = promiseCallbacks(runtime, promiseArgs, promiseArgCount, callInvoker, lifetime);
+                  auto resolve = pending.resolve;
+                  auto reject = pending.reject;
                   Oliphaunt *strongSelf = weakSelf;
                   if (strongSelf == nil) {
                     reject->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                      rejectFunction.call(runtime, OliphauntCreateError(runtime, "liboliphaunt native module is unavailable"));
+                      rejectFunction.call(runtime, createError(runtime, "liboliphaunt native module is unavailable"));
                     });
                     return facebook::jsi::Value::undefined();
                   }
@@ -1136,7 +850,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt restore failed";
                       reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                        rejectFunction.call(runtime, OliphauntCreateError(runtime, message));
+                        rejectFunction.call(runtime, createError(runtime, message));
                       });
                       return;
                     }
@@ -1299,7 +1013,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
     _nativeDirectClaim = 0;
   }
 #ifdef RCT_NEW_ARCH_ENABLED
-  OliphauntAbortChunkAcknowledgements();
+  _jsiLifetime->invalidate();
 #endif
   [sessionsToClose enumerateKeysAndObjectsUsingBlock:^(
       NSNumber *key,

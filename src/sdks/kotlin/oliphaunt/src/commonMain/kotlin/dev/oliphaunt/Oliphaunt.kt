@@ -138,6 +138,12 @@ internal interface OliphauntEngine {
     )
 }
 
+internal class OliphauntRequestNotSubmitted : kotlinx.coroutines.CancellationException("request was not submitted")
+
+internal class OliphauntOperationCancellation(val caller: kotlinx.coroutines.Job?) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<OliphauntOperationCancellation>
+}
+
 internal interface OliphauntSession {
     suspend fun execProtocolRaw(request: ByteArray): ByteArray
 
@@ -848,6 +854,7 @@ public class OliphauntDatabase private constructor(
         transactionToken: Long?,
         error: Throwable,
     ) {
+        if (error is OliphauntRequestNotSubmitted) return
         val message =
             "typed operation outcome is unknown before a complete ReadyForQuery boundary; close and reopen the database: $error"
         stateMutex.withLock {
@@ -1007,6 +1014,7 @@ public class OliphauntDatabase private constructor(
     private suspend fun poisonUnknownRawProtocolOperation(
         error: Throwable,
     ) {
+        if (error is OliphauntRequestNotSubmitted) return
         val message =
             "raw protocol operation outcome is unknown before confirmed recovery; " +
                 "close and reopen the database: $error"
@@ -1091,8 +1099,9 @@ public class OliphauntDatabase private constructor(
             throw error
         }
 
+        val cancellation = OliphauntOperationCancellation(currentCoroutineContext()[kotlinx.coroutines.Job])
         val result =
-            withContext(NonCancellable) {
+            withContext(NonCancellable + cancellation) {
                 try {
                     operation()
                 } finally {
