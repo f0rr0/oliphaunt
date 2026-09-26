@@ -1,4 +1,3 @@
-import { directory } from '../storage.js';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -59,7 +58,7 @@ export async function assertNativeDatabaseContract(
     await database.close();
     database = undefined;
 
-    await Oliphaunt.restore(directory(restoredRoot), backup);
+    await Oliphaunt.restore({ kind: 'directory', path: restoredRoot }, backup);
     database = await Oliphaunt.open({
       ...config,
       storage: { kind: 'directory', path: sourceRoot },
@@ -69,7 +68,7 @@ export async function assertNativeDatabaseContract(
     database = undefined;
 
     await assert.rejects(
-      Oliphaunt.restore(directory(join(root, 'invalid')), backup.subarray(0, 8)),
+      Oliphaunt.restore({ kind: 'directory', path: join(root, 'invalid') }, backup.subarray(0, 8)),
       (error) => error instanceof Error && error.message.length > 0,
     );
   } finally {
