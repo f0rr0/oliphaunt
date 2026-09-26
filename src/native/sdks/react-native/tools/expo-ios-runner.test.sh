@@ -60,6 +60,33 @@ cat > "$scratch/pod/Package.swift" <<EOF
     checksum: "$checksum"
 )
 EOF
+# Stage the source artifact exactly as the iOS runner does before CocoaPods clones it.
+(
+  export OLIPHAUNT_EXPO_IOS_SCRATCH="$scratch/runner"
+  export OLIPHAUNT_EXPO_REQUIRE_SDK_ARTIFACTS=1
+  export OLIPHAUNT_EXPO_SDK_ARTIFACT_ROOT="$scratch/sdk-artifacts"
+  . "${tool%.mts}.sh"
+  swift_artifacts="$(expo_sdk_artifact_product_root oliphaunt-swift)"
+  mkdir -p "$scratch/package" "$swift_artifacts/release-assets"
+  cp -R "$root/src/native/sdks/swift/Sources" "$scratch/package/Sources"
+  cp "$root/src/native/runtime/include/oliphaunt.h" "$scratch/package/Sources/COliphaunt/include/oliphaunt.h"
+  mkdir -p "$scratch/package/Sources/OliphauntNativeBindings"
+  printf '// generated bindings fixture\n' > "$scratch/package/Sources/OliphauntNativeBindings/OliphauntNativeBindings.swift"
+  printf '%s\n' "$version" > "$scratch/package/VERSION"
+  cp "$scratch/pod/Artifacts/$asset" "$swift_artifacts/release-assets/"
+  cp "$scratch/pod/Package.swift" "$swift_artifacts/Package.swift.release"
+  bun "$root/tools/packaging/archive-directory.mts" --keep-parent \
+    "$scratch/package" "$swift_artifacts/Oliphaunt-source.zip"
+  prepare_swift_sdk_artifact_git_repo_if_required
+  git clone -q --branch "$OLIPHAUNT_SWIFT_SDK_BRANCH" "$OLIPHAUNT_SWIFT_SDK_GIT_URL" "$scratch/consumer"
+  cd "$scratch/consumer"
+  diff -r "$scratch/package/Sources" src/sdks/swift/Sources
+  header_prepare="$(sed -n 's/^  s.prepare_command = "\(.*\)"$/\1/p' "$rn_dir/ios/podspecs/COliphaunt.podspec")"
+  test -n "$header_prepare"
+  bash -ec "$header_prepare"
+  bash "$prepare" "$version"
+  cmp "$scratch/input/OliphauntNativeBindingsFFI.xcframework/Info.plist" Artifacts/OliphauntNativeBindingsFFI.xcframework/Info.plist
+)
 (
   cd "$scratch/pod"
   bash "$prepare" "$version"

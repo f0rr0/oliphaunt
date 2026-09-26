@@ -457,7 +457,8 @@ prepare_swift_sdk_artifact_git_repo_if_required() {
   archive="$(expo_single_sdk_artifact_file oliphaunt-swift 'Oliphaunt-source.zip')"
   artifact_repo="$scratch_root/swift-sdk-artifact-repo"
   extract_root="$scratch_root/swift-sdk-artifact-extract"
-  source_root="$artifact_repo/src/native/sdks/swift"
+  # CocoaPods and the release manifest consume the stable source-tag layout.
+  source_root="$artifact_repo/src/sdks/swift"
   rm -rf "$artifact_repo" "$extract_root"
   mkdir -p "$source_root"
   bun "$root/src/native/sdks/swift/tools/extract-verified-zip.mts" \
@@ -861,8 +862,6 @@ cleanup_ios_runner() {
   cleanup || true
 }
 
-trap cleanup_ios_runner EXIT
-
 main() {
   need_cmd node
   need_cmd xcrun
@@ -940,4 +939,7 @@ main() {
   printf '\n'
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  trap cleanup_ios_runner EXIT
+  main "$@"
+fi
