@@ -25,21 +25,15 @@ npx expo install @oliphaunt/react-native@{{release:oliphaunt-react-native}}
 
 Oliphaunt includes native Swift and Kotlin code, so React Native apps run it
 from an Expo development build or a native app binary. The config plugin
-selects the native runtime and exact extension artifacts that ship in the app.
+discovers installed extension and ICU packages for the native app build.
 
-Configure selected extensions in app config:
+Install the extension packages you use, such as `@oliphaunt/extension-vector`,
+and enable the plugin:
 
 ```json
 {
   "expo": {
-    "plugins": [
-      [
-        "@oliphaunt/react-native",
-        {
-          "extensions": ["vector"]
-        }
-      ]
-    ]
+    "plugins": ["@oliphaunt/react-native"]
   }
 }
 ```

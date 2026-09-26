@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const { createRequire } = require('node:module');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -67,6 +68,72 @@ function normalizeOptions(options = {}) {
     kotlinPluginVersion:
       optionalString(options.kotlinPluginVersion) ?? packageMetadata.oliphaunt?.kotlinSdkVersion,
   };
+}
+
+async function resolveInstalledResources(projectRoot, platform, options = {}) {
+  // Use the app's Expo installation, including its dependency resolution and exclusions.
+  const expoRequire = createRequire(require.resolve('expo/package.json', { paths: [projectRoot] }));
+  const { makeCachedDependenciesLinker, scanDependencyResolutionsForPlatform } = expoRequire(
+    'expo-modules-autolinking/exports',
+  );
+  const resourceNames = new Set([
+    ...extensionMetadata.extensions.map((extension) => extension['npm-package']),
+    '@oliphaunt/icu',
+  ]);
+  // Resource carriers opt out of native autolinking. Include them for discovery;
+  // the existing Oliphaunt staging code still owns their pods and Gradle inputs.
+  const resolutions = await scanDependencyResolutionsForPlatform(
+    makeCachedDependenciesLinker({ projectRoot }),
+    platform,
+    [...resourceNames],
+  );
+  const packages = new Map();
+  for (const name of resourceNames) {
+    const resolution = resolutions[name];
+    if (!resolution) continue;
+    const installations = [resolution, ...(resolution.duplicates ?? [])];
+    if (installations.some((entry) => entry.version !== resolution.version)) {
+      throw new Error(
+        `Conflicting versions of ${name}: ${installations.map((entry) => `${entry.version} at ${entry.path}`).join(', ')}. Deduplicate the app's dependencies before prebuild.`,
+      );
+    }
+    packages.set(name, path.join(resolution.path, 'package.json'));
+  }
+  const packageJsonResolver = (name, searchPaths) => {
+    if (!resourceNames.has(name)) return resolvePackageJson(name, searchPaths);
+    const file = packages.get(name);
+    if (!file) {
+      throw new Error(
+        `Install ${name} in the app and ensure it is not excluded from Expo autolinking on ${platform}`,
+      );
+    }
+    return file;
+  };
+  const normalized = normalizeOptions({
+    ...options,
+    extensions:
+      options.extensions ??
+      extensionMetadata.extensions
+        .filter((extension) => packages.has(extension['npm-package']))
+        .map((extension) => extension['sql-name']),
+    icu: options.icu ?? packages.has('@oliphaunt/icu'),
+  });
+  if (normalized.icu) {
+    const icu = readJsonObject(packageJsonResolver('@oliphaunt/icu', [projectRoot]), 'ICU package');
+    if (icu.name !== '@oliphaunt/icu' || !STABLE_SEMVER_RE.test(icu.version ?? '')) {
+      throw new Error('@oliphaunt/icu must declare its package name and a stable version');
+    }
+    if (
+      normalized.databaseResourcesVersion &&
+      normalized.databaseResourcesVersion !== icu.version
+    ) {
+      throw new Error(
+        `databaseResourcesVersion must match installed @oliphaunt/icu ${icu.version}`,
+      );
+    }
+    normalized.databaseResourcesVersion = icu.version;
+  }
+  return { ...normalized, packageJsonResolver };
 }
 
 function optionalString(value) {
@@ -857,7 +924,9 @@ function iosPodfileBlock(options = {}) {
   if (options.icu) resources.push(['@oliphaunt/icu', 'OliphauntICU']);
   for (const [packageName, podName] of resources) {
     const projectRoot = options.projectRoot ?? process.cwd();
-    const packageRoot = path.dirname(resolvePackageJson(packageName, [projectRoot]));
+    const packageRoot = path.dirname(
+      (options.packageJsonResolver ?? resolvePackageJson)(packageName, [projectRoot]),
+    );
     if (!fs.existsSync(path.join(packageRoot, `${podName}.podspec`))) {
       throw new Error(`${packageName} is missing ${podName}.podspec`);
     }
@@ -975,20 +1044,24 @@ function patchAndroidGradle(androidRoot, normalized) {
 
 function withOliphaunt(config, options = {}) {
   const plugin = require('expo/config-plugins');
-  const normalized = normalizeOptions(options);
   // Expo's built-in iOS mods consume this synchronously and propagate it to
   // both the Xcode project and Podfile.properties.json during prebuild.
   config = ensureIosConfigDeploymentTarget(config);
 
   config = plugin.withDangerousMod(config, [
     'android',
-    (modConfig) => {
+    async (modConfig) => {
       const projectRoot = modConfig.modRequest.projectRoot;
       const androidRoot = path.join(projectRoot, 'android');
+      const { packageJsonResolver, ...normalized } = await resolveInstalledResources(
+        projectRoot,
+        'android',
+        options,
+      );
       const installedExtensions = resolveInstalledExtensionOwners(
         projectRoot,
         normalized.extensions,
-        { liboliphauntVersion: normalized.liboliphauntVersion },
+        { liboliphauntVersion: normalized.liboliphauntVersion, packageJsonResolver },
       );
       const androidOptions = {
         ...normalized,
@@ -1017,7 +1090,12 @@ function withOliphaunt(config, options = {}) {
     async (modConfig) => {
       const projectRoot = modConfig.modRequest.projectRoot;
       const iosRoot = path.join(projectRoot, 'ios');
-      await stageIosAppPayload(projectRoot, iosRoot, normalized);
+      const { packageJsonResolver, ...normalized } = await resolveInstalledResources(
+        projectRoot,
+        'ios',
+        options,
+      );
+      await stageIosAppPayload(projectRoot, iosRoot, normalized, { packageJsonResolver });
       writeJson(path.join(iosRoot, 'oliphaunt.json'), normalized);
       writeJson(path.join(iosRoot, 'OliphauntExtensions.json'), {
         extensions: normalized.extensions,
@@ -1026,7 +1104,7 @@ function withOliphaunt(config, options = {}) {
         assetBaseUrl: normalized.assetBaseUrl,
       });
       ensureIosDeploymentTargetFile(path.join(iosRoot, 'Podfile.properties.json'));
-      patchIosPodfile(path.join(iosRoot, 'Podfile'), normalized);
+      patchIosPodfile(path.join(iosRoot, 'Podfile'), { ...normalized, packageJsonResolver });
       return modConfig;
     },
   ]);
@@ -1037,6 +1115,7 @@ function withOliphaunt(config, options = {}) {
 module.exports = withOliphaunt;
 module.exports.withOliphaunt = withOliphaunt;
 module.exports.normalizeOptions = normalizeOptions;
+module.exports.resolveInstalledResources = resolveInstalledResources;
 module.exports.extensionPackageName = extensionPackageName;
 module.exports.selectedExtensionClosure = selectedExtensionClosure;
 module.exports.releaseOwnerForSqlName = releaseOwnerForSqlName;

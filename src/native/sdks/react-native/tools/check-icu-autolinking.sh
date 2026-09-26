@@ -18,9 +18,9 @@ for kind in candidate control; do
   for platform in "${platforms[@]}"; do
     (cd "$expo_project" && bun x --no-install expo-modules-autolinking react-native-config "$consumer/node_modules" \
       --project-root "$consumer" --platform "$platform" --json) > "$root/expo.json"
-    bun "$helper" check "$root" "$kind" "$platform" "$root/expo.json"
+    node --experimental-strip-types "$helper" check "$root" "$kind" "$platform" "$root/expo.json"
     (cd "$consumer" && node "$cli" config --platform "$platform") > "$root/bare.json"
-    bun "$helper" check "$root" "$kind" "$platform" "$root/bare.json"
+    node --experimental-strip-types "$helper" check "$root" "$kind" "$platform" "$root/bare.json"
   done
 done
 printf 'Packed React Native and ICU Expo/bare autolinking passed\n'
