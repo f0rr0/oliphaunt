@@ -9,7 +9,8 @@ runs:
       run: printf 'version=%s\n' "$(cat src/native/sdks/swift/.swift-version)" >> "$GITHUB_OUTPUT"
     - name: Import Swift signing keys
       shell: bash
-      run: curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 https://www.swift.org/keys/all-keys.asc | gpg --batch --import -
+      # Pin Swift's upstream key bundle instead of relying on the website endpoint.
+      run: curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/swiftlang/swift-org-website/894b4ef6cfd942971e433497feb0458af641ec1e/keys/all-keys.asc | gpg --batch --import -
     - name: Install Swift
       uses: swift-actions/setup-swift@d8e84bc3a450686a95474d7d6fa4a3301498debc # v3, Swiftly 1.1.0
       with:
