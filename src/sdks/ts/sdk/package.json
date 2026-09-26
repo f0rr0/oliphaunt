@@ -73,10 +73,10 @@
   ],
   "scripts": {
     "build": "rm -rf lib && tsc -p tsconfig.build.json",
-    "test": "bun test --isolate --timeout=30000 ./src/__tests__ ./tools/published-consumer.test.mts",
+    "test": "bash ../../../../tools/dev/bun.sh test --cwd src/sdks/ts/sdk --isolate ./src/__tests__ ./tools/published-consumer.test.mts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf lib",
-    "coverage": "bun test --isolate --timeout=30000 ./src/__tests__ --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../../../target/coverage/oliphaunt-js",
+    "coverage": "bash ../../../../tools/dev/bun.sh test --cwd src/sdks/ts/sdk --isolate ./src/__tests__ --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../../../target/coverage/oliphaunt-js",
     "format": "bun x --no-install biome format --write --no-errors-on-unmatched .",
     "format-check": "bun x --no-install biome format --no-errors-on-unmatched .",
     "lint": "bun x --no-install biome lint --diagnostic-level=error --no-errors-on-unmatched .",

@@ -62,6 +62,8 @@ tasks:
       - unit
     command: bun run test
     inputs:
+      - "/tools/dev/bun.sh"
+      - "package.json"
       - /src/sdks/ts-query/src/**/*.ts
       - test/**/*
       - project: shared-test-fixtures

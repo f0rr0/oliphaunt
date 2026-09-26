@@ -9,4 +9,4 @@ source "$lib/immutable-carrier.sh"
 export FRESH_WORK_ROOT="$temporary"
 binding="$(fresh_immutable_kernel)"
 [ "$(HOST_CC=false fresh_immutable_kernel)" = "$binding" ]
-OLIPHAUNT_IMMUTABLE_KERNEL="$binding" bun test "$lib/immutable-carrier.test.mts" -t 'native immutable'
+OLIPHAUNT_IMMUTABLE_KERNEL="$binding" bash "$REPO_ROOT/tools/dev/bun.sh" test "$lib/immutable-carrier.test.mts" -t 'native immutable'

@@ -72,12 +72,13 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
-      bun test ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts ../../../../tools/packaging/local-npm-tarball.test.mts
+      bash ../../../../tools/dev/bun.sh test --cwd src/sdks/ts-wasix/node-addon ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts ../../../../tools/packaging/local-npm-tarball.test.mts
       bash tools/package-platform.test.sh
       cargo test --manifest-path Cargo.toml --locked --no-default-features --features test-noop --lib
     env:
       CARGO_TARGET_DIR: "../../../../target"
     inputs:
+      - "/tools/dev/bun.sh"
       - "@group(cargo-workspace)"
       - "@group(code)"
       - "/tools/packaging/testdata/release-fixture-utils.mts"

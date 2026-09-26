@@ -38,4 +38,4 @@ for crate in "$scratch/cargo-a/"*.crate; do
     --manifest-path "$scratch/extracted/$package_name/Cargo.toml" \
     --target-dir "$scratch/cargo-check"
 done
-"$bun" test --timeout=30000 ./src/broker/tools/broker-dependency-license-contract.test.mts
+bash tools/dev/bun.sh test ./src/broker/tools/broker-dependency-license-contract.test.mts

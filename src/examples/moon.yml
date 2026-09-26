@@ -51,8 +51,9 @@ tasks:
       set -e
       bash src/examples/tools/stage-tauri-webdriver-app.test.sh
       bash src/examples/tools/run-tauri-webdriver-smoke.test.sh
-      bun test src/examples/react-native-expo/tools/smoke-pass-receipt.test.mts src/examples/react-native-expo/tools/mobile-extension-proof.test.mts
+      bash tools/dev/bun.sh test src/examples/react-native-expo/tools/smoke-pass-receipt.test.mts src/examples/react-native-expo/tools/mobile-extension-proof.test.mts
     inputs:
+      - "/tools/dev/bun.sh"
       - "**/*"
       - "@group(bun-workspace)"
       - "!/src/examples/**/node_modules"

@@ -4,7 +4,7 @@ tools="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$tools/../../../.." && pwd)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-bun test "$tools/mobile-extension-artifact-paths.test.mts"
+bash "$root/tools/dev/bun.sh" test "$tools/mobile-extension-artifact-paths.test.mts"
 mkdir "$scratch/artifacts"
 arguments=(--root "$root" --artifact-root "$scratch/artifacts" --materialize-root "$scratch/cache" --extensions vector --asset-kind runtime --asset-target android-arm64-v8a)
 for required in 0 1; do

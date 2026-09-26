@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-bun test ./tools/packaging/cargo-package-test-closure.test.mts
+bash tools/dev/bun.sh test ./tools/packaging/cargo-package-test-closure.test.mts
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-cargo-closure-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 crate=$(bun tools/packaging/cargo-package-test-closure.test.mts prepare "$scratch")

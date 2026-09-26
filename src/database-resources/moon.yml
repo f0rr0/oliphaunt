@@ -37,7 +37,7 @@ tasks:
     tags: ["quality", "unit"]
     deps: ["cluster-seed-contract:test", "seed-producer-test"]
     command: "bash test.sh"
-    inputs: ["test.sh", "seeds/*.mts", "icu/tools/**/*", "icu/npm/**/*", "contracts/**/*", "/tools/packaging/**/*.mts", "!/tools/packaging/**/*.test.*"]
+    inputs: ["/tools/dev/bun.sh", "test.sh", "seeds/*.mts", "icu/tools/**/*", "icu/npm/**/*", "contracts/**/*", "/tools/packaging/**/*.mts", "!/tools/packaging/**/*.test.*"]
   package-native:
     deps: ["database-resources:build-native-standard", "database-resources:build-native-icu"]
     command: "bash src/database-resources/seeds/package.sh native"

@@ -204,7 +204,7 @@ tasks:
 
   test-packaging:
     tags: ["quality", "unit"]
-    command: "bun test --timeout=30000 ./src/sdks/kotlin/tools/kotlin-maven-staging.test.mts"
+    command: "bash tools/dev/bun.sh test ./src/sdks/kotlin/tools/kotlin-maven-staging.test.mts"
     inputs:
       - "@group(legal-files)"
       - "@group(release-target-contract)"

@@ -43,5 +43,5 @@ while IFS= read -r -d '' test_file; do
 done < "$inventory"
 [ "${#test_files[@]}" -gt 0 ] || { echo 'No release tests found' >&2; exit 1; }
 
-bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-source.sh HEAD bash tools/ci/with-projects.sh test --timeout=30000 "${test_files[@]}"
+bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-source.sh HEAD bash tools/ci/with-projects.sh test "${test_files[@]}"
 for shell_test in "${shell_tests[@]}"; do bash "$shell_test"; done

@@ -17,7 +17,7 @@ bash "$script" "$source_dir" "$scratch/output"
 cp "$archive" "$scratch/first.tar.gz"
 bash "$script" "$source_dir" "$scratch/output"
 cmp "$archive" "$scratch/first.tar.gz"
-OLIPHAUNT_ICU_TEST_ARCHIVE="$archive" bun test ./src/database-resources/icu/tools/package-liboliphaunt-icu-data.test.mts
+OLIPHAUNT_ICU_TEST_ARCHIVE="$archive" bash tools/dev/bun.sh test ./src/database-resources/icu/tools/package-liboliphaunt-icu-data.test.mts
 if bash "$script" "$scratch/empty" "$scratch/output" > "$scratch/empty.log" 2>&1; then
   echo 'Empty ICU input was accepted' >&2; exit 1
 fi

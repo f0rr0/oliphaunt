@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-bun test ./tools/packaging/windows-vc-runtime-closure.test.mts
+bash tools/dev/bun.sh test ./tools/packaging/windows-vc-runtime-closure.test.mts
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-vc-strip-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 bun tools/packaging/windows-vc-runtime-closure.test.mts prepare "$scratch"

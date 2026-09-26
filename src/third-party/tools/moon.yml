@@ -31,8 +31,9 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -e\nbash src/third-party/tools/fetch-sources.sh production-all --validate-only\nbash src/third-party/tools/source-fetch-core.test.sh\nbun test ./src/third-party/tools/source-fetch-scopes.test.mts\nbash src/third-party/postgres/fetch-source.test.sh\n"
+    script: "set -e\nbash src/third-party/tools/fetch-sources.sh production-all --validate-only\nbash src/third-party/tools/source-fetch-core.test.sh\nbash tools/dev/bun.sh test ./src/third-party/tools/source-fetch-scopes.test.mts\nbash src/third-party/postgres/fetch-source.test.sh\n"
     inputs:
+      - "/tools/dev/bun.sh"
       - /src/third-party/postgres/**/*
       - "/src/third-party/{icu,openssl}/source.toml"
       - /src/runtimes/liboliphaunt-native/sources/*.toml

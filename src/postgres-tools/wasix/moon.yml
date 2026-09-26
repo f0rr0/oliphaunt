@@ -23,7 +23,7 @@ tasks:
   test:
     command: "bash src/postgres-tools/wasix/tools/test-packaging.sh"
     tags: ["quality", "unit"]
-    inputs: ["tools/**/*", "npm/**/*", "cargo/**/*", "/src/runtimes/liboliphaunt-wasix/tools/*.mts", "/tools/packaging/**/*", "@group(release-target-contract)", "@group(legal-files)"]
+    inputs: ["/tools/dev/bun.sh", "tools/**/*", "npm/**/*", "cargo/**/*", "/src/runtimes/liboliphaunt-wasix/tools/*.mts", "/tools/packaging/**/*", "@group(release-target-contract)", "@group(legal-files)"]
     options: {runFromWorkspaceRoot: true}
   compiler-output:
     tags: ["artifact", "ci-liboliphaunt-wasix-runtime"]

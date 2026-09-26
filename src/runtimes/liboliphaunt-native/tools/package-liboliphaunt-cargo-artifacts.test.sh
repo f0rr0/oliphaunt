@@ -13,7 +13,7 @@ echo 'Carrier assembly must not strip frozen release assets' >&2
 exit 99
 STRIP
 chmod +x "$OLIPHAUNT_STRIP"
-bun test --timeout=30000 ./src/runtimes/liboliphaunt-native/tools/package-liboliphaunt-cargo-artifacts.test.mts
+bash tools/dev/bun.sh test ./src/runtimes/liboliphaunt-native/tools/package-liboliphaunt-cargo-artifacts.test.mts
 CARGO_HOME="$root/installed-consumer/cargo-home" \
   CARGO_TARGET_DIR="$root/installed-consumer/target" \
   cargo check --offline --manifest-path "$root/installed-consumer/Cargo.toml"

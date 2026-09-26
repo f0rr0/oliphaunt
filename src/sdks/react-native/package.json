@@ -82,7 +82,7 @@
     "test": "bash tools/test.sh",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf lib",
-    "coverage": "bun test --isolate --timeout=30000 ./src/__tests__ --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../../target/coverage/oliphaunt-react-native",
+    "coverage": "bash ../../../tools/dev/bun.sh test --cwd src/sdks/react-native --isolate ./src/__tests__ --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../../target/coverage/oliphaunt-react-native",
     "format": "bun x --no-install biome format --write --no-errors-on-unmatched .",
     "format-check": "bun x --no-install biome format --no-errors-on-unmatched .",
     "lint": "bun x --no-install biome lint --diagnostic-level=error --no-errors-on-unmatched . && bun run codegen:check",

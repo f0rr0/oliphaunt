@@ -10,7 +10,7 @@
     "smoke": "bun tools/smoke-built-site.mts",
     "lint": "biome check",
     "format": "biome format --write",
-    "test": "bun test tools/published-products.test.mts tools/verify-live.test.mts && bash tools/request-refresh.test.sh"
+    "test": "bash ../../tools/dev/bun.sh test --cwd src/docs tools/published-products.test.mts tools/verify-live.test.mts && bash tools/request-refresh.test.sh"
   },
   "dependencies": {
     "@mdx-js/react": "^3.1.0",

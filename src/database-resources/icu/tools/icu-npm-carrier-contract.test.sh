@@ -11,4 +11,4 @@ bun "$test_file" prepare "$scratch"
 bun "$test_file" extract-config "$scratch"
 node -e 'process.stdout.write(JSON.stringify(require(process.argv[1])))' \
   "$scratch/consumer/react-native.config.js" > "$scratch/config.json"
-OLIPHAUNT_ICU_NPM_TEST_ROOT="$scratch" bun test "$root/$test_file"
+OLIPHAUNT_ICU_NPM_TEST_ROOT="$scratch" bash tools/dev/bun.sh test "$root/$test_file"

@@ -21,8 +21,9 @@ project:
 tasks:
   test:
     tags: ["quality", "unit"]
-    command: "bun test ./src/extensions/external/postgis/tools/preprocess-sql.test.mts"
+    command: "bash tools/dev/bun.sh test ./src/extensions/external/postgis/tools/preprocess-sql.test.mts"
     inputs:
+      - "/tools/dev/bun.sh"
       - "tools/preprocess-sql.mts"
       - "tools/preprocess-sql.test.mts"
     options:

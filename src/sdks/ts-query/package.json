@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.module.json && tsc -p tsconfig.build.commonjs.json && cp module.package.json dist/module/package.json",
-    "test": "bun test ./test",
+    "test": "bash ../../../tools/dev/bun.sh test --cwd src/sdks/ts-query ./test",
     "typecheck": "tsc --noEmit",
     "format": "bun x --no-install biome format --write --no-errors-on-unmatched .",
     "format-check": "bun x --no-install biome format --no-errors-on-unmatched .",

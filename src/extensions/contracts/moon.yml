@@ -28,8 +28,9 @@ fileGroups:
 tasks:
   test:
     tags: ["quality", "unit"]
-    command: "bun test ./src/extensions/contracts"
+    command: "bash tools/dev/bun.sh test ./src/extensions/contracts"
     inputs:
+      - "/tools/dev/bun.sh"
       - "@group(contract)"
       - "*.test.mts"
       - "/tools/packaging/*.{mjs,mts}"
