@@ -37,23 +37,26 @@ npx expo run:ios
 npx expo run:android
 ```
 
-Expo apps use the config plugin so selected native runtime and extension
-artifacts are included in the app build.
+Install the extension packages your app needs, such as
+`@oliphaunt/extension-vector`, and enable the Expo config plugin. Prebuild
+discovers installed extensions and `@oliphaunt/icu` automatically.
 
 ```json
 {
   "expo": {
-    "plugins": [
-      [
-        "@oliphaunt/react-native",
-        {
-          "extensions": ["vector"]
-        }
-      ]
-    ]
+    "plugins": ["@oliphaunt/react-native"]
   }
 }
 ```
+
+Discovery uses the app's [Expo autolinker](https://docs.expo.dev/modules/autolinking/),
+including transitive dependencies, workspace links, search paths, and platform
+exclusions. Install packages under their published names and deduplicate any
+conflicting resource versions. The optional `extensions` plugin setting limits
+which SQL members ship; `icu: false` disables ICU packaging unless an ICU seed
+requires it. Omit these settings for automatic discovery. Installing the contrib
+package ships all its members
+unless you provide an `extensions` filter.
 
 React Native apps without Expo still use the same package, but native projects
 own the equivalent Pod, Gradle, and resource configuration. Rebuild after
@@ -134,9 +137,8 @@ PostgreSQL wire messages directly.
 ### Configure
 
 Configure storage, selected exact extensions, PostgreSQL startup GUCs, and
-startup identity through the JS API and config plugin. Build-time extension selection
-controls what ships in the app bundle; runtime storage controls where app data
-lives.
+startup identity through the JS API. Installed resource packages determine what
+ships in the app bundle; runtime storage controls where app data lives.
 
 Keep build-time and runtime settings separate. The config plugin controls native
 artifacts in the installed app. `Oliphaunt.open()` controls storage, startup
@@ -218,12 +220,13 @@ checkout for this section.
 For Android, the Expo plugin selects one resource profile at build time:
 
 ```json
-{ "plugins": [["@oliphaunt/react-native", { "seedProfile": "icu", "icu": true }]] }
+{ "plugins": [["@oliphaunt/react-native", { "seedProfile": "icu" }]] }
 ```
 
 For iOS, select exactly one development npm carrier:
 `@oliphaunt/seed-native-ios-datum64-standard` or
-`@oliphaunt/seed-native-ios-datum64-icu`. Its resource-only CocoaPod autolinks;
-keep `icu: true` for an ICU database. These are app packaging choices, not
-JavaScript database-open modes. Existing storage does not require a seed.
+`@oliphaunt/seed-native-ios-datum64-icu` and set the matching `seedProfile`.
+The plugin adds its resource CocoaPod. Install `@oliphaunt/icu` for an ICU
+database; the plugin discovers it without an additional flag. These are app
+packaging choices, not JavaScript database-open modes. Existing storage does not require a seed.
 Mobile device qualification of the new seed carriers remains pending.
