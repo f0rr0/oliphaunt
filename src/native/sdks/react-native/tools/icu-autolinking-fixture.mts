@@ -15,6 +15,7 @@ if (phase === 'prepare') {
   const resolver = createRequire(path.join(expoProject, 'package.json'));
   const dependencies = {};
   for (const name of [
+    'expo',
     'react-native',
     '@react-native-community/cli',
     '@react-native-community/cli-platform-android',
@@ -77,6 +78,41 @@ if (phase === 'prepare') {
       resolver.resolve('@oliphaunt/icu/package.json'),
       path.join(icuRoot, 'package.json'),
     );
+    const plugin = resolver(
+      path.join(
+        path.dirname(resolver.resolve('@oliphaunt/react-native/package.json')),
+        'app.plugin.js',
+      ),
+    );
+    const resources = await plugin.resolveInstalledResources(consumer, platform);
+    assert.equal(resources.icu, true, 'the Expo plugin discovers the installed ICU package');
+    assert.equal(
+      resources.databaseResourcesVersion,
+      readJson(path.join(icuRoot, 'package.json')).version,
+    );
+    assert.equal(
+      resources.packageJsonResolver('@oliphaunt/icu', [consumer]),
+      path.join(icuRoot, 'package.json'),
+    );
+    assert.deepEqual(resources.extensions, []);
+    if (platform === 'android') {
+      mkdirSync(path.join(consumer, 'android'), { recursive: true });
+      const appConfig = plugin({ name: 'consumer', slug: 'consumer' });
+      await appConfig.mods.android.dangerous({
+        ...appConfig,
+        modRequest: { projectRoot: consumer },
+      });
+      assert.match(
+        readFileSync(path.join(consumer, 'android/gradle.properties'), 'utf8'),
+        /^oliphauntIcu=true$/m,
+      );
+    } else {
+      assert.ok(
+        plugin
+          .iosPodfileBlock({ ...resources, projectRoot: consumer })
+          .includes("pod 'OliphauntICU'"),
+      );
+    }
   } else {
     assert.ok(
       icu?.platforms?.ios?.podspecPath,

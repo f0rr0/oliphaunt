@@ -11,25 +11,40 @@ plugin when using Expo prebuild. The supported platforms and packaged targets
 are declared by the repository SDK manifest; the package does not advertise
 future platform targets.
 
-Enable PostgreSQL ICU collations through the Expo plugin only when the app needs
-them:
+For Expo, install the extension packages your app needs and enable the plugin:
+
+```sh
+npx expo install @oliphaunt/react-native @oliphaunt/extension-vector
+```
 
 ```json
 {
   "expo": {
-    "plugins": [["@oliphaunt/react-native", { "seedProfile": "icu", "icu": true }]]
+    "plugins": ["@oliphaunt/react-native"]
   }
 }
 ```
+
+Prebuild discovers installed extension packages and `@oliphaunt/icu` through
+the app's Expo autolinker. It follows dependencies, workspace links, and Expo's
+platform-specific `searchPaths` and `exclude` settings. Install resource packages
+under their published names. Conflicting versions must be deduplicated before
+prebuild. Rebuild the native app after adding or removing resources.
+
+The existing plugin options remain optional: `extensions` limits which SQL
+members ship (useful for the contrib bundle), and `icu: false` omits ICU data
+unless an ICU seed requires it. Neither is needed for automatic discovery.
+Per-database extension selection
+still belongs in `open()`.
 
 Initialization seeds are optional dependencies owned by `database-resources`.
 On Android, `seedProfile` selects the standard or ICU Maven seed; omit it when
 opening an existing database or supplying application-owned seed resources.
 On iOS, install exactly one `@oliphaunt/seed-native-ios-datum64-standard` or
-`@oliphaunt/seed-native-ios-datum64-icu` npm package. Its resource-only CocoaPod
-is autolinked into the application. `seedProfile` declares the selected resource
-dependency in the app-owned podspec; omit it when using an existing database or
-application-owned resources. An ICU profile also requires the separately installed
+`@oliphaunt/seed-native-ios-datum64-icu` npm package. Set `seedProfile` to
+`standard` or `icu`; the plugin adds the selected resource CocoaPod to the app.
+Omit it when using an existing database or application-owned resources.
+An ICU profile also requires the separately installed
 `@oliphaunt/icu` package. Its data bundle stays separate from the runtime payload;
 the Swift initializer validates and uses it with the selected seed.
 These are build-time choices and do not add a database-open option.
@@ -137,8 +152,8 @@ Runtime selection accepts typed descriptors. Import `extensions` from
 `@oliphaunt/react-native` and pass `extensions: [extensions.vector]` to select
 linked resources, as in Swift and Kotlin. Installed extension packages also
 export descriptors; their React Native export has no Node filesystem imports.
-The native build must link the selected products; the Expo plugin's build
-selection still uses SQL names.
+The Expo plugin ships installed resource packages by default. Its optional
+`extensions` filter uses SQL names; `open()` uses typed descriptors.
 
 The TurboModule owns configuration and handle lifecycle. Every database and
 archive operation returns a JavaScript promise; the JSI object only copies
