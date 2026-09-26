@@ -232,6 +232,66 @@ export function extensionProjections(catalog: Row, releases: Row[]): Map<string,
       `${generated}export type GeneratedExtensionMetadata = {\n${type}\n};\n\nexport const GENERATED_EXTENSION_METADATA_SHA256 = ${literal(hash)} as const;\n\nexport const GENERATED_EXTENSION_METADATA = ${JSON.stringify(sorted(rows), null, 2)} as const satisfies readonly GeneratedExtensionMetadata[];\n\nexport function generatedExtensionBySqlName(sqlName: string): GeneratedExtensionMetadata | undefined {\n  return GENERATED_EXTENSION_METADATA.find((extension) => extension.sqlName === sqlName);\n}\n\nexport function generatedSharedPreloadLibraries(extensionSqlNames: readonly string[]): string[] {\n  const libraries = new Set<string>();\n  for (const sqlName of extensionSqlNames) {\n    const extension = generatedExtensionBySqlName(sqlName);\n    for (const library of extension?.sharedPreloadLibraries ?? []) {\n      libraries.add(library);\n    }\n  }\n  return [...libraries].sort();\n}\n`,
     );
   }
+  for (const sdk of ['ts', 'react-native']) {
+    outputs.set(
+      `src/native/sdks/${sdk}/src/extensions.ts`,
+      `${generated}${nativeExtensionDescriptors(sdk === 'react-native')}`,
+    );
+  }
+  outputs.set(
+    'src/native/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/OliphauntExtension.kt',
+    `${generated}package dev.oliphaunt
+
+/** Selecting an extension exposes its linked resources; installation remains application SQL. */
+public enum class OliphauntExtension(public val sqlName: String) {
+${metadataRows.map((row) => `    ${row['sql-name'].replaceAll('-', '_').toUpperCase()}(${literal(row['sql-name'])}),`).join('\n')}
+    ;
+
+    public companion object {
+        public fun fromSqlName(sqlName: String): OliphauntExtension = entries.firstOrNull { it.sqlName == sqlName }
+            ?: throw OliphauntException("unknown Oliphaunt extension: $sqlName")
+    }
+}
+`,
+  );
+  outputs.set(
+    'src/native/sdks/swift/Sources/Oliphaunt/OliphauntExtension.swift',
+    `${generated}import Foundation
+
+/// An explicitly selected extension. Selection does not run CREATE EXTENSION.
+public struct OliphauntExtension: Sendable, Equatable {
+    public let sqlName: String
+    private let product: String?
+    private let version: String?
+    private let registration: @Sendable () throws -> Void
+
+    /// Select an extension whose native resources are already linked by the application.
+    public init(sqlName: String) throws {
+        _ = try OliphauntRuntimeResources.validateExtensionIds([sqlName])
+        self.sqlName = sqlName
+        self.product = nil
+        self.version = nil
+        self.registration = {}
+    }
+
+    /// Used by generated SwiftPM resource products to register their own verified payload.
+    public init(sqlName: String, product: String? = nil, version: String? = nil, registration: @escaping @Sendable () throws -> Void) {
+        self.sqlName = sqlName
+        self.product = product
+        self.version = version
+        self.registration = registration
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.sqlName == rhs.sqlName && lhs.product == rhs.product && lhs.version == rhs.version
+    }
+
+    func prepare() throws { try registration() }
+
+${metadataRows.map((row) => `    public static let ${row.id.replace(/[-_]([a-z])/g, (_, letter) => letter.toUpperCase())} = OliphauntExtension(sqlName: ${literal(row['sql-name'])}, registration: {})`).join('\n')}
+}
+`,
+  );
   const smokePlan = metadataRows.map((row) => ({
     sqlName: row['sql-name'],
     createsExtension: row['creates-extension'],
@@ -428,6 +488,7 @@ function rustModule(rows: Row[]): string {
     '#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]',
     'pub struct Extension {',
     '    id: ExtensionId,',
+    "    pub(super) package: Option<&'static super::ExtensionPackage>,",
     '}',
     '',
     '#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]',
@@ -438,7 +499,7 @@ function rustModule(rows: Row[]): string {
     'impl Extension {',
     ...rows.map(
       (row) =>
-        `    /// Select the \`${row['sql-name']}\` artifact.\n    pub const ${row['rust-constant']}: Self = Self { id: ${id(row)} };`,
+        `    /// Select the \`${row['sql-name']}\` artifact.\n    pub const ${row['rust-constant']}: Self = Self { id: ${id(row)}, package: None };`,
     ),
     '',
     '    /// All PostgreSQL 18 extension artifacts known to the native SDK.',
@@ -446,6 +507,7 @@ function rustModule(rows: Row[]): string {
     '}',
     '',
     match('sql_name', "&'static str", (row) => literal(row['sql-name'])),
+    match('artifact_product', "&'static str", (row) => literal(row['artifact-product'])),
     match('native_module_stem', "Option<&'static str>", (row) => option(row['native-module-stem'])),
     match('creates_extension', 'bool', (row) => String(row['creates-extension'])),
     match('dependencies', "&'static [Extension]", (row) =>
@@ -598,8 +660,7 @@ export function catalogProjections(catalog: Row): Map<string, string> {
 }
 
 function wasixRustModule(rows: Row[]): string {
-  const feature = (row: Row) => `extension-${row['sql-name'].replaceAll('_', '-')}`;
-  const cfg = (row: Row) => `#[cfg(feature = ${literal(feature(row))})]`;
+  const cfg = (_row: Row) => ''; // Metadata is available independently of embedded payload features.
   const array = (values: string[]) => `&[${values.map(literal).join(', ')}]`;
   const option = (value: string | undefined) =>
     value === undefined ? 'None' : `Some(${literal(value)})`;
@@ -614,9 +675,9 @@ function wasixRustModule(rows: Row[]): string {
         (module) =>
           `super::ExtensionNativeModule { runtime_path: ${literal(module.runtime_path)}, aot_name: Some(${literal(`extension:${row['sql-name']}:${module.name}`)}) }`,
       );
-    text += `${cfg(row)}\nconst DEFINITION_${row['rust-constant']}: Extension = Extension {\n    sql_name: ${literal(row['sql-name'])},\n    native_support_modules: &[${modules.join(', ')}],\n    native_module_file: ${option(row['native-module-file'])},\n    aot_name: ${option(row['native-module-file'] ? `extension:${row['sql-name']}` : undefined)},\n    dependencies: ${array(row.dependencies.filter((sql: string) => sql !== 'plpgsql'))},\n    startup_config: ${array(row.lifecycle['startup-config'])},\n};\n\n`;
+    text += `${cfg(row)}\nconst DEFINITION_${row['rust-constant']}: Extension = Extension {\n    sql_name: ${literal(row['sql-name'])},\n    native_support_modules: &[${modules.join(', ')}],\n    native_module_file: ${option(row['native-module-file'])},\n    aot_name: ${option(row['native-module-file'] ? `extension:${row['sql-name']}` : undefined)},\n    dependencies: ${array(row.dependencies.filter((sql: string) => sql !== 'plpgsql'))},\n    startup_config: ${array(row.lifecycle['startup-config'])},\n    package: None,\n};\n\n`;
   }
-  text += `impl Extension {\n${rows.map((row) => `    /// Select the \`${row['sql-name']}\` artifact.\n    ${cfg(row)}\n    pub const ${row['rust-constant']}: Self = DEFINITION_${row['rust-constant']};`).join('\n')}\n\n    /// Extension artifacts enabled in this Cargo build.\n    pub const ALL: &'static [Self] = &[\n${rows.map((row) => `        ${cfg(row)}\n        Self::${row['rust-constant']},`).join('\n')}\n    ];\n}\n`;
+  text += `impl Extension {\n${rows.map((row) => `    /// Select the \`${row['sql-name']}\` artifact.\n    ${cfg(row)}\n    pub const ${row['rust-constant']}: Self = DEFINITION_${row['rust-constant']};`).join('\n')}\n\n    /// Supported extension metadata; payloads are selected independently.\n    pub const ALL: &'static [Self] = &[\n${rows.map((row) => `        ${cfg(row)}\n        Self::${row['rust-constant']},`).join('\n')}\n    ];\n}\n`;
   text += `\n#[cfg(test)]\npub(super) fn creates_database_object_for_test(extension: Extension) -> bool {\n    match extension.sql_name() {\n${rows.map((row) => `        ${cfg(row)}\n        ${literal(row['sql-name'])} => ${row.lifecycle['create-extension']},`).join('\n')}\n        _ => false,\n    }\n}\n`;
   const activation = (row: Row) => {
     const sql: string[] = [],
@@ -635,4 +696,79 @@ function wasixRustModule(rows: Row[]): string {
     text +
     `\n#[cfg(test)]\npub(super) fn activation_sql_for_test(extension: Extension) -> &'static [&'static str] {\n    match extension.sql_name() {\n${rows.map((row) => `        ${cfg(row)}\n        ${literal(row['sql-name'])} => ${array(activation(row))},`).join('\n')}\n        _ => &[],\n    }\n}\n`
   );
+}
+
+function nativeExtensionDescriptors(mobile: boolean): string {
+  return `import { GENERATED_EXTENSION_METADATA, generatedExtensionBySqlName } from './generated/extensions.js';
+
+/** A selected native extension. External packages export their own descriptors. */
+export type NativeExtension = {
+  readonly schema: 'oliphaunt-native-extension-v1';
+  readonly sqlName: string;
+  readonly product: string;
+  readonly packageName: string;
+  readonly version?: string;
+  /** Present in the Node/Bun/Deno export; mobile resolves linked resources. */
+  readonly packageJsonUrl?: string;
+};
+
+type ExtensionId = ${mobile ? "(typeof GENERATED_EXTENSION_METADATA)[number]['id']" : "Extract<(typeof GENERATED_EXTENSION_METADATA)[number], { readonly runtimeBound: true }>['id']"};
+
+/** Selecting an extension makes its files available; it does not execute SQL. */
+export const extensions = Object.freeze(Object.fromEntries(
+  GENERATED_EXTENSION_METADATA${mobile ? '' : '.filter(row => row.runtimeBound)'}.map(row => [row.id, Object.freeze({
+    schema: 'oliphaunt-native-extension-v1' as const,
+    sqlName: row.sqlName,
+    product: row.artifactProduct,
+    packageName: row.npmPackage,
+  })]),
+)) as Readonly<Record<ExtensionId, NativeExtension>>;
+
+/** @internal Validate and snapshot descriptors before asynchronous work. */
+export function normalizeExtensions(values: readonly NativeExtension[] = []): NativeExtension[] {
+  const selected = new Map<string, NativeExtension>();
+  for (const value of values) {
+    const metadata = generatedExtensionBySqlName(value?.sqlName);
+    if (value?.schema !== 'oliphaunt-native-extension-v1' || metadata === undefined ||
+        value.product !== metadata.artifactProduct || value.packageName !== metadata.npmPackage ||
+        ${mobile ? "(value.version !== undefined && (typeof value.version !== 'string' || value.version.length === 0))" : "(!metadata.runtimeBound && (typeof value.version !== 'string' || value.version.length === 0))"}) {
+      throw new Error('extensions must contain native extension descriptors imported from their packages');
+    }
+    if (value.packageJsonUrl !== undefined && typeof value.packageJsonUrl !== 'string') {
+      throw new Error('extension packageJsonUrl must be a string');
+    }
+    const snapshot: NativeExtension = Object.freeze({
+      schema: value.schema, sqlName: value.sqlName, product: value.product,
+      packageName: value.packageName,
+      ...(value.version !== undefined ? { version: value.version } : {}),
+      ...(value.packageJsonUrl !== undefined ? { packageJsonUrl: value.packageJsonUrl } : {}),
+    });
+    const previous = selected.get(value.sqlName);
+    if (previous !== undefined && (previous.version !== snapshot.version || previous.packageJsonUrl !== snapshot.packageJsonUrl)) {
+      throw new Error('conflicting selected extension packages for ' + value.sqlName);
+    }
+    selected.set(value.sqlName, snapshot);
+  }
+  for (const value of selected.values()) {
+    for (const sqlName of generatedExtensionBySqlName(value.sqlName)!.selectedExtensionDependencies) {
+      const dependency = generatedExtensionBySqlName(sqlName)!;
+      const existing = selected.get(sqlName);
+      if (existing !== undefined) {
+        if (dependency.artifactProduct === value.product &&
+            (existing.version !== value.version || existing.packageJsonUrl !== value.packageJsonUrl)) {
+          throw new Error('conflicting selected extension packages for ' + sqlName);
+        }
+        continue;
+      }
+      if (dependency.artifactProduct !== value.product && !dependency.runtimeBound) {
+        throw new Error('select the external extension dependency explicitly: ' + sqlName);
+      }
+      selected.set(sqlName, Object.freeze(dependency.artifactProduct === value.product
+        ? { ...value, sqlName }
+        : { schema: value.schema, sqlName, product: dependency.artifactProduct, packageName: dependency.npmPackage }));
+    }
+  }
+  return [...selected.values()];
+}
+`;
 }

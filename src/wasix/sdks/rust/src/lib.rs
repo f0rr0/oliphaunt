@@ -6,7 +6,7 @@ mod error;
 mod oliphaunt;
 
 #[cfg(feature = "extensions")]
-pub use oliphaunt::extensions::Extension;
+pub use oliphaunt::extensions::{Extension, ExtensionPackage};
 
 pub use async_api::{AsyncOliphaunt, AsyncOliphauntBuilder, AsyncSql, AsyncTransaction};
 pub use error::{

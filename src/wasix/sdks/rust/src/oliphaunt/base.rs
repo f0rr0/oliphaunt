@@ -1763,6 +1763,26 @@ pub(crate) fn install_missing_extension_archives(
     extensions: &[Extension],
 ) -> Result<()> {
     for extension in extensions {
+        if let Some(package) = extension.package() {
+            let matches = package
+                .archives()
+                .iter()
+                .filter(|(name, _, _)| *name == extension.sql_name())
+                .collect::<Vec<_>>();
+            ensure!(
+                matches.len() == 1,
+                "extension package must contain exactly one archive for {}",
+                extension.sql_name()
+            );
+            let (_, bytes, expected) = matches[0];
+            ensure!(
+                sha256_hex(bytes).eq_ignore_ascii_case(expected),
+                "extension archive hash mismatch for {}",
+                extension.sql_name()
+            );
+            install_extension_reader(&outcome.runtime_layout.mutable_root, Cursor::new(bytes))?;
+            continue;
+        }
         let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
             crate::error::invalid_configuration(format!(
                 "extension asset '{}' is not bundled in this oliphaunt-wasix build",

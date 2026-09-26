@@ -61,6 +61,35 @@ describe('WASIX host runtime helpers', () => {
     ).rejects.toThrow('did not provide a PGDATA mount');
   });
 
+  it('releases partial mounts when runtime or PGDATA materialization fails', async () => {
+    for (const failureInBase of [false, true]) {
+      const freed: number[] = [];
+      let count = 0;
+      class FailingDirectory {
+        id = ++count;
+        async createDir() {
+          throw new Error('cannot create directory');
+        }
+        free() {
+          freed.push(this.id);
+        }
+      }
+      const empty = { files: {}, directories: [] };
+      const failing = { files: {}, directories: ['fail'] };
+      await expect(
+        materializeWasixMounts(
+          FailingDirectory as never,
+          {
+            module: Uint8Array.of(),
+            mounts: { '/first': empty, '/second': failureInBase ? empty : failing },
+          },
+          failing,
+        ),
+      ).rejects.toThrow('cannot create directory');
+      expect(freed.sort()).toEqual(failureInBase ? [1, 2, 3] : [1, 2]);
+    }
+  });
+
   it('keeps host environment and lifecycle errors structured', () => {
     const options = workerOpenOptions();
     options.username = 'application';

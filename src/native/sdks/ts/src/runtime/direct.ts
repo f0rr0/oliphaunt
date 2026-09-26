@@ -19,6 +19,9 @@ export function directRuntimeBinding(binding: NativeBinding): RuntimeBinding {
         username: config.username,
         database: config.database,
         extensions: config.extensions,
+        ...(config.extensionDescriptors === undefined
+          ? {}
+          : { extensionDescriptors: config.extensionDescriptors }),
         startupArgs: config.startupArgs,
       });
     },

@@ -160,7 +160,7 @@ function addonFixture(): NativeWasixAddon {
     NativeWasixServer: Server,
     async restore() {},
     restoreDirect() {},
-    addonAbiVersion: () => 2,
+    addonAbiVersion: () => 3,
     nodeApiVersion: () => 8,
     runtimeVersion: () => '0.1.1',
     supportedProfiles: () => ['standard', 'icu'],
@@ -177,7 +177,7 @@ function metadata() {
       runtimeVersion: '0.1.1',
       wasixNapiProduct: 'oliphaunt-wasix-napi',
       wasixNapiVersion: '0.1.1',
-      wasixAddonAbiVersion: 2,
+      wasixAddonAbiVersion: 3,
       nodeApiVersion: 8,
     },
   };

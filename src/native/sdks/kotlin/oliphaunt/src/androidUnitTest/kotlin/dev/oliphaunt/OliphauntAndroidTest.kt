@@ -7,7 +7,7 @@ class OliphauntAndroidTest {
     @Test
     fun publicConfigurationConversionSnapshotsMutableCollections() {
         val startupGucs = mutableListOf(PostgresStartupGuc("shared_buffers", "16MB"))
-        val extensions = mutableListOf("pgtap")
+        val extensions = mutableListOf(OliphauntExtension.PGTAP)
         val converted =
             OliphauntConfig(
                 startupGucs = startupGucs,
@@ -15,7 +15,7 @@ class OliphauntAndroidTest {
             ).toEngineConfig()
 
         startupGucs[0] = PostgresStartupGuc("work_mem", "64MB")
-        extensions[0] = "vector"
+        extensions[0] = OliphauntExtension.VECTOR
 
         assertEquals(listOf(PostgresStartupGuc("shared_buffers", "16MB")), converted.startupGucs)
         assertEquals(listOf("pgtap"), converted.extensions)

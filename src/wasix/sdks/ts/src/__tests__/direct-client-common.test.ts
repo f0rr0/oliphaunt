@@ -25,6 +25,7 @@ import { WASIX_PHYSICAL_IDENTITY, type WasixStorageLease } from '../storage/stor
 import { wasixPostgresArgs } from '../hosts/browser/wasix-runtime.js';
 import { createWorkerSessionDispatcher } from '../workers/worker-dispatch.js';
 import { openWorkerDatabase, type WasixWorkerPort } from '../workers/worker-rpc.js';
+import { initializeWasixStorage } from '../hosts/browser/initialize.js';
 
 const EMPTY_WASM = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0);
 const EMPTY_WASM_SHA256 = '93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476';
@@ -36,6 +37,47 @@ const pgDumpDescriptor = {
 };
 
 describe('direct WASIX session lifecycle', () => {
+  it('initializes without a seed and releases all initdb mounts on failure', async () => {
+    for (const icuEnabled of [false, true]) {
+      const directories: FakeDirectory[] = [];
+      const freed: FakeDirectory[] = [];
+      class InitializerDirectory extends FakeDirectory {
+        constructor(files: Record<string, Uint8Array> = {}) {
+          super(files);
+          directories.push(this);
+        }
+        free() {
+          freed.push(this);
+        }
+      }
+      const runtime = preparedRuntime();
+      runtime.icuEnabled = icuEnabled;
+      delete runtime.loadClusterSeed;
+      runtime.layout.mounts['/bin'] = { files: { initdb: EMPTY_WASM }, directories: [] };
+      const host = {
+        Directory: InitializerDirectory,
+        async runWasix(bytes: Uint8Array, options: RunWasixOptions) {
+          expect(bytes).toBe(EMPTY_WASM);
+          expect(options.program).toBe('/bin/initdb');
+          expect(options.env).toMatchObject(
+            icuEnabled
+              ? { ICU_DATA: '/share/icu', OLIPHAUNT_INTERNAL_ICU_READY: '1' }
+              : { OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY: '1' },
+          );
+          expect(options.mount?.['/base']).toBe(directories.at(-1) as never);
+          return {
+            async wait() {
+              return { ok: false, code: 1, stderr: 'bootstrap failed' };
+            },
+          };
+        },
+      } as unknown as DirectWasixHost;
+      await expect(initializeWasixStorage(host, runtime)).rejects.toThrow(
+        'WASIX initdb failed (1): bootstrap failed',
+      );
+      expect(freed).toEqual(directories);
+    }
+  });
   it('relies on the compiled WASIX WAL sync default', () => {
     expect(wasixPostgresArgs(openOptions()).some((arg) => arg.startsWith('wal_sync_method='))).toBe(
       false,

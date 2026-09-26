@@ -58,7 +58,7 @@ export async function assertNativeDatabaseContract(
     await database.close();
     database = undefined;
 
-    await Oliphaunt.restore(restoredRoot, backup);
+    await Oliphaunt.restore({ kind: 'directory', path: restoredRoot }, backup);
     database = await Oliphaunt.open({
       ...config,
       storage: { kind: 'directory', path: sourceRoot },
@@ -68,7 +68,7 @@ export async function assertNativeDatabaseContract(
     database = undefined;
 
     await assert.rejects(
-      Oliphaunt.restore(join(root, 'invalid'), backup.subarray(0, 8)),
+      Oliphaunt.restore({ kind: 'directory', path: join(root, 'invalid') }, backup.subarray(0, 8)),
       (error) => error instanceof Error && error.message.length > 0,
     );
   } finally {

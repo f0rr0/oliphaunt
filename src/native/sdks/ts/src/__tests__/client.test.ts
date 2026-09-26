@@ -1,3 +1,5 @@
+import { extensions as contrib, type NativeExtension } from '../extensions.js';
+import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -5,6 +7,7 @@ import { join } from 'node:path';
 import { test } from 'bun:test';
 
 import { createOliphauntClient } from '../client.js';
+import { directory } from '../storage.js';
 import type {
   NativeBinding,
   NativeBindingOptions,
@@ -69,7 +72,7 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
     assert.equal(binding.detachCalls, 1);
     await assert.rejects(() => db.execute('SELECT 1'), /closed/);
 
-    await client.restore(join(root, 'restored'), new Uint8Array([7, 8]), {
+    await client.restore(directory(join(root, 'restored')), new Uint8Array([7, 8]), {
       libraryPath: '/opt/oliphaunt/liboliphaunt.so',
     });
     assert.deepEqual(binding.restoreCalls, [
@@ -94,7 +97,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     return { state: 'closed' };
   };
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
-  const extensions: string[] = [];
+  const extensions: NativeExtension[] = [];
   const config: OpenConfig = {
     topology: 'broker',
     storage: { kind: 'directory', path: root },
@@ -111,7 +114,7 @@ test('snapshots open configuration before asynchronous storage work', async () =
     config.username = 'after';
     config.database = 'after';
     startupGUCs.work_mem = '64MB';
-    extensions.push('vector');
+    extensions.push(contrib.hstore);
 
     const database = await opening;
     assert.equal(direct.openCalls.length, 0);
@@ -192,7 +195,7 @@ test('snapshots server storage and nested configuration before asynchronous work
   const storage = { kind: 'directory' as const, path: root };
   const listen = { transport: 'tcp' as const, port: 15432 };
   const startupGUCs: Record<string, string> = { work_mem: '8MB' };
-  const extensions: string[] = [];
+  const extensions: NativeExtension[] = [];
   const config: ServerOpenConfig = { storage, listen, startupGUCs, extensions };
   const client = createOliphauntClient(() => new FakeBinding(), { server: serverRuntime });
 
@@ -201,7 +204,7 @@ test('snapshots server storage and nested configuration before asynchronous work
     storage.path = movedRoot;
     listen.port = 25432;
     startupGUCs.work_mem = '64MB';
-    extensions.push('vector');
+    extensions.push(contrib.hstore);
 
     const database = await opening;
     assert.equal(database.connectionString, 'postgresql://postgres@127.0.0.1:15432/postgres');
@@ -266,7 +269,32 @@ test('server open preserves both a missing endpoint and handle cleanup failure',
   }
 });
 
-test('copies restore bytes before asynchronous binding resolution', async () => {
+test('rejects nonpersistent restore destinations before loading a binding', async () => {
+  let calls = 0;
+  const client = createOliphauntClient(() => {
+    calls += 1;
+    return new FakeBinding();
+  });
+  for (const destination of [
+    undefined,
+    null,
+    '/db',
+    { kind: 'temporaryDirectory' },
+    { kind: 'directory' },
+    { kind: 'directory', path: '' },
+    { kind: 'directory', path: '\0' },
+  ]) {
+    await assert.rejects(client.restore(destination as never, new Uint8Array()));
+  }
+  assert.equal(calls, 0);
+  assert.deepEqual(directory(pathToFileURL(join(tmpdir(), 'database space'))), {
+    kind: 'directory',
+    path: join(tmpdir(), 'database space'),
+  });
+  assert.throws(() => directory(new URL('https://example.com/database')));
+});
+
+test('copies restore destination and bytes before asynchronous binding resolution', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-restore-snapshot-'));
   const binding = new FakeBinding();
   const releaseBinding = deferred<void>();
@@ -277,7 +305,9 @@ test('copies restore bytes before asynchronous binding resolution', async () => 
   const backup = Buffer.from([0, 7, 8, 0]).subarray(1, 3);
 
   try {
-    const restoring = client.restore(join(root, 'restored'), backup);
+    const destination = { kind: 'directory' as const, path: join(root, 'restored') };
+    const restoring = client.restore(destination, backup);
+    destination.path = join(root, 'changed');
     backup.fill(0);
     releaseBinding.resolve();
     await restoring;

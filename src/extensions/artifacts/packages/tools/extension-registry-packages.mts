@@ -1,4 +1,5 @@
 import {
+  AOT_TARGET_TRIPLES,
   expectedExtensionAotTargets,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
@@ -49,6 +50,14 @@ export function extensionNpmPackageForProduct(product) {
  */
 export function extensionNpmWasixPackageForProduct(product) {
   return `${extensionNpmPackageForProduct(product)}-wasix`;
+}
+
+export function extensionNpmWasixAotTargets(product, aotTargets = expectedExtensionAotTargets()) {
+  if (product === 'oliphaunt-extension-contrib-pg18') return [];
+  return Object.entries(AOT_TARGET_TRIPLES)
+    .filter(([, triple]) => aotTargets.includes(triple))
+    .map(([target]) => target)
+    .sort(compareText);
 }
 
 export function extensionNpmTargetPackageForProduct(product, target) {
@@ -218,7 +227,17 @@ export function extensionWasixRegistryPackageEntries({
       kind: 'crates',
       name,
     })),
-    ...(includeNpm ? [{ kind: 'npm', name: extensionNpmWasixPackageForProduct(product) }] : []),
+    ...(includeNpm
+      ? [
+          { kind: 'npm', name: extensionNpmWasixPackageForProduct(product) },
+          ...(includeAot
+            ? extensionNpmWasixAotTargets(product, aotTargets).map((target) => ({
+                kind: 'npm',
+                name: `${extensionNpmWasixPackageForProduct(product)}-${target}`,
+              }))
+            : []),
+        ]
+      : []),
   ];
 }
 

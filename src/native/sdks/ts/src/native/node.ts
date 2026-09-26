@@ -54,6 +54,7 @@ export async function createNodeNativeBinding(
         config.extensions,
         {
           explicitRuntimeDirectory,
+          descriptors: config.extensionDescriptors,
         },
       );
       if (

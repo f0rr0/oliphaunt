@@ -35,6 +35,7 @@ through configuration:
 ```toml
 [dependencies]
 oliphaunt = "={{release:oliphaunt-rust}}"
+oliphaunt-extension-vector = "={{release:oliphaunt-extension-vector}}"
 ```
 
 </Step>
@@ -42,17 +43,19 @@ oliphaunt = "={{release:oliphaunt-rust}}"
 
 ### Open and query
 
+Add `oliphaunt-extension-vector` as a Cargo dependency to select its packaged resources.
+
 Create a builder, choose storage, select exact extensions, open, query, and
 close.
 
 ```rust
-use oliphaunt::{DatabaseStorage, Extension, Oliphaunt};
+use oliphaunt::{DatabaseStorage, Oliphaunt};
 
 fn open_database() -> oliphaunt::Result<()> {
     let mut db = Oliphaunt::builder()
         .storage(DatabaseStorage::Directory(".oliphaunt".into()))
         .direct()
-        .extension(Extension::VECTOR)
+        .extension(oliphaunt_extension_vector::VECTOR)
         .open()?;
 
     let rows = db.query("SELECT 1::text AS value")?;

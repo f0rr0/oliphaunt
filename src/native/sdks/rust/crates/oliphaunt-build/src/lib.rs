@@ -1,8 +1,7 @@
-//! Cargo build-script integration for Oliphaunt applications.
+//! Cargo artifact integration for SDKs and custom deployments.
 //!
-//! `configure()` is intended to be called from an application `build.rs`.
-//! Cargo resolves target-specific artifact crates; this crate stages the
-//! already-resolved files into `OUT_DIR`.
+//! The SDK uses `embed_resolved_artifacts()` internally. Ordinary applications
+//! need no build script. `configure()` stages resources for custom deployments.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -38,6 +37,96 @@ pub fn configure() {
 /// Run Oliphaunt build-script configuration from Cargo-provided environment.
 pub fn try_configure() -> Result<BuildOutput> {
     BuildContext::from_env()?.configure()
+}
+
+/// Embed the artifact dependencies resolved for this crate, without application metadata.
+/// The generated slice contains (resource path, bytes, SHA-256, executable) tuples.
+pub fn embed_resolved_artifacts() -> Result<PathBuf> {
+    let mut context = BuildContext::from_env()?;
+    context.artifact_manifest_paths = env::vars_os()
+        .filter_map(|(key, value)| {
+            let key = key.to_str()?;
+            let artifact =
+                key.starts_with(ARTIFACT_ENV_PREFIX) && key.ends_with(ARTIFACT_ENV_SUFFIX);
+            let sdk_relay = key.starts_with("DEP_OLIPHAUNT_ARTIFACT_RELAY_")
+                && !key.starts_with("DEP_OLIPHAUNT_ARTIFACT_RELAY_EXTENSION_");
+            (artifact && !sdk_relay && !value.is_empty()).then(|| PathBuf::from(value))
+        })
+        .collect();
+    let artifacts = context.read_artifact_manifests()?;
+    for artifact in &artifacts {
+        if artifact.target != context.target && artifact.target != "portable" {
+            return Err(Error::new(format!(
+                "{} targets {}, but Cargo is building {}",
+                artifact.label(),
+                artifact.target,
+                context.target
+            )));
+        }
+    }
+    let versions = artifacts
+        .iter()
+        .filter_map(|artifact| {
+            if artifact.kind == ArtifactKind::NativeRuntime {
+                Some(artifact.version.as_str())
+            } else if artifact.runtime_product.as_deref() == Some("liboliphaunt-native") {
+                artifact.runtime_version.as_deref()
+            } else {
+                None
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    if versions.len() > 1 {
+        return Err(Error::new(
+            "resolved artifacts require conflicting native runtime versions",
+        ));
+    }
+    let manifest_path = context.manifest_dir.join("Cargo.toml");
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(&manifest_path)
+            .map_err(|error| Error::io("read package manifest", &manifest_path, error))?,
+    )
+    .map_err(|error| Error::parse(&manifest_path, error))?;
+    let fallback = manifest
+        .get("package")
+        .and_then(|package| package.get("metadata"))
+        .and_then(|metadata| metadata.get("oliphaunt"))
+        .and_then(|metadata| metadata.get("native-version"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or("unavailable");
+    println!(
+        "cargo::rustc-env=OLIPHAUNT_NATIVE_RUNTIME_VERSION={}",
+        versions.first().copied().unwrap_or(fallback)
+    );
+    let resources = context.out_dir.join("embedded-resources");
+    let staged = stage_artifacts(&artifacts, &resources)?;
+    let mut files = BTreeMap::new();
+    for artifact in staged {
+        for file in artifact.files {
+            files.insert(file.path.clone(), file);
+        }
+    }
+    let mut source = String::from("&[\n");
+    for (relative, file) in files {
+        let path = resources.join(&relative);
+        source.push_str(&format!(
+            "({relative:?}, include_bytes!({:?}), {:?}, {}),\n",
+            path, file.sha256, file.executable
+        ));
+    }
+    source.push_str("]\n");
+    let output = context.out_dir.join("embedded_resources.rs");
+    fs::write(&output, source)
+        .map_err(|error| Error::io("write embedded resource index", &output, error))?;
+    for manifest in &context.artifact_manifest_paths {
+        println!("cargo::rerun-if-changed={}", manifest.display());
+    }
+    for artifact in artifacts {
+        for file in artifact.files {
+            println!("cargo::rerun-if-changed={}", file.source.display());
+        }
+    }
+    Ok(output)
 }
 
 /// Successful build-script output.

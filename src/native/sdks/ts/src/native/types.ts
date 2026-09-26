@@ -11,6 +11,7 @@ export type NativeOpenConfig = {
   username: string;
   database: string;
   extensions: string[];
+  extensionDescriptors?: readonly import('../extensions.js').NativeExtension[];
   startupArgs: string[];
 };
 

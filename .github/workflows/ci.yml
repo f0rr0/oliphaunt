@@ -1749,8 +1749,32 @@ jobs:
         with:
           deno-version: ${{ env.DENO_VERSION }}
       - name: Set up Rust
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
         uses: ./.github/actions/setup-rust
+      - name: Download Rust SDK package for installed consumer
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-rust-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-rust
+      - name: Download Rust query dependency
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-query-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-query
+      - name: Download Rust bindings dependency
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-bindings-sdk-package-artifacts
+          path: target/sdk-artifacts/liboliphaunt-native-bindings
+      - name: Download Rust broker dependency
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-broker-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-broker
       - name: Download SDK package
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer-published') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

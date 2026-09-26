@@ -191,24 +191,24 @@ another backend.
 
 ### Select extensions
 
-Enable only the exact Cargo features the application uses, then select the
-matching typed extension value on the builder. Selection makes the artifact
+Add each independently released extension crate with its `wasix` feature and
+select its typed value on the builder. Selection makes the artifact
 and required pre-start settings available; it does not run `CREATE EXTENSION`,
 `LOAD`, or migration SQL. Optional extension payloads are not part of the core
-runtime. The matching associated constant exists only when that leaf feature is
-enabled. `Extension::ALL` and `Extension::by_sql_name` enumerate only the
-enabled set, so an unavailable artifact cannot be selected and fail later at
-runtime.
+runtime. The selected crate carries its portable bytes and matching host AOT
+code. `Extension::ALL` and `Extension::by_sql_name` describe catalog metadata;
+bare selectors require payloads enabled through the older `extension-*` features.
 
 ```toml
 [dependencies]
-oliphaunt-wasix = { version = "={{release:oliphaunt-wasix-rust}}", features = ["extension-pgtap"] }
+oliphaunt-wasix = "={{release:oliphaunt-wasix-rust}}"
+oliphaunt-extension-pgtap = { version = "={{release:oliphaunt-extension-pgtap}}", default-features = false, features = ["wasix"] }
 ```
 
 ```rust
-use oliphaunt_wasix::{Extension, Oliphaunt};
+use oliphaunt_wasix::Oliphaunt;
 
-let mut database = Oliphaunt::builder().extension(Extension::PGTAP).open()?;
+let mut database = Oliphaunt::builder().extension(oliphaunt_extension_pgtap::PGTAP).open()?;
 database.execute("CREATE EXTENSION pgtap")?;
 ```
 

@@ -53,11 +53,11 @@ Open from TypeScript and keep the handle in app state, a data service, or a
 provider that matches your navigation lifetime:
 
 ```ts
-import Oliphaunt from '@oliphaunt/react-native';
+import Oliphaunt, { extensions } from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
   storage: { kind: 'applicationData', name: 'main' },
-  extensions: ['vector'],
+  extensions: [extensions.vector],
 });
 
 const rows = await db.query('SELECT 1::text AS value');

@@ -85,7 +85,8 @@ pub(super) fn materialize_runtime(
     icu_data: Option<&Path>,
     icu_data_tree_sha256: Option<&str>,
 ) -> Result<PathBuf> {
-    let extension_artifact_dirs = locate_native_extension_artifact_dirs();
+    let resources = crate::extension::materialize_extension_resources(extensions)?;
+    let extension_artifact_dirs = locate_native_extension_artifact_dirs(resources.as_deref());
     let embedded_modules = if profile.needs_embedded_modules() {
         Some(locate_native_embedded_modules_dir(install_dir)?)
     } else {

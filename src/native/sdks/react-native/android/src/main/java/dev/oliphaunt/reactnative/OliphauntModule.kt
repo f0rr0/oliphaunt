@@ -411,7 +411,7 @@ class OliphauntModule(
         startupGucs = config.startupGucs("startupGUCs"),
         username = username,
         database = database,
-        extensions = config.stringList("extensions"),
+        extensions = config.stringList("extensions").map(dev.oliphaunt.OliphauntExtension::fromSqlName),
       ),
       runtimeDirectory = runtimeDirectory,
       resourceRoot = null,

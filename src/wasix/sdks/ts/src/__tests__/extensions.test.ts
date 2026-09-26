@@ -340,9 +340,13 @@ describe('WASIX TypeScript extensions', () => {
     ).toThrow('format-version 2');
 
     const missingFingerprint = { ...expected, 'source-fingerprint': undefined };
-    expect(() =>
+    expect(
       parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(missingFingerprint))),
-    ).toThrow('WASIX asset source fingerprint');
+    ).toEqual(missingFingerprint);
+    const rebuilt = { ...expected, 'source-fingerprint': 'independently-rebuilt-source' };
+    expect(parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(rebuilt)))).toEqual(
+      rebuilt,
+    );
   });
 });
 

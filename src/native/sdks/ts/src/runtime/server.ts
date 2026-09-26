@@ -289,6 +289,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       serverExecutable: config.serverExecutable,
       runtimeDirectory: config.runtimeDirectory,
       extensions: config.extensions,
+      extensionDescriptors: config.extensionDescriptors,
     });
     const executable = tools.executable;
     const toolDirectory = tools.toolDirectory;
@@ -549,6 +550,7 @@ export async function resolveServerTools(options: {
   serverExecutable?: string;
   runtimeDirectory?: string;
   extensions?: readonly string[];
+  extensionDescriptors?: readonly import('../extensions.js').NativeExtension[];
   icuData?: import('../types.js').NativeResourceDirectory;
 }): Promise<ServerTools> {
   const candidates = [
@@ -579,6 +581,7 @@ export async function resolveServerTools(options: {
   const install = await resolvePackageManagedServerInstall(
     options.extensions ?? [],
     options.icuData,
+    options.extensionDescriptors,
   );
   if (install.runtimeDirectory !== undefined) {
     const toolDirectory = join(install.runtimeDirectory, 'bin');
@@ -604,6 +607,7 @@ export async function resolveServerTools(options: {
 async function resolvePackageManagedServerInstall(
   extensions: readonly string[],
   icuData?: import('../types.js').NativeResourceDirectory,
+  descriptors?: readonly import('../extensions.js').NativeExtension[],
 ): Promise<{
   runtimeDirectory?: string;
   icuDataDirectory?: string;
@@ -612,6 +616,7 @@ async function resolvePackageManagedServerInstall(
   return materializeExtensionInstall(
     await selectNativeResources(await resolveNativeInstall(), { icuData }),
     extensions,
+    descriptors,
   );
 }
 

@@ -1,3 +1,4 @@
+import { extensions } from '../extensions.js';
 import { test, vi } from 'bun:test';
 import assert from 'node:assert/strict';
 
@@ -187,7 +188,7 @@ async function testOpenUsesNativeDirectDefaults(): Promise<void> {
     startupGUCs: { search_path: 'public' },
     username: 'postgres',
     database: 'app',
-    extensions: ['hstore'],
+    extensions: [extensions.hstore, extensions.vector],
   });
 
   assert.deepEqual(native.openCalls, [
@@ -197,7 +198,7 @@ async function testOpenUsesNativeDirectDefaults(): Promise<void> {
       startupGUCs: ['search_path=public'],
       username: 'postgres',
       database: 'app',
-      extensions: ['hstore'],
+      extensions: ['hstore', 'vector'],
     },
   ]);
   await db.close();

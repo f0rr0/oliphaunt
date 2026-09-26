@@ -51,7 +51,7 @@ internal suspend fun compileOliphauntPublicApi(
             startupGucs = listOf(PostgresStartupGuc("application_name", "public-api-consumer")),
             username = "postgres",
             database = "postgres",
-            extensions = listOf("vector"),
+            extensions = listOf(dev.oliphaunt.OliphauntExtension.VECTOR),
         )
     val database: OliphauntDatabase =
         Oliphaunt.open(
