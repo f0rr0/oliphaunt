@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/public-consumer-smoke.test.mts
+bash tools/dev/bun.sh test ./tools/release/public-consumer-smoke.test.mts
 source_root="$PWD"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT

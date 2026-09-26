@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/verify-maven-signing-readiness.test.mts
+bash tools/dev/bun.sh test ./tools/release/verify-maven-signing-readiness.test.mts
 scratch="$(mktemp -d)"
 cleanup() {
   gpgconf --homedir "$scratch/keys" --kill all >/dev/null 2>&1 || true

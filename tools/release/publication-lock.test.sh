@@ -8,7 +8,7 @@ if [[ "${1:-}" != --context ]]; then
 fi
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-bun test ./tools/release/publication-lock.test.mts
+bash tools/dev/bun.sh test ./tools/release/publication-lock.test.mts
 bun tools/release/publication-lock.test.mts prepare-handoff "$scratch"
 bun tools/release/publication-lock.mts verify --lock "$scratch/publication-lock.json" --head-ref HEAD
 for ref in HEAD HEAD^; do

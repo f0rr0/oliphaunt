@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/verify-github-release-attestation-receipt.test.mts
+bash tools/dev/bun.sh test ./tools/release/verify-github-release-attestation-receipt.test.mts
 scratch="$(mktemp -d "$PWD/target/receipt-verifier.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 mkdir "$scratch/bin"

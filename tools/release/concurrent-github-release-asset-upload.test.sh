@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-bun test ./tools/release/concurrent-github-release-asset-upload.test.mts
+bash tools/dev/bun.sh test ./tools/release/concurrent-github-release-asset-upload.test.mts
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-upload-concurrency-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 pids=()

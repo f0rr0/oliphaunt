@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/validate-release-workflow-inputs.test.mts
+bash tools/dev/bun.sh test ./tools/release/validate-release-workflow-inputs.test.mts
 output="$(mktemp)"
 trap 'rm -f "$output"' EXIT
 sha=84d90b9853530ab72e48a1aa6fb616aaed7a0dc6

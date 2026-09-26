@@ -13,4 +13,4 @@ for directory in "$scratch"/*; do
     "${environment[@]}" bun .github/scripts/download-bootstrap-ledger.mts > "$directory/result" 2>&1 || status=$?
   printf '%s\n' "$status" > "$directory/status"
 done
-OLIPHAUNT_LEDGER_TEST_ROOT="$scratch" bun test ./tools/release/download-bootstrap-ledger.test.mts
+OLIPHAUNT_LEDGER_TEST_ROOT="$scratch" bash tools/dev/bun.sh test ./tools/release/download-bootstrap-ledger.test.mts

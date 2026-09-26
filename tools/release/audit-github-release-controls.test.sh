@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/audit-github-release-controls.test.mts
+bash tools/dev/bun.sh test ./tools/release/audit-github-release-controls.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 fixtures=tools/release/fixtures/github-release-controls

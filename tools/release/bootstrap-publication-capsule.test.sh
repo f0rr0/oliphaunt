@@ -10,7 +10,7 @@ if [ "${1:-}" != --context ]; then
     bash tools/release/with-source.sh HEAD bash tools/ci/with-projects.sh --exec \
     bash tools/release/bootstrap-publication-capsule.test.sh --context
 fi
-bun test --timeout=30000 ./tools/release/bootstrap-publication-capsule.test.mts
+bash tools/dev/bun.sh test ./tools/release/bootstrap-publication-capsule.test.mts
 scratch=$(bun tools/release/bootstrap-publication-capsule.test.mts prepare)
 trap 'rm -rf "$scratch"' EXIT
 export BUN_OPTIONS="--preload $scratch/registry-fixture.mts"

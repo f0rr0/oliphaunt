@@ -7,6 +7,9 @@ runs:
       id: version
       shell: bash
       run: printf 'version=%s\n' "$(cat src/sdks/swift/.swift-version)" >> "$GITHUB_OUTPUT"
+    - name: Import Swift signing keys
+      shell: bash
+      run: curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 https://www.swift.org/keys/all-keys.asc | gpg --batch --import -
     - name: Install Swift
       uses: swift-actions/setup-swift@d8e84bc3a450686a95474d7d6fa4a3301498debc # v3, Swiftly 1.1.0
       with:

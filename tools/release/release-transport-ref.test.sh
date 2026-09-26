@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/release-transport-ref.test.mts
+bash tools/dev/bun.sh test ./tools/release/release-transport-ref.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 cat > "$scratch/fetch.mts" <<'TS'

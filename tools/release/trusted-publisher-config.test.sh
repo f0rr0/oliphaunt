@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 source_root="$PWD"
-bun test ./tools/release/trusted-publisher-config.test.mts
+bash tools/dev/bun.sh test ./tools/release/trusted-publisher-config.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 bun tools/release/trusted-publisher-config.test.mts pipe | cat > "$scratch/pipe.json"

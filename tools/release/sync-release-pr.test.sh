@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 source_root="$PWD"
-bun test ./tools/release/sync-release-pr.test.mts
+bash tools/dev/bun.sh test ./tools/release/sync-release-pr.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 mkdir "$scratch/repo"
