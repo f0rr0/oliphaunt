@@ -227,6 +227,6 @@ sql-name = "uuid-ossp"
 contrib-dir = "uuid-ossp"
 module-file = "uuid-ossp.so"
 default-version = "1.1"
-mobile-static-include-dirs = ["src/runtimes/liboliphaunt-native/portable-uuid/include"]
+mobile-static-include-dirs = ["src/extensions/contrib/portable-uuid/include"]
 mobile-static-cflags = ["-DHAVE_UUID_E2FS=1", "-DHAVE_UUID_UUID_H=1"]
-mobile-static-hash-dirs = ["src/runtimes/liboliphaunt-native/portable-uuid"]
+mobile-static-hash-dirs = ["src/extensions/contrib/portable-uuid"]

@@ -43,9 +43,9 @@ import {
 import {
   swiftExtensionCarrierAssetName,
   writeSwiftExtensionCarrierManifest,
-} from '../../../../sdks/swift/tools/ios-carrier-manifest.mts';
-import { AOT_TARGET_TRIPLES } from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
-import { assertCanonicalWasixAotManifest } from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-aot-manifest.mts';
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
+import { AOT_TARGET_TRIPLES } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
 import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstallSidecar,

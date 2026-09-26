@@ -21,10 +21,7 @@ import { fileURLToPath } from 'node:url';
 const TOOL = 'windows-vc-runtime-closure.mts';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const POLICY = JSON.parse(
-  readFileSync(
-    path.join(ROOT, 'src/runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json'),
-    'utf8',
-  ),
+  readFileSync(path.join(ROOT, 'tools/packaging/windows-vc-runtime-policy.json'), 'utf8'),
 );
 const PE_MACHINE_AMD64 = 0x8664;
 const PE_MAGIC_32 = 0x10b;

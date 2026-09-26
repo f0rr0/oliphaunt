@@ -12,34 +12,32 @@ dependency and build semantics.
   package.json, bun.lock, bunfig.toml
   Package.swift
   .moon/, .github/
-  src/runtimes/
-    liboliphaunt-native/
-    liboliphaunt-wasix/
-    liboliphaunt-wasix-postmaster/
-      executor/
-      wasmer/
-    wasix-browser-host/
-  src/sdks/
-    ts/{sdk,node-addon}/
-    ts-wasix/{sdk,node-addon}/
-    rust/{sdk,liboliphaunt-native}/
-    rust-wasix/
-    ts-query/
-    rust-query/
-    swift/
-    kotlin/
-    react-native/
-  src/broker/
-  src/extensions/
-  src/third-party/{postgres,icu,openssl,tools}/
-  src/docs/{src,content,public,architecture,maintainers,internal}/
-  src/examples/
-  src/benchmarks/
-  src/database-resources/{contracts,icu,seeds,tools}/
-  src/postgres-tools/{native,wasix}/
-  src/pgwire-server/
-  src/test-fixtures/
-  tools/{dev,graph,packaging,policy,release,test}/
+  src/
+    native/
+      runtime/
+      rust-bindings/
+      mobile-bindings/
+      node-addon/
+      broker/
+      postgres-tools/
+      sdks/{rust,ts,swift,kotlin,react-native}/
+    wasix/
+      runtime/
+      postmaster/{executor,wasmer}/
+      browser-host/
+      node-addon/
+      pgwire-server/
+      postgres-tools/
+      sdks/{rust,ts}/
+    query/{rust,ts}/
+    extensions/
+    third-party/{postgres,icu,openssl,tools}/
+    database-resources/{contracts,icu,seeds,tools}/
+    examples/{native,wasix,assets}/
+    benchmarks/
+    test-fixtures/
+    docs/{src,content,public,architecture,maintainers,internal}/
+  tools/{dev,ci,packaging,release}/
 ```
 
 Release metadata readers live in `tools/release`; reusable archive and package
@@ -50,30 +48,31 @@ product owners. Shared source acquisition lives in `src/third-party/tools`, upst
 pins and notices beside each dependency, and installer pins in `tools/dev`.
 Product-specific pins stay with their runtime. New package identities remain
 unreleased until their first successful public release.
-The [implementation plan](../architecture/repository-simplification-plan.md)
-tracks those remaining boundaries.
+The [source map](../../README.md) is the navigation entrypoint;
+[Source Architecture](../architecture/final-product-source-architecture.md)
+describes ownership and publication boundaries.
 
 ## Product boundaries
 
-- `src/runtimes/liboliphaunt-native` owns the native C ABI, embedded PostgreSQL
+- `src/native/runtime` owns the native C ABI, embedded PostgreSQL
   implementation, patches and platform runtime production.
-- `src/runtimes/liboliphaunt-wasix` owns the single-backend WASIX runtime and its
+- `src/wasix/runtime` owns the single-backend WASIX runtime and its
   portable/AOT carriers. `liboliphaunt-wasix-postmaster` owns the separate
   concurrent postmaster product, executor and patched Wasmer host.
-- `src/runtimes/wasix-browser-host` is a Rust/WASM execution-host build project
+- `src/wasix/browser-host` is a Rust/WASM execution-host build project
   consumed by the WASIX TypeScript SDK; it is not another SDK.
-- `src/sdks/rust/liboliphaunt-native` is the `liboliphaunt-native-bindings` Cargo
+- `src/native/rust-bindings` is the `liboliphaunt-native-bindings` Cargo
   package. It owns Rust ABI loading, native sessions, runtime discovery and
   database-root handling. The public Rust SDK and broker consume this package.
-- `src/sdks/rust/sdk` is the `oliphaunt` public SDK. `broker` owns the process
+- `src/native/sdks/rust` is the `oliphaunt` public SDK. `broker` owns the process
   helper, IPC service/client library and broker carriers. The broker does not
   depend on the public SDK.
-- `src/sdks/ts/sdk` and `src/sdks/ts-wasix/sdk` are the two TypeScript SDKs.
-  Their sibling `node-addon` projects own native Node-API artifacts. Browser
+- `src/native/sdks/ts` and `src/wasix/sdks/ts` are the two TypeScript SDKs.
+  Their family’s `node-addon` projects own Node-API artifacts. Browser
   consumers use the WASIX SDK rather than a separate browser package.
-- `src/sdks/rust-wasix` is the ordinary Cargo package for the WASIX SDK; its
+- `src/wasix/sdks/rust` is the ordinary Cargo package for the WASIX SDK; its
   former outer wrapper has been merged into the package.
-- `src/sdks/ts-query` and `src/sdks/rust-query` are shared query packages with
+- `src/query/ts` and `src/query/rust` are shared query packages with
   explicit package dependencies. They are not copied private source trees.
 - Swift, Kotlin and React Native keep their package-native APIs and mobile
   integration. React Native's platform adapters consume the Swift/Kotlin SDKs.
@@ -84,10 +83,10 @@ tracks those remaining boundaries.
   guides describe latest behavior and use completed public release versions.
   There are no documentation-version archives or SDK API-generation builds.
 
-Grouping directories such as `src/sdks/ts` and `src/sdks/rust` have no package
+Family and role groups such as `src/native` and `src/wasix/sdks` have no package
 manifest. Root Cargo/Bun lockfiles belong to their workspaces. The root
 `Package.swift` remains the public Swift tag entrypoint; the development
-package lives in `src/sdks/swift`.
+package lives in `src/native/sdks/swift`.
 
 ## Working in a product
 

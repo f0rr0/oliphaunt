@@ -71,25 +71,25 @@ const examples = [
     platform: 'Tauri / Native',
     proof: 'Rust owns the Oliphaunt handle in application state.',
     stack: 'Rust SDK · app-owned root',
-    href: `${githubRoot}/src/examples/tauri`,
+    href: `${githubRoot}/src/examples/native/tauri`,
   },
   {
     platform: 'Tauri / WASIX',
     proof: 'OliphauntServer exposes a local PostgreSQL URL to SQLx.',
     stack: 'WASIX sidecar · SQLx',
-    href: `${githubRoot}/src/examples/tauri-wasix`,
+    href: `${githubRoot}/src/examples/wasix/tauri`,
   },
   {
     platform: 'Electron / Native',
     proof: 'The TypeScript SDK runs native server mode in the main process.',
     stack: 'TypeScript SDK · native server',
-    href: `${githubRoot}/src/examples/electron`,
+    href: `${githubRoot}/src/examples/native/electron`,
   },
   {
     platform: 'Electron / WASIX',
     proof: 'A Rust sidecar supplies a local PostgreSQL URL to the main process.',
     stack: 'WASIX sidecar · local endpoint',
-    href: `${githubRoot}/src/examples/electron-wasix`,
+    href: `${githubRoot}/src/examples/wasix/electron`,
   },
 ] as const;
 

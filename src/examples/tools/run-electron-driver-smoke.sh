@@ -135,7 +135,7 @@ electron="$electron_pkg/dist/$electron_relative"
 if [ ! -x "$electron" ]; then
   fail "missing Electron executable at $electron after example install"
 fi
-if [ "$app_dir" = "src/examples/electron" ]; then
+if [ "$app_dir" = "src/examples/native/electron" ]; then
   typescript_version="$(example_package_version "@oliphaunt/ts")"
   liboliphaunt_linux_version="$(example_package_version "@oliphaunt/liboliphaunt-linux-x64-gnu")"
   contrib_version="$(example_package_version "@oliphaunt/extension-contrib-pg18")"

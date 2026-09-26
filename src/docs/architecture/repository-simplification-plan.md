@@ -1,5 +1,8 @@
 # Repository simplification implementation plan
 
+Historical simplification record. For the current source layout, see
+[Source Architecture](final-product-source-architecture.md).
+
 Status: implementation in progress. The `src/` migration is committed in
 `e15e05d0`; final hosted qualification remains pending.
 Product/resource separation, shared Rust/query/mobile implementations, broker

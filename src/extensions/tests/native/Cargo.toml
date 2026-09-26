@@ -10,5 +10,5 @@ publish = false
 default = []
 
 [dependencies]
-oliphaunt = { path = "../../../sdks/rust/sdk" }
+oliphaunt = { path = "../../../native/sdks/rust" }
 tar = "0.4"

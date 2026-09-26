@@ -12,7 +12,7 @@ require() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-[ "$#" -eq 1 ] || fail "usage: src/runtimes/liboliphaunt-native/tools/$tool LIBOLIPHAUNT_ICU_DATA.tar.gz"
+[ "$#" -eq 1 ] || fail "usage: src/native/runtime/tools/$tool LIBOLIPHAUNT_ICU_DATA.tar.gz"
 [ "$(uname -s)" = "Darwin" ] || fail "this regression check requires macOS"
 
 for command in cp diff find git grep mktemp pod ruby tail xcodebuild; do

@@ -10,7 +10,7 @@ mkdir "$output" # Never mix measurements from different invocations.
 if command -v sha256sum >/dev/null; then hash=(sha256sum); else hash=(shasum -a 256); fi
 {
   git rev-parse HEAD
-  git status --short -- src/sdks/rust/sdk src/sdks/rust-query src/benchmarks/perf src/benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo
+  git status --short -- src/native/sdks/rust src/query/rust src/benchmarks/perf src/benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo
   rustc -Vv
   uname -a
   date -u
@@ -26,7 +26,7 @@ if command -v sha256sum >/dev/null; then hash=(sha256sum); else hash=(shasum -a 
   done
   while IFS= read -r -d '' file; do
     [ ! -f "$file" ] || "${hash[@]}" "$file"
-  done < <(git ls-files -z --cached --others --exclude-standard -- src/sdks/rust/sdk src/sdks/rust-query src/benchmarks/perf/runner src/benchmarks/perf/run-native.sh src/benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo)
+  done < <(git ls-files -z --cached --others --exclude-standard -- src/native/sdks/rust src/query/rust src/benchmarks/perf/runner src/benchmarks/perf/run-native.sh src/benchmarks/native/sql Cargo.toml Cargo.lock rust-toolchain.toml .cargo)
 } >"$output/inputs.sha256"
 CARGO_TARGET_DIR="$root/target" cargo build --release --locked -p oliphaunt-perf >"$output/build.log" 2>&1
 runner="$root/target/release/oliphaunt-perf"

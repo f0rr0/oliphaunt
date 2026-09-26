@@ -1725,7 +1725,7 @@ jobs:
         run: |
           PRODUCER_MOON_VERSION="$(moon --version)"
           export PRODUCER_MOON_VERSION
-          bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts src/sdks/ts-query
+          bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts src/query/ts
 
   native-consumers:
     name: Builds / Native Product Consumers
@@ -2010,8 +2010,8 @@ jobs:
         if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
-          context: src/runtimes/liboliphaunt-wasix/assets/build/docker
-          file: src/runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile
+          context: src/wasix/runtime/assets/build/docker
+          file: src/wasix/runtime/assets/build/docker/Dockerfile
           tags: oliphaunt-wasix-wasix-build:ci
           load: true
           cache-from: type=gha,scope=wasix-builder
@@ -2021,8 +2021,8 @@ jobs:
         if: ${{ env.HEAVY_CACHE_SAVE_IF != 'true' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
-          context: src/runtimes/liboliphaunt-wasix/assets/build/docker
-          file: src/runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile
+          context: src/wasix/runtime/assets/build/docker
+          file: src/wasix/runtime/assets/build/docker/Dockerfile
           tags: oliphaunt-wasix-wasix-build:ci
           load: true
           cache-from: type=gha,scope=wasix-builder
@@ -2112,7 +2112,7 @@ jobs:
             target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**
             target/oliphaunt-wasix/assets/**
             src/extensions/generated/**
-            src/runtimes/liboliphaunt-wasix/assets/generated/**
+            src/wasix/runtime/assets/generated/**
           if-no-files-found: error
 
   liboliphaunt-wasix-aot:
@@ -2894,7 +2894,7 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh mobile-build-android
 
       - name: Validate Android mobile app artifacts
-        run: tools/dev/bun.sh src/sdks/react-native/tools/check-mobile-artifacts.mts android
+        run: tools/dev/bun.sh src/native/sdks/react-native/tools/check-mobile-artifacts.mts android
 
       - name: Upload Android mobile build logs
         if: ${{ always() }}
@@ -3034,7 +3034,7 @@ jobs:
 
       - name: Render exact-SHA cache-warm iOS carrier manifest
         run: |
-          tools/dev/bun.sh src/sdks/swift/tools/ios-carrier-manifest.mts \
+          tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts \
             --base-asset-dir target/liboliphaunt/release-assets \
             --extension-root target/mobile-extension-artifacts \
             --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json \
@@ -3047,7 +3047,7 @@ jobs:
           IOS_CARRIER_CACHE: target/qualification/react-native-ios-carrier-cache
           PLANNED_EXTENSION_SQL_NAMES: ${{ needs.affected.outputs.extension_package_sql_names_csv }}
         run: |
-          bash src/sdks/react-native/tools/qualify-ios-carriers.sh
+          bash src/native/sdks/react-native/tools/qualify-ios-carriers.sh
 
       - name: Run exact-extension Swift release consumer
         env:
@@ -3102,7 +3102,7 @@ jobs:
           fi
 
           printf '%s\n' "${consumer_args[@]}" > "$evidence_dir/consumer-arguments.txt"
-          src/sdks/swift/tools/check-extension-release-consumer.sh "${consumer_args[@]}"
+          src/native/sdks/swift/tools/check-extension-release-consumer.sh "${consumer_args[@]}"
 
       - name: Build iOS mobile app
         env:
@@ -3122,11 +3122,11 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh mobile-build-ios
 
       - name: Validate iOS mobile app artifacts
-        run: tools/dev/bun.sh src/sdks/react-native/tools/check-mobile-artifacts.mts ios
+        run: tools/dev/bun.sh src/native/sdks/react-native/tools/check-mobile-artifacts.mts ios
 
       - name: Pack fidelity-preserving iOS app transport
         run: |
-          bash src/sdks/react-native/tools/ios-app-transport.sh pack \
+          bash src/native/sdks/react-native/tools/ios-app-transport.sh pack \
             --app-dir target/mobile-build/react-native/ios \
             --transport-dir target/mobile-build/react-native/ios-transport
 
@@ -3288,7 +3288,7 @@ jobs:
           OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
           OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-        run: bash src/sdks/react-native/tools/mobile-e2e.sh android
+        run: bash src/native/sdks/react-native/tools/mobile-e2e.sh android
 
       - name: Upload Android E2E reports
         if: ${{ always() }}
@@ -3336,7 +3336,7 @@ jobs:
         id: ios_app_transport_verify
         run: |
           rm -rf target/mobile-build/react-native/ios
-          bash src/sdks/react-native/tools/ios-app-transport.sh verify-extract \
+          bash src/native/sdks/react-native/tools/ios-app-transport.sh verify-extract \
             --transport-dir target/mobile-build/react-native/ios-transport \
             --output-dir target/mobile-build/react-native/ios
 
@@ -3352,7 +3352,7 @@ jobs:
           OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-        run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
+        run: bash src/native/sdks/react-native/tools/mobile-e2e.sh ios
 
       - name: Upload iOS E2E reports
         if: ${{ always() }}

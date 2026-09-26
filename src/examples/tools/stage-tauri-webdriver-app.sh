@@ -34,7 +34,7 @@ esac
   fail "$source_app_dir does not look like a Tauri example directory"
 source_app_relative="${source_app_path#"$root"/}"
 case "$source_app_relative" in
-  src/examples/tauri | src/examples/tauri-wasix) ;;
+  src/examples/native/tauri | src/examples/wasix/tauri) ;;
   *) fail "unsupported Tauri webdriver example: $source_app_relative" ;;
 esac
 
@@ -51,7 +51,7 @@ mkdir -p "$worktree/src/examples"
 # Keep the bounded example family at its repository-relative location. The
 # Tauri variants deliberately share frontend sources, and relocating only one
 # app silently breaks those relative imports.
-for example in tauri tauri-wasix; do
+for example in native/tauri wasix/tauri; do
   mkdir -p "$worktree/src/examples/$example"
   rsync -a --delete \
     --exclude node_modules \

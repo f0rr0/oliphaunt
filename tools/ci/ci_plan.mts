@@ -35,7 +35,7 @@ import { qualificationRequestKey } from '../../.github/scripts/release-candidate
 import {
   publishedConsumerInventory,
   validPublishedConsumerInventory,
-} from '../../src/sdks/ts/sdk/tools/published-consumer.mts';
+} from '../../src/native/sdks/ts/tools/published-consumer.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const PREFIX = 'ci_plan.mts';

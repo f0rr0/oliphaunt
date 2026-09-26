@@ -679,7 +679,7 @@ jobs:
               "${extension_manifest_args[@]}"
               --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
             )
-            tools/dev/bun.sh src/sdks/swift/tools/ios-carrier-manifest.mts "${public_args[@]}"
+            tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts "${public_args[@]}"
           fi
 
           if [[ "$includes_swift" == true && ${#extension_manifest_args[@]} -gt 0 ]]; then
@@ -691,22 +691,22 @@ jobs:
               --output "$local_aggregate_carrier"
               --local-urls
             )
-            tools/dev/bun.sh src/sdks/swift/tools/ios-carrier-manifest.mts "${local_args[@]}"
-            extensions_csv="$(bun src/sdks/swift/tools/ios-carrier-manifest.mts list-extensions "$local_aggregate_carrier")"
+            tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts "${local_args[@]}"
+            extensions_csv="$(bun src/native/sdks/swift/tools/ios-carrier-manifest.mts list-extensions "$local_aggregate_carrier")"
             if [[ -z "$extensions_csv" || ${#extension_carrier_args[@]} == 0 ]]; then
               echo 'Swift extension validation requires selected extension carrier assets.' >&2
               exit 1
             fi
             swift_version="$(tools/dev/bun.sh tools/release/product-version.mts version oliphaunt-swift)"
             cache=target/release-work/swiftpm-extension-cache
-            bun src/sdks/swift/tools/render-extension-products.mts \
+            bun src/native/sdks/swift/tools/render-extension-products.mts \
               --carrier "$local_aggregate_carrier" \
               --extensions "$extensions_csv" \
               --cache-dir "$cache" \
               --allow-file-urls \
               --base-package-version "$swift_version" \
               --output-dir target/release-work/swiftpm-extension-cache-warm
-            bun src/sdks/swift/tools/render-extension-products.mts \
+            bun src/native/sdks/swift/tools/render-extension-products.mts \
               --carrier "$swift_source_carrier" \
               "${extension_carrier_args[@]}" \
               --extensions "$extensions_csv" \

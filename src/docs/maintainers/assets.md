@@ -146,7 +146,7 @@ validation, and a live exact-commit fetch from every newly declared endpoint.
 
 WASIX build and work trees are generated under
 `target/oliphaunt-wasix/wasix-build/**`. The source tree
-`src/runtimes/liboliphaunt-wasix/assets/build/**` is reserved for scripts, patches,
+`src/wasix/runtime/assets/build/**` is reserved for scripts, patches,
 Docker inputs, and shims that define the build at the exact producer commit.
 
 Local packaging tests do not clone upstream repositories or run Docker:
@@ -172,7 +172,7 @@ expectations belong to the publication envelope/lock and do not alter those
 runtime bytes.
 
 The WASIX builder declares its immutable bootstrap inputs in
-`src/runtimes/liboliphaunt-wasix/assets/build/docker/Dockerfile`: the Ubuntu base image digest, Dockerfile
+`src/wasix/runtime/assets/build/docker/Dockerfile`: the Ubuntu base image digest, Dockerfile
 frontend digest, Ubuntu snapshot timestamp, and the committed TLS root used to
 reach `snapshot.ubuntu.com`. The APT helper writes one isolated deb822 source
 containing only `noble`, `noble-updates`, and `noble-security` with the `main`
@@ -205,7 +205,7 @@ authenticated archival mirror.
 
 The `CI` workflow's WASIX runtime/AOT build lane mirrors the release topology on
 trusted producer runs: one Linux/Docker job builds portable WASIX modules from
-`src/runtimes/liboliphaunt-wasix/assets/build` into `target/oliphaunt-wasix/assets`,
+`src/wasix/runtime/assets/build` into `target/oliphaunt-wasix/assets`,
 then native matrix jobs generate and package target-specific Wasmer AOT crates
 into `target/oliphaunt-wasix/aot/<target>`. Artifacts are uploaded with
 checksums and manifests.
@@ -246,7 +246,7 @@ For workflow artifacts, select one exact run or full commit SHA; all three modes
 validate checksums and packaged manifests before installation:
 
 ```sh
-bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --run-id <id> --target-triple <triple>
-bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --sha <full-40-character-sha> --target-triple <triple>
-bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --release <tag> --target-triple <triple>
+bash src/wasix/runtime/tools/download-assets.sh --run-id <id> --target-triple <triple>
+bash src/wasix/runtime/tools/download-assets.sh --sha <full-40-character-sha> --target-triple <triple>
+bash src/wasix/runtime/tools/download-assets.sh --release <tag> --target-triple <triple>
 ```

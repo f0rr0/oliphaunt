@@ -14,7 +14,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const INPUT = path.join(ROOT, 'src/extensions/generated/sdk/extensions.json');
 const OUTPUT = path.join(
   ROOT,
-  'src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json',
+  'src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json',
 );
 const SCHEMA = 'oliphaunt-android-extension-legal-catalog-v1';
 const TARGETS = Object.freeze(['android-arm64-v8a', 'android-x86_64']);

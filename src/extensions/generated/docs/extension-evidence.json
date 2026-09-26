@@ -1268,7 +1268,7 @@
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:3a8f82a57c35a3200bd33f0c57e46ec430acff7a402222c907fbee927e10ed2d",
+  "source-digest": "sha256:05c44ce681c43857fb4b49081cb8a290cf3051ea102de324964ec61f4f9566d2",
   "source-digest-inputs": [
     "src/third-party/postgres/source.toml",
     "src/extensions/catalog/extensions.source.json",
@@ -1291,7 +1291,7 @@
     "src/extensions/external/postgis/dependencies/sqlite/source.toml",
     "src/extensions/external/postgis/source.toml",
     "src/extensions/external/vector/source.toml",
-    "src/runtimes/liboliphaunt-native/sources/icu-windows.toml",
+    "src/native/runtime/sources/icu-windows.toml",
     "src/third-party/icu/source.toml",
     "src/third-party/openssl/source.toml",
     "src/extensions/external/README.md",

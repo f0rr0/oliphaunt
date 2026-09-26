@@ -16,7 +16,7 @@ import { gunzipSync } from 'node:zlib';
 import {
   requiredRuntimeMemberPaths,
   requiredToolsMemberPaths,
-} from '../../../../runtimes/liboliphaunt-native/tools/native-runtime-payload.mts';
+} from '../../../../native/runtime/tools/native-runtime-payload.mts';
 import {
   compareText,
   currentProductVersionSync,

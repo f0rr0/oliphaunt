@@ -1073,7 +1073,7 @@ async function prepareOutputFile(output, force) {
 async function artifactPhase(phase, artifactRoot, argv) {
   const args = parseArgs(argv);
   args.nativeRuntimeProduct ??= 'liboliphaunt-native';
-  args.nativeRuntimeVersion ??= (await readText('src/runtimes/liboliphaunt-native/VERSION')).trim();
+  args.nativeRuntimeVersion ??= (await readText('src/native/runtime/VERSION')).trim();
   await validateArtifactArgs(args);
   if (!['directory', 'dir', 'tar', 'tar-gz', 'tar.gz', 'tgz', 'gz'].includes(args.format)) {
     fail('unknown extension artifact format: ' + args.format);

@@ -14,7 +14,7 @@ done
 [ "${#roots[@]}" -gt 0 ] || { echo 'at least one input path is required' >&2; exit 2; }
 for root in "${roots[@]}"; do [ -f "$root" ] || [ -d "$root" ] || { echo "input path does not exist: $root" >&2; exit 2; }; done
 host="$(uname -s)"
-vc_dlls="$(jq -r '.windowsVcRuntimeDlls[] | ascii_downcase' "$script_root/../../src/runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json")"
+vc_dlls="$(jq -r '.windowsVcRuntimeDlls[] | ascii_downcase' "$script_root/windows-vc-runtime-policy.json")"
 files="$(mktemp)"
 trap 'rm -f "$files"' EXIT
 find -H "${roots[@]}" -type f -print0 | LC_ALL=C sort -z >"$files"

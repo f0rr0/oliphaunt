@@ -36,8 +36,8 @@ tasks:
       - "/tools/dev/bun.sh"
       - /src/third-party/postgres/**/*
       - "/src/third-party/{icu,openssl}/source.toml"
-      - /src/runtimes/liboliphaunt-native/sources/*.toml
-      - /src/runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
+      - /src/native/runtime/sources/*.toml
+      - /src/wasix/postmaster/sources/*.toml
       - /src/extensions/external/**/source.toml
       - /src/extensions/external/**/dependencies/**/source.toml
       - /src/extensions/external/*/upstream-license-data.json
@@ -55,8 +55,8 @@ tasks:
     inputs:
       - /src/database-resources/icu/source.toml
       - "/src/third-party/{icu,openssl}/source.toml"
-      - /src/runtimes/liboliphaunt-native/sources/*.toml
-      - /src/runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
+      - /src/native/runtime/sources/*.toml
+      - /src/wasix/postmaster/sources/*.toml
       - /src/extensions/external/**/source.toml
       - /src/extensions/external/**/dependencies/**/source.toml
       - /src/extensions/external/*/upstream-license-data.json
@@ -78,7 +78,7 @@ tasks:
     inputs:
       - /src/database-resources/icu/source.toml
       - "/src/third-party/{icu,openssl}/source.toml"
-      - /src/runtimes/liboliphaunt-native/sources/*.toml
+      - /src/native/runtime/sources/*.toml
       - "**/*"
       - "!**/*.test.*"
       - "!verify-source-tree.mts"
@@ -116,7 +116,7 @@ tasks:
     inputs:
       - /src/database-resources/icu/source.toml
       - "/src/third-party/{icu,openssl}/source.toml"
-      - /src/runtimes/liboliphaunt-wasix-postmaster/sources/*.toml
+      - /src/wasix/postmaster/sources/*.toml
       - "**/*"
       - "!**/*.test.*"
       - "!verify-source-tree.mts"

@@ -116,7 +116,7 @@ cmp "$cache" "$fixtures/valid.tar.gz"
 cmp "$scratch/trusted" "$checkout/file.txt"
 grep -q 'url=https://ftpmirror.gnu.org/' "$checkout/.oliphaunt-source-pin"
 FETCH_TEST_FAULT=all fetch "$root" "$fixtures/valid.json" verify
-bun "$root_dir/src/runtimes/liboliphaunt-wasix/tools/verify-source-tree.mts" --checkout "$checkout" --manifest "$fixtures/source.toml"
+bun "$root_dir/src/wasix/runtime/tools/verify-source-tree.mts" --checkout "$checkout" --manifest "$fixtures/source.toml"
 export FETCH_TEST_FAULT='' FETCH_TEST_ARCHIVE="$fixtures/traversal.tar.gz"
 fail_command 'traversal|unsafe|escape' fetch "$root" "$fixtures/unsafe.json"
 cmp "$scratch/trusted" "$checkout/file.txt"

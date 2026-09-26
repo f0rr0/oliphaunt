@@ -5,14 +5,14 @@ Status: normative testing policy. Last verified: 2026-07-28. Owner: repository m
 Oliphaunt is a polyglot product repo. Product-native tests stay in product-native test roots.
 Each SDK is validated with the same tools its consumers use:
 
-- Rust SDK: `src/sdks/rust/sdk/tests/`
-- Rust WASIX binding: `src/sdks/rust-wasix/tests/`
-- Swift SDK: `src/sdks/swift/Tests/`
-- Kotlin SDK: `src/sdks/kotlin/oliphaunt/src/commonTest/`,
-  and `src/sdks/kotlin/oliphaunt/src/androidUnitTest/`
-- React Native package: `src/sdks/react-native/src/__tests__/`
+- Rust SDK: `src/native/sdks/rust/tests/`
+- Rust WASIX binding: `src/wasix/sdks/rust/tests/`
+- Swift SDK: `src/native/sdks/swift/Tests/`
+- Kotlin SDK: `src/native/sdks/kotlin/oliphaunt/src/commonTest/`,
+  and `src/native/sdks/kotlin/oliphaunt/src/androidUnitTest/`
+- React Native package: `src/native/sdks/react-native/src/__tests__/`
 - Installed React Native app smoke and benchmark coverage:
-  `src/examples/react-native-expo/`
+  `src/examples/native/react-native-expo/`
 
 All Bun test entrypoints (Shell, Moon, workflows, and package scripts) use
 `bash tools/dev/bun.sh test`. This launcher selects the pinned Bun and owns the
@@ -105,7 +105,7 @@ product-native tests or policy checks:
   behavior cases that are meaningful in more than one SDK.
 - `src/test-fixtures/storage/database-root.json`: the exact five-field
   managed-root descriptor cases consumed by native and WASIX validators.
-- `src/runtimes/liboliphaunt-native/smoke/fixtures/physical-archive-native-v1.properties` and
+- `src/native/runtime/smoke/fixtures/physical-archive-native-v1.properties` and
   `physical-archive-wasix-v1.properties`: exact physical archive identities
   consumed by the runtime-family backup and restore tests.
 - `src/test-fixtures/storage/physical-backup-wal-range-v1.properties`: exact

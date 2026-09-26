@@ -2,10 +2,10 @@
 set -euo pipefail
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 export OLIPHAUNT_WASM_BUILD_PROFILE="${ASSET_PROFILE:-release}"
-build=src/runtimes/liboliphaunt-wasix/assets/build
+build=src/wasix/runtime/assets/build
 bash "$build/docker_pgxs_extensions.sh"
 bash "$build/docker_contrib_extensions.sh"
-extension_scripts="$(bun src/runtimes/liboliphaunt-wasix/tools/extension-build-scripts.mts)"
+extension_scripts="$(bun src/wasix/runtime/tools/extension-build-scripts.mts)"
 while IFS= read -r script; do
   [ -z "$script" ] || bash "$script"
 done <<<"$extension_scripts"

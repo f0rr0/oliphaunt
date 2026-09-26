@@ -34,9 +34,9 @@ const LOCKFILES = [path.join(ROOT, 'Cargo.lock')];
 const BUN_LOCKFILE = path.join(ROOT, 'bun.lock');
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, 'release-please-config.json');
 const RELEASE_PLEASE_MANIFEST = path.join(ROOT, '.release-please-manifest.json');
-const ELECTRON_EXAMPLE_PACKAGE = path.join(ROOT, 'src/examples/electron/package.json');
-const NATIVE_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'src/postgres-tools/native/npm/package.json');
-const WASIX_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'src/postgres-tools/wasix/ts/package.json');
+const ELECTRON_EXAMPLE_PACKAGE = path.join(ROOT, 'src/examples/native/electron/package.json');
+const NATIVE_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'src/native/postgres-tools/npm/package.json');
+const WASIX_TOOLS_FACADE_PACKAGE = path.join(ROOT, 'src/wasix/postgres-tools/ts/package.json');
 const PACKAGE_START_RE = /^\s*\[\[package\]\]\s*$/u;
 const STRING_KEY_RE = /^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$/u;
 const VERSION_LINE_RE = /^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$/u;
@@ -47,11 +47,11 @@ const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
 export const SDK_INSTALL_VERSION_RULES = Object.freeze([
   {
     product: 'oliphaunt-swift',
-    file: 'src/sdks/swift/README.md',
+    file: 'src/native/sdks/swift/README.md',
     prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "',
     suffix: '")',
   },
-  ...['src/sdks/kotlin/README.md'].map((file) => ({
+  ...['src/native/sdks/kotlin/README.md'].map((file) => ({
     product: 'oliphaunt-kotlin',
     file,
     prefix: 'implementation("dev.oliphaunt:oliphaunt-android:',
@@ -970,7 +970,7 @@ export function releaseDerivedPathInventory() {
         ...exactExtensionReleaseProducts(PREFIX).map((product) =>
           path.join(ROOT, packagePath(product), 'release.toml'),
         ),
-        path.join(ROOT, 'src/sdks/ts/sdk/package.json'),
+        path.join(ROOT, 'src/native/sdks/ts/package.json'),
         ...cargoManifestPaths(),
       ].map(rel),
     ),

@@ -21,7 +21,7 @@ source-digest-inputs = [
   "src/extensions/external/postgis/dependencies/sqlite/source.toml",
   "src/extensions/external/postgis/source.toml",
   "src/extensions/external/vector/source.toml",
-  "src/runtimes/liboliphaunt-native/sources/icu-windows.toml",
+  "src/native/runtime/sources/icu-windows.toml",
   "src/third-party/icu/source.toml",
   "src/third-party/openssl/source.toml",
   "src/extensions/external/README.md",

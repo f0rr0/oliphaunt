@@ -10,8 +10,8 @@ import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
 const [phase, repo, family, scenario, headRef, releaseRef] = process.argv.slice(2);
 const broker = 'oliphaunt-broker';
 const native = 'liboliphaunt-native';
-const nativePath = 'src/runtimes/liboliphaunt-native';
-const exampleManifest = 'src/examples/tauri/src-tauri/Cargo.toml';
+const nativePath = 'src/native/runtime';
+const exampleManifest = 'src/examples/native/tauri/src-tauri/Cargo.toml';
 function write(file, contents) {
   const target = path.join(repo, file);
   mkdirSync(path.dirname(target), { recursive: true });
@@ -74,7 +74,7 @@ function prepareBasic(base) {
       scenario,
     )
   )
-    json('src/sdks/ts/sdk/package.json', {
+    json('src/native/sdks/ts/package.json', {
       name: 'shadow-derived',
       oliphaunt: { brokerVersion: scenario === 'derived-version-only' ? '0.1.0' : '0.0.0' },
       optionalDependencies: {
@@ -89,21 +89,25 @@ function prepareBasic(base) {
 function prepareCargo(base) {
   json('release-please-config.json', {
     packages: {
-      'src/broker': { 'release-type': 'rust', component: broker, 'changelog-path': 'CHANGELOG.md' },
+      'src/native/broker': {
+        'release-type': 'rust',
+        component: broker,
+        'changelog-path': 'CHANGELOG.md',
+      },
     },
   });
   const version = base ? '0.0.0' : '0.1.0';
-  json('.release-please-manifest.json', { 'src/broker': version });
-  write('src/broker/Cargo.toml', cargo(broker, version));
+  json('.release-please-manifest.json', { 'src/native/broker': version });
+  write('src/native/broker/Cargo.toml', cargo(broker, version));
   if (base) {
-    write('src/broker/CHANGELOG.md', '# Changelog\n');
+    write('src/native/broker/CHANGELOG.md', '# Changelog\n');
     write('src/shared/unrelated/Cargo.toml', cargo('unrelated', '0.0.0'));
-  } else changelog('src/broker', version);
+  } else changelog('src/native/broker', version);
   if (base || scenario !== 'unrelated-lock')
     write(
-      'src/sdks/rust/sdk/Cargo.toml',
+      'src/native/sdks/rust/Cargo.toml',
       cargo('shadow-sdk', scenario === 'unrelated-package' ? '0.1.0' : '0.0.0') +
-        `\n[dependencies]\noliphaunt-broker = { path = "../../../broker", version = "${version}" }\nunrelated = { path = "../../../../src/shared/unrelated", version = "${scenario === 'unrelated-pin' ? '0.1.0' : '0.0.0'}" }\n`,
+        `\n[dependencies]\noliphaunt-broker = { path = "../../broker", version = "${version}" }\nunrelated = { path = "../../../../src/shared/unrelated", version = "${scenario === 'unrelated-pin' ? '0.1.0' : '0.0.0'}" }\n`,
     );
   if (base || ['exact', 'unrelated-lock'].includes(scenario))
     write(
@@ -113,20 +117,20 @@ function prepareCargo(base) {
 }
 function prepareWildcard(base) {
   json('release-please-config.json', {
-    packages: { 'src/broker': { 'release-type': 'rust', component: broker } },
+    packages: { 'src/native/broker': { 'release-type': 'rust', component: broker } },
   });
   const version = base ? '0.1.0' : '0.2.0';
-  json('.release-please-manifest.json', { 'src/broker': version });
-  let entry = 'oliphaunt = { path = "../sdks/rust/sdk", version = "*", features = [] }';
+  json('.release-please-manifest.json', { 'src/native/broker': version });
+  let entry = 'oliphaunt = { path = "../sdks/rust", version = "*", features = [] }';
   if (!base && scenario !== 'workspace-wildcard') {
     entry = entry.replace('"*"', scenario === 'wrong-version' ? '"0.3.0"' : '"0.2.0"');
-    if (scenario === 'changed-path') entry = entry.replace('../sdks/rust/sdk', '../sdks/other');
-    if (scenario === 'removed-path') entry = entry.replace('path = "../sdks/rust/sdk", ', '');
+    if (scenario === 'changed-path') entry = entry.replace('../sdks/rust', '../sdks/other');
+    if (scenario === 'removed-path') entry = entry.replace('path = "../sdks/rust", ', '');
     if (scenario === 'changed-features')
       entry = entry.replace('features = []', 'features = ["extra"]');
   }
   write(
-    'src/broker/Cargo.toml',
+    'src/native/broker/Cargo.toml',
     cargo(broker, version) +
       ['dependencies', 'dev-dependencies', 'build-dependencies']
         .flatMap((table) => [
@@ -136,14 +140,14 @@ function prepareWildcard(base) {
         .join(''),
   );
   if (base) {
-    write('src/broker/CHANGELOG.md', '# Changelog\n');
-    write('src/sdks/rust/sdk/Cargo.toml', cargo('oliphaunt', '0.2.0'));
-  } else changelog('src/broker', version);
+    write('src/native/broker/CHANGELOG.md', '# Changelog\n');
+    write('src/native/sdks/rust/Cargo.toml', cargo('oliphaunt', '0.2.0'));
+  } else changelog('src/native/broker', version);
 }
 function prepareWasix(base) {
-  const runtime = 'src/runtimes/liboliphaunt-wasix',
-    sdk = 'src/sdks/ts-wasix/sdk',
-    tools = 'src/postgres-tools/wasix/ts';
+  const runtime = 'src/wasix/runtime',
+    sdk = 'src/wasix/sdks/ts',
+    tools = 'src/wasix/postgres-tools/ts';
   const version = base ? '0.1.0' : '0.2.0';
   json('release-please-config.json', {
     packages: {
@@ -177,21 +181,22 @@ function prepareWasix(base) {
 }
 function prepareExample(base) {
   json('release-please-config.json', {
-    packages: { [nativePath]: simple(native), 'src/broker': simple(broker) },
+    packages: { [nativePath]: simple(native), 'src/native/broker': simple(broker) },
   });
   const missing = scenario === 'missing-native-transition';
   const nativeVersion = base || missing ? '0.1.0' : '0.1.1',
     brokerVersion = !base && missing ? '0.1.1' : '0.1.0';
   json('.release-please-manifest.json', {
     [nativePath]: nativeVersion,
-    'src/broker': brokerVersion,
+    'src/native/broker': brokerVersion,
   });
   write(`${nativePath}/VERSION`, `${nativeVersion}\n`);
-  write('src/broker/VERSION', `${brokerVersion}\n`);
+  write('src/native/broker/VERSION', `${brokerVersion}\n`);
   if (base) {
     write(`${nativePath}/CHANGELOG.md`, '# Changelog\n');
-    write('src/broker/CHANGELOG.md', '# Changelog\n');
-  } else changelog(missing ? 'src/broker' : nativePath, missing ? brokerVersion : nativeVersion);
+    write('src/native/broker/CHANGELOG.md', '# Changelog\n');
+  } else
+    changelog(missing ? 'src/native/broker' : nativePath, missing ? brokerVersion : nativeVersion);
   const carrierVersion = base ? '0.1.0' : scenario === 'wrong-registry-version' ? '0.1.2' : '0.1.1';
   const runtimeVersion = base ? '0.1.0' : scenario === 'wrong-runtime-version' ? '0.1.2' : '0.1.1';
   const unrelatedVersion = scenario === 'unrelated-registry-version' ? '9.0.1' : '9.0.0';
@@ -247,7 +252,7 @@ if (phase === 'write') {
         'wrong-runtime-version': /derived file.*runtime-version/u,
         'unrelated-registry-version': /derived file.*unrelated[.]version/u,
         'missing-native-transition':
-          /derived file src\/examples\/tauri\/src-tauri\/Cargo[.]toml contains a non-version semantic change/u,
+          /derived file src\/examples\/native\/tauri\/src-tauri\/Cargo[.]toml contains a non-version semantic change/u,
       }[scenario] ??
       (family === 'wildcard' && scenario !== 'workspace-wildcard'
         ? /canonical version file.*non-version semantic change/u

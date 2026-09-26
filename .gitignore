@@ -11,32 +11,32 @@ node_modules/
 /src/docs/.source/
 /src/docs/build/
 /src/docs/out/
-/src/runtimes/liboliphaunt-wasix/crates/assets/assets/
-/src/runtimes/liboliphaunt-wasix/crates/aot/*/artifacts/
-/src/sdks/react-native/ios/vendor/oliphaunt-swift/
-/src/sdks/react-native/ios/vendor/liboliphaunt.xcframework/
+/src/wasix/runtime/crates/assets/assets/
+/src/wasix/runtime/crates/aot/*/artifacts/
+/src/native/sdks/react-native/ios/vendor/oliphaunt-swift/
+/src/native/sdks/react-native/ios/vendor/liboliphaunt.xcframework/
 **/.DS_Store
 __pycache__/
 # Build artifacts from cargo package
 oliphaunt_wasix-*.crates.tar.gz
 
 # Exact candidate locks are generated from the qualified local Cargo registry.
-/src/examples/tauri/src-tauri/Cargo.lock
-/src/examples/tauri-wasix/src-tauri/Cargo.lock
-/src/examples/electron-wasix/src-wasix/Cargo.lock
-/src/examples/browser-wasix/dist/
+/src/examples/native/tauri/src-tauri/Cargo.lock
+/src/examples/wasix/tauri/src-tauri/Cargo.lock
+/src/examples/wasix/electron/src-wasix/Cargo.lock
+/src/examples/wasix/browser/dist/
 
 # JavaScript emitted from TypeScript for public package consumers.
-/src/sdks/swift/tools/extension-resource-inventory.mjs
-/src/sdks/swift/tools/render-extension-products.mjs
-/src/sdks/swift/tools/swift-carrier-resolver.mjs
-/src/sdks/react-native/tools/native-resource-closure.mjs
-/src/sdks/react-native/tools/stage-ios-app.mjs
-/src/sdks/react-native/tools/verify-ios-package.mjs
-/src/sdks/react-native/app.plugin.js
-/src/sdks/react-native/react-native.config.js
-/src/sdks/react-native/tools/codegen-check.cjs
-/src/postgres-tools/native/npm/index.js
-/src/postgres-tools/wasix/npm/index.js
+/src/native/sdks/swift/tools/extension-resource-inventory.mjs
+/src/native/sdks/swift/tools/render-extension-products.mjs
+/src/native/sdks/swift/tools/swift-carrier-resolver.mjs
+/src/native/sdks/react-native/tools/native-resource-closure.mjs
+/src/native/sdks/react-native/tools/stage-ios-app.mjs
+/src/native/sdks/react-native/tools/verify-ios-package.mjs
+/src/native/sdks/react-native/app.plugin.js
+/src/native/sdks/react-native/react-native.config.js
+/src/native/sdks/react-native/tools/codegen-check.cjs
+/src/native/postgres-tools/npm/index.js
+/src/wasix/postgres-tools/npm/index.js
 /src/database-resources/icu/npm/react-native.config.js
-/src/sdks/react-native/.generated-tools/
+/src/native/sdks/react-native/.generated-tools/

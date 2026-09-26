@@ -14,13 +14,13 @@ and static-extension resources. It depends directly on
 `liboliphaunt-native-bindings` with `internal-native-packaging`, without exposing
 a packaging feature or private packaging API through the public SDK.
 
-`src/broker/` now owns the independently versioned `oliphaunt-broker` library and
+`src/native/broker/` now owns the independently versioned `oliphaunt-broker` library and
 executable. Both the broker and the native SDK depend on
-`liboliphaunt-native-bindings` in `src/sdks/rust/liboliphaunt-native`; the broker no
+`liboliphaunt-native-bindings` in `src/native/rust-bindings`; the broker no
 longer reaches back into a private SDK broker feature. SQL and cancellation use
 PostgreSQL wire framing. Backup and shutdown use a separate authenticated
 management connection. Swift and Kotlin reach the same native implementation
-through the private `src/sdks/rust/mobile-bindings` UniFFI adapter.
+through the private `src/native/mobile-bindings` UniFFI adapter.
 
 Current public concepts are:
 

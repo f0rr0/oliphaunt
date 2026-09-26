@@ -96,8 +96,8 @@ hard-fails. Replace it with a build-produced asset manifest contract.
 
 Remove direct GitHub asset downloads from:
 
-- `src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java`
-- the duplicate resolver in `src/sdks/kotlin/oliphaunt/build.gradle.kts`
+- `src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java`
+- the duplicate resolver in `src/native/sdks/kotlin/oliphaunt/build.gradle.kts`
 
 Replace downloads with Gradle/Maven artifact dependencies and Gradle dependency
 verification.
@@ -106,9 +106,9 @@ verification.
 
 Replace the iOS config-only path in:
 
-- `src/sdks/react-native/app.plugin.js`
-- `src/sdks/react-native/OliphauntReactNative.podspec`
-- `src/sdks/react-native/ios/podspecs/*.podspec`
+- `src/native/sdks/react-native/app.plugin.js`
+- `src/native/sdks/react-native/OliphauntReactNative.podspec`
+- `src/native/sdks/react-native/ios/podspecs/*.podspec`
 
 The config plugin writes a locked native artifact plan. The native build consumes
 real local package artifacts installed by npm packages.
@@ -117,7 +117,7 @@ real local package artifacts installed by npm packages.
 
 Extend the generated SwiftPM release manifest in:
 
-- `src/sdks/swift/tools/render_swiftpm_release_package.mts`
+- `src/native/sdks/swift/tools/render_swiftpm_release_package.mts`
 
 Generate extension products and checksum-pinned binary targets. Do not use a
 plugin to add dependencies.

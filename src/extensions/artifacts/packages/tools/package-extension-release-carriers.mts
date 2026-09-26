@@ -21,8 +21,8 @@ import {
 import path from 'node:path';
 import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../../tools/packaging/rust-build-script-sha256.mts';
-import { CORE_RUNTIME_ARCHIVE_FILES } from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
-import { parseNpmExtensionLicenseFiles } from '../../../../sdks/ts/sdk/src/native/extension-contract.ts';
+import { CORE_RUNTIME_ARCHIVE_FILES } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { parseNpmExtensionLicenseFiles } from '../../../../native/sdks/ts/src/native/extension-contract.ts';
 import {
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
@@ -31,7 +31,7 @@ import {
 import {
   buildIosCarrierManifest,
   IOS_CARRIER_FILENAME,
-} from '../../../../sdks/swift/tools/ios-carrier-manifest.mts';
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { packGeneratedNpmCarrier } from '../../../../../tools/packaging/npm-package.mts';
 import { NPM_TRUSTED_PUBLISHING_REPOSITORY } from '../../../../../tools/packaging/npm-trusted-publishing.mts';
 import {

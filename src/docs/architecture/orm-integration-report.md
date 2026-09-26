@@ -75,7 +75,7 @@ correctness limitations.
 | Rust server qualification | Stock SQLx, Diesel, diesel-async, SeaORM, and tokio-postgres APIs | Exercise the existing dedicated native and WASIX server builders through connection strings | Add reproducible per-library suites; use pool size one on WASIX |
 | `OliphauntSeaQueryExecutor` | Small, truly socketless Rust query-builder integration | Statement/value codecs over the existing direct API | Build independently of server qualification |
 | Constrained `pg-compat` facade | Knex and TypeORM first; possibly Sequelize, Slonik, and Zapatos later | Single-session compatibility over the stable core, with any required lease kept adapter-private | Defer until the first three JavaScript integrations pass |
-| Duplex operation ABI | Interactive COPY, pull row streams, and advanced socketless client emulation | New C/Rust/src/broker/TypeScript/WASIX exchange path | Start only for a proven feature requirement |
+| Duplex operation ABI | Interactive COPY, pull row streams, and advanced socketless client emulation | New C/Rust/src/native/broker/TypeScript/WASIX exchange path | Start only for a proven feature requirement |
 
 Do not build a custom SQLx database implementation or a direct Prisma adapter.
 Do not put per-ORM SQL codecs, transaction schedulers, or browser ownership
@@ -1015,7 +1015,7 @@ sizes above one fail, and unsupported `pg` APIs fail deterministically.
   such direct-mode client emulation as proven demand justifies.
 
 Acceptance: bounded backpressure, cancel recovery, no unread frames across
-readiness, and src/broker/Worker crash cleanup are proven before enabling an ORM
+readiness, and src/native/broker/Worker crash cleanup are proven before enabling an ORM
 feature.
 
 ## Recommended end-state experience
@@ -1074,17 +1074,17 @@ Users should need to learn only three Oliphaunt-specific facts:
 
 ## Repository evidence
 
-- [Native TypeScript database state machine](../../sdks/ts/sdk/src/client.ts)
-- [Native TypeScript query codec](../../sdks/ts/sdk/src/query.ts)
-- [Native broker runtime](../../sdks/ts/sdk/src/runtime/broker.ts)
-- [Native Rust executor](../../sdks/rust/sdk/src/executor.rs)
-- [Native Rust database API](../../sdks/rust/sdk/src/database.rs)
-- [Native C protocol ABI](../../runtimes/liboliphaunt-native/include/oliphaunt.h)
-- [WASIX TypeScript database](../../sdks/ts-wasix/sdk/src/database.ts)
-- [WASIX TypeScript query codec](../../sdks/ts-wasix/sdk/src/query.ts)
-- [WASIX TypeScript architecture](../../sdks/ts-wasix/sdk/ARCHITECTURE.md)
-- [WASIX Rust one-client proxy](../../sdks/rust-wasix/src/oliphaunt/proxy.rs)
-- [WASIX Rust wire framing](../../sdks/rust-wasix/src/oliphaunt/wire.rs)
+- [Native TypeScript database state machine](../../native/sdks/ts/src/client.ts)
+- [Native TypeScript query codec](../../native/sdks/ts/src/query.ts)
+- [Native broker runtime](../../native/sdks/ts/src/runtime/broker.ts)
+- [Native Rust executor](../../native/sdks/rust/src/executor.rs)
+- [Native Rust database API](../../native/sdks/rust/src/database.rs)
+- [Native C protocol ABI](../../native/runtime/include/oliphaunt.h)
+- [WASIX TypeScript database](../../wasix/sdks/ts/src/core/database.ts)
+- [WASIX TypeScript query codec](../../wasix/sdks/ts/src/protocol/query.ts)
+- [WASIX TypeScript architecture](../../wasix/sdks/ts/ARCHITECTURE.md)
+- [WASIX Rust one-client proxy](../../wasix/sdks/rust/src/oliphaunt/proxy.rs)
+- [WASIX Rust wire framing](../../wasix/sdks/rust/src/oliphaunt/wire.rs)
 - [Public capability matrix](../content/reference/capabilities.mdx)
 
 ## Primary upstream sources

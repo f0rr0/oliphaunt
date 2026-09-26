@@ -6,8 +6,8 @@ Oliphaunt source code in this repository is licensed under the MIT license in
 This file is the repository-level notice index. Product-specific runtime and
 packaging notices live next to the product that ships the relevant artifacts:
 
-- `src/runtimes/liboliphaunt-native/THIRD_PARTY_NOTICES.md`
-- `src/sdks/rust-wasix/THIRD_PARTY_NOTICES.md`
+- `src/native/runtime/THIRD_PARTY_NOTICES.md`
+- `src/wasix/sdks/rust/THIRD_PARTY_NOTICES.md`
 
 Shared PostgreSQL source pins, third-party source pins, and extension metadata
 are maintained in `src/third-party/postgres/`, `src/third-party/`, and

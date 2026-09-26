@@ -4,7 +4,7 @@ import {
   expectedExtensionAotTargets,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
-} from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
+} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { packageGeneratedCargoSource } from '../../../../../tools/packaging/cargo-source-package.mts';
 import {
   assertReleaseNoticesInArchive,

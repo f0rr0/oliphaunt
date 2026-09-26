@@ -324,7 +324,7 @@ function derivedVersionRules() {
   for (const { packageName, product } of nativeToolsOptionalPackageProducts(TOOL)) {
     addStructured(
       'json',
-      'src/postgres-tools/native/npm/package.json',
+      'src/native/postgres-tools/npm/package.json',
       ['optionalDependencies', packageName],
       product,
       true,
@@ -344,7 +344,7 @@ function derivedVersionRules() {
     }
     addStructured(
       'json',
-      'src/examples/electron/package.json',
+      'src/examples/native/electron/package.json',
       ['dependencies', packageName],
       owners[0],
     );

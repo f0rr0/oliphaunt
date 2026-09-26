@@ -19,11 +19,11 @@ import {
 import {
   buildSwiftExtensionCarrierManifest,
   swiftExtensionCarrierAssetName,
-} from '../../src/sdks/swift/tools/ios-carrier-manifest.mts';
+} from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import {
   validateSelectionNeutralSwiftSourceCarrier,
   validateSwiftSourceReleaseContract,
-} from '../../src/sdks/swift/tools/swift-source-carrier-contract.mts';
+} from '../../src/native/sdks/swift/tools/swift-source-carrier-contract.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { parseMavenArtifactManifest } from '../packaging/maven-artifact-manifest.mts';
 import { validateMavenCentralPublication } from '../packaging/maven-central-contract.mts';
@@ -1642,7 +1642,7 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
   );
   const canonicalResourceInventory = path.join(
     ROOT,
-    'src/sdks/swift/tools/extension-resource-inventory.mts',
+    'src/native/sdks/swift/tools/extension-resource-inventory.mts',
   );
   if (
     resourceInventoryArtifact === undefined ||
@@ -1651,7 +1651,7 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
     )
   ) {
     throw error(
-      `${product.id} frozen extension-resource-inventory.mjs must exactly match src/sdks/swift/tools/extension-resource-inventory.mjs`,
+      `${product.id} frozen extension-resource-inventory.mjs must exactly match src/native/sdks/swift/tools/extension-resource-inventory.mjs`,
     );
   }
   const carrierName = 'oliphaunt-react-native-ios-carriers.json';

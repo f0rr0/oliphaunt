@@ -159,12 +159,12 @@ export function prepareSimple(config: Config, extension: string) {
       );
     } else {
       copyFileSync(
-        path.join(config.repo, 'src/runtimes/liboliphaunt-native/portable-uuid/portable_uuid.c'),
+        path.join(config.repo, 'src/extensions/contrib/portable-uuid/portable_uuid.c'),
         path.join(destination, 'portable_uuid.c'),
       );
       sources = ['../../uuid-ossp/uuid-ossp.c', 'portable_uuid.c'];
       cArgs.push(
-        `/I${path.join(config.repo, 'src/runtimes/liboliphaunt-native/portable-uuid/include')}`,
+        `/I${path.join(config.repo, 'src/extensions/contrib/portable-uuid/include')}`,
         '/DHAVE_UUID_E2FS=1',
         '/DHAVE_UUID_UUID_H=1',
       );

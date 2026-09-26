@@ -104,11 +104,11 @@ const BASE_ROWS = Object.freeze([
 const PRODUCT_NOTICE_ROWS = Object.freeze({
   native: Object.freeze({
     member: 'THIRD_PARTY_NOTICES.liboliphaunt-native.md',
-    source: path.join(ROOT, 'src/runtimes/liboliphaunt-native/THIRD_PARTY_NOTICES.md'),
+    source: path.join(ROOT, 'src/native/runtime/THIRD_PARTY_NOTICES.md'),
   }),
   wasix: Object.freeze({
     member: 'THIRD_PARTY_NOTICES.oliphaunt-wasix.md',
-    source: path.join(ROOT, 'src/sdks/rust-wasix/THIRD_PARTY_NOTICES.md'),
+    source: path.join(ROOT, 'src/wasix/sdks/rust/THIRD_PARTY_NOTICES.md'),
   }),
 });
 

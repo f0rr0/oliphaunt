@@ -6,7 +6,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   exit 1
 }
 cd "$root"
-source "$root/src/runtimes/liboliphaunt-wasix-postmaster/lib/process-supervision.sh"
+source "$root/src/wasix/postmaster/lib/process-supervision.sh"
 
 shard_index="${SHARD_INDEX:-${1:-}}"
 shard_count="${SHARD_COUNT:-${2:-}}"
@@ -70,7 +70,7 @@ if [ "$shard_index" = "0" ]; then
   fresh_run_process_group_timeout_ms "$proof_timeout_ms" -- \
     "$runner" --native-tools-npm-smoke -- \
       bash \
-      "$root/src/postgres-tools/native/tools/smoke-packed-tools-npm.sh" \
+      "$root/src/native/postgres-tools/tools/smoke-packed-tools-npm.sh" \
       --asset-dir "$input_root/tools" 2>&1 \
     | tee "$evidence_root/native-tools-npm-shard-$shard_index.log"
 fi

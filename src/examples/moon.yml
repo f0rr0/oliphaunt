@@ -33,11 +33,11 @@ owners:
 tasks:
   browser-wasix-typecheck:
     tags: ["quality", "static", "browser", "wasix"]
-    command: "bun run --cwd src/examples/browser-wasix typecheck"
+    command: "bun run --cwd src/examples/wasix/browser typecheck"
     deps:
       - "oliphaunt-query-ts:build"
     inputs:
-      - "browser-wasix/**/*"
+      - "wasix/browser/**/*"
       - project: "oliphaunt-wasix-ts"
         group: "code"
       - "@group(bun-workspace)"
@@ -51,7 +51,7 @@ tasks:
       set -e
       bash src/examples/tools/stage-tauri-webdriver-app.test.sh
       bash src/examples/tools/run-tauri-webdriver-smoke.test.sh
-      bash tools/dev/bun.sh test src/examples/react-native-expo/tools/smoke-pass-receipt.test.mts src/examples/react-native-expo/tools/mobile-extension-proof.test.mts
+      bash tools/dev/bun.sh test src/examples/native/react-native-expo/tools/smoke-pass-receipt.test.mts src/examples/native/react-native-expo/tools/mobile-extension-proof.test.mts
     inputs:
       - "/tools/dev/bun.sh"
       - "**/*"
@@ -65,7 +65,7 @@ tasks:
     tags: ["mobile", "build", "android", "ci-mobile-build-android"]
     script: |
       export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
-      exec bun run --cwd src/examples/react-native-expo mobile-build:android
+      exec bun run --cwd src/examples/native/react-native-expo mobile-build:android
     deps:
       - "oliphaunt-query-ts:package"
       - "database-resources:build-native-android-icu"
@@ -76,7 +76,7 @@ tasks:
       - "oliphaunt-kotlin:package"
       - "oliphaunt-react-native:package"
     inputs:
-      - "react-native-expo/**/*"
+      - "native/react-native-expo/**/*"
       - project: "oliphaunt-kotlin"
         group: "code"
       - project: "oliphaunt-react-native"
@@ -86,7 +86,7 @@ tasks:
       - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
-      - "/src/runtimes/liboliphaunt-native/packaging/**/*"
+      - "/src/native/runtime/packaging/**/*"
     outputs:
       - "/target/mobile-build/react-native/android/**/*"
     options:
@@ -94,13 +94,13 @@ tasks:
       runFromWorkspaceRoot: true
   react-native-android-e2e:
     tags: ["mobile", "e2e", "android"]
-    command: "bun run --cwd src/examples/react-native-expo mobile-e2e:android"
+    command: "bun run --cwd src/examples/native/react-native-expo mobile-e2e:android"
     deps:
       - "integration-examples:react-native-android-build"
     inputs:
-      - "react-native-expo/src/**/*"
-      - "react-native-expo/maestro/**/*"
-      - "react-native-expo/package.json"
+      - "native/react-native-expo/src/**/*"
+      - "native/react-native-expo/maestro/**/*"
+      - "native/react-native-expo/package.json"
       - project: "oliphaunt-react-native"
         group: "code"
       - "/tools/dev/maestro.toml"
@@ -112,16 +112,16 @@ tasks:
       runInCI: skip
   react-native-android-drill:
     tags: ["mobile", "drill", "android"]
-    command: "bun run --cwd src/examples/react-native-expo mobile-drill:android"
+    command: "bun run --cwd src/examples/native/react-native-expo mobile-drill:android"
     inputs:
-      - "react-native-expo/**/*"
+      - "native/react-native-expo/**/*"
       - project: "oliphaunt-kotlin"
         group: "code"
       - project: "oliphaunt-react-native"
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/src/runtimes/liboliphaunt-native/packaging/**/*"
+      - "/src/native/runtime/packaging/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -130,7 +130,7 @@ tasks:
     tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
     script: |
       export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
-      exec bun run --cwd src/examples/react-native-expo mobile-build:ios
+      exec bun run --cwd src/examples/native/react-native-expo mobile-build:ios
     deps:
       - "oliphaunt-query-ts:package"
       - "database-resources:build-native-ios-icu"
@@ -140,7 +140,7 @@ tasks:
       - "oliphaunt-react-native:package"
       - "oliphaunt-swift:package"
     inputs:
-      - "react-native-expo/**/*"
+      - "native/react-native-expo/**/*"
       - project: "oliphaunt-react-native"
         group: "code"
       - project: "oliphaunt-swift"
@@ -150,7 +150,7 @@ tasks:
       - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"
-      - "/src/runtimes/liboliphaunt-native/packaging/**/*"
+      - "/src/native/runtime/packaging/**/*"
     outputs:
       - "/target/mobile-build/react-native/ios/**/*"
     options:
@@ -158,13 +158,13 @@ tasks:
       runFromWorkspaceRoot: true
   react-native-ios-e2e:
     tags: ["mobile", "e2e", "ios"]
-    command: "bun run --cwd src/examples/react-native-expo mobile-e2e:ios"
+    command: "bun run --cwd src/examples/native/react-native-expo mobile-e2e:ios"
     deps:
       - "integration-examples:react-native-ios-build"
     inputs:
-      - "react-native-expo/src/**/*"
-      - "react-native-expo/maestro/**/*"
-      - "react-native-expo/package.json"
+      - "native/react-native-expo/src/**/*"
+      - "native/react-native-expo/maestro/**/*"
+      - "native/react-native-expo/package.json"
       - project: "oliphaunt-react-native"
         group: "code"
       - "/tools/dev/maestro.toml"
@@ -176,16 +176,16 @@ tasks:
       runInCI: skip
   react-native-ios-drill:
     tags: ["mobile", "drill", "ios"]
-    command: "bun run --cwd src/examples/react-native-expo mobile-drill:ios"
+    command: "bun run --cwd src/examples/native/react-native-expo mobile-drill:ios"
     inputs:
-      - "react-native-expo/**/*"
+      - "native/react-native-expo/**/*"
       - project: "oliphaunt-react-native"
         group: "code"
       - project: "oliphaunt-swift"
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/src/runtimes/liboliphaunt-native/packaging/**/*"
+      - "/src/native/runtime/packaging/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true

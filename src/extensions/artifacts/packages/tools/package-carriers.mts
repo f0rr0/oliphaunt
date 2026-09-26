@@ -14,13 +14,13 @@ import {
   packageNativeExtensionCargoCrates,
   stageExtensionNpmPackagesForTargets,
 } from './package-extension-release-carriers.mts';
-import { packageWasixCargoArtifacts } from '../../../../runtimes/liboliphaunt-wasix/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
+import { packageWasixCargoArtifacts } from '../../../../wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import { readFileSync } from 'node:fs';
-import { WASIX_CARGO_ARTIFACT_SCHEMA } from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
+import { WASIX_CARGO_ARTIFACT_SCHEMA } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import {
   expectedWasixExtensionPackageInventory,
   validateWasixExtensionArtifactInventory,
-} from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-extension-cargo-artifact-inventory.mts';
+} from '../../../../wasix/runtime/tools/wasix-extension-cargo-artifact-inventory.mts';
 import { packageExtensionCargoFacades } from './package-extension-cargo-facades.mts';
 
 export function extensionPackageDir(product, family = 'native') {
