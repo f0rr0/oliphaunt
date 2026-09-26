@@ -156,7 +156,9 @@ function assertBuildInputs(buildInputs, target, label) {
   if (!Array.isArray(inputs.extensionArtifacts)) {
     throw new Error(`${label} extension artifact inventory must be an array`);
   }
-  const expectedProducts = exactExtensionProducts(PREFIX);
+  const expectedProducts = exactExtensionProducts(PREFIX).filter(
+    (product) => product === 'oliphaunt-extension-contrib-pg18',
+  );
   assertSameStrings(
     inputs.extensionArtifacts.map((row) => row?.product),
     expectedProducts,

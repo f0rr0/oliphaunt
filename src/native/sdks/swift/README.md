@@ -13,7 +13,7 @@ dependencies: [
 Then add the `Oliphaunt` product to the iOS or macOS app target. Release tags
 are source tags for the Swift API and are paired with compatible
 `liboliphaunt-native-v<version>` GitHub release assets, for example
-`liboliphaunt-native-v0.1.1`. Those assets contain the base Apple XCFramework,
+`liboliphaunt-native-v0.2.0`. Those assets contain the base Apple XCFramework,
 portable runtime resources, and checksum manifest.
 CocoaPods trunk is not a release path for Oliphaunt. The SwiftPM release tag
 resolves a generated manifest with a checksum-pinned `liboliphaunt` binary
@@ -61,7 +61,7 @@ CONTRIB_CARRIER=/path/to/oliphaunt-extension-contrib-pg18-X.Y.Z-swift-extension-
 POSTGIS_CARRIER=/path/to/oliphaunt-extension-postgis-X.Y.Z-swift-extension-carrier.json
 PGTAP_CARRIER=/path/to/oliphaunt-extension-pgtap-X.Y.Z-swift-extension-carrier.json
 
-node src/native/sdks/swift/tools/render-extension-products.mjs \
+bun src/native/sdks/swift/tools/render-extension-products.mts \
   --extension-carrier "$CONTRIB_CARRIER" \
   --extension-carrier "$POSTGIS_CARRIER" \
   --extension-carrier "$PGTAP_CARRIER" \
@@ -91,7 +91,7 @@ base package, local XCFrameworks, or extension-resource roots.
 
 Every generated SwiftPM release source tag contains a schema-valid,
 selection-neutral carrier at
-`src/native/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json`. It pins only
+`src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json`. It pins only
 the compatible `liboliphaunt-native` base assets; its `carriers` and
 `extensions` arrays are empty. The generator uses that checksum-locked,
 Git-tree-addressed base carrier by default, so a pure Swift consumer does not
@@ -107,7 +107,7 @@ carrier predates or follows the Swift source tag. Compose the asset with the emb
 `--extension-carrier` option:
 
 ```bash
-node src/native/sdks/swift/tools/render-extension-products.mjs \
+bun src/native/sdks/swift/tools/render-extension-products.mts \
   --extension-carrier /path/to/oliphaunt-extension-vector-0.2.0-swift-extension-carrier.json \
   --extensions vector \
   --output-dir /path/to/package/generated/swiftpm/vector
@@ -138,8 +138,9 @@ atomically composes the extension-free base with exactly those registered fragme
 deterministic cache entry. It regenerates runtime, static-registry, and size
 metadata, rejects conflicting paths, and supports multiple independent native
 extensions plus SQL-only extensions. Consumers add the generated product and
-call its `register()` method before opening a database that requests that SQL
-extension. The application adds the generated directory as a local Swift
+select `OliphauntExtensionVector.resource` in `OliphauntConfiguration.extensions`.
+Opening the database registers that product automatically; `register()` remains
+available for explicit resource assembly. The application adds the generated directory as a local Swift
 package and depends on the generated products it selected. The published base
 Oliphaunt package remains extension-free; exact-extension releases remain
 checksum-covered GitHub carrier assets rather than pretending
@@ -154,7 +155,7 @@ plugin. It does not carry a second native database runtime.
 
 | SDK | Native core | Apple distribution |
 | --- | --- | --- |
-| `Oliphaunt` `0.6.1` | `liboliphaunt` `0.1.1` | SwiftPM source tag plus checksum-covered GitHub release assets |
+| `Oliphaunt` `0.7.0` | `liboliphaunt` `0.2.0` | SwiftPM source tag plus checksum-covered GitHub release assets |
 
 Exact extensions are selected by PostgreSQL SQL extension name and released as
 separate exact-extension artifacts. Selecting `vector` must only fetch/link

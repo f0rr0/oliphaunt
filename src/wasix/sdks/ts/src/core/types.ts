@@ -141,7 +141,7 @@ export type WasixExtensionLifecycle = {
 /** Host-relevant subset of the generated liboliphaunt WASIX asset manifest. */
 export type WasixAssetManifest = {
   'format-version': 2;
-  'source-fingerprint': string;
+  'source-fingerprint'?: string;
   runtime: {
     archive: string;
     sha256: string;
@@ -171,7 +171,7 @@ export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
   database?: string;
   /** PostgreSQL `-c name=value` settings applied before the database opens. */
   startupGUCs?: Readonly<Record<string, string>>;
-  /** Optional initializer seed. New browser storage requires an explicit seed. */
+  /** Optional initializer seed. Without one, new storage runs the runtime's initdb. */
   seed?: WasixSeed;
   /** Optional canonical ICU data, independent of the selected seed. */
   icu?: WasixIcuDescriptor;

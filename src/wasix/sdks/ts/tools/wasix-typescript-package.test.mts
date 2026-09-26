@@ -31,7 +31,7 @@ function manifest() {
       runtimeVersion: '1.2.3',
       wasixNapiProduct: 'oliphaunt-wasix-napi',
       wasixNapiVersion: '1.2.3',
-      wasixAddonAbiVersion: 2,
+      wasixAddonAbiVersion: 3,
       nodeApiVersion: 8,
       browserHost: 'wasmer-js-patched',
       serverHost: 'wasix-rust-napi',

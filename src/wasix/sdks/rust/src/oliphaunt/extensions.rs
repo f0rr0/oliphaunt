@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 #[cfg(all(test, feature = "extension-pg-textsearch"))]
@@ -39,9 +39,21 @@ pub struct Extension {
     aot_name: Option<&'static str>,
     dependencies: &'static [&'static str],
     startup_config: &'static [&'static str],
+    package: Option<&'static ExtensionPackage>,
 }
 
 impl Extension {
+    /// Bind extension metadata to the exact package selected by Cargo.
+    #[doc(hidden)]
+    pub const fn with_package(mut self, package: &'static ExtensionPackage) -> Self {
+        self.package = Some(package);
+        self
+    }
+
+    pub(crate) const fn package(self) -> Option<&'static ExtensionPackage> {
+        self.package
+    }
+
     /// SQL extension name used in `CREATE EXTENSION`.
     pub const fn sql_name(self) -> &'static str {
         self.sql_name
@@ -82,8 +94,43 @@ pub fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Extension>>
     let mut resolved = Vec::new();
     let mut requested = extensions.to_vec();
     requested.sort_by_key(|extension| extension.sql_name());
+    for pair in requested.windows(2) {
+        if pair[0].sql_name() == pair[1].sql_name() && pair[0] != pair[1] {
+            return Err(crate::error::invalid_configuration(format!(
+                "conflicting packages selected for extension '{}'",
+                pair[0].sql_name()
+            )));
+        }
+    }
+    let selected: BTreeMap<_, _> = requested
+        .iter()
+        .map(|extension| (extension.sql_name(), *extension))
+        .collect();
     for extension in requested {
-        visit_extension(extension, &mut visiting, &mut visited, &mut resolved)?;
+        if Extension::by_sql_name(extension.sql_name()).is_none() {
+            return Err(crate::error::invalid_configuration(format!(
+                "unsupported extension '{}'",
+                extension.sql_name()
+            )));
+        }
+        if let Some(package) = extension.package
+            && package.runtime_version() != liboliphaunt_wasix_portable::PACKAGE_VERSION
+        {
+            return Err(crate::error::invalid_configuration(format!(
+                "{}@{} requires WASIX runtime {}, selected {}",
+                package.product(),
+                package.version(),
+                package.runtime_version(),
+                liboliphaunt_wasix_portable::PACKAGE_VERSION
+            )));
+        }
+        visit_extension(
+            extension,
+            &selected,
+            &mut visiting,
+            &mut visited,
+            &mut resolved,
+        )?;
     }
     Ok(resolved)
 }
@@ -215,28 +262,54 @@ fn comma_separated_values(value: &str) -> impl Iterator<Item = &str> {
 
 fn visit_extension(
     extension: Extension,
+    selected: &BTreeMap<&'static str, Extension>,
     visiting: &mut BTreeSet<&'static str>,
     visited: &mut BTreeSet<&'static str>,
     resolved: &mut Vec<Extension>,
 ) -> Result<()> {
     if visited.contains(extension.sql_name()) {
+        if resolved
+            .iter()
+            .any(|prior| prior.sql_name() == extension.sql_name() && *prior != extension)
+        {
+            return Err(crate::error::invalid_configuration(format!(
+                "conflicting packages selected for extension '{}'",
+                extension.sql_name()
+            )));
+        }
         return Ok(());
     }
     if !visiting.insert(extension.sql_name()) {
         return Err(crate::error::invalid_configuration(format!(
-            "cyclic bundled extension dependency involving '{}'",
+            "cyclic extension dependency involving '{}'",
             extension.sql_name()
         )));
     }
     for dependency in extension.dependencies() {
-        let dependency_extension = Extension::by_sql_name(dependency).ok_or_else(|| {
+        let mut dependency_extension = Extension::by_sql_name(dependency).ok_or_else(|| {
             crate::error::invalid_configuration(format!(
                 "selected extension '{}' depends on missing catalog extension '{}'",
                 extension.sql_name(),
                 dependency
             ))
         })?;
-        visit_extension(dependency_extension, visiting, visited, resolved)?;
+        if let Some(package) = extension.package
+            && package
+                .archives()
+                .iter()
+                .any(|(name, _, _)| name == dependency)
+        {
+            dependency_extension = dependency_extension.with_package(package);
+        }
+        if let Some(explicit) = selected.get(dependency) {
+            if dependency_extension.package.is_some() && dependency_extension != *explicit {
+                return Err(crate::error::invalid_configuration(format!(
+                    "conflicting packages selected for extension '{dependency}'"
+                )));
+            }
+            dependency_extension = *explicit;
+        }
+        visit_extension(dependency_extension, selected, visiting, visited, resolved)?;
     }
     visiting.remove(extension.sql_name());
     visited.insert(extension.sql_name());
@@ -296,7 +369,7 @@ mod extension_tests {
     use crate::DatabaseStorage;
     use crate::Oliphaunt;
     use anyhow::{Context, Result, ensure};
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -679,5 +752,72 @@ mod extension_tests {
         walk(root, root, &mut files);
         files.sort();
         files
+    }
+}
+
+/// Immutable resources owned by an independently released WASIX package.
+///
+/// Applications use the descriptor exported by their extension crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExtensionPackage {
+    product: &'static str,
+    version: &'static str,
+    runtime_version: &'static str,
+    archives: &'static [(&'static str, &'static [u8], &'static str)],
+    aot_manifest: &'static str,
+    aot_artifacts: &'static [(&'static str, &'static [u8])],
+}
+
+impl ExtensionPackage {
+    /// Package-owned product.
+    pub const fn product(self) -> &'static str {
+        self.product
+    }
+    /// Package-owned version.
+    pub const fn version(self) -> &'static str {
+        self.version
+    }
+    /// Package-owned runtime version.
+    pub const fn runtime_version(self) -> &'static str {
+        self.runtime_version
+    }
+    /// Package-owned archives.
+    pub const fn archives(self) -> &'static [(&'static str, &'static [u8], &'static str)] {
+        self.archives
+    }
+    /// Package-owned aot manifest.
+    pub const fn aot_manifest(self) -> &'static str {
+        self.aot_manifest
+    }
+    /// Package-owned aot artifacts.
+    pub const fn aot_artifacts(self) -> &'static [(&'static str, &'static [u8])] {
+        self.aot_artifacts
+    }
+
+    /// Construct a descriptor in a generated extension package.
+    ///
+    /// # Safety
+    /// Every AOT artifact must have been produced by the trusted Oliphaunt build
+    /// for the declared engine and target. The manifest and archive identities
+    /// must belong to that same release. A caller-provided hash alone does not
+    /// establish this trust: arbitrary serialized native code is not safe input.
+    #[doc(hidden)]
+    #[allow(unsafe_code)]
+    pub const unsafe fn from_trusted_release(
+        product: &'static str,
+        version: &'static str,
+        runtime_version: &'static str,
+        archives: &'static [(&'static str, &'static [u8], &'static str)],
+        aot_manifest: &'static str,
+        aot_artifacts: &'static [(&'static str, &'static [u8])],
+    ) -> Self {
+        Self {
+            product,
+            version,
+            runtime_version,
+            archives,
+            aot_manifest,
+            aot_artifacts,
+        }
     }
 }

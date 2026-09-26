@@ -1,7 +1,3 @@
-import seedArchive from '@oliphaunt/seed-wasix-standard/seed.tar.zst?url';
-import seedManifest from '@oliphaunt/seed-wasix-standard/manifest.json?url';
-import icuSeedArchive from '@oliphaunt/seed-wasix-icu/seed.tar.zst?url';
-import icuSeedManifest from '@oliphaunt/seed-wasix-icu/manifest.json?url';
 import icuData from '@oliphaunt/icu/data?url';
 import icuManifest from '@oliphaunt/icu/manifest?url';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
@@ -18,7 +14,6 @@ try {
   const storage = indexedDB('packed-browser-smoke');
   let database = await Oliphaunt.open({
     storage,
-    seed: { archive: seedArchive, manifest: seedManifest },
     extensions: [pgtap],
   });
   let pgtapVersion: string;
@@ -62,7 +57,6 @@ try {
     }
     await database.execute('CHECKPOINT');
     const icuDatabase = await Oliphaunt.open({
-      seed: { archive: icuSeedArchive, manifest: icuSeedManifest },
       icu: { data: icuData, manifest: icuManifest },
     });
     try {

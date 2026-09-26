@@ -1,3 +1,4 @@
+import { normalizeExtensions, type NativeExtension } from './extensions.js';
 import {
   backupJsi,
   execProtocolRawJsi,
@@ -37,7 +38,6 @@ import {
   type RawQueryResult,
   type TransactionStatus,
 } from './query';
-import { generatedExtensionBySqlName } from './generated/extensions';
 import type { NativeOpenConfig, Spec as NativeOliphauntModule } from './specs/NativeOliphaunt';
 
 export type BinaryInput = ByteInput;
@@ -58,7 +58,7 @@ export type OpenConfig = {
   startupGUCs?: Readonly<Record<string, string>>;
   username?: string;
   database?: string;
-  extensions?: ReadonlyArray<string>;
+  extensions?: ReadonlyArray<NativeExtension>;
 };
 
 export type OliphauntClient = {
@@ -1123,7 +1123,7 @@ function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
     startupGUCs,
     username: config.username,
     database: config.database,
-    extensions: config.extensions ? validateExtensionIds(config.extensions) : undefined,
+    extensions: normalizeExtensions(config.extensions).map((extension) => extension.sqlName),
   };
 }
 
@@ -1212,24 +1212,4 @@ function validateStartupGUCs(gucs: Readonly<Record<string, string>>): string[] {
   return entries
     .filter(({ name }, index) => lastIndexByName.get(name) === index)
     .map(({ name, value }) => `${name}=${value}`);
-}
-
-function validateExtensionIds(extensions: ReadonlyArray<string>): string[] {
-  const normalized: string[] = [];
-  for (const extension of extensions) {
-    const trimmed = extension.trim();
-    if (trimmed.length === 0) {
-      continue;
-    }
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(trimmed)) {
-      throw new Error(
-        `React Native Oliphaunt extension id '${trimmed}' must contain 1 to 128 ASCII letters, digits, '.', '_' or '-'`,
-      );
-    }
-    if (generatedExtensionBySqlName(trimmed) === undefined) {
-      throw new Error(`unknown React Native Oliphaunt extension id '${trimmed}'`);
-    }
-    normalized.push(trimmed);
-  }
-  return normalized;
 }

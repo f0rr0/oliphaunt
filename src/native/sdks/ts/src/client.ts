@@ -1109,15 +1109,22 @@ export function createOliphauntClient(
     },
 
     async restore(
-      destination: string,
+      destination: Extract<DatabaseStorage, { kind: 'directory' }>,
       backup: BinaryInput,
       options: RestoreOptions = {},
     ): Promise<void> {
-      validateDirectoryPath(destination, 'restore destination');
+      if (destination?.kind !== 'directory') {
+        throw new TypeError('restore destination must be directory storage');
+      }
+      const path = destination.path;
+      if (typeof path !== 'string') {
+        throw new TypeError('restore destination path must be a string');
+      }
+      validateDirectoryPath(path, 'restore destination');
       const bytes = toUint8Array(backup).slice();
       const binding = await bindingFor({ libraryPath: options.libraryPath });
       await binding.restore({
-        destination,
+        destination: path,
         bytes,
       });
     },
@@ -1180,7 +1187,10 @@ function snapshotCommonOpenConfig(config: OpenConfig | ServerOpenConfig) {
     startupGUCs: config.startupGUCs === undefined ? undefined : { ...config.startupGUCs },
     username: config.username,
     database: config.database,
-    extensions: config.extensions === undefined ? undefined : [...config.extensions],
+    extensions:
+      config.extensions === undefined
+        ? undefined
+        : config.extensions.map((value) => ({ ...value })),
     runtimeDirectory: config.runtimeDirectory,
     ...('seed' in config && config.seed !== undefined ? { seed: { ...config.seed } } : {}),
     ...(config.icuData !== undefined ? { icuData: { ...config.icuData } } : {}),

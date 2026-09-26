@@ -28,8 +28,9 @@ The published SDK is one universal browser-and-server package. Its browser host
 files and exact `@oliphaunt/liboliphaunt-wasix` dependency are therefore
 installed on Node.js, Bun, Deno, and Electron too, although native export
 conditions never load them. The matching target-filtered optional platform
-package embeds the runtime, both cluster profiles, tools, and qualified
-extension catalog used on those hosts. Carrier packages have no install scripts
+package embeds the runtime and contrib code used on those hosts. External
+extensions supply their own portable package and host AOT dependency; updating
+one does not require rebuilding the addon. Carrier packages have no install scripts
 and do not download a binary at install or first use. Applications do not
 configure raw runtime assets.
 
@@ -62,12 +63,13 @@ packed native module, but the unpacked layout avoids that startup overhead and
 antivirus interaction. Carrier qualification loads the addon from this
 packaged layout and proves that a missing unpacked companion fails explicitly.
 
-Database resources are optional, separately installed packages. New browser storage
-requires a selected seed; existing browser storage reopens without one. Node, Bun,
-and Deno can also initialize a new database with the runtime's initdb when no seed
-is supplied.
+Database resources are optional, separately installed packages. Browser, Node,
+Bun, and Deno initialize new storage with the runtime's initdb when no seed is
+selected. Browser initialization uses isolated WASIX processes and their workers;
+normal direct queries retain their importing-realm placement. Existing storage
+reopens without running initdb or loading a seed.
 
-For a browser bundler, select the standard seed explicitly:
+For a browser bundler, an optional seed can skip initdb:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
@@ -77,11 +79,11 @@ import manifest from '@oliphaunt/seed-wasix-standard/manifest.json?url';
 await using database = await Oliphaunt.open({ seed: { archive, manifest } });
 ```
 
-For ICU, select `@oliphaunt/seed-wasix-icu` instead and pass
-`icu: { data, manifest }`, loading `@oliphaunt/icu/data` and
+For ICU, pass `icu: { data, manifest }`, loading `@oliphaunt/icu/data` and
 `@oliphaunt/icu/manifest`. Node/Bun/Deno may pass their file bytes instead of URLs.
 The SDK verifies seed integrity, runtime compatibility, and the ICU data tree
-before initialization. Each native platform addon supports both profiles without
+before initialization. If also selecting a seed, use `@oliphaunt/seed-wasix-icu`.
+Each native platform addon supports both profiles without
 bundling either seed or ICU data.
 
 ## Query PostgreSQL
@@ -203,9 +205,11 @@ pgdata/
 ```
 
 The descriptor records the shared database-root schema, PostgreSQL major, and
-WASIX physical format. Runtime source fingerprints and package hashes validate
-the asset graph; they are not physical-reopen identity. Native and WASIX roots
-are not rejected merely because of the originating family.
+WASIX physical format. Runtime compatibility uses declared product and version;
+AOT also checks its host and engine versions. Hashes verify payload integrity,
+and source fingerprints record producer provenance. Neither is a physical-reopen
+identity. Native and WASIX roots are not rejected merely because of the
+originating family.
 
 Rust and WASIX TypeScript bindings use the same root and physical-archive
 contracts. On Node.js, Bun, Deno, and Electron the Rust runtime holds the managed

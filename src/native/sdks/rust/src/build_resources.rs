@@ -1,3 +1,18 @@
+use std::sync::OnceLock;
+const BASE_RESOURCES: &[liboliphaunt_native_bindings::EmbeddedResource] =
+    include!(env!("OLIPHAUNT_EMBEDDED_RESOURCES_RS"));
+static BASE_DIRECTORY: OnceLock<()> = OnceLock::new();
+
+pub(crate) fn prepare_base_resources() -> Result<()> {
+    if BASE_RESOURCES.is_empty() || BASE_DIRECTORY.get().is_some() {
+        return Ok(());
+    }
+    let directory = liboliphaunt_native_bindings::materialize_embedded_resources(BASE_RESOURCES)?;
+    liboliphaunt_native_bindings::register_packaged_resources_dir(directory)?;
+    let _ = BASE_DIRECTORY.set(());
+    Ok(())
+}
+
 use crate::Result;
 use std::path::PathBuf;
 /// Register resources staged for the application by oliphaunt-build.

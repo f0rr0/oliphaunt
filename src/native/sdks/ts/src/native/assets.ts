@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+import type { NativeExtension } from '../extensions.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -192,12 +194,12 @@ export async function selectNativeResources(
 export async function prepareExtensionInstall(
   install: ResolvedNativeInstall,
   extensions: ReadonlyArray<string> = [],
-  options: { explicitRuntimeDirectory?: boolean } = {},
+  options: { explicitRuntimeDirectory?: boolean; descriptors?: readonly NativeExtension[] } = {},
 ): Promise<ResolvedNativeInstall> {
   if (options.explicitRuntimeDirectory === true && extensions.length > 0) {
     return validatePreparedNativeRuntimeExtensions(install, extensions);
   }
-  return materializeExtensionInstall(install, extensions);
+  return materializeExtensionInstall(install, extensions, options.descriptors);
 }
 
 export async function validatePreparedNativeRuntimeExtensions(
@@ -222,6 +224,7 @@ export async function validatePreparedNativeRuntimeExtensions(
 export async function materializeExtensionInstall(
   install: ResolvedNativeInstall,
   extensions: ReadonlyArray<string> = [],
+  descriptors: readonly NativeExtension[] = [],
 ): Promise<ResolvedNativeInstall> {
   const selected = selectedExtensionClosure(extensions);
   if (selected.length === 0) {
@@ -238,7 +241,12 @@ export async function materializeExtensionInstall(
   const target = liboliphauntPackageTarget(platform(), arch());
   const packages = await Promise.all(
     selected.map((sqlName) =>
-      resolveExtensionPackage(sqlName, target.id, versions.liboliphauntVersion),
+      resolveExtensionPackage(
+        sqlName,
+        target.id,
+        versions.liboliphauntVersion,
+        descriptors.find((value) => value.sqlName === sqlName),
+      ),
     ),
   );
   const cacheKey = runtimeCacheKey({
@@ -341,6 +349,7 @@ async function resolveExtensionPackage(
   sqlName: string,
   target: string,
   liboliphauntVersion: string,
+  descriptor?: NativeExtension,
 ): Promise<ResolvedExtensionPackage> {
   const extension = generatedExtensionBySqlName(sqlName);
   if (extension === undefined) {
@@ -352,6 +361,7 @@ async function resolveExtensionPackage(
     extension,
     targetPackageName,
     target,
+    descriptor,
   );
   const packageJsonPath = resolvedTarget.packageJsonPath;
   const packageRoot = dirname(packageJsonPath);
@@ -1382,11 +1392,15 @@ async function resolveExtensionTargetPackageJson(
   extension: GeneratedExtensionMetadata,
   targetPackageName: string,
   target: string,
+  descriptor?: NativeExtension,
 ): Promise<{ packageJsonPath: string; ownerVersion: string }> {
   const packageName = extension.npmPackage;
   const expectedMembers = extensionOwnerMembers(extension);
   const isBundle = expectedMembers.length > 1;
-  const packageJsonPath = optionalResolvePackageJson(packageName);
+  const packageJsonPath =
+    descriptor?.packageJsonUrl === undefined
+      ? optionalResolvePackageJson(packageName)
+      : fileURLToPath(descriptor.packageJsonUrl);
   if (packageJsonPath === undefined) {
     if (isBundle) {
       throw new Error(
@@ -1424,6 +1438,11 @@ async function resolveExtensionTargetPackageJson(
   requireExtensionPackageMembers(packageJson, expectedMembers, packageName);
   if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) {
     throw new Error(`${packageName} package metadata is missing version`);
+  }
+  if (descriptor?.version !== undefined && packageJson.version !== descriptor.version) {
+    throw new Error(
+      `${packageName} version ${packageJson.version} does not match selected version ${descriptor.version}`,
+    );
   }
   const resolvedTargetPackageName =
     packageJson.oliphaunt.targetPackageNames?.[target] ?? targetPackageName;

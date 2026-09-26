@@ -148,7 +148,7 @@ export async function createDenoNativeBinding(
       const prepared = await prepareExtensionInstall(
         { ...selectedInstall, runtimeDirectory: openConfig.runtimeDirectory },
         openConfig.extensions,
-        { explicitRuntimeDirectory },
+        { explicitRuntimeDirectory, descriptors: config.extensionDescriptors },
       );
       openConfig = { ...openConfig, runtimeDirectory: prepared.runtimeDirectory };
       const moduleDirectory = prepared.moduleDirectory;

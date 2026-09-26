@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { installPackageAssetReader } from '../../resources/asset-source.js';
 import { loadAsset } from '../../resources/archive.js';
@@ -10,6 +13,8 @@ import {
 } from '../../core/errors.js';
 import {
   loadNativeWasixAddon,
+  nativeTarget,
+  type NativeWasixExtensionPackage,
   type NativeWasixAddon,
   type NativeWasixActorDatabaseHandle,
   type NativeWasixDatabaseHandle,
@@ -443,35 +448,18 @@ export function requireCompatibleNativeWasixAddon(
       `WASIX runtime ${options.runtime.version} is incompatible with native runtime ${addon.runtimeVersion()}`,
     );
   }
-  requireEmbeddedPayloadIdentity(
-    addon,
-    'runtimeArchive',
-    options.runtime.runtimeArchive,
-    'runtime archive',
-  );
   for (const [sqlName, carrier] of Object.entries(options.extensionCarriers)) {
     if (carrier.sqlName !== sqlName) {
       throw new Error(`WASIX extension carrier key ${sqlName} does not match ${carrier.sqlName}`);
     }
-    const expectedIdentity = `${carrier.sha256}:${carrier.size}`;
-    if (addon.extensionIdentity(sqlName) !== expectedIdentity) {
+    if (carrier.product !== 'oliphaunt-extension-contrib-pg18') continue;
+    if (carrier.version !== addon.runtimeVersion()) {
       throw new Error(
-        `WASIX extension ${sqlName} descriptor does not match the archive embedded in the native addon`,
+        `WASIX contrib extension ${sqlName} version ${carrier.version} is incompatible with native runtime ${addon.runtimeVersion()}`,
       );
     }
   }
   return addon;
-}
-
-function requireEmbeddedPayloadIdentity(
-  addon: NativeWasixAddon,
-  component: Parameters<NativeWasixAddon['payloadIdentity']>[0],
-  descriptor: Readonly<{ sha256: string; size: number }>,
-  label: string,
-): void {
-  if (addon.payloadIdentity(component) !== `${descriptor.sha256}:${descriptor.size}`) {
-    throw new Error(`WASIX ${label} descriptor does not match the native addon payload`);
-  }
 }
 
 export async function loadNativeResources(options: SerializedOpenOptions) {
@@ -499,8 +487,40 @@ export function nativeWasixOpenOptions(
     username: identity.username,
     database: identity.database,
     startupGucs: { ...options.startupGUCs },
-    extensions: [...options.extensions],
+    extensions: [...new Set([...options.extensions, ...Object.keys(options.extensionCarriers)])],
+    extensionPackages: nativeExtensionPackages(options),
   };
+}
+
+function nativeExtensionPackages(options: SerializedOpenOptions): NativeWasixExtensionPackage[] {
+  return Object.values(options.extensionCarriers)
+    .filter((carrier) => carrier.product !== 'oliphaunt-extension-contrib-pg18')
+    .map((carrier) => {
+      if (typeof carrier.source !== 'string' || !carrier.source.startsWith('file:')) {
+        throw new Error(
+          `WASIX extension ${carrier.sqlName} requires an installed package on native hosts`,
+        );
+      }
+      const archive = fileURLToPath(carrier.source);
+      // Generated portable carriers own extensions/<sql-name>/extension.tar.zst.
+      const packageJson = join(dirname(dirname(dirname(archive))), 'package.json');
+      const name = `@oliphaunt/${carrier.product.slice('oliphaunt-'.length)}-wasix`;
+      const needsAot =
+        carrier.install.nativeModule !== null || carrier.install.nativeModules.length > 0;
+      const target = nativeTarget(process.platform, process.arch, 'glibc').id;
+      const aotPackageJson = needsAot
+        ? createRequire(packageJson).resolve(`${name}-${target}/package.json`)
+        : undefined;
+      return {
+        sqlName: carrier.sqlName,
+        product: carrier.product,
+        version: carrier.version,
+        archiveSha256: carrier.sha256,
+        archiveSize: carrier.size,
+        packageJson,
+        ...(aotPackageJson === undefined ? {} : { aotPackageJson }),
+      };
+    });
 }
 
 function nativeStorage(options: SerializedOpenOptions): NativeWasixOpenOptions['storage'] {
@@ -634,7 +654,7 @@ function nativeStorageError(error: unknown): NativeStorageError | undefined {
   const candidate = error as Record<string, unknown>;
   if (
     candidate.oliphauntWasixError !== 'storage' ||
-    candidate.oliphauntWasixAddonAbi !== 2 ||
+    candidate.oliphauntWasixAddonAbi !== 3 ||
     !memberOf(candidate.code, STORAGE_CODES) ||
     !memberOf(candidate.commitState, STORAGE_COMMIT_STATES) ||
     !memberOf(candidate.phase, STORAGE_PHASES)

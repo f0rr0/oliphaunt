@@ -96,7 +96,7 @@ export type ResolvedWasixExtensions = {
 
 export type PreparedWasixRuntime = {
   layout: WasixRuntimeLayout;
-  loadClusterSeed(): Promise<WasixDirectoryMount>;
+  loadClusterSeed?: () => Promise<WasixDirectoryMount>;
   moduleSha256: string;
   catalogProfile: 'standard' | 'icu';
   icuEnabled: boolean;
@@ -186,7 +186,11 @@ export async function prepareWasixRuntime(
 
   return {
     layout,
-    loadClusterSeed: lazyClusterSeedLoader(options, manifest, profile, icuData?.treeSha256),
+    ...(options.seed === undefined
+      ? {}
+      : {
+          loadClusterSeed: lazyClusterSeedLoader(options, manifest, profile, icuData?.treeSha256),
+        }),
     moduleSha256: manifest.runtime['module-sha256'],
     catalogProfile: profile,
     icuEnabled: options.icu !== undefined,
@@ -338,8 +342,6 @@ export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
     requireString(entry.name, `WASIX runtime export ${index} name`);
     requireString(entry.kind, `WASIX runtime export ${index} kind`);
   }
-
-  requireString(manifest['source-fingerprint'], 'WASIX asset source fingerprint');
 
   const runtimeSupport = requireArray(manifest['runtime-support'], 'WASIX runtime-support entries');
   for (const [index, value] of runtimeSupport.entries()) {

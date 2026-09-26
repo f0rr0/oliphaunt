@@ -1286,6 +1286,7 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
         ? [`pub const SQL_NAME: &str = ${JSON.stringify(spec.members[0].sqlName)};`]
         : []),
       '',
+      `pub const ARCHIVES: &[(&str, &[u8], &str)] = &[${spec.members.map((member) => `(${JSON.stringify(member.sqlName)}, include_bytes!(concat!(env!("OUT_DIR"), "/payload/extensions/${member.sqlName}/extension.tar.zst")), ${JSON.stringify(member.sha256)})`).join(', ')}];`,
       "pub fn archive(sql_name: &str) -> Option<&'static [u8]> {",
       '    match sql_name {',
       ...spec.members.map(
@@ -1444,6 +1445,11 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
         : []),
       `pub const TARGET_TRIPLE: &str = "${spec.target}";`,
       '',
+      `pub const ARTIFACTS: &[(&str, &[u8])] = &[${artifacts.map((artifact) => `(${JSON.stringify(artifact.name)}, include_bytes!(concat!(env!("OUT_DIR"), "/payload/${artifact.payloadRelative}")))`).join(', ')}];`,
+      ...spec.members.map(
+        (member) =>
+          `pub const ${member.sqlName.replaceAll('-', '_').toUpperCase()}_MANIFEST: &str = include_str!("../manifests/${member.sqlName}.json");`,
+      ),
       "pub fn aot_manifest_json(sql_name: &str) -> Option<&'static str> {",
       '    match sql_name {',
       ...spec.members.map(

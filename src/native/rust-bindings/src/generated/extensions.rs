@@ -7,6 +7,7 @@ use super::ExtensionRuntimeEnvironment;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Extension {
     id: ExtensionId,
+    pub(super) package: Option<&'static super::ExtensionPackage>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -95,158 +96,197 @@ impl Extension {
     /// Select the `amcheck` artifact.
     pub const AMCHECK: Self = Self {
         id: ExtensionId::Amcheck,
+        package: None,
     };
     /// Select the `auto_explain` artifact.
     pub const AUTO_EXPLAIN: Self = Self {
         id: ExtensionId::AutoExplain,
+        package: None,
     };
     /// Select the `bloom` artifact.
     pub const BLOOM: Self = Self {
         id: ExtensionId::Bloom,
+        package: None,
     };
     /// Select the `btree_gin` artifact.
     pub const BTREE_GIN: Self = Self {
         id: ExtensionId::BtreeGin,
+        package: None,
     };
     /// Select the `btree_gist` artifact.
     pub const BTREE_GIST: Self = Self {
         id: ExtensionId::BtreeGist,
+        package: None,
     };
     /// Select the `citext` artifact.
     pub const CITEXT: Self = Self {
         id: ExtensionId::Citext,
+        package: None,
     };
     /// Select the `cube` artifact.
     pub const CUBE: Self = Self {
         id: ExtensionId::Cube,
+        package: None,
     };
     /// Select the `dict_int` artifact.
     pub const DICT_INT: Self = Self {
         id: ExtensionId::DictInt,
+        package: None,
     };
     /// Select the `dict_xsyn` artifact.
     pub const DICT_XSYN: Self = Self {
         id: ExtensionId::DictXsyn,
+        package: None,
     };
     /// Select the `earthdistance` artifact.
     pub const EARTHDISTANCE: Self = Self {
         id: ExtensionId::Earthdistance,
+        package: None,
     };
     /// Select the `file_fdw` artifact.
     pub const FILE_FDW: Self = Self {
         id: ExtensionId::FileFdw,
+        package: None,
     };
     /// Select the `fuzzystrmatch` artifact.
     pub const FUZZYSTRMATCH: Self = Self {
         id: ExtensionId::Fuzzystrmatch,
+        package: None,
     };
     /// Select the `hstore` artifact.
     pub const HSTORE: Self = Self {
         id: ExtensionId::Hstore,
+        package: None,
     };
     /// Select the `intarray` artifact.
     pub const INTARRAY: Self = Self {
         id: ExtensionId::Intarray,
+        package: None,
     };
     /// Select the `isn` artifact.
     pub const ISN: Self = Self {
         id: ExtensionId::Isn,
+        package: None,
     };
     /// Select the `lo` artifact.
     pub const LO: Self = Self {
         id: ExtensionId::Lo,
+        package: None,
     };
     /// Select the `ltree` artifact.
     pub const LTREE: Self = Self {
         id: ExtensionId::Ltree,
+        package: None,
     };
     /// Select the `pageinspect` artifact.
     pub const PAGEINSPECT: Self = Self {
         id: ExtensionId::Pageinspect,
+        package: None,
     };
     /// Select the `pg_buffercache` artifact.
     pub const PG_BUFFERCACHE: Self = Self {
         id: ExtensionId::PgBuffercache,
+        package: None,
     };
     /// Select the `pg_freespacemap` artifact.
     pub const PG_FREESPACEMAP: Self = Self {
         id: ExtensionId::PgFreespacemap,
+        package: None,
     };
     /// Select the `pg_hashids` artifact.
     pub const PG_HASHIDS: Self = Self {
         id: ExtensionId::PgHashids,
+        package: None,
     };
     /// Select the `pg_ivm` artifact.
     pub const PG_IVM: Self = Self {
         id: ExtensionId::PgIvm,
+        package: None,
     };
     /// Select the `pg_surgery` artifact.
     pub const PG_SURGERY: Self = Self {
         id: ExtensionId::PgSurgery,
+        package: None,
     };
     /// Select the `pg_textsearch` artifact.
     pub const PG_TEXTSEARCH: Self = Self {
         id: ExtensionId::PgTextsearch,
+        package: None,
     };
     /// Select the `pg_trgm` artifact.
     pub const PG_TRGM: Self = Self {
         id: ExtensionId::PgTrgm,
+        package: None,
     };
     /// Select the `pg_uuidv7` artifact.
     pub const PG_UUIDV7: Self = Self {
         id: ExtensionId::PgUuidv7,
+        package: None,
     };
     /// Select the `pg_visibility` artifact.
     pub const PG_VISIBILITY: Self = Self {
         id: ExtensionId::PgVisibility,
+        package: None,
     };
     /// Select the `pg_walinspect` artifact.
     pub const PG_WALINSPECT: Self = Self {
         id: ExtensionId::PgWalinspect,
+        package: None,
     };
     /// Select the `pgcrypto` artifact.
     pub const PGCRYPTO: Self = Self {
         id: ExtensionId::Pgcrypto,
+        package: None,
     };
     /// Select the `pgtap` artifact.
     pub const PGTAP: Self = Self {
         id: ExtensionId::Pgtap,
+        package: None,
     };
     /// Select the `postgis` artifact.
     pub const POSTGIS: Self = Self {
         id: ExtensionId::Postgis,
+        package: None,
     };
     /// Select the `seg` artifact.
     pub const SEG: Self = Self {
         id: ExtensionId::Seg,
+        package: None,
     };
     /// Select the `tablefunc` artifact.
     pub const TABLEFUNC: Self = Self {
         id: ExtensionId::Tablefunc,
+        package: None,
     };
     /// Select the `tcn` artifact.
     pub const TCN: Self = Self {
         id: ExtensionId::Tcn,
+        package: None,
     };
     /// Select the `tsm_system_rows` artifact.
     pub const TSM_SYSTEM_ROWS: Self = Self {
         id: ExtensionId::TsmSystemRows,
+        package: None,
     };
     /// Select the `tsm_system_time` artifact.
     pub const TSM_SYSTEM_TIME: Self = Self {
         id: ExtensionId::TsmSystemTime,
+        package: None,
     };
     /// Select the `unaccent` artifact.
     pub const UNACCENT: Self = Self {
         id: ExtensionId::Unaccent,
+        package: None,
     };
     /// Select the `uuid-ossp` artifact.
     pub const UUID_OSSP: Self = Self {
         id: ExtensionId::UuidOssp,
+        package: None,
     };
     /// Select the `vector` artifact.
     pub const VECTOR: Self = Self {
         id: ExtensionId::Vector,
+        package: None,
     };
 
     /// All PostgreSQL 18 extension artifacts known to the native SDK.
@@ -335,6 +375,51 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
         ExtensionId::Unaccent => "unaccent",
         ExtensionId::UuidOssp => "uuid-ossp",
         ExtensionId::Vector => "vector",
+    }
+}
+
+/// Generated extension metadata accessor.
+pub(super) const fn artifact_product(extension: Extension) -> &'static str {
+    match extension.id {
+        ExtensionId::Amcheck => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::AutoExplain => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Bloom => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::BtreeGin => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::BtreeGist => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Citext => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Cube => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::DictInt => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::DictXsyn => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Earthdistance => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::FileFdw => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Fuzzystrmatch => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Hstore => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Intarray => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Isn => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Lo => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Ltree => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Pageinspect => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgBuffercache => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgFreespacemap => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgHashids => "oliphaunt-extension-pg-hashids",
+        ExtensionId::PgIvm => "oliphaunt-extension-pg-ivm",
+        ExtensionId::PgSurgery => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgTextsearch => "oliphaunt-extension-pg-textsearch",
+        ExtensionId::PgTrgm => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgUuidv7 => "oliphaunt-extension-pg-uuidv7",
+        ExtensionId::PgVisibility => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::PgWalinspect => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Pgcrypto => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Pgtap => "oliphaunt-extension-pgtap",
+        ExtensionId::Postgis => "oliphaunt-extension-postgis",
+        ExtensionId::Seg => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Tablefunc => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Tcn => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::TsmSystemRows => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::TsmSystemTime => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Unaccent => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::UuidOssp => "oliphaunt-extension-contrib-pg18",
+        ExtensionId::Vector => "oliphaunt-extension-vector",
     }
 }
 

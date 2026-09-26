@@ -49,7 +49,8 @@ export async function stagePackedWasixConsumer({
     await readFile(resolve(repositoryRoot, '.release-please-manifest.json'), 'utf8'),
   );
   const runtimeVersion = releaseVersions['src/wasix/runtime'];
-  const extensionVersion = releaseVersions['src/extensions/external/pgtap'];
+  // A private fixture version proves the addon is independent of the extension release.
+  const extensionVersion = '9.8.7';
   const tarballs = resolve(scratch, 'tarballs');
   await mkdir(tarballs, { recursive: true });
 
@@ -269,7 +270,7 @@ function validateNativeCarrierArchive(file, entries, manifest, expected, runtime
     manifest.oliphaunt?.target !== expected.target ||
     manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix' ||
     manifest.oliphaunt?.runtimeVersion !== runtimeVersion ||
-    manifest.oliphaunt?.addonAbiVersion !== 2 ||
+    manifest.oliphaunt?.addonAbiVersion !== 3 ||
     manifest.oliphaunt?.nodeApiVersion !== 8 ||
     JSON.stringify(manifest.oliphaunt?.profiles) !== JSON.stringify(['standard', 'icu'])
   ) {
@@ -424,12 +425,12 @@ async function wasixPhysicalIdentity() {
 async function packPgtap({ scratch, tarballs, runtimeVersion, extensionVersion }) {
   requireReleaseVersion(extensionVersion, 'src/extensions/external/pgtap');
   const staging = resolve(scratch, 'pgtap');
-  const assets = resolve(staging, 'assets');
+  const assets = resolve(staging, 'extensions/pgtap');
   await mkdir(assets, { recursive: true });
   const manifest = JSON.parse(await readFile(resolve(extensionAssetRoot, 'manifest.json'), 'utf8'));
   const row = manifest.extensions.find((candidate) => candidate['sql-name'] === 'pgtap');
   if (row === undefined) throw new Error('WASIX manifest has no pgtap carrier');
-  await cp(resolve(extensionAssetRoot, row.archive), resolve(assets, 'pgtap.tar.zst'));
+  await cp(resolve(extensionAssetRoot, row.archive), resolve(assets, 'extension.tar.zst'));
   const lifecycle = row.lifecycle;
   const carrier = {
     product: 'oliphaunt-extension-pgtap',
@@ -477,7 +478,7 @@ async function packPgtap({ scratch, tarballs, runtimeVersion, extensionVersion }
   await writeFile(
     resolve(staging, 'index.js'),
     `const descriptor = ${JSON.stringify(descriptor, null, 2)};
-descriptor.carriers[0].source = new URL('./assets/pgtap.tar.zst', import.meta.url);
+descriptor.carriers[0].source = new URL('./extensions/pgtap/extension.tar.zst', import.meta.url);
 export default descriptor;
 `,
   );
@@ -486,6 +487,21 @@ export default descriptor;
     version: extensionVersion,
     type: 'module',
     exports: { '.': './index.js' },
+    oliphaunt: {
+      product: carrier.product,
+      kind: 'exact-extension-wasix',
+      runtime: 'wasix',
+      wasixRuntimeProduct: 'liboliphaunt-wasix',
+      wasixRuntimeVersion: runtimeVersion,
+      carriers: {
+        pgtap: {
+          path: 'extensions/pgtap/extension.tar.zst',
+          sha256: row.sha256,
+          size: row.size,
+          requiresAot: false,
+        },
+      },
+    },
   });
   return pack(staging, tarballs);
 }

@@ -45,6 +45,8 @@ require_linux_x64() {
 build_consumer() {
   local sdk_artifacts="$1"
   local output="$2"
+  local cargo_artifact_dir="${3:-}" artifact_name
+  local real_artifacts=()
   local crate dependency_crate dependency_source product packed_manifest metadata dependency_rows name version stub
   local manifests=()
   local dependency_sources=()
@@ -69,13 +71,29 @@ build_consumer() {
     cp Cargo.lock "$scratch/consumer/Cargo.lock"
   fi
 
-  for product in oliphaunt-query liboliphaunt-native-bindings oliphaunt-broker; do
-    dependency_crate="$(find_one "target/sdk-artifacts/$product" "$product-*.crate")"
+  for product in oliphaunt-query liboliphaunt-native-bindings oliphaunt-broker oliphaunt-build; do
+    local artifact_dir="target/sdk-artifacts/$product"
+    [ "$product" != oliphaunt-build ] || artifact_dir="$sdk_artifacts"
+    dependency_crate="$(find_one "$artifact_dir" "$product-*.crate")"
     mkdir -p "$scratch/dependencies/$product"
     tar -xzf "$dependency_crate" -C "$scratch/dependencies/$product"
     dependency_source="$(dirname "$(find_one "$scratch/dependencies/$product" Cargo.toml)")"
     dependency_sources+=("$product" "$dependency_source")
   done
+
+  if [ -n "$cargo_artifact_dir" ]; then
+    mkdir -p "$scratch/artifacts"
+    while IFS= read -r dependency_crate; do
+      tar -xzf "$dependency_crate" -C "$scratch/artifacts"
+    done < <(find "$cargo_artifact_dir" -type f -name '*.crate' -print)
+    for dependency_source in "$scratch/artifacts"/*; do
+      [ -f "$dependency_source/Cargo.toml" ] || continue
+      artifact_name="$(sed -n 's/^name = "\([^"]*\)"$/\1/p' "$dependency_source/Cargo.toml" | head -1)"
+      dependency_sources+=("$artifact_name" "$dependency_source")
+      real_artifacts+=("$artifact_name")
+    done
+    [ "${#real_artifacts[@]}" -gt 0 ] || fail "no Cargo artifact crates in $cargo_artifact_dir"
+  fi
 
   metadata="$scratch/metadata.json"
   dependency_rows="$scratch/artifact-dependencies.tsv"
@@ -92,6 +110,11 @@ build_consumer() {
       printf '"%s" = { path = "%s" }\n' "${dependency_sources[index]}" "${dependency_sources[index+1]}"
     done
     while IFS=$'\t' read -r name version; do
+      local resolved=false artifact
+      for artifact in "${real_artifacts[@]+${real_artifacts[@]}}"; do
+        [ "$artifact" != "$name" ] || resolved=true
+      done
+      [ "$resolved" = false ] || continue
       stub="$scratch/stubs/$name"
       mkdir -p "$stub/src"
       printf '[package]\nname = "%s"\nversion = "%s"\nedition = "2024"\npublish = false\n\n[lib]\npath = "src/lib.rs"\n' \
@@ -128,6 +151,32 @@ run_consumer() {
   broker_archive="$(find_one "$broker_assets" 'oliphaunt-broker-*-linux-x64-gnu.tar.gz')"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-rust-release-consumer-run.XXXXXX")"
 
+  # Build the installed SDK against real Cargo carriers, then run the copied
+  # executable after its unpacked crates and Cargo output have been removed.
+  cargo fetch --locked
+  tools/dev/bun.sh src/native/runtime/tools/package-liboliphaunt-cargo-artifacts.mts \
+    --asset-dir "$native_assets" --output-dir "$scratch/cargo/native" \
+    --work-dir "$scratch/cargo-work" --target linux-x64-gnu
+  tools/dev/bun.sh src/native/broker/tools/package_broker_cargo_artifacts.mts \
+    --asset-dir "$broker_assets" --output-dir "$scratch/cargo/broker" --target linux-x64-gnu
+  CARGO_TARGET_DIR="$scratch/consumer-build" bash "$0" build \
+    target/sdk-artifacts/oliphaunt-rust "$scratch/embedded-consumer" "$scratch/cargo"
+  rm -rf "$scratch/cargo" "$scratch/cargo-work" "$scratch/consumer-build"
+  local mode action
+  for mode in direct broker; do
+    for action in "$mode" "$mode-verify"; do
+      (
+      cd "$scratch"
+      env -u LIBOLIPHAUNT_PATH -u OLIPHAUNT_RESOURCES_DIR \
+        -u OLIPHAUNT_CONSUMER_RESOURCES_DIR -u OLIPHAUNT_EXTENSION_RESOURCES_DIR \
+        -u OLIPHAUNT_EMBEDDED_MODULE_DIR -u OLIPHAUNT_BROKER \
+        -u OLIPHAUNT_INSTALL_DIR -u OLIPHAUNT_INITDB -u OLIPHAUNT_POSTGRES -u LD_LIBRARY_PATH \
+        OLIPHAUNT_RUNTIME_CACHE_DIR="$scratch/embedded-cache" \
+        "$scratch/embedded-consumer" "$scratch/embedded-$mode" "$action"
+      )
+    done
+  done
+
   native_dir="$scratch/resources/native-runtime/liboliphaunt-native"
   mkdir -p "$native_dir" "$scratch/tools" "$scratch/broker" "$scratch/runtime-cache"
   tar -xzf "$runtime_archive" -C "$native_dir"
@@ -154,8 +203,8 @@ run_consumer() {
 
 case "${1:-}" in
   build)
-    [ "$#" -eq 3 ] || fail "usage: $0 build SDK_ARTIFACT_DIR OUTPUT"
-    build_consumer "$2" "$3"
+    [ "$#" -eq 3 ] || [ "$#" -eq 4 ] || fail "usage: $0 build SDK_ARTIFACT_DIR OUTPUT [CARGO_ARTIFACT_DIR]"
+    build_consumer "$2" "$3" "${4:-}"
     ;;
   run)
     [ "$#" -eq 5 ] || fail "usage: $0 run CONSUMER NATIVE_ASSET_DIR TOOLS_ASSET_DIR BROKER_ASSET_DIR"

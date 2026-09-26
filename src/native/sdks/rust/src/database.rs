@@ -231,6 +231,7 @@ impl AsyncOliphaunt {
         let destination = destination.into();
         let backup = backup.as_ref().to_vec();
         run_off_thread("oliphaunt-restore", move || {
+            crate::build_resources::prepare_base_resources()?;
             crate::liboliphaunt::OliphauntRuntime::from_env().restore(&destination, &backup)
         })
         .await

@@ -155,13 +155,15 @@ session when its state is unknown.
 ## Backup and restore
 
 ```ts
+import { directory } from '@oliphaunt/ts/storage/node';
+
 const source = await Oliphaunt.open({
   storage: { kind: 'directory', path: '.oliphaunt-source' },
 });
 const bytes = await source.backup();
 await source.close();
 
-await Oliphaunt.restore('.oliphaunt-restored', bytes);
+await Oliphaunt.restore(directory('.oliphaunt-restored'), bytes);
 ```
 
 Backup bytes are a PostgreSQL physical initialization payload containing PGDATA
@@ -241,13 +243,25 @@ separate resource dependencies. Explicit library, runtime, addon,
 broker, or server paths exist for packaging and development scenarios. Native
 client-tool packages remain separate products and are not SDK dependencies.
 
-Extensions are selected by exact PostgreSQL SQL name through `extensions`.
-Runtime artifact discovery remains internal. The package intentionally does not
+Select typed extension descriptors from the SDK's contrib catalog or the
+independently installed extension package:
+
+```ts
+import { Oliphaunt, extensions } from '@oliphaunt/ts';
+import { vector } from '@oliphaunt/extension-vector';
+
+await using database = await Oliphaunt.open({ extensions: [extensions.hstore, vector] });
+```
+
+External descriptors retain their owning package and version, including nested
+or aliased installs. Selection makes files available without running `CREATE
+EXTENSION`. The package intentionally does not
 publish capability profiles, supported-mode introspection, package-size reports,
 generic streams, protocol parsers, or backup format helpers.
 
-The package has one public code entrypoint, `@oliphaunt/ts`, plus
-`@oliphaunt/ts/package.json` for package metadata.
+`@oliphaunt/ts/extensions` also exports the catalog. The `directory()` factory
+is available from `@oliphaunt/ts/storage/node`, `/storage/bun`, and `/storage/deno`;
+open and restore accept the same directory descriptor.
 
 ## Working on this package
 
