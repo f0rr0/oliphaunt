@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
-import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../src/sdks/rust/mobile-bindings/tools/dependency-license-contract.mts';
+import { RUST_PAYLOAD_LICENSE as MOBILE_BINDINGS_LICENSE } from '../../src/native/mobile-bindings/tools/dependency-license-contract.mts';
 
 import {
   PLATFORM_COMPATIBILITY_POLICY,
@@ -778,7 +778,7 @@ export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
       asset: 'oliphaunt-swift-{version}-bindings.xcframework.zip',
       surfaces: ['github-release', 'swiftpm'],
       license: MOBILE_BINDINGS_LICENSE,
-      _source_file: 'src/sdks/swift/tools/build-bindings-xcframework.sh',
+      _source_file: 'src/native/sdks/swift/tools/build-bindings-xcframework.sh',
     },
     {
       id: 'oliphaunt-swift.checksums',
@@ -787,7 +787,7 @@ export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
       target: 'portable',
       asset: 'oliphaunt-swift-{version}-release-assets.sha256',
       surfaces: ['github-release'],
-      _source_file: 'src/sdks/swift/tools/build-bindings-xcframework.sh',
+      _source_file: 'src/native/sdks/swift/tools/build-bindings-xcframework.sh',
     },
     ...databaseResourceRows(),
     ...liboliphauntNativeRows(prefix),

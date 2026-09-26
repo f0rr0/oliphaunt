@@ -12,8 +12,8 @@ import path from 'node:path';
 import os from 'node:os';
 
 const graph = loadGraph('prepare-release-candidate.test');
-const native = 'src/runtimes/liboliphaunt-native';
-const wasix = 'src/runtimes/liboliphaunt-wasix';
+const native = 'src/native/runtime';
+const wasix = 'src/wasix/runtime';
 const shared = 'src/extensions/contrib/postgres18.toml';
 const first = 'a'.repeat(40);
 const second = 'b'.repeat(40);
@@ -26,8 +26,8 @@ async function generate(commits, baselines = { [native]: first, [wasix]: first }
       owner,
       {
         releaseType: 'simple',
-        component: owner.split('/').at(-1),
-        packageName: owner.split('/').at(-1),
+        component: owner === native ? 'liboliphaunt-native' : 'liboliphaunt-wasix',
+        packageName: owner === native ? 'liboliphaunt-native' : 'liboliphaunt-wasix',
         versionFile: 'VERSION',
         changelogPath: 'CHANGELOG.md',
         includeVInTag: true,
@@ -146,7 +146,12 @@ test('shared source qualification respects each owner release boundary and ignor
 
 test('actual Rust, npm, Swift and Gradle strategy updates apply to one local candidate', async () => {
   const root = path.resolve(import.meta.dir, '../..');
-  const selected = ['src/sdks/rust/sdk', 'src/sdks/ts/sdk', 'src/sdks/swift', 'src/sdks/kotlin'];
+  const selected = [
+    'src/native/sdks/rust',
+    'src/native/sdks/ts',
+    'src/native/sdks/swift',
+    'src/native/sdks/kotlin',
+  ];
   const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
   const versions = JSON.parse(
     readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
@@ -211,19 +216,22 @@ test('actual Rust, npm, Swift and Gradle strategy updates apply to one local can
       readFileSync(path.join(scratch, '.release-please-manifest.json'), 'utf8'),
     );
     const read = (file) => readFileSync(path.join(scratch, file), 'utf8');
-    expect(Bun.TOML.parse(read('src/sdks/rust/sdk/Cargo.toml')).package.version).toBe(
-      after['src/sdks/rust/sdk'],
+    expect(Bun.TOML.parse(read('src/native/sdks/rust/Cargo.toml')).package.version).toBe(
+      after['src/native/sdks/rust'],
     );
     expect(
-      Bun.TOML.parse(read('src/sdks/rust/sdk/crates/oliphaunt-build/Cargo.toml')).package.version,
-    ).toBe(after['src/sdks/rust/sdk']);
-    expect(JSON.parse(read('src/sdks/ts/sdk/package.json')).version).toBe(after['src/sdks/ts/sdk']);
-    expect(read('src/sdks/swift/VERSION').trim()).toBe(after['src/sdks/swift']);
-    expect(read('src/sdks/kotlin/VERSION').trim()).toBe(after['src/sdks/kotlin']);
-    expect(read('src/sdks/kotlin/gradle.properties')).toContain(
-      `VERSION_NAME=${after['src/sdks/kotlin']}`,
+      Bun.TOML.parse(read('src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml')).package
+        .version,
+    ).toBe(after['src/native/sdks/rust']);
+    expect(JSON.parse(read('src/native/sdks/ts/package.json')).version).toBe(
+      after['src/native/sdks/ts'],
     );
-    expect(existsSync(path.join(scratch, 'src/sdks/rust/sdk/Cargo.lock'))).toBe(false);
+    expect(read('src/native/sdks/swift/VERSION').trim()).toBe(after['src/native/sdks/swift']);
+    expect(read('src/native/sdks/kotlin/VERSION').trim()).toBe(after['src/native/sdks/kotlin']);
+    expect(read('src/native/sdks/kotlin/gradle.properties')).toContain(
+      `VERSION_NAME=${after['src/native/sdks/kotlin']}`,
+    );
+    expect(existsSync(path.join(scratch, 'src/native/sdks/rust/Cargo.lock'))).toBe(false);
     for (const owner of selected) expect(after[owner]).not.toBe(versions[owner]);
   } finally {
     rmSync(scratch, { recursive: true, force: true });

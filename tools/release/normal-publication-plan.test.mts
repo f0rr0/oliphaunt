@@ -175,7 +175,7 @@ describe('normal publication plan', () => {
     expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.releaseProducts);
     expect(external.topology.carrierCount).toBe(external.catalog.carriers.length);
 
-    const runtime = realSelection('src/runtimes/liboliphaunt-native/CHANGELOG.md');
+    const runtime = realSelection('src/native/runtime/CHANGELOG.md');
     expect(runtime.release.directProducts).toEqual(['liboliphaunt-native']);
     expect(runtime.release.releaseProducts).toContain('liboliphaunt-native');
     expect(runtime.release.releaseProducts).not.toContain('liboliphaunt-wasix');
@@ -202,7 +202,7 @@ describe('normal publication plan', () => {
     expect(icu.release.directProducts).toEqual(['database-resources']);
     expect(icu.release.releaseProducts).toEqual(['database-resources']);
 
-    const sdk = realSelection('src/sdks/react-native/CHANGELOG.md');
+    const sdk = realSelection('src/native/sdks/react-native/CHANGELOG.md');
     expect(sdk.release.directProducts).toEqual(['oliphaunt-react-native']);
     expect(sdk.release.releaseProducts).toEqual(['oliphaunt-react-native']);
     expect(sdk.catalog.products.map(({ id }) => id)).toEqual(sdk.release.releaseProducts);

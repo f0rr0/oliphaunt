@@ -36,7 +36,7 @@ export function sourceDigestInputs(): string[] {
     'src/extensions/generated/contrib-build.tsv',
     'src/extensions/generated/pgxs-build.tsv',
     ...files('src/third-party/{icu,openssl}/source.toml')
-      .concat(files('src/runtimes/liboliphaunt-native/sources/*.toml'))
+      .concat(files('src/native/runtime/sources/*.toml'))
       .concat(files('src/extensions/external/**/source.toml'))
       .concat('src/database-resources/icu/source.toml')
       .sort(),

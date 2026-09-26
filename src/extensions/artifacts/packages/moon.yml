@@ -40,16 +40,16 @@ tasks:
       - tools/package-mobile-release-assets.sh
       - project: extensions
         group: package
-      - /src/runtimes/liboliphaunt-native/moon.yml
-      - /src/runtimes/liboliphaunt-native/release.toml
-      - /src/runtimes/liboliphaunt-native/VERSION
+      - /src/native/runtime/moon.yml
+      - /src/native/runtime/release.toml
+      - /src/native/runtime/VERSION
       - "@group(upstream-licenses)"
-      - /src/runtimes/liboliphaunt-wasix/moon.yml
-      - /src/runtimes/liboliphaunt-wasix/release.toml
-      - /src/runtimes/liboliphaunt-wasix/VERSION
+      - /src/wasix/runtime/moon.yml
+      - /src/wasix/runtime/release.toml
+      - /src/wasix/runtime/VERSION
       - project: extension-runtime-contract
         group: contract
-      - /src/sdks/react-native/tools/validate-mobile-runtime-files.mts
+      - /src/native/sdks/react-native/tools/validate-mobile-runtime-files.mts
       - /tools/dev/bun.sh
       - /src/third-party/tools/source-fetch-core.mts
       - /src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts
@@ -58,18 +58,18 @@ tasks:
       - /src/extensions/artifacts/packages/tools/check-carriers.mts
       - /src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts
       - /src/extensions/tools/extension-upstream-licenses.mts
-      - /src/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
       - "@group(release-target-contract)"
-      - /src/sdks/swift/tools/prepare-swift-release-consumer.mts
+      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
       - /tools/release/release-graph.mts
       - "@group(release-archive-contract)"
       - /tools/packaging/rust-native-targets.mts
       - /tools/packaging/source-only-sdk-package.mts
-      - /src/sdks/swift/tools/swift-source-carrier-contract.mts
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-aot-manifest.mts
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-toolchain-policy.mts
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
-      - /src/sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
+      - /src/wasix/runtime/tools/wasix-aot-manifest.mts
+      - /src/wasix/runtime/tools/wasix-cargo-toolchain-policy.mts
+      - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
+      - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
       - /src/third-party/postgres/source.toml
       - /target/extensions/native/release-assets/**/*
     outputs:
@@ -94,16 +94,16 @@ tasks:
       - tools/package-release-assets.sh
       - project: extensions
         group: package
-      - /src/runtimes/liboliphaunt-native/moon.yml
-      - /src/runtimes/liboliphaunt-native/release.toml
-      - /src/runtimes/liboliphaunt-native/VERSION
+      - /src/native/runtime/moon.yml
+      - /src/native/runtime/release.toml
+      - /src/native/runtime/VERSION
       - "@group(upstream-licenses)"
-      - /src/runtimes/liboliphaunt-wasix/moon.yml
-      - /src/runtimes/liboliphaunt-wasix/release.toml
-      - /src/runtimes/liboliphaunt-wasix/VERSION
+      - /src/wasix/runtime/moon.yml
+      - /src/wasix/runtime/release.toml
+      - /src/wasix/runtime/VERSION
       - project: extension-runtime-contract
         group: contract
-      - /src/sdks/react-native/tools/validate-mobile-runtime-files.mts
+      - /src/native/sdks/react-native/tools/validate-mobile-runtime-files.mts
       - /tools/dev/bun.sh
       - /src/third-party/tools/source-fetch-core.mts
       - /src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts
@@ -112,18 +112,18 @@ tasks:
       - /src/extensions/artifacts/packages/tools/check-carriers.mts
       - /src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts
       - /src/extensions/tools/extension-upstream-licenses.mts
-      - /src/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
       - "@group(release-target-contract)"
-      - /src/sdks/swift/tools/prepare-swift-release-consumer.mts
+      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
       - /tools/release/release-graph.mts
       - "@group(release-archive-contract)"
       - /tools/packaging/rust-native-targets.mts
       - /tools/packaging/source-only-sdk-package.mts
-      - /src/sdks/swift/tools/swift-source-carrier-contract.mts
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-aot-manifest.mts
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-toolchain-policy.mts
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
-      - /src/sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
+      - /src/wasix/runtime/tools/wasix-aot-manifest.mts
+      - /src/wasix/runtime/tools/wasix-cargo-toolchain-policy.mts
+      - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
+      - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
       - /src/third-party/postgres/source.toml
       - /target/extensions/native/release-assets/**/*
       - /target/extensions/wasix/release-assets/**/*
@@ -141,12 +141,12 @@ tasks:
       - requires-rust
     command: bash src/extensions/artifacts/packages/tools/test.sh
     inputs:
-      - /src/sdks/rust/sdk/crates/oliphaunt-build/src/**/*.rs
-      - /src/sdks/rust/sdk/crates/oliphaunt-build/Cargo.toml
+      - /src/native/sdks/rust/crates/oliphaunt-build/src/**/*.rs
+      - /src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml
       - "@group(cargo-workspace)"
       - /src/extensions/tools/extension-upstream-licenses.mts
       - /src/extensions/contracts/*.mts
-      - /src/sdks/ts/sdk/src/native/extension-contract.ts
+      - /src/native/sdks/ts/src/native/extension-contract.ts
       - /src/extensions/generated/**/*
       - /src/extensions/external/**/upstream-license-data.json
       - "@group(upstream-licenses)"

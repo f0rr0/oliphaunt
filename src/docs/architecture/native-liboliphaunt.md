@@ -14,7 +14,7 @@ lifecycle, archive parser, or root validation.
 ## Public C boundary
 
 The unreleased checkout ABI version 11 exports one fixed surface from
-`src/runtimes/liboliphaunt-native/include/oliphaunt.h`:
+`src/native/runtime/include/oliphaunt.h`:
 
 - `oliphaunt_init`, `oliphaunt_detach`, `oliphaunt_close`, generation-guarded
   close, version access, and atomic caller-owned error copies;

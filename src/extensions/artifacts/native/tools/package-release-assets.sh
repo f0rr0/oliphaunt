@@ -17,15 +17,15 @@ require() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-source "$root/src/runtimes/liboliphaunt-native/bin/mobile-static-extensions.sh"
-source "$root/src/runtimes/liboliphaunt-native/bin/build-output.bash"
+source "$root/src/native/runtime/bin/mobile-static-extensions.sh"
+source "$root/src/native/runtime/bin/build-output.bash"
 packager="src/extensions/artifacts/native/tools/extension-artifact-packager.mts"
 observed_phase="src/extensions/artifacts/native/tools/run-observed-phase.sh"
 native_asset_index_contract="src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts"
 
 target_id="${OLIPHAUNT_EXTENSION_TARGET:-${1:-}}"
 if [ -z "$target_id" ]; then
-  source "$root/src/runtimes/liboliphaunt-native/tools/runtime-preflight.sh"
+  source "$root/src/native/runtime/tools/runtime-preflight.sh"
   target_id="$(oliphaunt_runtime_native_host_target_id)"
 fi
 case "$target_id" in
@@ -69,7 +69,7 @@ fi
 build_sql_names="$selected_sql_names"
 
 version="${OLIPHAUNT_EXTENSION_RELEASE_VERSION:-$(bun "$packager" product-version liboliphaunt-native)}"
-native_runtime_version="$(tr -d '[:space:]' < "$root/src/runtimes/liboliphaunt-native/VERSION")"
+native_runtime_version="$(tr -d '[:space:]' < "$root/src/native/runtime/VERSION")"
 default_out_dir="$root/target/extensions/native/release-assets/$target_id"
 default_stage_root="$root/target/extensions/native/release-stage/$target_id"
 if [ -n "$extension_product" ] && [ -z "${OLIPHAUNT_EXTENSION_PRODUCTS:-}" ]; then
@@ -353,7 +353,7 @@ build_desktop_extension_runtime() {
         OLIPHAUNT_WORK_ROOT="${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-extension-release-$target_id}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
         OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-macos.sh
+        src/native/runtime/bin/build-postgres18-macos.sh
       ;;
     linux-x64-gnu|linux-arm64-gnu)
       [ "$(uname -s)" = "Linux" ] || fail "$target_id extension artifacts must be built on Linux"
@@ -364,7 +364,7 @@ build_desktop_extension_runtime() {
         OLIPHAUNT_LINUX_WORK_ROOT="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-release}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
         OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-linux.sh
+        src/native/runtime/bin/build-postgres18-linux.sh
       ;;
     windows-x64-msvc)
       "$observed_phase" \
@@ -374,7 +374,7 @@ build_desktop_extension_runtime() {
         OLIPHAUNT_WINDOWS_WORK_ROOT="${OLIPHAUNT_WINDOWS_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-release}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
         OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
-        bash src/runtimes/liboliphaunt-native/bin/build-postgres18-windows.sh
+        bash src/native/runtime/bin/build-postgres18-windows.sh
       ;;
     *)
       fail "desktop extension runtime builder called for non-desktop target $target_id"
@@ -393,7 +393,7 @@ build_mobile_host_extension_runtime() {
         OLIPHAUNT_WORK_ROOT="${OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-extension-release-$target_id}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
         OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-macos.sh
+        src/native/runtime/bin/build-postgres18-macos.sh
       ;;
     android-*)
       [ "$(uname -s)" = "Linux" ] || fail "$target_id host extension runtime must be built on Linux"
@@ -404,7 +404,7 @@ build_mobile_host_extension_runtime() {
         OLIPHAUNT_LINUX_WORK_ROOT="${OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-linux-x64-gnu-extension-release}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
         OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-linux.sh
+        src/native/runtime/bin/build-postgres18-linux.sh
       ;;
     *)
       fail "mobile host extension runtime requested for non-mobile target $target_id"
@@ -431,7 +431,7 @@ build_mobile_static_artifacts() {
         -- env \
         OLIPHAUNT_IOS_SIMULATOR_ROOT="$mobile_extension_work_root/$target_id/ios-simulator" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-ios-simulator.sh
+        src/native/runtime/bin/build-postgres18-ios-simulator.sh
       }
       device_lane() {
       "$observed_phase" \
@@ -440,7 +440,7 @@ build_mobile_static_artifacts() {
         -- env \
         OLIPHAUNT_IOS_DEVICE_ROOT="$mobile_extension_work_root/$target_id/ios-device" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-ios-device.sh
+        src/native/runtime/bin/build-postgres18-ios-device.sh
       }
       macos_lane() {
         build_mobile_host_extension_runtime
@@ -451,7 +451,7 @@ build_mobile_static_artifacts() {
         OLIPHAUNT_MACOS_RUNTIME_ROOT="$macos_runtime_root" \
         OLIPHAUNT_MACOS_EXTENSION_ARCHIVE_ROOT="$macos_archive_root" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt-native/bin/build-macos-extension-archives.sh
+        src/native/runtime/bin/build-macos-extension-archives.sh
       }
       oliphaunt_parallel_apple_builds macos_lane simulator_lane device_lane
       "$observed_phase" \
@@ -463,7 +463,7 @@ build_mobile_static_artifacts() {
         OLIPHAUNT_MACOS_EXTENSION_OUT="$macos_archive_root/out" \
         OLIPHAUNT_IOS_EXTENSION_XCFRAMEWORK_ROOT="$mobile_extension_work_root/$target_id/ios-extension-xcframeworks" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt-native/bin/build-ios-extension-xcframeworks.sh
+        src/native/runtime/bin/build-ios-extension-xcframeworks.sh
       ;;
     android-arm64-v8a)
       "$observed_phase" \
@@ -473,7 +473,7 @@ build_mobile_static_artifacts() {
         OLIPHAUNT_ANDROID_ARM64_ROOT="$mobile_extension_work_root/$target_id/android-arm64" \
         OLIPHAUNT_ANDROID_ABI=arm64-v8a \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-android-arm64.sh
+        src/native/runtime/bin/build-postgres18-android-arm64.sh
       ;;
     android-x86_64)
       "$observed_phase" \
@@ -483,7 +483,7 @@ build_mobile_static_artifacts() {
         OLIPHAUNT_ANDROID_X86_64_ROOT="$mobile_extension_work_root/$target_id/android-x86_64" \
         OLIPHAUNT_ANDROID_ABI=x86_64 \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt-native/bin/build-postgres18-android-x86_64.sh
+        src/native/runtime/bin/build-postgres18-android-x86_64.sh
       ;;
   esac
 }

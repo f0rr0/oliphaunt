@@ -505,9 +505,9 @@ export function validateRepository() {
     graph: inventory.graph,
     catalog: inventory.catalog,
     targets: inventory.targets,
-    jsManifest: readJson('src/sdks/ts/sdk/package.json'),
-    nativeToolsManifest: readJson('src/postgres-tools/native/npm/package.json'),
-    rustManifest: readToml('src/sdks/rust/sdk/Cargo.toml'),
+    jsManifest: readJson('src/native/sdks/ts/package.json'),
+    nativeToolsManifest: readJson('src/native/postgres-tools/npm/package.json'),
+    rustManifest: readToml('src/native/sdks/rust/Cargo.toml'),
     platformManifests: platformPackageManifests(inventory.graph, inventory.targets),
   });
   validateExtensionCarrierCoverage(inventory.graph, inventory.catalog, inventory.products);

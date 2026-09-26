@@ -1,0 +1,102 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: oliphaunt-query-ts
+language: typescript
+layer: library
+stack: frontend
+tags:
+  - javascript-quality
+  - shared
+  - typescript
+  - sdk
+  - release-product
+dependsOn:
+  - id: shared-test-fixtures
+    scope: development
+project:
+  title: TypeScript query
+  description: "PostgreSQL query encoding, decoding and result types."
+  owner: oliphaunt
+  release:
+    component: oliphaunt-query-ts
+    packagePath: src/query/ts
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+  paths:
+    "**/*.ts":
+      - "@oliphaunt/sdk-js"
+      - "@oliphaunt/sdk-react-native"
+    tools/**:
+      - "@oliphaunt/sdk-js"
+      - "@oliphaunt/sdk-react-native"
+fileGroups:
+  package:
+    - README.md
+  sources:
+    - module.package.json
+    - package.json
+    - src/**/*.ts
+    - tsconfig*.json
+tasks:
+  build:
+    tags:
+      - build
+      - typescript
+    command: bun run build
+    inputs:
+      - /src/query/ts/package.json
+      - /src/query/ts/module.package.json
+      - /src/query/ts/src/**/*.ts
+      - /src/query/ts/tsconfig*.json
+      - /bun.lock
+    outputs:
+      - /src/query/ts/dist/module/*.d.ts
+      - /src/query/ts/dist/module/*.js
+      - /src/query/ts/dist/module/package.json
+      - /src/query/ts/dist/commonjs/*.d.ts
+      - /src/query/ts/dist/commonjs/*.js
+    options:
+      cache: true
+  test:
+    tags:
+      - quality
+      - unit
+    command: bun run test
+    inputs:
+      - "/tools/dev/bun.sh"
+      - "package.json"
+      - /src/query/ts/src/**/*.ts
+      - test/**/*
+      - project: shared-test-fixtures
+        group: fixtures
+    options:
+      cache: true
+  typecheck:
+    tags:
+      - quality
+      - static
+      - typescript
+    command: bun run typecheck
+    inputs:
+      - "@group(sources)"
+      - /bun.lock
+  package:
+    tags:
+      - package
+      - release
+      - artifact-package
+      - ci-js-sdk-package
+    deps:
+      - oliphaunt-query-ts:build
+    inputs:
+      - "**/*"
+      - /bun.lock
+      - /LICENSE
+    outputs:
+      - /target/sdk-artifacts/oliphaunt-query-ts/**/*
+    command: bun run package
+workspace:
+  inheritedTasks:
+    rename:
+      js-format: format
+      js-format-check: format-check
+      js-lint: lint

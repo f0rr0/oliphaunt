@@ -1,5 +1,8 @@
 # Repository simplification: product and completion contracts
 
+Historical simplification record. For the current source layout, see
+[Source Architecture](final-product-source-architecture.md).
+
 Planning companion to [the implementation plan](repository-simplification-plan.md).
 These are target contracts, not claims that the commands or packages already
 exist. The implementation plan owns task status and user decisions. This is

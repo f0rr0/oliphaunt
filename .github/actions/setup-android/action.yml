@@ -50,11 +50,11 @@ runs:
         java-version: "17"
         cache: gradle
         cache-dependency-path: |
-          src/sdks/kotlin/**/*.gradle*
-          src/sdks/kotlin/**/gradle-wrapper.properties
-          src/sdks/kotlin/**/libs.versions.toml
-          src/examples/react-native-expo/package.json
-          src/sdks/react-native/package.json
+          src/native/sdks/kotlin/**/*.gradle*
+          src/native/sdks/kotlin/**/gradle-wrapper.properties
+          src/native/sdks/kotlin/**/libs.versions.toml
+          src/examples/native/react-native-expo/package.json
+          src/native/sdks/react-native/package.json
           bun.lock
 
     - name: Set up Java without Gradle cache
@@ -71,7 +71,7 @@ runs:
         path: |
           ~/.gradle/caches
           ~/.gradle/wrapper
-        key: setup-java-${{ runner.os }}-${{ runner.arch == 'X64' && 'x64' || runner.arch == 'ARM64' && 'arm64' || runner.arch }}-gradle-${{ hashFiles('src/sdks/kotlin/**/*.gradle*', 'src/sdks/kotlin/**/gradle-wrapper.properties', 'src/sdks/kotlin/**/libs.versions.toml', 'src/examples/react-native-expo/package.json', 'src/sdks/react-native/package.json', 'bun.lock') }}
+        key: setup-java-${{ runner.os }}-${{ runner.arch == 'X64' && 'x64' || runner.arch == 'ARM64' && 'arm64' || runner.arch }}-gradle-${{ hashFiles('src/native/sdks/kotlin/**/*.gradle*', 'src/native/sdks/kotlin/**/gradle-wrapper.properties', 'src/native/sdks/kotlin/**/libs.versions.toml', 'src/examples/native/react-native-expo/package.json', 'src/native/sdks/react-native/package.json', 'bun.lock') }}
 
     - name: Prepare native Android ccache directory
       if: ${{ inputs.native-ccache == 'true' }}

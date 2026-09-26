@@ -14,7 +14,7 @@ schema_version = 6
 
 [sdks.rust]
 package_identity = "cargo:oliphaunt"
-implementation_path = "src/sdks/rust/sdk"
+implementation_path = "src/native/sdks/rust"
 documentation_path = "src/docs/content/sdk/rust"
 consumer_targets = ["tauri", "rust-desktop"]
 runtime_owner = true
@@ -38,7 +38,7 @@ topologies = ["native-direct", "native-broker", "native-server"]
 
 [sdks.wasix-rust]
 package_identity = "cargo:oliphaunt-wasix"
-implementation_path = "src/sdks/rust-wasix"
+implementation_path = "src/wasix/sdks/rust"
 documentation_path = "src/docs/content/sdk/wasix-rust"
 consumer_targets = ["tauri", "rust-desktop"]
 runtime_owner = true
@@ -62,7 +62,7 @@ topologies = ["wasix-direct", "wasix-server"]
 
 [sdks.wasix-typescript]
 package_identity = "npm:@oliphaunt/wasix-ts"
-implementation_path = "src/sdks/ts-wasix/sdk"
+implementation_path = "src/wasix/sdks/ts"
 documentation_path = "src/docs/content/sdk/wasix-typescript"
 consumer_targets = ["browser", "node", "bun", "deno", "electron"]
 runtime_owner = true
@@ -118,7 +118,7 @@ topologies = ["wasix-server"]
 
 [sdks.swift]
 package_identity = "swiftpm:Oliphaunt"
-implementation_path = "src/sdks/swift"
+implementation_path = "src/native/sdks/swift"
 documentation_path = "src/docs/content/sdk/swift"
 consumer_targets = ["ios", "macos"]
 runtime_owner = true
@@ -134,7 +134,7 @@ topologies = ["native-direct"]
 
 [sdks.kotlin]
 package_identity = "maven:dev.oliphaunt:oliphaunt-android"
-implementation_path = "src/sdks/kotlin"
+implementation_path = "src/native/sdks/kotlin"
 documentation_path = "src/docs/content/sdk/kotlin"
 consumer_targets = ["android"]
 runtime_owner = true
@@ -150,7 +150,7 @@ topologies = ["native-direct"]
 
 [sdks.react-native]
 package_identity = "npm:@oliphaunt/react-native"
-implementation_path = "src/sdks/react-native"
+implementation_path = "src/native/sdks/react-native"
 documentation_path = "src/docs/content/sdk/react-native"
 consumer_targets = ["react-native-ios", "react-native-android"]
 runtime_owner = false
@@ -168,7 +168,7 @@ topologies = ["native-direct"]
 
 [sdks.typescript]
 package_identity = "npm:@oliphaunt/ts"
-implementation_path = "src/sdks/ts/sdk"
+implementation_path = "src/native/sdks/ts"
 documentation_path = "src/docs/content/sdk/typescript"
 consumer_targets = ["node", "bun", "deno"]
 runtime_owner = true

@@ -16,7 +16,7 @@ import {
   contribCarrierDescriptor,
   extensionProductForSqlName,
 } from '../release/release-artifact-targets.mts';
-import { publishedConsumerDependencies } from '../../src/sdks/ts/sdk/tools/published-consumer.mts';
+import { publishedConsumerDependencies } from '../../src/native/sdks/ts/tools/published-consumer.mts';
 
 const GRAPH = loadGraph('ci-plan-node-products.test.mts');
 const NATIVE_TS_CONSUMER_JOBS = [
@@ -119,6 +119,20 @@ function effects(paths) {
     tasks,
   };
 }
+
+test('shared Windows DLL policy changes select native and WASIX packaging consumers', () => {
+  const result = effects(paths.windowsVcRuntimePolicy);
+  for (const target of [
+    'liboliphaunt-native:build-runtime-desktop-target',
+    'liboliphaunt-native:package-runtime-desktop-target',
+    'liboliphaunt-native:packaging-unit',
+    'extension-artifacts-native:build-target',
+    'oliphaunt-wasix-napi:build-release-assets',
+    'oliphaunt-wasix-napi:finalize-release-assets',
+  ]) {
+    assert(result.directTasks.includes(target), `DLL policy must affect ${target}`);
+  }
+});
 
 test('Rust release qualification executes the compiled consumer against shipped Linux dependencies', () => {
   const consumer = 'oliphaunt-rust:test-consumer-runtime';

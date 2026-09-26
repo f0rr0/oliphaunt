@@ -36,5 +36,5 @@ tcn	tcn	contrib	contrib/tcn
 tsm_system_rows	tsm_system_rows	contrib	contrib/tsm_system_rows
 tsm_system_time	tsm_system_time	contrib	contrib/tsm_system_time
 unaccent	unaccent	contrib	contrib/unaccent
-uuid-ossp	uuid-ossp	contrib	contrib/uuid-ossp	uuid	uuid	uuid		src/runtimes/liboliphaunt-native/portable-uuid/include	-DHAVE_UUID_E2FS=1,-DHAVE_UUID_UUID_H=1				src/runtimes/liboliphaunt-native/portable-uuid
+uuid-ossp	uuid-ossp	contrib	contrib/uuid-ossp	uuid	uuid	uuid		src/extensions/contrib/portable-uuid/include	-DHAVE_UUID_E2FS=1,-DHAVE_UUID_UUID_H=1				src/extensions/contrib/portable-uuid
 vector	vector	external	target/oliphaunt-sources/checkouts/pgvector

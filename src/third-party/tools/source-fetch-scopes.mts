@@ -30,11 +30,8 @@ export const sourceScopes = Object.freeze(Object.keys(SOURCE_ORIGINS_BY_SCOPE));
 const domainEntries = Object.freeze([
   Object.freeze(['src/third-party/icu', sourceOrigins.sharedThirdParty]),
   Object.freeze(['src/third-party/openssl', sourceOrigins.sharedThirdParty]),
-  Object.freeze(['src/runtimes/liboliphaunt-native/sources', sourceOrigins.nativeThirdParty]),
-  Object.freeze([
-    'src/runtimes/liboliphaunt-wasix-postmaster/sources',
-    sourceOrigins.wasixPostmasterThirdParty,
-  ]),
+  Object.freeze(['src/native/runtime/sources', sourceOrigins.nativeThirdParty]),
+  Object.freeze(['src/wasix/postmaster/sources', sourceOrigins.wasixPostmasterThirdParty]),
 ]);
 
 export function sourceDomainsForScope(selectedScope, platform = process.platform) {

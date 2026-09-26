@@ -75,19 +75,19 @@ tasks:
       - project: extension-runtime-contract
         group: contract
       - /src/test-fixtures/extensions/**/*
-      - /src/runtimes/liboliphaunt-native/sources/*.toml
+      - /src/native/runtime/sources/*.toml
       - project: third-party-icu
         group: sources
       - project: third-party-openssl
         group: sources
-      - /src/sdks/rust/liboliphaunt-native/src/generated/extensions.rs
-      - /src/sdks/ts/sdk/src/generated/extensions.ts
-      - /src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt
-      - /src/sdks/react-native/src/generated/extensions.ts
-      - /src/examples/react-native-expo/src/generated/extension-smoke.ts
+      - /src/native/rust-bindings/src/generated/extensions.rs
+      - /src/native/sdks/ts/src/generated/extensions.ts
+      - /src/native/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt
+      - /src/native/sdks/react-native/src/generated/extensions.ts
+      - /src/examples/native/react-native-expo/src/generated/extension-smoke.ts
       - /src/third-party/openssl/LICENSE.txt
       - /src/third-party/postgres/COPYRIGHT
-      - /src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json
+      - /src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json
       - /src/third-party/tools/source-fetch-core.mts
       - /src/extensions/tools/extension-upstream-licenses.mts
       - "@group(release-archive-contract)"
@@ -114,8 +114,8 @@ tasks:
       - "@group(model)"
       - /src/test-fixtures/extensions/**/*
       - "/src/third-party/{icu,openssl}/source.toml"
-      - /src/runtimes/liboliphaunt-native/sources/*.toml
-      - /src/runtimes/liboliphaunt-native/portable-uuid/**/*
+      - /src/native/runtime/sources/*.toml
+      - /src/extensions/contrib/portable-uuid/**/*
       - project: extension-runtime-contract
         group: contract
     options:
@@ -130,7 +130,7 @@ tasks:
       - external/**/upstream-license-data.json
       - external/**/upstream-licenses/**/*
       - generated/sdk/extensions.json
-      - /src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json
+      - /src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json
       - "@group(upstream-licenses)"
       - "@group(legal-files)"
       - "@group(release-target-contract)"

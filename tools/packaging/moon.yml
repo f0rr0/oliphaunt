@@ -36,15 +36,15 @@ tasks:
       - /src/extensions/tools/extension-upstream-licenses.mts
       - /src/extensions/external/**/upstream-license-data.json
       - "@group(upstream-licenses)"
-      - "/src/runtimes/liboliphaunt-{native,wasix}/THIRD_PARTY_NOTICES.md"
+      - "/src/{native,wasix}/runtime/THIRD_PARTY_NOTICES.md"
       - "/src/third-party/{icu,openssl}/source.toml"
       - "**/*.mts"
       - "**/*.sh"
       - /src/database-resources/contracts/*.mts
       - /tools/release/**/*.mts
-      - /src/runtimes/liboliphaunt-native/tools/native-runtime-payload-policy.json
-      - /src/runtimes/liboliphaunt-wasix/crates/**/*
-      - /src/postgres-tools/wasix/crates/**/*
+      - /tools/packaging/windows-vc-runtime-policy.json
+      - /src/wasix/runtime/crates/**/*
+      - /src/wasix/postgres-tools/crates/**/*
       - /src/database-resources/icu/cargo/**/*
     options:
       cache: true

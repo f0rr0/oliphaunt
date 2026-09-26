@@ -38,8 +38,9 @@ tasks:
       - "liboliphaunt-native:build-runtime-desktop-target"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/runtimes/liboliphaunt-native/**/*"
-      - "/src/sdks/rust/sdk/**/*"
+      - "/src/native/runtime/**/*"
+      - "/src/extensions/contrib/portable-uuid/**/*"
+      - "/src/native/sdks/rust/**/*"
       - project: "shared-test-fixtures"
         group: "fixtures"
       - "/src/benchmarks/perf/run-native.sh"
@@ -60,23 +61,23 @@ tasks:
       node --check src/benchmarks/perf/wasix-node/engine-runner.mts
       node --check src/benchmarks/perf/wasix-node/benchmark.mts
       node --check src/benchmarks/perf/wasix-node/pglite-node-worker.mts
-      node --check src/sdks/ts-wasix/sdk/tools/pgwire-client.mts
+      node --check src/wasix/sdks/ts/tools/pgwire-client.mts
       node src/benchmarks/perf/wasix-node/benchmark.mts --validate
     inputs:
       - "@group(bun-workspace)"
       - "/src/benchmarks/wasix/**/*"
-      - "/src/runtimes/wasix-browser-host/**/*"
-      - "/src/sdks/ts-wasix/sdk/package.json"
-      - "/src/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts"
-      - "/src/sdks/ts-wasix/sdk/tools/pgwire-client.mts"
-      - "/src/sdks/ts-wasix/node-addon/package.json"
+      - "/src/wasix/browser-host/**/*"
+      - "/src/wasix/sdks/ts/package.json"
+      - "/src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts"
+      - "/src/wasix/sdks/ts/tools/pgwire-client.mts"
+      - "/src/wasix/node-addon/package.json"
       - "/src/benchmarks/perf/wasix-browser/*.{mjs,mts}"
       - "/src/benchmarks/perf/wasix-node/*.{mts,sh}"
       - "/src/benchmarks/perf/wasix-node/package.json"
       - "@group(release-archive-contract)"
-      - "/src/runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm-*.mts"
-      - "/src/postgres-tools/wasix/ts/tools/wasix-tools-typescript-package.mts"
-      - "/src/sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts"
+      - "/src/wasix/runtime/tools/wasix-runtime-npm-*.mts"
+      - "/src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts"
+      - "/src/wasix/sdks/ts/tools/wasix-typescript-package.mts"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -85,8 +86,8 @@ tasks:
     tags: ["bench", "measured", "local-only"]
     script: |
       set -e
-      bun run --cwd src/sdks/ts-wasix/sdk build
-      bun src/sdks/ts-wasix/sdk/tools/stage-host.mts
+      bun run --cwd src/wasix/sdks/ts build
+      bun src/wasix/sdks/ts/tools/stage-host.mts
       bash src/benchmarks/perf/wasix-node/benchmark.sh --run
     deps:
       - "perf-tools:wasix-plan"
@@ -97,14 +98,14 @@ tasks:
       - "@group(legal-files)"
       - "@group(bun-workspace)"
       - "/src/benchmarks/wasix/node-pglite-memory-v2.json"
-      - "/src/sdks/ts-wasix/sdk/**/*"
-      - "/src/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts"
+      - "/src/wasix/sdks/ts/**/*"
+      - "/src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts"
       - "/src/benchmarks/perf/wasix-node/*.{mts,sh}"
       - "/src/benchmarks/perf/wasix-node/package.json"
       - "@group(release-archive-contract)"
-      - "/src/runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm-*.mts"
-      - "/src/postgres-tools/wasix/ts/tools/wasix-tools-typescript-package.mts"
-      - "/src/sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts"
+      - "/src/wasix/runtime/tools/wasix-runtime-npm-*.mts"
+      - "/src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts"
+      - "/src/wasix/sdks/ts/tools/wasix-typescript-package.mts"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -113,9 +114,9 @@ tasks:
     tags: ["bench", "measured", "browser", "local-only"]
     script: |
       set -e
-      bun run --cwd src/sdks/ts-wasix/sdk build
-      bun src/sdks/ts-wasix/sdk/tools/stage-host.mts
-      bash src/sdks/ts-wasix/sdk/tools/integration/smoke-browser.sh --benchmark
+      bun run --cwd src/wasix/sdks/ts build
+      bun src/wasix/sdks/ts/tools/stage-host.mts
+      bash src/wasix/sdks/ts/tools/integration/smoke-browser.sh --benchmark
     deps:
       - "perf-tools:wasix-plan"
       - "liboliphaunt-wasix:runtime-portable"
@@ -125,8 +126,8 @@ tasks:
       - "@group(legal-files)"
       - "@group(bun-workspace)"
       - "/src/benchmarks/wasix/browser-pglite-memory-v2.json"
-      - "/src/sdks/ts-wasix/sdk/**/*"
-      - "/src/sdks/ts-wasix/sdk/tools/integration/*.{mts,sh}"
+      - "/src/wasix/sdks/ts/**/*"
+      - "/src/wasix/sdks/ts/tools/integration/*.{mts,sh}"
       - "/src/benchmarks/perf/wasix-browser/*.{mjs,mts}"
       - "/src/benchmarks/perf/wasix-node/installed-closure.mts"
       - "/src/benchmarks/perf/wasix-node/plan.mts"

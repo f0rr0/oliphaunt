@@ -212,7 +212,7 @@ cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension vector \
   --prebuilt-extension vendor/acme_ext.tar.zst \
-  --liboliphaunt-native-version "$(cat src/runtimes/liboliphaunt-native/VERSION)" \
+  --liboliphaunt-native-version "$(cat src/native/runtime/VERSION)" \
   --force
 ```
 
@@ -474,7 +474,7 @@ selected target can actually package and run.
 PostgreSQL 18.4 can build `uuid-ossp` only with
 `--with-uuid=bsd`, `--with-uuid=e2fs`, or `--with-uuid=ossp`. Oliphaunt carries
 a first-party portable UUID compatibility source for the e2fs API under
-`src/runtimes/liboliphaunt-native/portable-uuid`; the WASIX, Linux/macOS native,
+`src/extensions/contrib/portable-uuid`; the WASIX, Linux/macOS native,
 iOS, Android, and Windows native build scripts compile and link it for
 `uuid-ossp`. `uuid-ossp` is stable in the generated WASIX plan; WASIX side-module builds and packages with matching archive
 and module hashes, has host AOT metadata, and has direct, server, restart, and

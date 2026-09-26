@@ -30,7 +30,7 @@ import { assertPublicationLockSource, loadPublicationLock } from './publication-
 
 export { requestBoundedGithubJson, requestGithubJsonWithRetry } from './github-read.mts';
 
-import { swiftExtensionCarrierAssetName } from '../../src/sdks/swift/tools/ios-carrier-manifest.mts';
+import { swiftExtensionCarrierAssetName } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { assertWasixExtensionMemberInstall } from '../../src/extensions/contracts/wasix-extension-install.mts';
 import { assertPublicationController } from './publication-controller.mts';
 

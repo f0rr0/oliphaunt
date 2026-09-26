@@ -4,7 +4,7 @@ import path from 'node:path';
 import {
   buildSwiftExtensionCarrierManifest,
   swiftExtensionCarrierAssetName,
-} from '../../../../sdks/swift/tools/ios-carrier-manifest.mts';
+} from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
 import {
   portableMemberName,
   readFileOnlyTarGzipEntries,

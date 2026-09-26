@@ -1,6 +1,6 @@
 # SDK Products
 
-SDK source lives under `src/sdks/`, with language manifests and local build/test
+SDK source lives under `src/native/sdks/` and `src/wasix/sdks/`, with language manifests and local build/test
 entrypoints. This document describes the development checkout; newly introduced
 carriers and bindings are not assumed to be publicly released.
 
@@ -26,26 +26,26 @@ site does not build SDK API references. Product dependencies and release identit
 Moon and package manifests. Product tests and package checks verify runtime
 delegation and consumer behavior.
 
-- `src/sdks/rust/sdk/`: canonical native Rust SDK for Tauri and Rust desktop apps.
-- `src/sdks/rust-wasix/`: Rust SDK over the portable
+- `src/native/sdks/rust/`: canonical native Rust SDK for Tauri and Rust desktop apps.
+- `src/wasix/sdks/rust/`: Rust SDK over the portable
   and host-AOT `liboliphaunt-wasix` runtime products.
-- `src/sdks/ts-wasix/sdk/`: TypeScript SDK over the browser portable WASIX
+- `src/wasix/sdks/ts/`: TypeScript SDK over the browser portable WASIX
   carrier and the Node/Bun/Deno/Electron Rust Node-API carrier. Its native-host root
   uses a Rust owner actor, `/direct` opts into caller-realm execution, and
   `/worker` owns a JavaScript Worker on every runtime. Optional `pg_dump` and
-  `psql` belong to `src/postgres-tools/wasix`, including its TypeScript facade in
-  `src/postgres-tools/wasix/ts`. Portable and AOT tool inputs are supplied explicitly
+  `psql` belong to `src/wasix/postgres-tools`, including its TypeScript facade in
+  `src/wasix/postgres-tools/ts`. Portable and AOT tool inputs are supplied explicitly
   to the adapter; the database addon does not embed the frontend tool payloads.
-- `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API, platform
+- `src/native/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API, platform
   resource composition, and generated UniFFI bindings to the shared Rust native
   database implementation.
-- `src/sdks/kotlin/`: Android SDK with a suspend-first common implementation,
+- `src/native/sdks/kotlin/`: Android SDK with a suspend-first common implementation,
   JVM contract tests, and generated bindings to that same Rust implementation. Maven
   publication is deliberately limited to the Android consumer surface.
-- `src/sdks/react-native/`: React Native New Architecture package. Its product contract
+- `src/native/sdks/react-native/`: React Native New Architecture package. Its product contract
   is a typed TypeScript/TurboModule layer over the Swift and Kotlin SDKs, with
   no independent database semantics.
-- `src/sdks/ts/sdk/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
+- `src/native/sdks/ts/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
   Tauri apps expose narrow app-owned commands from the Rust SDK. Direct topology
   is the default across supported JavaScript
   runtimes; Node.js and Bun use the prebuilt Rust napi-rs addon. Deno retains its
@@ -57,12 +57,12 @@ delegation and consumer behavior.
   verified release assets without building Rust locally. Runtime, addon, and
   optional database resources have separate packages.
 
-`src/sdks/rust/liboliphaunt-native` owns native runtime loading and direct execution.
-`src/sdks/rust/mobile-bindings` is the private UniFFI adapter consumed by Swift and
-Kotlin. It does not own a second PostgreSQL runtime. `src/broker/` is an independent
-process owner over the shared native implementation. `src/pgwire-server/` owns the
+`src/native/rust-bindings` owns native runtime loading and direct execution.
+`src/native/mobile-bindings` is the private UniFFI adapter consumed by Swift and
+Kotlin. It does not own a second PostgreSQL runtime. `src/native/broker/` is an independent
+process owner over the shared native implementation. `src/wasix/pgwire-server/` owns the
 WASIX socket library and CLI. Browser host implementation and its Wasmer patches
-live under `src/runtimes/wasix-browser-host`, outside the TypeScript SDK.
+live under `src/wasix/browser-host`, outside the TypeScript SDK.
 
 The native Rust SDK is canonical for native mode and resource terminology;
 Swift, Kotlin, React Native, and native TypeScript mirror it unless a platform

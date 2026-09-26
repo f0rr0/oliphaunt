@@ -3,7 +3,7 @@ import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { BROKER_PAYLOAD_LICENSE } from '../../src/broker/tools/broker-dependency-license-contract.mts';
+import { BROKER_PAYLOAD_LICENSE } from '../../src/native/broker/tools/broker-dependency-license-contract.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const CODE_LICENSE = 'MIT';
@@ -53,19 +53,25 @@ function assertNpmLicenses(files, expected) {
 }
 
 test('broker source is MIT and compiled payload carriers declare their exact dependency license closure', () => {
-  assertCargoLicenses(['src/broker/Cargo.toml'], CODE_LICENSE);
-  assertCargoLicenses(childManifests('src/broker/crates', 'Cargo.toml'), BROKER_PAYLOAD_LICENSE);
-  assertNpmLicenses(childManifests('src/broker/packages', 'package.json'), BROKER_PAYLOAD_LICENSE);
+  assertCargoLicenses(['src/native/broker/Cargo.toml'], CODE_LICENSE);
+  assertCargoLicenses(
+    childManifests('src/native/broker/crates', 'Cargo.toml'),
+    BROKER_PAYLOAD_LICENSE,
+  );
+  assertNpmLicenses(
+    childManifests('src/native/broker/packages', 'package.json'),
+    BROKER_PAYLOAD_LICENSE,
+  );
 });
 
 test('native source facades and payload carriers declare their exact role licenses', () => {
-  assertCargoLicenses(['src/postgres-tools/native/crates/tools/Cargo.toml'], CODE_LICENSE);
+  assertCargoLicenses(['src/native/postgres-tools/crates/tools/Cargo.toml'], CODE_LICENSE);
   assertNpmLicenses(
-    childManifests('src/runtimes/liboliphaunt-native/packages', 'package.json'),
+    childManifests('src/native/runtime/packages', 'package.json'),
     NATIVE_RUNTIME_LICENSE,
   );
   assertNpmLicenses(
-    childManifests('src/postgres-tools/native/npm-platforms', 'package.json'),
+    childManifests('src/native/postgres-tools/npm-platforms', 'package.json'),
     NATIVE_TOOLS_LICENSE,
   );
 });

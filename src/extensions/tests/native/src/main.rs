@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-include!("../../../../sdks/rust/sdk/tests/native_extensions.rs");
+include!("../../../../native/sdks/rust/tests/native_extensions.rs");
 
 fn parse_usize_flag(arguments: &[String], name: &str, default: usize) -> usize {
     let flag = format!("--{name}");

@@ -25,14 +25,14 @@ tasks:
     tags: ["artifact", "ci-liboliphaunt-wasix-runtime"]
     command: "bash src/extensions/artifacts/wasix/tools/build-portable.sh"
     deps: ["liboliphaunt-wasix:runtime-portable"]
-    inputs: ["tools/build-portable.sh", "/src/runtimes/liboliphaunt-wasix/assets/build/**/*", "/src/runtimes/liboliphaunt-wasix/tools/extension-build-scripts.mts", "/src/runtimes/liboliphaunt-wasix/tools/xtask/**/*", {project: "extensions", group: "build"}]
+    inputs: ["tools/build-portable.sh", "/src/wasix/runtime/assets/build/**/*", "/src/wasix/runtime/tools/extension-build-scripts.mts", "/src/wasix/runtime/tools/xtask/**/*", {project: "extensions", group: "build"}]
     outputs: ["/target/extensions/wasix/assets/**/*"]
     options: {runFromWorkspaceRoot: true, cache: local}
   build-aot:
     command: "bash src/extensions/artifacts/wasix/tools/build-aot.sh"
     deps: ["compiler-output"]
     tags: ["artifact", "ci-liboliphaunt-wasix-aot"]
-    inputs: ["tools/build-aot.sh", "/src/runtimes/liboliphaunt-wasix/tools/serialize-aot.sh", "/src/runtimes/liboliphaunt-wasix/tools/xtask/**/*", "$AOT_TARGET"]
+    inputs: ["tools/build-aot.sh", "/src/wasix/runtime/tools/serialize-aot.sh", "/src/wasix/runtime/tools/xtask/**/*", "$AOT_TARGET"]
     outputs: ["/target/extensions/wasix/aot-artifacts/**/*"]
     options: {runFromWorkspaceRoot: true, cache: local}
   build-target:

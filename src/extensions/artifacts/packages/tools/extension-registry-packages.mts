@@ -2,7 +2,7 @@ import {
   expectedExtensionAotTargets,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
-} from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
+} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;

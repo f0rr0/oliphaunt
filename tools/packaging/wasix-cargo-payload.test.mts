@@ -24,7 +24,7 @@ const cases = [
   ],
   [
     'runtime',
-    'src/runtimes/liboliphaunt-wasix/crates/assets',
+    'src/wasix/runtime/crates/assets',
     'wasix-runtime',
     'payload',
     'target/oliphaunt-wasix/assets',
@@ -33,7 +33,7 @@ const cases = [
   ],
   [
     'tools',
-    'src/postgres-tools/wasix/crates/tools',
+    'src/wasix/postgres-tools/crates/tools',
     'wasix-tools',
     'payload',
     'target/postgres-tools/wasix/assets',
@@ -42,7 +42,7 @@ const cases = [
   ],
   [
     'runtime-aot',
-    `src/runtimes/liboliphaunt-wasix/crates/aot/${triple}`,
+    `src/wasix/runtime/crates/aot/${triple}`,
     'wasix-aot',
     'artifacts',
     `target/oliphaunt-wasix/aot/${triple}`,
@@ -51,7 +51,7 @@ const cases = [
   ],
   [
     'tools-aot',
-    `src/postgres-tools/wasix/crates/aot/${triple}`,
+    `src/wasix/postgres-tools/crates/aot/${triple}`,
     'wasix-tools-aot',
     'artifacts',
     `target/postgres-tools/wasix/aot/${triple}`,
@@ -110,8 +110,8 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
   mkdirSync(path.join(base, '.git'));
   for (const marker of [
     'Cargo.toml',
-    'src/sdks/rust-wasix/Cargo.toml',
-    'src/runtimes/liboliphaunt-wasix/crates/assets/Cargo.toml',
+    'src/wasix/sdks/rust/Cargo.toml',
+    'src/wasix/runtime/crates/assets/Cargo.toml',
   ]) {
     mkdirSync(path.dirname(path.join(base, marker)), { recursive: true });
     writeFileSync(path.join(base, marker), '');

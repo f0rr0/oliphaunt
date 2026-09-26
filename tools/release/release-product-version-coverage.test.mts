@@ -10,8 +10,8 @@ const NATIVE = 'liboliphaunt-native';
 const WASIX = 'liboliphaunt-wasix';
 const VECTOR = 'oliphaunt-extension-vector';
 const PRODUCT_PATHS = {
-  [NATIVE]: 'src/runtimes/liboliphaunt-native',
-  [WASIX]: 'src/runtimes/liboliphaunt-wasix',
+  [NATIVE]: 'src/native/runtime',
+  [WASIX]: 'src/wasix/runtime',
   [VECTOR]: 'src/extensions/external/vector',
 };
 const VECTOR_RELEASE = `${PRODUCT_PATHS[VECTOR]}/release.toml`;

@@ -38,8 +38,8 @@ explicit Rust smoke tests; ordinary application startup does not run or load
 Run Tauri GUI smoke tests through WebDriver on Linux:
 
 ```sh
-src/examples/tools/run-tauri-webdriver-smoke.sh src/examples/tauri
-src/examples/tools/run-tauri-webdriver-smoke.sh src/examples/tauri-wasix
+src/examples/tools/run-tauri-webdriver-smoke.sh src/examples/native/tauri
+src/examples/tools/run-tauri-webdriver-smoke.sh src/examples/wasix/tauri
 ```
 
 The WebDriver smoke builds the selected Tauri app in debug mode, launches it
@@ -50,8 +50,8 @@ asserts the done filter. It expects `WebKitWebDriver`; on Debian/Ubuntu install
 Run Electron GUI smoke tests on Linux:
 
 ```sh
-src/examples/tools/run-electron-driver-smoke.sh src/examples/electron
-src/examples/tools/run-electron-driver-smoke.sh src/examples/electron-wasix
+src/examples/tools/run-electron-driver-smoke.sh src/examples/native/electron
+src/examples/tools/run-electron-driver-smoke.sh src/examples/wasix/electron
 ```
 
 The Electron smoke builds the selected app, launches the packaged Electron

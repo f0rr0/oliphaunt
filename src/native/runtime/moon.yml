@@ -1,0 +1,624 @@
+$schema: https://moonrepo.dev/schemas/project.json
+id: liboliphaunt-native
+language: c
+layer: library
+stack: systems
+tags:
+  - javascript-quality
+  - native
+  - postgres
+  - c-abi
+  - pg18
+  - release-product
+dependsOn:
+  - id: extensions
+    scope: build
+  - id: shared-test-fixtures
+    scope: development
+  - id: postgres18
+    scope: build
+  - id: third-party-icu
+    scope: build
+  - id: third-party-openssl
+    scope: build
+  - id: extension-runtime-contract
+    scope: build
+  - id: oliphaunt-extension-contrib-pg18
+    scope: build
+project:
+  title: liboliphaunt Native
+  description: C ABI and PostgreSQL 18 patch stack for native embedded Oliphaunt.
+  owner: oliphaunt
+  release:
+    component: liboliphaunt-native
+    packagePath: src/native/runtime
+    artifactTargets:
+      preset: liboliphaunt-native
+      targets:
+        - android-arm64-v8a
+        - android-x86_64
+        - ios-xcframework
+        - linux-arm64-gnu
+        - linux-x64-gnu
+        - macos-arm64
+        - windows-x64-msvc
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*":
+      - "@oliphaunt/core"
+fileGroups:
+  runtime:
+    - bin/**/*
+    - include/**/*
+    - src/**/*
+    - patches/**/*
+    - postgres/**/*
+    - /src/third-party/postgres/**/*
+    - "!/src/third-party/postgres/**/*.test.*"
+    - "!/src/third-party/postgres/testdata/**/*"
+    - /src/extensions/contrib/portable-uuid/**/*
+    - postgres18/**/*
+    - "tools/build-*.{mts,sh}"
+    - tools/release-runtime.sh
+    - /src/extensions/artifacts/native/tools/build-windows-extensions.sh
+    - /src/extensions/artifacts/native/tools/windows-extension-sources.mts
+    - /src/extensions/external/postgis/tools/windows/**/*
+    - VERSION
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!bin/**/*.test.sh"
+    - "!tools/**/*.test.sh"
+tasks:
+  build-orchestration-test:
+    tags:
+      - quality
+      - unit
+    script: "set -e\nbash src/native/runtime/bin/build-output.test.sh\nbash src/native/runtime/tools/build-dispatch.test.sh\nbash src/native/runtime/bin/postgis-dependency-cache.test.sh\n"
+    inputs:
+      - bin/build-output.bash
+      - bin/build-output.test.sh
+      - bin/postgis-dependency-cache.sh
+      - bin/postgis-dependency-cache.test.sh
+      - tools/build-dispatch.test.sh
+      - tools/build-ci-target.sh
+      - tools/release-runtime.sh
+      - tools/runtime-preflight.sh
+      - /src/third-party/postgres/source.toml
+      - /src/extensions/artifacts/native/tools/run-observed-phase.sh
+    options:
+      runFromWorkspaceRoot: true
+  lint:
+    tags:
+      - quality
+      - static
+    script: "set -e\nwhile IFS= read -r -d '' script; do bash -n \"$script\"; done < <(find src/native/runtime -type f \\( -name '*.sh' -o -name '*.bash' \\) -print0)\n"
+    inputs:
+      - "**/*.sh"
+      - "**/*.bash"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags:
+      - quality
+      - unit
+    command: "true"
+    deps:
+      - liboliphaunt-native:build-orchestration-test
+      - liboliphaunt-native:external-source-fetch-test
+      - liboliphaunt-native:error-attribution-test
+      - liboliphaunt-native:generation-lifecycle-test
+      - liboliphaunt-native:ios-extension-packager-test
+      - liboliphaunt-native:module-dir-resolver-test
+      - liboliphaunt-native:postgis-reproducible-time-test
+      - liboliphaunt-native:static-extension-registry-test
+      - liboliphaunt-native:symbol-scope-test
+    inputs:
+      []
+  external-source-fetch-test:
+    script: "set -e\nbash src/native/runtime/bin/fetch-pinned-git-checkout.test.sh\nbash src/native/runtime/bin/extension-source.test.sh\n"
+    inputs:
+      - bin/common.sh
+      - bin/extension-source.test.sh
+      - /src/native/runtime/bin/fetch-pinned-git-checkout.sh
+      - /src/native/runtime/bin/fetch-pinned-git-checkout.test.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  error-attribution-test:
+    command: bash src/native/runtime/tools/test-error-attribution.sh
+    inputs:
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/runtime/src/liboliphaunt_error.c
+      - /src/native/runtime/src/liboliphaunt_internal.h
+      - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/smoke/liboliphaunt_error_attribution.c
+      - /src/native/runtime/tools/test-error-attribution.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  generation-lifecycle-test:
+    command: bash src/native/runtime/tools/test-generation-lifecycle.sh
+    inputs:
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/runtime/src/liboliphaunt_internal.h
+      - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/src/liboliphaunt_backup_state.c
+      - /src/native/runtime/src/liboliphaunt_process.c
+      - /src/native/runtime/smoke/liboliphaunt_generation_lifecycle.c
+      - /src/native/runtime/tools/test-generation-lifecycle.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  ios-extension-packager-test:
+    command: bash src/native/runtime/bin/build-ios-extension-xcframeworks.test.sh
+    inputs:
+      - /src/native/runtime/bin/build-ios-extension-xcframeworks.sh
+      - /src/native/runtime/bin/build-ios-extension-xcframeworks.test.sh
+      - /src/native/runtime/bin/common.sh
+      - /src/native/runtime/bin/mobile-static-extensions.sh
+      - /src/native/runtime/include/oliphaunt.h
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  postgis-reproducible-time-test:
+    script: "set -e\nbash src/native/runtime/bin/postgis-reproducible-time.test.sh\n"
+    inputs:
+      - /src/extensions/external/postgis/source.toml
+      - /src/extensions/external/postgis/tools/build_wasix.sh
+      - /src/extensions/external/postgis/tools/reproducible-bin/date
+      - /src/extensions/external/postgis/tools/reproducible-time.sh
+      - /src/native/runtime/bin/build-macos-extension-archives.sh
+      - /src/native/runtime/bin/build-postgres18-android-arm64.sh
+      - /src/native/runtime/bin/build-postgres18-ios-device.sh
+      - /src/native/runtime/bin/build-postgres18-ios-simulator.sh
+      - /src/native/runtime/bin/build-postgres18-linux.sh
+      - /src/native/runtime/bin/build-postgres18-macos.sh
+      - /src/extensions/artifacts/native/tools/build-windows-extensions.sh
+      - /src/extensions/artifacts/native/tools/windows-extension-sources.mts
+      - /src/extensions/external/postgis/tools/windows/**/*
+      - /src/native/runtime/bin/mobile-postgis-extensions.sh
+      - /src/native/runtime/bin/postgis-reproducible-time.test.sh
+      - /src/wasix/runtime/tools/xtask/src/asset_checks.rs
+      - /src/wasix/runtime/tools/xtask/src/asset_manifest.rs
+      - /src/wasix/runtime/tools/xtask/src/asset_pipeline.rs
+      - /src/wasix/runtime/tools/xtask/src/source_spine.rs
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  module-dir-resolver-test:
+    command: bash src/native/runtime/tools/test-module-dir-resolver.sh
+    inputs:
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/runtime/src/liboliphaunt_fs.c
+      - /src/native/runtime/src/liboliphaunt_internal.h
+      - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/smoke/liboliphaunt_module_dir_resolver.c
+      - /src/native/runtime/tools/test-module-dir-resolver.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  static-extension-registry-test:
+    command: bash src/native/runtime/tools/test-static-extension-registry.sh
+    inputs:
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/runtime/src/liboliphaunt_internal.h
+      - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/src/liboliphaunt_static_extensions.c
+      - /src/native/runtime/smoke/liboliphaunt_static_extension_registry.c
+      - /src/native/runtime/tools/test-static-extension-registry.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  symbol-scope-test:
+    script: "set -e\nbash src/native/runtime/tools/test-symbol-scope.sh\nbash src/native/runtime/tools/native-readiness-probes.test.sh\n"
+    inputs:
+      - /src/native/runtime/tools/native-readiness-probes.test.sh
+      - /src/native/runtime/bin/common.sh
+      - /src/native/runtime/bin/mobile-static-extensions.sh
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/runtime/src/liboliphaunt_internal.h
+      - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/src/liboliphaunt_process.c
+      - /src/native/runtime/smoke/liboliphaunt_symbol_scope_consumer.c
+      - /src/native/runtime/smoke/liboliphaunt_symbol_scope_host.c
+      - /src/native/runtime/smoke/liboliphaunt_symbol_scope_provider.c
+      - /src/native/runtime/tools/audit-macos-module-nm.awk
+      - /src/native/runtime/tools/audit-macos-provider-collisions.awk
+      - /src/native/runtime/tools/test-symbol-scope.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  test-integration:
+    tags:
+      - runtime
+      - smoke
+    script: "set -e\n. src/native/runtime/tools/runtime-preflight.sh\noliphaunt_runtime_native_host_require basic\nbash src/native/runtime/tools/run-host-c-smoke.sh\n"
+    deps:
+      - liboliphaunt-native:build-runtime-desktop-target
+    inputs:
+      - "**/*"
+      - /src/extensions/contrib/portable-uuid/**/*
+      - project: postgres18
+        group: source
+      - project: third-party-icu
+        group: sources
+      - project: third-party-openssl
+        group: sources
+      - /src/native/runtime/sources/*.toml
+      - project: extension-runtime-contract
+        group: contract
+      - project: shared-test-fixtures
+        group: fixtures
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: skip
+  build-runtime-desktop-target:
+    tags:
+      - runtime
+      - build
+    deps:
+      - source-inputs:source-fetch-native-runtime
+    command: bash src/native/runtime/tools/release-runtime.sh build
+    inputs:
+      - $OLIPHAUNT_CI_TARGET
+      - /tools/packaging/windows-vc-runtime-policy.json
+      - project: postgres18
+        group: source
+      - project: third-party-icu
+        group: sources
+      - project: third-party-openssl
+        group: sources
+      - /src/native/runtime/sources/*.toml
+      - project: extension-runtime-contract
+        group: contract
+      - "@group(runtime)"
+      - /src/extensions/tools/native-extension-files.mts
+      - /src/extensions/generated/sdk/extensions.json
+    outputs:
+      - /target/liboliphaunt-pg18/**/*
+      - /target/liboliphaunt-pg18-linux-*/**/*
+      - /target/liboliphaunt-pg18-windows-*/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-runtime-desktop-target:
+    tags:
+      - runtime
+      - release
+      - artifact-package
+      - ci-liboliphaunt-native-desktop
+    command: bash src/native/runtime/tools/release-runtime.sh package
+    deps:
+      - liboliphaunt-native:build-runtime-desktop-target
+    inputs:
+      - $OLIPHAUNT_CI_TARGET
+      - /tools/packaging/windows-vc-runtime-policy.json
+      - "@group(legal-files)"
+      - /src/native/runtime/include/**/*
+      - /src/native/runtime/tools/release-runtime.sh
+      - /src/native/runtime/tools/runtime-preflight.sh
+      - /src/native/runtime/tools/package-liboliphaunt-linux-assets.sh
+      - /src/native/runtime/tools/package-liboliphaunt-macos-assets.sh
+      - /src/native/runtime/tools/package-liboliphaunt-windows-assets.sh
+      - /src/extensions/tools/native-extension-files.mts
+      - /src/extensions/generated/sdk/extensions.json
+      - /src/native/runtime/tools/liboliphaunt-extension-guard.sh
+      - /tools/packaging/release-notices.mts
+      - /tools/packaging/strip-native-binaries.sh
+      - /tools/packaging/platform-binary-contract.mts
+      - "/tools/packaging/*.{mjs,mts}"
+    outputs:
+      - /target/liboliphaunt/desktop-release-assets/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  test-artifacts-desktop-target:
+    tags:
+      - runtime
+      - integration
+      - ci-liboliphaunt-native-desktop
+    command: bash src/native/runtime/tools/test-desktop-artifact.sh
+    deps:
+      - liboliphaunt-native:package-runtime-desktop-target
+    inputs:
+      - $OLIPHAUNT_CI_TARGET
+      - tools/test-desktop-artifact.sh
+      - tools/run-host-c-smoke.sh
+      - tools/native-smoke-data.mts
+      - smoke/**/*
+      - include/**/*
+      - src/**/*.h
+      - /src/native/runtime/smoke/fixtures/physical-archive-native-v1.properties
+      - /tools/packaging/check-linux-consumer-baseline.sh
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  build-runtime-android-arm64-v8a:
+    tags:
+      - runtime
+      - build
+      - ci-liboliphaunt-native-android
+    deps:
+      - source-inputs:source-fetch-native-runtime
+    command: bash src/native/runtime/tools/build-ci-target.sh android-arm64-v8a
+    inputs:
+      - "@group(legal-files)"
+      - project: postgres18
+        group: source
+      - "@group(upstream-licenses)"
+      - project: third-party-icu
+        group: sources
+      - project: third-party-openssl
+        group: sources
+      - /src/native/runtime/sources/*.toml
+      - project: extension-runtime-contract
+        group: contract
+      - "@group(runtime)"
+      - /src/native/runtime/packaging/**/*
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /src/wasix/runtime/tools/xtask/**/*
+      - "@group(cargo-workspace)"
+    outputs:
+      - /target/liboliphaunt-native-ci/android-arm64-v8a/**/*
+      - /target/liboliphaunt-pg18-android-arm64/**/*
+      - /target/liboliphaunt-mobile-host/android-arm64-v8a/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-runtime-android-arm64-v8a:
+    tags:
+      - runtime
+      - release
+      - artifact-package
+      - ci-liboliphaunt-native-android
+    command: "env OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS=\"target/liboliphaunt/mobile-release-assets/android-arm64-v8a\" OLIPHAUNT_LINUX_X64_ROOT=\"$PWD/target/liboliphaunt-mobile-host/android-arm64-v8a\" bash src/native/runtime/tools/package-liboliphaunt-mobile-assets.sh android-arm64-v8a"
+    deps:
+      - liboliphaunt-native:build-runtime-android-arm64-v8a
+    inputs:
+      - "@group(legal-files)"
+      - /src/native/runtime/include/**/*
+      - /src/native/runtime/tools/package-liboliphaunt-mobile-assets.sh
+      - /src/native/runtime/tools/liboliphaunt-extension-guard.sh
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /src/native/runtime/tools/finalize-native-runtime-carrier.mts
+      - /tools/packaging/strip-native-binaries.sh
+      - /tools/packaging/platform-binary-contract.mts
+      - "@group(release-archive-contract)"
+    outputs:
+      - /target/liboliphaunt/mobile-release-assets/android-arm64-v8a/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  build-runtime-android-x86_64:
+    tags:
+      - runtime
+      - build
+      - ci-liboliphaunt-native-android
+    deps:
+      - source-inputs:source-fetch-native-runtime
+    command: bash src/native/runtime/tools/build-ci-target.sh android-x86_64
+    inputs:
+      - "@group(legal-files)"
+      - project: postgres18
+        group: source
+      - "@group(upstream-licenses)"
+      - project: third-party-icu
+        group: sources
+      - project: third-party-openssl
+        group: sources
+      - /src/native/runtime/sources/*.toml
+      - project: extension-runtime-contract
+        group: contract
+      - "@group(runtime)"
+      - /src/native/runtime/packaging/**/*
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /src/wasix/runtime/tools/xtask/**/*
+      - "@group(cargo-workspace)"
+    outputs:
+      - /target/liboliphaunt-native-ci/android-x86_64/**/*
+      - /target/liboliphaunt-pg18-android-x86_64/**/*
+      - /target/liboliphaunt-mobile-host/android-x86_64/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-runtime-android-x86_64:
+    tags:
+      - runtime
+      - release
+      - artifact-package
+      - ci-liboliphaunt-native-android
+    command: "env OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS=\"target/liboliphaunt/mobile-release-assets/android-x86_64\" OLIPHAUNT_LINUX_X64_ROOT=\"$PWD/target/liboliphaunt-mobile-host/android-x86_64\" bash src/native/runtime/tools/package-liboliphaunt-mobile-assets.sh android-x86_64"
+    deps:
+      - liboliphaunt-native:build-runtime-android-x86_64
+    inputs:
+      - "@group(legal-files)"
+      - /src/native/runtime/include/**/*
+      - /src/native/runtime/tools/package-liboliphaunt-mobile-assets.sh
+      - /src/native/runtime/tools/liboliphaunt-extension-guard.sh
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /src/native/runtime/tools/finalize-native-runtime-carrier.mts
+      - /tools/packaging/strip-native-binaries.sh
+      - /tools/packaging/platform-binary-contract.mts
+      - "@group(release-archive-contract)"
+    outputs:
+      - /target/liboliphaunt/mobile-release-assets/android-x86_64/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  build-runtime-ios-xcframework:
+    tags:
+      - runtime
+      - build
+      - ci-liboliphaunt-native-ios
+    deps:
+      - source-inputs:source-fetch-native-runtime
+    command: bash src/native/runtime/tools/build-ci-target.sh ios-xcframework
+    inputs:
+      - "@group(legal-files)"
+      - project: postgres18
+        group: source
+      - "@group(upstream-licenses)"
+      - project: third-party-icu
+        group: sources
+      - project: third-party-openssl
+        group: sources
+      - /src/native/runtime/sources/*.toml
+      - project: extension-runtime-contract
+        group: contract
+      - "@group(runtime)"
+      - /src/native/runtime/packaging/**/*
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /src/wasix/runtime/tools/xtask/**/*
+      - "@group(cargo-workspace)"
+    outputs:
+      - /target/liboliphaunt-native-ci/ios-xcframework/**/*
+      - /target/liboliphaunt-ios-device/**/*
+      - /target/liboliphaunt-ios-simulator/**/*
+      - /target/liboliphaunt-ios-xcframework/**/*
+      - /target/liboliphaunt-mobile-host/ios-xcframework/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-runtime-ios-xcframework:
+    tags:
+      - runtime
+      - release
+      - artifact-package
+      - ci-liboliphaunt-native-ios
+    script: |
+      set -e
+      export OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/mobile-release-assets/ios-xcframework"
+      export OLIPHAUNT_WORK_ROOT="$PWD/target/liboliphaunt-mobile-host/ios-xcframework"
+      src/native/runtime/tools/package-liboliphaunt-mobile-assets.sh ios-xcframework
+      bun src/native/runtime/tools/validate-ios-carrier-zips.mts --root "$OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS"
+    deps:
+      - liboliphaunt-native:build-runtime-ios-xcframework
+    inputs:
+      - "@group(legal-files)"
+      - /src/native/runtime/include/**/*
+      - /src/native/runtime/tools/package-liboliphaunt-mobile-assets.sh
+      - /src/native/runtime/tools/liboliphaunt-extension-guard.sh
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /src/native/runtime/tools/finalize-native-runtime-carrier.mts
+      - /tools/packaging/strip-native-binaries.sh
+      - /tools/packaging/platform-binary-contract.mts
+      - /src/native/runtime/tools/validate-ios-carrier-zips.mts
+      - /src/native/runtime/bin/build-ios-xcframework.sh
+      - "@group(release-archive-contract)"
+    outputs:
+      - /target/liboliphaunt/mobile-release-assets/ios-xcframework/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  finalize-runtime-android-abi:
+    tags:
+      - runtime
+      - artifact-package
+      - ci-liboliphaunt-native-android-abi
+    command: tools/dev/bun.sh src/native/runtime/tools/finalize-native-mobile-abi-proofs.mts --domain android-datum64 --asset-dir target/liboliphaunt/mobile-release-assets/android-x86_64 --receipt-root target/liboliphaunt-native-ci --output-dir target/liboliphaunt/abi-compatible-release-assets/android-datum64
+    deps:
+      - liboliphaunt-native:package-runtime-android-arm64-v8a
+      - liboliphaunt-native:package-runtime-android-x86_64
+    inputs:
+      - /src/native/runtime/tools/finalize-native-mobile-abi-proofs.mts
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /target/liboliphaunt/mobile-release-assets/android-x86_64/**/*
+      - /target/liboliphaunt-native-ci/android-*/**/*
+    outputs:
+      - /target/liboliphaunt/abi-compatible-release-assets/android-datum64/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  finalize-runtime-ios-abi:
+    tags:
+      - runtime
+      - artifact-package
+      - ci-liboliphaunt-native-ios-abi
+    command: tools/dev/bun.sh src/native/runtime/tools/finalize-native-mobile-abi-proofs.mts --domain ios-datum64 --asset-dir target/liboliphaunt/mobile-release-assets/ios-xcframework --receipt-root target/liboliphaunt-native-ci/ios-xcframework --output-dir target/liboliphaunt/abi-compatible-release-assets/ios-datum64
+    deps:
+      - liboliphaunt-native:package-runtime-ios-xcframework
+    inputs:
+      - /src/native/runtime/tools/finalize-native-mobile-abi-proofs.mts
+      - /src/native/runtime/tools/native-mobile-abi-contract.mts
+      - /target/liboliphaunt/mobile-release-assets/ios-xcframework/**/*
+      - /target/liboliphaunt-native-ci/ios-xcframework/**/*
+    outputs:
+      - /target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  release-assets:
+    tags:
+      - runtime
+      - release
+      - artifact-package
+      - ci-liboliphaunt-native-release-assets
+    command: bash src/native/runtime/tools/package-liboliphaunt-aggregate-assets.sh
+    deps:
+      - liboliphaunt-native:package-runtime-desktop-target
+      - liboliphaunt-native:package-runtime-android-arm64-v8a
+      - liboliphaunt-native:package-runtime-android-x86_64
+      - liboliphaunt-native:package-runtime-ios-xcframework
+      - liboliphaunt-native:finalize-runtime-android-abi
+      - liboliphaunt-native:finalize-runtime-ios-abi
+    inputs:
+      - /release-please-config.json
+      - project: extensions
+        group: sdk-metadata
+      - /src/native/runtime/moon.yml
+      - "/tools/packaging/*.{mjs,mts}"
+      - /src/native/runtime/tools/check-release-assets.mts
+      - /src/native/runtime/tools/package-liboliphaunt-aggregate-assets.sh
+      - "@group(release-target-contract)"
+      - /tools/packaging/platform-binary-contract.mts
+      - /tools/release/release-graph.mts
+      - /tools/release/query.mts
+      - /target/liboliphaunt/release-assets/**/*
+    outputs:
+      - /target/liboliphaunt/release-assets/**/*
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+  packaging-unit:
+    tags:
+      - quality
+      - unit
+      - requires-rust
+    command: "bash src/native/runtime/tools/test-packaging.sh"
+    inputs:
+      - /tools/packaging/windows-vc-runtime-policy.json
+      - /src/extensions/tools/extension-upstream-licenses.mts
+      - /src/extensions/contracts/*.mts
+      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
+      - /src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts
+      - /src/wasix/runtime/tools/wasix-*-npm-contract.mts
+      - "@group(release-target-contract)"
+      - "@group(package-test-metadata)"
+      - "**/*.{mts,cts,sh,podspec,json}"
+      - /tools/packaging/testdata/**/*
+      - /tools/dev/bun.sh
+      - /src/database-resources/contracts/*.mts
+      - /LICENSE
+      - /THIRD_PARTY_NOTICES.md
+      - THIRD_PARTY_NOTICES.md
+      - "@group(upstream-licenses)"
+      - /src/third-party/postgres/source.toml
+      - /src/third-party/icu/source.toml
+      - "/tools/packaging/*.{mts,sh}"
+      - "/tools/release/*.{mjs,mts}"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

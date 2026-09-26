@@ -13,7 +13,7 @@ import {
   EXTENSION_PORTABLE_TARGET,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
-} from '../../src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
+} from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 
 function catalogForArtifactProducts(products) {
   return loadPublicationCatalog('publication-catalog.test', {

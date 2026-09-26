@@ -104,10 +104,10 @@ const released =
 const current = products(released);
 if (scenario === 'workspace')
   current['postgres-tools-wasix'] = {
-    path: 'src/postgres-tools/wasix',
+    path: 'src/wasix/postgres-tools',
     tag_prefix: 'postgres-tools-wasix-v',
     version: '0.2.1',
-    version_files: ['src/postgres-tools/wasix/VERSION'],
+    version_files: ['src/wasix/postgres-tools/VERSION'],
   };
 if (phase === 'write') {
   const versions =
@@ -127,8 +127,8 @@ if (phase === 'write') {
   writeState(root, versions, { compatibilityByProduct });
   writeFileSync(graphPath, JSON.stringify({ products: current }));
 } else if (phase === 'workspace') {
-  mkdirSync(path.join(root, 'src/postgres-tools/wasix'), { recursive: true });
-  writeFileSync(path.join(root, 'src/postgres-tools/wasix/VERSION'), '0.2.1\n');
+  mkdirSync(path.join(root, 'src/wasix/postgres-tools'), { recursive: true });
+  writeFileSync(path.join(root, 'src/wasix/postgres-tools/VERSION'), '0.2.1\n');
 } else if (phase === 'assert') {
   const pending = (...ids) => new Map(ids.map((id) => [id, released[id]]));
   const options = { root, prefix: 'compatibility-test' };

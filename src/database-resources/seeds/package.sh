@@ -6,7 +6,7 @@ family="${1:?native or wasix is required}"
 target="${2:-${OLIPHAUNT_CI_TARGET:-}}"
 if [ "$family" = wasix ]; then target=portable; fi
 if [ -z "$target" ]; then
-  source src/runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+  source src/native/runtime/tools/runtime-preflight.sh
   target="$(oliphaunt_runtime_native_host_target_id)"
 fi
 bash tools/ci/with-projects.sh src/database-resources/seeds/package-carriers.mts --family "$family" --target "$target"

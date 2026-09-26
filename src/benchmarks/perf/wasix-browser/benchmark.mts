@@ -5,7 +5,7 @@ import { arch, cpus, hostname, platform, release, totalmem } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { loadHostBuildContract } from '../../../runtimes/wasix-browser-host/build-provenance.mts';
+import { loadHostBuildContract } from '../../../wasix/browser-host/build-provenance.mts';
 import { directoryTreeSha256, installedPackageClosure } from '../wasix-node/installed-closure.mts';
 import { assertRuntimeBuildConfiguration, runtimeBuildProvenance } from '../wasix-node/plan.mts';
 import {
@@ -17,7 +17,7 @@ import {
 } from './plan.mts';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const bindingRoot = resolve(repositoryRoot, 'src/sdks/ts-wasix/sdk');
+const bindingRoot = resolve(repositoryRoot, 'src/wasix/sdks/ts');
 const [phase, scratch] = process.argv.slice(2);
 if (!scratch || !['--prepare', '--report', '--diagnostic'].includes(phase))
   throw new Error('usage: benchmark.mts --prepare|--report|--diagnostic SCRATCH');
@@ -207,14 +207,14 @@ async function toolProvenance(plan) {
     resolve(repositoryRoot, 'src/benchmarks/perf/wasix-browser/plan.mts'),
     resolve(repositoryRoot, 'src/benchmarks/perf/wasix-node/installed-closure.mts'),
     resolve(repositoryRoot, 'src/benchmarks/perf/wasix-node/plan.mts'),
-    resolve(repositoryRoot, 'src/sdks/ts-wasix/sdk/tools/integration/smoke-browser.mts'),
-    resolve(repositoryRoot, 'src/sdks/ts-wasix/sdk/tools/integration/smoke-browser.sh'),
+    resolve(repositoryRoot, 'src/wasix/sdks/ts/tools/integration/smoke-browser.mts'),
+    resolve(repositoryRoot, 'src/wasix/sdks/ts/tools/integration/smoke-browser.sh'),
     resolve(repositoryRoot, 'src/benchmarks/perf/wasix-browser/benchmark.mts'),
-    resolve(repositoryRoot, 'src/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts'),
-    resolve(repositoryRoot, 'src/examples/browser-wasix/benchmark.html'),
-    resolve(repositoryRoot, 'src/examples/browser-wasix/benchmark.ts'),
-    resolve(repositoryRoot, 'src/examples/browser-wasix/pglite-worker.ts'),
-    resolve(repositoryRoot, 'src/examples/browser-wasix/vite.config.ts'),
+    resolve(repositoryRoot, 'src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts'),
+    resolve(repositoryRoot, 'src/examples/wasix/browser/benchmark.html'),
+    resolve(repositoryRoot, 'src/examples/wasix/browser/benchmark.ts'),
+    resolve(repositoryRoot, 'src/examples/wasix/browser/pglite-worker.ts'),
+    resolve(repositoryRoot, 'src/examples/wasix/browser/vite.config.ts'),
   ]);
 }
 

@@ -44,7 +44,7 @@ authoritative.
 ## Assets
 
 Bundled runtime assets must stay aligned with product-local runtime metadata
-under `src/runtimes/` and extension metadata under `src/extensions/`. If a
+under `src/native/` and `src/wasix/` and extension metadata under `src/extensions/`. If a
 runtime or extension artifact target changes, update the owning product
 metadata and run the affected Moon checks.
 

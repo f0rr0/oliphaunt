@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { arch, cpus, freemem, homedir, hostname, platform, release, totalmem } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stagePackedWasixConsumer } from '../../../sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts';
+import { stagePackedWasixConsumer } from '../../../wasix/sdks/ts/tools/integration/packed-node-fixture.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
 import { installedPackageClosure } from './installed-closure.mts';
 import {
@@ -187,7 +187,7 @@ function throwNativeCarrierPreflight(cause, consumer) {
     throw new Error(
       `${consumer} requires one optimized current-host WASIX Node-API carrier. ` +
         'After staging the portable/AOT runtime, ICU, and extension inputs, run ' +
-        '`bash src/sdks/ts-wasix/node-addon/tools/build-native.sh`, then retry. ' +
+        '`bash src/wasix/node-addon/tools/build-native.sh`, then retry. ' +
         `Carrier preflight: ${detail}`,
       { cause },
     );
@@ -543,8 +543,8 @@ async function toolProvenance(planFile) {
     resolve(toolRoot, 'installed-closure.mts'),
     resolve(toolRoot, 'plan.mts'),
     resolve(toolRoot, 'pglite-node-worker.mts'),
-    resolve(repositoryRoot, 'src/sdks/ts-wasix/sdk/tools/integration/packed-node-fixture.mts'),
-    resolve(repositoryRoot, 'src/sdks/ts-wasix/sdk/tools/wasix-typescript-package.mts'),
+    resolve(repositoryRoot, 'src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts'),
+    resolve(repositoryRoot, 'src/wasix/sdks/ts/tools/wasix-typescript-package.mts'),
     planFile,
   ];
   const records = [];

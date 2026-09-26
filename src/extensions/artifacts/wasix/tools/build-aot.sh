@@ -5,5 +5,5 @@ export OLIPHAUNT_WASM_BUILD_PROFILE="${ASSET_PROFILE:-release}"
 target="${AOT_TARGET:-$(rustc -vV | awk '/^host:/{print $2}')}"
 host="$(rustc -vV | awk '/^host:/{print $2}')"
 [ "$target" = "$host" ] || { echo "AOT target $target requires its matching builder host, got $host" >&2; exit 1; }
-bash src/runtimes/liboliphaunt-wasix/tools/serialize-aot.sh --target-triple "$target" --product extensions
+bash src/wasix/runtime/tools/serialize-aot.sh --target-triple "$target" --product extensions
 cargo run -p xtask --locked -- assets package-extension-aot --target-triple "$target"

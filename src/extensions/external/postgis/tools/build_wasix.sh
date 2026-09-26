@@ -13,7 +13,7 @@ oliphaunt_postgis_bootstrap_repo_root() {
   repo_root="$SCRIPT_DIR"
   while [ "$repo_root" != "/" ]; do
     if [ -f "$repo_root/package.json" ] &&
-       [ -d "$repo_root/src/runtimes/liboliphaunt-wasix/assets/build" ]; then
+       [ -d "$repo_root/src/wasix/runtime/assets/build" ]; then
       printf '%s\n' "$repo_root"
       return 0
     fi
@@ -25,7 +25,7 @@ oliphaunt_postgis_bootstrap_repo_root() {
 }
 
 BOOTSTRAP_REPO_ROOT="$(oliphaunt_postgis_bootstrap_repo_root)"
-ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$BOOTSTRAP_REPO_ROOT/src/runtimes/liboliphaunt-wasix/assets/build}"
+ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$BOOTSTRAP_REPO_ROOT/src/wasix/runtime/assets/build}"
 . "$ROOT/wasix_third_party.sh"
 . "$ROOT/source_lane.sh"
 

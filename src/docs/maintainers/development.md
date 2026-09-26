@@ -139,13 +139,13 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run oliphaunt-react-native:build`: React Native TypeScript and packaging-helper compilation.
   Run `oliphaunt-react-native:typecheck` and `oliphaunt-react-native:lint-codegen`
   for source diagnostics. Package-shape work belongs to `oliphaunt-react-native:package`;
-- `bun run --cwd src/examples/react-native-expo smoke:android`: real Android Expo
+- `bun run --cwd src/examples/native/react-native-expo smoke:android`: real Android Expo
   development-client smoke for the installed React Native package. It reuses
   current native artifacts, generates the ignored Expo `android/` project only
   when missing, packages `liboliphaunt.so` plus runtime/cluster-seed resources, starts
   Metro when needed, installs the app, and waits for
   `OLIPHAUNT_EXPO_SMOKE_PASS`;
-- `bun run --cwd src/examples/react-native-expo smoke:ios`: real iOS Expo
+- `bun run --cwd src/examples/native/react-native-expo smoke:ios`: real iOS Expo
   development-client build/smoke harness for the installed React Native package.
   For simulator builds it produces or reuses the current iOS simulator
   `liboliphaunt.dylib` automatically when no explicit artifact override is set,
@@ -219,7 +219,7 @@ tools/dev/bootstrap-tools.sh
 bash tools/dev/install-hooks.sh
 ```
 
-`src/sdks/rust-wasix/tests/runtime_smoke.rs` starts the real WASIX backend and
+`src/wasix/sdks/rust/tests/runtime_smoke.rs` starts the real WASIX backend and
 is intentionally slower than the protocol unit tests.
 
 ## Maintenance Utilities
@@ -244,7 +244,7 @@ bash src/third-party/tools/fetch-sources.sh production-all --force
 bash src/third-party/tools/fetch-sources.sh wasix-runtime --verify-only
 cargo run -p xtask -- assets check --strict-generated
 moon run database-resources:package-wasix
-bash src/runtimes/liboliphaunt-wasix/assets/build/prepare_postgres_source.sh
+bash src/wasix/runtime/assets/build/prepare_postgres_source.sh
 moon run oliphaunt-rust:package
 ```
 
@@ -291,8 +291,8 @@ in ignored paths, and then runs the real runtime tests:
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
 bash src/third-party/tools/fetch-sources.sh production-all --force
-bash src/runtimes/liboliphaunt-wasix/tools/build-runtime-portable.sh
-bash src/runtimes/liboliphaunt-wasix/tools/build-aot-target.sh
+bash src/wasix/runtime/tools/build-runtime-portable.sh
+bash src/wasix/runtime/tools/build-aot-target.sh
 moon run liboliphaunt-wasix:smoke
 ```
 
@@ -309,7 +309,7 @@ the existing generated portable assets:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-bash src/runtimes/liboliphaunt-wasix/tools/serialize-aot.sh --target-triple "$host"
+bash src/wasix/runtime/tools/serialize-aot.sh --target-triple "$host"
 cargo run -p xtask -- assets package-aot --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
@@ -322,9 +322,9 @@ build path:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --run-id <id> --target-triple "$host"
+bash src/wasix/runtime/tools/download-assets.sh --run-id <id> --target-triple "$host"
 # Or select the successful CI run for one exact commit:
-bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --sha <full-40-character-sha> --target-triple "$host"
+bash src/wasix/runtime/tools/download-assets.sh --sha <full-40-character-sha> --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
 
@@ -337,7 +337,7 @@ are public GitHub release assets:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --release <tag> --target-triple "$host"
+bash src/wasix/runtime/tools/download-assets.sh --release <tag> --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
 
@@ -348,7 +348,7 @@ Release validation can download every supported target from the exact `CI`
 workflow SHA:
 
 ```sh
-bash src/runtimes/liboliphaunt-wasix/tools/download-assets.sh --sha <full-40-character-sha> --all-targets
+bash src/wasix/runtime/tools/download-assets.sh --sha <full-40-character-sha> --all-targets
 bash tools/release/release-check.sh
 ```
 

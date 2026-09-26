@@ -98,12 +98,12 @@ tasks:
       - /src/extensions/tools/**/*
       - /src/third-party/postgres/source.toml
       - "@group(upstream-licenses)"
-      - /src/sdks/ts-wasix/node-addon/tools/build-native.sh
+      - /src/wasix/node-addon/tools/build-native.sh
       - project: shared-test-fixtures
         group: fixtures
       - /src/third-party/**/source.toml
-      - /src/runtimes/*/sources/*.toml
-      - /src/runtimes/*/toolchain.toml
+      - /src/{native,wasix}/*/sources/*.toml
+      - /src/{native,wasix}/*/toolchain.toml
       - /tools/dev/*.toml
       - /tools/release/npm-publisher.toml
       - /tools/**/moon.yml
@@ -122,8 +122,8 @@ tasks:
       - requires-rust
     command: bash tools/release/release-check.sh --mutation-tests-only
     inputs:
-      - /src/runtimes/liboliphaunt-wasix/tools/download-assets.sh
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
+      - /src/wasix/runtime/tools/download-assets.sh
+      - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
       - /tools/packaging/**/*
       - /src/database-resources/contracts/**/*
       - /tools/release/**/*
@@ -144,7 +144,7 @@ tasks:
       - /tools/ci/with-projects.sh
       - /.prototools
       - /tools/dev/bun.sh
-      - /src/sdks/kotlin/tools/kotlin-maven-staging.mts
+      - /src/native/sdks/kotlin/tools/kotlin-maven-staging.mts
       - "**/*"
       - "!/tools/release/**/*.md"
     options:
@@ -182,14 +182,14 @@ tasks:
       - /src/extensions/contracts/extension-target-profiles.mts
       - /src/extensions/tools/extension-upstream-licenses.mts
       - /src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
-      - /src/runtimes/liboliphaunt-native/tools/native-runtime-payload.mts
+      - /src/native/runtime/tools/native-runtime-payload.mts
       - /tools/release/platform-compatibility-policy.mts
       - /tools/release/release-artifact-targets.mts
       - /tools/release/prepare-release-candidate.mts
       - /tools/release/prepare-release-candidate.test.mts
       - "@group(release-archive-contract)"
       - /tools/release/release-graph.mts
-      - /src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts
+      - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
       - /tools/packaging/windows-vc-runtime-closure.mts
       - package.json
       - /bun.lock

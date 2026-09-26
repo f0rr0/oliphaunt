@@ -34,17 +34,17 @@ stage_and_verify() {
   printf '%s\n' "$actual"
 }
 
-tauri="$(stage_and_verify tauri)"
-tauri_wasix="$(stage_and_verify tauri-wasix)"
+tauri="$(stage_and_verify native/tauri)"
+tauri_wasix="$(stage_and_verify wasix/tauri)"
 
-shared_main="$tauri_wasix/src/../../tauri/src/main.ts"
-shared_styles="$tauri_wasix/src/../../tauri/src/styles.css"
-cmp "$root/src/examples/tauri/src/main.ts" "$shared_main" >/dev/null ||
+shared_main="$tauri_wasix/src/../../../native/tauri/src/main.ts"
+shared_styles="$tauri_wasix/src/../../../native/tauri/src/styles.css"
+cmp "$root/src/examples/native/tauri/src/main.ts" "$shared_main" >/dev/null ||
   fail "tauri-wasix scratch tree is missing its shared TypeScript source"
-cmp "$root/src/examples/tauri/src/styles.css" "$shared_styles" >/dev/null ||
+cmp "$root/src/examples/native/tauri/src/styles.css" "$shared_styles" >/dev/null ||
   fail "tauri-wasix scratch tree is missing its shared stylesheet"
 
-icon_relative='../../assets/tauri-icon.png'
+icon_relative='../../../assets/tauri-icon.png'
 for app in "$tauri" "$tauri_wasix"; do
   icon="$app/src-tauri/$icon_relative"
   [[ -f "$icon" ]] || fail "$(basename "$app") scratch tree is missing its configured icon"

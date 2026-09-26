@@ -17,12 +17,12 @@ import {
   extensionCarrierLegalContract,
   stageExtensionUpstreamLicenses,
 } from '../../src/extensions/tools/extension-upstream-licenses.mts';
-import { extensionDependencyRequirement } from '../../src/runtimes/liboliphaunt-wasix/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
+import { extensionDependencyRequirement } from '../../src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
 import {
   buildSwiftExtensionCarrierManifest,
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
-} from '../../src/sdks/swift/tools/ios-carrier-manifest.mts';
+} from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { canonicalGzipSync } from '../packaging/portable-archive.mts';
@@ -1349,7 +1349,7 @@ describe('publication artifact discovery and freezing', () => {
             ? releaseJavaScript(
                 path.join(
                   import.meta.dir,
-                  '../../src/sdks/swift/tools/extension-resource-inventory.mts',
+                  '../../src/native/sdks/swift/tools/extension-resource-inventory.mts',
                 ),
               )
             : `${name}\n`,

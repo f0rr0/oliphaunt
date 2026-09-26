@@ -10,7 +10,7 @@ icu="${OLIPHAUNT_ICU_DATA_DIR:-}"
 target="${OLIPHAUNT_CI_TARGET:-}"
 case "$family" in
   native)
-    source src/runtimes/liboliphaunt-native/tools/runtime-preflight.sh
+    source src/native/runtime/tools/runtime-preflight.sh
     target="${target:-$(oliphaunt_runtime_native_host_target_id)}"
     case "$target" in
       linux-*) work_root="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target}" ;;
@@ -18,14 +18,14 @@ case "$family" in
       windows-x64-msvc) work_root="${OLIPHAUNT_WINDOWS_WORK_ROOT:-${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target}}" ;;
       android-datum64)
         work_root="$root/target/liboliphaunt-mobile-host/android-x86_64"
-        bun src/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts compare --domain android-datum64 \
+        bun src/native/runtime/tools/native-mobile-abi-contract.mts compare --domain android-datum64 \
           --receipt "${OLIPHAUNT_ANDROID_ARM64_ROOT:-$root/target/liboliphaunt-pg18-android-arm64}/out/native-mobile-abi.properties" \
           --receipt "${OLIPHAUNT_ANDROID_X86_64_ROOT:-$root/target/liboliphaunt-pg18-android-x86_64}/out/native-mobile-abi.properties" \
           --receipt "${OLIPHAUNT_ANDROID_X86_64_ROOT:-$root/target/liboliphaunt-pg18-android-x86_64}/out/native-mobile-abi-producer.properties"
         ;;
       ios-datum64)
         work_root="$root/target/liboliphaunt-mobile-host/ios-xcframework"
-        bun src/runtimes/liboliphaunt-native/tools/native-mobile-abi-contract.mts compare --domain ios-datum64 \
+        bun src/native/runtime/tools/native-mobile-abi-contract.mts compare --domain ios-datum64 \
           --receipt "${OLIPHAUNT_IOS_DEVICE_ROOT:-$root/target/liboliphaunt-ios-device}/out/native-mobile-abi.properties" \
           --receipt "${OLIPHAUNT_IOS_SIMULATOR_ROOT:-$root/target/liboliphaunt-ios-simulator}/out/native-mobile-abi.properties" \
           --receipt "${OLIPHAUNT_IOS_XCFRAMEWORK_ROOT:-$root/target/liboliphaunt-ios-xcframework}/out/native-mobile-abi-producer.properties"

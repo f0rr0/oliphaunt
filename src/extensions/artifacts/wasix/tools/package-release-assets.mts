@@ -9,7 +9,7 @@ import {
   resolveNativeComponentClosure,
 } from '../../../tools/native-component-contract.mts';
 const PREFIX = 'package-wasix-extension-assets.sh';
-const WASIX_PRODUCT_PATH = 'src/runtimes/liboliphaunt-wasix';
+const WASIX_PRODUCT_PATH = 'src/wasix/runtime';
 const WASIX_VERSION_PATH = `${WASIX_PRODUCT_PATH}/VERSION`;
 const PRODUCT_METADATA_PATH = 'src/extensions/generated/sdk/extensions.json';
 const nativeComponentContract = loadNativeComponentContract();

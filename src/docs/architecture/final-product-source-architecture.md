@@ -1,11 +1,11 @@
 # Oliphaunt Source Architecture
 
 Status: canonical product, task, qualification, and release-boundary model.
-Last reviewed: 2026-09-11. Owner: repository maintainers.
+Last reviewed: 2026-09-26. Owner: repository maintainers.
 
 This document describes the active repository model. It is not a migration log.
-The remaining target layout and implementation progress are tracked in
-[the simplification plan](repository-simplification-plan.md).
+The earlier simplification is recorded in
+[the historical plan](repository-simplification-plan.md).
 
 ## Authority Boundaries
 
@@ -23,7 +23,7 @@ Oliphaunt uses one source graph and one release identity system:
   artifacts, and exact published-product compatibility pins.
 - Product-local `targets/*.toml` files own platform artifact metadata.
 - Product-owned tools assemble and validate their packages. Shared archive and
-  metadata contracts live under `src/shared/`.
+  metadata contracts live under `tools/packaging/`.
 - Shell entrypoints under `tools/release/` own release command execution;
   TypeScript handles metadata, native HTTP, frozen publication identities and
   receipts. Committed scripting source uses TypeScript or Shell; published
@@ -35,33 +35,59 @@ coupling, it must be visible in Moon or release-please/product-local metadata.
 
 ## Source Shape
 
-Source products and shared domains live under `src/`:
+Choose the runtime family first, then the role. `native` executes native
+PostgreSQL; `wasix` executes the WASIX guest, including when its host is Node.js,
+Bun, Deno, or a Rust application.
 
 ```text
-src/third-party/postgres/        PostgreSQL 18 source pin and validation
-src/sources/                     shared source and toolchain pins
-src/extensions/                  exact SQL extension catalog, recipes, evidence
-src/runtimes/liboliphaunt-native native C ABI runtime
-src/runtimes/liboliphaunt-wasix  WASIX runtime and AOT assets
-src/sdks/ts-wasix/node-addon          WASIX Node-API runtime adapter
-broker              Rust broker helper runtime
-src/sdks/ts/node-addon         Node direct native runtime
-src/sdks/rust/sdk                    Rust SDK
-src/sdks/swift                   Swift SDK
-src/sdks/kotlin                  Kotlin/Android SDK
-src/sdks/react-native            React Native SDK
-src/sdks/ts/sdk                      TypeScript SDK
-src/sdks/rust-wasix          Rust binding for the WASIX runtime
-src/sdks/ts-wasix/sdk            TypeScript browser and Node/Bun/Deno/Electron WASIX binding with optional tools
-src/sdks/ts-query                   published TypeScript query and protocol package
-src/sdks/rust-query                 published Rust query crate
-src/extensions/contracts extension/runtime ABI contract
-src/database-resources/contracts shared cluster-seed format contract
-tools/packaging    shared archive and package contracts
-tools/release      shared product and compatibility readers
-test-fixtures              shared semantic test fixtures
-docs                         public docs site
+src/
+├── native/
+│   ├── runtime/          C ABI, PostgreSQL patches, platform builds and carriers
+│   ├── rust-bindings/    shared Rust bindings to the native C ABI
+│   ├── mobile-bindings/  generated Swift/Kotlin bridge
+│   ├── node-addon/       Node-API adapter to the native runtime
+│   ├── broker/           native process isolation and IPC
+│   ├── postgres-tools/   native PostgreSQL command-line tools
+│   └── sdks/             rust, ts, swift, kotlin, react-native
+├── wasix/
+│   ├── runtime/          embedded WASIX guest, portable and AOT artifacts
+│   ├── postmaster/       concurrent postmaster guest and executor
+│   ├── browser-host/     patched Wasmer JavaScript host
+│   ├── node-addon/       Node-API adapter to the WASIX Rust SDK
+│   ├── pgwire-server/    WASIX database server over the PostgreSQL wire protocol
+│   ├── postgres-tools/   WASIX PostgreSQL tools and their TypeScript facade
+│   └── sdks/             rust, ts
+├── query/                runtime-independent Rust and TypeScript query packages
+├── database-resources/   cluster seeds, ICU data and resource contracts
+├── extensions/           extension catalog, recipes, carriers and evidence
+├── third-party/          shared upstream source pins and acquisition tools
+├── examples/
+│   ├── native/           electron, tauri, react-native-expo
+│   ├── wasix/            browser, electron, tauri
+│   └── assets/           example artwork shared by both families
+├── test-fixtures/        shared semantic fixtures
+├── benchmarks/           performance and footprint measurements
+└── docs/                 documentation site and maintainer references
 ```
+
+Product-owned build, test and packaging helpers stay with their owner. General
+development, CI, packaging and publication tools live under root `tools/`.
+The portable UUID implementation belongs to `extensions/contrib/portable-uuid`
+because both runtime families compile it. Windows VC runtime redistribution
+policy belongs to `tools/packaging/windows-vc-runtime-policy.json` because both
+families ship Windows binaries.
+
+The [WASIX TypeScript SDK](../../wasix/sdks/ts/ARCHITECTURE.md) separates shared
+API and storage code from `hosts/browser` and `hosts/node-api`. A Node-API host
+inside `wasix` still runs the WASIX guest; it does not use the native family.
+
+Directory names are navigation, not package identities. Moon project IDs,
+release components, registry names, versions and tag prefixes remain independent
+of checkout paths. Published Swift source tags retain `src/sdks/swift/Sources`
+and `Carriers`; packaging copies the current sources and canonical C header into
+that established tree. WASIX portable archives likewise retain their established
+generated-asset member paths. These are distribution paths, not duplicate source
+owners in this checkout.
 
 Generated local state lives outside source roots or in ignored product build
 directories. Root `target/`, `.moon/cache/`, `node_modules/`, Gradle build
@@ -191,7 +217,7 @@ The flow is:
 
 Mobile build jobs do not own ABI lists. They request target surfaces such as
 `react-native-android` and `react-native-ios`; the selected native runtime
-target IDs come from `src/runtimes/liboliphaunt-native/targets/*.toml`. Mobile
+target IDs come from `src/native/runtime/targets/*.toml`. Mobile
 E2E is a separate installed-app phase that consumes the app artifacts from the
 same CI run; it must not rebuild runtimes, SDKs, or extension packages.
 

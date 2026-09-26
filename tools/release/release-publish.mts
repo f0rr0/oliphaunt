@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readSelectedRemoteTagMap } from '../../.github/scripts/manage-release-drafts.mts';
-import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from '../../src/sdks/kotlin/tools/kotlin-maven-staging.mts';
+import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from '../../src/native/sdks/kotlin/tools/kotlin-maven-staging.mts';
 import { compareText, currentProductVersionSync } from './release-artifact-targets.mts';
 import { loadProducts, releaseOrder } from './release-graph.mts';
 import { loadBootstrapLedger } from './bootstrap-ledger.mts';

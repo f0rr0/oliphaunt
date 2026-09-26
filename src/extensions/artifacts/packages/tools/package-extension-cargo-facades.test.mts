@@ -15,7 +15,7 @@ import {
   expectedExtensionAotTargets,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
-} from '../../../../runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts';
+} from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import {
   currentProductVersionSync,
   extensionRegistryPackageTargetSets,
@@ -162,7 +162,7 @@ fixture-native-tools = { path = ${JSON.stringify(tools)} }
 fixture-broker = { path = ${JSON.stringify(broker)} }
 
 [build-dependencies]
-oliphaunt-build = { path = ${JSON.stringify(path.resolve(import.meta.dir, '../../../../sdks/rust/sdk/crates/oliphaunt-build'))} }
+oliphaunt-build = { path = ${JSON.stringify(path.resolve(import.meta.dir, '../../../../native/sdks/rust/crates/oliphaunt-build'))} }
 
 [workspace]
 `,

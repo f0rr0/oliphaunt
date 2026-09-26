@@ -23,6 +23,7 @@ fileGroups:
     - "/src/third-party/icu/LICENSE"
     - "/src/third-party/openssl/LICENSE.txt"
   release-archive-contract:
+    - "/tools/packaging/windows-vc-runtime-policy.json"
     - "/tools/packaging/release-directory-safety.mts"
     - "/tools/packaging/portable-archive.mts"
     - "/tools/packaging/release-notices.mts"
@@ -41,7 +42,7 @@ fileGroups:
     - "/tools/release/release-history.mts"
     - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
     - "/src/extensions/artifacts/packages/tools/extension-registry-packages.mts"
-    - "/src/runtimes/liboliphaunt-wasix/tools/wasix-cargo-artifact-contract.mts"
+    - "/src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts"
   release-target-contract:
     - "/tools/release/platform-compatibility-policy.mts"
     - "/src/extensions/contracts/extension-target-profiles.mts"

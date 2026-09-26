@@ -13,8 +13,8 @@ import {
 const productionDomains = [
   ['src/third-party/icu', sourceOrigins.sharedThirdParty],
   ['src/third-party/openssl', sourceOrigins.sharedThirdParty],
-  ['src/runtimes/liboliphaunt-native/sources', sourceOrigins.nativeThirdParty],
-  ['src/runtimes/liboliphaunt-wasix-postmaster/sources', sourceOrigins.wasixPostmasterThirdParty],
+  ['src/native/runtime/sources', sourceOrigins.nativeThirdParty],
+  ['src/wasix/postmaster/sources', sourceOrigins.wasixPostmasterThirdParty],
 ];
 
 test('production-all is the default release scope and includes every product pin', () => {
@@ -32,8 +32,8 @@ test('all honestly spans every repository source domain', () => {
   assert.deepEqual(sourceDomainsForScope('all'), [
     ['src/third-party/icu', sourceOrigins.sharedThirdParty],
     ['src/third-party/openssl', sourceOrigins.sharedThirdParty],
-    ['src/runtimes/liboliphaunt-native/sources', sourceOrigins.nativeThirdParty],
-    ['src/runtimes/liboliphaunt-wasix-postmaster/sources', sourceOrigins.wasixPostmasterThirdParty],
+    ['src/native/runtime/sources', sourceOrigins.nativeThirdParty],
+    ['src/wasix/postmaster/sources', sourceOrigins.wasixPostmasterThirdParty],
   ]);
   assert.equal(scopeIncludesExtensions('all'), true);
   assert.equal(scopeIncludes('all', sourceOrigins.sharedThirdParty), true);
@@ -46,7 +46,7 @@ test('postmaster scope includes only its runtime dependencies and private pins',
   assert.deepEqual(sourceDomainsForScope('wasix-postmaster-runtime'), [
     ['src/third-party/icu', sourceOrigins.sharedThirdParty],
     ['src/third-party/openssl', sourceOrigins.sharedThirdParty],
-    ['src/runtimes/liboliphaunt-wasix-postmaster/sources', sourceOrigins.wasixPostmasterThirdParty],
+    ['src/wasix/postmaster/sources', sourceOrigins.wasixPostmasterThirdParty],
   ]);
   assert.equal(scopeIncludesExtensions('wasix-postmaster-runtime'), false);
   assert.equal(scopeIncludes('wasix-postmaster-runtime', sourceOrigins.sharedThirdParty), true);
