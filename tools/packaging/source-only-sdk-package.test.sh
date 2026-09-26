@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-bun test ./tools/packaging/source-only-sdk-package.test.mts
+bash tools/dev/bun.sh test ./tools/packaging/source-only-sdk-package.test.mts
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-source-sdk-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 bun tools/packaging/source-only-sdk-package.test.mts prepare "$scratch"

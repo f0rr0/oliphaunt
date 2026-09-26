@@ -196,7 +196,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-    command: bash tools/ci/with-projects.sh test --timeout=30000 ./tools/release/prepare-release-candidate.test.mts
+    command: bash tools/ci/with-projects.sh test ./tools/release/prepare-release-candidate.test.mts
   check:
     tags:
       - policy

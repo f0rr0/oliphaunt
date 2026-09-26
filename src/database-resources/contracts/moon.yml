@@ -25,7 +25,7 @@ fileGroups:
 tasks:
   test:
     tags: ["quality", "unit"]
-    command: "bun test ./src/database-resources/contracts"
-    inputs: ["**/*"]
+    command: "bash tools/dev/bun.sh test ./src/database-resources/contracts"
+    inputs: ["/tools/dev/bun.sh", "**/*"]
     options:
       runFromWorkspaceRoot: true

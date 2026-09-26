@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-bun test ./tools/packaging/archive-directory.test.mts
+bash tools/dev/bun.sh test ./tools/packaging/archive-directory.test.mts
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-archive-interop-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/source/nested/empty" "$scratch/extracted"

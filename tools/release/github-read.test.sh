@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/github-read.test.mts
+bash tools/dev/bun.sh test ./tools/release/github-read.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 printf '%s\n' 'globalThis.fetch = async () => Response.json([{id: 42}]);' > "$scratch/fetch.mts"

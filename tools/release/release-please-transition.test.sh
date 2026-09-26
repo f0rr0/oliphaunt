@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 source_root="$PWD"
-bun test ./tools/release/release-please-transition.test.mts
+bash tools/dev/bun.sh test ./tools/release/release-please-transition.test.mts
 repo="$(mktemp -d)"
 trap 'rm -rf "$repo"' EXIT
 cd "$repo"

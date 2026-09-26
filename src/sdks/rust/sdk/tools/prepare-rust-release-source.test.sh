@@ -10,4 +10,4 @@ for owner in sdk build; do
   root="$OLIPHAUNT_RUST_RELEASE_SOURCE_TEST_ROOT/$owner"
   bash tools/packaging/package-cargo-source.sh "$root/source/Cargo.toml" "$root/crate"
 done
-bun test --timeout=30000 ./src/sdks/rust/sdk/tools/prepare-rust-release-source.test.mts
+bash tools/dev/bun.sh test ./src/sdks/rust/sdk/tools/prepare-rust-release-source.test.mts

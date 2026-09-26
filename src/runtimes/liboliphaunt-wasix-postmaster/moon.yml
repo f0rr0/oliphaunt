@@ -89,8 +89,9 @@ tasks:
       - quality
       - unit
       - requires-rust
-    script: "set -e\nbun test ./src/runtimes/liboliphaunt-wasix-postmaster\ncargo test --locked --manifest-path src/runtimes/liboliphaunt-wasix-postmaster/tools/sealed-export-closure/Cargo.toml --target-dir target/oliphaunt-wasix-postmaster/runtime/sealed-export-closure-target\nwhile IFS= read -r test_file; do bash \"$test_file\"; done < <(find src/runtimes/liboliphaunt-wasix-postmaster -type f -name '*.test.sh' ! -name 'seal-wasix-linear-memory.test.sh' | LC_ALL=C sort)\n"
+    script: "set -e\nbash tools/dev/bun.sh test ./src/runtimes/liboliphaunt-wasix-postmaster\ncargo test --locked --manifest-path src/runtimes/liboliphaunt-wasix-postmaster/tools/sealed-export-closure/Cargo.toml --target-dir target/oliphaunt-wasix-postmaster/runtime/sealed-export-closure-target\nwhile IFS= read -r test_file; do bash \"$test_file\"; done < <(find src/runtimes/liboliphaunt-wasix-postmaster -type f -name '*.test.sh' ! -name 'seal-wasix-linear-memory.test.sh' | LC_ALL=C sort)\n"
     inputs:
+      - "/tools/dev/bun.sh"
       - "**/*"
       - /tools/packaging/strict-json.mts
     options:

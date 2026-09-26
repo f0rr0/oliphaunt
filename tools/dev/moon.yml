@@ -38,7 +38,7 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -eu\nfor test in tools/dev/extract-pinned-zip.test.sh tools/dev/install-pinned-js-runtime.test.sh tools/dev/install-pinned-winflexbison.test.sh .github/actions/setup-moon/install-pinned-node.test.sh .github/actions/setup-moon/install-pinned-toolchain.test.sh .github/actions/setup-npm-publisher/install.test.sh .github/scripts/setup-native-build-tools.test.sh; do\n  bash \"$test\"\ndone\nbash tools/dev/maintainer-tool-install.test.sh\n"
+    script: "set -eu\nfor test in tools/dev/bun.test.sh tools/dev/extract-pinned-zip.test.sh tools/dev/install-pinned-js-runtime.test.sh tools/dev/install-pinned-winflexbison.test.sh .github/actions/setup-moon/install-pinned-node.test.sh .github/actions/setup-moon/install-pinned-toolchain.test.sh .github/actions/setup-npm-publisher/install.test.sh .github/scripts/setup-native-build-tools.test.sh; do\n  bash \"$test\"\ndone\nbash tools/dev/maintainer-tool-install.test.sh\n"
     inputs:
       - install-pinned*
       - install-actionlint.sh
@@ -47,6 +47,7 @@ tasks:
       - extract-pinned*
       - winflexbison-identity.mts
       - bun.sh
+      - bun.test.sh
       - node-info.mts
       - curl-platform-flags.sh
       - /.prototools

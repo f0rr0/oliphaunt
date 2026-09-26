@@ -5,7 +5,7 @@ tests=(./src/__tests__)
 for test in ./tools/*.test.mts; do
   [[ -f "${test%.mts}.sh" ]] || tests+=("$test")
 done
-bun test --isolate --timeout=30000 "${tests[@]}"
+bash ../../../tools/dev/bun.sh test --cwd src/sdks/react-native --isolate "${tests[@]}"
 for test in tools/stage-ios-app.test.sh tools/ios-app-transport.test.sh tools/expo-ios-runner.test.sh tools/mobile-extension-artifact-paths.test.sh; do
   bash "$test"
 done

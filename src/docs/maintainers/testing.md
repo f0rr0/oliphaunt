@@ -14,6 +14,12 @@ Each SDK is validated with the same tools its consumers use:
 - Installed React Native app smoke and benchmark coverage:
   `src/examples/react-native-expo/`
 
+All Bun test entrypoints (Shell, Moon, workflows, and package scripts) use
+`bash tools/dev/bun.sh test`. This launcher selects the pinned Bun and owns the
+30-second per-test default. Use an explicit `--timeout` only for a different
+limit. The launcher starts from the repository root; package-local tests pass
+`--cwd src/path/to/package` so their paths and Bun configuration stay local.
+
 Use the tier model below when deciding whether a check belongs in PR fast
 feedback, affected integration, an explicit full manual run, release dry-run, or post-publish
 validation.

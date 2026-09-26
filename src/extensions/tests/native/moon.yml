@@ -13,9 +13,10 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
-      bun test ./src/extensions/tests/native/tools
+      bash tools/dev/bun.sh test ./src/extensions/tests/native/tools
       cargo test --locked -p oliphaunt-native-extension-proof
     inputs:
+      - "/tools/dev/bun.sh"
       - "Cargo.toml"
       - "src/**/*.rs"
       - "@group(cargo-workspace)"

@@ -5,7 +5,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 test_data="$tools/ios-app-transport.test.mts"
 cli="$tools/ios-app-transport.sh"
-bun test "$test_data"
+bash "$tools/../../../../tools/dev/bun.sh" test "$test_data"
 reject() {
   local expected="$1"
   shift

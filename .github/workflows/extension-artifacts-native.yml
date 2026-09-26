@@ -60,7 +60,7 @@ jobs:
 
       - name: Verify Windows VC runtime atomic staging
         if: ${{ runner.os == 'Windows' }}
-        run: tools/dev/bun.sh test ./tools/packaging/windows-vc-runtime-closure.test.mts
+        run: bash tools/dev/bun.sh test ./tools/packaging/windows-vc-runtime-closure.test.mts
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -139,4 +139,3 @@ jobs:
             /tmp/liboliphaunt-ci-extension-assets-fetch.log
             /tmp/liboliphaunt-release-extension-assets-fetch.log
           if-no-files-found: warn
-

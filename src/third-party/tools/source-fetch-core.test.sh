@@ -19,7 +19,7 @@ for scope in icu native-runtime wasix-runtime wasix-postmaster-runtime productio
     [[ ! -e "$plan/postgis.json" && ! -e "$plan/libiconv.json" ]]
   fi
 done
-bun test "$test_data"
+bash "$root_dir/tools/dev/bun.sh" test "$test_data"
 mkdir "$scratch/fixtures" "$scratch/bin"
 bun "$test_data" prepare "$scratch/fixtures"
 for name in git curl sleep; do

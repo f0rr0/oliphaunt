@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./src/extensions/artifacts/packages/tools/package-extension-cargo-facades.test.mts
+bash tools/dev/bun.sh test ./src/extensions/artifacts/packages/tools/package-extension-cargo-facades.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 host="$(rustc -vV | sed -n 's/^host: //p')"

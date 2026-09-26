@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-OLIPHAUNT_EXTENSION_NODE_FIXTURES="$scratch" bun test ./src/extensions/artifacts/packages/tools/extension-wasix-npm-packages.test.mts
+OLIPHAUNT_EXTENSION_NODE_FIXTURES="$scratch" bash tools/dev/bun.sh test ./src/extensions/artifacts/packages/tools/extension-wasix-npm-packages.test.mts
 while IFS= read -r entrypoint; do
   node src/extensions/artifacts/packages/tools/testdata/inspect-wasix-descriptor.mts "$entrypoint"
 done < "$scratch/entrypoints"

@@ -41,4 +41,4 @@ cp "$RELEASE_TAG_CONTRIB" contrib
 SH
 RELEASE_HEAD_COMMIT="$(cat first)" bash check.sh --head-ref "$(cat expected-head)"
 cd "$source_root"
-TEST_TAG_ROOT="$scratch" bun test ./tools/release/release-version-tags.test.mts
+TEST_TAG_ROOT="$scratch" bash tools/dev/bun.sh test ./tools/release/release-version-tags.test.mts

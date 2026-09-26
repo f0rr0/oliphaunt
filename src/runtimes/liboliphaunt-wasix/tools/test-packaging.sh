@@ -16,7 +16,7 @@ if bun "$contract" unsupported > /dev/null 2>&1; then
   echo 'Unsupported AOT download target was accepted' >&2
   exit 1
 fi
-bun test --timeout=30000 ./src/runtimes/liboliphaunt-wasix/tools
+bash tools/dev/bun.sh test ./src/runtimes/liboliphaunt-wasix/tools
 node src/runtimes/liboliphaunt-wasix/tools/wasix-runtime-npm.test-consumer.mts
 for scenario in nested-owner aggregate; do
   root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/$scenario"

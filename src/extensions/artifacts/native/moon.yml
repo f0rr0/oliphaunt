@@ -32,6 +32,7 @@ tasks:
       - unit
     command: bash src/extensions/artifacts/native/tools/test.sh
     inputs:
+      - "/tools/dev/bun.sh"
       - /src/extensions/artifacts/native/tools/run-observed-phase.sh
       - /src/extensions/artifacts/native/tools/run-observed-phase.test.sh
       - /src/extensions/artifacts/native/tools/*.{mts,sh}

@@ -41,7 +41,7 @@
   "scripts": {
     "build": "bash -c \"rm -rf lib\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "bun test --isolate --timeout=30000 ./src/__tests__ ./tools/wasix-tools-typescript-package.test.mts",
+    "test": "bash ../../../../tools/dev/bun.sh test --cwd src/postgres-tools/wasix/ts --isolate ./src/__tests__ ./tools/wasix-tools-typescript-package.test.mts",
     "clean": "bash -c \"rm -rf lib\""
   },
   "dependencies": {

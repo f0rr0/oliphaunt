@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/github-content-write-pacer.test.mts
+bash tools/dev/bun.sh test ./tools/release/github-content-write-pacer.test.mts
 scratch="$(mktemp -d)"
 pids=()
 cleanup() {

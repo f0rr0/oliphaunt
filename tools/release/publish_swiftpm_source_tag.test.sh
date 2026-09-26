@@ -5,7 +5,7 @@ if [[ "${1:-}" != --with-projects ]]; then
   exec bash tools/ci/with-projects.sh --exec bash "$0" --with-projects
 fi
 source_root="$PWD"
-bun test ./tools/release/publish_swiftpm_source_tag.test.mts
+bash tools/dev/bun.sh test ./tools/release/publish_swiftpm_source_tag.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 bun tools/release/publish_swiftpm_source_tag.test.mts prepare "$scratch"

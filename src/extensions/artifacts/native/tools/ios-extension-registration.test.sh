@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./src/extensions/artifacts/native/tools/ios-extension-registration.test.mts
+bash tools/dev/bun.sh test ./src/extensions/artifacts/native/tools/ios-extension-registration.test.mts
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 cat > "$scratch/extension.c" <<'C'

@@ -34,6 +34,8 @@ tasks:
   test:
     command: "bun run test"
     inputs:
+      - "/tools/dev/bun.sh"
+      - "package.json"
       - "tools/published-products*"
       - "tools/request-refresh*"
       - "tools/verify-live*"

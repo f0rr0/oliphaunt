@@ -10,5 +10,5 @@ for file in src/runtimes/liboliphaunt-native/tools/*.test.mts; do
     tests+=("./$file")
   fi
 done
-bun test --timeout=30000 "${tests[@]}"
+bash tools/dev/bun.sh test "${tests[@]}"
 for file in "${shell_tests[@]}"; do bash "$file"; done

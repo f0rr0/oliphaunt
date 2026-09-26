@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-bun test --timeout=30000 ./tools/packaging/cargo-source-package.test.mts
+bash tools/dev/bun.sh test ./tools/packaging/cargo-source-package.test.mts
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-cargo-source-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 bun tools/packaging/cargo-source-package.test.mts prepare "$scratch"

@@ -30,7 +30,7 @@
     "format-check": "cargo fmt --check",
     "typecheck": "cargo check --locked",
     "lint": "cargo clippy --all-targets --locked -- -D warnings",
-    "test": "bun test tools/check-release-assets.test.mts",
+    "test": "bash ../../../../tools/dev/bun.sh test --cwd src/sdks/ts/node-addon tools/check-release-assets.test.mts",
     "build": "bash tools/build-native.sh",
     "test-built": "bash tools/test-node-addon-cleanup-lifecycle.sh target/oliphaunt-node-direct/native/oliphaunt_node.node",
     "dependency-license-audit": "bash ../../../../tools/packaging/audit-rust-dependency-licenses.sh src/sdks/ts/node-addon/tools/dependency-license-contract.mts oliphaunt-node-direct"

@@ -78,8 +78,9 @@ tasks:
     inputs: ["@group(code)", "/Cargo.lock", "/Cargo.toml"]
   test:
     tags: ["quality", "unit"]
-    command: "bun test tools/check-release-assets.test.mts"
+    command: "bash ../../../../tools/dev/bun.sh test --cwd src/sdks/ts/node-addon tools/check-release-assets.test.mts"
     inputs:
+      - "/tools/dev/bun.sh"
       - "@group(code)"
       - "/tools/packaging/testdata/tar-fixture.mts"
       - "@group(legal-files)"

@@ -97,6 +97,7 @@ tasks:
     deps:
       - oliphaunt-query-ts:build
     inputs:
+      - "/tools/dev/bun.sh"
       - /tools/release/check_registry_publication.mts
       - /tools/release/public-consumer-smoke.mts
       - project: shared-test-fixtures

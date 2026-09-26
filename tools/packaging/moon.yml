@@ -29,6 +29,7 @@ tasks:
       - requires-rust
     command: "bash tools/packaging/test.sh"
     inputs:
+      - "/tools/dev/bun.sh"
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"
       - "@group(legal-files)"

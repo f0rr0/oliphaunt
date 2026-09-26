@@ -27,10 +27,10 @@ require zizmor
 # actionlint 1.7.12 predates GitHub's `concurrency.queue: max` schema addition.
 run actionlint -ignore 'unexpected key "queue" for "concurrency" section'
 run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .github/workflows .github/actions
-run tools/dev/bun.sh test ./tools/ci/workflow-security.test.mts
+run bash tools/dev/bun.sh test ./tools/ci/workflow-security.test.mts
 run tools/dev/bun.sh tools/ci/workflow-security.mts
 run bash .github/scripts/check-ci-gate.test.sh
-run tools/dev/bun.sh test ./.github/scripts/resolve-mobile-e2e.test.mts
+run bash tools/dev/bun.sh test ./.github/scripts/resolve-mobile-e2e.test.mts
 run bash .github/scripts/run-moon-targets.test.sh
 graph_file="$(mktemp)"
 observations="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-ci-observations.XXXXXX")"
@@ -38,7 +38,7 @@ trap 'rm -f "$graph_file"; rm -rf "$observations"' EXIT
 "${MOON_BIN:-moon}" task-graph --json >"$graph_file"
 export OLIPHAUNT_MOON_TASK_GRAPH_FILE="$graph_file"
 export OLIPHAUNT_CI_TEST_OBSERVATIONS="$observations"
-run tools/dev/bun.sh test ./.github/scripts/moon-task-capabilities.test.mts
+run bash tools/dev/bun.sh test ./.github/scripts/moon-task-capabilities.test.mts
 run bash .github/scripts/write-affected-moon-target-matrices.test.sh
 run bash .github/scripts/resolve-planned-moon-execution.test.sh
 run bash tools/ci/with-projects.sh --exec bash tools/ci/capture-ci-test-observations.sh "$observations"

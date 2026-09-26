@@ -48,6 +48,7 @@ tasks:
     tags: ["quality", "unit"]
     command: "bun run --cwd src/postgres-tools/wasix/ts test"
     inputs:
+      - "/tools/dev/bun.sh"
       - "@group(bun-workspace)"
       - "@group(code)"
       - project: "shared-test-fixtures"

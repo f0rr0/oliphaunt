@@ -5,5 +5,5 @@ tests=()
 for test in tools/packaging/*.test.mts; do
   [[ -f "${test%.mts}.sh" ]] || tests+=("./$test")
 done
-bun test --timeout=30000 "${tests[@]}"
+bash tools/dev/bun.sh test "${tests[@]}"
 for test in tools/packaging/*.test.sh; do bash "$test"; done

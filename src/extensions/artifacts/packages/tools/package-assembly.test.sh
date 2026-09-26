@@ -59,4 +59,4 @@ bun src/extensions/artifacts/wasix/tools/package-release-assets.mts \
   --root "$root" --asset-root "$scratch/wasix/assets" --metadata "$scratch/wasix/extensions.json" \
   --manifest "$scratch/wasix/manifest.json" --out-dir "$scratch/wasix/out" \
   --target wasix-portable --extension-products oliphaunt-extension-contrib-pg18
-OLIPHAUNT_EXTENSION_ASSEMBLY_TEST_ROOT="$scratch/wasix" bun test "./$test_file"
+OLIPHAUNT_EXTENSION_ASSEMBLY_TEST_ROOT="$scratch/wasix" bash tools/dev/bun.sh test "./$test_file"

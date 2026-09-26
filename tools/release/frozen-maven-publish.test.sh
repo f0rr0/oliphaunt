@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-bun test ./tools/release/frozen-maven-publish.test.mts
+bash tools/dev/bun.sh test ./tools/release/frozen-maven-publish.test.mts
 scratch="$(mktemp -d "$PWD/target/frozen-maven-signing.XXXXXX")"
 signing_home="$scratch/gpg"
 cleanup() { gpgconf --homedir "$signing_home" --kill all >/dev/null 2>&1 || true; rm -rf "$scratch"; }
