@@ -1,0 +1,83 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] libc: evaluate the signal jump buffer exactly once
+
+Return the original buffer from the signal-mask preparation helper and pass
+that result directly to setjmp. Previously a side-effectful buffer expression
+could save the mask into one buffer and establish the jump context in another.
+Both arguments now evaluate once while setjmp remains in the caller's frame;
+no returned helper frame or compiler-specific statement expression is used.
+
+This is a separate correctness delta after the source-equivalent 0001-0007
+split. The private helper return ABI changes, so rebuild libc and its callers;
+the ordered series identity invalidates previous sysroot/runtime receipts.
+PostgreSQL's current callers use stable buffers, but the public libc macro must
+also satisfy its argument-evaluation contract. This fix is upstream-suitable
+for the WASIX EH adaptation; it does not change non-EH or upstream musl paths.
+
+diff --git a/libc-top-half/musl/include/setjmp.h b/libc-top-half/musl/include/setjmp.h
+index 47bb2e0..775aa1f 100644
+--- a/libc-top-half/musl/include/setjmp.h
++++ b/libc-top-half/musl/include/setjmp.h
+@@ -42,27 +42,27 @@ _Noreturn void _longjmp (jmp_buf, int);
+ #if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 1)
+ #define __setjmp_attr __attribute__((__returns_twice__))
+ #else
+ #define __setjmp_attr
+ #endif
+ 
+ #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
+ 	defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+ 	typedef jmp_buf sigjmp_buf;
+ #if !defined(__wasilibc_unmodified_upstream) && \
+     defined(__wasm_exception_handling__) && \
+     !defined(__WASIX_LIBC_BUILDING_SETJMP)
+-	int __wasilibc_sigsetjmp_save(sigjmp_buf, int);
++	struct __jmp_buf_tag *__wasilibc_sigsetjmp_save(sigjmp_buf, int);
+ #define sigsetjmp(buf, savesigs) \
+-	(__wasilibc_sigsetjmp_save((buf), (savesigs)), setjmp((buf)))
++	setjmp(__wasilibc_sigsetjmp_save((buf), (savesigs)))
+ #else
+ 	int sigsetjmp(sigjmp_buf, int) __setjmp_attr;
+ #endif
+ 	_Noreturn void siglongjmp(sigjmp_buf, int);
+ #endif
+ 
+ #if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+ 	int _setjmp(jmp_buf) __setjmp_attr;
+ 	_Noreturn void _longjmp(jmp_buf, int);
+ #endif
+ 
+ #undef __setjmp_attr
+diff --git a/libc-top-half/musl/src/signal/sigsetjmp_tail.c b/libc-top-half/musl/src/signal/sigsetjmp_tail.c
+index f35da65..2eeb9cc 100644
+--- a/libc-top-half/musl/src/signal/sigsetjmp_tail.c
++++ b/libc-top-half/musl/src/signal/sigsetjmp_tail.c
+@@ -9,24 +9,24 @@
+ hidden int __sigsetjmp_tail(sigjmp_buf jb, int ret)
+ {
+ #ifdef __wasilibc_unmodified_upstream
+ 	void *p = jb->__ss;
+ 	__syscall(SYS_rt_sigprocmask, SIG_SETMASK, ret?p:0, ret?0:p, _NSIG/8);
+ 	return ret;
+ #else
+ 	return EINVAL;
+ #endif
+ }
+ 
+ #if !defined(__wasilibc_unmodified_upstream) && defined(__wasm_exception_handling__)
+-int __wasilibc_sigsetjmp_save(sigjmp_buf jb, int savesigs)
++struct __jmp_buf_tag *__wasilibc_sigsetjmp_save(sigjmp_buf jb, int savesigs)
+ {
+ 	jb->__fl = savesigs ? 1 : 0;
+ 	if (!savesigs) {
+-		return 0;
++		return jb;
+ 	}
+ 
+ 	memset(jb->__ss, 0, sizeof jb->__ss);
+ 	pthread_sigmask(SIG_SETMASK, NULL, (sigset_t *)jb->__ss);
+-	return 0;
++	return jb;
+ }
+ #endif

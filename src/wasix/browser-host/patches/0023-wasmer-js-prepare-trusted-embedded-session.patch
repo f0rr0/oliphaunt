@@ -1,0 +1,57 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: prepare trusted embedded PostgreSQL sessions
+
+Require and invoke the guest's explicit trusted-embedded-session entrypoint
+before client initialization. The embedded host has already selected the
+session identity; replaying server authentication/bootstrap paths here can
+undo that boundary. This requires the matching PostgreSQL guest patch and is
+an Oliphaunt-specific trusted-host ABI, not a generic authentication bypass.
+
+diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
+index 3c38b13..7b14a8f 100644
+--- a/src/postgres_direct.rs
++++ b/src/postgres_direct.rs
+@@ -508,6 +508,7 @@ pub struct OliphauntDirectInstance {
+     output_data: TypedFunction<(), i32>,
+     set_protocol_transport: TypedFunction<i32, i32>,
+     set_active: TypedFunction<i32, i32>,
++    prepare_trusted_embedded_session: TypedFunction<(), i32>,
+     wasi_start: TypedFunction<(), ()>,
+     start_oliphaunt: TypedFunction<(), ()>,
+     run_atexit_funcs: Option<TypedFunction<(), ()>>,
+@@ -796,6 +797,11 @@ impl OliphauntDirectInstance {
+             "oliphaunt_wasix_set_protocol_transport",
+         )?;
+         let set_active = typed_export(&mut store, &instance, "oliphaunt_wasix_set_active")?;
++        let prepare_trusted_embedded_session = typed_export(
++            &mut store,
++            &instance,
++            "oliphaunt_wasix_prepare_trusted_embedded_session",
++        )?;
+         let wasi_start = typed_export(&mut store, &instance, "_start")?;
+         let start_oliphaunt = typed_export(&mut store, &instance, "oliphaunt_wasix_start")?;
+         let run_atexit_funcs =
+@@ -831,6 +837,7 @@ impl OliphauntDirectInstance {
+             output_data,
+             set_protocol_transport,
+             set_active,
++            prepare_trusted_embedded_session,
+             wasi_start,
+             start_oliphaunt,
+             run_atexit_funcs,
+@@ -922,6 +929,14 @@ impl OliphauntDirectInstance {
+         self.set_active
+             .call(&mut self.store, 1)
+             .context("oliphaunt_wasix_set_active(1)")?;
++        let prepare_status = self
++            .prepare_trusted_embedded_session
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_prepare_trusted_embedded_session")?;
++        ensure!(
++            prepare_status == 0,
++            "oliphaunt_wasix_prepare_trusted_embedded_session rejected after PostgreSQL startup began"
++        );
+         match self.wasi_start.call(&mut self.store) {
+             Ok(()) => {}
+             Err(error) if runtime_exit_code(&error) == Some(OLIPHAUNT_EXIT_ALIVE) => {}

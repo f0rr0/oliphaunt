@@ -1,0 +1,849 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 8/9] postmaster: supply the engine build closure
+
+Keep CLI/workspace dependency integration for the sealed carrier. The product
+compiler/executor, memory profile and startup proof are now first-party sources
+in src/wasix/postmaster/executor, not patched into Wasmer. This patch retains
+the main branch engine build closure; Cargo locks and features remain pinned.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 19464e5..8c36cb7 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -535,17 +535,6 @@ dependencies = [
+  "allocator-api2",
+ ]
+ 
+-[[package]]
+-name = "bus"
+-version = "2.4.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4b7118d0221d84fada881b657c2ddb7cd55108db79c8764c9ee212c0c259b783"
+-dependencies = [
+- "crossbeam-channel",
+- "num_cpus",
+- "parking_lot_core",
+-]
+-
+ [[package]]
+ name = "bytecheck"
+ version = "0.8.2"
+@@ -3716,6 +3705,26 @@ dependencies = [
+  "ruzstd",
+ ]
+ 
++[[package]]
++name = "oliphaunt-wasix-postmaster-executor"
++version = "7.2.0-alpha.2"
++dependencies = [
++ "anyhow",
++ "async-trait",
++ "dirs",
++ "hex",
++ "libc",
++ "serde",
++ "serde_json",
++ "sha2 0.11.0",
++ "tempfile",
++ "tracing",
++ "wasmer",
++ "wasmer-types",
++ "wasmer-vm",
++ "wasmer-wasix",
++]
++
+ [[package]]
+ name = "once_cell"
+ version = "1.21.4"
+@@ -7113,6 +7128,7 @@ dependencies = [
+  "mio",
+  "normpath",
+  "object 0.39.1",
++ "oliphaunt-wasix-postmaster-executor",
+  "once_cell",
+  "opener",
+  "parking_lot",
+@@ -7162,6 +7178,7 @@ dependencies = [
+  "wasmer-wasix",
+  "wasmer-wast",
+  "webc",
++ "windows-sys 0.61.2",
+  "zip",
+ ]
+ 
+@@ -7578,7 +7595,6 @@ dependencies = [
+  "base64 0.22.1",
+  "bincode 2.0.1",
+  "blake3",
+- "bus",
+  "bytecheck",
+  "bytes",
+  "cfg-if",
+diff --git a/Cargo.toml b/Cargo.toml
+index 6ce7557..fa7d8dc 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -110,7 +111,6 @@ bindgen = "0.72.1"
+ bitflags = "2.11.0"
+ blake3 = "1.0"
+ build-deps = "0.1.4"
+-bus = "2.4.1"
+ bytecheck = { version = "0.8.2" }
+ byteorder = "1.3"
+ bytes = "1.11.1"
+diff --git a/lib/cli/Cargo.toml b/lib/cli/Cargo.toml
+index aceecf7..6e710d3 100644
+--- a/lib/cli/Cargo.toml
++++ b/lib/cli/Cargo.toml
+@@ -34,7 +34,8 @@ default = [
+ 	"wast",
+ 	"journal",
+ 	"wasmer-artifact-create",
+-	"static-artifact-create"
++	"static-artifact-create",
++	"cli-signal-watcher"
+ ]
+ 
+ # # Tun-tap client for connecting to Wasmer Edge VPNs
+@@ -49,7 +50,8 @@ default = [
+ journal = ["wasmer-wasix/journal"]
+ backend = []
+ coredump = ["wasm-coredump-builder"]
+-sys = ["compiler", "dep:wasmer-vm"]
++native-runtime = ["dep:wasmer-vm", "wasmer/sys"]
++sys = ["compiler", "native-runtime"]
+ v8 = ["backend", "wasmer/v8"]
+ wast = ["wasmer-wast"]
+ host-net = ["virtual-net/host-net"]
+@@ -92,10 +94,18 @@ disable-all-logging = [
+ 	"wasmer-wasix/disable-all-logging",
+ 	"log/release_max_level_off",
+ ]
+-headless = ["dep:wasmer-vm", "wasmer/sys"]
+-headless-minimal = ["headless", "disable-all-logging"]
++headless = ["native-runtime"]
++headless-minimal = [
++	"headless",
++	"disable-all-logging",
++	"oliphaunt-wasix-postmaster-executor/memory-profile-core",
++]
+ telemetry = []
+ napi-v8 = ["dep:wasmer-napi"]
++# Preserve the interactive full CLI's historical Ctrl+C exit watcher without
++# pulling Tokio's process-global signal machinery into the compiler-free
++# headless carrier.
++cli-signal-watcher = ["tokio/signal"]
+ 
+ # Optional
+ enable-serde = [
+@@ -134,6 +144,9 @@ wasmer-types = { version = "=7.2.0-alpha.2", path = "../types", features = [
+ 	"detect-wasm-features",
+ ] }
+ wasmer-napi = { version = "0.702.0-alpha.2", path = "../napi", optional = true }
++oliphaunt-wasix-postmaster-executor = { version = "=7.2.0-alpha.2", path = "../oliphaunt-wasix-postmaster-executor", default-features = false, features = [
++	"compat-cache-dir",
++] }
+ virtual-fs = { version = "0.702.0-alpha.2", path = "../virtual-fs", default-features = false, features = [
+ 	"host-fs",
+ ] }
+@@ -281,6 +294,10 @@ pretty_assertions.workspace = true
+ 
+ [target.'cfg(target_os = "windows")'.dependencies]
+ colored.workspace = true
++windows-sys = { workspace = true, features = [
++	"Win32_Foundation",
++	"Win32_Storage_FileSystem",
++] }
+ 
+ [package.metadata.binstall]
+ pkg-fmt = "tgz"
+diff --git a/lib/cli/src/backend.rs b/lib/cli/src/backend.rs
+index 1c37513..17fe4c9 100644
+--- a/lib/cli/src/backend.rs
++++ b/lib/cli/src/backend.rs
+@@ -12,7 +12,7 @@ use std::sync::Arc;
+ use std::{path::PathBuf, str::FromStr};
+ 
+ use anyhow::{Context, Result, bail};
+-#[cfg(feature = "sys")]
++#[cfg(feature = "native-runtime")]
+ use wasmer::sys::*;
+ use wasmer::*;
+ use wasmer_types::{Features, target::Target};
+@@ -297,7 +297,6 @@ impl RuntimeOptions {
+         filtered_backends.first().unwrap().get_engine(target, self)
+     }
+ 
+-    #[cfg(feature = "compiler")]
+     /// Get the enabled Wasm features.
+     pub fn get_features(&self, default_features: &Features) -> Result<Features> {
+         if self.features.all {
+@@ -323,10 +322,33 @@ impl RuntimeOptions {
+         if self.features.reference_types {
+             result.reference_types(true);
+         }
++        if self.features.tail_call {
++            result.tail_call(true);
++        }
++        if self.features.module_linking {
++            result.module_linking(true);
++        }
++        if self.features.multi_memory {
++            result.multi_memory(true);
++        }
++        if self.features.memory64 {
++            result.memory64(true);
++        }
++        if self.features.exceptions {
++            result.exceptions(true);
++        }
++        if self.features.relaxed_simd {
++            result.relaxed_simd(true);
++        }
++        if self.features.extended_const {
++            result.extended_const(true);
++        }
++        if self.features.wide_arithmetic {
++            result.wide_arithmetic(true);
++        }
+         Ok(result)
+     }
+ 
+-    #[cfg(feature = "compiler")]
+     /// Get a copy of the default features with user-configured options
+     pub fn get_configured_features(&self) -> Result<Features> {
+         let features = Features::default();
+@@ -531,6 +553,8 @@ impl BackendType {
+             Self::Singlepass,
+             #[cfg(feature = "v8")]
+             Self::V8,
++            #[cfg(all(feature = "headless", not(feature = "compiler")))]
++            Self::Headless,
+         ]
+     }
+ 
+@@ -644,7 +668,11 @@ impl BackendType {
+             }
+             #[cfg(feature = "v8")]
+             Self::V8 => Ok(wasmer::v8::V8::new().into()),
+-            Self::Headless => bail!("Headless is not a valid runtime to instantiate directly"),
++            Self::Headless => Ok(EngineBuilder::headless()
++                .set_features(Some(runtime_opts.get_configured_features()?))
++                .set_target(Some(target.clone()))
++                .engine()
++                .into()),
+             #[allow(unreachable_patterns)]
+             _ => bail!("Unsupported backend type"),
+         }
+@@ -663,7 +691,10 @@ impl BackendType {
+             Self::LLVM => wasmer::BackendKind::LLVM,
+             #[cfg(feature = "v8")]
+             Self::V8 => wasmer::BackendKind::V8,
+-            Self::Headless => return false, // Headless can't compile
++            // A headless engine does not compile the input module. Feature
++            // compatibility is enforced while deserializing the selected AOT
++            // artifact, so feature detection must not filter it out here.
++            Self::Headless => return true,
+             #[allow(unreachable_patterns)]
+             _ => return false,
+         };
+diff --git a/lib/cli/src/commands/mod.rs b/lib/cli/src/commands/mod.rs
+index 5896d6f..eeeaaa9 100644
+--- a/lib/cli/src/commands/mod.rs
++++ b/lib/cli/src/commands/mod.rs
+@@ -32,6 +32,7 @@ mod validate;
+ #[cfg(feature = "wast")]
+ mod wast;
+ use itertools::Itertools;
++#[cfg(feature = "cli-signal-watcher")]
+ use std::io::IsTerminal as _;
+ use tokio::task::JoinHandle;
+ 
+@@ -78,29 +79,38 @@ pub(crate) trait AsyncCliCommand: Send + Sync {
+         &self,
+         done: tokio::sync::oneshot::Receiver<()>,
+     ) -> Option<JoinHandle<anyhow::Result<()>>> {
+-        if std::io::stdin().is_terminal() {
+-            return Some(tokio::task::spawn(async move {
+-                tokio::select! {
+-                    _ = done => {}
+-
+-                    _ = tokio::signal::ctrl_c() => {
+-                        let term = console::Term::stdout();
+-                        let _ = term.show_cursor();
+-                        // https://learn.microsoft.com/en-us/cpp/c-runtime-library/signal-constants
+-                        #[cfg(target_os = "windows")]
+-                        std::process::exit(3);
+-
+-                        // POSIX compliant OSs: 128 + SIGINT (2)
+-                        #[cfg(not(target_os = "windows"))]
+-                        std::process::exit(130);
++        #[cfg(not(feature = "cli-signal-watcher"))]
++        {
++            let _ = done;
++            return None;
++        }
++
++        #[cfg(feature = "cli-signal-watcher")]
++        {
++            if std::io::stdin().is_terminal() {
++                return Some(tokio::task::spawn(async move {
++                    tokio::select! {
++                        _ = done => {}
++
++                        _ = tokio::signal::ctrl_c() => {
++                            let term = console::Term::stdout();
++                            let _ = term.show_cursor();
++                            // https://learn.microsoft.com/en-us/cpp/c-runtime-library/signal-constants
++                            #[cfg(target_os = "windows")]
++                            std::process::exit(3);
++
++                            // POSIX compliant OSs: 128 + SIGINT (2)
++                            #[cfg(not(target_os = "windows"))]
++                            std::process::exit(130);
++                        }
+                     }
+-                }
+ 
+-                Ok::<(), anyhow::Error>(())
+-            }));
+-        }
++                    Ok::<(), anyhow::Error>(())
++                }));
++            }
+ 
+-        None
++            None
++        }
+     }
+ }
+ 
+diff --git a/lib/cli/src/commands/run/mod.rs b/lib/cli/src/commands/run/mod.rs
+index cc9a3b0..8ffcb13 100644
+--- a/lib/cli/src/commands/run/mod.rs
++++ b/lib/cli/src/commands/run/mod.rs
+@@ -20,15 +20,16 @@ use std::{
+     time::{Duration, SystemTime, UNIX_EPOCH},
+ };
+ 
+-use anyhow::{Context, Error, anyhow, bail};
++use anyhow::{Context, Error, anyhow, bail, ensure};
+ use clap::{Parser, ValueEnum};
+ use colored::Colorize;
+ use futures::future::BoxFuture;
+ use indicatif::{MultiProgress, ProgressBar};
++use oliphaunt_wasix_postmaster_executor::sealed;
+ use once_cell::sync::Lazy;
+ use tempfile::NamedTempFile;
+ use url::Url;
+-#[cfg(feature = "sys")]
++#[cfg(feature = "native-runtime")]
+ use wasmer::sys::NativeEngineExt;
+ use wasmer::{
+     AsStoreMut, DeserializeError, Engine, Function, Imports, Instance, Module, RuntimeError, Store,
+@@ -45,8 +46,10 @@ use wasmer_types::ModuleHash;
+ 
+ #[cfg(feature = "journal")]
+ use wasmer_wasix::journal::{LogFileJournal, SnapshotTrigger};
++#[cfg(any(unix, windows))]
++use wasmer_wasix::os::task::HostLifecycleSupervisor;
+ use wasmer_wasix::{
+-    Runtime, SpawnError, WasiError,
++    ResourceLimits, Runtime, SpawnError, WasiError,
+     bin_factory::{BinaryPackage, BinaryPackageCommand},
+     journal::CompactingLogFileJournal,
+     runners::{
+@@ -57,11 +60,8 @@ use wasmer_wasix::{
+         wcgi::{self, AbortHandle, NoOpWcgiCallbacks, WcgiRunner},
+     },
+     runtime::{
+-        OverriddenRuntime,
+-        module_cache::{CacheError, HashedModuleData},
+-        package_loader::PackageLoader,
+-        resolver::QueryError,
+-        task_manager::VirtualTaskManagerExt,
++        OverriddenRuntime, module_cache::ModuleCache, package_loader::PackageLoader,
++        resolver::QueryError, task_manager::VirtualTaskManagerExt,
+     },
+ };
+ use webc::Container;
+@@ -76,10 +76,54 @@ use crate::{
+ };
+ 
+ use self::{
+-    package_source::CliPackageSource, runtime::MonitoringRuntime, target::ExecutableTarget,
++    package_source::CliPackageSource,
++    runtime::{CliTokioRuntimePolicy, MonitoringRuntime},
++    target::ExecutableTarget,
+ };
+ 
+ const TICK: Duration = Duration::from_millis(250);
++const WASIX_STACK_RLIMIT_DIVISOR: u64 = 8;
++
++#[cfg(any(unix, windows))]
++fn attach_cli_host_lifecycle(runner: &mut WasiRunner) -> Result<(), Error> {
++    let supervisor = HostLifecycleSupervisor::install()
++        .context("Unable to install exclusive CLI host lifecycle supervision")?;
++    runner.with_host_lifecycle_supervisor(Arc::new(supervisor));
++    Ok(())
++}
++
++#[cfg(not(any(unix, windows)))]
++fn attach_cli_host_lifecycle(_runner: &mut WasiRunner) -> Result<(), Error> {
++    Ok(())
++}
++
++fn conservative_stack_resource_limit(stack_size: usize) -> u64 {
++    ((stack_size as u64) / WASIX_STACK_RLIMIT_DIVISOR).max(1)
++}
++
++fn resource_limits_for_engine(engine: &Engine, stack_size: Option<usize>) -> ResourceLimits {
++    ResourceLimits {
++        stack: {
++            #[cfg(feature = "native-runtime")]
++            {
++                if engine.is_sys() {
++                    if let Some(stack_size) = stack_size {
++                        wasmer_vm::set_stack_size(stack_size);
++                    }
++                    Some(conservative_stack_resource_limit(
++                        wasmer_vm::get_stack_size(),
++                    ))
++                } else {
++                    None
++                }
++            }
++            #[cfg(not(feature = "native-runtime"))]
++            {
++                None
++            }
++        },
++    }
++}
+ 
+ /// The unstable `wasmer run` subcommand.
+ #[derive(Debug, Parser)]
+@@ -95,6 +139,10 @@ pub struct Run {
+     /// Set the default stack size (default is 1048576)
+     #[clap(long = "stack-size")]
+     stack_size: Option<usize>,
++    /// Run a verified, precompiled-only executable closure.
++    #[cfg(feature = "headless")]
++    #[clap(long = "sealed-module-manifest", value_name = "PATH")]
++    sealed_module_manifest: Option<PathBuf>,
+     /// The entrypoint module for webc packages.
+     #[clap(short, long, aliases = &["command", "command-name"])]
+     entrypoint: Option<String>,
+@@ -115,6 +163,17 @@ pub struct Run {
+ }
+ 
+ impl Run {
++    fn sealed_manifest_path(&self) -> Option<&Path> {
++        #[cfg(feature = "headless")]
++        {
++            self.sealed_module_manifest.as_deref()
++        }
++        #[cfg(not(feature = "headless"))]
++        {
++            None
++        }
++    }
++
+     #[cfg(feature = "napi-v8")]
+     fn module_needs_napi(module: &Module) -> bool {
+         let (napi_version, napi_extension_version) = wasmer_napi::module_needs_napi(module);
+@@ -187,9 +246,28 @@ impl Run {
+ 
+         pb.set_message("Initializing the WebAssembly VM");
+ 
+-        let runtime = tokio::runtime::Builder::new_multi_thread()
+-            .enable_all()
+-            .build()?;
++        let sealed_manifest_path = self.sealed_manifest_path().map(Path::to_path_buf);
++        let sealed_manifest = sealed_manifest_path
++            .as_deref()
++            .map(|manifest| {
++                let input = match &self.input {
++                    CliPackageSource::File(path) => path.as_path(),
++                    _ => bail!("--sealed-module-manifest requires a local executable file input"),
++                };
++                sealed::prepare(manifest, input)
++            })
++            .transpose()?;
++        let sealed_runtime_identity = sealed_manifest
++            .as_ref()
++            .and_then(sealed::PreparedSealedManifest::runtime_identity);
++        let tokio_runtime_policy = CliTokioRuntimePolicy::select(sealed_runtime_identity);
++        tracing::info!(
++            policy_id = tokio_runtime_policy.id(),
++            workload_id = ?tokio_runtime_policy.workload_id(),
++            configured_worker_threads = ?tokio_runtime_policy.configured_worker_threads(),
++            "Selected CLI Tokio runtime policy"
++        );
++        let runtime = tokio_runtime_policy.build()?;
+         let handle = runtime.handle().clone();
+ 
+         // Check for the preferred webc version.
+@@ -210,7 +288,9 @@ impl Run {
+ 
+         // Try to detect WebAssembly features before selecting a backend
+         tracing::info!("Input source: {:?}", self.input);
+-        if let CliPackageSource::File(path) = &self.input {
++        if sealed_manifest_path.is_none()
++            && let CliPackageSource::File(path) = &self.input
++        {
+             tracing::info!("Input file path: {}", path.display());
+ 
+             // Try to read and detect any file that exists, regardless of extension
+@@ -275,20 +355,24 @@ impl Run {
+         let engine_kind = engine.deterministic_id();
+         tracing::info!("Executing on backend {engine_kind:?}");
+ 
+-        #[cfg(feature = "sys")]
+-        if engine.is_sys() && self.stack_size.is_some() {
+-            wasmer_vm::set_stack_size(self.stack_size.unwrap());
+-        }
++        let sealed_modules = sealed_manifest
++            .map(|manifest| sealed::load(manifest, &engine))
++            .transpose()?;
++        let sealed_module_cache = sealed_modules
++            .as_ref()
++            .map(|sealed| sealed.module_cache.clone() as Arc<dyn ModuleCache + Send + Sync>);
+ 
+-        let engine = engine.clone();
++        let resource_limits = resource_limits_for_engine(&engine, self.stack_size);
+ 
+         let runtime = self.wasi.prepare_runtime(
+-            engine,
++            engine.clone(),
+             &self.env,
+             &capabilities::get_capability_cache_path(&self.env, &self.input)?,
+             runtime,
+             preferred_webc_version,
+             self.rt.compiler_debug_dir.is_some(),
++            resource_limits,
++            sealed_module_cache,
+         )?;
+ 
+         // This is a slow operation, so let's temporarily wrap the runtime with
+@@ -301,7 +385,20 @@ impl Run {
+         let runtime: Arc<dyn Runtime + Send + Sync> = monitoring_runtime.runtime.clone();
+         let monitoring_runtime: Arc<dyn Runtime + Send + Sync> = monitoring_runtime;
+ 
+-        let target = self.input.resolve_target(&monitoring_runtime, &pb)?;
++        let (target, sealed_executables) = match sealed_modules {
++            Some(sealed) => (
++                ExecutableTarget::WebAssembly {
++                    module: sealed.module,
++                    module_hash: sealed.module_hash,
++                    path: sealed.path,
++                },
++                sealed.executables,
++            ),
++            None => (
++                self.input.resolve_target(&monitoring_runtime, &pb)?,
++                Vec::new(),
++            ),
++        };
+ 
+         if let ExecutableTarget::Package(ref pkg) = target {
+             self.wasi
+@@ -320,7 +417,13 @@ impl Run {
+                     module,
+                     module_hash,
+                     path,
+-                } => self.execute_wasm(&path, module, module_hash, runtime.clone()),
++                } => self.execute_wasm(
++                    &path,
++                    module,
++                    module_hash,
++                    runtime.clone(),
++                    sealed_executables,
++                ),
+                 ExecutableTarget::Package(pkg) => {
+                     // Check if we should update the engine based on the WebC package features
+                     if let Some(cmd) = pkg.get_entrypoint_command()
+@@ -359,15 +462,17 @@ impl Run {
+                                         &self.env,
+                                         &self.input,
+                                     )?;
++                                let new_resource_limits =
++                                    resource_limits_for_engine(&new_engine, self.stack_size);
+                                 let new_runtime = self.wasi.prepare_runtime(
+                                     new_engine,
+                                     &self.env,
+                                     &capability_cache_path,
+-                                    tokio::runtime::Builder::new_multi_thread()
+-                                        .enable_all()
+-                                        .build()?,
++                                    tokio_runtime_policy.build()?,
+                                     preferred_webc_version,
+                                     self.rt.compiler_debug_dir.is_some(),
++                                    new_resource_limits,
++                                    None,
+                                 )?;
+ 
+                                 let new_runtime = Arc::new(MonitoringRuntime::new(
+@@ -405,9 +510,10 @@ impl Run {
+         module: Module,
+         module_hash: ModuleHash,
+         runtime: Arc<dyn Runtime + Send + Sync>,
++        sealed_executables: Vec<(String, ModuleHash)>,
+     ) -> Result<(), Error> {
+         if wasmer_wasix::is_wasi_module(&module) || wasmer_wasix::is_wasix_module(&module) {
+-            self.execute_wasi_module(path, module, module_hash, runtime)
++            self.execute_wasi_module(path, module, module_hash, runtime, sealed_executables)
+         } else {
+             self.execute_pure_wasm_module(&module)
+         }
+@@ -495,6 +601,7 @@ impl Run {
+ 
+         // Assume webcs are always WASIX
+         let mut runner = self.build_wasi_runner(&runtime, true)?;
++        attach_cli_host_lifecycle(&mut runner)?;
+         #[cfg(feature = "napi-v8")]
+         self.configure_wasi_runner_for_napi(&module, &mut runner);
+         Runner::run_command(&mut runner, command_name, pkg, runtime)
+@@ -696,12 +803,17 @@ impl Run {
+         module: Module,
+         module_hash: ModuleHash,
+         runtime: Arc<dyn Runtime + Send + Sync>,
++        sealed_executables: Vec<(String, ModuleHash)>,
+     ) -> Result<(), Error> {
+         let program_name = wasm_path.display().to_string();
+         let runtime = self.maybe_wrap_runtime_with_napi(&module, runtime)?;
+ 
+         let mut runner =
+             self.build_wasi_runner(&runtime, wasmer_wasix::is_wasix_module(&module))?;
++        attach_cli_host_lifecycle(&mut runner)?;
++        for (guest_path, sealed_hash) in sealed_executables {
++            runner.with_sealed_module(guest_path, sealed_hash, None);
++        }
+         self.configure_wasi_runner_for_napi(&module, &mut runner);
+         runner.run_wasm(
+             RuntimeOrEngine::Runtime(runtime),
+@@ -905,3 +1017,34 @@ fn get_exit_code(
+ 
+     None
+ }
++
++#[cfg(all(test, feature = "headless", not(feature = "compiler")))]
++mod tests {
++    use super::*;
++
++    struct StackSizeRestore(usize);
++
++    impl Drop for StackSizeRestore {
++        fn drop(&mut self) {
++            wasmer_vm::set_stack_size(self.0);
++        }
++    }
++
++    #[test]
++    fn headless_stack_size_sets_vm_and_guest_limit() {
++        let run = Run::try_parse_from(["run", "--stack-size", "33554432", "probe.wasm"])
++            .expect("headless run arguments should parse");
++        let engine = run
++            .rt
++            .get_engine(&Target::default())
++            .expect("headless engine should be available");
++        assert_eq!(engine.deterministic_id(), "engine-headless");
++
++        let previous_stack_size = wasmer_vm::get_stack_size();
++        let _restore = StackSizeRestore(previous_stack_size);
++        let limits = resource_limits_for_engine(&engine, run.stack_size);
++
++        assert_eq!(wasmer_vm::get_stack_size(), 33_554_432);
++        assert_eq!(limits.stack, Some(4_194_304));
++    }
++}
+diff --git a/lib/cli/src/commands/run/runtime.rs b/lib/cli/src/commands/run/runtime.rs
+index c562c24..d06fcc8 100644
+--- a/lib/cli/src/commands/run/runtime.rs
++++ b/lib/cli/src/commands/run/runtime.rs
+@@ -1,6 +1,6 @@
+ //! Provides CLI-specific Wasix components.
+ 
+-use std::{sync::Arc, time::Duration};
++use std::{io, sync::Arc, time::Duration};
+ 
+ use anyhow::Error;
+ use futures::future::BoxFuture;
+@@ -23,6 +23,64 @@ use wasmer_wasix::{
+ };
+ use webc::Container;
+ 
++use oliphaunt_wasix_postmaster_executor::sealed::SealedRuntimeIdentity;
++
++const GENERIC_TOKIO_RUNTIME_POLICY_ID: &str = "wasmer.cli.tokio.default.v1";
++pub(super) const SEALED_POSTMASTER_TOKIO_RUNTIME_POLICY_ID: &str =
++    "oliphaunt.wasix-postmaster.tokio.sealed-postmaster-2-worker.v1";
++const SEALED_POSTMASTER_TOKIO_WORKER_THREADS: usize = 2;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(super) enum CliTokioRuntimePolicy {
++    Generic,
++    SealedWasixPostmaster(SealedRuntimeIdentity),
++}
++
++impl CliTokioRuntimePolicy {
++    pub(super) const fn select(identity: Option<SealedRuntimeIdentity>) -> Self {
++        match identity {
++            Some(identity) => Self::SealedWasixPostmaster(identity),
++            None => Self::Generic,
++        }
++    }
++
++    pub(super) const fn id(self) -> &'static str {
++        match self {
++            Self::Generic => GENERIC_TOKIO_RUNTIME_POLICY_ID,
++            Self::SealedWasixPostmaster(_) => SEALED_POSTMASTER_TOKIO_RUNTIME_POLICY_ID,
++        }
++    }
++
++    pub(super) const fn workload_id(self) -> Option<&'static str> {
++        match self {
++            Self::Generic => None,
++            Self::SealedWasixPostmaster(identity) => Some(identity.workload_id()),
++        }
++    }
++
++    pub(super) const fn configured_worker_threads(self) -> Option<usize> {
++        match self {
++            Self::Generic => None,
++            Self::SealedWasixPostmaster(_) => Some(SEALED_POSTMASTER_TOKIO_WORKER_THREADS),
++        }
++    }
++
++    pub(super) fn build(self) -> io::Result<tokio::runtime::Runtime> {
++        match self {
++            // Keep generic Wasmer behavior byte-for-byte equivalent to the
++            // historical builder: Tokio owns its platform-default worker
++            // selection and environment override semantics.
++            Self::Generic => tokio::runtime::Builder::new_multi_thread()
++                .enable_all()
++                .build(),
++            Self::SealedWasixPostmaster(_) => tokio::runtime::Builder::new_multi_thread()
++                .worker_threads(SEALED_POSTMASTER_TOKIO_WORKER_THREADS)
++                .enable_all()
++                .build(),
++        }
++    }
++}
++
+ /// Special wasix runtime implementation for the CLI.
+ ///
+ /// Wraps an undelrying runtime and adds progress monitoring for package
+@@ -53,6 +111,10 @@ impl<R: wasmer_wasix::Runtime + Send + Sync> wasmer_wasix::Runtime for Monitorin
+         self.runtime.task_manager()
+     }
+ 
++    fn resource_limits(&self) -> wasmer_wasix::ResourceLimits {
++        self.runtime.resource_limits()
++    }
++
+     fn package_loader(
+         &self,
+     ) -> Arc<dyn wasmer_wasix::runtime::package_loader::PackageLoader + Send + Sync> {
+@@ -264,3 +326,42 @@ impl wasmer_wasix::runtime::package_loader::PackageLoader for MonitoringPackageL
+             .await
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn sealed_postmaster_policy_id_and_worker_configuration_are_stable() {
++        for identity in [
++            SealedRuntimeIdentity::WasixPostmasterInitdb,
++            SealedRuntimeIdentity::WasixPostmasterPostgres,
++        ] {
++            let policy = CliTokioRuntimePolicy::select(Some(identity));
++            assert_eq!(
++                policy.id(),
++                "oliphaunt.wasix-postmaster.tokio.sealed-postmaster-2-worker.v1"
++            );
++            assert_eq!(policy.workload_id(), Some(identity.workload_id()));
++            assert_eq!(policy.configured_worker_threads(), Some(2));
++        }
++    }
++
++    #[test]
++    fn sealed_postmaster_runtime_has_exactly_two_tokio_workers() {
++        let runtime =
++            CliTokioRuntimePolicy::select(Some(SealedRuntimeIdentity::WasixPostmasterPostgres))
++                .build()
++                .unwrap();
++
++        assert_eq!(runtime.metrics().num_workers(), 2);
++    }
++
++    #[test]
++    fn generic_runtime_policy_retains_tokio_default_worker_selection() {
++        let policy = CliTokioRuntimePolicy::select(None);
++        assert_eq!(policy.id(), "wasmer.cli.tokio.default.v1");
++        assert_eq!(policy.workload_id(), None);
++        assert_eq!(policy.configured_worker_threads(), None);
++    }
++}
+diff --git a/lib/cli/src/commands/run/wasi.rs b/lib/cli/src/commands/run/wasi.rs
+index 3297890..4cfac63 100644
+--- a/lib/cli/src/commands/run/wasi.rs
++++ b/lib/cli/src/commands/run/wasi.rs
+@@ -23,8 +23,8 @@ use wasmer_types::ModuleHash;
+ #[cfg(feature = "journal")]
+ use wasmer_wasix::journal::{LogFileJournal, SnapshotTrigger};
+ use wasmer_wasix::{
+-    PluggableRuntime, RewindState, Runtime, WasiEnv, WasiEnvBuilder, WasiError, WasiFunctionEnv,
+-    WasiVersion,
++    PluggableRuntime, ResourceLimits, RewindState, Runtime, WasiEnv, WasiEnvBuilder, WasiError,
++    WasiFunctionEnv, WasiVersion,
+     bin_factory::BinaryPackage,
+     capabilities::Capabilities,
+     get_wasi_versions,
+@@ -580,12 +580,25 @@ impl Wasi {
+         rt_or_handle: I,
+         preferred_webc_version: webc::Version,
+         compiler_debug_dir_used: bool,
++        resource_limits: ResourceLimits,
++        sealed_module_cache: Option<Arc<dyn ModuleCache + Send + Sync>>,
+     ) -> Result<impl Runtime + Send + Sync + use<I>>
+     where
+         I: Into<RuntimeOrHandle>,
+     {
+         let tokio_task_manager = Arc::new(TokioTaskManager::new(rt_or_handle.into()));
+         let mut rt = PluggableRuntime::new(tokio_task_manager.clone());
++        rt.set_resource_limits(resource_limits);
++        if let Some(module_cache) = sealed_module_cache {
++            // This authoritative cache is the sealed carrier's exact immutable
++            // closure. It is installed before any runtime consumers are built.
++            rt.set_module_cache(module_cache);
++        } else if !self.disable_cache && !compiler_debug_dir_used {
++            let cache_dir = env.cache_dir().join("compiled");
++            let module_cache = wasmer_wasix::runtime::module_cache::in_memory()
++                .with_fallback(FileSystemCache::new(cache_dir, tokio_task_manager));
++            rt.set_module_cache(module_cache);
++        }
+ 
+         let has_networking = self.networking.is_some()
+             || capabilities::get_cached_capability(pkg_cache_path)
+@@ -643,13 +656,6 @@ impl Wasi {
+ 
+         let registry = self.prepare_source(env, client, preferred_webc_version)?;
+ 
+-        if !self.disable_cache && !compiler_debug_dir_used {
+-            let cache_dir = env.cache_dir().join("compiled");
+-            let module_cache = wasmer_wasix::runtime::module_cache::in_memory()
+-                .with_fallback(FileSystemCache::new(cache_dir, tokio_task_manager));
+-            rt.set_module_cache(module_cache);
+-        }
+-
+         rt.set_package_loader(package_loader)
+             .set_source(registry)
+             .set_engine(engine);

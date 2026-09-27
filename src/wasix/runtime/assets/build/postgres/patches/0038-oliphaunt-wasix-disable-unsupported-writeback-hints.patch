@@ -19,7 +19,7 @@ targets retain the upstream selection logic.
  2 files changed, 12 insertions(+), 2 deletions(-)
 
 diff --git a/src/backend/storage/file/fd.c b/src/backend/storage/file/fd.c
-index 739b1b9..b1f0a22 100644
+index 48453fe..80a2146 100644
 --- a/src/backend/storage/file/fd.c
 +++ b/src/backend/storage/file/fd.c
 @@ -103,7 +103,12 @@
@@ -37,11 +37,11 @@ index 739b1b9..b1f0a22 100644
  #elif !defined(WIN32) && defined(MS_ASYNC)
  #define PG_FLUSH_DATA_WORKS 1
 diff --git a/src/common/file_utils.c b/src/common/file_utils.c
-index d0ddfd9..066d455 100644
+index dc474fb..62be891 100644
 --- a/src/common/file_utils.c
 +++ b/src/common/file_utils.c
-@@ -34,7 +34,12 @@
- #include "common/logging.h"
+@@ -34,8 +34,13 @@
+ #ifdef FRONTEND
  
  /* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
 -#if defined(HAVE_SYNC_FILE_RANGE)
@@ -52,7 +52,8 @@ index d0ddfd9..066d455 100644
 + */
 +#elif defined(HAVE_SYNC_FILE_RANGE)
  #define PG_FLUSH_DATA_WORKS 1
- #elif !defined(WIN32) && defined(MS_ASYNC)
+ #elif defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_DONTNEED)
  #define PG_FLUSH_DATA_WORKS 1
+ #endif
 -- 
 2.51.0

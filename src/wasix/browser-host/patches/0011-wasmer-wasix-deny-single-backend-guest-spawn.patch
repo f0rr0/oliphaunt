@@ -1,35 +1,270 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: make execution and I/O policy host-owned
+
+Represent single-program execution, clock selection and close behavior as a
+typed host policy. Deny guest process/thread creation before side effects and
+retain control-plane limits as an independent defense. Guest environment
+variables must not grant capabilities. The generic policy mechanism and
+Oliphaunt's selected profile should be separated for upstream review.
+
+diff --git a/src/capabilities.rs b/src/capabilities.rs
+index e3c3b0ab..cbff2665 100644
+--- a/src/capabilities.rs
++++ b/src/capabilities.rs
+@@ -2,6 +2,73 @@ use std::time::Duration;
+ 
+ use crate::http::HttpClientCapabilityV1;
+ 
++/// Defines how much guest-controlled execution a WASI environment permits.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
++pub enum WasiGuestExecutionMode {
++    /// Retain the normal WASIX process and thread behavior.
++    #[default]
++    General,
++    /// Keep the initial program as the environment's only process and thread.
++    SingleProgram,
++}
++
++/// Selects the implementation used for `clock_time_get`.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
++pub enum WasiClockTimeGetMode {
++    /// Use the complete Rust syscall for every clock read.
++    #[default]
++    Canonical,
++    /// Use the JavaScript clock import with bounded canonical fallbacks.
++    DirectJs,
++}
++
++/// Describes whether a filesystem needs WASIX to flush before closing a file.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
++pub enum WasiFdClosePolicy {
++    /// Preserve the upstream flush-before-close behavior.
++    #[default]
++    FlushBeforeClose,
++    /// Writes complete synchronously, so POSIX close must not become fsync.
++    WritesCompleteSynchronously,
++}
++
++/// Immutable host-selected execution policy for one WASI environment.
++///
++/// This policy is deliberately separate from guest environment variables and
++/// from mergeable [`Capabilities`]. The builder fixes it before instantiation.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
++pub struct WasiHostPolicy {
++    guest_execution: WasiGuestExecutionMode,
++    clock_time_get: WasiClockTimeGetMode,
++    fd_close: WasiFdClosePolicy,
++}
++
++impl WasiHostPolicy {
++    pub const fn new(
++        guest_execution: WasiGuestExecutionMode,
++        clock_time_get: WasiClockTimeGetMode,
++        fd_close: WasiFdClosePolicy,
++    ) -> Self {
++        Self {
++            guest_execution,
++            clock_time_get,
++            fd_close,
++        }
++    }
++
++    pub const fn guest_execution(self) -> WasiGuestExecutionMode {
++        self.guest_execution
++    }
++
++    pub const fn clock_time_get(self) -> WasiClockTimeGetMode {
++        self.clock_time_get
++    }
++
++    pub const fn fd_close(self) -> WasiFdClosePolicy {
++        self.fd_close
++    }
++}
++
+ /// Defines capabilities for a Wasi environment.
+ #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+ pub struct Capabilities {
+diff --git a/src/os/task/control_plane.rs b/src/os/task/control_plane.rs
+index 6f88ee67..c1a82b77 100644
+--- a/src/os/task/control_plane.rs
++++ b/src/os/task/control_plane.rs
+@@ -120,9 +120,9 @@ impl WasiControlPlane {
+     pub(crate) fn register_task(&self) -> Result<TaskCountGuard, ControlPlaneError> {
+         let count = self.state.task_count.fetch_add(1, Ordering::SeqCst);
+         if let Some(max) = self.state.config.max_task_count {
+-            if count > max {
++            if count >= max {
+                 self.state.task_count.fetch_sub(1, Ordering::SeqCst);
+-                return Err(ControlPlaneError::TaskLimitReached { max: count });
++                return Err(ControlPlaneError::TaskLimitReached { max });
+             }
+         }
+         Ok(TaskCountGuard(self.state.task_count.clone()))
+@@ -234,6 +234,11 @@ mod tests {
+             .new_thread(WasiMemoryLayout::default(), ThreadStartType::MainThread)
+             .unwrap();
+ 
++        assert_eq!(
++            p1.new_thread(WasiMemoryLayout::default(), ThreadStartType::MainThread)
++                .err(),
++            Some(ControlPlaneError::TaskLimitReached { max: 2 })
++        );
+         assert_eq!(
+             p.new_process(ModuleHash::random()).unwrap_err(),
+             ControlPlaneError::TaskLimitReached { max: 2 }
+diff --git a/src/state/builder.rs b/src/state/builder.rs
+index 768e427d..d57e1913 100644
+--- a/src/state/builder.rs
++++ b/src/state/builder.rs
+@@ -17,7 +17,7 @@ use wasmer_config::package::PackageId;
+ use crate::journal::{DynJournal, DynReadableJournal, SnapshotTrigger};
+ use crate::{
+     bin_factory::{BinFactory, BinaryPackage},
+-    capabilities::Capabilities,
++    capabilities::{Capabilities, WasiGuestExecutionMode, WasiHostPolicy},
+     fs::{WasiFs, WasiFsRoot, WasiInodes},
+     os::task::control_plane::{ControlPlaneConfig, ControlPlaneError, WasiControlPlane},
+     state::WasiState,
+@@ -84,6 +84,8 @@ pub struct WasiEnvBuilder {
+ 
+     pub(super) capabilites: Capabilities,
+ 
++    pub(super) host_policy: WasiHostPolicy,
++
+     #[cfg(feature = "journal")]
+     pub(super) snapshot_on: Vec<SnapshotTrigger>,
+ 
+@@ -759,6 +761,16 @@ impl WasiEnvBuilder {
+         self.capabilites = capabilities;
+     }
+ 
++    /// Selects immutable host-side behavior before the environment is built.
++    pub fn host_policy(mut self, host_policy: WasiHostPolicy) -> Self {
++        self.set_host_policy(host_policy);
++        self
++    }
++
++    pub fn set_host_policy(&mut self, host_policy: WasiHostPolicy) {
++        self.host_policy = host_policy;
++    }
++
+     #[cfg(feature = "journal")]
+     pub fn add_snapshot_trigger(&mut self, on: SnapshotTrigger) {
+         self.snapshot_on.push(on);
+@@ -966,9 +978,17 @@ impl WasiEnvBuilder {
+         let bin_factory = BinFactory::new(runtime.clone());
+ 
+         let capabilities = self.capabilites;
++        let host_policy = self.host_policy;
++
++        let max_task_count =
++            if host_policy.guest_execution() == WasiGuestExecutionMode::SingleProgram {
++                Some(1)
++            } else {
++                capabilities.threading.max_threads
++            };
+ 
+         let plane_config = ControlPlaneConfig {
+-            max_task_count: capabilities.threading.max_threads,
++            max_task_count,
+             enable_asynchronous_threading: capabilities.threading.enable_asynchronous_threading,
+             enable_exponential_cpu_backoff: capabilities.threading.enable_exponential_cpu_backoff,
+         };
+@@ -982,6 +1002,7 @@ impl WasiEnvBuilder {
+             control_plane,
+             bin_factory,
+             capabilities,
++            host_policy,
+             memory_ty: None,
+             process: None,
+             thread: None,
+diff --git a/src/state/env.rs b/src/state/env.rs
+index a9701e1e..77d8a892 100644
+--- a/src/state/env.rs
++++ b/src/state/env.rs
+@@ -27,7 +27,7 @@ use webc::metadata::annotations::Wasi;
+ use crate::journal::{DynJournal, JournalEffector, SnapshotTrigger};
+ use crate::{
+     bin_factory::{BinFactory, BinaryPackage, BinaryPackageCommand},
+-    capabilities::Capabilities,
++    capabilities::{Capabilities, WasiHostPolicy},
+     fs::{WasiFsRoot, WasiInodes},
+     import_object_for_all_wasi_versions,
+     os::task::{
+@@ -54,6 +54,7 @@ pub struct WasiEnvInit {
+     pub mapped_commands: HashMap<String, PathBuf>,
+     pub bin_factory: BinFactory,
+     pub capabilities: Capabilities,
++    pub(crate) host_policy: WasiHostPolicy,
+ 
+     pub control_plane: WasiControlPlane,
+     pub memory_ty: Option<MemoryType>,
+@@ -110,6 +111,7 @@ impl WasiEnvInit {
+             mapped_commands: self.mapped_commands.clone(),
+             bin_factory: self.bin_factory.clone(),
+             capabilities: self.capabilities.clone(),
++            host_policy: self.host_policy,
+             control_plane: self.control_plane.clone(),
+             memory_ty: None,
+             process: None,
+@@ -139,6 +141,8 @@ pub struct WasiEnv {
+     pub vfork: Option<WasiVFork>,
+     /// Seed used to rotate around the events returned by `poll_oneoff`
+     pub poll_seed: u64,
++    /// Immutable behavior selected by the host before instantiation.
++    pub(crate) host_policy: WasiHostPolicy,
+     /// Shared state of the WASI system. Manages all the data that the
+     /// executing WASI program can see.
+     pub(crate) state: Arc<WasiState>,
+@@ -193,6 +197,7 @@ impl Clone for WasiEnv {
+             control_plane: self.control_plane.clone(),
+             process: self.process.clone(),
+             poll_seed: self.poll_seed,
++            host_policy: self.host_policy,
+             thread: self.thread.clone(),
+             layout: self.layout.clone(),
+             vfork: self.vfork.clone(),
+@@ -237,6 +242,7 @@ impl WasiEnv {
+             layout: self.layout.clone(),
+             vfork: None,
+             poll_seed: 0,
++            host_policy: self.host_policy,
+             bin_factory,
+             state,
+             inner: Default::default(),
+@@ -375,6 +381,7 @@ impl WasiEnv {
+             layout,
+             vfork: None,
+             poll_seed: 0,
++            host_policy: init.host_policy,
+             state: Arc::new(init.state),
+             inner: Default::default(),
+             owned_handles: Vec::new(),
 diff --git a/src/syscalls/wasix/mod.rs b/src/syscalls/wasix/mod.rs
-index 0ec461d..74c1c61 100644
+index 0ec461de..d6edc59b 100644
 --- a/src/syscalls/wasix/mod.rs
 +++ b/src/syscalls/wasix/mod.rs
-@@ -173,3 +173,18 @@ pub use tty_get::*;
+@@ -173,3 +173,9 @@ pub use tty_get::*;
  pub use tty_set::*;
-
+ 
  use tracing::{debug_span, field, instrument, trace_span, Span};
 +
-+use crate::WasiEnv;
++use crate::{capabilities::WasiGuestExecutionMode, WasiEnv};
 +
-+const OLIPHAUNT_SINGLE_BACKEND_ENV: &[u8] = b"OLIPHAUNT_WASIX_SINGLE_BACKEND=1";
-+
-+fn oliphaunt_single_backend_requested(env: &WasiEnv) -> bool {
-+    env.state
-+        .envs
-+        .lock()
-+        .map(|envs| {
-+            envs.iter()
-+                .any(|entry| entry.as_slice() == OLIPHAUNT_SINGLE_BACKEND_ENV)
-+        })
-+        .unwrap_or(true)
++fn single_program_requested(env: &WasiEnv) -> bool {
++    env.host_policy.guest_execution() == WasiGuestExecutionMode::SingleProgram
 +}
 diff --git a/src/syscalls/wasix/proc_exec3.rs b/src/syscalls/wasix/proc_exec3.rs
-index e72cdd7..b6c29b7 100644
+index e72cdd7c..7362c34f 100644
 --- a/src/syscalls/wasix/proc_exec3.rs
 +++ b/src/syscalls/wasix/proc_exec3.rs
 @@ -34,6 +34,11 @@ pub fn proc_exec3<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
-
-+    if oliphaunt_single_backend_requested(ctx.data()) {
+ 
++    if single_program_requested(ctx.data()) {
 +        warn!("guest process replacement denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);
 +    }
@@ -38,14 +273,14 @@ index e72cdd7..b6c29b7 100644
      if let Some(exit_code) = unsafe { handle_rewind::<M, i32>(&mut ctx) } {
          // We should never get here as the process will be termined
 diff --git a/src/syscalls/wasix/proc_fork.rs b/src/syscalls/wasix/proc_fork.rs
-index f2b17e5..f7fead0 100644
+index f2b17e51..3c953a8e 100644
 --- a/src/syscalls/wasix/proc_fork.rs
 +++ b/src/syscalls/wasix/proc_fork.rs
 @@ -27,6 +27,11 @@ pub fn proc_fork<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
-
-+    if oliphaunt_single_backend_requested(ctx.data()) {
+ 
++    if single_program_requested(ctx.data()) {
 +        warn!("guest process fork denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);
 +    }
@@ -54,14 +289,14 @@ index f2b17e5..f7fead0 100644
          warn!("process forking not supported for dynamically linked modules");
          Errno::Notsup
 diff --git a/src/syscalls/wasix/proc_spawn.rs b/src/syscalls/wasix/proc_spawn.rs
-index 958b9b0..fff03a8 100644
+index 958b9b03..48d7b0d6 100644
 --- a/src/syscalls/wasix/proc_spawn.rs
 +++ b/src/syscalls/wasix/proc_spawn.rs
 @@ -42,6 +42,11 @@ pub fn proc_spawn<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
-
-+    if oliphaunt_single_backend_requested(ctx.data()) {
+ 
++    if single_program_requested(ctx.data()) {
 +        warn!("guest process creation denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);
 +    }
@@ -70,14 +305,14 @@ index 958b9b0..fff03a8 100644
      let control_plane = &env.control_plane;
      let memory = unsafe { env.memory_view(&ctx) };
 diff --git a/src/syscalls/wasix/proc_spawn2.rs b/src/syscalls/wasix/proc_spawn2.rs
-index b907118..2922514 100644
+index b9071184..4d26e950 100644
 --- a/src/syscalls/wasix/proc_spawn2.rs
 +++ b/src/syscalls/wasix/proc_spawn2.rs
 @@ -44,6 +44,11 @@ pub fn proc_spawn2<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
-
-+    if oliphaunt_single_backend_requested(ctx.data()) {
+ 
++    if single_program_requested(ctx.data()) {
 +        warn!("guest process creation denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);
 +    }
@@ -86,17 +321,15 @@ index b907118..2922514 100644
      let memory = unsafe { ctx.data().memory_view(&ctx) };
      let mut name = unsafe { get_input_str_ok!(&memory, name, name_len) };
 diff --git a/src/syscalls/wasix/thread_spawn.rs b/src/syscalls/wasix/thread_spawn.rs
-index 3598b70..b3fc666 100644
+index 87c4dfd5..8526b057 100644
 --- a/src/syscalls/wasix/thread_spawn.rs
 +++ b/src/syscalls/wasix/thread_spawn.rs
-@@ -57,6 +57,13 @@ pub fn thread_spawn_internal_from_wasi<M: MemorySize>(
+@@ -57,6 +57,11 @@ pub fn thread_spawn_internal_from_wasi<M: MemorySize>(
      ctx: &mut FunctionEnvMut<'_, WasiEnv>,
      start_ptr: WasmPtr<ThreadStart<M>, M>,
  ) -> Result<Tid, Errno> {
-+    if oliphaunt_single_backend_requested(ctx.data()) {
-+        warn!(
-+            "guest thread creation denied for the Oliphaunt single-backend pgwire runtime"
-+        );
++    if single_program_requested(ctx.data()) {
++        warn!("guest thread creation denied for the Oliphaunt single-backend pgwire runtime");
 +        return Err(Errno::Notcapable);
 +    }
 +

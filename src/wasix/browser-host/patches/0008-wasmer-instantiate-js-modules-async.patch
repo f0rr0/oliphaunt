@@ -1,3 +1,12 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer: instantiate JavaScript modules asynchronously
+
+Expose asynchronous module instantiation for the JavaScript backend. Large
+PostgreSQL modules exceed browser main-thread synchronous instantiation limits;
+non-JavaScript backends keep their existing instantiation semantics. This is
+a general engine API addition suitable for a separate upstream proposal.
+
 diff --git a/Cargo.toml b/Cargo.toml
 --- a/Cargo.toml
 +++ b/Cargo.toml

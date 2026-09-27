@@ -1,26 +1,36 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: execute the configured WASIX process
+
+Use the configured WASIX environment and propagate nonzero process exits.
+Oliphaunt needs its mounts, program arguments and host policy honored when
+running PostgreSQL and frontend tools. This is a general runner correction;
+the surrounding Oliphaunt policy remains a downstream integration.
+
 diff --git a/Cargo.toml b/Cargo.toml
-index b21b6eb..4a26370 100644
+index b21b6eb..65d86be 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -126,7 +126,7 @@ wasmer-types = { version = "4.2.5", default-features = false }
-
+@@ -127,7 +127,7 @@ wasm-bindgen-test = "0.3"
+ 
  [profile.release]
  lto = true
 -opt-level = 'z'
 +opt-level = 3
-
+ 
  [package.metadata.wasm-pack.profile.release.wasm-bindgen]
  debug-js-glue = false
-@@ -135,9 +135,11 @@ demangle-name-section = false
+@@ -135,9 +135,12 @@ demangle-name-section = false
  dwarf-debug-info = false
-
+ 
  [package.metadata.wasm-pack.profile.release]
 -wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-Oz"]
 +wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-O3"]
-
+ 
  [patch.crates-io]
 +wasmer = { path = "../wasmer-6.1.0" }
 +wasmer-wasix = { path = "../wasmer-wasix-0.601.0" }
++virtual-fs = { path = "../virtual-fs-0.601.0" }
  #webc = {git = "https://github.com/wasmerio/pirita", branch = "in-memory-manifest"}
  #virtual-net = { git = "https://github.com/wasmerio/wasmer", branch = "master" }
  #virtual-fs = { git = "https://github.com/wasmerio/wasmer", branch = "master" }
@@ -40,18 +50,18 @@ index 6e25018..99ee44e 100644
 -use wasmer_wasix::runners::wasi::{WasiRunner, RuntimeOrEngine};
 +use wasmer_wasix::runtime::task_manager::VirtualTaskManagerExt;
 +use wasmer_wasix::{WasiEnvBuilder, WasiError, WasiRuntimeError};
-
+ 
  use crate::{instance::ExitCondition, utils::Error, Instance, RunOptions};
-
+ 
 @@ -43,9 +42,9 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<
      let (stdin, stdout, stderr) = config.configure_builder(&mut builder)?;
-
+ 
      let (exit_code_tx, exit_code_rx) = oneshot::channel();
 -    let mut runner = WasiRunner::new();
-
+ 
      let module: wasmer::Module = wasm_module.to_module(&*runtime).await?;
 +    let module_bytes = module.serialize().unwrap();
-
+ 
      // Note: The WasiEnvBuilder::run() method blocks, so we need to run it on
      // the thread pool.
 @@ -54,8 +53,26 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<

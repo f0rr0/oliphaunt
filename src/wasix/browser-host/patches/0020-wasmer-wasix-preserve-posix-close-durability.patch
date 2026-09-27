@@ -1,8 +1,24 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: distinguish close policy from explicit durability
+
+Keep the historical flush-before-close default, but let an explicit host
+policy select POSIX close semantics when the filesystem writes synchronously.
+Do not turn every descriptor close into a durability barrier; PostgreSQL's
+explicit sync operations remain authoritative. This policy must never be
+selected merely from a guest-controlled environment variable.
+
 diff --git a/src/syscalls/wasi/fd_close.rs b/src/syscalls/wasi/fd_close.rs
-index 647eec3..40756fe 100644
+index 41d27119..e97c6eeb 100644
 --- a/src/syscalls/wasi/fd_close.rs
 +++ b/src/syscalls/wasi/fd_close.rs
-@@ -30,13 +30,18 @@ pub fn fd_close(mut ctx: FunctionEnvMut<'_, WasiEnv>, fd: WasiFd) -> Result<Errn
+@@ -1,4 +1,5 @@
+ use super::*;
++use crate::capabilities::WasiFdClosePolicy;
+ use crate::syscalls::*;
+ 
+ /// ### `fd_close()`
+@@ -28,13 +29,18 @@ pub fn fd_close(mut ctx: FunctionEnvMut<'_, WasiEnv>, fd: WasiFd) -> Result<Errn
              return Ok(Errno::Success);
          }
      }
@@ -13,7 +29,7 @@ index 647eec3..40756fe 100644
 -        Ok(_) | Err(Errno::Isdir) | Err(Errno::Io) | Err(Errno::Access) => {}
 -        Err(e) => {
 -            return Ok(e);
-+    if !env.oliphaunt_single_backend {
++    if env.host_policy.fd_close() == WasiFdClosePolicy::FlushBeforeClose {
 +        // HACK: upstream uses tokio files to back WASI file handles. Since
 +        // tokio does writes in the background, it may miss writes if the file
 +        // is closed without flushing first. Hence, flush those hosts here.

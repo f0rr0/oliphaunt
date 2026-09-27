@@ -1,3 +1,22 @@
+From 0000000000000000000000000000000000000003 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] postgres: link static libpq encoding wrappers on WASIX
+
+Base: PostgreSQL REL_18_4; apply after the wasix-core overlay and in series order.
+
+Static libpgcommon uses private encoding symbol names, whereas libpq clients
+need the public wrappers. Link the overlay's wasix_encoding_shim.o only into
+the wasix-core static archive instead of adding the full shared common archive
+and duplicating unrelated symbols. The wrappers forward to existing encoding
+implementations without changing their behavior.
+
+This is a repository port/linkage seam, not a query optimization. A generic
+upstream static-link solution should replace it if PostgreSQL gains this
+target. Check frontend links and the libpq regression subset as well as patch
+application; the overlay is a required input, not generated upstream code.
+---
+
 diff --git a/src/interfaces/libpq/Makefile b/src/interfaces/libpq/Makefile
 index 8fab74f..4a90ecf 100644
 --- a/src/interfaces/libpq/Makefile

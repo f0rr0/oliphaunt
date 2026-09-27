@@ -7,6 +7,7 @@ import {
 import { createDeterministicTar } from './cargo-source-package.mts';
 import { extractPortableArchiveTree, releaseZstdCompressSync } from './portable-archive.mts';
 import { packageSpec } from './wasix-cargo-payload.mts';
+import { WASIX_AOT_ENGINE } from '../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
 
 const root = path.resolve(import.meta.dir, '../..');
 const scratch = process.argv[2];
@@ -93,6 +94,7 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
       JSON.stringify(
         aot
           ? {
+              engine: WASIX_AOT_ENGINE,
               artifacts: [
                 {
                   name: id === 'tools-aot' ? 'tool:pg_dump' : 'runtime:oliphaunt',

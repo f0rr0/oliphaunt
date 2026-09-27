@@ -1,8 +1,17 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: copy direct protocol bytes through guest memory
+
+Use the direct guest input/output exports with JavaScript typed arrays to
+avoid redundant Rust staging. Returned protocol bytes remain owned copies;
+no borrowed view may escape across guest reentry or memory growth. The copy
+boundary is part of the downstream ABI and must remain independently safe.
+
 diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
-index b381faf5..87e202c5 100644
+index c45000a..67a600f 100644
 --- a/src/postgres_direct.rs
 +++ b/src/postgres_direct.rs
-@@ -2,15 +2,44 @@ use std::sync::Arc;
+@@ -2,9 +2,11 @@ use std::sync::Arc;
  
  use anyhow::{ensure, Context};
  use js_sys::{Uint8Array, WebAssembly};
@@ -16,8 +25,9 @@ index b381faf5..87e202c5 100644
  
  use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOptions};
  
- const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
- const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
+@@ -29,6 +31,32 @@ impl MainLoopOutcome {
+     }
+ }
  
 +#[wasm_bindgen(inline_js = r#"
 +export function oliphauntCopyToGuest(memory, pointer, input) {
@@ -45,17 +55,17 @@ index b381faf5..87e202c5 100644
 +        length: u32,
 +    ) -> Result<Uint8Array, JsValue>;
 +}
-+
  /// Instantiate the integrated Oliphaunt/PostgreSQL guest in this JS realm.
  ///
  /// The returned driver is synchronous by design: every guest export runs on
-@@ -31,14 +60,15 @@ pub struct OliphauntDirectInstance {
+@@ -48,15 +76,15 @@ pub struct OliphauntDirectInstance {
+     _runtime: Arc<Runtime>,
      store: Store,
      _instance: WasmerInstance,
 -    env: WasiFunctionEnv,
-+    _env: WasiFunctionEnv,
 -    malloc: TypedFunction<i32, i32>,
 -    free: TypedFunction<i32, ()>,
++    _env: WasiFunctionEnv,
 +    guest_memory: JsValue,
      input_reset: TypedFunction<(), i32>,
 -    input_write: TypedFunction<(i32, i32), i32>,
@@ -66,11 +76,10 @@ index b381faf5..87e202c5 100644
      output_len: TypedFunction<(), i32>,
 -    output_read: TypedFunction<(i32, i32), i32>,
 +    output_data: TypedFunction<(), i32>,
-+    output_contains_error: TypedFunction<(), i32>,
-     set_force_host_error_recovery: Option<TypedFunction<i32, i32>>,
      set_active: TypedFunction<i32, i32>,
      wasi_start: TypedFunction<(), ()>,
-@@ -62,8 +92,8 @@ impl OliphauntDirectInstance {
+     start_oliphaunt: TypedFunction<(), ()>,
+@@ -78,8 +106,8 @@ impl OliphauntDirectInstance {
      /// Start PostgreSQL and process one frontend startup packet.
      #[wasm_bindgen(js_name = startup)]
      pub fn startup(&mut self, packet: Uint8Array) -> Result<Uint8Array, Error> {
@@ -81,7 +90,7 @@ index b381faf5..87e202c5 100644
              Err(error) => Err(self.startup_error(error)),
          }
      }
-@@ -71,9 +101,7 @@ impl OliphauntDirectInstance {
+@@ -87,9 +115,7 @@ impl OliphauntDirectInstance {
      /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
      #[wasm_bindgen(js_name = execProtocolRaw)]
      pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
@@ -92,7 +101,7 @@ index b381faf5..87e202c5 100644
      }
  
      /// Shut down the embedded lifecycle. This does not consume the JS object.
-@@ -83,7 +111,7 @@ impl OliphauntDirectInstance {
+@@ -99,7 +125,7 @@ impl OliphauntDirectInstance {
  }
  
  impl OliphauntDirectInstance {
@@ -101,7 +110,7 @@ index b381faf5..87e202c5 100644
          self.ensure_open()?;
          ensure!(
              !self.protocol_started,
-@@ -91,7 +119,7 @@ impl OliphauntDirectInstance {
+@@ -107,7 +133,7 @@ impl OliphauntDirectInstance {
          );
          self.start_backend()?;
          self.reset_io()?;
@@ -110,7 +119,7 @@ index b381faf5..87e202c5 100644
  
          let port = self
              .get_port
-@@ -112,22 +140,23 @@ impl OliphauntDirectInstance {
+@@ -128,22 +154,23 @@ impl OliphauntDirectInstance {
                  .context("oliphaunt_wasix_pq_flush after startup")?;
              self.protocol_started = true;
          }
@@ -138,34 +147,18 @@ index b381faf5..87e202c5 100644
 +        let payload_len = payload.length() as usize;
 +        let max_attempts = (payload_len / 5).saturating_add(2).max(1);
          let mut attempts = 0usize;
-         let mut recovered_protocol_error = false;
          while self.protocol_input_remaining()? > 0 {
-@@ -140,7 +169,7 @@ impl OliphauntDirectInstance {
-                 // Match the native host: the exported recovery boundary is
-                 // authoritative even when a JS engine reports an unfamiliar
-                 // trap spelling.
--                self.recover_protocol_error(payload.len())?;
-+                self.recover_protocol_error(payload_len)?;
-                 recovered_protocol_error = true;
-             }
+             attempts += 1;
+@@ -162,7 +189,7 @@ impl OliphauntDirectInstance {
          }
-@@ -150,8 +179,13 @@ impl OliphauntDirectInstance {
-         self.pq_flush
-             .call(&mut self.store)
-             .context("oliphaunt_wasix_pq_flush after protocol input")?;
--        let output = self.take_output()?;
--        if !recovered_protocol_error && protocol_response_contains_error(&output) {
-+        let output_contains_error = self
-+            .output_contains_error
-+            .call(&mut self.store)
-+            .context("oliphaunt_wasix_output_contains_error")?
-+            != 0;
-+        let output = self.take_output_js()?;
-+        if !recovered_protocol_error && output_contains_error {
-             self.recover_non_trapping_protocol_error()?;
-         }
-         Ok(output)
-@@ -196,6 +230,8 @@ impl OliphauntDirectInstance {
+         self.send_ready_after_main_loop()?;
+         self.flush_after_main_loop()?;
+-        self.take_output()
++        self.take_output_js()
+     }
+ 
+     fn close_inner(&mut self) -> anyhow::Result<()> {
+@@ -204,6 +231,8 @@ impl OliphauntDirectInstance {
              .instantiate_async(module, &mut store)
              .await
              .context("instantiate Oliphaunt direct WASIX module")?;
@@ -174,7 +167,7 @@ index b381faf5..87e202c5 100644
          seed_exported_c_string(
              &mut store,
              &instance,
-@@ -204,16 +240,19 @@ impl OliphauntDirectInstance {
+@@ -212,16 +241,14 @@ impl OliphauntDirectInstance {
              DEFAULT_PROGRAM_NAME,
          )?;
  
@@ -191,21 +184,17 @@ index b381faf5..87e202c5 100644
          let output_len = typed_export(&mut store, &instance, "oliphaunt_wasix_output_len")?;
 -        let output_read = typed_export(&mut store, &instance, "oliphaunt_wasix_output_read")?;
 +        let output_data = typed_export(&mut store, &instance, "oliphaunt_wasix_output_data")?;
-+        let output_contains_error = typed_export(
-+            &mut store,
-+            &instance,
-+            "oliphaunt_wasix_output_contains_error",
-+        )?;
-         let set_force_host_error_recovery = optional_typed_export(
-             &mut store,
-             &instance,
-@@ -243,14 +282,15 @@ impl OliphauntDirectInstance {
+         let set_active = typed_export(&mut store, &instance, "oliphaunt_wasix_set_active")?;
+         let wasi_start = typed_export(&mut store, &instance, "_start")?;
+         let start_oliphaunt = typed_export(&mut store, &instance, "oliphaunt_wasix_start")?;
+@@ -244,15 +271,15 @@ impl OliphauntDirectInstance {
+             _runtime: runtime,
              store,
              _instance: instance,
 -            env,
-+            _env: env,
 -            malloc,
 -            free,
++            _env: env,
 +            guest_memory,
              input_reset,
 -            input_write,
@@ -216,11 +205,10 @@ index b381faf5..87e202c5 100644
              output_len,
 -            output_read,
 +            output_data,
-+            output_contains_error,
-             set_force_host_error_recovery,
              set_active,
              wasi_start,
-@@ -322,68 +362,42 @@ impl OliphauntDirectInstance {
+             start_oliphaunt,
+@@ -375,68 +402,42 @@ impl OliphauntDirectInstance {
          Ok(())
      }
  
@@ -314,7 +302,7 @@ index b381faf5..87e202c5 100644
          ensure!(
              self.output_reset
                  .call(&mut self.store)
-@@ -391,16 +405,7 @@ impl OliphauntDirectInstance {
+@@ -444,16 +445,7 @@ impl OliphauntDirectInstance {
                  == 0,
              "oliphaunt_wasix_output_reset after read failed"
          );
@@ -332,14 +320,7 @@ index b381faf5..87e202c5 100644
      }
  
      fn protocol_input_remaining(&mut self) -> anyhow::Result<i32> {
-@@ -448,14 +453,16 @@ impl OliphauntDirectInstance {
-         self.pq_flush
-             .call(&mut self.store)
-             .context("oliphaunt_wasix_pq_flush after backend ErrorResponse")?;
--        let _ = self.take_output()?;
-+        let _ = self.take_output_js()?;
-         Ok(())
-     }
+@@ -472,8 +464,10 @@ impl OliphauntDirectInstance {
  
      fn startup_error(&mut self, error: anyhow::Error) -> Error {
          let _ = self.pq_flush.call(&mut self.store);
@@ -352,7 +333,7 @@ index b381faf5..87e202c5 100644
              return Error::from(error);
          }
  
-@@ -463,7 +470,7 @@ impl OliphauntDirectInstance {
+@@ -481,7 +475,7 @@ impl OliphauntDirectInstance {
          let _ = js_sys::Reflect::set(
              &js_error,
              &wasm_bindgen::JsValue::from_str("protocolResponse"),
@@ -361,27 +342,3 @@ index b381faf5..87e202c5 100644
          );
          let _ = js_sys::Reflect::set(
              &js_error,
-@@ -545,23 +552,3 @@ fn runtime_exit_code(error: &wasmer::RuntimeError) -> Option<i32> {
-             _ => None,
-         })
- }
--
--fn protocol_response_contains_error(response: &[u8]) -> bool {
--    let mut cursor = 0usize;
--    while cursor + 5 <= response.len() {
--        let tag = response[cursor];
--        let len = i32::from_be_bytes(response[cursor + 1..cursor + 5].try_into().unwrap());
--        if len < 4 {
--            return false;
--        }
--        let total = 1usize.saturating_add(len as usize);
--        if cursor + total > response.len() {
--            return false;
--        }
--        if tag == b'E' {
--            return true;
--        }
--        cursor += total;
--    }
--    false
--}

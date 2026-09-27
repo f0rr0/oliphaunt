@@ -16,7 +16,7 @@ stack while still preserving normal PostgreSQL call sites.
  1 file changed, 15 insertions(+)
 
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
-index 6252eecbfd..6c1c7b895f 100644
+index def8f37c8b..31379d6302 100644
 --- a/src/include/port/wasix-dl.h
 +++ b/src/include/port/wasix-dl.h
 @@ -8,6 +8,7 @@
@@ -27,9 +27,10 @@ index 6252eecbfd..6c1c7b895f 100644
  #include <sys/types.h>
 
  struct Port;
-@@ -21,7 +22,21 @@ extern sigjmp_buf postgresmain_sigjmp_buf;
+@@ -21,8 +22,22 @@ extern sigjmp_buf postgresmain_sigjmp_buf;
  extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
  extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
+ extern int oliphaunt_wasix_output_status(void);
  extern void oliphaunt_wasix_process_startup_options(struct Port *port);
 +extern uid_t oliphaunt_wasix_geteuid(void);
 +extern uid_t oliphaunt_wasix_getuid(void);

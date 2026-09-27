@@ -7,8 +7,8 @@ compiler-bearing producer plus a compiler-free product executor.
 
 Tracked product inputs are:
 
-- `patches/wasmer/0001-postgres-wasix-blockers.patch`;
-- `patches/wasix-libc/0001-postgres-wasix-blockers.patch`;
+- `patches/wasmer/series`;
+- `patches/wasix-libc/series`;
 - the current contract inventory in `capabilities.tsv`;
 - focused capability fixtures under `probes/`;
 - preparation, build, verification, and qualification entrypoints under `bin/`.
@@ -24,6 +24,21 @@ executor receipt. Together they bind source pins, patch digests, prepared-tree
 identities, Cargo.lock, sysroot manifests, compiler/executor features, host ABI,
 Rust and LLVM versions, artifact ABI, runtime ABI, CPU policy, and binary
 hashes. Runtime selection never falls back to a stock or `PATH` Wasmer.
+
+The ordered `series` files, not directory globs, select patches. Their digest
+includes the manifest, member names and contents; editing or reordering a patch
+invalidates receipts. Wasmer patches 0001–0008 decompose the inherited main
+bundle without changing its source hunks. The product executor stays in
+`../executor`, as on main, rather than being copied into the Wasmer fork.
+Patch 0009 separately disables LLVM nonvolatile memory operations for shared
+guest memory; the product compiler and artifact verifier use the same strict
+policy. Carriers and AOT artifacts must be rebuilt, never relabelled.
+
+The libc series separates mapping, file, socket, process, exception and resource
+contracts. Its `sigsetjmp` fix evaluates the buffer expression once in the live
+caller and keeps helper declarations limited to exception-enabled builds.
+The host C/C++ probes prove those language contracts, not WASIX signal delivery;
+the runtime capability probes remain required for that claim.
 
 The product executor accepts only an independently verified sealed carrier. It
 does not expose the general Wasmer package, registry, network, or compilation

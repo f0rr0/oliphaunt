@@ -36,8 +36,11 @@ wasmer_wasix_sha256="$(toml_value wasmer-wasix sha256)"
 wasmer_url="$(toml_value wasmer url)"
 wasmer_version="$(toml_value wasmer version)"
 wasmer_sha256="$(toml_value wasmer sha256)"
+virtual_fs_url="$(toml_value virtual-fs url)"
+virtual_fs_version="$(toml_value virtual-fs version)"
+virtual_fs_sha256="$(toml_value virtual-fs sha256)"
 
-for value in "$wasmer_js_url" "$wasmer_js_version" "$wasmer_js_commit" "$wasmer_wasix_url" "$wasmer_wasix_version" "$wasmer_wasix_sha256" "$wasmer_url" "$wasmer_version" "$wasmer_sha256"; do
+for value in "$wasmer_js_url" "$wasmer_js_version" "$wasmer_js_commit" "$wasmer_wasix_url" "$wasmer_wasix_version" "$wasmer_wasix_sha256" "$wasmer_url" "$wasmer_version" "$wasmer_sha256" "$virtual_fs_url" "$virtual_fs_version" "$virtual_fs_sha256"; do
   if [[ -z "$value" ]]; then
     echo "wasix-ts host build: malformed $source_manifest" >&2
     exit 1
@@ -50,6 +53,10 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 mapfile -t patch_series < <(bun "$provenance_script" --patch-series)
 input_hash="$(bun "$provenance_script" --inputs-sha256)"
+if [[ ! "$input_hash" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "wasix-ts host build: invalid source identity" >&2
+  exit 1
+fi
 
 patch_command="patch"
 sha256sum_command="sha256sum"
@@ -93,6 +100,8 @@ wasmer_wasix_archive="$build_root/wasmer-wasix.crate"
 wasmer_wasix_dir="$build_root/wasmer-wasix-$wasmer_wasix_version"
 wasmer_archive="$build_root/wasmer.crate"
 wasmer_dir="$build_root/wasmer-$wasmer_version"
+virtual_fs_archive="$build_root/virtual-fs.crate"
+virtual_fs_dir="$build_root/virtual-fs-$virtual_fs_version"
 
 git init --quiet "$wasmer_js_dir"
 git -C "$wasmer_js_dir" remote add origin "$wasmer_js_url"
@@ -120,6 +129,12 @@ curl --fail --location --silent --show-error \
 echo "$wasmer_sha256  $wasmer_archive" | "$sha256sum_command" --check --status
 tar -xzf "$wasmer_archive" -C "$build_root"
 
+curl --fail --location --silent --show-error \
+  --user-agent "oliphaunt-wasix-ts-source-build/0.0.0" \
+  "$virtual_fs_url" --output "$virtual_fs_archive"
+echo "$virtual_fs_sha256  $virtual_fs_archive" | "$sha256sum_command" --check --status
+tar -xzf "$virtual_fs_archive" -C "$build_root"
+
 for patch_name in "${patch_series[@]}"; do
   patch_file="$host_dir/patches/$patch_name"
   case "$patch_name" in
@@ -129,6 +144,9 @@ for patch_name in "${patch_series[@]}"; do
     ????-wasmer-wasix-*.patch)
       patch_dir="$wasmer_wasix_dir"
       ;;
+    ????-virtual-fs-*.patch)
+      patch_dir="$virtual_fs_dir"
+      ;;
     ????-wasmer-*.patch)
       patch_dir="$wasmer_dir"
       ;;
@@ -137,7 +155,7 @@ for patch_name in "${patch_series[@]}"; do
       exit 1
       ;;
   esac
-  "$patch_command" --batch --forward -d "$patch_dir" -p1 < "$patch_file"
+  "$patch_command" --batch --forward --fuzz=0 -d "$patch_dir" -p1 < "$patch_file"
 done
 
 # The pinned source commit's npm lock predates its package metadata. Patch only

@@ -1,3 +1,22 @@
+From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] postgres: retry interrupted WASIX child joins
+
+Base: PostgreSQL REL_18_4 plus earlier entries in postgres/patches/series.
+Depends-on: 0004-wasix-core-execbackend-initdb-runtime.patch.
+
+WASIX proc_join can clear its input/output PID before a signal interrupts the
+wait. Restore the requested child on every EINTR retry in both initdb and the
+common executable probe. Otherwise a normal child exit can be reported as a
+failed command or a subsequent retry can wait for the wrong child.
+
+Retain the existing handling of actual join errors and exit statuses. This
+is a process-correctness repair, not a performance shortcut. It is suitable
+for an upstream WASIX process adapter once that prerequisite exists. Validate
+signal/child supervision and backend waves, not only uninterrupted initdb.
+---
+
 diff --git a/src/bin/initdb/initdb.c b/src/bin/initdb/initdb.c
 --- a/src/bin/initdb/initdb.c
 +++ b/src/bin/initdb/initdb.c

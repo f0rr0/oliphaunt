@@ -109,6 +109,8 @@ tasks:
       - liboliphaunt-native:external-source-fetch-test
       - liboliphaunt-native:error-attribution-test
       - liboliphaunt-native:generation-lifecycle-test
+      - liboliphaunt-native:embedded-contract-test
+      - liboliphaunt-native:session-reset-test
       - liboliphaunt-native:ios-extension-packager-test
       - liboliphaunt-native:module-dir-resolver-test
       - liboliphaunt-native:postgis-reproducible-time-test
@@ -116,6 +118,30 @@ tasks:
       - liboliphaunt-native:symbol-scope-test
     inputs:
       []
+  embedded-contract-test:
+    command: node --test src/native/runtime/tools/cwd-boundary-contract.test.mjs src/native/runtime/tools/event-trigger-runtime-mode.test.mjs src/native/runtime/tools/trusted-embedded-session.test.mjs src/native/runtime/tools/trusted-host-process-boundary.test.mjs
+    inputs:
+      - patches/**/*
+      - postgres/series
+      - src/**/*
+      - smoke/liboliphaunt_smoke.c
+      - tools/*.test.mjs
+      - /src/native/broker/src/server.rs
+      - /src/native/sdks/rust/src/server.rs
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  session-reset-test:
+    command: node src/native/runtime/tools/test-session-reset.mjs
+    inputs:
+      - src/**/*
+      - include/oliphaunt.h
+      - tools/test-session-reset.mjs
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
   external-source-fetch-test:
     script: "set -e\nbash src/native/runtime/bin/fetch-pinned-git-checkout.test.sh\nbash src/native/runtime/bin/extension-source.test.sh\n"
     inputs:
@@ -147,6 +173,8 @@ tasks:
       - /src/native/runtime/src/liboliphaunt_internal.h
       - /src/native/runtime/src/liboliphaunt_platform.h
       - /src/native/runtime/src/liboliphaunt_backup_state.c
+      - /src/native/runtime/src/liboliphaunt_config.c
+      - /src/native/runtime/src/liboliphaunt_runtime.c
       - /src/native/runtime/src/liboliphaunt_process.c
       - /src/native/runtime/smoke/liboliphaunt_generation_lifecycle.c
       - /src/native/runtime/tools/test-generation-lifecycle.sh

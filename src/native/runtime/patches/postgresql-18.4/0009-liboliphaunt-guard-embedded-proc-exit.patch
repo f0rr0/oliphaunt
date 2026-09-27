@@ -8,23 +8,33 @@ process. That is correct for backend processes, but embedded liboliphaunt runs a
 backend thread inside a host app. A FATAL during embedded startup must unwind
 to the liboliphaunt owner so the host can surface an error instead of exiting.
 
-Install a thread-local embedded proc_exit handler around oliphaunt_embedded_main().
-The normal proc_exit_prepare() callback chain still runs, then control jumps
-back to the embedded entrypoint with the PostgreSQL exit code.
+Install a one-shot thread-local proc_exit handler only after its sigsetjmp target
+exists. Keep every mutable cleanup value in a heap-owned lifecycle object: an
+automatic object changed after sigsetjmp would be indeterminate after
+siglongjmp. PostgreSQL's normal proc_exit_prepare() callback chain still runs;
+the guarded path then disarms exit state and jumps to one ownership-aware cleanup
+path. Ordinary startup failures use that same cleanup path after the handler is
+installed.
+
+The lifecycle retains the POSIX caller-directory descriptor introduced by the
+cwd patch, so rename-safe restoration and descriptor release also survive a
+non-local exit. It closes both ends of its dummy socket pair after PostgreSQL's
+callbacks: pqcomm deliberately invalidates its Port descriptor without closing
+the underlying socket because an ordinary backend is about to exit.
 ---
- src/backend/storage/ipc/ipc.c | 27 +++++++++++++++++++++++++
- src/backend/tcop/postgres.c   | 38 +++++++++++++++++++++++++++++++++--
- src/include/storage/ipc.h     |  3 +++
- 3 files changed, 66 insertions(+), 2 deletions(-)
+ src/backend/storage/ipc/ipc.c | 51 ++++++++++++++++++++
+ src/backend/tcop/postgres.c   | 119 ++++++++++++++++++++++++++----------------
+ src/include/storage/ipc.h     |  5 ++
+ 3 files changed, 147 insertions(+), 28 deletions(-)
 
 diff --git a/src/backend/storage/ipc/ipc.c b/src/backend/storage/ipc/ipc.c
-index a2d0f8a..b0630ec 100644
+index a2d0f8a..97edd03 100644
 --- a/src/backend/storage/ipc/ipc.c
 +++ b/src/backend/storage/ipc/ipc.c
 @@ -85,6 +85,17 @@ static int	on_proc_exit_index,
  			on_shmem_exit_index,
  			before_shmem_exit_index;
-
+ 
 +#ifdef OLIPHAUNT_EMBEDDED
 +#ifdef _MSC_VER
 +#define OLIPHAUNT_THREAD_LOCAL __declspec(thread)
@@ -36,17 +46,24 @@ index a2d0f8a..b0630ec 100644
 +static OLIPHAUNT_THREAD_LOCAL void *oliphaunt_proc_exit_context = NULL;
 +#endif
 +
-
+ 
  /* ----------------------------------------------------------------
   *		proc_exit
-@@ -111,6 +122,14 @@ proc_exit(int code)
+@@ -111,6 +122,21 @@ proc_exit(int code)
  	/* Clean up everything that must be cleaned up */
  	proc_exit_prepare(code);
-
+ 
 +#ifdef OLIPHAUNT_EMBEDDED
 +	if (oliphaunt_proc_exit_handler != NULL)
 +	{
-+		oliphaunt_proc_exit_handler(code, oliphaunt_proc_exit_context);
++		oliphaunt_embedded_proc_exit_handler handler = oliphaunt_proc_exit_handler;
++		void	   *context = oliphaunt_proc_exit_context;
++
++		/* The embedded escape is one-shot and must not leave exit state armed. */
++		oliphaunt_proc_exit_handler = NULL;
++		oliphaunt_proc_exit_context = NULL;
++		proc_exit_inprogress = false;
++		handler(code, context);
 +		abort();
 +	}
 +#endif
@@ -54,23 +71,40 @@ index a2d0f8a..b0630ec 100644
  #ifdef PROFILE_PID_DIR
  	{
  		/*
-@@ -218,6 +237,14 @@ proc_exit_prepare(int code)
+@@ -218,6 +244,31 @@ proc_exit_prepare(int code)
  }
-
+ 
  #ifdef OLIPHAUNT_EMBEDDED
-+void
-+oliphaunt_embedded_set_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
-+									  void *context)
++bool
++oliphaunt_embedded_install_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
++										  void *context)
 +{
-+	oliphaunt_proc_exit_handler = handler;
++	if (handler == NULL || oliphaunt_proc_exit_handler != NULL)
++		return false;
++
 +	oliphaunt_proc_exit_context = context;
++	oliphaunt_proc_exit_handler = handler;
++	return true;
++}
++
++bool
++oliphaunt_embedded_clear_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
++										void *context)
++{
++	if (oliphaunt_proc_exit_handler != handler ||
++		oliphaunt_proc_exit_context != context)
++		return false;
++
++	oliphaunt_proc_exit_handler = NULL;
++	oliphaunt_proc_exit_context = NULL;
++	return true;
 +}
 +
  /*
   * Run PostgreSQL's normal backend exit callbacks without terminating the host
   * process.  This is only valid for the embedded thread owner that already
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 56888c4..c96011f 100644
+index 70f1baf..226174c 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
 @@ -27,6 +27,7 @@
@@ -80,90 +114,201 @@ index 56888c4..c96011f 100644
 +#include <setjmp.h>
  #endif
  #include <sys/time.h>
-
-@@ -4180,6 +4181,20 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 
+@@ -4180,6 +4181,34 @@ PostgresSingleUserMain(int argc, char *argv[],
  }
-
+ 
  #ifdef OLIPHAUNT_EMBEDDED
-+typedef struct OliphauntEmbeddedProcExitGuard
++/*
++ * Keep every value read by cleanup behind an unchanged pointer.  Automatic
++ * objects modified after sigsetjmp() would be indeterminate after siglongjmp().
++ */
++typedef struct OliphauntEmbeddedLifecycle
 +{
-+	sigjmp_buf env;
-+	int			code;
-+} OliphauntEmbeddedProcExitGuard;
++	sigjmp_buf proc_exit_env;
++	int			proc_exit_code;
++	int			rc;
++	int			socket_pair[2];
++	char		original_cwd[MAXPGPATH];
++#ifndef WIN32
++	int			original_cwd_fd;
++#endif
++	bool		cwd_restore_required;
++	bool		proc_exit_handler_armed;
++} OliphauntEmbeddedLifecycle;
 +
 +static void
 +oliphaunt_embedded_throw_proc_exit(int code, void *context)
 +{
-+	OliphauntEmbeddedProcExitGuard *guard = (OliphauntEmbeddedProcExitGuard *) context;
-+	guard->code = code;
-+	siglongjmp(guard->env, 1);
++	OliphauntEmbeddedLifecycle *lifecycle = (OliphauntEmbeddedLifecycle *) context;
++
++	lifecycle->proc_exit_code = code;
++	lifecycle->proc_exit_handler_armed = false;
++	siglongjmp(lifecycle->proc_exit_env, 1);
 +}
 +
  /*
   * oliphaunt_embedded_main
   *
-@@ -4199,6 +4214,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
- 	int			socket_pair[2] = {-1, -1};
+@@ -4196,29 +4225,53 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 					 OliphauntEmbeddedIO *io)
+ {
+ 	const char *switch_dbname = NULL;
+-	int			socket_pair[2] = {-1, -1};
  	ClientSocket client_sock;
  	struct sockaddr_in *addr;
-+	OliphauntEmbeddedProcExitGuard exit_guard;
-+	int			rc = 0;
- 	char		original_cwd[MAXPGPATH];
- 	bool		have_original_cwd;
-
-@@ -4208,6 +4225,15 @@ oliphaunt_embedded_main(int argc, char *argv[],
-
- 	Assert(!IsUnderPostmaster);
-
-+	memset(&exit_guard, 0, sizeof(exit_guard));
-+	oliphaunt_embedded_set_proc_exit_handler(oliphaunt_embedded_throw_proc_exit,
-+									  &exit_guard);
-+	if (sigsetjmp(exit_guard.env, 1) != 0)
+-	char		original_cwd[MAXPGPATH];
+-#ifndef WIN32
+-	int			original_cwd_fd = -1;
+-#endif
+-	bool		cwd_restore_required = false;
++	OliphauntEmbeddedLifecycle *lifecycle;
++	int			result;
+ 
+ 	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
+ 		username == NULL || io == NULL)
+ 		return -1;
+ 
+-	if (getcwd(original_cwd, sizeof(original_cwd)) == NULL)
++	lifecycle = calloc(1, sizeof(*lifecycle));
++	if (lifecycle == NULL)
+ 		return -1;
++	lifecycle->socket_pair[0] = -1;
++	lifecycle->socket_pair[1] = -1;
+ #ifndef WIN32
+-	original_cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
+-	if (original_cwd_fd < 0)
++	lifecycle->original_cwd_fd = -1;
++#endif
++	if (getcwd(lifecycle->original_cwd,
++			   sizeof(lifecycle->original_cwd)) == NULL)
 +	{
-+		rc = exit_guard.code;
++		free(lifecycle);
+ 		return -1;
++	}
++#ifndef WIN32
++	lifecycle->original_cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
++	if (lifecycle->original_cwd_fd < 0)
++	{
++		free(lifecycle);
++		return -1;
++	}
+ #endif
+ 
+ 	Assert(!IsUnderPostmaster);
+ 
++	if (sigsetjmp(lifecycle->proc_exit_env, 1) != 0)
++	{
++		lifecycle->rc = lifecycle->proc_exit_code;
 +		goto embedded_cleanup;
 +	}
++	if (!oliphaunt_embedded_install_proc_exit_handler(
++			oliphaunt_embedded_throw_proc_exit, lifecycle))
++	{
++		lifecycle->rc = -1;
++		goto embedded_cleanup;
++	}
++	lifecycle->proc_exit_handler_armed = true;
 +
  	if (progname == NULL)
  		progname = get_progname(argv[0]);
  	MyProcPid = getpid();
-@@ -4278,14 +4304,22 @@ oliphaunt_embedded_main(int argc, char *argv[],
-
+@@ -4238,14 +4291,12 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 
+ 	if (!SelectConfigFiles(userDoption, progname))
+ 	{
+-#ifndef WIN32
+-		close(original_cwd_fd);
+-#endif
+-		return -1;
++		lifecycle->rc = -1;
++		goto embedded_cleanup;
+ 	}
+ 
+ 	checkDataDir();
+-	cwd_restore_required = true;
++	lifecycle->cwd_restore_required = true;
+ 	ChangeToDataDir();
+ 	CreateDataDirLockFile(false);
+ 	LocalProcessControlFile(false);
+@@ -4261,12 +4312,12 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	PgStartTime = GetCurrentTimestamp();
+ 	InitProcess();
+ 
+-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_pair) != 0)
++	if (socketpair(AF_UNIX, SOCK_STREAM, 0, lifecycle->socket_pair) != 0)
+ 		ereport(FATAL,
+ 				(errmsg("could not create embedded liboliphaunt socketpair: %m")));
+ 
+ 	memset(&client_sock, 0, sizeof(client_sock));
+-	client_sock.sock = socket_pair[0];
++	client_sock.sock = lifecycle->socket_pair[0];
+ 	addr = (struct sockaddr_in *) &client_sock.raddr.addr;
+ 	addr->sin_family = AF_INET;
+ 	addr->sin_port = htons(5432);
+@@ -4293,24 +4344,36 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 
  	PostgresMain(dbname, username);
  	oliphaunt_embedded_proc_exit(0);
-+	rc = 0;
-
-+embedded_cleanup:
-+	oliphaunt_embedded_set_proc_exit_handler(NULL, NULL);
- 	if (have_original_cwd && chdir(original_cwd) != 0)
--		return -1;
-+		rc = rc == 0 ? -1 : rc;
-
- 	if (socket_pair[1] >= 0)
- 		close(socket_pair[1]);
-+	if (socket_pair[0] >= 0 && MyProcPort == NULL)
-+		close(socket_pair[0]);
-
--	return 0;
-+	if (rc == 0 && exit_guard.code != 0)
-+		rc = exit_guard.code;
++	lifecycle->rc = 0;
 +
-+	return rc;
++embedded_cleanup:
++	if (lifecycle->proc_exit_handler_armed &&
++		!oliphaunt_embedded_clear_proc_exit_handler(
++			oliphaunt_embedded_throw_proc_exit, lifecycle))
++		abort();
++	lifecycle->proc_exit_handler_armed = false;
+ 
+ #ifdef WIN32
+-	if (cwd_restore_required && chdir(original_cwd) != 0)
+-		return -1;
++	if (lifecycle->cwd_restore_required &&
++		chdir(lifecycle->original_cwd) != 0)
++		lifecycle->rc = lifecycle->rc == 0 ? -1 : lifecycle->rc;
+ #else
+-	if (cwd_restore_required && fchdir(original_cwd_fd) != 0)
+-	{
+-		close(original_cwd_fd);
+-		return -1;
+-	}
+-	if (close(original_cwd_fd) != 0)
+-		return -1;
++	if (lifecycle->cwd_restore_required &&
++		fchdir(lifecycle->original_cwd_fd) != 0)
++		lifecycle->rc = lifecycle->rc == 0 ? -1 : lifecycle->rc;
++	if (lifecycle->original_cwd_fd >= 0 &&
++		close(lifecycle->original_cwd_fd) != 0)
++		lifecycle->rc = lifecycle->rc == 0 ? -1 : lifecycle->rc;
+ #endif
+ 
+-	if (socket_pair[1] >= 0)
+-		close(socket_pair[1]);
++	if (lifecycle->socket_pair[1] >= 0)
++		close(lifecycle->socket_pair[1]);
++	if (lifecycle->socket_pair[0] >= 0)
++		close(lifecycle->socket_pair[0]);
+ 
+-	return 0;
++	result = lifecycle->rc;
++	free(lifecycle);
++	return result;
  }
  #endif
-
+ 
 diff --git a/src/include/storage/ipc.h b/src/include/storage/ipc.h
-index 8bfa63a..69d2d80 100644
+index 8bfa63a..f6ac183 100644
 --- a/src/include/storage/ipc.h
 +++ b/src/include/storage/ipc.h
-@@ -68,7 +68,10 @@ extern PGDLLIMPORT bool shmem_exit_inprogress;
+@@ -68,7 +68,12 @@ extern PGDLLIMPORT bool shmem_exit_inprogress;
  pg_noreturn extern void proc_exit(int code);
  extern void shmem_exit(int code);
  #ifdef OLIPHAUNT_EMBEDDED
 +typedef void (*oliphaunt_embedded_proc_exit_handler) (int code, void *context);
  extern void oliphaunt_embedded_proc_exit(int code);
-+extern void oliphaunt_embedded_set_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
++extern bool oliphaunt_embedded_install_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
 +												  void *context);
++extern bool oliphaunt_embedded_clear_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
++												void *context);
  #endif
  extern void on_proc_exit(pg_on_exit_callback function, Datum arg);
  extern void on_shmem_exit(pg_on_exit_callback function, Datum arg);

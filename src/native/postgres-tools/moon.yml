@@ -45,9 +45,14 @@ tasks:
       runFromWorkspaceRoot: true
   test:
     tags: ["quality", "unit", "requires-rust"]
-    command: "cargo test -p oliphaunt-tools --locked"
+    script: |
+      set -e
+      cargo test -p oliphaunt-tools --locked
+      node --test src/native/postgres-tools/npm/output-capture.test.mjs
     inputs:
       - "crates/tools/**/*"
+      - "npm/index.mts"
+      - "npm/output-capture.test.mjs"
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
         group: "fixtures"

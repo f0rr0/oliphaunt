@@ -6,6 +6,12 @@ layer: "library"
 stack: "frontend"
 
 tasks:
+  test:
+    tags: ["quality", "unit"]
+    command: "bun test src/wasix/browser-host/clock.test.mts"
+    inputs: ["clock.test.mts", "patches/0013-wasmer-wasix-fast-single-backend-clock.patch"]
+    options:
+      runFromWorkspaceRoot: true
   build:
     tags: ["artifact", "build", "requires-rust"]
     command: "bash src/wasix/browser-host/build-sdk.sh"
@@ -14,6 +20,8 @@ tasks:
     inputs:
       - "**/*"
       - "/tools/dev/node-info.mts"
+      - "/src/wasix/runtime/protocol-contract/contract.json"
+      - "/src/native/postgres-tools/output-contract/contract.json"
       - "@group(cargo-workspace)"
     outputs:
       - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"

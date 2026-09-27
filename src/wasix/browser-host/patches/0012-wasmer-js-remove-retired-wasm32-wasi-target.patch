@@ -1,3 +1,11 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: remove the retired Rust target requirement
+
+Remove the obsolete wasm32-wasi target from the pinned toolchain manifest.
+The browser SDK builds wasm32-unknown-unknown, so installing the retired target
+is unnecessary and can prevent the otherwise valid source build.
+
 diff --git a/rust-toolchain.toml b/rust-toolchain.toml
 --- a/rust-toolchain.toml
 +++ b/rust-toolchain.toml

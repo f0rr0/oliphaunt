@@ -7,19 +7,34 @@ Use the same relocatable wasm linker shape as the released WASIX lane when
 assembling the backend core archive.  Leave the final dynamic-main link to the
 product build helper so its generated side-module export closure stays the one
 authoritative policy instead of wasixcc's unconditional export-all default.
+
+Release builds feed ThinLTO bitcode into this raw relocatable link, making it
+the backend core's WebAssembly code-generation boundary.  Mirror wasixcc's
+complete exception and SJLJ lowering flags here.  In particular,
+--exception-model=wasm is what emits the live try_table/catch and
+__wasm_setjmp_test path; the other SJLJ flags alone can rewrite setjmp to helper
+calls without installing the handler.  Once the relocatable link has emitted a
+native Wasm object, the sealed final link cannot repair a missed lowering.
 ---
- src/backend/Makefile | 17 ++++++++++++-----
- 1 file changed, 12 insertions(+), 5 deletions(-)
+ src/backend/Makefile | 23 ++++++++++++++++++-----
+ 1 file changed, 18 insertions(+), 5 deletions(-)
 
 diff --git a/src/backend/Makefile b/src/backend/Makefile
-index 9292f77031..89c356d090 100644
+index 9292f77031..9c46c0d33f 100644
 --- a/src/backend/Makefile
 +++ b/src/backend/Makefile
-@@ -96,12 +96,19 @@ libpostgres.a: postgres
+@@ -96,12 +96,25 @@ libpostgres.a: postgres
  endif # win32
 
  ifeq ($(PORTNAME), wasix-dl)
 +WASM_LD ?= $(shell $(CC) -print-prog-name=wasm-ld)
++# This relocatable ThinLTO link is a code-generation boundary.  Keep all four
++# flags synchronized with wasixcc's final WebAssembly EH/SJLJ link.
++WASM_LTO_SJLJ_FLAGS = \
++	-mllvm --wasm-enable-eh \
++	-mllvm --wasm-enable-sjlj \
++	-mllvm --wasm-use-legacy-eh=false \
++	-mllvm --exception-model=wasm
 +LIBPGCORE ?= $(top_builddir)/libpgcore.a
 +LIBPG = $(top_builddir)/libpostgres.a
 +PGCORE = $(top_builddir)/src/common/libpgcommon_srv.a $(top_builddir)/src/port/libpgport_srv.a $(LIBPG)
@@ -32,10 +47,9 @@ index 9292f77031..89c356d090 100644
 -	$(LD) -r -o libpgcore.o $(filter-out main/main.o,$(call expand_subsys,$^))
 -	$(AR) rcs libpgcore.a libpgcore.o
 -	$(CC) $(CFLAGS) main/main.o libpgcore.a $(LDFLAGS) $(LIBS) -Wl,--no-entry -Wl,--export-dynamic -Wl,--export=_start -nostartfiles -o $@
-+	rm -f $(top_builddir)/libpgmain.a $(LIBPG) $(top_builddir)/libpgcore.o $(LIBPGCORE)
 +	$(AR) rcs $(top_builddir)/libpgmain.a $(PGMAIN)
 +	$(AR) rcs $(LIBPG) $(PGBACKEND)
-+	$(WASM_LD) --relocatable -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
++	$(WASM_LD) --relocatable $(WASM_LTO_SJLJ_FLAGS) -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
 +	$(AR) rcs $(LIBPGCORE) $(top_builddir)/libpgcore.o
 
  postgres: oliphaunt

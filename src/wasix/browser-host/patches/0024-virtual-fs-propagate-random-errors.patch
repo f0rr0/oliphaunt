@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000024 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Wed, 26 Aug 2026 00:00:00 +0000
+Subject: [PATCH] virtual-fs: propagate random device errors
+
+RandomFile currently ignores getrandom failures and then reports a successful
+read of the zero-initialized staging buffer. Predictable bytes must never be
+reported as entropy.
+
+Return the provider error as an I/O error without advancing the destination.
+The caller can then preserve its own fail-closed randomness contract.
+---
+ src/random_file.rs | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/random_file.rs b/src/random_file.rs
+index 2667d16..ad880c3 100644
+--- a/src/random_file.rs
++++ b/src/random_file.rs
+@@ -54,7 +54,9 @@ impl AsyncRead for RandomFile {
+         buf: &mut tokio::io::ReadBuf<'_>,
+     ) -> Poll<io::Result<()>> {
+         let mut data = vec![0u8; buf.remaining()];
+-        getrandom::getrandom(&mut data).ok();
++        if let Err(error) = getrandom::getrandom(&mut data) {
++            return Poll::Ready(Err(error.into()));
++        }
+         buf.put_slice(&data[..]);
+         Poll::Ready(Ok(()))
+     }
+-- 
+2.51.0

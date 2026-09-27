@@ -16,14 +16,28 @@ preserving fatal error handling for regular files and non-directory errors.
  2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/src/backend/storage/file/fd.c b/src/backend/storage/file/fd.c
+index 378c078..48453fe 100644
 --- a/src/backend/storage/file/fd.c
 +++ b/src/backend/storage/file/fd.c
-@@ -3845,1 +3845,1 @@ fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
+@@ -3902,7 +3902,7 @@ fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
+ 	 * Some OSes don't allow us to fsync directories at all, so we can ignore
+ 	 * those errors. Anything else needs to be logged.
+ 	 */
 -	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
 +	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL || errno == EISDIR)))
+ 	{
+ 		int			save_errno;
+ 
 diff --git a/src/common/file_utils.c b/src/common/file_utils.c
+index 7b62687..dc474fb 100644
 --- a/src/common/file_utils.c
 +++ b/src/common/file_utils.c
-@@ -416,1 +416,1 @@ fsync_fname(const char *fname, bool isdir)
+@@ -435,7 +435,7 @@ fsync_fname(const char *fname, bool isdir)
+ 	 * Some OSes don't allow us to fsync directories at all, so we can ignore
+ 	 * those errors. Anything else needs to be reported.
+ 	 */
 -	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
 +	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL || errno == EISDIR)))
+ 	{
+ 		pg_log_error("could not fsync file \"%s\": %m", fname);
+ 		(void) close(fd);
