@@ -305,7 +305,6 @@ internal object OliphauntAndroidRuntimeAssets {
         assetManager: AssetManager,
         pgdata: File,
         clusterSeed: OliphauntAndroidAssetPackage?,
-        didPublishDestination: () -> Unit,
     ): AndroidPgdataPublication {
         if (File(pgdata, "PG_VERSION").isFile) {
             validateCompleteAndroidPgdata(pgdata)
@@ -341,7 +340,7 @@ internal object OliphauntAndroidRuntimeAssets {
                 copyPackageTree(assetManager, clusterSeed, temp)
                 ensureClusterSeedDirectoriesForAndroid(temp)
                 normalizeClusterSeedForAndroid(temp)
-                publishPreparedAndroidPgdata(temp, pgdata, didPublishDestination)
+                publishPreparedAndroidPgdata(temp, pgdata)
             }
         return finishAndroidStaging(result, operation = "PGDATA preparation") {
             removeAndroidStagingIfPresent(temp)
@@ -351,7 +350,6 @@ internal object OliphauntAndroidRuntimeAssets {
     internal fun publishPreparedAndroidPgdata(
         staging: File,
         destination: File,
-        didPublishDestination: () -> Unit = {},
         syncPublicationTree: (File) -> Unit = ::syncAndroidPublicationTree,
         syncParentDirectory: (File) -> Unit = ::syncAndroidDirectory,
     ): AndroidPgdataPublication {
@@ -385,7 +383,6 @@ internal object OliphauntAndroidRuntimeAssets {
         }
 
         if (staging.renameTo(destination)) {
-            didPublishDestination()
             syncParentDirectory(
                 destination.parentFile
                     ?: throw OliphauntException("PGDATA has no parent directory: ${destination.absolutePath}"),

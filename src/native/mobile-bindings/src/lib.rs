@@ -134,9 +134,6 @@ impl NativeDatabase {
     pub async fn cancel(&self) -> Result<(), NativeError> {
         Ok(self.database.cancel().await?)
     }
-    pub async fn backup(&self) -> Result<Vec<u8>, NativeError> {
-        Ok(self.database.backup().await?)
-    }
     pub async fn detach(&self) -> Result<(), NativeError> {
         Ok(self.database.close().await?)
     }

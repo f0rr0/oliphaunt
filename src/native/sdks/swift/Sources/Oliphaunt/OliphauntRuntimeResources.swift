@@ -311,8 +311,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     @discardableResult
     func preparePgdata(
         at pgdata: URL,
-        profile: OliphauntNativeCatalogProfile,
-        didPublishDestination: () -> Void
+        profile: OliphauntNativeCatalogProfile
     ) throws -> OliphauntPgdataPublication? {
         if FileManager.default.fileExists(
             atPath: pgdata.appendingPathComponent("PG_VERSION").path
@@ -350,8 +349,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             try ensurePgdataDirectoryLayout(at: temp)
             return try publishOliphauntPreparedPgdata(
                 temp,
-                to: pgdata,
-                didPublishDestination: didPublishDestination
+                to: pgdata
             )
         }
         return try finishOliphauntStaging(result, operation: "PGDATA preparation") {

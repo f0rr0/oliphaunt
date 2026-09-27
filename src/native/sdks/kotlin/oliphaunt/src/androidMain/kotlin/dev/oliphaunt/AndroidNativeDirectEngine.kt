@@ -81,40 +81,13 @@ internal class AndroidNativeDirectEngine(
                     val result = runCatching {
                         Os.chmod(stagingRoot.absolutePath, 448) // 0700
                         val stagedPgdata = File(stagingRoot, "pgdata")
-                        var ownsPublishedPgdata = false
-                        try {
-                            OliphauntAndroidRuntimeAssets.preparePgdata(
-                                assetManager = appContext.assets,
-                                pgdata = stagedPgdata,
-                                clusterSeed = runtime.clusterSeed,
-                                didPublishDestination = { ownsPublishedPgdata = true },
-                            )
-                            validateCompleteAndroidPgdata(stagedPgdata)
-                            writeAndroidManagedRootDescriptor(stagingRoot)
-                        } catch (publicationError: Throwable) {
-                            recoverAndroidManagedRootPublicationFailure(
-                                publicationError = publicationError,
-                                ownsPublishedPgdata = ownsPublishedPgdata,
-                                descriptorDefinitelyAbsent = {
-                                    isAndroidPathDefinitelyAbsent(
-                                        File(stagingRoot, ".oliphaunt.json"),
-                                    )
-                                },
-                                removePublishedPgdata = {
-                                    if (
-                                        !isAndroidPathDefinitelyAbsent(stagedPgdata) &&
-                                        !stagedPgdata.deleteRecursively()
-                                    ) {
-                                        throw OliphauntException(
-                                            "failed to remove uncommitted PGDATA at ${stagedPgdata.absolutePath}",
-                                        )
-                                    }
-                                },
-                                syncRoot = {
-                                    OliphauntAndroidRuntimeAssets.syncAndroidDirectory(stagingRoot)
-                                },
-                            )
-                        }
+                        OliphauntAndroidRuntimeAssets.preparePgdata(
+                            assetManager = appContext.assets,
+                            pgdata = stagedPgdata,
+                            clusterSeed = runtime.clusterSeed,
+                        )
+                        validateCompleteAndroidPgdata(stagedPgdata)
+                        writeAndroidManagedRootDescriptor(stagingRoot)
                         // POSIX rename replaces an empty directory, never a nonempty root.
                         Os.rename(stagingRoot.absolutePath, storageDirectory.absolutePath)
                         OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory.parentFile!!)
@@ -235,42 +208,6 @@ internal fun writeAndroidManagedRootDescriptor(directory: File) {
     finishAndroidStaging(result, operation = "database root descriptor publication") {
         removeAndroidStagingIfPresent(temporary)
     }
-}
-
-internal fun recoverAndroidManagedRootPublicationFailure(
-    publicationError: Throwable,
-    ownsPublishedPgdata: Boolean,
-    descriptorDefinitelyAbsent: () -> Boolean,
-    removePublishedPgdata: () -> Unit,
-    syncRoot: () -> Unit,
-): Nothing {
-    if (!ownsPublishedPgdata) throw publicationError
-    val descriptorIsAbsent =
-        try {
-            descriptorDefinitelyAbsent()
-        } catch (inspectionError: Throwable) {
-            throw OliphauntException(
-                "database root descriptor publication failed (${publicationError.message}); " +
-                    "preserved PGDATA because descriptor publication is uncertain (${inspectionError.message})",
-            ).apply {
-                addSuppressed(publicationError)
-                addSuppressed(inspectionError)
-            }
-        }
-    if (!descriptorIsAbsent) throw publicationError
-    try {
-        removePublishedPgdata()
-        syncRoot()
-    } catch (cleanupError: Throwable) {
-        throw OliphauntException(
-            "database root descriptor publication failed (${publicationError.message}); " +
-                "failed to clean uncommitted PGDATA (${cleanupError.message})",
-        ).apply {
-            addSuppressed(publicationError)
-            addSuppressed(cleanupError)
-        }
-    }
-    throw publicationError
 }
 
 internal fun isAndroidPathDefinitelyAbsent(path: File): Boolean = try {

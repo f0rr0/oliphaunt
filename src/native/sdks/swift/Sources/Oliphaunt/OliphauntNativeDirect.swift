@@ -71,57 +71,33 @@ package struct OliphauntNativeDirectEngine: OliphauntEngine {
                 attributes: [.posixPermissions: 0o700])
             let result: Result<Void, Error> = Result {
                 let pgdata = stagingRoot.appendingPathComponent("pgdata", isDirectory: true)
-                var ownsPublishedPgdata = false
-                do {
-                    let preparation = try resolvedRuntime.resources?.preparePgdata(
-                        at: pgdata,
-                        profile: resolvedRuntime.catalogProfile,
-                        didPublishDestination: { ownsPublishedPgdata = true }
+                let preparation = try resolvedRuntime.resources?.preparePgdata(
+                    at: pgdata,
+                    profile: resolvedRuntime.catalogProfile
+                )
+                if preparation == nil {
+                    let staging = stagingRoot.appendingPathComponent(
+                        ".pgdata-initdb-\(UUID().uuidString)",
+                        isDirectory: true
                     )
-                    if preparation == nil {
-                        let staging = stagingRoot.appendingPathComponent(
-                            ".pgdata-initdb-\(UUID().uuidString)",
-                            isDirectory: true
+                    let result: Result<OliphauntPgdataPublication, Error> = Result {
+                        try Self.runPackagedInitdb(
+                            pgdata: staging,
+                            runtimeDirectory: resolvedRuntime.directory,
+                            username: "postgres",
+                            catalogProfile: resolvedRuntime.catalogProfile
                         )
-                        let result: Result<OliphauntPgdataPublication, Error> = Result {
-                            try Self.runPackagedInitdb(
-                                pgdata: staging,
-                                runtimeDirectory: resolvedRuntime.directory,
-                                username: "postgres",
-                                catalogProfile: resolvedRuntime.catalogProfile
-                            )
-                            return try publishOliphauntPreparedPgdata(
-                                staging,
-                                to: pgdata,
-                                didPublishDestination: { ownsPublishedPgdata = true }
-                            )
-                        }
-                        _ = try finishOliphauntStaging(result, operation: "PGDATA preparation") {
-                            try removeOliphauntStagingIfPresent(staging)
-                        }
+                        return try publishOliphauntPreparedPgdata(
+                            staging,
+                            to: pgdata
+                        )
                     }
-                    try validateOliphauntCompletePgdata(pgdata)
-                    try Self.writeManagedRootDescriptor(stagingRoot)
-                } catch let publicationError {
-                    try recoverOliphauntManagedRootPublicationFailure(
-                        publicationError,
-                        ownsPublishedPgdata: ownsPublishedPgdata,
-                        descriptorDefinitelyAbsent: {
-                            try isOliphauntPathDefinitelyAbsent(
-                                stagingRoot.appendingPathComponent(
-                                    ".oliphaunt.json",
-                                    isDirectory: false
-                                )
-                            )
-                        },
-                        removePublishedPgdata: {
-                            if !(try isOliphauntPathDefinitelyAbsent(pgdata)) {
-                                try FileManager.default.removeItem(at: pgdata)
-                            }
-                        },
-                        syncRoot: { try syncOliphauntDirectory(stagingRoot) }
-                    )
+                    _ = try finishOliphauntStaging(result, operation: "PGDATA preparation") {
+                        try removeOliphauntStagingIfPresent(staging)
+                    }
                 }
+                try validateOliphauntCompletePgdata(pgdata)
+                try Self.writeManagedRootDescriptor(stagingRoot)
                 // POSIX rename replaces an empty directory, never a nonempty root.
                 guard rename(stagingRoot.path, storageDirectory.path) == 0 else {
                     throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)

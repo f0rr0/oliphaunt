@@ -39,8 +39,7 @@ enum OliphauntPgdataPublication: Equatable {
 @discardableResult
 func publishOliphauntPreparedPgdata(
     _ staging: URL,
-    to destination: URL,
-    didPublishDestination: () -> Void = {}
+    to destination: URL
 ) throws -> OliphauntPgdataPublication {
     if FileManager.default.fileExists(atPath: destination.path),
        (try? validateOliphauntCompletePgdata(destination)) != nil
@@ -60,44 +59,9 @@ func publishOliphauntPreparedPgdata(
         }
         throw publicationError
     }
-    didPublishDestination()
     try syncOliphauntDirectory(destination.deletingLastPathComponent())
     try validateOliphauntCompletePgdata(destination)
     return .published
-}
-
-func recoverOliphauntManagedRootPublicationFailure(
-    _ publicationError: Error,
-    ownsPublishedPgdata: Bool,
-    descriptorDefinitelyAbsent: () throws -> Bool,
-    removePublishedPgdata: () throws -> Void,
-    syncRoot: () throws -> Void
-) throws -> Never {
-    guard ownsPublishedPgdata else {
-        throw publicationError
-    }
-    let descriptorIsAbsent: Bool
-    do {
-        descriptorIsAbsent = try descriptorDefinitelyAbsent()
-    } catch let inspectionError {
-        throw OliphauntError.engine(
-            "database root descriptor publication failed (\(publicationError)); "
-                + "preserved PGDATA because descriptor publication is uncertain (\(inspectionError))"
-        )
-    }
-    guard descriptorIsAbsent else {
-        throw publicationError
-    }
-    do {
-        try removePublishedPgdata()
-        try syncRoot()
-    } catch let cleanupError {
-        throw OliphauntError.engine(
-            "database root descriptor publication failed (\(publicationError)); "
-                + "failed to clean uncommitted PGDATA (\(cleanupError))"
-        )
-    }
-    throw publicationError
 }
 
 func isOliphauntPathDefinitelyAbsent(_ path: URL) throws -> Bool {

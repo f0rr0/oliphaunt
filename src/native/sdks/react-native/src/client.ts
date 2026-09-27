@@ -581,7 +581,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     const operation = this.#admit(this.#operationTail, body);
     this.#operationTail = Promise.allSettled([this.#operationTail, operation]).then(
       () => undefined,
-      () => undefined,
     );
     return operation;
   }
@@ -979,12 +978,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     void operation.catch((error: unknown) => {
       this.#firstFailure ??= asError(error);
     });
-    this.#tail = Promise.allSettled([this.#tail, operation]).then(
-      () => undefined,
-      (error: unknown) => {
-        this.#firstFailure ??= asError(error);
-      },
-    );
+    this.#tail = Promise.allSettled([this.#tail, operation]).then(() => undefined);
     return operation;
   }
 

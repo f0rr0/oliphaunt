@@ -1,4 +1,20 @@
-# Installed mobile broker checks
+# Mobile broker checks
+
+## Shared transport and runtime
+
+```sh
+moon run oliphaunt-mobile-bindings:test oliphaunt-mobile-bindings:test-native
+```
+
+The shared tests cover close acknowledgement after worker exit, late cancellation,
+and startup, unresponsive execution, and socket-loss retirement in dedicated child
+processes. The native test uses real PostgreSQL for backup/restore and streams
+8, 32, and 128 MiB through a slow reader. On Linux it checks sampled process RSS
+growth against a 32 MiB allowance after warmup. Both transport endpoints and
+PostgreSQL share that test process; this does not qualify device worker memory or
+native process launchers.
+
+## Installed consumers
 
 These native consumer apps link the Swift CocoaPods host/ExtensionFoundation worker
 and the Kotlin Android AAR/bound service, then run actual PostgreSQL operations.

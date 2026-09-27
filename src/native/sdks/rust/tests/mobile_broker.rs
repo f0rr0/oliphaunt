@@ -96,13 +96,16 @@ fn mobile_broker_native_roundtrip() {
         );
         fs::write(root.join("original/.oliphaunt.json"),
             br#"{"schema":"oliphaunt-database-root-v1","engineFamily":"native","pgdata":"pgdata","postgresMajor":18,"physicalFormat":"native-pg18-v1"}"#).unwrap();
-        for action in ["produce", "restore", "verify"] {
+        for action in ["produce", "restore", "verify", "stream"] {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "mobile_broker_native_roundtrip", "--nocapture"])
                 .env("OLIPHAUNT_MOBILE_TEST_ACTION", action)
                 .env("OLIPHAUNT_MOBILE_TEST_ROOT", &root)
                 .output()
                 .unwrap();
+            if action == "stream" {
+                print!("{}", String::from_utf8_lossy(&output.stdout));
+            }
             assert!(
                 output.status.success(),
                 "{action}: {}\n{}",
@@ -201,6 +204,8 @@ fn child(action: &str, root: &Path) {
             block_on(Request::new(&database).backup_to(fs::File::create(&archive).unwrap()))
                 .unwrap();
             assert!(fs::metadata(&archive).unwrap().len() > 1024 * 1024);
+        } else if action == "stream" {
+            slow_reader(&database);
         } else {
             let response =
                 block_on(Request::new(&database).execute(query("SELECT value FROM broker_probe")))
@@ -211,4 +216,61 @@ fn child(action: &str, root: &Path) {
         serving.join().unwrap().unwrap();
     }
     assert!(retired.0.load(Ordering::Acquire));
+}
+
+fn slow_reader(database: &oliphaunt::AsyncOliphaunt) {
+    use std::sync::atomic::AtomicUsize;
+    let mut warmed_peak = None;
+    for mib in [8, 32, 128] {
+        let total = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(resident_kib()));
+        let (received, measured) = (total.clone(), peak.clone());
+        // Fixed-size rows separate transport growth from a growing PostgreSQL field.
+        let sql = format!(
+            "SELECT repeat('x', 1024) FROM generate_series(1, {})",
+            mib * 1024
+        );
+        block_on(
+            Request::new(database).stream(query(&sql), move |bytes: &[u8]| {
+                let before = received.fetch_add(bytes.len(), Ordering::Relaxed);
+                let after = before + bytes.len();
+                if before / 65536 != after / 65536 {
+                    std::thread::sleep(Duration::from_millis(1));
+                    measured.fetch_max(resident_kib(), Ordering::Relaxed);
+                }
+            }),
+        )
+        .unwrap();
+        assert!(total.load(Ordering::Relaxed) > mib * 1024 * 1024);
+        let peak = peak.load(Ordering::Relaxed);
+        println!("mobile broker slow reader: {mib} MiB, process peak sampled RSS {peak} KiB");
+        // Both Rust endpoints and PostgreSQL share this test process. A full
+        // 128 MiB response buffer would exceed this generous allocator allowance.
+        let baseline = *warmed_peak.get_or_insert(peak);
+        assert!(
+            peak <= baseline + 32 * 1024,
+            "streaming RSS grew with the response: {baseline} -> {peak} KiB"
+        );
+    }
+}
+
+fn resident_kib() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("VmRSS:")?
+                    .split_whitespace()
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .expect("Linux reports process RSS")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    } // Portable transport check; platform memory qualification uses device tools.
 }

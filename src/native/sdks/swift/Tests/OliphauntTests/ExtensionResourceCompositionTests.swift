@@ -285,7 +285,7 @@ func swiftRuntimeMaterializationDoesNotRequireAnInitializationSeed() throws {
     let resources = OliphauntRuntimeResources(resourceRoot: root, cacheRoot: root.appendingPathComponent("cache"), icuResourceDirectories: [])
     let runtime = try resources.materializeRuntime()
     #expect(FileManager.default.fileExists(atPath: runtime.appendingPathComponent("share/postgresql/postgres.bki").path))
-    #expect(try resources.preparePgdata(at: root.appendingPathComponent("fresh"), profile: .standard, didPublishDestination: {}) == nil)
+    #expect(try resources.preparePgdata(at: root.appendingPathComponent("fresh"), profile: .standard) == nil)
 }
 
 @Test

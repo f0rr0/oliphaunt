@@ -615,6 +615,101 @@ mod tests {
     }
 
     #[test]
+    fn watchdog_and_transport_retire_worker_process() {
+        const MODE: &str = "OLIPHAUNT_WORKER_RETIREMENT_TEST";
+        const RETIRED: i32 = 23;
+        struct Exit;
+        impl Retirement for Exit {
+            fn retire(&self) {
+                std::process::exit(RETIRED);
+            }
+        }
+        struct HungEngine(std::sync::mpsc::Sender<()>);
+        impl EngineSession for HungEngine {
+            fn exec_protocol_raw(&mut self, _: ProtocolRequest) -> Result<ProtocolResponse> {
+                // No cancellation handle: simulate native execution that never settles.
+                self.0.send(()).unwrap();
+                loop {
+                    std::thread::park();
+                }
+            }
+        }
+        if let Ok(mode) = std::env::var(MODE) {
+            let (mut host, socket) = UnixStream::pair().unwrap();
+            let worker = Worker::new(
+                socket,
+                Arc::new(Exit),
+                if mode == "startup" {
+                    Duration::from_millis(100)
+                } else {
+                    Duration::from_secs(10)
+                },
+            )
+            .unwrap();
+            if mode != "startup" {
+                let (entered, running) = std::sync::mpsc::channel();
+                worker
+                    .database
+                    .set(AsyncOliphaunt::from_executor(EngineExecutor::spawn(
+                        Box::new(HungEngine(entered)),
+                    )))
+                    .ok()
+                    .unwrap();
+                worker.state.lock().unwrap().ready = true;
+                worker.watchdog.get().unwrap().clear(0);
+                let server = worker.clone();
+                std::thread::spawn(move || block_on(server.serve()));
+                if mode == "transport" {
+                    drop(host); // No external kill: the live worker must retire itself.
+                } else {
+                    let query = b"Q\0\0\0\rSELECT 1\0";
+                    let mut begin = [0; 16];
+                    begin[..8].copy_from_slice(&(query.len() as u64).to_be_bytes());
+                    wire::write_frame(&mut host, Kind::Query, worker.epoch, 1, &begin).unwrap();
+                    wire::write_frame(&mut host, Kind::Data, worker.epoch, 1, query).unwrap();
+                    wire::write_frame(&mut host, Kind::End, worker.epoch, 1, &[]).unwrap();
+                    running.recv_timeout(Duration::from_secs(5)).unwrap();
+                    worker.cancel(worker.epoch, 1);
+                    // Keep the host endpoint alive while unresponsive execution
+                    // exhausts the cancellation grace and triggers retirement.
+                    let _ = wire::read_frame(&mut host);
+                }
+            }
+            std::thread::sleep(Duration::from_secs(10));
+            panic!("worker did not retire for {mode}");
+        }
+        // Each process owns exactly one worker; a stuck engine cannot stall the test runner.
+        for mode in ["startup", "hung-query", "transport"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "mobile::broker::worker::tests::watchdog_and_transport_retire_worker_process",
+                    "--nocapture",
+                ])
+                .env(MODE, mode)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if child.try_wait().unwrap().is_none() {
+                child.kill().unwrap();
+            }
+            let output = child.wait_with_output().unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(RETIRED),
+                "{mode}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
     fn early_cancel_rejection_next_request_and_close_share_one_owner() {
         let (mut host, socket) = UnixStream::pair().unwrap();
         host.set_read_timeout(Some(Duration::from_secs(5))).unwrap();

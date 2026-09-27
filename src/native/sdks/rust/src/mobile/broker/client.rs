@@ -200,32 +200,8 @@ pub async fn connect(
     control: Arc<dyn Control>,
     timeout: Option<Duration>,
 ) -> Result<(AsyncOliphaunt, Arc<Connection>)> {
-    let shutdown = socket
-        .try_clone()
-        .map_err(|e| failure(Reason::Transport, Execution::NotStarted, true, e))?;
-    let connection = Arc::new(Connection {
-        epoch,
-        control,
-        socket: shutdown,
-        state: Mutex::new(State::default()),
-        watchdog: OnceLock::new(),
-    });
-    let weak = Arc::downgrade(&connection);
-    let watchdog = Watchdog::new(move |request, action| {
-        if let Some(connection) = weak.upgrade() {
-            connection.expired(request, action);
-        }
-    })?;
-    connection
-        .watchdog
-        .set(watchdog)
-        .ok()
-        .expect("watchdog installed once");
-    let session = Session {
-        socket,
-        connection: connection.clone(),
-        timeout,
-    };
+    let session = Session::new(socket, epoch, control, timeout)?;
+    let connection = session.connection.clone();
     let (executor, ()) = EngineExecutor::open("oliphaunt-broker-client", move || {
         Ok((Box::new(session), ()))
     })
@@ -240,18 +216,10 @@ pub async fn restore(
     timeout: Option<Duration>,
     mut input: std::fs::File,
 ) -> Result<()> {
-    let (_database, connection) = connect(
-        socket
-            .try_clone()
-            .map_err(|e| Error::Engine(e.to_string()))?,
-        epoch,
-        control,
-        timeout,
-    )
-    .await?;
+    let mut session = Session::new(socket, epoch, control, timeout)?;
     crate::executor::run_off_thread("oliphaunt-broker-archive-upload", move || {
-        let _database = _database;
-        let mut socket = socket;
+        let connection = &session.connection;
+        let mut socket = &mut session.socket;
         let request = connection.start(timeout)?;
         let result = (|| -> Result<()> {
             input.rewind().map_err(|e| Error::Engine(e.to_string()))?;
@@ -294,8 +262,6 @@ pub async fn restore(
             uploaded.map_err(|e| connection.transport_error(e))
         })();
         connection.finish(request, true);
-        connection.watchdog.get().unwrap().stop();
-        let _ = socket.shutdown(Shutdown::Both);
         result
     })
     .await
@@ -308,6 +274,40 @@ struct Session {
 }
 
 impl Session {
+    fn new(
+        socket: UnixStream,
+        epoch: Epoch,
+        control: Arc<dyn Control>,
+        timeout: Option<Duration>,
+    ) -> Result<Self> {
+        let shutdown = socket
+            .try_clone()
+            .map_err(|e| failure(Reason::Transport, Execution::NotStarted, true, e))?;
+        let connection = Arc::new(Connection {
+            epoch,
+            control,
+            socket: shutdown,
+            state: Mutex::new(State::default()),
+            watchdog: OnceLock::new(),
+        });
+        let weak = Arc::downgrade(&connection);
+        let watchdog = Watchdog::new(move |request, action| {
+            if let Some(connection) = weak.upgrade() {
+                connection.expired(request, action);
+            }
+        })?;
+        connection
+            .watchdog
+            .set(watchdog)
+            .ok()
+            .expect("watchdog installed once");
+        Ok(Self {
+            socket,
+            connection,
+            timeout,
+        })
+    }
+
     fn exchange(
         &mut self,
         kind: Kind,
@@ -455,32 +455,30 @@ impl EngineSession for Session {
     }
     fn close(&mut self) -> Result<()> {
         self.connection.begin_close();
-        let result = self
-            .connection
-            .control
-            .close(self.connection.epoch)
-            .and_then(|()| {
-                let frame = wire::read_frame(&mut self.socket)
-                    .map_err(|e| self.connection.transport_error(e))?;
-                if frame.epoch != self.connection.epoch
-                    || frame.request != 0
-                    || frame.kind != Kind::Terminal
-                {
-                    return Err(failure(
-                        Reason::Transport,
-                        Execution::Unknown,
-                        true,
-                        "invalid broker close result",
-                    ));
-                }
-                let completion = Completion::decode(&frame.payload)
-                    .map_err(|e| self.connection.transport_error(e))?;
-                if completion.reason == Reason::Success {
-                    Ok(())
-                } else {
-                    Err(Error::broker(completion))
-                }
-            });
+        // The worker may have acknowledged Close and exited already. Its
+        // terminal receipt, not another control send, determines the outcome.
+        let result = (|| {
+            let frame = wire::read_frame(&mut self.socket)
+                .map_err(|e| self.connection.transport_error(e))?;
+            if frame.epoch != self.connection.epoch
+                || frame.request != 0
+                || frame.kind != Kind::Terminal
+            {
+                return Err(failure(
+                    Reason::Transport,
+                    Execution::Unknown,
+                    true,
+                    "invalid broker close result",
+                ));
+            }
+            let completion = Completion::decode(&frame.payload)
+                .map_err(|e| self.connection.transport_error(e))?;
+            if completion.reason == Reason::Success {
+                Ok(())
+            } else {
+                Err(Error::broker(completion))
+            }
+        })();
         self.connection.watchdog.get().unwrap().stop();
         let _ = self.socket.shutdown(Shutdown::Both);
         result
@@ -489,8 +487,8 @@ impl EngineSession for Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        self.connection.begin_close();
         self.connection.watchdog.get().unwrap().stop();
-        let _ = self.connection.control.close(self.connection.epoch);
         let _ = self.socket.shutdown(Shutdown::Both);
     }
 }
@@ -510,6 +508,104 @@ mod tests {
             let _ = self.0.send(());
             Ok(())
         }
+    }
+
+    #[test]
+    fn close_accepts_success_after_the_control_endpoint_exits() {
+        struct ExitingWorker(Mutex<Option<UnixStream>>);
+        impl Control for ExitingWorker {
+            fn cancel(&self, _: Epoch, _: u64) -> Result<()> {
+                Ok(())
+            }
+            fn close(&self, epoch: Epoch) -> Result<()> {
+                let Some(mut worker) = self.0.lock().unwrap().take() else {
+                    return Err(Error::Engine("worker already exited".into()));
+                };
+                wire::write_frame(
+                    &mut worker,
+                    Kind::Terminal,
+                    epoch,
+                    0,
+                    &Completion::success().encode(),
+                )
+                .unwrap();
+                Ok(())
+            }
+        }
+        for begin_close_first in [false, true] {
+            let (socket, worker) = UnixStream::pair().unwrap();
+            let mut session = Session::new(
+                socket,
+                [3; 16],
+                Arc::new(ExitingWorker(Mutex::new(Some(worker)))),
+                None,
+            )
+            .unwrap();
+            if begin_close_first {
+                session.connection.begin_close();
+            }
+            session.close().unwrap();
+        }
+    }
+
+    #[test]
+    fn late_cancel_preserves_completion_and_cannot_target_the_next_request() {
+        struct Cancels(std::sync::mpsc::Sender<u64>);
+        impl Control for Cancels {
+            fn cancel(&self, _: Epoch, request: u64) -> Result<()> {
+                self.0.send(request).unwrap();
+                Ok(())
+            }
+            fn close(&self, _: Epoch) -> Result<()> {
+                Ok(())
+            }
+        }
+        let (socket, mut worker) = UnixStream::pair().unwrap();
+        worker
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let (cancel, cancelled) = std::sync::mpsc::channel();
+        let mut session = Session::new(socket, [4; 16], Arc::new(Cancels(cancel)), None).unwrap();
+        let server = std::thread::spawn(move || {
+            for request in 1..=2 {
+                let begin = wire::read_frame(&mut worker).unwrap();
+                assert_eq!(begin.request, request);
+                while wire::read_frame(&mut worker).unwrap().kind != Kind::End {}
+                wire::write_frame(
+                    &mut worker,
+                    Kind::Data,
+                    begin.epoch,
+                    request,
+                    b"Z\0\0\0\x05I",
+                )
+                .unwrap();
+                if request == 1 {
+                    assert_eq!(cancelled.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+                }
+                wire::write_frame(
+                    &mut worker,
+                    Kind::Terminal,
+                    begin.epoch,
+                    request,
+                    &Completion::success().encode(),
+                )
+                .unwrap();
+            }
+            cancelled
+        });
+        let connection = session.connection.clone();
+        for _ in 0..2 {
+            let outcome = session.exchange(Kind::Query, b"Q\0\0\0\rSELECT 1\0", &mut |_| {
+                // First cancel races the terminal receipt; the second is stale.
+                connection.cancel_request(1, Reason::Cancelled)
+            });
+            assert!(matches!(
+                outcome,
+                ProtocolStreamOutcome::ReadyForQuery(Ok(()))
+            ));
+            assert!(connection.is_usable());
+        }
+        assert!(server.join().unwrap().try_recv().is_err());
     }
 
     #[test]
