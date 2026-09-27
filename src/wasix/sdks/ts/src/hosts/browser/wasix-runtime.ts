@@ -5,6 +5,7 @@ import { simpleQuery } from '../../protocol/protocol.js';
 import { assertSuccessfulQueryResponse, PostgresError } from '../../protocol/query.js';
 import type { SerializedOpenOptions } from '../../workers/rpc.js';
 import { normalizeWasixStartupGUCs } from '../../core/startup-config.js';
+import { releaseWasixToolMounts } from '../../resources/tool-runtime.js';
 
 let compiledModuleCache: { sha256: string; module: Promise<WebAssembly.Module> } | undefined;
 
@@ -37,17 +38,21 @@ export async function materializeWasixMounts(
   createPgdataDirectory?: (DirectoryConstructor: typeof Directory) => Promise<Directory>,
 ): Promise<{ mounts: Record<string, Directory>; baseDirectory: Directory }> {
   const mounts = await materializeMountMap(DirectoryConstructor, layout);
-  let baseDirectory: Directory;
-  if (createPgdataDirectory !== undefined) {
-    baseDirectory = await createPgdataDirectory(DirectoryConstructor);
-  } else {
-    if (pgdata === undefined) {
-      throw new Error('portable WASIX storage did not provide a PGDATA mount');
+  try {
+    let baseDirectory: Directory;
+    if (createPgdataDirectory !== undefined) {
+      baseDirectory = await createPgdataDirectory(DirectoryConstructor);
+    } else {
+      if (pgdata === undefined) {
+        throw new Error('portable WASIX storage did not provide a PGDATA mount');
+      }
+      baseDirectory = await materializeDirectory(DirectoryConstructor, pgdata);
     }
-    baseDirectory = await materializeDirectory(DirectoryConstructor, pgdata);
+    mounts['/base'] = baseDirectory;
+    return { mounts, baseDirectory };
+  } catch (primary) {
+    releaseWasixToolMounts(mounts, { primary });
   }
-  mounts['/base'] = baseDirectory;
-  return { mounts, baseDirectory };
 }
 
 /** @internal Materialize runtime support mounts for frontend tools. */
@@ -63,10 +68,14 @@ async function materializeMountMap(
   layout: Pick<WasixRuntimeLayout, 'mounts'>,
 ): Promise<Record<string, Directory>> {
   const mounts: Record<string, Directory> = {};
-  for (const [mountPath, contents] of Object.entries(layout.mounts)) {
-    mounts[mountPath] = await materializeDirectory(DirectoryConstructor, contents);
+  try {
+    for (const [mountPath, contents] of Object.entries(layout.mounts)) {
+      mounts[mountPath] = await materializeDirectory(DirectoryConstructor, contents);
+    }
+    return mounts;
+  } catch (primary) {
+    releaseWasixToolMounts(mounts, { primary });
   }
-  return mounts;
 }
 
 async function materializeDirectory(
@@ -74,16 +83,20 @@ async function materializeDirectory(
   contents: WasixDirectoryMount,
 ): Promise<Directory> {
   const directory = new DirectoryConstructor(contents.files);
-  const existing = directoriesImpliedByFiles(Object.keys(contents.files));
-  const explicit = [...new Set(contents.directories)].sort(compareDirectoryDepth);
-  for (const path of explicit) {
-    if (existing.has(path)) {
-      continue;
+  try {
+    const existing = directoriesImpliedByFiles(Object.keys(contents.files));
+    const explicit = [...new Set(contents.directories)].sort(compareDirectoryDepth);
+    for (const path of explicit) {
+      if (existing.has(path)) {
+        continue;
+      }
+      await directory.createDir(path);
+      existing.add(path);
     }
-    await directory.createDir(path);
-    existing.add(path);
+    return directory;
+  } catch (primary) {
+    releaseWasixToolMounts({ directory }, { primary });
   }
-  return directory;
 }
 
 function directoriesImpliedByFiles(paths: readonly string[]): Set<string> {

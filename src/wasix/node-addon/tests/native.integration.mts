@@ -25,7 +25,7 @@ const expectedExports = [
   'supportedProfiles',
 ];
 assert.deepEqual(Object.keys(addon).sort(), expectedExports);
-assert.equal(addon.addonAbiVersion(), 2);
+assert.equal(addon.addonAbiVersion(), 3);
 assert.equal(addon.nodeApiVersion(), 8);
 assert.deepEqual(addon.supportedProfiles(), ['standard', 'icu']);
 
@@ -159,7 +159,7 @@ await Promise.all([actor.close(), actor.close()]);
 assert.equal(actor.closed, true);
 await assert.rejects(actor.execProtocolRaw(queryMessage('select 1')), (error) => {
   assert.equal(error.oliphauntWasixError, 'lifecycle');
-  assert.equal(error.oliphauntWasixAddonAbi, 2);
+  assert.equal(error.oliphauntWasixAddonAbi, 3);
   return true;
 });
 
@@ -198,7 +198,7 @@ try {
     (error) => {
       assert.equal(error.name, 'OliphauntWasixStorageError');
       assert.equal(error.oliphauntWasixError, 'storage');
-      assert.equal(error.oliphauntWasixAddonAbi, 2);
+      assert.equal(error.oliphauntWasixAddonAbi, 3);
       assert.equal(error.code, 'busy');
       assert.equal(error.commitState, 'unchanged');
       assert.equal(error.phase, 'ownership');

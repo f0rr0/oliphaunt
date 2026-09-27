@@ -1,27 +1,3 @@
-diff --git a/Cargo.toml b/Cargo.toml
-index dc2cfe4..1e9c0dc 100644
---- a/Cargo.toml
-+++ b/Cargo.toml
-@@ -156,6 +156,11 @@ features = [
- ]
- optional = true
- 
-+[dependencies.instant]
-+version = "0.1"
-+features = ["wasm-bindgen"]
-+optional = true
-+
- [dependencies.js-sys]
- version = "0.3.64"
- optional = true
-@@ -432,6 +437,7 @@ js = [
-     "virtual-fs/js",
-     "getrandom/js",
-     "chrono",
-+    "instant",
-     "js-sys",
-     "wasm-bindgen",
-     "wasm-bindgen-futures",
 diff --git a/src/state/env.rs b/src/state/env.rs
 index a9701e1..6895971 100644
 --- a/src/state/env.rs
@@ -168,23 +144,34 @@ diff --git a/src/syscalls/wasm.rs b/src/syscalls/wasm.rs
 index dd731f0..1cac381 100644
 --- a/src/syscalls/wasm.rs
 +++ b/src/syscalls/wasm.rs
-@@ -1,6 +1,5 @@
+@@ -1,6 +1,4 @@
 -use std::mem;
 -
 -use chrono::prelude::*;
-+use instant::Instant;
-+use once_cell::sync::Lazy;
++use wasm_bindgen::prelude::wasm_bindgen;
  use wasmer::WasmRef;
  
  use crate::syscalls::types::{
-@@ -8,15 +7,21 @@ use crate::syscalls::types::{
+@@ -8,15 +7,33 @@ use crate::syscalls::types::{
      *,
  };
  
-+static MONOTONIC_EPOCH: Lazy<Instant> = Lazy::new(Instant::now);
++// WASIX processes share Rust memory across workers, but performance.now() is
++// relative to each worker's creation. Include timeOrigin so every process uses
++// the same monotonic timeline (https://www.w3.org/TR/hr-time-2/).
++#[wasm_bindgen(inline_js = r#"
++export function oliphaunt_monotonic_time_ms() {
++    return performance.timeOrigin + performance.now();
++}
++"#)]
++extern "C" {
++    fn oliphaunt_monotonic_time_ms() -> f64;
++}
 +
 +fn monotonic_time_ns() -> Result<i64, Errno> {
-+    i64::try_from(MONOTONIC_EPOCH.elapsed().as_nanos()).map_err(|_| Errno::Overflow)
++    let time = std::time::Duration::try_from_secs_f64(oliphaunt_monotonic_time_ms() / 1000.0)
++        .map_err(|_| Errno::Overflow)?;
++    i64::try_from(time.as_nanos()).map_err(|_| Errno::Overflow)
 +}
 +
  pub fn platform_clock_res_get(

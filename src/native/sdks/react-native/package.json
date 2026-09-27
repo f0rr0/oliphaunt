@@ -34,6 +34,12 @@
       "import": "./lib/module/storage.js",
       "require": "./lib/commonjs/storage.js",
       "default": "./lib/module/storage.js"
+    },
+    "./extensions": {
+      "types": "./lib/typescript/extensions.d.ts",
+      "react-native": "./lib/module/extensions.js",
+      "require": "./lib/commonjs/extensions.js",
+      "default": "./lib/module/extensions.js"
     }
   },
   "oliphaunt": {

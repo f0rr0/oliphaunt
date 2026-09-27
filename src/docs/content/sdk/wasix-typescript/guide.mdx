@@ -54,16 +54,17 @@ const result = await database.query('select $1::int + 1 as answer', [41]);
 console.log(result.rows[0]?.answer);
 ```
 
-New browser storage requires a seed. The imports above use a browser bundler's
-asset URL support; seed packages are independently installed development
+New browser storage runs the runtime's initdb when no seed is selected.
+The optional seed imports above use a browser bundler's asset URL support;
+seed packages are independently installed development
 carriers, not part of the SDK. Existing IndexedDB or OPFS storage reopens without
 `seed`. Node/Bun/Deno can initialize without a seed using the runtime's initdb.
 
-For ICU, use `@oliphaunt/seed-wasix-icu` instead and pass
+For ICU, pass
 `icu: { data, manifest }`, where `data` is the raw `@oliphaunt/icu/data`
 asset and `manifest` is `@oliphaunt/icu/manifest`. Load both with `?url`
 in a browser bundler, or pass their bytes on a native host. ICU data remains
-required when reopening an ICU database; the seed does not.
+required when reopening an ICU database; the seed does not. If selecting a seed, use `@oliphaunt/seed-wasix-icu`.
 
 Browser pages must send these response headers. Bundlers using the explicit
 Worker surface must also preserve its module Worker asset:

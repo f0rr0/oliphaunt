@@ -14,7 +14,7 @@ public data class OliphauntConfig(
     val startupGucs: List<PostgresStartupGuc> = emptyList(),
     val username: String? = null,
     val database: String? = null,
-    val extensions: List<String> = emptyList(),
+    val extensions: List<OliphauntExtension> = emptyList(),
 )
 
 public object Oliphaunt {
@@ -54,5 +54,5 @@ internal fun OliphauntConfig.toEngineConfig(): EngineConfig = EngineConfig(
     startupGucs = startupGucs.toList(),
     username = username,
     database = database,
-    extensions = extensions.toList(),
+    extensions = extensions.map(OliphauntExtension::sqlName),
 )

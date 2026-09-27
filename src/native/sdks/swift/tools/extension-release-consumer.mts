@@ -90,6 +90,7 @@ if (command === 'write-consumer') {
   const releasePackagePath = JSON.stringify(path.resolve(process.env.OLIPHAUNT_RELEASE_PACKAGE));
   const dependencies = [
     `.product(name: "COliphaunt", package: "oliphaunt")`,
+    `.product(name: "Oliphaunt", package: "oliphaunt")`,
     ...selected.map(
       ({ swiftProduct }) =>
         `.product(name: ${JSON.stringify(swiftProduct)}, package: "selectedExtensions")`,
@@ -119,7 +120,9 @@ if (command === 'write-consumer') {
       : `precondition(${finalLink.swiftProduct}.sqlName == ${JSON.stringify(finalLink.sqlName)} && ${finalLink.swiftProduct}.product == ${JSON.stringify(finalLink.product)}, "planned native extension identity mismatch")\n` +
         `print("OLIPHAUNT_SWIFT_NATIVE_EXTENSION_LINK_PASS extension=${finalLink.sqlName} native_module=${finalLink.nativeModuleStem} runtime=\\(linkedNativeRuntimeVersion!) products=${selected.length}")\n`;
   const main =
-    `import COliphaunt\n${selected.map(({ swiftProduct }) => `import ${swiftProduct}`).join('\n')}\n\n` +
+    `import COliphaunt\nimport Oliphaunt\n${selected.map(({ swiftProduct }) => `import ${swiftProduct}`).join('\n')}\n\n` +
+    `let configuration = OliphauntConfiguration(extensions: [${selected.map(({ swiftProduct }) => `${swiftProduct}.resource`).join(', ')}])\n` +
+    `precondition(configuration.extensions.map(\\.sqlName).sorted() == ${JSON.stringify(actualExtensions)})\n` +
     `${selected.map(({ swiftProduct }) => `try ${swiftProduct}.register()`).join('\n')}\n` +
     `let linkedNativeRuntimeVersion = oliphaunt_version().map { String(cString: $0) }\n` +
     `precondition(linkedNativeRuntimeVersion == ${runtimeVersion}, "linked liboliphaunt runtime version mismatch")\n` +

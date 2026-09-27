@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { rejects } from 'node:assert/strict';
 
 import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
 import { readPackageAsset } from '../resources/asset-source.js';
 
 import { WasixDatabaseImpl } from '../core/database.js';
@@ -27,6 +29,7 @@ const nativeMocks = {
 
 vi.mock('../hosts/node-api/native-addon.js', () => ({
   loadNativeWasixAddon: nativeMocks.loadAddon,
+  nativeTarget: () => ({ id: 'linux-x64-gnu' }),
 }));
 
 import {
@@ -77,7 +80,7 @@ beforeEach(() => {
 });
 
 describe('WASIX native embedded payload compatibility', () => {
-  it('rejects a runtime descriptor whose archive differs from the embedded runtime', () => {
+  it('accepts a compatible runtime version independently of producer archive identity', () => {
     const options = workerOpenOptions();
     nativeMocks.payloadIdentity.mockImplementation((component: string) =>
       component === 'runtimeArchive'
@@ -85,29 +88,63 @@ describe('WASIX native embedded payload compatibility', () => {
         : `${(component === 'standardSeedArchive' ? '2' : '4').repeat(64)}:1`,
     );
 
+    expect(requireCompatibleNativeWasixAddon(options)).toBe(
+      nativeMocks.loadAddon.mock.results[0]?.value,
+    );
+    options.runtime.version = '999.0.0';
     expect(() => requireCompatibleNativeWasixAddon(options)).toThrow(
-      'WASIX runtime archive descriptor does not match the native addon payload',
+      /incompatible with native runtime/,
     );
   });
 
-  it('accepts an extension descriptor only when its exact archive is embedded', () => {
+  it('accepts a contrib descriptor with the same runtime version and a different archive identity', () => {
     const options = workerOpenOptions();
-    options.extensionCarriers.pgtap = extensionCarrier('pgtap');
+    options.extensionCarriers.hstore = {
+      ...extensionCarrier('hstore'),
+      product: 'oliphaunt-extension-contrib-pg18',
+    };
+    nativeMocks.extensionIdentity.mockReturnValue(`${'b'.repeat(64)}:7`);
 
     expect(requireCompatibleNativeWasixAddon(options)).toBe(
       nativeMocks.loadAddon.mock.results[0]?.value,
     );
-    expect(nativeMocks.extensionIdentity).toHaveBeenCalledWith('pgtap');
+    expect(nativeMocks.extensionIdentity).not.toHaveBeenCalled();
   });
 
-  it('rejects an extension descriptor whose archive differs from the embedded archive', () => {
+  it('rejects a contrib descriptor with a different runtime version', () => {
     const options = workerOpenOptions();
-    options.extensionCarriers.pgtap = extensionCarrier('pgtap');
-    nativeMocks.extensionIdentity.mockReturnValue(`${'b'.repeat(64)}:7`);
+    options.extensionCarriers.hstore = {
+      ...extensionCarrier('hstore'),
+      product: 'oliphaunt-extension-contrib-pg18',
+      version: '999.0.0',
+    };
 
     expect(() => requireCompatibleNativeWasixAddon(options)).toThrow(
-      'WASIX extension pgtap descriptor does not match the archive embedded in the native addon',
+      /WASIX contrib extension hstore version 999.0.0 is incompatible/,
     );
+  });
+
+  it('passes an independently installed extension to the native package loader', () => {
+    const options = workerOpenOptions();
+    options.extensionCarriers.pgtap = {
+      ...extensionCarrier('pgtap'),
+      version: '9.8.7',
+      source: pathToFileURL(resolve('/installed/pgtap/extensions/pgtap/extension.tar.zst')).href,
+    };
+    requireCompatibleNativeWasixAddon(options);
+    expect(nativeMocks.extensionIdentity).not.toHaveBeenCalled();
+    expect(nativeWasixOpenOptions(options, { kind: 'memory' }).extensionPackages).toEqual([
+      {
+        sqlName: 'pgtap',
+        product: 'oliphaunt-extension-pgtap',
+        version: '9.8.7',
+        archiveSha256: digest,
+        archiveSize: 7,
+        packageJson: resolve('/installed/pgtap/package.json'),
+      },
+    ]);
+    options.extensionCarriers.pgtap.source = 'https://example.com/extension.tar.zst';
+    expect(() => nativeWasixOpenOptions(options, { kind: 'memory' })).toThrow('installed package');
   });
 
   it('rejects a frontend tool descriptor whose digest differs from its supplied bytes', async () => {
@@ -136,7 +173,7 @@ describe('WASIX native embedded payload compatibility', () => {
     nativeMocks.open.mockImplementation(() => {
       throw Object.assign(new Error('this deliberately says corrupt and available'), {
         oliphauntWasixError: 'storage',
-        oliphauntWasixAddonAbi: 2,
+        oliphauntWasixAddonAbi: 3,
         code: 'busy',
         commitState: 'unchanged',
         phase: 'ownership',
@@ -401,7 +438,7 @@ function addon(): NativeWasixAddon {
     }) as unknown as NativeWasixAddon['NativeWasixServer'],
     async restore() {},
     restoreDirect() {},
-    addonAbiVersion: () => 2,
+    addonAbiVersion: () => 3,
     nodeApiVersion: () => 8,
     runtimeVersion: () => '0.1.1',
     supportedProfiles: () => ['standard', 'icu'],

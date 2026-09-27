@@ -25,14 +25,14 @@ public struct OliphauntConfiguration: Equatable, Sendable {
     public var startupGUCs: [OliphauntStartupGUC]
     public var username: String?
     public var database: String?
-    public var extensions: [String]
+    public var extensions: [OliphauntExtension]
 
     public init(
         storage: OliphauntDatabaseStorage = .temporaryDirectory,
         startupGUCs: [OliphauntStartupGUC] = [],
         username: String? = nil,
         database: String? = nil,
-        extensions: [String] = []
+        extensions: [OliphauntExtension] = []
     ) {
         self.storage = storage
         self.startupGUCs = startupGUCs
@@ -381,11 +381,9 @@ public actor OliphauntDatabase {
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database, label: "database")
         try validateOliphauntStartupGUCs(configuration.startupGUCs)
-        var normalized = configuration
-        normalized.extensions = try OliphauntRuntimeResources.normalizedExtensionIds(
-            configuration.extensions
-        )
-        return OliphauntDatabase(session: try await engine.open(configuration: normalized))
+        _ = try OliphauntRuntimeResources.validateExtensionIds(configuration.extensions.map(\.sqlName))
+        for extensionResource in configuration.extensions { try extensionResource.prepare() }
+        return OliphauntDatabase(session: try await engine.open(configuration: configuration))
     }
 
     public static func restore(destination: URL, bytes: Data) async throws {

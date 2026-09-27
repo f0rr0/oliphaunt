@@ -31,7 +31,7 @@ function manifest() {
       target: target.target,
       runtimeProduct: 'liboliphaunt-wasix',
       runtimeVersion: productManifest.oliphaunt.runtimeVersion,
-      addonAbiVersion: 2,
+      addonAbiVersion: 3,
       nodeApiVersion: 8,
       profiles: ['standard', 'icu'],
     },
@@ -72,7 +72,7 @@ describe('WASIX Node-API carrier fail-closed package contract', () => {
         candidate.oliphaunt.target = 'linux-arm64-gnu';
       },
       (candidate) => {
-        candidate.oliphaunt.addonAbiVersion = 3;
+        candidate.oliphaunt.addonAbiVersion = 4;
       },
       (candidate) => {
         candidate.oliphaunt.profiles = ['standard'];

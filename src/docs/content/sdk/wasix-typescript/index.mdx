@@ -56,7 +56,7 @@ absent.
 
 ## App Responsibilities
 
-- In the development API, supply an independent seed for new browser storage.
+- New browser storage runs initdb; an independent seed can skip that work.
   Reopening existing storage needs no seed; ICU roots still need their ICU data.
 
 - Import only the persistent-storage adapter and exact WASIX extension packages

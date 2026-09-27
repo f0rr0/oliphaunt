@@ -52,3 +52,5 @@ export {
 export const Oliphaunt: import('./client').OliphauntClient = createOliphauntClient(NativeOliphaunt);
 
 export default Oliphaunt;
+
+export { extensions, type NativeExtension } from './extensions.js';

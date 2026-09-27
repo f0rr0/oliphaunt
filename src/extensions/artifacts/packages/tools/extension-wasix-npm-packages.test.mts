@@ -31,7 +31,9 @@ import {
 import {
   stageExtensionNpmPackagesForTargets,
   stageExtensionWasixNpmPackages,
+  writeWasixExtensionAotNpmPackage,
 } from './package-extension-release-carriers.mts';
+import { canonicalWasixAotMetadata } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../../../../..');
 const directories = [];
@@ -296,6 +298,65 @@ test('derives one explicit WASIX npm identity without renaming the native/defaul
   expect(identities).toContain('@oliphaunt/extension-pgtap');
   expect(identities).toContain('@oliphaunt/extension-pgtap-wasix');
   expect(identities).not.toContain('@oliphaunt/extension-pgtap-native');
+});
+
+test('external AOT carriers retain independent versions and validate host, owner, and bytes', () => {
+  const root = temporaryRoot('oliphaunt-extension-aot-');
+  const sourceDir = path.join(root, 'source');
+  mkdirSync(sourceDir);
+  const bytes = Buffer.from('verified-aot-fixture');
+  writeFileSync(path.join(sourceDir, 'vector.bin'), bytes);
+  const canonical = canonicalWasixAotMetadata();
+  const manifest = {
+    'format-version': 1,
+    'source-lane': canonical.sourceLane,
+    engine: canonical.engine,
+    'wasmer-version': canonical.wasmerVersion,
+    'wasmer-wasix-version': canonical.wasmerWasixVersion,
+    'postgres-version': '18.4',
+    'target-triple': 'x86_64-unknown-linux-gnu',
+    artifacts: [
+      {
+        name: 'extension:vector',
+        path: 'vector.bin',
+        compressed: false,
+        sha256: sha256Bytes(bytes),
+        'raw-sha256': sha256Bytes(bytes),
+        'raw-size': bytes.length,
+        'module-sha256': '1'.repeat(64),
+      },
+    ],
+  };
+  const options = {
+    product: 'oliphaunt-extension-vector',
+    version: '9.8.7',
+    runtimeVersion: compatibility().wasixRuntimeVersion,
+    sqlName: 'vector',
+    target: 'linux-x64-gnu',
+    sourceDir,
+  };
+  const generate = () => {
+    writeFileSync(path.join(sourceDir, 'manifest.json'), JSON.stringify(manifest));
+    writeWasixExtensionAotNpmPackage(path.join(root, 'package'), options);
+  };
+  generate();
+  const packaged = JSON.parse(readFileSync(path.join(root, 'package/package.json'), 'utf8'));
+  expect(packaged).toMatchObject({
+    name: '@oliphaunt/extension-vector-wasix-linux-x64-gnu',
+    version: '9.8.7',
+    oliphaunt: { runtimeVersion: options.runtimeVersion },
+  });
+  expect(packaged.oliphaunt.manifestSha256).toBe(
+    sha256Bytes(readFileSync(path.join(root, 'package/aot-manifest.json'))),
+  );
+  manifest['target-triple'] = 'aarch64-unknown-linux-gnu';
+  expect(generate).toThrow(/target-triple/);
+  manifest['target-triple'] = 'x86_64-unknown-linux-gnu';
+  manifest.artifacts[0].name = 'extension:hstore';
+  expect(generate).toThrow(/another extension/);
+  manifest.artifacts[0].name = 'extension:vector';
+  writeFileSync(path.join(sourceDir, 'vector.bin'), 'tampered');
+  expect(generate).toThrow(/SHA-256 mismatch/);
 });
 
 test('packs a host-neutral singleton descriptor that Node imports and verifies byte-for-byte', async () => {

@@ -222,6 +222,7 @@ function manifestMembers(manifest, product) {
 function extensionInputs(extensionRoot, target, targetTriple, sourceFingerprint) {
   directory(extensionRoot, 'WASIX extension artifact root');
   return exactExtensionProducts(PREFIX)
+    .filter((product) => product === 'oliphaunt-extension-contrib-pg18')
     .map((product) => {
       const productRoot = extensionArtifactProductRoot(product, 'wasix', extensionRoot, PREFIX);
       const manifestFile = path.join(productRoot, 'extension-artifacts.json');

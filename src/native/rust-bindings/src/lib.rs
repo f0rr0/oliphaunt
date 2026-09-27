@@ -11,9 +11,14 @@ mod test_fixtures;
 pub use build_resources::register_build_resources_dir;
 #[doc(hidden)]
 pub use build_resources::registered_build_resources_dir;
+#[doc(hidden)]
+pub use build_resources::{
+    EmbeddedResource, materialize_embedded_resources, register_packaged_resources_dir,
+    resources_dir_candidates,
+};
 pub use config::{NativeClusterSeed, NativeConfig, NativeResourceDirectory, PostgresStartupGuc};
 pub use error::{Error, Result};
-pub use extension::Extension;
+pub use extension::{Extension, ExtensionPackage};
 pub use liboliphaunt::root::{PreparedNativeRoot, configure_native_tool_env, native_root_key};
 pub use liboliphaunt::{
     NativeCancel, NativeOpenOptions, NativeProtocolInput, NativeSession, ProtocolStreamOutcome,

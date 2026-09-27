@@ -2450,6 +2450,7 @@ dependencies = [
  "getrandom 0.3.4",
  "liboliphaunt-native-bindings",
  "oliphaunt-broker",
+ "oliphaunt-build",
  "oliphaunt-query",
  "serde",
  "serde_json",
@@ -2635,6 +2636,8 @@ dependencies = [
  "oliphaunt-pgwire-server",
  "oliphaunt-wasix",
  "rustix",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

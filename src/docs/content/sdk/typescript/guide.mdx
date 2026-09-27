@@ -42,7 +42,7 @@ Install the npm package. Runtime assets and helper executables resolve through
 package configuration.
 
 ```sh
-npm install @oliphaunt/ts@{{release:oliphaunt-js}}
+npm install @oliphaunt/ts@{{release:oliphaunt-js}} @oliphaunt/extension-vector
 ```
 
 </Step>
@@ -55,10 +55,11 @@ database.
 
 ```ts
 import { Oliphaunt } from '@oliphaunt/ts';
+import { vector } from '@oliphaunt/extension-vector';
 
 const db = await Oliphaunt.open({
   storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
-  extensions: ['vector'],
+  extensions: [vector],
 });
 
 const rows = await db.query('SELECT 1::text AS value');

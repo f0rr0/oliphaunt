@@ -24,7 +24,7 @@ delegates through Swift and Kotlin.
 Install the package from npm:
 
 ```sh
-npm install @oliphaunt/ts@{{release:oliphaunt-js}}
+npm install @oliphaunt/ts@{{release:oliphaunt-js}} @oliphaunt/extension-vector
 ```
 
 npm is the native-runtime distribution for Node.js, Bun, and Deno. Deno imports
@@ -40,10 +40,11 @@ Open a database from TypeScript:
 
 ```ts
 import { Oliphaunt } from '@oliphaunt/ts';
+import { vector } from '@oliphaunt/extension-vector';
 
 const db = await Oliphaunt.open({
   storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
-  extensions: ['vector'],
+  extensions: [vector],
 });
 
 const rows = await db.query('SELECT 1::text AS value');

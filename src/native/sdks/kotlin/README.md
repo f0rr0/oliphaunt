@@ -41,7 +41,7 @@ val db = Oliphaunt.open(
     config = OliphauntConfig(
         storage = DatabaseStorage.Directory(filesDir.resolve("database")),
         startupGucs = listOf(PostgresStartupGuc("application_name", "my-app")),
-        extensions = listOf("vector"),
+        extensions = listOf(OliphauntExtension.VECTOR),
     ),
 )
 
@@ -155,7 +155,8 @@ directories are rejected without mutation.
 PostgreSQL `-c name=value` settings; the SDK has no durability, memory, runtime,
 or capability profiles.
 
-`OliphauntConfig.extensions` accepts exact generated PostgreSQL SQL names.
+`OliphauntConfig.extensions` accepts generated `OliphauntExtension` values,
+such as `OliphauntExtension.VECTOR` and `OliphauntExtension.HSTORE`.
 Packaging resolves dependencies and native registration; package manifests and
 size reports remain internal build concerns.
 

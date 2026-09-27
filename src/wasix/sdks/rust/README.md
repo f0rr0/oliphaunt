@@ -112,14 +112,22 @@ close-only, and a retained callback panic is not resumed into an unknown session
 state. WASIX query cancellation is intentionally absent
 until the guest runtime can interrupt execution and prove protocol recovery.
 
-The builder also supports `username`, `database`, `startup_gucs`, and bundled
-`extension`/`extensions` when the corresponding crate features are enabled.
+The builder also supports `username`, `database`, `startup_gucs`, and
+`extension`/`extensions`. Independently released extension crates expose typed
+selectors carrying their own portable payload and matching host AOT code:
+
+```toml
+oliphaunt-extension-vector = { version = "0.2", default-features = false, features = ["wasix"] }
+```
+
+Pass `oliphaunt_extension_vector::VECTOR` to `.extension(...)`. The extension
+version may differ from the SDK's; its declared runtime version must match.
 Selecting an extension makes its artifact and required pre-start configuration
 available; it never runs `CREATE EXTENSION`, `LOAD`, or migration SQL. Install
-database-local objects explicitly through your normal migrations. Each
-associated selector is compiled only by its matching `extension-*` feature;
-`Extension::ALL` and `Extension::by_sql_name` therefore describe exactly the
-artifacts enabled in the current Cargo build, not the full packaging catalog.
+database-local objects explicitly through your normal migrations.
+`Extension::ALL` and `Extension::by_sql_name` describe the catalog. Bare
+`Extension::...` values use payloads selected through the existing `extension-*`
+features; independently installed crates supply their own payloads.
 
 ## Storage and physical backup
 
@@ -286,9 +294,10 @@ preserves its exact path across Rust drivers and ORMs.
 The server deliberately owns one connected client at a time; use the separate
 postmaster product for concurrent sessions.
 
-The crate packages no mutable runtime downloads. Cargo resolves the matching
-runtime, AOT, tool, and selected extension artifacts built from the same
-`liboliphaunt-wasix` source identity.
+The crate makes no runtime downloads. Cargo resolves versioned runtime, AOT,
+tool, and selected extension artifacts. Compatibility follows their declared
+runtime, PostgreSQL, host, and engine versions; source fingerprints are producer
+provenance. Each payload is still verified against its own manifest hashes.
 
 ## Maintainer commands
 

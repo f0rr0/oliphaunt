@@ -628,11 +628,56 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
       members: bundleManifestMembers,
     };
     await writeFile(join(targetRoot, 'bundle-manifest.json'), JSON.stringify(bundleManifest));
+    // Resolve the selected package's own dependency even when it is nested away
+    // from the SDK and the root contains another (invalid) copy.
+    const selectedRoot = join(root, 'selected-package');
+    await cp(join(consumerRoot, 'node_modules', basePackageName), selectedRoot, {
+      recursive: true,
+    });
+    const nestedTarget = join(selectedRoot, 'node_modules', targetPackageName);
+    await mkdir(dirname(nestedTarget), { recursive: true });
+    await cp(targetRoot, nestedTarget, { recursive: true });
+    const descriptor = {
+      schema: 'oliphaunt-native-extension-v1' as const,
+      sqlName: 'hstore',
+      product,
+      packageName: basePackageName,
+      version: extensionVersion,
+      packageJsonUrl: pathToFileURL(join(selectedRoot, 'package.json')).href,
+    };
     const nativeModule = `hstore${nativeModuleSuffixForTarget(target.id)}`;
     await mkdir(installRuntime, { recursive: true });
     await mkdir(join(dirname(libraryPath), 'modules'), { recursive: true });
     await writeFile(join(installRuntime, 'base-runtime.txt'), 'base');
     await writeFile(join(dirname(libraryPath), 'modules/base-module.so'), 'base-module');
+
+    await assert.rejects(
+      () =>
+        nodeAssets.materializeExtensionInstall(
+          { libraryPath, runtimeDirectory: installRuntime },
+          ['hstore'],
+          [{ ...descriptor, version: 'wrong-version' }],
+        ),
+      /does not match selected version/,
+    );
+    const originalMetadata = await readFile(join(targetRoot, 'package.json'));
+    await writeFile(join(targetRoot, 'package.json'), '{}');
+    try {
+      const selectedInstall = await nodeAssets.materializeExtensionInstall(
+        { libraryPath, runtimeDirectory: installRuntime },
+        ['hstore'],
+        [descriptor],
+      );
+      assert.equal(
+        await readFile(
+          join(selectedInstall.runtimeDirectory!, 'share/postgresql/extension/hstore.control'),
+          'utf8',
+        ),
+        'extension',
+      );
+    } finally {
+      await writeFile(join(targetRoot, 'package.json'), originalMetadata);
+    }
 
     firstInstall = await nodeAssets.materializeExtensionInstall(
       { libraryPath, runtimeDirectory: installRuntime },

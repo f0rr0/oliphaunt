@@ -37,10 +37,14 @@ SDK package carries the runtime files it needs.
 
 ### Open and query
 
+This example selects the generated vector resource product described in the Swift SDK README.
+
 Open an `OliphauntDatabase` with a persistent file URL, run SQL with async calls, and
 close when the app no longer needs the handle.
 
 ```swift
+import OliphauntExtensionVector
+
 let appSupport = FileManager.default.urls(
     for: .applicationSupportDirectory,
     in: .userDomainMask
@@ -49,7 +53,7 @@ let appSupport = FileManager.default.urls(
 let database = try await OliphauntDatabase.open(
     configuration: OliphauntConfiguration(
         storage: .directory(appSupport.appending(path: "main.oliphaunt")),
-        extensions: ["vector"]
+        extensions: [OliphauntExtensionVector.resource]
     )
 )
 

@@ -1,6 +1,8 @@
 import {
   Oliphaunt,
+  extensions as linkedExtensions,
   type DatabaseStorage,
+  type NativeExtension,
   type OliphauntDatabase,
   type QueryResult,
 } from '@oliphaunt/react-native';
@@ -156,8 +158,16 @@ export default function HomeScreen() {
           );
         }
         const extensionPlan = mobileReleaseExtensionProofPlan();
-        const extensions = extensionPlan.map((extension) => extension.sqlName);
-        stage('extensions:selected', { extensions });
+        const extensions = extensionPlan.map(({ sqlName }) => {
+          const resource = Object.values(linkedExtensions).find(
+            (entry) => entry.sqlName === sqlName,
+          );
+          if (resource === undefined) throw new Error(`unknown linked extension: ${sqlName}`);
+          return resource;
+        });
+        stage('extensions:selected', {
+          extensions: extensions.map((extension) => extension.sqlName),
+        });
         const databaseOpen = await openDatabase(stage, extensions);
         stage('open:done', { openMs: databaseOpen.openMs });
         const db = databaseOpen.database;
@@ -217,7 +227,7 @@ export default function HomeScreen() {
         };
         const smokePassReceipt = serializeExpoSmokePassReceipt({
           platform: Platform.OS,
-          extensions,
+          extensions: extensions.map((extension) => extension.sqlName),
           activatedExtensions: extensionProofResult.activatedExtensions,
           extensionCatalogComplete: extensionProofResult.extensionCatalogComplete,
           pgTextsearchEnglishBm25: extensionProofResult.pgTextsearchEnglishBm25,
@@ -430,7 +440,7 @@ async function runLifecycleResumeValidation(
 
 async function runCatalogProfileReopenProof(
   db: OliphauntDatabase,
-  extensions: readonly string[],
+  extensions: readonly NativeExtension[],
   stage: (name: string, extra?: Record<string, unknown>) => void,
 ): Promise<{ catalogProfile: CatalogProfile; check: OperationCheck }> {
   const started = now();
@@ -918,7 +928,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 async function openDatabase(
   stage?: (name: string, extra?: Record<string, unknown>) => void,
-  extensions: readonly string[] = [],
+  extensions: readonly NativeExtension[] = [],
 ): Promise<{ database: OliphauntDatabase; openMs: number }> {
   const smokeState = smokeGlobalState();
   if (smokeState.databaseInstance) {

@@ -8,15 +8,19 @@ PostgreSQL driver or ORM through their connection string.
 
 ## Installation
 
-Add `oliphaunt` and use `oliphaunt-build` from the build script so the matching
-native runtime, tools, and selected extension artifacts are staged for the
-target platform.
+Add the SDK as an ordinary dependency:
 
-```rust
-fn main() {
-    oliphaunt_build::configure();
-}
+```toml
+[dependencies]
+oliphaunt = "0.2"
 ```
+
+The published SDK selects the matching native runtime and broker packages through
+Cargo, embeds their verified payloads, and materializes them in a private cache on
+first use. Applications need no build script or startup registration call, and the
+executable can be moved away from the Cargo build directory. Seeds and ICU data
+remain optional, independent resources. `oliphaunt-build` and
+`register_build_resources!()` remain available for custom preassembled deployments.
 
 ## Execution placement and database topology
 
@@ -288,7 +292,11 @@ application error.
 
 ## Extensions and platform support
 
-Choose extensions with `.extension(Extension::...)` or `.extensions(...)`.
+Add an independently released extension crate and pass its typed constant, for
+example `.extension(oliphaunt_extension_vector::VECTOR)`. Its selected Cargo
+payload is embedded and registered automatically. The contrib facade similarly
+exports constants such as `oliphaunt_extension_contrib_pg18::HSTORE`.
+`Extension::...` remains available for explicitly prepared runtime resources.
 Selection uses exact PostgreSQL SQL names and the generated PostgreSQL 18
 catalog. `Extension` is an opaque `Copy + Eq + Hash + Ord` selector with
 uppercase associated constants, `ALL`, `by_sql_name`, and `sql_name`. Selection

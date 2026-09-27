@@ -212,7 +212,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let storage = try parseDatabaseStorage(config)
         let username = try startupIdentity(config, "username")
         let database = try startupIdentity(config, "database")
-        let extensions = try stringArray(config, "extensions")
+        let extensions = try stringArray(config, "extensions").map { try OliphauntExtension(sqlName: $0) }
         let configuration = OliphauntConfiguration(
             storage: storage,
             startupGUCs: try startupGUCs(config, "startupGUCs"),

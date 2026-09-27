@@ -1,3 +1,4 @@
+import { normalizeExtensions, type NativeExtension } from './extensions.js';
 import { join } from 'node:path';
 
 import {
@@ -30,6 +31,7 @@ export type NormalizedOpenConfig = {
   username: string;
   database: string;
   extensions: string[];
+  extensionDescriptors?: NativeExtension[];
   libraryPath?: string;
   runtimeDirectory?: string;
   seed?: NativeResourceDirectory;
@@ -49,7 +51,8 @@ export function normalizeOpenConfig(
   validateDirectoryPath(resolvedStorage.instanceDirectory, 'database storage directory');
   validateStartupIdentity(config.username ?? DEFAULT_USERNAME, 'username');
   validateStartupIdentity(config.database ?? DEFAULT_DATABASE, 'database');
-  const extensions = config.extensions ? validateExtensionIds(config.extensions) : [];
+  const extensionDescriptors = normalizeExtensions(config.extensions);
+  const extensions = extensionDescriptors.map((extension) => extension.sqlName);
   const topology =
     config.topology === 'server' ? 'server' : normalizeDatabaseTopology(config.topology);
   validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
@@ -84,6 +87,7 @@ export function normalizeOpenConfig(
     username: config.username ?? DEFAULT_USERNAME,
     database: config.database ?? DEFAULT_DATABASE,
     extensions,
+    ...(extensionDescriptors.length === 0 ? {} : { extensionDescriptors }),
     libraryPath,
     runtimeDirectory,
     ...('seed' in config && config.seed !== undefined

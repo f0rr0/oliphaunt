@@ -133,6 +133,13 @@ background/resume state machine.
 
 ## Native boundaries and extensions
 
+Runtime selection accepts typed descriptors. Import `extensions` from
+`@oliphaunt/react-native` and pass `extensions: [extensions.vector]` to select
+linked resources, as in Swift and Kotlin. Installed extension packages also
+export descriptors; their React Native export has no Node filesystem imports.
+The native build must link the selected products; the Expo plugin's build
+selection still uses SQL names.
+
 The TurboModule owns configuration and handle lifecycle. Every database and
 archive operation returns a JavaScript promise; the JSI object only copies
 `ArrayBuffer` bytes and registers completion callbacks, then delegates runtime

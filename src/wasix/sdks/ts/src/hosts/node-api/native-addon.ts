@@ -8,6 +8,16 @@ export type NativeWasixStorage =
   | Readonly<{ kind: 'memory' }>
   | Readonly<{ kind: 'directory'; path: string }>;
 
+export type NativeWasixExtensionPackage = Readonly<{
+  sqlName: string;
+  product: string;
+  version: string;
+  packageJson: string;
+  aotPackageJson?: string;
+  archiveSha256: string;
+  archiveSize: number;
+}>;
+
 export type NativeProfile = 'standard' | 'icu';
 
 export type NativeWasixOpenOptions = Readonly<{
@@ -17,6 +27,7 @@ export type NativeWasixOpenOptions = Readonly<{
   database: string;
   startupGucs: Record<string, string>;
   extensions: string[];
+  extensionPackages?: NativeWasixExtensionPackage[];
   seed?: { archive: Uint8Array; manifest: Uint8Array };
   icuData?: { data: Uint8Array; manifest: Uint8Array };
 }>;
@@ -375,7 +386,7 @@ export function validateNativeWasixAddon(
     throw new Error(`Oliphaunt WASIX native addon ${path} has an invalid export surface`);
   }
   const expectedAbi = metadata.oliphaunt?.wasixAddonAbiVersion;
-  if (expectedAbi !== 2 || addon.addonAbiVersion() !== expectedAbi) {
+  if (expectedAbi !== 3 || addon.addonAbiVersion() !== expectedAbi) {
     throw new Error(`Oliphaunt WASIX native addon ${path} has an incompatible addon ABI`);
   }
   const expectedNodeApi = metadata.oliphaunt?.nodeApiVersion;

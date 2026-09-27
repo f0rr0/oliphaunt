@@ -54,8 +54,24 @@
       "types": "./lib/broker.d.ts",
       "default": "./lib/broker.js"
     },
+    "./storage/node": {
+      "types": "./lib/storage.d.ts",
+      "default": "./lib/storage.js"
+    },
+    "./storage/bun": {
+      "types": "./lib/storage.d.ts",
+      "default": "./lib/storage.js"
+    },
+    "./storage/deno": {
+      "types": "./lib/storage.d.ts",
+      "default": "./lib/storage.js"
+    },
     "./package.json": {
       "default": "./package.json"
+    },
+    "./extensions": {
+      "types": "./lib/extensions.d.ts",
+      "default": "./lib/extensions.js"
     }
   },
   "main": "lib/index.js",

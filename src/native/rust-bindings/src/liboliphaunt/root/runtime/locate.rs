@@ -50,22 +50,24 @@ pub(super) fn locate_native_install_dir() -> Result<PathBuf> {
     )))
 }
 
-pub(super) fn locate_native_extension_artifact_dirs() -> Vec<PathBuf> {
+pub(super) fn locate_native_extension_artifact_dirs(selected: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    for resources_dir in resources_dir_candidates() {
+    let mut roots: Vec<PathBuf> = selected.map(Path::to_path_buf).into_iter().collect();
+    roots.extend(std::env::var_os("OLIPHAUNT_EXTENSION_RESOURCES_DIR").map(PathBuf::from));
+    roots.extend(resources_dir_candidates());
+    for resources_dir in roots {
         let extension_root = resources_dir.join("extension");
         let Ok(entries) = std::fs::read_dir(extension_root) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
+        let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path.is_dir() && !dirs.contains(&path) {
                 dirs.push(path);
             }
         }
     }
-    dirs.sort();
-    dirs.dedup();
     dirs
 }
 

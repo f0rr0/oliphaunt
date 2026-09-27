@@ -295,6 +295,7 @@ impl Oliphaunt {
 
     /// Restore physical backup bytes synchronously into an empty destination.
     pub fn restore(destination: impl Into<PathBuf>, backup: impl AsRef<[u8]>) -> Result<()> {
+        crate::build_resources::prepare_base_resources()?;
         OliphauntRuntime::from_env().restore(&destination.into(), backup.as_ref())
     }
 

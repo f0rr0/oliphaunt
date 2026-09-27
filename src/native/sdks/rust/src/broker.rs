@@ -513,7 +513,14 @@ fn spawn_broker(
     auth_token: &BrokerAuthToken,
 ) -> Result<Child> {
     let mut command = Command::new(executable);
-    if let Some(resources) = liboliphaunt_native_bindings::registered_build_resources_dir() {
+    if let Some(resources) =
+        liboliphaunt_native_bindings::extension::materialize_extension_resources(extensions)?
+    {
+        command.env("OLIPHAUNT_EXTENSION_RESOURCES_DIR", resources);
+    } else {
+        command.env_remove("OLIPHAUNT_EXTENSION_RESOURCES_DIR");
+    }
+    if let Some(resources) = liboliphaunt_native_bindings::resources_dir_candidates().first() {
         command.env("OLIPHAUNT_RESOURCES_DIR", resources);
     }
     command
@@ -690,6 +697,16 @@ fn read_ready_line_from_child(
 fn resolve_broker_executable() -> Option<PathBuf> {
     if let Some(path) = env::var_os(ENV_BROKER).map(PathBuf::from) {
         return Some(path);
+    }
+    if let Some(target) = current_broker_release_target() {
+        for root in liboliphaunt_native_bindings::resources_dir_candidates() {
+            let candidate = root
+                .join("broker-helper/oliphaunt-broker")
+                .join(target.executable_relative_path);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
     }
     if let Some(path) = resolve_broker_executable_next_to_current_exe() {
         return Some(path);

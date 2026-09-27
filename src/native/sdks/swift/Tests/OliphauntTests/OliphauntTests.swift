@@ -17,6 +17,22 @@ func runtimeCacheUsesApplicationDataNamespaceCasing() {
     #expect(cacheRoot.deletingLastPathComponent().lastPathComponent == "Oliphaunt")
 }
 
+@Test
+func selectedExtensionRegistersBeforeOpeningEngine() async throws {
+    let resource = OliphauntExtension(sqlName: "vector", product: "oliphaunt-extension-vector", version: "9.8.7") {
+        throw OliphauntError.engine("selected package registration failed")
+    }
+    do {
+        _ = try await OliphauntDatabase.open(
+            configuration: OliphauntConfiguration(extensions: [resource]),
+            engine: TestEngine(session: TestSession(response: commandResponse("SELECT 1")))
+        )
+        Issue.record("opening must not bypass the selected resource registration")
+    } catch {
+        #expect(String(describing: error).contains("selected package registration failed"))
+    }
+}
+
 
 // OLIPHAUNT_DOCS_SNIPPET swift-quickstart
 @Test

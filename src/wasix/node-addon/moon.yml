@@ -74,7 +74,7 @@ tasks:
       set -e
       bash ../../../tools/dev/bun.sh test --cwd src/wasix/node-addon ./tools/detect-linux-libc.test.mts ./tools/package-contract.test.mts ../../../tools/packaging/local-npm-tarball.test.mts
       bash tools/package-platform.test.sh
-      cargo test --manifest-path Cargo.toml --locked --no-default-features --features test-noop --lib
+      cargo test --manifest-path Cargo.toml --locked --no-default-features --features extensions,test-noop --lib
     env:
       CARGO_TARGET_DIR: "../../../target"
     inputs:
@@ -107,7 +107,7 @@ tasks:
 
   build-release-assets:
     tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-napi"]
-    command: "bash -c 'set -e; tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts --all --family wasix --require-wasix; exec bash src/wasix/node-addon/tools/build-native.sh'"
+    command: "bash -c 'set -e; tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts oliphaunt-extension-contrib-pg18 --family wasix --require-wasix; exec bash src/wasix/node-addon/tools/build-native.sh'"
     deps:
       - target: cargo-sources
         cacheStrategy: hash

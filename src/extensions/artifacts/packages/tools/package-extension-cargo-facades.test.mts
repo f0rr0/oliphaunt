@@ -49,7 +49,25 @@ if (['prepare-compiler', 'verify-compiler'].includes(process.argv[2])) {
       'package-extension-cargo-facades.test',
     );
     const products = ['oliphaunt-extension-contrib-pg18', 'oliphaunt-extension-vector'];
-    const dependencyPaths = {};
+    const dependencyPaths = {
+      'liboliphaunt-native-bindings': path.resolve(
+        import.meta.dir,
+        '../../../../native/rust-bindings',
+      ),
+      'oliphaunt-build': path.resolve(
+        import.meta.dir,
+        '../../../../native/sdks/rust/crates/oliphaunt-build',
+      ),
+    };
+    // The native consumer does not enable WASIX, but Cargo resolves optional coordinates.
+    const wasixStub = path.join(root, 'wasix-sdk');
+    mkdirSync(path.join(wasixStub, 'src'), { recursive: true });
+    writeFileSync(
+      path.join(wasixStub, 'Cargo.toml'),
+      `[package]\nname = "oliphaunt-wasix"\nversion = "${currentProductVersionSync('oliphaunt-wasix-rust')}"\nedition = "2024"\n[features]\nextensions = []\n[workspace]\n`,
+    );
+    writeFileSync(path.join(wasixStub, 'src/lib.rs'), '');
+    dependencyPaths['oliphaunt-wasix'] = wasixStub;
     for (const product of products) {
       const productVersion = extensionReleaseVersion(
         product,
@@ -271,7 +289,10 @@ describe('exact extension Cargo facade', () => {
     const [pkg] = packageExtensionCargoFacades(['oliphaunt-extension-pgtap'], output);
     const manifest = Bun.TOML.parse(readFileSync(pkg.manifestPath, 'utf8'));
     expect(manifest.features.default).toEqual(['native']);
-    expect(manifest.features.wasix).toEqual([`dep:oliphaunt-extension-pgtap-wasix`]);
+    expect(manifest.features.wasix).toEqual([
+      'dep:oliphaunt-wasix',
+      'dep:oliphaunt-extension-pgtap-wasix',
+    ]);
     expect(pkg.cratePath.endsWith('.crate')).toBe(true);
   });
 
@@ -289,6 +310,6 @@ describe('exact extension Cargo facade', () => {
     );
     expect(manifest.features.default).toEqual(['native']);
     expect(manifest.features.wasix).toBeUndefined();
-    expect(Object.keys(manifest.dependencies ?? {})).toHaveLength(0);
+    expect(Object.keys(manifest.dependencies ?? {})).toEqual(['liboliphaunt-native-bindings']);
   });
 });

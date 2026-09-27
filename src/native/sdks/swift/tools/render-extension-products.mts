@@ -779,6 +779,7 @@ function renderSwift(extension, bySqlName) {
     `    public static let dependencies: [String] = [${extension.dependencies.map(swiftString).join(', ')}]\n\n` +
     `    public static let nativeDependencies: [String] = [${extension.nativeDependencies.map(({ name }) => swiftString(name)).join(', ')}]\n\n` +
     `    public static let sharedPreloadLibraries: [String] = [${extension.sharedPreloadLibraries.map(swiftString).join(', ')}]\n\n` +
+    `    public static let resource = OliphauntExtension(sqlName: sqlName, product: product, version: version, registration: { try register() })\n\n` +
     `    public static func register() throws {\n` +
     `${dependencyRegistrations ? `${dependencyRegistrations}\n` : ''}` +
     `        guard let resourceRoot = Bundle.module.url(forResource: "extension-artifact", withExtension: nil) else {\n` +

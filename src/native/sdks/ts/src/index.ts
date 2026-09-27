@@ -37,6 +37,7 @@ export {
 export type {
   BinaryInput,
   DatabaseStorage,
+  DirectoryStorage,
   OliphauntClient,
   OliphauntDatabase,
   OliphauntTransaction,
@@ -54,3 +55,5 @@ import type { OliphauntClient } from './types.js';
 export const Oliphaunt: OliphauntClient = createOliphauntClient();
 
 export default Oliphaunt;
+
+export { extensions, type NativeExtension } from './extensions.js';

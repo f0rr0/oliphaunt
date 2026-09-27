@@ -63,6 +63,18 @@ impl CommonOpenOptions {
         broker: NativeBrokerConfig,
         server: NativeServerConfig,
     ) -> Result<OpenConfig> {
+        for extension in &self.extensions {
+            if let Some(package) = extension.package()
+                && Some(package.runtime_version) != option_env!("OLIPHAUNT_NATIVE_RUNTIME_VERSION")
+            {
+                return Err(Error::InvalidConfig(format!(
+                    "{} requires native runtime {}, but this SDK embeds {}",
+                    package.product,
+                    package.runtime_version,
+                    option_env!("OLIPHAUNT_NATIVE_RUNTIME_VERSION").unwrap_or("no runtime")
+                )));
+            }
+        }
         let config = OpenConfig {
             mode,
             storage: self.storage.clone(),
@@ -301,6 +313,7 @@ impl AsyncOliphauntServerBuilder {
 }
 
 pub(crate) fn open_embedded_session(config: OpenConfig) -> Result<Box<dyn EngineSession>> {
+    crate::build_resources::prepare_base_resources()?;
     match config.mode {
         EngineMode::Direct => OliphauntRuntime::from_env().open(config),
         #[cfg(feature = "desktop")]
@@ -315,6 +328,7 @@ pub(crate) fn open_embedded_session(config: OpenConfig) -> Result<Box<dyn Engine
 
 #[cfg(feature = "desktop")]
 pub(crate) fn start_server_session(config: OpenConfig) -> Result<(Box<dyn EngineSession>, String)> {
+    crate::build_resources::prepare_base_resources()?;
     let session = NativeServerRuntime::from_config(&config.server).open(config)?;
     let connection_string = session.connection_string().ok_or_else(|| {
         Error::Engine("native server did not expose its connection string".to_owned())

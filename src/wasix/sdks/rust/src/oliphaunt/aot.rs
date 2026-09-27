@@ -100,6 +100,88 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
     Ok(module)
 }
 
+/// Load AOT from a trusted package descriptor, checking its exact module identity.
+#[cfg(feature = "extensions")]
+#[allow(unsafe_code)]
+pub(crate) fn load_package_module(
+    engine: &Engine,
+    package: &super::extensions::ExtensionPackage,
+    name: &str,
+    wasm: &[u8],
+) -> Result<Module> {
+    ensure!(
+        package.runtime_version() == liboliphaunt_wasix_portable::PACKAGE_VERSION,
+        "package AOT runtime version mismatch"
+    );
+    let manifest: AotManifest = serde_json::from_str(package.aot_manifest())
+        .context("parse selected extension AOT manifest")?;
+    validate_aot_manifest(&manifest)?;
+    ensure!(
+        manifest.format_version == 1,
+        "extension AOT format version mismatch"
+    );
+    let matches = manifest
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.name == name)
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "extension AOT must contain exactly one artifact {name}"
+    );
+    let artifact = matches[0];
+    ensure!(
+        artifact.module_sha256 == sha256_hex(wasm),
+        "extension AOT WebAssembly module identity mismatch"
+    );
+    let matches = package
+        .aot_artifacts()
+        .iter()
+        .filter(|(artifact_name, _)| *artifact_name == name)
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "extension package must contain exactly one AOT payload {name}"
+    );
+    let bytes = matches[0].1;
+    let key = format!(
+        "package:{name}:{}:{:p}:{}",
+        artifact.sha256,
+        bytes.as_ptr(),
+        bytes.len()
+    );
+    let mut modules = MODULE_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("AOT module cache poisoned");
+    if let Some(module) = modules.get(&key) {
+        return Ok(module.clone());
+    }
+    validate_compressed_artifact_manifest(name, artifact, bytes)?;
+    let size = artifact
+        .raw_size
+        .context("extension AOT is missing raw-size")?;
+    let mut raw = Vec::new();
+    if bytes.starts_with(ZSTD_MAGIC) {
+        ZstdDecoder::new(Cursor::new(bytes))?
+            .take(
+                size.checked_add(1)
+                    .context("extension AOT raw-size overflow")?,
+            )
+            .read_to_end(&mut raw)?;
+    } else {
+        raw.extend_from_slice(bytes);
+    }
+    expected_raw_hash(name, artifact, &raw, AotVerifyMode::Full)?;
+    // SAFETY: ExtensionPackage can only be constructed through its unsafe trusted
+    // release constructor. We additionally verify the engine/target/runtime and
+    // both compressed and raw identities, and deserialize these same owned bytes.
+    let module = unsafe { Module::deserialize(engine, raw) }
+        .context("deserialize selected extension AOT module")?;
+    modules.insert(key, module.clone());
+    Ok(module)
+}
+
 #[cfg(feature = "tools-execution")]
 pub(crate) fn load_pg_dump_module(engine: &Engine) -> Result<Module> {
     load_artifact_module(engine, "tool:pg_dump")
@@ -357,6 +439,10 @@ fn target_manifest_artifact(name: &str) -> Result<AotManifestArtifact> {
 
 fn validate_aot_manifest(manifest: &AotManifest) -> Result<()> {
     ensure!(
+        manifest.format_version == 1,
+        "unsupported AOT manifest format"
+    );
+    ensure!(
         manifest.target_triple == target_triple(),
         "AOT manifest target mismatch: manifest={} actual={}",
         manifest.target_triple,
@@ -378,16 +464,6 @@ fn validate_aot_manifest(manifest: &AotManifest) -> Result<()> {
         manifest.wasmer_wasix_version
     );
     let metadata = assets::asset_manifest_metadata()?;
-    if let Some(expected) = metadata.source_fingerprint.as_deref() {
-        ensure!(
-            manifest.source_fingerprint.as_deref() == Some(expected),
-            "AOT manifest source fingerprint mismatch: manifest={} assets={expected}",
-            manifest
-                .source_fingerprint
-                .as_deref()
-                .unwrap_or("<missing>")
-        );
-    }
     let postgres_version = manifest
         .postgres_version
         .as_deref()
@@ -517,10 +593,6 @@ fn merge_tools_aot_manifest(manifest: &mut AotManifest) -> Result<()> {
         manifest.wasmer_wasix_version
     );
     ensure!(
-        tools_manifest.source_fingerprint == manifest.source_fingerprint,
-        "tools AOT manifest source fingerprint mismatch"
-    );
-    ensure!(
         tools_manifest.postgres_version == manifest.postgres_version,
         "tools AOT manifest postgres version mismatch"
     );
@@ -592,10 +664,6 @@ fn merge_extension_aot_manifests(_manifest: &mut AotManifest) -> Result<()> {
                 "extension AOT manifest wasmer-wasix version mismatch for '{sql_name}': manifest={} core={}",
                 extension_manifest.wasmer_wasix_version,
                 manifest.wasmer_wasix_version
-            );
-            ensure!(
-                extension_manifest.source_fingerprint == manifest.source_fingerprint,
-                "extension AOT manifest source fingerprint mismatch for '{sql_name}'"
             );
             ensure!(
                 extension_manifest.postgres_version == manifest.postgres_version,
@@ -991,7 +1059,7 @@ fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct AotManifest {
-    source_fingerprint: Option<String>,
+    format_version: u32,
     postgres_version: Option<String>,
     target_triple: String,
     engine: String,
@@ -1029,6 +1097,31 @@ struct AotCacheReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_provenance_does_not_change_aot_compatibility() {
+        let mut value = serde_json::json!({
+            "format-version": 1,
+            "postgres-version": assets::asset_manifest_metadata().unwrap().postgres_version,
+            "target-triple": target_triple(),
+            "engine": EXPECTED_AOT_ENGINE,
+            "wasmer-version": EXPECTED_WASMER_VERSION,
+            "wasmer-wasix-version": EXPECTED_WASMER_WASIX_VERSION,
+            "artifacts": [],
+        });
+        for fingerprint in [None, Some("different-producer-source")] {
+            if let Some(fingerprint) = fingerprint {
+                value["source-fingerprint"] = fingerprint.into();
+            }
+            let manifest = serde_json::from_value(value.clone()).unwrap();
+            validate_aot_manifest(&manifest).unwrap();
+        }
+        value["target-triple"] = "wrong-host".into();
+        assert!(validate_aot_manifest(&serde_json::from_value(value.clone()).unwrap()).is_err());
+        value["target-triple"] = target_triple().into();
+        value["wasmer-version"] = "wrong-engine-version".into();
+        assert!(validate_aot_manifest(&serde_json::from_value(value).unwrap()).is_err());
+    }
 
     #[test]
     fn engine_identity_matches_runtime_aot_versions() {

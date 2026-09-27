@@ -38,6 +38,9 @@ liboliphaunt-native-bindings = { version = "0.1.0", path = "../../rust-bindings"
 oliphaunt-query = { version = "0.1.0", path = "../../../query/rust" }
 getrandom = { version = "0.3", optional = true }
 
+[build-dependencies]
+oliphaunt-build = { version = "0.2.0", path = "crates/oliphaunt-build" }
+
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

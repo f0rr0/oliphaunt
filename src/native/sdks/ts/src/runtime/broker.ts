@@ -487,6 +487,7 @@ async function resolveBrokerNativeInstall(config: {
   libraryPath?: string;
   runtimeDirectory?: string;
   extensions?: readonly string[];
+  extensionDescriptors?: readonly import('../extensions.js').NativeExtension[];
   seed?: import('../types.js').NativeResourceDirectory;
   icuData?: import('../types.js').NativeResourceDirectory;
 }): Promise<BrokerNativeInstall> {
@@ -507,6 +508,7 @@ async function resolveBrokerNativeInstall(config: {
   };
   const prepared = await assets.prepareExtensionInstall(resolved, extensions, {
     explicitRuntimeDirectory,
+    descriptors: config.extensionDescriptors,
   });
   if (
     !explicitRuntimeDirectory ||

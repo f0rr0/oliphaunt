@@ -6,6 +6,15 @@ const ARTIFACT_ENV_SUFFIX: &str = "_MANIFEST";
 const RELAY_ENV_PREFIX: &str = "DEP_OLIPHAUNT_ARTIFACT_RELAY_";
 
 fn main() {
+    #[cfg(not(test))]
+    {
+        let embedded = oliphaunt_build::embed_resolved_artifacts()
+            .expect("validate and embed Cargo-resolved Oliphaunt resources");
+        println!(
+            "cargo::rustc-env=OLIPHAUNT_EMBEDDED_RESOURCES_RS={}",
+            embedded.display()
+        );
+    }
     match relay_manifest_instructions(env::vars()) {
         Ok(instructions) => {
             for instruction in instructions {

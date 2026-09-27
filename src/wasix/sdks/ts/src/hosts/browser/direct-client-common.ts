@@ -1,3 +1,4 @@
+import { initializeWasixStorage } from './initialize.js';
 import {
   WasixDatabaseImpl,
   createWasixDeferred,
@@ -64,6 +65,7 @@ import {
 
 /** @internal Narrow caller-realm host contract. */
 export type DirectWasixHost = Readonly<{
+  runWasix?: typeof import('../../host/index.mjs').runWasix;
   Directory: typeof Directory;
   init(options?: WasmerInitOptions): Promise<unknown>;
   instantiateOliphauntDirect(
@@ -192,7 +194,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     const prepared = await dependencies.prepareRuntime(options);
     const startupGUCs = normalizeWasixStartupGUCs(prepared.startupGUCs);
     const eagerClusterSeed =
-      options.storage.kind === 'memory' ? prepared.loadClusterSeed() : undefined;
+      options.storage.kind === 'memory' ? prepared.loadClusterSeed?.() : undefined;
     const [, module] = await Promise.all([
       initializeHost(host),
       dependencies.compileModule(prepared.layout.module, prepared.moduleSha256),
@@ -206,7 +208,9 @@ export class DirectWasixSession implements WasixDatabaseSession {
         if (options.username !== 'postgres') {
           throw newStorageRoleError(options.username);
         }
-        return eagerClusterSeed ?? prepared.loadClusterSeed();
+        return (
+          eagerClusterSeed ?? prepared.loadClusterSeed?.() ?? initializeWasixStorage(host, prepared)
+        );
       },
       prepared.physicalIdentity,
     );

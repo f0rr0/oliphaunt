@@ -19,6 +19,8 @@ import {
 } from '../../../../../tools/packaging/rust-native-targets.mts';
 import {
   exactExtensionProducts,
+  currentProductVersionSync,
+  extensionMetadata,
   extensionRegistryPackageTargetSets,
   extensionReleaseProduct,
   extensionReleaseVersion,
@@ -51,6 +53,11 @@ const RELAY_PREFIX: &str = "DEP_OLIPHAUNT_ARTIFACT_RELAY_";
 const SUFFIX: &str = "_MANIFEST";
 
 fn main() {
+    #[cfg(feature = "native")]
+    {
+        let embedded = oliphaunt_build::embed_resolved_artifacts().expect("embed native extension resources");
+        println!("cargo::rustc-env=OLIPHAUNT_EMBEDDED_RESOURCES_RS={}", embedded.display());
+    }
     let mut manifests = BTreeMap::new();
     for (key, value) in env::vars() {
         if value.is_empty() || key.starts_with(RELAY_PREFIX) {
@@ -112,11 +119,14 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
   const aotNames = wasixAotTargets.map((target) => wasixExtensionAotPackageName(product, target));
   const features = [
     `default = ["native"]`,
-    `native = [${nativeNames.map((name) => JSON.stringify(dependencyFeature(name))).join(', ')}]`,
-    ...(wasixName === null ? [] : [`wasix = [${JSON.stringify(dependencyFeature(wasixName))}]`]),
+    `native = ["dep:liboliphaunt-native-bindings", "dep:oliphaunt-build", ${nativeNames.map((name) => JSON.stringify(dependencyFeature(name))).join(', ')}]`,
+    ...(wasixName === null
+      ? []
+      : [
+          `wasix = ["dep:oliphaunt-wasix", ${[wasixName, ...aotNames].map((name) => JSON.stringify(dependencyFeature(name))).join(', ')}]`,
+        ]),
     ...aotNames.map(
-      (name, index) =>
-        `${JSON.stringify(`wasix-aot-${wasixAotTargets[index]}`)} = [${JSON.stringify(dependencyFeature(wasixName))}, ${JSON.stringify(dependencyFeature(name))}]`,
+      (name, index) => `${JSON.stringify(`wasix-aot-${wasixAotTargets[index]}`)} = ["wasix"]`,
     ),
   ];
   const targetDependencies = [];
@@ -129,12 +139,41 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
       `[target.'cfg(${cfg})'.dependencies]\n${name} = { version = "=${version}", optional = true${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ''} }`,
     );
   }
-  const optionalDependencies = [...(wasixName === null ? [] : [wasixName]), ...aotNames]
-    .map(
-      (name) =>
-        `${name} = { version = "=${version}", optional = true${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ''} }`,
-    )
-    .join('\n');
+  const dependency = (name, version, optional = true) =>
+    `${name} = { version = "=${version}"${optional ? ', optional = true' : ''}, default-features = false${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ''} }`;
+  const cfgForTriple = (triple) =>
+    rustNativeTargetCfg(
+      {
+        'aarch64-unknown-linux-gnu': 'linux-arm64-gnu',
+        'x86_64-unknown-linux-gnu': 'linux-x64-gnu',
+        'aarch64-apple-darwin': 'macos-arm64',
+        'x86_64-pc-windows-msvc': 'windows-x64-msvc',
+      }[triple],
+    );
+  // Both native and WASIX leaves use the same host selection table.
+  for (const [index, name] of aotNames.entries()) {
+    const cfg = cfgForTriple(wasixAotTargets[index]);
+    const header = `[target.'cfg(${cfg})'.dependencies]`;
+    const existing = targetDependencies.findIndex((entry) => entry.startsWith(header));
+    const row = dependency(name, version);
+    if (existing < 0) targetDependencies.push(`${header}\n${row}`);
+    else targetDependencies[existing] += `\n${row}`;
+  }
+  const sdkVersion = currentProductVersionSync('oliphaunt-rust');
+  const bindingVersion = currentProductVersionSync('liboliphaunt-native-bindings');
+  const optionalDependencies = [
+    dependency('liboliphaunt-native-bindings', bindingVersion),
+    ...(wasixName === null
+      ? []
+      : [
+          dependency(wasixName, version),
+          dependency('oliphaunt-wasix', currentProductVersionSync('oliphaunt-wasix-rust')).replace(
+            'default-features = false',
+            'default-features = false, features = ["extensions"]',
+          ),
+        ]),
+  ].join('\n');
+  const compatibility = extensionMetadata(product).compatibility;
   const unsupportedNativeGuard = renderUnsupportedNativeGuard(
     product,
     targets.nativeCargoTargets,
@@ -166,6 +205,9 @@ ${features.join('\n')}
 [dependencies]
 ${optionalDependencies}
 
+[build-dependencies]
+${dependency('oliphaunt-build', sdkVersion)}
+
 ${targetDependencies.join('\n\n')}
 
 [workspace]
@@ -189,7 +231,7 @@ The default \`native\` feature selects the matching native artifact leaf.${
   );
   writeFileSync(
     path.join(sourceDir, 'src/lib.rs'),
-    `#![forbid(unsafe_code)]
+    `#![deny(unsafe_op_in_unsafe_fn)]
 
 ${unsupportedNativeGuard}
 
@@ -197,6 +239,46 @@ pub const PRODUCT: &str = ${JSON.stringify(product)};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const EXTENSION_SQL_NAMES: &[&str] = &[${sqlNames.map((sqlName) => JSON.stringify(sqlName)).join(', ')}];
 ${sqlNames.length === 1 ? `pub const EXTENSION_SQL_NAME: &str = ${JSON.stringify(sqlNames[0])};` : ''}
+
+#[cfg(feature = "native")]
+pub mod native {
+    use super::{PRODUCT, VERSION};
+    const PACKAGE: liboliphaunt_native_bindings::ExtensionPackage = liboliphaunt_native_bindings::ExtensionPackage {
+        product: PRODUCT, version: VERSION, runtime_version: ${JSON.stringify(compatibility.nativeRuntimeVersion)},
+        resources: include!(env!("OLIPHAUNT_EMBEDDED_RESOURCES_RS")),
+    };
+${sqlNames.map((sql) => `    pub const ${sql.replaceAll('-', '_').toUpperCase()}: liboliphaunt_native_bindings::Extension = liboliphaunt_native_bindings::Extension::${sql.replaceAll('-', '_').toUpperCase()}.with_package(&PACKAGE);`).join('\n')}
+}
+#[cfg(feature = "native")]
+pub use native::*;
+${
+  wasixName === null
+    ? ''
+    : `
+#[cfg(feature = "wasix")]
+pub mod wasix {
+    use super::{PRODUCT, VERSION};
+    ${aotNames.map((name, index) => `#[cfg(${cfgForTriple(wasixAotTargets[index])})] use ${name.replaceAll('-', '_')} as aot;`).join('\n    ')}
+${sqlNames
+  .map((sql) => {
+    const constant = sql.replaceAll('-', '_').toUpperCase();
+    return `    // SAFETY: these immutable AOT bytes are built and verified by this release's producer.
+    const ${constant}_PACKAGE: oliphaunt_wasix::ExtensionPackage = unsafe {
+        oliphaunt_wasix::ExtensionPackage::from_trusted_release(
+            PRODUCT, VERSION, ${JSON.stringify(compatibility.wasixRuntimeVersion)},
+            ${wasixName.replaceAll('-', '_')}::ARCHIVES,
+            ${aotNames.length ? `aot::${constant}_MANIFEST, aot::ARTIFACTS` : '"", &[]'},
+        )
+    };
+    pub const ${constant}: oliphaunt_wasix::Extension = oliphaunt_wasix::Extension::${constant}.with_package(&${constant}_PACKAGE);`;
+  })
+  .join('\n')}
+}
+#[cfg(all(feature = "wasix", not(feature = "native")))]
+pub use wasix::*;
+`
+}
+
 `,
   );
   stageReleaseNotices(sourceDir, FACADE_NOTICE_OPTIONS);

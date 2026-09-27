@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { currentProductVersion } from '../../../../tools/release/release-artifact-targets.mts';
 import { packageGeneratedCargoSource } from '../../../../tools/packaging/cargo-source-package.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
 import {
@@ -87,23 +88,13 @@ async function parseArgs(argv) {
     sourceOutputDir:
       args.sourceOutputDir === undefined ? undefined : repoPath(args.sourceOutputDir),
     targets: args.targets,
-    version: args.version ?? (await currentVersion()),
+    version:
+      args.version ?? (await currentProductVersion(PRODUCT, 'package_broker_cargo_artifacts.mts')),
   };
 }
 
 function repoPath(value) {
   return path.isAbsolute(value) ? value : path.join(ROOT, value);
-}
-
-async function currentVersion() {
-  const manifest = JSON.parse(
-    await readFile(path.join(ROOT, '.release-please-manifest.json'), 'utf8'),
-  );
-  const version = manifest['broker'];
-  if (typeof version !== 'string' || version.length === 0) {
-    fail('.release-please-manifest.json is missing broker');
-  }
-  return version;
 }
 
 function cargoPackageName(targetId) {

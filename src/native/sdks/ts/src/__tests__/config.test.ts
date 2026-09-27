@@ -1,3 +1,4 @@
+import { extensions, normalizeExtensions } from '../extensions.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'bun:test';
@@ -12,6 +13,33 @@ import {
   validateStartupGUCs,
   validateStartupIdentity,
 } from '../config.js';
+
+test('extension descriptors snapshot package identity and resolve dependencies', () => {
+  const selected = {
+    ...extensions.earthdistance,
+    version: '9.8.7',
+    packageJsonUrl: 'file:///selected/package.json',
+  };
+  const normalized = normalizeExtensions([selected]);
+  selected.version = 'mutated';
+  assert.deepEqual(
+    normalized.map((value) => [value.sqlName, value.version]),
+    [
+      ['earthdistance', '9.8.7'],
+      ['cube', '9.8.7'],
+    ],
+  );
+  assert.ok(normalized.every(Object.isFrozen));
+  assert.throws(
+    () => normalizeExtensions([...normalized, { ...normalized[0]!, version: 'different' }]),
+    /conflicting selected extension packages/,
+  );
+  assert.throws(
+    () => normalizeExtensions([normalized[0]!, { ...extensions.cube, version: 'different' }]),
+    /conflicting selected extension packages/,
+  );
+  assert.throws(() => normalizeExtensions(['vector'] as never), /extension descriptors/);
+});
 
 test('normalizes only the public database and server configuration', () => {
   const direct = normalizeOpenConfig(
@@ -28,14 +56,14 @@ test('normalizes only the public database and server configuration', () => {
       startupGUCs: { work_mem: '16MB' },
       username: 'app_user',
       database: 'app_db',
-      extensions: [' vector ', '', 'hstore'],
+      extensions: [extensions.cube, extensions.hstore],
     },
     { instanceDirectory: '/app/root', temporaryDirectory: false },
   );
   assert.equal(broker.topology, 'broker');
   assert.equal(broker.pgdata, '/app/root/pgdata');
   assert.equal(broker.brokerExecutable, '/opt/oliphaunt-broker');
-  assert.deepEqual(broker.extensions, ['vector', 'hstore']);
+  assert.deepEqual(broker.extensions, ['cube', 'hstore']);
   assert.deepEqual(broker.startupArgs.slice(0, 2), ['-c', 'work_mem=16MB']);
 
   const server = normalizeOpenConfig(
