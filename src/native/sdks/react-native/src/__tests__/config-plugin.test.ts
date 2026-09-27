@@ -18,6 +18,7 @@ const {
   readCarrierSummary,
   releaseOwnerForSqlName,
   resolveInstalledExtensionOwners,
+  resolveInstalledResources,
   resolveIosCarrierManifests,
   selectedExtensionClosure,
   serializeExtensionVersions,
@@ -115,6 +116,172 @@ function writeCarrierPackage(
   });
   return carrier;
 }
+
+function writeExpoApp(projectRoot: string, dependencies = {}, autolinking = {}): void {
+  writeJson(path.join(projectRoot, 'package.json'), {
+    name: 'resource-consumer',
+    dependencies,
+    expo: { autolinking },
+  });
+  const expo = path.join(projectRoot, 'node_modules/expo');
+  fs.mkdirSync(path.dirname(expo), { recursive: true });
+  if (!fs.existsSync(expo)) {
+    const manifest = require.resolve('expo/package.json', {
+      paths: [path.resolve(sdkRoot, '../../../examples/native/react-native-expo')],
+    });
+    fs.symlinkSync(path.dirname(manifest), expo, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+}
+
+test('Expo discovery follows workspace dependencies and supplies the same resources to both platforms', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-expo-discovery-'));
+  try {
+    const app = path.join(root, 'app');
+    const library = path.join(root, 'workspace-library');
+    writeExpoApp(app, { 'workspace-library': 'file:../workspace-library' });
+    writeJson(path.join(library, 'package.json'), {
+      name: 'workspace-library',
+      dependencies: { '@oliphaunt/extension-vector': '1.2.3', '@oliphaunt/icu': '1.2.3' },
+    });
+    fs.symlinkSync(
+      library,
+      path.join(app, 'node_modules/workspace-library'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const vector = path.join(library, 'node_modules/@oliphaunt/extension-vector');
+    const carrier = writeCarrierPackage(
+      vector,
+      '@oliphaunt/extension-vector',
+      [{ sqlName: 'vector', dependencies: [] }],
+      {
+        kind: 'exact-extension',
+        product: 'oliphaunt-extension-vector',
+        liboliphauntVersion: '1.2.3',
+        members: ['vector'],
+      },
+    );
+    const icu = path.join(library, 'node_modules/@oliphaunt/icu');
+    writeJson(path.join(icu, 'package.json'), { name: '@oliphaunt/icu', version: '1.2.3' });
+    fs.writeFileSync(path.join(icu, 'OliphauntICU.podspec'), 'Pod::Spec.new {}');
+    fs.writeFileSync(
+      path.join(icu, 'react-native.config.js'),
+      'module.exports = { dependency: { platforms: { ios: null, android: null } } };',
+    );
+    // A package merely present in node_modules is not an app dependency.
+    writeJson(path.join(app, 'node_modules/@oliphaunt/extension-pgtap/package.json'), {
+      name: '@oliphaunt/extension-pgtap',
+      version: '1.2.3',
+    });
+    const base = path.join(root, 'base');
+    const baseCarrier = writeCarrierPackage(base, '@oliphaunt/react-native', []);
+    for (const platform of ['ios', 'android']) {
+      const discovered = await resolveInstalledResources(app, platform);
+      assert.deepEqual(discovered.extensions, ['vector']);
+      assert.equal(discovered.icu, true);
+      assert.equal(discovered.databaseResourcesVersion, '1.2.3');
+      assert.equal(
+        discovered.packageJsonResolver('@oliphaunt/icu', [app]),
+        path.join(icu, 'package.json'),
+      );
+      assert.throws(
+        () => discovered.packageJsonResolver('@oliphaunt/extension-pgtap', [app]),
+        /Install/,
+      );
+      const owners = resolveInstalledExtensionOwners(app, discovered.extensions, discovered);
+      assert.equal(owners.extensionVersions['oliphaunt-extension-vector'], '1.2.3');
+      assert.deepEqual(
+        resolveIosCarrierManifests(app, discovered.extensions, {
+          ...discovered,
+          basePackageRoot: base,
+          env: {},
+        }),
+        [baseCarrier, carrier],
+      );
+      assert.ok(
+        insertIosPodfileBlock('use_expo_modules!\n', {
+          ...discovered,
+          projectRoot: app,
+        }).includes('../workspace-library/node_modules/@oliphaunt/icu'),
+      );
+    }
+    fs.mkdirSync(path.join(app, 'android/app'), { recursive: true });
+    fs.writeFileSync(path.join(app, 'android/app/build.gradle'), 'plugins {\n}\n');
+    const installedSdk = path.join(app, 'node_modules/@oliphaunt/react-native');
+    writeJson(path.join(installedSdk, 'package.json'), packageJson);
+    writeJson(
+      path.join(installedSdk, 'src/generated/extensions.json'),
+      require(path.resolve(sdkRoot, '../../../extensions/generated/sdk/extensions.json')),
+    );
+    fs.copyFileSync(
+      path.join(sdkRoot, 'app.plugin.cts'),
+      path.join(installedSdk, 'app.plugin.cts'),
+    );
+    const { withOliphaunt } = require(path.join(installedSdk, 'app.plugin.cts'));
+    const config = withOliphaunt({ name: 'consumer', slug: 'consumer' });
+    await config.mods.android.dangerous({ ...config, modRequest: { projectRoot: app } });
+    const output = fs.readFileSync(path.join(app, 'android/gradle.properties'), 'utf8');
+    assert.match(output, /^oliphauntExtensions=vector$/m);
+    assert.match(output, /^oliphauntIcu=true$/m);
+    assert.match(output, /^oliphauntDatabaseResourcesVersion=1.2.3$/m);
+    assert.match(output, /^oliphauntExtensionVersions=oliphaunt-extension-vector=1.2.3$/m);
+
+    const limited = await resolveInstalledResources(app, 'android', { extensions: [], icu: false });
+    assert.deepEqual(limited.extensions, []);
+    assert.equal(limited.icu, false);
+    await assert.rejects(
+      resolveInstalledResources(app, 'android', { databaseResourcesVersion: '9.8.7' }),
+      /databaseResourcesVersion must match installed @oliphaunt\/icu 1\.2\.3/,
+    );
+    writeExpoApp(
+      app,
+      { 'workspace-library': '*' },
+      {
+        android: { exclude: ['@oliphaunt/extension-vector', '@oliphaunt/icu'] },
+      },
+    );
+    const excluded = await resolveInstalledResources(app, 'android');
+    assert.deepEqual(excluded.extensions, []);
+    assert.equal(excluded.icu, false);
+    assert.deepEqual((await resolveInstalledResources(app, 'ios')).extensions, ['vector']);
+    await assert.rejects(
+      resolveInstalledResources(app, 'android', { seedProfile: 'icu' }),
+      /Install @oliphaunt\/icu/,
+    );
+    // Re-prebuild removes stale resource selection after dependency changes.
+    await config.mods.android.dangerous({ ...config, modRequest: { projectRoot: app } });
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(app, 'android/gradle.properties'), 'utf8'),
+      /^oliphaunt(?:Extensions|ExtensionVersions|Icu|DatabaseResourcesVersion)=/m,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('Expo search paths use upstream precedence and reject conflicting resource versions', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-expo-duplicates-'));
+  try {
+    writeExpoApp(
+      root,
+      { '@oliphaunt/extension-vector': '1.2.3' },
+      { searchPaths: ['./resources'] },
+    );
+    const direct = path.join(root, 'node_modules/@oliphaunt/extension-vector/package.json');
+    const searched = path.join(root, 'resources/@oliphaunt/extension-vector/package.json');
+    for (const file of [direct, searched])
+      writeJson(file, { name: '@oliphaunt/extension-vector', version: '1.2.3' });
+    const discovered = await resolveInstalledResources(root, 'ios');
+    assert.deepEqual(discovered.extensions, ['vector']);
+    assert.equal(discovered.packageJsonResolver('@oliphaunt/extension-vector', [root]), searched);
+    writeJson(direct, { name: '@oliphaunt/extension-vector', version: '9.8.7' });
+    await assert.rejects(
+      resolveInstalledResources(root, 'ios'),
+      /Conflicting versions of @oliphaunt\/extension-vector:.*1\.2\.3.*9\.8\.7.*Deduplicate/,
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
 
 test('normalizes exact extension selection', () => {
   const normalized = normalizeOptions({

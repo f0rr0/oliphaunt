@@ -180,6 +180,7 @@ tasks:
       - oliphaunt-query-ts:build
     inputs:
       - "/tools/dev/bun.sh"
+      - /src/examples/native/react-native-expo/package.json
       - /tools/packaging/portable-archive.mts
       - project: oliphaunt-query-ts
         group: sources

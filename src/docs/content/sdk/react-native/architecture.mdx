@@ -79,7 +79,8 @@ a new or existing-empty destination and does not replace data.
 
 ## Extensions and packaging
 
-The config plugin selects exact extension artifacts at build time. `open()`
-repeats the selected SQL names at runtime so the platform SDK validates that
-the installed app contains them. PostgreSQL `CREATE EXTENSION` remains the SQL
-activation step.
+The config plugin uses the app's Expo autolinker to discover installed resource
+packages at build time. Both native platforms resolve those same package paths;
+the existing carrier checks validate their versions and contents. Optional plugin
+filters can narrow what ships. `open()` selects typed extension descriptors for
+each database, and PostgreSQL `CREATE EXTENSION` remains the SQL activation step.
