@@ -545,6 +545,16 @@ describe('PE32+ architecture and self-contained runtime imports', () => {
     ).toThrow(/repeats lib\/oliphaunt\.lib/u);
   });
 
+  test('writes a valid import library from unordered symbols without changing its input', () => {
+    const symbols = Object.freeze([...OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS].sort().reverse());
+    const result = inspectPlatformBinaryEntries(
+      [entry('lib/oliphaunt.lib', windowsImportLibraryFixture({ importSymbols: symbols }))],
+      { target: 'windows-x64-msvc', requireWindowsRuntimeImportLibrary: true },
+    );
+    expect(result.files).toEqual(['lib/oliphaunt.lib']);
+    expect(result.slices).toBe(1 + symbols.length);
+  });
+
   test('keeps PostGIS COPYING.LIB legal text out of Windows binary discovery without admitting stray libraries', () => {
     const legalText = Buffer.from(
       'GNU LIBRARY GENERAL PUBLIC LICENSE\n\fTERMS AND CONDITIONS\n',

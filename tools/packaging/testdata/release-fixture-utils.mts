@@ -287,6 +287,8 @@ export function windowsImportLibraryFixture({
   if (!Array.isArray(importSymbols) || importSymbols.length === 0) {
     throw new Error('Windows import-library fixture requires at least one import symbol');
   }
+  // The second COFF linker member requires symbols in lexical order.
+  importSymbols = [...importSymbols].sort();
   const descriptorSymbol = '__IMPORT_DESCRIPTOR_oliphaunt';
   const symbols = [descriptorSymbol, ...importSymbols];
   const firstNames = nullTerminatedAscii(symbols);
