@@ -33,13 +33,13 @@ to review on their own merits.
  create mode 100644 src/template/wasix-dl
 
 diff --git a/src/Makefile.shlib b/src/Makefile.shlib
-index 1b5ddf2825..55129150fa 100644
+index 3825af5b22..27632c5398 100644
 --- a/src/Makefile.shlib
 +++ b/src/Makefile.shlib
-@@ -196,6 +196,16 @@ ifeq ($(PORTNAME), linux)
+@@ -183,6 +183,16 @@ ifeq ($(PORTNAME), linux)
    endif
  endif
-
+ 
 +ifeq ($(PORTNAME), wasix-dl)
 +  LINK.shared		= $(COMPILER) -shared
 +  ifdef SO_MAJOR_VERSION
@@ -54,29 +54,29 @@ index 1b5ddf2825..55129150fa 100644
    LINK.shared		= $(COMPILER) -shared
    ifdef soname
 diff --git a/src/backend/Makefile b/src/backend/Makefile
-index 4827ee361d..9292f77031 100644
+index c0be941038..536c28821a 100644
 --- a/src/backend/Makefile
 +++ b/src/backend/Makefile
-@@ -44,13 +44,13 @@ endif
-
+@@ -61,13 +61,13 @@ override LDFLAGS := $(LDFLAGS) $(LDFLAGS_EX) $(LDFLAGS_EX_BE)
+ 
  all: submake-libpgport submake-catalog-headers submake-utils-headers postgres $(POSTGRES_IMP)
-
+ 
 -ifneq ($(PORTNAME), cygwin)
 +ifeq (,$(filter cygwin wasix-dl,$(PORTNAME)))
  ifneq ($(PORTNAME), win32)
-
+ 
  postgres: $(OBJS)
  	$(CC) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LIBS) -o $@
-
+ 
 -endif
 +endif # win32
  endif
-
+ 
  ifeq ($(PORTNAME), cygwin)
-@@ -82,6 +82,22 @@ libpostgres.a: postgres
-
+@@ -95,6 +95,22 @@ libpostgres.a: postgres
+ 
  endif # win32
-
+ 
 +ifeq ($(PORTNAME), wasix-dl)
 +oliphaunt: $(OBJS)
 +	$(AR) rcs libpgmain.a main/main.o
@@ -94,11 +94,11 @@ index 4827ee361d..9292f77031 100644
 +endif # wasix-dl
 +
  $(top_builddir)/src/port/libpgport_srv.a: | submake-libpgport
-
-
+ 
+ 
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
 new file mode 100644
-index 0000000000..630687ec15
+index 0000000000..24eeecbf98
 --- /dev/null
 +++ b/src/include/port/wasix-dl.h
 @@ -0,0 +1,8 @@
@@ -112,7 +112,7 @@ index 0000000000..630687ec15
 +#endif
 diff --git a/src/template/wasix-dl b/src/template/wasix-dl
 new file mode 100644
-index 0000000000..f3792d3e83
+index 0000000000..d8dce3e11e
 --- /dev/null
 +++ b/src/template/wasix-dl
 @@ -0,0 +1,14 @@

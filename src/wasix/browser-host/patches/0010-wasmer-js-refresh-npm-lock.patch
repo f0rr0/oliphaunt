@@ -1,3 +1,11 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-js: align the pinned npm lock with package metadata
+
+Supply the missing root metadata and dependency entries in the pinned source
+lock so npm ci can install without rewriting it. This is reproducibility repair
+for this exact upstream revision, not a runtime optimization.
+
 diff --git a/package-lock.json b/package-lock.json
 index ef54a7d..83d263d 100644
 --- a/package-lock.json

@@ -46,6 +46,10 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 patch_series="$(bun "$provenance_script" --patch-series)"
 input_hash="$(bun "$provenance_script" --inputs-sha256)"
+if [[ ! "$input_hash" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "wasix-ts host build: invalid source identity" >&2
+  exit 1
+fi
 
 patch_command="patch"
 if command -v gpatch >/dev/null 2>&1; then
@@ -121,6 +125,9 @@ while IFS= read -r patch_name; do
     ????-wasmer-wasix-*.patch)
       patch_dir="$wasmer_wasix_dir"
       ;;
+    ????-virtual-fs-*.patch)
+      patch_dir="$virtual_fs_dir"
+      ;;
     ????-wasmer-*.patch)
       patch_dir="$wasmer_dir"
       ;;
@@ -135,7 +142,7 @@ while IFS= read -r patch_name; do
       exit 1
       ;;
   esac
-  "$patch_command" --batch --forward -d "$patch_dir" -p1 < "$patch_file"
+  "$patch_command" --batch --forward --fuzz=0 -d "$patch_dir" -p1 < "$patch_file"
 done <<< "$patch_series"
 
 # The pinned source commit's npm lock predates its package metadata. Patch only

@@ -1,0 +1,36 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: expose the direct instance memory handle
+
+Expose the instance memory needed by the direct JS protocol adapter without
+changing clock policy or guest execution. This small downstream accessor is
+paired with the direct PostgreSQL host; upstream should prefer an appropriately
+scoped general memory accessor.
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 1064c373..4333c83c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -279,6 +279,22 @@ pub(crate) fn install_oliphaunt_direct_clock(
+     Ok(())
+ }
+ 
++/// Return the JavaScript WebAssembly memory backing a WASIX environment.
++///
++/// Oliphaunt's direct pgwire adapter uses this to transfer protocol bytes
++/// without routing them through an unrelated clock-import optimization.
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++pub fn oliphaunt_direct_memory(
++    env: &WasiFunctionEnv,
++    store: &impl wasmer::AsStoreRef,
++) -> Option<JsValue> {
++    use wasmer::js::AsJs;
++
++    env.data(store)
++        .try_memory()
++        .map(|memory| memory.as_jsvalue(store))
++}
++
+ pub use crate::{
+     fs::{default_fs_backing, Fd, WasiFs, WasiInodes, VIRTUAL_ROOT_FD},
+     os::{

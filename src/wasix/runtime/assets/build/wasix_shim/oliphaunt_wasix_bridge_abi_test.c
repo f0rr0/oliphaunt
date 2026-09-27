@@ -30,6 +30,8 @@
 #include <netinet/tcp.h>
 #include <sys/shm.h>
 
+#include "oliphaunt_wasix_protocol_contract.generated.h"
+
 #define CHECK(condition)                                                                 \
 	do                                                                                   \
 	{                                                                                    \
@@ -43,7 +45,6 @@
 
 FILE *oliphaunt_wasix_popen(const char *command, const char *mode);
 int oliphaunt_wasix_system(const char *command);
-int oliphaunt_wasix_set_force_host_error_recovery(int new_value);
 int oliphaunt_wasix_set_active(int new_value);
 int oliphaunt_wasix_atexit(void (*function)(void));
 void oliphaunt_wasix_run_atexit_funcs(void);
@@ -54,22 +55,15 @@ gid_t oliphaunt_wasix_getgid(void);
 struct passwd *oliphaunt_wasix_getpwuid(uid_t uid);
 int oliphaunt_wasix_getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
 				   struct passwd **result);
-int oliphaunt_wasix_input_reset(void);
-void *oliphaunt_wasix_input_reserve(size_t length);
-int oliphaunt_wasix_input_commit(size_t length);
-size_t oliphaunt_wasix_input_available(void);
-int oliphaunt_wasix_output_reset(void);
-size_t oliphaunt_wasix_output_len(void);
-const void *oliphaunt_wasix_output_data(void);
 int oliphaunt_wasix_output_contains_error(void);
+const void *oliphaunt_wasix_startup_outcome_v1(void);
+void oliphaunt_wasix_startup_outcome_reset(void);
+int oliphaunt_wasix_startup_outcome_publish_rejected(void);
+extern volatile int oliphaunt_wasix_startup_error_capture_active;
 int oliphaunt_wasix_fcntl(int fd, int cmd, ...);
 int oliphaunt_wasix_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
 int oliphaunt_wasix_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
 int oliphaunt_wasix_getsockname(int fd, struct sockaddr *addr, socklen_t *len);
-int oliphaunt_wasix_set_protocol_transport(int mode);
-int oliphaunt_wasix_protocol_stream_active(void);
-void oliphaunt_wasix_protocol_report_copy_response(int state);
-int oliphaunt_wasix_protocol_copy_state(void);
 ssize_t oliphaunt_wasix_recv(int fd, void *buf, size_t n, int flags);
 ssize_t oliphaunt_wasix_send(int fd, const void *buf, size_t n, int flags);
 int oliphaunt_wasix_socket(int domain, int type, int protocol);
@@ -95,10 +89,185 @@ pg_encoding_to_char_private(int encoding)
 
 static int atexit_counter;
 
+typedef struct OliphauntWasixStartupOutcomeV1
+{
+	uint32_t abi_version;
+	uint32_t byte_size;
+	uint32_t kind;
+	uint32_t reserved;
+	uint64_t protocol_ptr;
+	uint64_t protocol_len;
+} OliphauntWasixStartupOutcomeV1;
+
+_Static_assert(sizeof(OliphauntWasixStartupOutcomeV1) == 32,
+			   "startup outcome ABI must remain 32 bytes");
+_Static_assert(offsetof(OliphauntWasixStartupOutcomeV1, abi_version) == 0,
+			   "startup outcome ABI version offset changed");
+_Static_assert(offsetof(OliphauntWasixStartupOutcomeV1, byte_size) == 4,
+			   "startup outcome ABI size offset changed");
+_Static_assert(offsetof(OliphauntWasixStartupOutcomeV1, kind) == 8,
+			   "startup outcome ABI kind offset changed");
+_Static_assert(offsetof(OliphauntWasixStartupOutcomeV1, reserved) == 12,
+			   "startup outcome ABI reserved offset changed");
+_Static_assert(offsetof(OliphauntWasixStartupOutcomeV1, protocol_ptr) == 16,
+			   "startup outcome ABI protocol pointer offset changed");
+_Static_assert(offsetof(OliphauntWasixStartupOutcomeV1, protocol_len) == 24,
+			   "startup outcome ABI protocol length offset changed");
+
+static uint32_t
+load_le32(const unsigned char *bytes)
+{
+	return (uint32_t) bytes[0] |
+		((uint32_t) bytes[1] << 8) |
+		((uint32_t) bytes[2] << 16) |
+		((uint32_t) bytes[3] << 24);
+}
+
+static uint64_t
+load_le64(const unsigned char *bytes)
+{
+	uint64_t value = 0;
+	for (size_t i = 0; i < sizeof(value); i++)
+		value |= (uint64_t) bytes[i] << (i * 8);
+	return value;
+}
+
 static void
 increment_atexit_counter(void)
 {
 	atexit_counter++;
+}
+
+static int
+check_send_reaches_stdout(const void *sent_bytes, size_t sent_len,
+						  const void *expected, size_t expected_len)
+{
+	int capture_fds[2] = {-1, -1};
+	int saved_stdout = -1;
+	unsigned char actual[64];
+	size_t actual_len = 0;
+	ssize_t sent = -1;
+	int result = 1;
+
+	if (expected_len > sizeof(actual) || pipe(capture_fds) != 0)
+		goto cleanup;
+	saved_stdout = dup(STDOUT_FILENO);
+	if (saved_stdout < 0 || dup2(capture_fds[1], STDOUT_FILENO) < 0)
+		goto cleanup;
+	if (close(capture_fds[1]) != 0)
+		goto cleanup;
+	capture_fds[1] = -1;
+
+	sent = oliphaunt_wasix_send(1, sent_bytes, sent_len, 0);
+	if (dup2(saved_stdout, STDOUT_FILENO) < 0)
+		goto cleanup;
+	if (close(saved_stdout) != 0)
+		goto cleanup;
+	saved_stdout = -1;
+
+	while (actual_len < expected_len)
+	{
+		ssize_t count = read(capture_fds[0], actual + actual_len,
+						 expected_len - actual_len);
+		if (count <= 0)
+			goto cleanup;
+		actual_len += (size_t) count;
+	}
+	unsigned char trailing;
+	ssize_t trailing_len = read(capture_fds[0], &trailing, 1);
+	result = sent == (ssize_t) sent_len &&
+		actual_len == expected_len &&
+		trailing_len == 0 &&
+		memcmp(actual, expected, expected_len) == 0 ? 0 : 1;
+
+cleanup:
+	if (saved_stdout >= 0)
+	{
+		(void) dup2(saved_stdout, STDOUT_FILENO);
+		(void) close(saved_stdout);
+	}
+	if (capture_fds[0] >= 0)
+		(void) close(capture_fds[0]);
+	if (capture_fds[1] >= 0)
+		(void) close(capture_fds[1]);
+	return result;
+}
+
+static int
+check_send_rejected_without_stdout(const void *sent_bytes, size_t sent_len,
+								   int expected_errno)
+{
+	int capture_fds[2] = {-1, -1};
+	int saved_stdout = -1;
+	ssize_t sent = -1;
+	int send_errno = 0;
+	unsigned char unexpected;
+	ssize_t captured_len = -1;
+	int result = 1;
+
+	if (pipe(capture_fds) != 0)
+		goto cleanup;
+	saved_stdout = dup(STDOUT_FILENO);
+	if (saved_stdout < 0 || dup2(capture_fds[1], STDOUT_FILENO) < 0)
+		goto cleanup;
+	if (close(capture_fds[1]) != 0)
+		goto cleanup;
+	capture_fds[1] = -1;
+
+	errno = 0;
+	sent = oliphaunt_wasix_send(1, sent_bytes, sent_len, 0);
+	send_errno = errno;
+	if (dup2(saved_stdout, STDOUT_FILENO) < 0)
+		goto cleanup;
+	if (close(saved_stdout) != 0)
+		goto cleanup;
+	saved_stdout = -1;
+	captured_len = read(capture_fds[0], &unexpected, 1);
+	result = sent == -1 && send_errno == expected_errno && captured_len == 0 ? 0 : 1;
+
+cleanup:
+	if (saved_stdout >= 0)
+	{
+		(void) dup2(saved_stdout, STDOUT_FILENO);
+		(void) close(saved_stdout);
+	}
+	if (capture_fds[0] >= 0)
+		(void) close(capture_fds[0]);
+	if (capture_fds[1] >= 0)
+		(void) close(capture_fds[1]);
+	return result;
+}
+
+static int
+check_stream_write_failure_is_sticky(int mode)
+{
+	int saved_stdout = -1;
+	ssize_t failed_send = -1;
+	int failed_errno = 0;
+
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(mode) >= 0);
+	saved_stdout = dup(STDOUT_FILENO);
+	CHECK(saved_stdout >= 0);
+	CHECK(close(STDOUT_FILENO) == 0);
+	errno = 0;
+	failed_send = oliphaunt_wasix_send(1, "x", 1, 0);
+	failed_errno = errno;
+	CHECK(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+	CHECK(close(saved_stdout) == 0);
+
+	CHECK(failed_send == -1);
+	CHECK(failed_errno == EBADF);
+	CHECK(oliphaunt_wasix_output_status() == EBADF);
+	CHECK(check_send_rejected_without_stdout("y", 1, EBADF) == 0);
+	CHECK(oliphaunt_wasix_output_status() == EBADF);
+
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
+	CHECK(check_send_reaches_stdout("z", 1, "z", 1) == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) == mode);
+	return 0;
 }
 
 static int
@@ -169,8 +338,6 @@ check_identity_and_fail_closed_calls(void)
 	CHECK(oliphaunt_wasix_system("echo unsafe") == -1);
 	CHECK(errno == ENOSYS);
 
-	CHECK(oliphaunt_wasix_set_force_host_error_recovery(1) == 0);
-	CHECK(oliphaunt_wasix_set_force_host_error_recovery(0) == 1);
 	CHECK(oliphaunt_wasix_set_active(1) == 0);
 	CHECK(oliphaunt_wasix_set_active(0) == 1);
 	CHECK(oliphaunt_wasix_atexit(increment_atexit_counter) == 0);
@@ -198,6 +365,7 @@ check_protocol_socket(void)
 
 	CHECK(oliphaunt_wasix_input_reset() == 0);
 	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
 	CHECK(oliphaunt_wasix_recv(1, buf, sizeof(buf), 0) == 0);
 	void *input_buffer = oliphaunt_wasix_input_reserve(sizeof(input) - 1);
 	CHECK(input_buffer != NULL);
@@ -238,28 +406,119 @@ check_protocol_socket(void)
 	CHECK(errno == EOVERFLOW);
 	errno = 0;
 	CHECK(oliphaunt_wasix_send(1, output, (size_t) INT_MAX + 1, 0) == -1);
-	CHECK(errno == EOVERFLOW);
+	CHECK(errno == EFBIG);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	CHECK(oliphaunt_wasix_output_status() == EFBIG);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
 
-	CHECK(oliphaunt_wasix_set_protocol_transport(0) == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
-	CHECK(oliphaunt_wasix_set_protocol_transport(1) == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_STREAM) == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 1);
-	CHECK(oliphaunt_wasix_set_protocol_transport(0) == 1);
+	CHECK(check_send_reaches_stdout(output, sizeof(output) - 1,
+								 output, sizeof(output) - 1) == 0);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) == OLIPHAUNT_WASIX_PROTOCOL_STREAM);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
-	CHECK(oliphaunt_wasix_set_protocol_transport(2) == 0);
+
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_HYBRID) == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
-	CHECK(oliphaunt_wasix_protocol_copy_state() == 0);
-	oliphaunt_wasix_protocol_report_copy_response(1);
-	CHECK(oliphaunt_wasix_protocol_copy_state() == 1);
-	CHECK(oliphaunt_wasix_send(1, output, sizeof(output) - 1, 0) == (ssize_t) (sizeof(output) - 1));
+	CHECK(oliphaunt_wasix_protocol_copy_state() == OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE);
+	CHECK(oliphaunt_wasix_send(1, "a", 1, 0) == 1);
+	CHECK(oliphaunt_wasix_output_len() == 1);
+	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
+	CHECK(oliphaunt_wasix_protocol_copy_state() == OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
+	const char hybrid_transition_output[] = "axyz";
+	CHECK(check_send_reaches_stdout(output, sizeof(output) - 1,
+								 hybrid_transition_output,
+								 sizeof(hybrid_transition_output) - 1) == 0);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 1);
-	CHECK(oliphaunt_wasix_set_protocol_transport(0) == 2);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	CHECK(check_send_reaches_stdout(output, sizeof(output) - 1,
+								 output, sizeof(output) - 1) == 0);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) == OLIPHAUNT_WASIX_PROTOCOL_HYBRID);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
-	CHECK(oliphaunt_wasix_protocol_copy_state() == 0);
-	CHECK(oliphaunt_wasix_set_protocol_transport(2) == 0);
-	oliphaunt_wasix_protocol_report_copy_response(0);
-	CHECK(oliphaunt_wasix_protocol_copy_state() == 0);
-	CHECK(oliphaunt_wasix_set_protocol_transport(0) == 2);
+	CHECK(oliphaunt_wasix_protocol_copy_state() == OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_HYBRID) == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
+	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE);
+	CHECK(oliphaunt_wasix_protocol_copy_state() == OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) == OLIPHAUNT_WASIX_PROTOCOL_HYBRID);
+
+	/* A failed hybrid buffer-to-stdio transition is sticky and preserves bytes. */
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_HYBRID) == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
+	CHECK(oliphaunt_wasix_send(1, "a", 1, 0) == 1);
+	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
+	int saved_stdout = dup(STDOUT_FILENO);
+	CHECK(saved_stdout >= 0);
+	CHECK(close(STDOUT_FILENO) == 0);
+	errno = 0;
+	ssize_t hybrid_failed_send = oliphaunt_wasix_send(1, "b", 1, 0);
+	int hybrid_failure_errno = errno;
+	int restore_stdout_result = dup2(saved_stdout, STDOUT_FILENO);
+	int close_saved_stdout_result = close(saved_stdout);
+	CHECK(restore_stdout_result == STDOUT_FILENO);
+	CHECK(close_saved_stdout_result == 0);
+	CHECK(hybrid_failed_send == -1);
+	CHECK(hybrid_failure_errno == EBADF);
+	CHECK(oliphaunt_wasix_output_status() == EBADF);
+	CHECK(oliphaunt_wasix_output_len() == 2);
+	CHECK(memcmp(oliphaunt_wasix_output_data(), "ab", 2) == 0);
+	errno = 0;
+	CHECK(oliphaunt_wasix_send(1, "c", 1, 0) == -1);
+	CHECK(errno == EBADF);
+	CHECK(oliphaunt_wasix_output_len() == 2);
+	CHECK(memcmp(oliphaunt_wasix_output_data(), "ab", 2) == 0);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) == OLIPHAUNT_WASIX_PROTOCOL_HYBRID);
+
+	/* Mode 3 keeps request input buffered while streaming every response byte. */
+	CHECK(oliphaunt_wasix_input_reset() == 0);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT) ==
+		  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
+	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
+	input_buffer = oliphaunt_wasix_input_reserve(1);
+	CHECK(input_buffer != NULL);
+	memcpy(input_buffer, "q", 1);
+	CHECK(oliphaunt_wasix_input_commit(1) == 1);
+	struct pollfd mode3_poll = {
+		.fd = 1,
+		.events = POLLIN | POLLOUT,
+		.revents = 0,
+	};
+	CHECK(oliphaunt_wasix_poll(&mode3_poll, 1, 0) == 1);
+	CHECK((mode3_poll.revents & POLLIN) != 0);
+	CHECK((mode3_poll.revents & POLLOUT) != 0);
+	memset(buf, 0, sizeof(buf));
+	CHECK(oliphaunt_wasix_recv(1, buf, 1, 0) == 1);
+	CHECK(buf[0] == 'q');
+	CHECK(check_send_reaches_stdout(output, sizeof(output) - 1,
+								 output, sizeof(output) - 1) == 0);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) ==
+		  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT);
+	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
+	CHECK(check_stream_write_failure_is_sticky(
+			  OLIPHAUNT_WASIX_PROTOCOL_STREAM) == 0);
+	CHECK(check_stream_write_failure_is_sticky(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT) == 0);
+
 	errno = 0;
 	CHECK(oliphaunt_wasix_set_protocol_transport(99) == -1);
 	CHECK(errno == EINVAL);
@@ -329,6 +588,221 @@ check_protocol_socket(void)
 #ifdef POLLNVAL
 	CHECK((mixed[1].revents & POLLNVAL) != 0);
 #endif
+	return 0;
+}
+
+static int
+check_startup_outcome(void)
+{
+	const unsigned char notice_then_error[] = {
+		'N', 0, 0, 0, 5, 0,
+		'E', 0, 0, 0, 12, 'C', '3', 'D', '0', '0', '0', 0, 0,
+	};
+	const unsigned char ready[] = {'Z', 0, 0, 0, 5, 'I'};
+	const unsigned char malformed_error[] = {'E', 0, 0, 0, 5, 0};
+	const unsigned char incomplete_error[] = {
+		'E', 0, 0, 0, 12, 'C', '3', 'D', '0', '0', '0', 0,
+	};
+	const unsigned char complete_error_with_incomplete_tail[] = {
+		'E', 0, 0, 0, 12, 'C', '3', 'D', '0', '0', '0', 0, 0,
+		'N', 0, 0, 0, 5,
+	};
+
+	const unsigned char *descriptor = oliphaunt_wasix_startup_outcome_v1();
+	CHECK(descriptor != NULL);
+	CHECK(oliphaunt_wasix_startup_outcome_v1() == descriptor);
+	oliphaunt_wasix_startup_outcome_reset();
+	CHECK(load_le32(descriptor + 0) == 1);
+	CHECK(load_le32(descriptor + 4) == 32);
+	CHECK(load_le32(descriptor + 8) == 0);
+	CHECK(load_le32(descriptor + 12) == 0);
+	CHECK(load_le64(descriptor + 16) == 0);
+	CHECK(load_le64(descriptor + 24) == 0);
+
+	/* Publication is impossible outside the narrow InitPostgres capture. */
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_send(1, notice_then_error, sizeof(notice_then_error), 0) ==
+		  (ssize_t) sizeof(notice_then_error));
+	errno = 0;
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+	CHECK(errno == EPERM);
+	CHECK(load_le32(descriptor + 8) == 0);
+
+	oliphaunt_wasix_startup_error_capture_active = 1;
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	errno = 0;
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+	CHECK(errno == EPROTO);
+
+	CHECK(oliphaunt_wasix_send(1, ready, sizeof(ready), 0) == (ssize_t) sizeof(ready));
+	errno = 0;
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+	CHECK(errno == EPROTO);
+
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_send(1, malformed_error, sizeof(malformed_error), 0) ==
+		  (ssize_t) sizeof(malformed_error));
+	errno = 0;
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+	CHECK(errno == EPROTO);
+
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_send(1, incomplete_error, sizeof(incomplete_error), 0) ==
+		  (ssize_t) sizeof(incomplete_error));
+	errno = 0;
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+	CHECK(errno == EPROTO);
+
+	/* A complete ErrorResponse is insufficient when trailing output is partial. */
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_send(1,
+							 complete_error_with_incomplete_tail,
+							 sizeof(complete_error_with_incomplete_tail),
+							 0) == (ssize_t) sizeof(complete_error_with_incomplete_tail));
+	errno = 0;
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+	CHECK(errno == EPROTO);
+
+	/* Complete preceding frames are retained with the ErrorResponse. */
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_send(1, notice_then_error, sizeof(notice_then_error), 0) ==
+		  (ssize_t) sizeof(notice_then_error));
+	const void *bridge_output = oliphaunt_wasix_output_data();
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == 0);
+	CHECK(load_le32(descriptor + 0) == 1);
+	CHECK(load_le32(descriptor + 4) == 32);
+	CHECK(load_le32(descriptor + 8) == 1);
+	CHECK(load_le32(descriptor + 12) == 0);
+	CHECK(load_le64(descriptor + 24) == sizeof(notice_then_error));
+	const unsigned char *owned_protocol =
+		(const unsigned char *) (uintptr_t) load_le64(descriptor + 16);
+	CHECK(owned_protocol != NULL);
+	CHECK(owned_protocol != bridge_output);
+	CHECK(memcmp(owned_protocol, notice_then_error, sizeof(notice_then_error)) == 0);
+
+	/* Later bridge output mutations cannot invalidate the published snapshot. */
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_send(1, ready, sizeof(ready), 0) == (ssize_t) sizeof(ready));
+	CHECK(memcmp(owned_protocol, notice_then_error, sizeof(notice_then_error)) == 0);
+	errno = 0;
+	CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+	CHECK(errno == EALREADY);
+
+	oliphaunt_wasix_startup_outcome_reset();
+	CHECK(oliphaunt_wasix_startup_outcome_v1() == descriptor);
+	CHECK(load_le32(descriptor + 8) == 0);
+	CHECK(load_le64(descriptor + 16) == 0);
+	CHECK(load_le64(descriptor + 24) == 0);
+
+	/* A corrupt or unexpectedly huge startup error cannot force a giant snapshot. */
+	const size_t oversized_len = (1024U * 1024U) + 1U;
+	if ((size_t) OLIPHAUNT_WASIX_BUFFERED_PROTOCOL_OUTPUT_LIMIT >= oversized_len)
+	{
+		unsigned char *oversized = malloc(oversized_len);
+		CHECK(oversized != NULL);
+		memset(oversized, 'x', oversized_len);
+		oversized[0] = 'E';
+		const uint32_t oversized_body_len = (uint32_t) (oversized_len - 1);
+		oversized[1] = (unsigned char) (oversized_body_len >> 24);
+		oversized[2] = (unsigned char) (oversized_body_len >> 16);
+		oversized[3] = (unsigned char) (oversized_body_len >> 8);
+		oversized[4] = (unsigned char) oversized_body_len;
+		oversized[5] = 'C';
+		memcpy(oversized + 6, "3D000", 5);
+		oversized[11] = 0;
+		oversized[12] = 'M';
+		oversized[oversized_len - 2] = 0;
+		oversized[oversized_len - 1] = 0;
+		CHECK(oliphaunt_wasix_output_reset() == 0);
+		CHECK(oliphaunt_wasix_send(1, oversized, oversized_len, 0) ==
+			  (ssize_t) oversized_len);
+		errno = 0;
+		CHECK(oliphaunt_wasix_startup_outcome_publish_rejected() == -1);
+		CHECK(errno == EOVERFLOW);
+		CHECK(load_le32(descriptor + 8) == 0);
+		free(oversized);
+	}
+
+	oliphaunt_wasix_startup_error_capture_active = 0;
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	return 0;
+}
+
+static int
+check_buffered_protocol_output_limit(void)
+{
+	const size_t limit =
+		(size_t) OLIPHAUNT_WASIX_BUFFERED_PROTOCOL_OUTPUT_LIMIT;
+	unsigned char chunk[4096];
+	size_t written = 0;
+
+	memset(chunk, 'x', sizeof(chunk));
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) == OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
+	errno = 0;
+	CHECK(oliphaunt_wasix_send(1, NULL, 1, 0) == -1);
+	CHECK(errno == EINVAL);
+	CHECK(oliphaunt_wasix_output_status() == EINVAL);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	errno = 0;
+	CHECK(oliphaunt_wasix_send(1, "x", 1, 0) == -1);
+	CHECK(errno == EINVAL);
+	CHECK(oliphaunt_wasix_output_len() == 0);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
+	CHECK(oliphaunt_wasix_send(1, "x", 1, 0) == 1);
+	const unsigned char *single_byte_output = oliphaunt_wasix_output_data();
+	errno = 0;
+	CHECK(oliphaunt_wasix_send(1, "y", SIZE_MAX, 0) == -1);
+	CHECK(errno == EFBIG);
+	CHECK(oliphaunt_wasix_output_status() == EFBIG);
+	CHECK(oliphaunt_wasix_output_len() == 1);
+	CHECK(oliphaunt_wasix_output_data() == single_byte_output);
+	CHECK(single_byte_output[0] == 'x');
+	errno = 0;
+	CHECK(oliphaunt_wasix_send(1, NULL, 1, 0) == -1);
+	CHECK(errno == EFBIG);
+	CHECK(oliphaunt_wasix_output_len() == 1);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
+
+	while (written < limit)
+	{
+		size_t remaining = limit - written;
+		size_t count = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
+		CHECK(oliphaunt_wasix_send(1, chunk, count, 0) == (ssize_t) count);
+		written += count;
+	}
+	CHECK(oliphaunt_wasix_output_len() == limit);
+	const unsigned char *output = oliphaunt_wasix_output_data();
+	CHECK(output != NULL);
+	CHECK(output[0] == 'x');
+	CHECK(output[limit - 1] == 'x');
+
+	errno = 0;
+	CHECK(oliphaunt_wasix_send(1, "y", 1, 0) == -1);
+	CHECK(errno == EFBIG);
+	CHECK(oliphaunt_wasix_output_status() == EFBIG);
+	CHECK(oliphaunt_wasix_output_len() == limit);
+	CHECK(oliphaunt_wasix_output_data() == output);
+	CHECK(output[0] == 'x');
+	CHECK(output[limit - 1] == 'x');
+
+	/* Sticky failure is terminal across modes; a reset restores true mode-3 streaming. */
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT) ==
+		  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
+	CHECK(check_send_rejected_without_stdout("z", 1, EFBIG) == 0);
+	CHECK(oliphaunt_wasix_output_status() == EFBIG);
+	CHECK(oliphaunt_wasix_output_len() == limit);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_status() == 0);
+	CHECK(check_send_reaches_stdout("z", 1, "z", 1) == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(
+			  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED) ==
+		  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT);
 	return 0;
 }
 
@@ -424,6 +898,8 @@ main(void)
 	CHECK(check_locale_pipe() == 0);
 	CHECK(check_identity_and_fail_closed_calls() == 0);
 	CHECK(check_protocol_socket() == 0);
+	CHECK(check_buffered_protocol_output_limit() == 0);
+	CHECK(check_startup_outcome() == 0);
 	CHECK(check_memory_and_shared_memory() == 0);
 	CHECK(check_direct_tool_transport() == 0);
 	return 0;

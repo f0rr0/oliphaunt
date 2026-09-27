@@ -1,7 +1,17 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer: recognize exception reference types in JS metadata
+
+Map nullable and non-null exception reference types to the engine exception
+reference representation. PostgreSQL's Wasm exception-handling build otherwise
+fails module metadata conversion before execution. This is a narrow upstream
+engine compatibility fix, not a relaxation of module validation.
+
 diff --git a/src/utils/polyfill.rs b/src/utils/polyfill.rs
+index 8b54de4..6660bb3 100644
 --- a/src/utils/polyfill.rs
 +++ b/src/utils/polyfill.rs
-@@ -371,6 +371,8 @@ pub fn wpreftype_to_type(ty: wasmparser::RefType) -> WasmResult<Type> {
+@@ -372,6 +372,8 @@ pub fn wpreftype_to_type(ty: wasmparser::RefType) -> WasmResult<Type> {
          Ok(Type::ExternRef)
      } else if ty.is_func_ref() {
          Ok(Type::FuncRef)

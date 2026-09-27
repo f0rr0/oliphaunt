@@ -1,3 +1,12 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] wasmer-wasix: retain the original shared offset across seek
+
+Keep the original open-file-description offset alive while seek suspends.
+A reused numeric descriptor must not redirect completion to a different file's
+offset. The regression covers suspension plus descriptor reuse. This is a
+general WASIX correctness fix suitable for independent upstream review.
+
 diff --git a/src/syscalls/wasi/fd_seek.rs b/src/syscalls/wasi/fd_seek.rs
 index 31cfe43e..18cf012e 100644
 --- a/src/syscalls/wasi/fd_seek.rs

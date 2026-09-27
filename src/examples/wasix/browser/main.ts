@@ -13,6 +13,7 @@ import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { standardSeed } from './resources.js';
 
 import { expectStructuredApi } from './structured-api-smoke.js';
+import { expectConfiguredIdentity } from './configured-identity-smoke.js';
 
 const status = requireElement<HTMLParagraphElement>('status');
 const sql = requireElement<HTMLTextAreaElement>('sql');
@@ -96,6 +97,7 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
+    await expectConfiguredIdentity();
     const opfsAnswers = await expectOpfsPersistence(extensions);
     const opfsCrash = await expectOpfsCrashRecovery();
     const postgisVersion = postgisWorkerCanary ? await expectLargePostgisWorkerModule() : undefined;
@@ -106,6 +108,7 @@ try {
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
       directWorkers: 0,
+      configuredIdentity: true,
       opfsTransport: 'synchronous-access',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,

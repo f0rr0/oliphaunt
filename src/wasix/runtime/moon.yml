@@ -107,12 +107,28 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -e\nbash src/wasix/runtime/tools/check-shim-abi.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh\n"
+    script: |
+      set -e
+      node src/wasix/runtime/protocol-contract/generate.mjs --check
+      bash src/wasix/runtime/tools/check-shim-abi.sh
+      bash src/wasix/runtime/assets/build/profile_flags.test.sh
+      bash src/wasix/runtime/assets/build/verify_wasix_sjlj_artifact.test.sh
+      node --test src/wasix/runtime/tools/strong-random.test.mjs src/third-party/postgres/apply-series.test.mjs
+      bash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh
+      bash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh
     inputs:
       - /tools/dev/acquisition.sh
       - assets/build/docker/**/*
       - assets/build/wasix_shim/**/*
       - tools/check-shim-abi.sh
+      - tools/strong-random.test.mjs
+      - protocol-contract/**/*
+      - /src/wasix/sdks/ts/src/protocol-limits.generated.ts
+      - /src/wasix/sdks/rust/src/oliphaunt/protocol_limits_generated.rs
+      - assets/build/profile_flags*
+      - assets/build/verify_wasix_sjlj_artifact*
+      - /src/third-party/postgres/apply-series*
+      - /src/third-party/postgres/patches/wasix/0037-oliphaunt-wasix-use-checked-getrandom.patch
     options:
       cache: true
       runFromWorkspaceRoot: true

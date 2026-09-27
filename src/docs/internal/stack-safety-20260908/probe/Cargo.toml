@@ -1,0 +1,16 @@
+[package]
+name = "hardened-stack-eh-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+wasmer = { version = "=7.2.1", default-features = false, features = ["sys", "llvm", "wat", "wasmer-artifact-create", "wasmer-artifact-load"] }
+wasmer-vm = "=7.2.1"
+
+[patch.crates-io]
+wasmer-vm = { path = "../../wasmer/lib/vm" }
+wasmer = { path = "../../wasmer/lib/api" }
+
+[profile.release]
+strip = "symbols"

@@ -223,3 +223,16 @@ run_tests \
 	--features "$FRESH_MEMORY_PROFILE_FEATURES" \
 	-- \
 	memory_profile::wasm_tool::tests
+
+# run_tests rejects an empty selection; both producer and generic CLI routes
+# must bind artifacts to the strict compiler identity.
+run_tests --locked --target-dir "$POSTMASTER_COMPILER_TARGET_DIR" \
+	--manifest-path "$FRESH_ROOT/executor/Cargo.toml" \
+	--package "$FRESH_POSTMASTER_EXECUTOR_PACKAGE" \
+	--bin "$FRESH_POSTMASTER_COMPILER_BINARY" \
+	--no-default-features --features "$FRESH_POSTMASTER_COMPILER_FEATURES" \
+	-- --exact product_compiler_uses_strict_memory_identity
+run_tests --locked --target-dir "$WASMER_TARGET_DIR" \
+	--manifest-path "$WASMER_ROOT/lib/cli/Cargo.toml" --lib \
+	--no-default-features --features "$FRESH_WASMER_COMPILER_FEATURES" \
+	-- --exact backend::tests::llvm_cli_routes_use_strict_memory_identity

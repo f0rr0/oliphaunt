@@ -1,3 +1,29 @@
+From 0000000000000000000000000000000000000008 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] postgres: preserve WASIX cross-instance latch ordering
+
+Base: PostgreSQL REL_18_4; also applies in postgres/patches/series order.
+
+The EXEC_BACKEND runtime maps the same shared-memory backing into separate
+Wasm instances. Release-O3 ThinLTO can erase fence-only latch ordering before
+the final module, leaving a granted lock holder asleep. Pack SET and SLEEPING
+into one naturally aligned lock-free atomic word so waiter publication and
+the wake decision participate in an explicit sequentially consistent order.
+
+Preserve latch layout with a reserved word and compile-time size/offset checks.
+Reset clears only SET; wait paths retract SLEEPING; SetLatch signals only the
+clear-to-set transition that observed a published waiter. Native behavior and
+signal delivery primitives remain unchanged. Require PG_WASIX_ATOMIC_LATCH_STATE
+only on the port with the matching atomic contract.
+
+This correctness seam is not an optional speed switch. A general PostgreSQL
+upstream proposal needs a portable concurrency argument and tests rather than
+simply widening the WASIX guard. Acceptance includes the state-machine check,
+clean standalone and series application, final-Wasm atomic verification,
+cross-instance latch probes and fresh-postmaster backend-wave qualification.
+---
+
 diff --git a/src/backend/storage/ipc/latch.c b/src/backend/storage/ipc/latch.c
 index beadeb5..407aa5d 100644
 --- a/src/backend/storage/ipc/latch.c

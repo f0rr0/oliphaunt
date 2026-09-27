@@ -1,0 +1,85 @@
+Subject: [PATCH] feat(api): expose a fixed checked execution-stack query
+
+Register one trusted scalar runtime operation through the existing function machinery. Reject unsupported backends at construction; do not offer arbitrary callbacks a way to bypass host-stack isolation. Requires the matching VM patch.
+
+Base: published wasmer-7.2.1 crate, apply from its crate root with git apply.
+Experimental candidate; not a merged upstream change.
+
+diff --git a/src/backend/sys/entities/function/mod.rs b/src/backend/sys/entities/function/mod.rs
+index efed13c5..d333e48d 100644
+--- a/src/backend/sys/entities/function/mod.rs
++++ b/src/backend/sys/entities/function/mod.rs
+@@ -42,6 +42,32 @@ pub struct Function {
+     pub(crate) handle: StoreHandle<VMFunction>,
+ }
+ 
++/// Fixed runtime operation, not a general opt-out from host-stack isolation.
++pub(crate) struct ExecutionStackRemaining;
++
++impl HostFunction<(), (), u64, WithoutEnv> for ExecutionStackRemaining {
++    fn function_callback(&self, _backend: crate::BackendKind) -> crate::vm::VMFunctionCallback {
++        // The public constructor rejects non-Sys stores before registration.
++        self.function_callback_sys()
++    }
++
++    fn function_callback_sys(&self) -> crate::vm::VMFunctionCallback {
++        // The ignored context belongs to the normal StaticFunction allocation.
++        // Only scalar return ABI is used; the successful measurement has no
++        // store/reference conversions, locks, allocations, user callbacks, or
++        // stack switches. The cold failure path terminates the invocation.
++        unsafe extern "C" fn remaining(_context: *mut VMContext) -> u64 {
++            unsafe { wasmer_vm::checked_execution_stack_remaining() as u64 }
++        }
++        crate::vm::VMFunctionCallback::Sys(remaining as *const VMFunctionBody)
++    }
++
++    fn call_trampoline_address() -> crate::vm::VMTrampoline {
++        // Reuse Wasmer's scalar result ABI and normal host-to-Wasm trampoline.
++        crate::vm::VMTrampoline::Sys(gen_call_trampoline_address_s0_no_env::<u64>())
++    }
++}
++
+ impl From<StoreHandle<VMFunction>> for Function {
+     fn from(handle: StoreHandle<VMFunction>) -> Self {
+         Self { handle }
+diff --git a/src/entities/function/mod.rs b/src/entities/function/mod.rs
+index 32668df2..639b726e 100644
+--- a/src/entities/function/mod.rs
++++ b/src/entities/function/mod.rs
+@@ -50,6 +50,36 @@ use crate::{
+ pub struct Function(pub(crate) BackendFunction);
+ 
+ impl Function {
++    /// Experimental Sys-only stack-budget query, with Wasm signature `() -> i64`.
++    ///
++    /// Runs a fixed, non-allocating measurement on the execution stack. No user
++    /// callback is accepted. Unsupported accounting is rejected at construction.
++    /// Missing accounting or reaching the engine hard reserve terminates the
++    /// invocation, never returns a recoverable zero. Callers must check an earlier
++    /// application-specific soft limit and leave space for their own recovery.
++    #[cfg(feature = "sys")]
++    pub fn new_execution_stack_remaining(
++        store: &mut impl AsStoreMut,
++    ) -> Result<Self, RuntimeError> {
++        if !matches!(
++            &store.as_store_mut().inner.store,
++            crate::BackendStore::Sys(_)
++        ) {
++            return Err(RuntimeError::new(
++                "execution-stack measurement requires the Sys backend",
++            ));
++        }
++        if !wasmer_vm::execution_stack_accounting_supported() {
++            return Err(RuntimeError::new(
++                "execution-stack measurement is unavailable on this platform/backend",
++            ));
++        }
++        Ok(Self::new_typed(
++            store,
++            crate::backend::sys::entities::function::ExecutionStackRemaining,
++        ))
++    }
++
+     /// Creates a new host `Function` (dynamic) with the provided signature.
+     ///
+     /// If you know the signature of the host function at compile time,

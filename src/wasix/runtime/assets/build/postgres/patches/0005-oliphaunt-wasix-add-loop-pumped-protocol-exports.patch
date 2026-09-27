@@ -7,19 +7,20 @@ Expose PostgreSQL main-loop control points for the embedded WASIX host.
 
 PostgreSQL still owns the normal backend initialization path and the normal
 per-message FE/BE protocol logic.  This patch factors the existing loop body
-and top-level error recovery into helper functions, exporting them only for
-OLIPHAUNT_WASM_SINGLE_USER builds so the Rust host can pump one frontend
-message at a time and recover a backend ERROR without starting another
-backend lifecycle.
+and top-level error recovery into helper functions.  The loop-step export is
+available only to OLIPHAUNT_WASM_SINGLE_USER builds and returns a small typed
+outcome: processed, recovered ERROR, or input ended.  PostgreSQL performs its
+own recovery while the call-site exception boundary is live; the host never
+has to infer guest control flow from a trap string or process-exit code.
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index b2e2753..da82a52 100644
+index 7e9c232e10..fa6e9cfaf7 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -153,6 +153,16 @@ static bool DoingCommandRead = false;
+@@ -153,6 +153,24 @@ static bool DoingCommandRead = false;
  static bool doing_extended_query_message = false;
  static bool ignore_till_sync = false;
-
+ 
 +/*
 + * These are local to PostgresMain() upstream. Oliphaunt WASIX exposes the
 + * main loop to the host, so the loop and recovery exports need the state at
@@ -29,14 +30,22 @@ index b2e2753..da82a52 100644
 +static volatile bool send_ready_for_query = true;
 +static volatile bool idle_in_transaction_timeout_enabled = false;
 +static volatile bool idle_session_timeout_enabled = false;
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++enum
++{
++	OLIPHAUNT_WASM_MAIN_LOOP_PROCESSED = 0,
++	OLIPHAUNT_WASM_MAIN_LOOP_RECOVERED = 1,
++	OLIPHAUNT_WASM_MAIN_LOOP_INPUT_ENDED = 2,
++};
++#endif
 +
  /*
   * If an unnamed prepared statement exists, it's stored here.
   * We keep it separate from the hashtable kept by commands/prepare.c
-@@ -4284,861 +4294,899 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4291,861 +4309,937 @@ PostgresSingleUserMain(int argc, char *argv[],
  }
-
-
+ 
+ 
 -/* ----------------------------------------------------------------
 - * PostgresMain
 - *	   postgres main loop -- all backends, interactive or otherwise loop here
@@ -108,7 +117,7 @@ index b2e2753..da82a52 100644
 +		{
 +			set_ps_display("idle in transaction (aborted)");
 +			pgstat_report_activity(STATE_IDLEINTRANSACTION_ABORTED, NULL);
-
+ 
 -		/*
 -		 * In a postmaster child backend, replace SignalHandlerForCrashExit
 -		 * with quickdie, so we can tell the client we're dying.
@@ -147,7 +156,7 @@ index b2e2753..da82a52 100644
 -		InitializeTimeouts();	/* establishes SIGALRM handler */
 +		{
 +			long		stats_timeout;
-
+ 
 -		/*
 -		 * Ignore failure to write to frontend. Note: if frontend closes
 -		 * connection, we will notice it and exit cleanly when control next
@@ -167,7 +176,7 @@ index b2e2753..da82a52 100644
 +			 */
 +			if (notifyInterruptPending)
 +				ProcessNotifyInterrupt(false);
-
+ 
 -		/*
 -		 * Reset some signals that are accepted by postmaster but not by
 -		 * backend
@@ -201,12 +210,12 @@ index b2e2753..da82a52 100644
 +				if (get_timeout_active(IDLE_STATS_UPDATE_TIMEOUT))
 +					disable_timeout(IDLE_STATS_UPDATE_TIMEOUT, false);
 +			}
-
+ 
 -	/* Early initialization */
 -	BaseInit();
 +			set_ps_display("idle");
 +			pgstat_report_activity(STATE_IDLE, NULL);
-
+ 
 -	/* We need to allow SIGINT, etc during the initial transaction */
 -	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
 +			/* Start the idle-session timer */
@@ -217,7 +226,7 @@ index b2e2753..da82a52 100644
 +									 IdleSessionTimeout);
 +			}
 +		}
-
+ 
 -	/*
 -	 * Generate a random cancel key, if this is a backend serving a
 -	 * connection. InitPostgres() will advertise it in shared memory.
@@ -228,7 +237,7 @@ index b2e2753..da82a52 100644
 -		int			len;
 +		/* Report any recently-changed GUC options */
 +		ReportChangedGUCOptions();
-
+ 
 -		len = (MyProcPort == NULL || MyProcPort->proto >= PG_PROTOCOL(3, 2))
 -			? MAX_CANCEL_KEY_LENGTH : 4;
 -		if (!pg_strong_random(&MyCancelKey, len))
@@ -272,12 +281,8 @@ index b2e2753..da82a52 100644
 +		send_ready_for_query = false;
  	}
 +}
-
-+#ifdef OLIPHAUNT_WASM_SINGLE_USER
-+OLIPHAUNT_WASM_HOST_EXPORT("PostgresMainLongJmp") void
-+#else
+ 
 +static void
-+#endif
 +PostgresMainLongJmp(void)
 +{
  	/*
@@ -304,7 +309,7 @@ index b2e2753..da82a52 100644
 +
 +	/* Prevent interrupts while cleaning up */
 +	HOLD_INTERRUPTS();
-
+ 
  	/*
 -	 * If the PostmasterContext is still around, recycle the space; we don't
 -	 * need it anymore after InitPostgres completes.
@@ -327,7 +332,7 @@ index b2e2753..da82a52 100644
 +	QueryCancelPending = false;
 +	idle_in_transaction_timeout_enabled = false;
 +	idle_session_timeout_enabled = false;
-
+ 
 -	SetProcessingMode(NormalProcessing);
 +	/* Not reading from the client anymore. */
 +	DoingCommandRead = false;
@@ -337,7 +342,7 @@ index b2e2753..da82a52 100644
 +
 +	/* Report the error to the client and/or server log */
 +	EmitErrorReport();
-
+ 
  	/*
 -	 * Now all GUC states are fully set up.  Report them to client if
 -	 * appropriate.
@@ -346,7 +351,7 @@ index b2e2753..da82a52 100644
  	 */
 -	BeginReportingGUCOptions();
 +	valgrind_report_error_query(debug_query_string);
-
+ 
  	/*
 -	 * Also set up handler to log session end; we have to wait till now to be
 -	 * sure Log_disconnections has its final value.
@@ -356,20 +361,20 @@ index b2e2753..da82a52 100644
 -	if (IsUnderPostmaster && Log_disconnections)
 -		on_proc_exit(log_disconnections, 0);
 +	debug_query_string = NULL;
-
+ 
 -	pgstat_report_connect(MyDatabaseId);
 +	/*
 +	 * Abort the current transaction in order to recover.
 +	 */
 +	AbortCurrentTransaction();
-
+ 
 -	/* Perform initialization specific to a WAL sender process. */
  	if (am_walsender)
 -		InitWalSender();
 +		WalSndErrorCleanup();
 +
 +	PortalErrorCleanup();
-
+ 
  	/*
 -	 * Send this backend's cancellation info to the frontend.
 +	 * We can't release replication slots inside AbortTransaction() as we
@@ -387,19 +392,19 @@ index b2e2753..da82a52 100644
 -		pq_sendint32(&buf, (int32) MyProcPid);
 +	if (MyReplicationSlot != NULL)
 +		ReplicationSlotRelease();
-
+ 
 -		pq_sendbytes(&buf, MyCancelKey, MyCancelKeyLength);
 -		pq_endmessage(&buf);
 -		/* Need not flush since ReadyForQuery will do it. */
 -	}
 +	/* We also want to cleanup temporary slots on error. */
 +	ReplicationSlotCleanup(false);
-
+ 
 -	/* Welcome banner for standalone case */
 -	if (whereToSendOutput == DestDebug)
 -		printf("\nPostgreSQL stand-alone backend %s\n", PG_VERSION);
 +	jit_reset_after_error();
-
+ 
  	/*
 -	 * Create the memory context we will use in the main loop.
 -	 *
@@ -413,7 +418,7 @@ index b2e2753..da82a52 100644
 -										   ALLOCSET_DEFAULT_SIZES);
 +	MemoryContextSwitchTo(MessageContext);
 +	FlushErrorState();
-
+ 
  	/*
 -	 * Create memory context and buffer used for RowDescription messages. As
 -	 * SendRowDescriptionMessage(), via exec_describe_statement_message(), is
@@ -431,12 +436,12 @@ index b2e2753..da82a52 100644
 -	MemoryContextSwitchTo(TopMemoryContext);
 +	if (doing_extended_query_message)
 +		ignore_till_sync = true;
-
+ 
 -	/* Fire any defined login event triggers, if appropriate */
 -	EventTriggerOnLogin();
 +	/* We don't have a transaction command open anymore */
 +	xact_started = false;
-
+ 
  	/*
 -	 * POSTGRES main processing loop begins here
 -	 *
@@ -468,7 +473,7 @@ index b2e2753..da82a52 100644
 +		ereport(FATAL,
 +				(errcode(ERRCODE_PROTOCOL_VIOLATION),
 +				 errmsg("terminating connection because protocol synchronization was lost")));
-
+ 
 -	if (sigsetjmp(local_sigjmp_buf, 1) != 0)
 -	{
 -		/*
@@ -481,11 +486,11 @@ index b2e2753..da82a52 100644
 +	/* Now we can allow interrupts again */
 +	RESUME_INTERRUPTS();
 +}
-
+ 
 -		/* Since not using PG_TRY, must reset error stack by hand */
 -		error_context_stack = NULL;
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
-+OLIPHAUNT_WASM_HOST_EXPORT("PostgresMainLoopOnce") void
++OLIPHAUNT_WASM_HOST_EXPORT("PostgresMainLoopOnce") int
 +#else
 +static void
 +#endif
@@ -493,7 +498,21 @@ index b2e2753..da82a52 100644
 +{
 +	int			firstchar;
 +	StringInfoData input_message;
-
++
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	/*
++	 * Every host call needs a live call-site boundary.  Never retain this
++	 * frame in PG_exception_stack after returning to the host.
++	 */
++	if (sigsetjmp(postgresmain_sigjmp_buf, 1) != 0)
++	{
++		PostgresMainLongJmp();
++		PG_exception_stack = NULL;
++		return OLIPHAUNT_WASM_MAIN_LOOP_RECOVERED;
++	}
++	PG_exception_stack = &postgresmain_sigjmp_buf;
++#endif
+ 
 -		/* Prevent interrupts while cleaning up */
 -		HOLD_INTERRUPTS();
 +	/*
@@ -501,7 +520,7 @@ index b2e2753..da82a52 100644
 +	 * errors encountered in "idle" state don't provoke skip.
 +	 */
 +	doing_extended_query_message = false;
-
+ 
 -		/*
 -		 * Forget any pending QueryCancel request, since we're returning to
 -		 * the idle loop anyway, and cancel any active timeout requests.  (In
@@ -523,7 +542,7 @@ index b2e2753..da82a52 100644
 +#ifdef USE_VALGRIND
 +	old_valgrind_error_count = VALGRIND_COUNT_ERRORS;
 +#endif
-
+ 
 -		/* Not reading from the client anymore. */
 -		DoingCommandRead = false;
 +	/*
@@ -532,11 +551,11 @@ index b2e2753..da82a52 100644
 +	 */
 +	MemoryContextSwitchTo(MessageContext);
 +	MemoryContextReset(MessageContext);
-
+ 
 -		/* Make sure libpq is in a good state */
 -		pq_comm_reset();
 +	initStringInfo(&input_message);
-
+ 
 -		/* Report the error to the client and/or server log */
 -		EmitErrorReport();
 +	/*
@@ -544,14 +563,14 @@ index b2e2753..da82a52 100644
 +	 * not preventing advance of global xmin while we wait for the client.
 +	 */
 +	InvalidateCatalogSnapshotConditionally();
-
+ 
 -		/*
 -		 * If Valgrind noticed something during the erroneous query, print the
 -		 * query string, assuming we have one.
 -		 */
 -		valgrind_report_error_query(debug_query_string);
 +	PostgresSendReadyForQueryIfNecessary();
-
+ 
 -		/*
 -		 * Make sure debug_query_string gets reset before we possibly clobber
 -		 * the storage it points at.
@@ -564,7 +583,7 @@ index b2e2753..da82a52 100644
 +	 * STDIN doing the same thing.)
 +	 */
 +	DoingCommandRead = true;
-
+ 
 -		/*
 -		 * Abort the current transaction in order to recover.
 -		 */
@@ -624,7 +643,7 @@ index b2e2753..da82a52 100644
 +	 * (3) read a command (loop blocks here)
 +	 */
 +	firstchar = ReadCommand(&input_message);
-
+ 
 -		/* Now we can allow interrupts again */
 -		RESUME_INTERRUPTS();
 +	/*
@@ -651,7 +670,7 @@ index b2e2753..da82a52 100644
 -
 -	if (!ignore_till_sync)
 -		send_ready_for_query = true;	/* initially, or after error */
-
+ 
  	/*
 -	 * Non-error queries loop here.
 +	 * (5) disable async signal conditions again.
@@ -664,7 +683,7 @@ index b2e2753..da82a52 100644
  	 */
 +	CHECK_FOR_INTERRUPTS();
 +	DoingCommandRead = false;
-
+ 
 -	for (;;)
 +	/*
 +	 * (6) check for any other interesting events that happened while we
@@ -690,7 +709,7 @@ index b2e2753..da82a52 100644
 +		ConfigReloadPending = false;
 +		ProcessConfigFile(PGC_SIGHUP);
 +	}
-
+ 
 -		/*
 -		 * Release storage left over from prior query cycle, and create a new
 -		 * query input buffer in the cleared MessageContext.
@@ -702,15 +721,22 @@ index b2e2753..da82a52 100644
 +	 * Sync.
 +	 */
 +	if (ignore_till_sync && firstchar != EOF)
++	{
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++		PG_exception_stack = NULL;
++		return OLIPHAUNT_WASM_MAIN_LOOP_PROCESSED;
++#else
 +		return;
-
++#endif
++	}
+ 
 -		initStringInfo(&input_message);
 +	switch (firstchar)
 +	{
 +		case PqMsg_Query:
 +			{
 +				const char *query_string;
-
+ 
 -		/*
 -		 * Also consider releasing our catalog snapshot if any, so that it's
 -		 * not preventing advance of global xmin while we wait for the client.
@@ -718,7 +744,7 @@ index b2e2753..da82a52 100644
 -		InvalidateCatalogSnapshotConditionally();
 +				/* Set statement_timestamp() */
 +				SetCurrentStatementStartTimestamp();
-
+ 
 -		/*
 -		 * (1) If we've reached idle state, tell the frontend we're ready for
 -		 * a new query.
@@ -743,7 +769,7 @@ index b2e2753..da82a52 100644
 -				pgstat_report_activity(STATE_IDLEINTRANSACTION_ABORTED, NULL);
 +				query_string = pq_getmsgstring(&input_message);
 +				pq_getmsgend(&input_message);
-
+ 
 -				/* Start the idle-in-transaction timer */
 -				if (IdleInTransactionSessionTimeout > 0
 -					&& (IdleInTransactionSessionTimeout < TransactionTimeout || TransactionTimeout == 0))
@@ -762,7 +788,7 @@ index b2e2753..da82a52 100644
 -				pgstat_report_activity(STATE_IDLEINTRANSACTION, NULL);
 +				else
 +					exec_simple_query(query_string);
-
+ 
 -				/* Start the idle-in-transaction timer */
 -				if (IdleInTransactionSessionTimeout > 0
 -					&& (IdleInTransactionSessionTimeout < TransactionTimeout || TransactionTimeout == 0))
@@ -785,7 +811,7 @@ index b2e2753..da82a52 100644
 +				const char *query_string;
 +				int			numParams;
 +				Oid		   *paramTypes = NULL;
-
+ 
 -				/*
 -				 * Process incoming notifies (including self-notifies), if
 -				 * any, and send relevant messages to the client.  Doing it
@@ -796,7 +822,7 @@ index b2e2753..da82a52 100644
 -				if (notifyInterruptPending)
 -					ProcessNotifyInterrupt(false);
 +				forbidden_in_wal_sender(firstchar);
-
+ 
 -				/*
 -				 * Check if we need to report stats. If pgstat_report_stat()
 -				 * decides it's too soon to flush out pending stats / lock
@@ -834,12 +860,12 @@ index b2e2753..da82a52 100644
 +						paramTypes[i] = pq_getmsgint(&input_message, 4);
  				}
 +				pq_getmsgend(&input_message);
-
+ 
 -				set_ps_display("idle");
 -				pgstat_report_activity(STATE_IDLE, NULL);
 +				exec_parse_message(query_string, stmt_name,
 +								   paramTypes, numParams);
-
+ 
 -				/* Start the idle-session timer */
 -				if (IdleSessionTimeout > 0)
 -				{
@@ -850,7 +876,7 @@ index b2e2753..da82a52 100644
 +				valgrind_report_error_query(query_string);
  			}
 +			break;
-
+ 
 -			/* Report any recently-changed GUC options */
 -			ReportChangedGUCOptions();
 +		case PqMsg_Bind:
@@ -858,7 +884,7 @@ index b2e2753..da82a52 100644
 +
 +			/* Set statement_timestamp() */
 +			SetCurrentStatementStartTimestamp();
-
+ 
  			/*
 -			 * The first time this backend is ready for query, log the
 -			 * durations of the different components of connection
@@ -900,12 +926,12 @@ index b2e2753..da82a52 100644
 -			}
 +				const char *portal_name;
 +				int			max_rows;
-
+ 
 -			ReadyForQuery(whereToSendOutput);
 -			send_ready_for_query = false;
 -		}
 +				forbidden_in_wal_sender(firstchar);
-
+ 
 -		/*
 -		 * (2) Allow asynchronous signals to be executed immediately if they
 -		 * come in while we are waiting for client input. (This must be
@@ -915,7 +941,7 @@ index b2e2753..da82a52 100644
 -		DoingCommandRead = true;
 +				/* Set statement_timestamp() */
 +				SetCurrentStatementStartTimestamp();
-
+ 
 -		/*
 -		 * (3) read a command (loop blocks here)
 -		 */
@@ -923,7 +949,7 @@ index b2e2753..da82a52 100644
 +				portal_name = pq_getmsgstring(&input_message);
 +				max_rows = pq_getmsgint(&input_message, 4);
 +				pq_getmsgend(&input_message);
-
+ 
 -		/*
 -		 * (4) turn off the idle-in-transaction and idle-session timeouts if
 -		 * active.  We do this before step (5) so that any last-moment timeout
@@ -943,7 +969,7 @@ index b2e2753..da82a52 100644
 -			idle_session_timeout_enabled = false;
 -		}
 +				exec_execute_message(portal_name, max_rows);
-
+ 
 -		/*
 -		 * (5) disable async signal conditions again.
 -		 *
@@ -958,7 +984,7 @@ index b2e2753..da82a52 100644
 +				/* exec_execute_message does valgrind_report_error_query */
 +			}
 +			break;
-
+ 
 -		/*
 -		 * (6) check for any other interesting events that happened while we
 -		 * slept.
@@ -970,7 +996,7 @@ index b2e2753..da82a52 100644
 -		}
 +		case PqMsg_FunctionCall:
 +			forbidden_in_wal_sender(firstchar);
-
+ 
 -		/*
 -		 * (7) process the command.  But ignore it if we're skipping till
 -		 * Sync.
@@ -979,7 +1005,7 @@ index b2e2753..da82a52 100644
 -			continue;
 +			/* Set statement_timestamp() */
 +			SetCurrentStatementStartTimestamp();
-
+ 
 -		switch (firstchar)
 -		{
 -			case PqMsg_Query:
@@ -988,12 +1014,12 @@ index b2e2753..da82a52 100644
 +			/* Report query to various monitoring facilities. */
 +			pgstat_report_activity(STATE_FASTPATH, NULL);
 +			set_ps_display("<FASTPATH>");
-
+ 
 -					/* Set statement_timestamp() */
 -					SetCurrentStatementStartTimestamp();
 +			/* start an xact for this function invocation */
 +			start_xact_command();
-
+ 
 -					query_string = pq_getmsgstring(&input_message);
 -					pq_getmsgend(&input_message);
 +			/*
@@ -1004,7 +1030,7 @@ index b2e2753..da82a52 100644
 +			 * Be careful not to do anything that assumes we're inside a
 +			 * valid transaction here.
 +			 */
-
+ 
 -					if (am_walsender)
 -					{
 -						if (!exec_replication_command(query_string))
@@ -1014,16 +1040,16 @@ index b2e2753..da82a52 100644
 -						exec_simple_query(query_string);
 +			/* switch back to message context */
 +			MemoryContextSwitchTo(MessageContext);
-
+ 
 -					valgrind_report_error_query(query_string);
 +			HandleFunctionRequest(&input_message);
-
+ 
 -					send_ready_for_query = true;
 -				}
 -				break;
 +			/* commit the function-invocation transaction */
 +			finish_xact_command();
-
+ 
 -			case PqMsg_Parse:
 -				{
 -					const char *stmt_name;
@@ -1031,18 +1057,18 @@ index b2e2753..da82a52 100644
 -					int			numParams;
 -					Oid		   *paramTypes = NULL;
 +			valgrind_report_error_query("fastpath function call");
-
+ 
 -					forbidden_in_wal_sender(firstchar);
 +			send_ready_for_query = true;
 +			break;
-
+ 
 -					/* Set statement_timestamp() */
 -					SetCurrentStatementStartTimestamp();
 +		case PqMsg_Close:
 +			{
 +				int			close_type;
 +				const char *close_target;
-
+ 
 -					stmt_name = pq_getmsgstring(&input_message);
 -					query_string = pq_getmsgstring(&input_message);
 -					numParams = pq_getmsgint(&input_message, 2);
@@ -1054,7 +1080,7 @@ index b2e2753..da82a52 100644
 -					}
 -					pq_getmsgend(&input_message);
 +				forbidden_in_wal_sender(firstchar);
-
+ 
 -					exec_parse_message(query_string, stmt_name,
 -									   paramTypes, numParams);
 +				close_type = pq_getmsgbyte(&input_message);
@@ -1075,7 +1101,7 @@ index b2e2753..da82a52 100644
 +					case 'P':
 +						{
 +							Portal		portal;
-
+ 
 -					valgrind_report_error_query(query_string);
 +							portal = GetPortalByName(close_target);
 +							if (PortalIsValid(portal))
@@ -1090,7 +1116,7 @@ index b2e2753..da82a52 100644
 +						break;
  				}
 -				break;
-
+ 
 -			case PqMsg_Bind:
 +				if (whereToSendOutput == DestRemote)
 +					pq_putemptymessage(PqMsg_CloseComplete);
@@ -1105,11 +1131,11 @@ index b2e2753..da82a52 100644
 +				const char *describe_target;
 +
  				forbidden_in_wal_sender(firstchar);
-
+ 
 -				/* Set statement_timestamp() */
 +				/* Set statement_timestamp() (needed for xact) */
  				SetCurrentStatementStartTimestamp();
-
+ 
 -				/*
 -				 * this message is complex enough that it seems best to put
 -				 * the field extraction out-of-line
@@ -1121,7 +1147,7 @@ index b2e2753..da82a52 100644
 +				describe_type = pq_getmsgbyte(&input_message);
 +				describe_target = pq_getmsgstring(&input_message);
 +				pq_getmsgend(&input_message);
-
+ 
 -			case PqMsg_Execute:
 +				switch (describe_type)
  				{
@@ -1140,12 +1166,12 @@ index b2e2753..da82a52 100644
 +										describe_type)));
 +						break;
 +				}
-
+ 
 -					forbidden_in_wal_sender(firstchar);
 +				valgrind_report_error_query("DESCRIBE message");
 +			}
 +			break;
-
+ 
 -					/* Set statement_timestamp() */
 -					SetCurrentStatementStartTimestamp();
 +		case PqMsg_Flush:
@@ -1153,13 +1179,13 @@ index b2e2753..da82a52 100644
 +			if (whereToSendOutput == DestRemote)
 +				pq_flush();
 +			break;
-
+ 
 -					portal_name = pq_getmsgstring(&input_message);
 -					max_rows = pq_getmsgint(&input_message, 4);
 -					pq_getmsgend(&input_message);
 +		case PqMsg_Sync:
 +			pq_getmsgend(&input_message);
-
+ 
 -					exec_execute_message(portal_name, max_rows);
 +			/*
 +			 * If pipelining was used, we may be in an implicit
@@ -1171,7 +1197,7 @@ index b2e2753..da82a52 100644
 +			valgrind_report_error_query("SYNC message");
 +			send_ready_for_query = true;
 +			break;
-
+ 
 -					/* exec_execute_message does valgrind_report_error_query */
 -				}
 -				break;
@@ -1181,21 +1207,21 @@ index b2e2753..da82a52 100644
 +			 * Either way, perform normal shutdown.
 +			 */
 +		case EOF:
-
+ 
 -			case PqMsg_FunctionCall:
 -				forbidden_in_wal_sender(firstchar);
 +			/* for the cumulative statistics system */
 +			pgStatSessionEndCause = DISCONNECT_CLIENT_EOF;
-
+ 
 -				/* Set statement_timestamp() */
 -				SetCurrentStatementStartTimestamp();
 +			/* FALLTHROUGH */
-
+ 
 -				/* Report query to various monitoring facilities. */
 -				pgstat_report_activity(STATE_FASTPATH, NULL);
 -				set_ps_display("<FASTPATH>");
 +		case PqMsg_Terminate:
-
+ 
 -				/* start an xact for this function invocation */
 -				start_xact_command();
 +			/*
@@ -1204,7 +1230,7 @@ index b2e2753..da82a52 100644
 +			 */
 +			if (whereToSendOutput == DestRemote)
 +				whereToSendOutput = DestNone;
-
+ 
 -				/*
 -				 * Note: we may at this point be inside an aborted
 -				 * transaction.  We can't throw error for that until we've
@@ -1222,18 +1248,21 @@ index b2e2753..da82a52 100644
 +			 */
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +			if (is_oliphaunt_active != 0)
-+				exit(OLIPHAUNT_WASM_EXIT_ALIVE);
++			{
++				PG_exception_stack = NULL;
++				return OLIPHAUNT_WASM_MAIN_LOOP_INPUT_ENDED;
++			}
 +#endif
-
+ 
 -				/* switch back to message context */
 -				MemoryContextSwitchTo(MessageContext);
 +			proc_exit(0);
-
+ 
 -				HandleFunctionRequest(&input_message);
 +		case PqMsg_CopyData:
 +		case PqMsg_CopyDone:
 +		case PqMsg_CopyFail:
-
+ 
 -				/* commit the function-invocation transaction */
 -				finish_xact_command();
 +			/*
@@ -1242,7 +1271,7 @@ index b2e2753..da82a52 100644
 +			 * is still sending data.
 +			 */
 +			break;
-
+ 
 -				valgrind_report_error_query("fastpath function call");
 +		default:
 +			ereport(FATAL,
@@ -1250,11 +1279,15 @@ index b2e2753..da82a52 100644
 +					 errmsg("invalid frontend message type %d",
 +							firstchar)));
 +	}
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	PG_exception_stack = NULL;
++	return OLIPHAUNT_WASM_MAIN_LOOP_PROCESSED;
++#endif
 +}
 
 -				send_ready_for_query = true;
 -				break;
-
+ 
 -			case PqMsg_Close:
 -				{
 -					int			close_type;
@@ -1276,18 +1309,18 @@ index b2e2753..da82a52 100644
 +#ifndef OLIPHAUNT_WASM_SINGLE_USER
 +	sigjmp_buf	local_sigjmp_buf;
 +#endif
-
+ 
 -					forbidden_in_wal_sender(firstchar);
 +	Assert(dbname != NULL);
 +	Assert(username != NULL);
-
+ 
 -					close_type = pq_getmsgbyte(&input_message);
 -					close_target = pq_getmsgstring(&input_message);
 -					pq_getmsgend(&input_message);
 +	send_ready_for_query = true;
 +	idle_in_transaction_timeout_enabled = false;
 +	idle_session_timeout_enabled = false;
-
+ 
 -					switch (close_type)
 -					{
 -						case 'S':
@@ -1316,7 +1349,7 @@ index b2e2753..da82a52 100644
 -							break;
 -					}
 +	Assert(GetProcessingMode() == InitProcessing);
-
+ 
 -					if (whereToSendOutput == DestRemote)
 -						pq_putemptymessage(PqMsg_CloseComplete);
 +	/*
@@ -1341,7 +1374,7 @@ index b2e2753..da82a52 100644
 +		pqsignal(SIGHUP, SignalHandlerForConfigReload);
 +		pqsignal(SIGINT, StatementCancelHandler);	/* cancel current query */
 +		pqsignal(SIGTERM, die); /* cancel current query and exit */
-
+ 
 -					valgrind_report_error_query("CLOSE message");
 -				}
 -				break;
@@ -1358,7 +1391,7 @@ index b2e2753..da82a52 100644
 +		else
 +			pqsignal(SIGQUIT, die); /* cancel current query and exit */
 +		InitializeTimeouts();	/* establishes SIGALRM handler */
-
+ 
 -			case PqMsg_Describe:
 -				{
 -					int			describe_type;
@@ -1373,7 +1406,7 @@ index b2e2753..da82a52 100644
 +		pqsignal(SIGUSR1, procsignal_sigusr1_handler);
 +		pqsignal(SIGUSR2, SIG_IGN);
 +		pqsignal(SIGFPE, FloatExceptionHandler);
-
+ 
 -					forbidden_in_wal_sender(firstchar);
 +		/*
 +		 * Reset some signals that are accepted by postmaster but not by
@@ -1382,18 +1415,18 @@ index b2e2753..da82a52 100644
 +		pqsignal(SIGCHLD, SIG_DFL); /* system() requires this on some
 +									 * platforms */
 +	}
-
+ 
 -					/* Set statement_timestamp() (needed for xact) */
 -					SetCurrentStatementStartTimestamp();
 +	/* Early initialization */
 +	BaseInit();
-
+ 
 -					describe_type = pq_getmsgbyte(&input_message);
 -					describe_target = pq_getmsgstring(&input_message);
 -					pq_getmsgend(&input_message);
 +	/* We need to allow SIGINT, etc during the initial transaction */
 +	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
-
+ 
 -					switch (describe_type)
 -					{
 -						case 'S':
@@ -1417,7 +1450,7 @@ index b2e2753..da82a52 100644
 +	if (whereToSendOutput == DestRemote)
 +	{
 +		int			len;
-
+ 
 -					valgrind_report_error_query("DESCRIBE message");
 -				}
 -				break;
@@ -1431,7 +1464,7 @@ index b2e2753..da82a52 100644
 +		}
 +		MyCancelKeyLength = len;
 +	}
-
+ 
 -			case PqMsg_Flush:
 -				pq_getmsgend(&input_message);
 -				if (whereToSendOutput == DestRemote)
@@ -1450,7 +1483,7 @@ index b2e2753..da82a52 100644
 +				 username, InvalidOid,	/* role to connect as */
 +				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
 +				 NULL);			/* no out_dbname */
-
+ 
 -			case PqMsg_Sync:
 -				pq_getmsgend(&input_message);
 +	/*
@@ -1462,7 +1495,7 @@ index b2e2753..da82a52 100644
 +		MemoryContextDelete(PostmasterContext);
 +		PostmasterContext = NULL;
 +	}
-
+ 
 -				/*
 -				 * If pipelining was used, we may be in an implicit
 -				 * transaction block. Close it before calling
@@ -1474,7 +1507,7 @@ index b2e2753..da82a52 100644
 -				send_ready_for_query = true;
 -				break;
 +	SetProcessingMode(NormalProcessing);
-
+ 
 -				/*
 -				 * PqMsg_Terminate means that the frontend is closing down the
 -				 * socket. EOF means unexpected loss of frontend connection.
@@ -1486,7 +1519,7 @@ index b2e2753..da82a52 100644
 +	 * appropriate.
 +	 */
 +	BeginReportingGUCOptions();
-
+ 
 -				/* for the cumulative statistics system */
 -				pgStatSessionEndCause = DISCONNECT_CLIENT_EOF;
 +	/*
@@ -1495,15 +1528,15 @@ index b2e2753..da82a52 100644
 +	 */
 +	if (IsUnderPostmaster && Log_disconnections)
 +		on_proc_exit(log_disconnections, 0);
-
+ 
 -				/* FALLTHROUGH */
 +	pgstat_report_connect(MyDatabaseId);
-
+ 
 -			case PqMsg_Terminate:
 +	/* Perform initialization specific to a WAL sender process. */
 +	if (am_walsender)
 +		InitWalSender();
-
+ 
 -				/*
 -				 * Reset whereToSendOutput to prevent ereport from attempting
 -				 * to send any more messages to client.
@@ -1577,7 +1610,7 @@ index b2e2753..da82a52 100644
 +	 * unblock in AbortTransaction() because the latter is only called if we
 +	 * were inside a transaction.
 +	 */
-
+ 
 -				/*
 -				 * NOTE: if you are tempted to add more code here, DON'T!
 -				 * Whatever you had in mind to do should be set up as an
@@ -1595,7 +1628,7 @@ index b2e2753..da82a52 100644
 +	{
 +		PostgresMainLongJmp();
 +	}
-
+ 
 -				proc_exit(0);
 +	/* We can now handle ereport(ERROR) */
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
@@ -1603,13 +1636,13 @@ index b2e2753..da82a52 100644
 +#else
 +	PG_exception_stack = &local_sigjmp_buf;
 +#endif
-
+ 
 -			case PqMsg_CopyData:
 -			case PqMsg_CopyDone:
 -			case PqMsg_CopyFail:
 +	if (!ignore_till_sync)
 +		send_ready_for_query = true;	/* initially, or after error */
-
+ 
 -				/*
 -				 * Accept but ignore these messages, per protocol spec; we
 -				 * probably got here because a COPY failed, and the frontend
@@ -1619,7 +1652,7 @@ index b2e2753..da82a52 100644
 +	/*
 +	 * Non-error queries loop here.
 +	 */
-
+ 
 -			default:
 -				ereport(FATAL,
 -						(errcode(ERRCODE_PROTOCOL_VIOLATION),
@@ -1628,26 +1661,41 @@ index b2e2753..da82a52 100644
 -		}
 -	}							/* end of input-reading loop */
 +	for (;;)
-+		PostgresMainLoopOnce();			/* end of input-reading loop */
++	{
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++		int			loop_status = PostgresMainLoopOnce();
++
++		if (loop_status == OLIPHAUNT_WASM_MAIN_LOOP_INPUT_ENDED)
++		{
++			PG_exception_stack = NULL;
++			exit(OLIPHAUNT_WASM_EXIT_ALIVE);
++		}
++		Assert(loop_status == OLIPHAUNT_WASM_MAIN_LOOP_PROCESSED ||
++			   loop_status == OLIPHAUNT_WASM_MAIN_LOOP_RECOVERED);
++#else
++		PostgresMainLoopOnce();
++#endif
++	}						/* end of input-reading loop */
  }
-
+ 
  /*
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
-index 569a589..b8d22ca 100644
+index 512c0a2ee6..e3a6243c93 100644
 --- a/src/include/port/wasix-dl.h
 +++ b/src/include/port/wasix-dl.h
-@@ -7,10 +7,12 @@
+@@ -7,11 +7,13 @@
  #define PG_PORT_WASIX_DL_H
-
+ 
  #ifdef OLIPHAUNT_WASM_SINGLE_USER
 +#include <setjmp.h>
  #include <sys/types.h>
-
+ 
  struct Port;
-
+ 
 +extern sigjmp_buf postgresmain_sigjmp_buf;
  extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
  extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
+ extern int oliphaunt_wasix_output_status(void);
  extern void oliphaunt_wasix_process_startup_options(struct Port *port);
 --
 2.49.0

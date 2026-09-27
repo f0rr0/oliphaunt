@@ -29,6 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Default storage is a disposable temporary directory. Direct mode stays bound to its first root and configuration for the lifetime of the process, even after closing a handle. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
+Direct and broker modes preserve PostgreSQL's `fsync=on` default. This corrects the earlier native `-F` default and can increase write latency. An explicit startup GUC `fsync=off` remains available for disposable data, accepting crash-corruption risk.
+
 ## Build your integration
 
 - [Guide](https://oliphaunt.dev/docs/sdk/rust/guide): parameters, transactions, extensions, backups, and shutdown.

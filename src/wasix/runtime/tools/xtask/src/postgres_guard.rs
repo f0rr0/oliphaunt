@@ -71,7 +71,13 @@ pub(crate) fn postgres_expected_source_fingerprint(
 
 fn postgres_patch_series_hash(patches: &[String]) -> Result<String> {
     let mut hasher = Sha256::new();
-    let inputs = std::iter::once(repo_relative_path(POSTGRES_PATCH_SERIES_PATH))
+    let inputs = [
+        repo_relative_path(POSTGRES_PATCH_SERIES_PATH),
+        repo_relative_path(
+            "src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h",
+        ),
+    ]
+        .into_iter()
         .chain(patches.iter().map(repo_relative_path));
     for path in inputs {
         let hash = sha256_text_file_lf(&path)?;
