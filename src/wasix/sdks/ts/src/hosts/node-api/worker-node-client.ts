@@ -21,9 +21,8 @@ import {
 
 /** Open PostgreSQL in a package-owned Node-compatible Worker realm. */
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
-  // The native Worker owns release-embedded runtime assets. Do not structured-
-  // clone caller-provided WebAssembly archives that the N-API path will never
-  // read; retain their exact identity metadata for compatibility validation.
+  // Runtime and contrib assets are embedded in the addon; external extensions
+  // still need their installed package URLs in the Worker.
   const openOptions = withoutNativeAssetPayloads(serializeOpenConfig(config));
   return openWasixWithWorker(createNodeWorker, openOptions, requireNodeStorage, false);
 }
@@ -62,7 +61,7 @@ function withoutNativeAssetPayloads(options: SerializedOpenOptions): SerializedO
     extensionCarriers: Object.fromEntries(
       Object.entries(options.extensionCarriers).map(([sqlName, carrier]) => [
         sqlName,
-        { ...carrier, source },
+        carrier.product === 'oliphaunt-extension-contrib-pg18' ? { ...carrier, source } : carrier,
       ]),
     ),
   };
