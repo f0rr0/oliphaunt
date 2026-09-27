@@ -70,7 +70,7 @@ pub(super) struct NativeRestoreOptions {
 pub(super) struct NativeRestoreStreamOptions {
     pub abi_version: u32,
     pub destination: *const c_char,
-    pub read: unsafe extern "C" fn(*mut c_void, *mut u8, usize, *mut usize) -> c_int,
+    pub read_callback: unsafe extern "C" fn(*mut c_void, *mut u8, usize, *mut usize) -> c_int,
     pub context: *mut c_void,
 }
 

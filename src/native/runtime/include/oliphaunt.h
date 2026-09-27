@@ -144,7 +144,7 @@ typedef int32_t (*OliphauntArchiveReadCallback)(
 typedef struct OliphauntRestoreStreamOptions {
     uint32_t abi_version;
     const char *destination;
-    OliphauntArchiveReadCallback read;
+    OliphauntArchiveReadCallback read_callback;
     void *context;
 } OliphauntRestoreStreamOptions;
 

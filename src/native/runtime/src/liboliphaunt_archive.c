@@ -865,7 +865,7 @@ static int32_t oliphaunt_restore_impl(const OliphauntRestoreStreamOptions *optio
         options->abi_version != OLIPHAUNT_ABI_VERSION ||
         options->destination == NULL ||
         options->destination[0] == '\0' ||
-        options->read == NULL) {
+        options->read_callback == NULL) {
         set_error(NULL, "invalid oliphaunt_restore options");
         return -1;
     }
@@ -918,7 +918,7 @@ static int32_t oliphaunt_restore_impl(const OliphauntRestoreStreamOptions *optio
         return -1;
     }
 
-    int rc = oliphaunt_unpack_physical_archive_stream(NULL, options->read, options->context, staging_root);
+    int rc = oliphaunt_unpack_physical_archive_stream(NULL, options->read_callback, options->context, staging_root);
     if (rc == 0) {
         rc = validate_restored_pgdata(NULL, staging_root);
     }
@@ -958,7 +958,7 @@ static int32_t restore_memory(
     OliphauntArchiveMemorySource source = {.data = options->data, .remaining = options->len};
     OliphauntRestoreStreamOptions stream = {
         .abi_version = options->abi_version, .destination = options->destination,
-        .read = oliphaunt_archive_read_memory, .context = &source,
+        .read_callback = oliphaunt_archive_read_memory, .context = &source,
     };
     return run_restore_operation(&stream, error, capture_required);
 }

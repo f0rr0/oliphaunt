@@ -70,7 +70,7 @@ fn restore(symbols: NativeSymbols, destination: &Path, reader: &mut dyn Read) ->
     let options = NativeRestoreStreamOptions {
         abi_version: ABI_VERSION,
         destination: destination.as_ptr(),
-        read: read_archive,
+        read_callback: read_archive,
         context: (&mut context as *mut ReadContext<'_>).cast(),
     };
     let mut error = NativeErrorCapture::zeroed();

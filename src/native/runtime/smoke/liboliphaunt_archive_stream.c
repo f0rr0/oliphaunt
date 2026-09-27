@@ -3,6 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Windows portability headers remap read after the public ABI is declared. */
+#ifndef read
+#define read _read
+#endif
+
 typedef struct ArchiveFile {
     FILE *file;
     size_t max_chunk;
@@ -65,7 +70,11 @@ int main(int argc, char **argv) {
     free(buffered.data);
     rewind(output.file);
     output.transferred = 0;
-    assert(oliphaunt_unpack_physical_archive_stream(NULL, read_archive, &output, destination) == 0);
+    OliphauntRestoreStreamOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION, .destination = destination,
+        .read_callback = read_archive, .context = &output,
+    };
+    assert(oliphaunt_unpack_physical_archive_stream(NULL, options.read_callback, options.context, destination) == 0);
     char *restored = oliphaunt_join_path(destination, "pgdata/large");
     input = fopen(restored, "rb");
     assert(input != NULL);
