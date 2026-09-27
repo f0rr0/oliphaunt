@@ -4,6 +4,18 @@ Base: `df2b112e866f8ea76d320d7b3e172cf7be764177`. Source of the earlier
 correctness work: `41c74d85dd0114935ae751807049ea6c6acf4756`.
 This is a selective port, not a restoration of the earlier repository layout.
 
+The integration checkout is `/home/sid/dev/oliphaunt-refresh-20260927`;
+artifact and evidence paths below are relative to it. The original research
+checkout and the previous PR head are preserved. The history-preserving merge
+`87f510fd182061d31052167ef2594b7f4947e895` has the same tree as the selective
+port commit `411585451f7fe332d28cfd2808bf5e7686cc8eae`.
+
+The first hosted run (36310352902) rejected that merge as its tip: the release
+metadata checker requires a single-parent HEAD. This documentation follow-up
+provides an ordinary single-parent tip without rewriting history or weakening
+the release check. Hosted qualification must be evaluated on the resulting
+new SHA, not inferred from the local runtime evidence below.
+
 ## Product changes
 
 - Retire the 13 embedded WASIX patches documented in
