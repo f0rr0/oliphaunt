@@ -253,6 +253,8 @@ function nullTerminatedAscii(values) {
 export const OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS = Object.freeze([
   'oliphaunt_backup',
   'oliphaunt_backup_with_error',
+  'oliphaunt_backup_stream_with_error',
+  'oliphaunt_restore_stream_with_error',
   'oliphaunt_cancel',
   'oliphaunt_close',
   'oliphaunt_close_if_generation',

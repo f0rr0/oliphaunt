@@ -3,7 +3,13 @@
 use crate::executor::EngineExecutor;
 use crate::{AsyncOliphaunt, Result};
 use liboliphaunt_native_bindings::{NativeOpenOptions, NativeSession};
+#[doc(hidden)]
+pub use oliphaunt_broker::mobile::{Execution, Reason};
 use std::sync::Arc;
+
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+#[doc(hidden)]
+pub mod broker;
 
 /// One request with cancellation authority limited to that request.
 pub struct Request {
@@ -67,6 +73,22 @@ impl Request {
     /// Request cancellation without targeting any other queued or later operation.
     pub fn cancel(&self) -> Result<()> {
         self.cancellation.cancel()
+    }
+
+    /// Buffer an archive with request-scoped cancellation.
+    pub async fn backup(&self) -> Result<Vec<u8>> {
+        self.database
+            .executor
+            .backup_cancellable(Arc::clone(&self.cancellation))
+            .await
+    }
+
+    /// Stream an archive on the same serialized, cancellable execution owner.
+    pub async fn backup_to(&self, writer: impl std::io::Write + Send + 'static) -> Result<()> {
+        self.database
+            .executor
+            .backup_to(Box::new(writer), Arc::clone(&self.cancellation))
+            .await
     }
 }
 

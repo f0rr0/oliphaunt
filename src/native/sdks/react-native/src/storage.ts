@@ -29,3 +29,16 @@ export function directory(location: string): Extract<DatabaseStorage, { kind: 'd
 }
 
 export default directory;
+
+/** Persist a database under a portable name in the selected native owner's private storage. */
+export function applicationData(
+  value: string,
+): Extract<DatabaseStorage, { kind: 'applicationData' }> {
+  const name = typeof value === 'string' ? value.trim() : '';
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(name) || name === '.' || name === '..') {
+    throw new TypeError(
+      'applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen',
+    );
+  }
+  return Object.freeze({ kind: 'applicationData', name });
+}

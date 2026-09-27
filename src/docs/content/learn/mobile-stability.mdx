@@ -5,9 +5,10 @@ description: Understand native direct mode, relaunch, persistence, and crash con
 
 # Mobile Stability
 
-Oliphaunt mobile SDKs use native direct mode: one embedded PostgreSQL backend
-lives inside the app process and SDK calls are serialized through the platform
-SDK.
+Oliphaunt mobile SDKs default to native direct mode. The explicit broker mode
+places PostgreSQL in a platform-owned worker process while keeping the same
+query, transaction, cancellation, and backup APIs. Both modes serialize one
+physical PostgreSQL session.
 
 <MobileStabilityContract />
 
@@ -25,9 +26,10 @@ independent PostgreSQL sessions, or multiple resident database instances.
 
 ## Close and reopen
 
-`close()` logically detaches the SDK handle. The same database instance can be
-reopened while the process remains resident; switching to another persistent
-root requires a fresh process.
+In direct mode, `close()` logically detaches the SDK handle. The same database
+instance can reopen while the process remains resident; switching persistent
+roots requires a fresh process. Broker close retires its worker. A subsequent
+explicit open creates a fresh worker and can select another named database.
 
 Use an app-owned persistent storage location for user data. Temporary storage
 is appropriate for tests and short-lived work.
@@ -48,9 +50,158 @@ return promises and delegate runtime work to the same native owner used by the
 Swift or Kotlin SDK. Invalidation schedules close asynchronously instead of
 blocking the JavaScript, iOS main, or Android UI thread.
 
-## Choosing the mode
+## Broker mode
 
-Mobile packages expose native direct mode. Broker and server are desktop
-runtime choices and are not advertised as mobile capability flags. Applications
-that require independent clients or database-process isolation use a supported
-desktop host or a remote PostgreSQL server.
+The broker implementation targets iOS 26+ and Android API 24+. Apple compilation,
+signing, installed-worker lifecycle, and device file-protection qualification
+must pass before this is advertised as a supported release configuration.
+
+| Contract | iOS | Android |
+| --- | --- | --- |
+| Worker | Ordinary non-UI ExtensionFoundation app extension | Unexported bound service in `:oliphaunt` |
+| Control | Native XPC session | Native AIDL/Binder |
+| Database bytes | One Unix socket pair | One Unix socket pair |
+| Named storage | Extension-private Application Support | `noBackupFilesDir/Oliphaunt/<name>` |
+| App integration | Signed embedded extension target | SDK manifest; guard app initialization in the worker |
+
+There is one active broker handle per application. A duplicate open fails;
+there is no hidden pool, automatic reconnection, or SQL replay. The mobile broker
+does not expose a listening server or independent client sessions. Worker loss
+makes the handle unusable: close it, open explicitly, and let PostgreSQL recover
+committed storage through WAL. Never blindly retry an operation with an unknown
+execution outcome.
+
+### Swift
+
+The app target links `OliphauntBroker`. The worker target links
+`OliphauntBrokerExtension`, its selected seed/ICU resources, and extension products.
+Keep PostgreSQL and its resource products in the worker target. Use the SDK's
+`Templates/OliphauntBroker` source, plist, and build settings to create and sign
+that target. Compile the host declaration template in the app target and enable
+`EX_ENABLE_EXTENSION_POINT_GENERATION` there as well. Its default bundle identifier is the app identifier plus
+`.OliphauntBroker`; the app's `OliphauntBrokerExtensionBundleIdentifier` Info.plist
+key can name another embedded target.
+
+```swift
+import OliphauntBroker
+
+let db = try await OliphauntBroker.open(
+    configuration: .init(storage: .applicationData(name: "primary")),
+    options: .init(operationTimeout: .seconds(10))
+)
+let result = try await db.query("SELECT 42 AS answer")
+try await db.backup(to: archiveURL)
+try await db.close()
+try await OliphauntBroker.restore(storage: .applicationData(name: "restored"), from: archiveURL)
+```
+
+Pass selected generated extension resources to `OliphauntBrokerExtensionPeer` in
+the worker template. In the host, select their SQL identities with
+`OliphauntExtension(sqlName:)`; importing resource products into the host would
+also link their direct-runtime dependencies there.
+
+### Kotlin
+
+```kotlin
+val db = OliphauntBroker.open(
+    context,
+    OliphauntConfig(storage = DatabaseStorage.ApplicationData("primary")),
+    OliphauntBrokerOptions(operationTimeoutMillis = 10_000),
+)
+val result = db.query("SELECT 42 AS answer")
+db.backup(archiveFile)
+db.close()
+OliphauntBroker.restore(context, DatabaseStorage.ApplicationData("restored"), archiveFile)
+```
+
+Android creates your `Application` in the worker too. After `super.onCreate()`,
+return early when `OliphauntBroker.isWorkerProcess(this)` is true, before starting
+React Native, analytics, or other app initialization. Process-specific content
+providers also need app-owned configuration if they perform unrelated startup
+work. The service is private to the application's UID and is not a foreground
+service.
+
+### React Native and Expo
+
+Select `topology: 'broker'` once in the Expo plugin. Both platforms use that
+native build choice for every `open()` and `restore()` call. The plugin defaults
+the iOS minimum to 26.0, preserves a higher minimum, and rejects an explicitly
+lower one. It creates the worker target, declares its EAS signing identity,
+places runtime resources in the worker, and adds the Android `Application`
+guard. Repeated prebuilds are idempotent. Use `npx expo prebuild --clean` when
+switching topology.
+
+Install one seed package for fresh creation, such as
+`@oliphaunt/seed-native-ios-datum64-standard`; the plugin discovers its profile
+and version for both platforms. `open()` initializes new databases automatically.
+If both seed profiles are installed, select `seedProfile` explicitly.
+Android-only apps can select it without installing the iOS seed package.
+
+```json
+{
+  "expo": {
+    "ios": { "bundleIdentifier": "com.example.app" },
+    "plugins": [["@oliphaunt/react-native", { "topology": "broker" }]]
+  }
+}
+```
+
+```typescript
+import Oliphaunt, { applicationData } from '@oliphaunt/react-native';
+
+const db = await Oliphaunt.open({
+  storage: applicationData('primary'),
+  broker: { operationTimeoutMs: 10_000 }, // Optional.
+});
+const backup = await db.backup();
+await db.close();
+await Oliphaunt.restore(applicationData('restored'), backup);
+```
+
+The plugin entry remains necessary because adding and signing an iOS extension
+is a native build operation. JavaScript cannot create that target at runtime.
+Bare React Native builds select `OLIPHAUNT_REACT_NATIVE_TOPOLOGY=broker` for
+CocoaPods and `oliphauntTopology=broker` in Android's `gradle.properties`, and
+must perform the worker target and application setup described above.
+
+The native Swift/Kotlin file APIs stream archive bytes. React Native's existing
+`Uint8Array` backup/restore API remains buffered in the caller; the worker
+transport does not impose a total archive-size limit.
+
+### Deadlines and failures
+
+Startup defaults to 30 seconds. The optional operation timeout is disabled by
+default. When set, it includes queue admission, transport, and execution, using
+platform clocks that include device suspension. Cancellation is cooperative;
+if the operation does not settle within the private three-second grace period,
+the worker retires. Close uses the same bounded retirement path. The operating
+system can suspend or kill either process; a deadline is not a promise that code
+will run while the application is suspended.
+
+Swift `OliphauntBrokerError`, Kotlin `OliphauntBrokerException`, and React Native
+broker errors expose `reason`, `execution`, and `requiresReopen` independently.
+Execution is `notStarted`, `completed`, or `unknown`. A rejected queued request
+can leave the handle usable; an unknown execution outcome requires reopening.
+`completed` is not a retry-safety guarantee. Ordinary PostgreSQL errors retain
+SQLSTATE and transaction semantics, including `57014` after a recovered cancel.
+
+Raw operations accept one Simple Query or one extended group ending in Sync.
+SQL input is bounded at 128 MiB. COPY output may be streamed; interactive COPY
+input is rejected and drained to PostgreSQL readiness, or the worker is retired
+if recovery cannot be proven. Stream chunks are provisional until the operation
+settles. Callbacks must return synchronously and must not reenter the database;
+a stuck application callback cannot be forcibly unwound by a worker deadline.
+
+### Storage and migration
+
+Broker storage is a portable application-data name or temporary storage; arbitrary
+directory paths are rejected. iOS uses CompleteUntilFirstUserAuthentication
+protection and excludes the storage parent from backup. Android uses private
+no-backup storage. Native fresh creation still needs an explicit compatible seed;
+existing databases and physical restore do not need that seed.
+
+A same-name direct database causes `migrationRequired` before a fresh broker
+root is created. Export the direct database, close it, then explicitly restore
+into broker storage. The direct source is preserved. Restore requires an absent
+or empty destination and publishes the managed descriptor last. There are no
+App Groups, implicit copies, or automatic destructive migrations.

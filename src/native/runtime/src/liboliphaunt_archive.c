@@ -477,7 +477,7 @@ static void print_backup_trace_phase(
 
 static int32_t oliphaunt_backup_impl(
     OliphauntHandle *handle,
-    OliphauntResponse *out) {
+    OliphauntResponse *out, OliphauntStreamCallback write, void *context) {
     if (handle == NULL || out == NULL) {
         set_error(handle, "invalid oliphaunt_backup arguments");
         return -1;
@@ -507,7 +507,7 @@ static int32_t oliphaunt_backup_impl(
     }
     print_backup_trace_phase(trace, "pg_backup_start", phase_started_ns, NULL);
 
-    OliphauntByteBuffer archive = {0};
+    OliphauntByteBuffer archive = {.write = write, .context = context};
     OliphauntBackupStopFiles stop_files = {0};
     phase_started_ns = trace ? oliphaunt_monotonic_ns() : 0;
     int rc = oliphaunt_archive_append_pgdata_tree(&archive, handle, oliphaunt_handle_pgdata(handle));
@@ -523,6 +523,7 @@ static int32_t oliphaunt_backup_impl(
         print_backup_trace_phase(trace, "pg_backup_stop", phase_started_ns, &archive);
     }
     if (rc != 0) {
+        if (archive.write_failed) set_error(handle, "physical archive output callback failed");
         cleanup_failed_backup(handle, &backup_state);
     }
     if (rc == 0) {
@@ -559,6 +560,9 @@ static int32_t oliphaunt_backup_impl(
     free_backup_stop_files(&stop_files);
     free_backup_start(&start);
     if (rc != 0) {
+        if (archive.write_failed && backup_state == OLIPHAUNT_BACKUP_EXIT_CONFIRMED) {
+            set_error(handle, "physical archive output callback failed");
+        }
         free(archive.data);
         return -1;
     }
@@ -572,7 +576,7 @@ static int32_t run_backup_operation(
     OliphauntHandle *handle,
     OliphauntResponse *out,
     OliphauntErrorCapture *capture,
-    bool capture_required) {
+    bool capture_required, OliphauntStreamCallback write, void *context) {
     OliphauntErrorScope error_scope;
     oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_backup");
     int32_t rc = -1;
@@ -580,11 +584,11 @@ static int32_t run_backup_operation(
     if (capture_required && capture == NULL) {
         set_error(NULL, "oliphaunt_backup error capture is null");
     } else if (handle == NULL) {
-        rc = oliphaunt_backup_impl(handle, out);
+        rc = oliphaunt_backup_impl(handle, out, write, context);
     } else if (oliphaunt_begin_handle_call(handle) == 0) {
         leased = true;
         error_scope.fallback_handle = handle;
-        rc = oliphaunt_backup_impl(handle, out);
+        rc = oliphaunt_backup_impl(handle, out, write, context);
     }
     oliphaunt_error_scope_end(&error_scope, rc != 0);
     oliphaunt_error_capture_current(capture, leased ? handle : NULL, rc != 0);
@@ -597,14 +601,29 @@ static int32_t run_backup_operation(
 int32_t oliphaunt_backup(
     OliphauntHandle *handle,
     OliphauntResponse *out) {
-    return run_backup_operation(handle, out, NULL, false);
+    return run_backup_operation(handle, out, NULL, false, NULL, NULL);
 }
 
 int32_t oliphaunt_backup_with_error(
     OliphauntHandle *handle,
     OliphauntResponse *out,
     OliphauntErrorCapture *error) {
-    return run_backup_operation(handle, out, error, true);
+    return run_backup_operation(handle, out, error, true, NULL, NULL);
+}
+
+int32_t oliphaunt_backup_stream_with_error(
+    OliphauntHandle *handle, OliphauntStreamCallback write, void *context,
+    OliphauntErrorCapture *error) {
+    OliphauntResponse ignored = {0};
+    if (write == NULL) {
+        OliphauntErrorScope scope;
+        oliphaunt_error_scope_begin(&scope, NULL, "oliphaunt_backup_stream");
+        set_error(NULL, "physical archive output callback is null");
+        oliphaunt_error_scope_end(&scope, true);
+        oliphaunt_error_capture_current(error, NULL, true);
+        return -1;
+    }
+    return run_backup_operation(handle, &ignored, error, true, write, context);
 }
 
 static int validate_restored_backup_manifest(OliphauntHandle *handle, const char *staging_root) {
@@ -841,13 +860,12 @@ static int publish_restore_without_replacement(OliphauntHandle *handle, const ch
     return 0;
 }
 
-static int32_t oliphaunt_restore_impl(const OliphauntRestoreOptions *options) {
+static int32_t oliphaunt_restore_impl(const OliphauntRestoreStreamOptions *options) {
     if (options == NULL ||
         options->abi_version != OLIPHAUNT_ABI_VERSION ||
         options->destination == NULL ||
         options->destination[0] == '\0' ||
-        options->data == NULL ||
-        options->len == 0) {
+        options->read == NULL) {
         set_error(NULL, "invalid oliphaunt_restore options");
         return -1;
     }
@@ -900,7 +918,7 @@ static int32_t oliphaunt_restore_impl(const OliphauntRestoreOptions *options) {
         return -1;
     }
 
-    int rc = oliphaunt_unpack_physical_archive(NULL, options->data, options->len, staging_root);
+    int rc = oliphaunt_unpack_physical_archive_stream(NULL, options->read, options->context, staging_root);
     if (rc == 0) {
         rc = validate_restored_pgdata(NULL, staging_root);
     }
@@ -916,7 +934,7 @@ static int32_t oliphaunt_restore_impl(const OliphauntRestoreOptions *options) {
 }
 
 static int32_t run_restore_operation(
-    const OliphauntRestoreOptions *options,
+    const OliphauntRestoreStreamOptions *options,
     OliphauntErrorCapture *capture,
     bool capture_required) {
     OliphauntErrorScope error_scope;
@@ -932,12 +950,29 @@ static int32_t run_restore_operation(
     return rc;
 }
 
+static int32_t restore_memory(
+    const OliphauntRestoreOptions *options, OliphauntErrorCapture *error, bool capture_required) {
+    if (options == NULL || options->data == NULL) {
+        return run_restore_operation(NULL, error, capture_required);
+    }
+    OliphauntArchiveMemorySource source = {.data = options->data, .remaining = options->len};
+    OliphauntRestoreStreamOptions stream = {
+        .abi_version = options->abi_version, .destination = options->destination,
+        .read = oliphaunt_archive_read_memory, .context = &source,
+    };
+    return run_restore_operation(&stream, error, capture_required);
+}
+
 int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
-    return run_restore_operation(options, NULL, false);
+    return restore_memory(options, NULL, false);
 }
 
 int32_t oliphaunt_restore_with_error(
-    const OliphauntRestoreOptions *options,
-    OliphauntErrorCapture *error) {
+    const OliphauntRestoreOptions *options, OliphauntErrorCapture *error) {
+    return restore_memory(options, error, true);
+}
+
+int32_t oliphaunt_restore_stream_with_error(
+    const OliphauntRestoreStreamOptions *options, OliphauntErrorCapture *error) {
     return run_restore_operation(options, error, true);
 }

@@ -6,6 +6,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
+mod archive;
 mod ffi;
 pub mod root;
 
@@ -74,6 +75,24 @@ pub fn materialize_native_packaging_resources(
 }
 
 impl NativeSession {
+    /// ABI accepted by the loaded runtime when this session initialized.
+    pub fn abi_version(&self) -> u32 {
+        ABI_VERSION
+    }
+
+    /// Version reported by the loaded runtime, rather than package metadata.
+    pub fn runtime_version(&self) -> Result<String> {
+        let version = unsafe { (self.symbols.version)() };
+        if version.is_null() {
+            return Err(Error::Engine(
+                "native runtime returned a null version".into(),
+            ));
+        }
+        Ok(unsafe { std::ffi::CStr::from_ptr(version) }
+            .to_string_lossy()
+            .into_owned())
+    }
+
     /// Read the runtime version without opening a database or acquiring a session.
     pub fn version_from_library(path: &std::path::Path) -> Result<String> {
         let symbols = NativeSymbols::load_path(path)?;

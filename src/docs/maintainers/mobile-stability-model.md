@@ -1,6 +1,6 @@
 # Mobile stability model
 
-Swift, Kotlin, and React Native use native direct mode. One process-resident
+Swift, Kotlin, and React Native default to native direct mode. One process-resident
 PostgreSQL backend owns one serialized physical session. React Native delegates
 runtime behavior to the same Swift and Kotlin SDKs instead of maintaining a
 third mobile runtime.
@@ -16,9 +16,10 @@ SDK-specific COPY object.
 
 Direct close may logically detach the SDK handle while the backend remains
 resident. Generation-guarded native cleanup prevents stale actor, coroutine, or
-JavaScript finalizers from closing a newer logical lease. The app must use
-broker/server on a supported desktop target when database-process crash
-isolation is required.
+JavaScript finalizers from closing a newer logical lease. The explicit mobile broker instead retires a dedicated platform worker on
+close. Its locked contract and application setup are documented in
+[Mobile Stability](../content/learn/mobile-stability.mdx#broker-mode).
+The host never reconnects or replays SQL automatically.
 
 ## Storage
 
@@ -84,7 +85,24 @@ matching static extension modules before first native init; React Native's
 config plugin arranges those same artifacts in the app build. Runtime selection
 must match what the installed application actually carries.
 
-## Qualification
+## Broker qualification
+
+`oliphaunt-mobile-bindings:test-native` exercises real PostgreSQL in fresh worker
+generations: an 8 MiB field crossing the 4 MiB native queue, simple and extended
+COPY rejection/recovery, deadline cancellation with SQLSTATE preservation,
+streamed backup, restore, and reopening the restored database. Swift/Kotlin and
+React Native facade tests cover admission and structured failures. Expo tests
+apply target generation twice to Expo's actual bundled Xcode template.
+
+`oliphaunt-swift:check-broker-ios` compiles the host, worker, and extension template
+against the iOS SDK; Linux Swift tests cannot substitute for this gate. Before
+release, additionally install signed iOS and Android broker consumers and prove
+worker death during open/query/backup/restore, host death, late cancel/close,
+WAL recovery, extension activation, host runtime isolation, and iOS file
+protection after creation and restore. These installed-worker checks remain
+outstanding; existing direct-mode PASS receipts do not qualify broker mode.
+
+## Direct-mode qualification
 
 The pre-build mobile closure gates prove compile/header ABI compatibility only.
 They intentionally do not claim runtime execution. Android x86_64 emulator and

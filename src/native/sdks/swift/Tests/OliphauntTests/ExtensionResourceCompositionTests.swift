@@ -1,3 +1,4 @@
+@testable import OliphauntCore
 import Foundation
 @testable @_spi(ExtensionSupport) import Oliphaunt
 import Testing

@@ -29,6 +29,8 @@ Pod::Spec.new do |s|
   s.swift_version = "6.0"
   s.source_files = "src/sdks/swift/Sources/Oliphaunt/**/*.swift"
   s.requires_arc = true
+  s.pod_target_xcconfig = { "OTHER_SWIFT_FLAGS" => "$(inherited) -package-name Oliphaunt" }
+  s.dependency "OliphauntCore", swift_sdk_version
   s.dependency "COliphaunt", swift_sdk_version
   s.dependency "OliphauntNativeBindings", swift_sdk_version
 end

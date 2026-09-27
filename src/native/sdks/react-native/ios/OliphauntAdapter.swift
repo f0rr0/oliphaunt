@@ -1,5 +1,12 @@
+import Darwin
 import Foundation
-import Oliphaunt
+@_spi(ReactNative) import OliphauntCore
+
+#if OLIPHAUNT_BROKER
+    import OliphauntBroker
+#else
+    import Oliphaunt
+#endif
 
 private struct SendableData: @unchecked Sendable {
     let value: Data
@@ -13,8 +20,8 @@ private final class ProtocolStreamCallbackFailure: Error, @unchecked Sendable {
     }
 }
 
-private extension OliphauntDatabase {
-    func reactNativeBackup() async throws -> SendableData {
+extension OliphauntDatabase {
+    fileprivate func reactNativeBackup() async throws -> SendableData {
         SendableData(value: try await backup())
     }
 }
@@ -27,6 +34,14 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
 
     private init(database: OliphauntDatabase) {
         self.database = database
+    }
+
+    @objc public static func topology() -> String {
+        #if OLIPHAUNT_BROKER
+            return "broker"
+        #else
+            return "direct"
+        #endif
     }
 
     @objc(openWithConfig:completion:)
@@ -44,7 +59,19 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let completionBox = CompletionBox(completion)
         Task(priority: .userInitiated) {
             do {
-                let database = try await OliphauntDatabase.open(configuration: parsed.configuration)
+                let database: OliphauntDatabase
+                #if OLIPHAUNT_BROKER
+                    guard #available(iOS 26, *) else {
+                        throw adapterError("broker execution requires iOS 26")
+                    }
+                    database = try await OliphauntBroker.open(
+                        configuration: parsed.configuration,
+                        options: .init(
+                            startupTimeout: .milliseconds(parsed.startupTimeoutMs),
+                            operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) }))
+                #else
+                    database = try await OliphauntDatabase.open(configuration: parsed.configuration)
+                #endif
                 completionBox.value(OliphauntAdapterDatabase(database: database), nil)
             } catch {
                 completionBox.value(nil, nsError(error))
@@ -52,24 +79,43 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    @objc(restoreWithStorageKind:storagePath:storageName:backupData:completion:)
+    @objc(restoreWithStorageKind:storagePath:storageName:options:backupData:completion:)
     public static func restore(
         storageKind: String,
         storagePath: String?,
         storageName: String?,
+        options: NSDictionary,
         backupData: Data,
         completion: @escaping (NSError?) -> Void
     ) {
         do {
-            let destination = try restoreDestination(
-                storageKind: storageKind,
-                storagePath: storagePath,
-                storageName: storageName
-            )
+            var config = options as? [String: Any] ?? [:]
+            config["storageKind"] = storageKind
+            config["storagePath"] = storagePath
+            config["storageName"] = storageName
+            let parsed = try parseOpenConfig(config as NSDictionary)
             let completionBox = CompletionBox(completion)
             Task(priority: .userInitiated) {
                 do {
-                    try await OliphauntDatabase.restore(destination: destination, bytes: backupData)
+                    #if OLIPHAUNT_BROKER
+                        guard #available(iOS 26, *) else {
+                            throw adapterError("broker execution requires iOS 26")
+                        }
+                        guard storageKind == "applicationData" else {
+                            throw adapterError("broker restore requires named applicationData storage")
+                        }
+                        let archive = FileManager.default.temporaryDirectory.appendingPathComponent(
+                            "oliphaunt-restore-\(UUID().uuidString)")
+                        defer { try? FileManager.default.removeItem(at: archive) }
+                        try backupData.write(to: archive, options: .withoutOverwriting)
+                        try await OliphauntBroker.restore(
+                            storage: parsed.configuration.storage, from: archive,
+                            options: .init(
+                                startupTimeout: .milliseconds(parsed.startupTimeoutMs),
+                                operationTimeout: parsed.operationTimeoutMs.map { .milliseconds($0) }))
+                    #else
+                        try await OliphauntDatabase.restore(storage: parsed.configuration.storage, bytes: backupData)
+                    #endif
                     completionBox.value(nil)
                 } catch {
                     completionBox.value(nsError(error))
@@ -80,44 +126,19 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    private static func restoreDestination(
-        storageKind: String,
-        storagePath: String?,
-        storageName: String?
-    ) throws -> URL {
-        switch storageKind {
-        case "directory":
-            guard let storagePath,
-                  !storagePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !storagePath.contains("\0") else {
-                throw adapterError("restore destination directory must not be empty or contain NUL bytes")
-            }
-            return URL(fileURLWithPath: storagePath, isDirectory: true)
-        case "applicationData":
-            let name = try applicationDataName(storageName)
-            guard let support = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first else {
-                throw adapterError("failed to resolve application data restore directory")
-            }
-            return support
-                .appendingPathComponent("Oliphaunt", isDirectory: true)
-                .appendingPathComponent(name, isDirectory: true)
-        default:
-            throw adapterError("unknown restore destination kind '\(storageKind)'")
-        }
-    }
-
-    @objc(execProtocolData:completion:)
+    @objc(execProtocolData:deadline:completion:)
     public func execProtocolData(
         _ request: Data,
+        deadline: Double,
         completion: @escaping (NSData?, NSError?) -> Void
     ) {
         let completionBox = CompletionBox(completion)
+        let instant = Self.operationDeadline(deadline)
         Task(priority: .userInitiated) { [database] in
             do {
-                let response = try await database.execProtocolRaw(request)
+                let response = try await OliphauntBridge.$deadline.withValue(instant) {
+                    try await database.execProtocolRaw(request)
+                }
                 completionBox.value(response as NSData, nil)
             } catch {
                 completionBox.value(nil, Self.nsError(error))
@@ -125,19 +146,23 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    @objc(execProtocolStreamData:onChunk:completion:)
+    @objc(execProtocolStreamData:deadline:onChunk:completion:)
     public func execProtocolStreamData(
         _ request: Data,
+        deadline: Double,
         onChunk: @escaping (NSData) -> NSError?,
         completion: @escaping (NSError?) -> Void
     ) {
         let completionBox = CompletionBox(completion)
         let chunkBox = CompletionBox(onChunk)
+        let instant = Self.operationDeadline(deadline)
         Task(priority: .userInitiated) { [database] in
             do {
-                try await database.execProtocolRawStream(request) { chunk in
-                    if let error = chunkBox.value(chunk as NSData) {
-                        throw ProtocolStreamCallbackFailure(error)
+                try await OliphauntBridge.$deadline.withValue(instant) {
+                    try await database.execProtocolRawStream(request) { chunk in
+                        if let error = chunkBox.value(chunk as NSData) {
+                            throw ProtocolStreamCallbackFailure(error)
+                        }
                     }
                 }
                 completionBox.value(nil)
@@ -155,14 +180,18 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    @objc(backupDataWithCompletion:)
+    @objc(backupDataWithDeadline:completion:)
     public func backupData(
+        deadline: Double,
         completion: @escaping (NSData?, NSError?) -> Void
     ) {
         let completionBox = CompletionBox(completion)
+        let instant = Self.operationDeadline(deadline)
         Task(priority: .userInitiated) { [database] in
             do {
-                let backup = try await database.reactNativeBackup()
+                let backup = try await OliphauntBridge.$deadline.withValue(instant) {
+                    try await database.reactNativeBackup()
+                }
                 completionBox.value(backup.value as NSData, nil)
             } catch {
                 completionBox.value(nil, Self.nsError(error))
@@ -191,7 +220,10 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                 try await database.close()
                 completionBox.value(nil)
             } catch {
-                completionBox.value(Self.nsError(error))
+                let native = Self.nsError(error)
+                var info = native.userInfo
+                info["oliphauntClosed"] = await database.isClosed
+                completionBox.value(NSError(domain: native.domain, code: native.code, userInfo: info))
             }
         }
     }
@@ -204,7 +236,17 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
+    private static func operationDeadline(_ milliseconds: Double) -> ContinuousClock.Instant? {
+        guard milliseconds > 0 else { return nil }
+        var scale = mach_timebase_info_data_t()
+        mach_timebase_info(&scale)
+        let now = Double(mach_continuous_time()) * Double(scale.numer) / Double(scale.denom) / 1_000_000
+        return ContinuousClock.now.advanced(by: .milliseconds(max(0, milliseconds - now)))
+    }
+
     private struct ParsedOpenConfig {
+        let startupTimeoutMs: Int64
+        let operationTimeoutMs: Int64?
         var configuration: OliphauntConfiguration
     }
 
@@ -212,7 +254,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let storage = try parseDatabaseStorage(config)
         let username = try startupIdentity(config, "username")
         let database = try startupIdentity(config, "database")
-        let extensions = try stringArray(config, "extensions").map { try OliphauntExtension(sqlName: $0) }
+        let extensions = try stringArray(config, "extensions").map {
+            try OliphauntExtension(sqlName: $0)
+        }
         let configuration = OliphauntConfiguration(
             storage: storage,
             startupGUCs: try startupGUCs(config, "startupGUCs"),
@@ -220,7 +264,20 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             database: database,
             extensions: extensions
         )
-        return ParsedOpenConfig(configuration: configuration)
+        if topology() == "direct", config["startupTimeoutMs"] != nil || config["operationTimeoutMs"] != nil {
+            throw adapterError("broker timeouts require a broker native build")
+        }
+        func timeout(_ key: String) throws -> Int64? {
+            guard let raw = config[key] else { return nil }
+            guard let number = raw as? NSNumber, number.doubleValue.isFinite,
+                number.doubleValue > 0, number.doubleValue <= 9_007_199_254_740_991,
+                number.doubleValue.rounded(.towardZero) == number.doubleValue
+            else { throw adapterError("invalid broker timeout") }
+            return number.int64Value
+        }
+        return ParsedOpenConfig(
+            startupTimeoutMs: try timeout("startupTimeoutMs") ?? 30_000,
+            operationTimeoutMs: try timeout("operationTimeoutMs"), configuration: configuration)
     }
 
     private static func string(_ dictionary: NSDictionary, _ key: String) throws -> String? {
@@ -268,20 +325,24 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         case "temporaryDirectory":
             return .temporaryDirectory
         case "directory":
-            guard let path = try nonBlankString(
-                config,
-                "storagePath",
-                emptyMessage: "database storage directory must not be empty"
-            ) else {
+            guard
+                let path = try nonBlankString(
+                    config,
+                    "storagePath",
+                    emptyMessage: "database storage directory must not be empty"
+                )
+            else {
                 throw adapterError("directory storage requires storagePath")
             }
             return .directory(URL(fileURLWithPath: path, isDirectory: true))
         case "applicationData":
-            guard let name = try nonBlankString(
-                config,
-                "storageName",
-                emptyMessage: "applicationData storage name must not be empty"
-            ) else {
+            guard
+                let name = try nonBlankString(
+                    config,
+                    "storageName",
+                    emptyMessage: "applicationData storage name must not be empty"
+                )
+            else {
                 throw adapterError("applicationData storage requires storageName")
             }
             guard isPortableStorageName(name) else {
@@ -289,17 +350,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                     "applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen"
                 )
             }
-            guard let baseURL = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first else {
-                throw adapterError("failed to resolve application data storage directory")
-            }
-            return .directory(
-                baseURL
-                    .appendingPathComponent("Oliphaunt", isDirectory: true)
-                    .appendingPathComponent(name, isDirectory: true)
-            )
+            return .applicationData(name: name)
         case let kind:
             throw adapterError("unknown database storage kind '\(kind)'")
         }
@@ -311,10 +362,8 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             return false
         }
         return bytes.allSatisfy { byte in
-            (byte >= 65 && byte <= 90) ||
-                (byte >= 97 && byte <= 122) ||
-                (byte >= 48 && byte <= 57) ||
-                byte == 46 || byte == 95 || byte == 45
+            (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || (byte >= 48 && byte <= 57)
+                || byte == 46 || byte == 95 || byte == 45
         }
     }
 
@@ -379,7 +428,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
-    private static func startupGUCs(_ dictionary: NSDictionary, _ key: String) throws -> [OliphauntStartupGUC] {
+    private static func startupGUCs(_ dictionary: NSDictionary, _ key: String) throws
+        -> [OliphauntStartupGUC]
+    {
         try stringArray(dictionary, key).map { assignment in
             guard let separator = assignment.firstIndex(of: "=") else {
                 throw adapterError("PostgreSQL startup GUC string must use name=value")
@@ -402,7 +453,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
 
     private static func env(_ key: String) -> String? {
         guard let value = ProcessInfo.processInfo.environment[key],
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return nil
         }
@@ -439,11 +490,13 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         if let nsError = error as NSError?, nsError.domain == errorDomain {
             return nsError
         }
-        return NSError(
-            domain: errorDomain,
-            code: 2,
-            userInfo: [NSLocalizedDescriptionKey: message(error)]
-        )
+        var details: [String: Any] = [NSLocalizedDescriptionKey: message(error)]
+        if let broker = error as? OliphauntBrokerError {
+            details["reason"] = broker.reason.rawValue
+            details["execution"] = broker.execution.rawValue
+            details["requiresReopen"] = broker.requiresReopen
+        }
+        return NSError(domain: errorDomain, code: 2, userInfo: details)
     }
 
     private static func message(_ error: Error) -> String {
@@ -458,8 +511,8 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
     }
 }
 
-private extension String {
-    func removingPrefix(_ prefix: String) -> String? {
+extension String {
+    fileprivate func removingPrefix(_ prefix: String) -> String? {
         guard hasPrefix(prefix) else {
             return nil
         }

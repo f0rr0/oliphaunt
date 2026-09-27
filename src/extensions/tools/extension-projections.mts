@@ -255,7 +255,7 @@ ${metadataRows.map((row) => `    ${row['sql-name'].replaceAll('-', '_').toUpperC
 `,
   );
   outputs.set(
-    'src/native/sdks/swift/Sources/Oliphaunt/OliphauntExtension.swift',
+    'src/native/sdks/swift/Sources/OliphauntCore/OliphauntExtension.swift',
     `${generated}import Foundation
 
 /// An explicitly selected extension. Selection does not run CREATE EXTENSION.
@@ -267,7 +267,7 @@ public struct OliphauntExtension: Sendable, Equatable {
 
     /// Select an extension whose native resources are already linked by the application.
     public init(sqlName: String) throws {
-        _ = try OliphauntRuntimeResources.validateExtensionIds([sqlName])
+        _ = try validateOliphauntExtensionIds([sqlName])
         self.sqlName = sqlName
         self.product = nil
         self.version = nil
@@ -286,7 +286,7 @@ public struct OliphauntExtension: Sendable, Equatable {
         lhs.sqlName == rhs.sqlName && lhs.product == rhs.product && lhs.version == rhs.version
     }
 
-    func prepare() throws { try registration() }
+    package func prepare() throws { try registration() }
 
 ${metadataRows.map((row) => `    public static let ${row.id.replace(/[-_]([a-z])/g, (_, letter) => letter.toUpperCase())} = OliphauntExtension(sqlName: ${literal(row['sql-name'])}, registration: {})`).join('\n')}
 }

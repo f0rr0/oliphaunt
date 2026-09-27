@@ -15,6 +15,9 @@ let package = Package(
     products: [
         .library(name: "COliphaunt", targets: ["COliphaunt"]),
         .library(name: "Oliphaunt", targets: ["Oliphaunt"]),
+        .library(name: "OliphauntCore", targets: ["OliphauntCore"]),
+        .library(name: "OliphauntBroker", targets: ["OliphauntBroker"]),
+        .library(name: "OliphauntBrokerExtension", targets: ["OliphauntBrokerExtension"]),
         .library(name: "OliphauntExtensionSupport", targets: ["OliphauntExtensionSupport"])
     ],
     targets: [
@@ -34,9 +37,12 @@ let package = Package(
             name: "COliphaunt",
             publicHeadersPath: "include"
         ),
+        .target(name: "OliphauntCore", dependencies: ["OliphauntNativeBindings"]),
+        .target(name: "OliphauntBroker", dependencies: ["OliphauntCore", "OliphauntNativeBindings"]),
+        .target(name: "OliphauntBrokerExtension", dependencies: ["Oliphaunt", "OliphauntCore", "OliphauntNativeBindings"]),
         .target(
             name: "Oliphaunt",
-            dependencies: ["COliphaunt", "OliphauntNativeBindings"]
+            dependencies: ["COliphaunt", "OliphauntCore", "OliphauntNativeBindings"]
         ),
         .target(
             name: "OliphauntExtensionSupport",
@@ -44,7 +50,7 @@ let package = Package(
         ),
         .testTarget(
             name: "OliphauntTests",
-            dependencies: ["Oliphaunt"]
+            dependencies: ["Oliphaunt", "OliphauntCore"]
         )
     ]
 )

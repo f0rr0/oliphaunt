@@ -1,5 +1,11 @@
 # Oliphaunt Kotlin SDK
 
+Broker mode is an explicit alternative to the default native-direct path. See
+[mobile broker setup and semantics](../../../docs/content/learn/mobile-stability.mdx#broker-mode)
+for platform requirements, resource placement, deadlines, errors, and migration.
+Apple and installed-worker qualification remains required before release support.
+
+
 Oliphaunt embeds PostgreSQL 18 behind a small coroutine-native Android API. The
 common implementation is also compiled and tested on the JVM, but Android is
 the only supported and published application facade.
@@ -56,10 +62,14 @@ val bytes = db.backup()
 db.close()
 Oliphaunt.restore(
     context = applicationContext,
-    destination = filesDir.resolve("restored-database").path,
+    storage = DatabaseStorage.ApplicationData("restored"),
     bytes = bytes,
 )
 ```
+
+Restore accepts the same persistent `DatabaseStorage` selectors as open. The
+existing `destination: File` overload remains available. Temporary storage is
+not a restore destination.
 
 ## API contract
 

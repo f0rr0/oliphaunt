@@ -62,6 +62,7 @@ tasks:
     deps:
       - oliphaunt-query-ts:build
     inputs:
+      - /src/native/sdks/swift/Templates/**/*
       - /tools/packaging/portable-archive.mts
       - project: oliphaunt-query-ts
         group: sources
@@ -79,6 +80,7 @@ tasks:
     outputs:
       - lib/**/*
       - app.plugin.js
+      - ios/templates/**/*
       - react-native.config.js
       - tools/codegen-check.cjs
       - tools/native-resource-closure.mjs

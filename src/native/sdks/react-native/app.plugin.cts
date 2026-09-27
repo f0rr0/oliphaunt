@@ -17,7 +17,13 @@ const extensionMetadata = require(
 );
 const IOS_PODFILE_START = '# @oliphaunt/react-native begin';
 const IOS_PODFILE_END = '# @oliphaunt/react-native end';
+const IOS_BROKER_PODFILE_START = '# @oliphaunt/react-native broker begin';
+const IOS_BROKER_PODFILE_END = '# @oliphaunt/react-native broker end';
 const IOS_MINIMUM_DEPLOYMENT_TARGET = '17.0';
+const SEED_PACKAGES = {
+  standard: '@oliphaunt/seed-native-ios-datum64-standard',
+  icu: '@oliphaunt/seed-native-ios-datum64-icu',
+};
 const IOS_CARRIER_SCHEMA = 'oliphaunt-react-native-ios-carrier-v1';
 const IOS_CARRIER_FILENAME = 'oliphaunt-react-native-ios-carriers.json';
 const IOS_BASE_CARRIER_ENV = 'OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER';
@@ -38,6 +44,10 @@ function compareText(left, right) {
 }
 
 function normalizeOptions(options = {}) {
+  if ('execution' in options) throw new Error('use topology: direct or broker in the Expo plugin');
+  const topology = options.topology ?? 'direct';
+  if (!['direct', 'broker'].includes(topology))
+    throw new Error('topology must be direct or broker');
   const extensions = Array.isArray(options.extensions) ? options.extensions : [];
   const selected = [
     ...new Set(extensions.map((value) => String(value).trim()).filter(Boolean)),
@@ -60,6 +70,7 @@ function normalizeOptions(options = {}) {
   }
   return {
     extensions: selected,
+    topology,
     icu: Boolean(options.icu) || seedProfile === 'icu',
     seedProfile,
     databaseResourcesVersion: optionalString(options.databaseResourcesVersion),
@@ -79,6 +90,7 @@ async function resolveInstalledResources(projectRoot, platform, options = {}) {
   const resourceNames = new Set([
     ...extensionMetadata.extensions.map((extension) => extension['npm-package']),
     '@oliphaunt/icu',
+    ...Object.values(SEED_PACKAGES),
   ]);
   // Resource carriers opt out of native autolinking. Include them for discovery;
   // the existing Oliphaunt staging code still owns their pods and Gradle inputs.
@@ -109,8 +121,18 @@ async function resolveInstalledResources(projectRoot, platform, options = {}) {
     }
     return file;
   };
+  const installedSeeds = Object.keys(SEED_PACKAGES).filter((profile) =>
+    packages.has(SEED_PACKAGES[profile]),
+  );
+  const explicitSeed = optionalString(options.seedProfile);
+  if (explicitSeed === undefined && installedSeeds.length > 1) {
+    throw new Error(
+      'Multiple installed seed profiles; select seedProfile explicitly or remove the unused seed package',
+    );
+  }
   const normalized = normalizeOptions({
     ...options,
+    seedProfile: explicitSeed ?? installedSeeds[0],
     extensions:
       options.extensions ??
       extensionMetadata.extensions
@@ -118,20 +140,27 @@ async function resolveInstalledResources(projectRoot, platform, options = {}) {
         .map((extension) => extension['sql-name']),
     icu: options.icu ?? packages.has('@oliphaunt/icu'),
   });
-  if (normalized.icu) {
-    const icu = readJsonObject(packageJsonResolver('@oliphaunt/icu', [projectRoot]), 'ICU package');
-    if (icu.name !== '@oliphaunt/icu' || !STABLE_SEMVER_RE.test(icu.version ?? '')) {
-      throw new Error('@oliphaunt/icu must declare its package name and a stable version');
+  const selectedResources = [
+    ...(normalized.icu ? ['@oliphaunt/icu'] : []),
+    ...(normalized.seedProfile && packages.has(SEED_PACKAGES[normalized.seedProfile])
+      ? [SEED_PACKAGES[normalized.seedProfile]]
+      : []),
+  ];
+  for (const name of selectedResources) {
+    const resource = readJsonObject(
+      packageJsonResolver(name, [projectRoot]),
+      'database resource package',
+    );
+    if (resource.name !== name || !STABLE_SEMVER_RE.test(resource.version ?? '')) {
+      throw new Error(`${name} must declare its package name and a stable version`);
     }
     if (
       normalized.databaseResourcesVersion &&
-      normalized.databaseResourcesVersion !== icu.version
+      normalized.databaseResourcesVersion !== resource.version
     ) {
-      throw new Error(
-        `databaseResourcesVersion must match installed @oliphaunt/icu ${icu.version}`,
-      );
+      throw new Error(`databaseResourcesVersion must match installed ${name} ${resource.version}`);
     }
-    normalized.databaseResourcesVersion = icu.version;
+    normalized.databaseResourcesVersion = resource.version;
   }
   return { ...normalized, packageJsonResolver };
 }
@@ -907,6 +936,7 @@ function iosPodfileBlock(options = {}) {
     IOS_PODFILE_START,
     "oliphaunt_podspecs_path = File.expand_path('../node_modules/@oliphaunt/react-native/ios/podspecs', __dir__)",
     "pod 'COliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'COliphaunt.podspec'), :modular_headers => true",
+    "pod 'OliphauntCore', :podspec => File.join(oliphaunt_podspecs_path, 'OliphauntCore.podspec')",
     "pod 'OliphauntNativeBindings', :podspec => File.join(oliphaunt_podspecs_path, 'OliphauntNativeBindings.podspec')",
     "pod 'Oliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'Oliphaunt.podspec')",
     "oliphaunt_payload_path = File.expand_path('oliphaunt', __dir__)",
@@ -937,51 +967,77 @@ function iosPodfileBlock(options = {}) {
     const rubyPath = relative.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     lines.push(`pod '${podName}', :path => File.expand_path('${rubyPath}', __dir__)`);
   }
+  if (options.topology === 'broker') {
+    const core = lines.filter((line) => /pod 'Oliphaunt(Core|NativeBindings)'/.test(line));
+    lines.splice(
+      2,
+      lines.length - 2,
+      "ENV['OLIPHAUNT_REACT_NATIVE_TOPOLOGY'] = 'broker'",
+      ...core,
+      "pod 'OliphauntBroker', :podspec => File.join(oliphaunt_podspecs_path, 'OliphauntBroker.podspec')",
+    );
+  }
   lines.push(IOS_PODFILE_END);
   return lines.join('\n');
 }
 
-function replaceMarkedBlock(contents, block) {
-  const start = contents.indexOf(IOS_PODFILE_START);
-  const end = contents.indexOf(IOS_PODFILE_END);
-  if (start === -1 && end === -1) {
-    return undefined;
-  }
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('ios/Podfile has a partial @oliphaunt/react-native managed block');
-  }
-  const lineStart = contents.lastIndexOf('\n', start) + 1;
-  const indent = contents.slice(lineStart, start).match(/^[ \t]*/)?.[0] ?? '';
-  const indentedBlock = block
-    .split('\n')
-    .map((line) => `${indent}${line}`)
-    .join('\n');
-  const afterEnd = end + IOS_PODFILE_END.length;
-  return `${contents.slice(0, lineStart)}${indentedBlock}${contents.slice(afterEnd)}`;
-}
-
 function insertIosPodfileBlock(contents, options = {}) {
   const block = iosPodfileBlock(options);
-  const replaced = replaceMarkedBlock(contents, block);
-  if (replaced !== undefined) {
-    return `${replaced.replace(/\n+$/, '')}\n`;
+  const workerStart = contents.indexOf(IOS_BROKER_PODFILE_START);
+  const workerEnd = contents.indexOf(IOS_BROKER_PODFILE_END);
+  if ((workerStart === -1) !== (workerEnd === -1) || workerEnd < workerStart) {
+    throw new Error('ios/Podfile has a partial @oliphaunt/react-native broker block');
+  }
+  if (workerStart !== -1) {
+    contents =
+      contents.slice(0, workerStart) +
+      contents.slice(workerEnd + IOS_BROKER_PODFILE_END.length).replace(/^\r?\n/, '');
+  }
+  const start = contents.indexOf(IOS_PODFILE_START);
+  const end = contents.indexOf(IOS_PODFILE_END);
+  if ((start === -1) !== (end === -1) || end < start) {
+    throw new Error('ios/Podfile has a partial @oliphaunt/react-native managed block');
+  }
+  if (start !== -1) {
+    const lineStart = contents.lastIndexOf('\n', start) + 1;
+    const after = end + IOS_PODFILE_END.length;
+    contents = contents.slice(0, lineStart) + contents.slice(after).replace(/^\r?\n/, '');
   }
 
   const lines = contents.split(/\r?\n/);
   const anchorIndex = lines.findIndex((line) => /config\s*=\s*use_native_modules!\s*/.test(line));
   const fallbackIndex = lines.findIndex((line) => /^\s*use_expo_modules!\s*$/.test(line));
-  const insertAfter = anchorIndex >= 0 ? anchorIndex : fallbackIndex;
-  if (insertAfter < 0) {
+  const insertAt = anchorIndex >= 0 ? anchorIndex : fallbackIndex;
+  if (insertAt < 0) {
     throw new Error(
       'ios/Podfile must call use_native_modules! or use_expo_modules! before Oliphaunt can add Swift SDK podspecs',
     );
   }
-  const indent = lines[insertAfter].match(/^\s*/)?.[0] ?? '';
+  const indent = lines[insertAt].match(/^\s*/)?.[0] ?? '';
   const indentedBlock = block
     .split('\n')
     .map((line) => `${indent}${line}`)
     .join('\n');
-  lines.splice(insertAfter + 1, 0, indentedBlock);
+  // React Native evaluates its podspec during use_native_modules!, so topology
+  // selection and explicit pod sources must already be declared at that point.
+  lines.splice(insertAt, 0, indentedBlock);
+  if (options.topology === 'broker') {
+    // A sibling target owns all its dependencies. CocoaPods omits shared libraries
+    // with search-path inheritance, and excludes configurations with inherit! :none.
+    const worker = iosPodfileBlock({ ...options, topology: 'direct' })
+      .split('\n')
+      .slice(1, -1);
+    while (lines.at(-1)?.trim() === '') lines.pop();
+    lines.push(
+      '',
+      IOS_BROKER_PODFILE_START,
+      "target 'OliphauntBroker' do",
+      ...worker.map((line) => `  ${line}`),
+      "  pod 'OliphauntBrokerExtension', :podspec => File.join(oliphaunt_podspecs_path, 'OliphauntBrokerExtension.podspec')",
+      'end',
+      IOS_BROKER_PODFILE_END,
+    );
+  }
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }
 
@@ -1042,11 +1098,167 @@ function patchAndroidGradle(androidRoot, normalized) {
   }
 }
 
+const BROKER_TARGET = 'OliphauntBroker';
+
+function configureBroker(config) {
+  const bundle = config.ios?.bundleIdentifier;
+  if (typeof bundle !== 'string' || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundle)) {
+    throw new Error('broker topology requires ios.bundleIdentifier');
+  }
+  config.ios.deploymentTarget ??= '26.0';
+  if (compareAppleDeploymentTargets(config.ios.deploymentTarget, '26.0') < 0) {
+    throw new Error('broker topology requires ios.deploymentTarget: "26.0" or later');
+  }
+  config.extra ??= {};
+  config.extra.eas ??= {};
+  config.extra.eas.build ??= {};
+  config.extra.eas.build.experimental ??= {};
+  config.extra.eas.build.experimental.ios ??= {};
+  const ios = config.extra.eas.build.experimental.ios;
+  const identity = { targetName: BROKER_TARGET, bundleIdentifier: `${bundle}.${BROKER_TARGET}` };
+  const extensions = ios.appExtensions ?? [];
+  const existing = extensions.find((entry) => entry.targetName === BROKER_TARGET);
+  if (existing && existing.bundleIdentifier !== identity.bundleIdentifier) {
+    throw new Error('conflicting EAS OliphauntBroker extension identity');
+  }
+  if (!existing) ios.appExtensions = [...extensions, identity];
+  return config;
+}
+
+function addBrokerTarget(project, iosRoot, config) {
+  const bundle = `${config.ios.bundleIdentifier}.${BROKER_TARGET}`;
+  const objects = project.hash.project.objects;
+  const unquote = (value) => (typeof value === 'string' ? value.replace(/^"|"$/g, '') : value);
+  const targets = Object.entries(objects.PBXNativeTarget).filter(
+    ([, target]) => typeof target === 'object',
+  );
+  const host = targets.find(
+    ([, target]) => unquote(target.productType) === 'com.apple.product-type.application',
+  );
+  if (!host || project.getFirstTarget().uuid !== host[0])
+    throw new Error('Oliphaunt expects the main app as the first Xcode target');
+  let target = targets.find(([, target]) => unquote(target.name) === BROKER_TARGET);
+  if (
+    target &&
+    unquote(target[1].productType) !== 'com.apple.product-type.extensionkit-extension'
+  ) {
+    throw new Error('an unrelated Xcode target already uses the name OliphauntBroker');
+  }
+  if (!target) {
+    const created = project.addTarget(BROKER_TARGET, 'app_extension', BROKER_TARGET, bundle);
+    target = [created.uuid, created.pbxNativeTarget];
+    target[1].productType = '"com.apple.product-type.extensionkit-extension"';
+    objects.PBXFileReference[target[1].productReference].explicitFileType =
+      '"wrapper.extensionkit-extension"';
+    project.addBuildPhase([], 'PBXSourcesBuildPhase', 'Sources', target[0]);
+    project.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', target[0]);
+    project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', target[0]);
+    const group = project.addPbxGroup([], BROKER_TARGET, BROKER_TARGET);
+    project.addToPbxGroup(group.uuid, project.getFirstProject().firstProject.mainGroup);
+    project.addSourceFile('OliphauntBroker.swift', { target: target[0] }, group.uuid);
+    // ExtensionFoundation uses Extensions/, not the legacy PlugIns/ destination.
+    for (const phase of Object.values(objects.PBXCopyFilesBuildPhase ?? {})) {
+      if (typeof phase !== 'object') continue;
+      const embedded = phase.files?.find(
+        (file) => objects.PBXBuildFile[file.value]?.fileRef === target[1].productReference,
+      );
+      if (!embedded) continue;
+      phase.dstSubfolderSpec = 16;
+      phase.dstPath = '"$(EXTENSIONS_FOLDER_PATH)"';
+      objects.PBXBuildFile[embedded.value].settings = {
+        ATTRIBUTES: ['CodeSignOnCopy', 'RemoveHeadersOnCopy'],
+      };
+    }
+  }
+  const configurations = (nativeTarget) =>
+    objects.XCConfigurationList[nativeTarget.buildConfigurationList].buildConfigurations.map(
+      ({ value }) => objects.XCBuildConfiguration[value],
+    );
+  const hostConfigurations = configurations(host[1]);
+  for (const configuration of hostConfigurations)
+    configuration.buildSettings.EX_ENABLE_EXTENSION_POINT_GENERATION = 'YES';
+  for (const configuration of configurations(target[1])) {
+    const parent =
+      hostConfigurations.find((value) => value.name === configuration.name)?.buildSettings ?? {};
+    Object.assign(configuration.buildSettings, {
+      PRODUCT_BUNDLE_IDENTIFIER: `"${bundle}"`,
+      PRODUCT_MODULE_NAME: 'OliphauntBrokerWorker',
+      INFOPLIST_FILE: `"${BROKER_TARGET}/Info.plist"`,
+      IPHONEOS_DEPLOYMENT_TARGET: config.ios.deploymentTarget,
+      SWIFT_VERSION: '6.0',
+      EX_ENABLE_EXTENSION_POINT_GENERATION: 'YES',
+      APPLICATION_EXTENSION_API_ONLY: 'YES',
+      GENERATE_INFOPLIST_FILE: 'NO',
+      SKIP_INSTALL: 'YES',
+      MARKETING_VERSION: parent.MARKETING_VERSION ?? config.version ?? '1.0',
+      CURRENT_PROJECT_VERSION: parent.CURRENT_PROJECT_VERSION ?? config.ios.buildNumber ?? '1',
+      TARGETED_DEVICE_FAMILY: parent.TARGETED_DEVICE_FAMILY ?? '"1,2"',
+      CODE_SIGN_STYLE: parent.CODE_SIGN_STYLE ?? 'Automatic',
+      ...(parent.DEVELOPMENT_TEAM ? { DEVELOPMENT_TEAM: parent.DEVELOPMENT_TEAM } : {}),
+    });
+  }
+  const packaged = path.join(__dirname, 'ios/templates/OliphauntBroker');
+  const sourceTemplates = path.join(__dirname, '../swift/Templates/OliphauntBroker');
+  const templates = fs.existsSync(sourceTemplates) ? sourceTemplates : packaged;
+  const directory = path.join(iosRoot, BROKER_TARGET);
+  ensureDir(directory);
+  fs.writeFileSync(
+    path.join(directory, 'OliphauntBroker.swift'),
+    fs
+      .readFileSync(path.join(templates, 'OliphauntBroker.swift.template'), 'utf8')
+      .replaceAll('__HOST_BUNDLE_IDENTIFIER__', config.ios.bundleIdentifier),
+  );
+  fs.copyFileSync(path.join(templates, 'Info.plist'), path.join(directory, 'Info.plist'));
+  // Xcode extracts host extension-point metadata from the app's own sources.
+  const hostSource = 'OliphauntBrokerHost.swift';
+  if (!project.hasFile(hostSource)) {
+    project.addSourceFile(
+      hostSource,
+      { target: host[0] },
+      project.getFirstProject().firstProject.mainGroup,
+    );
+  }
+  fs.copyFileSync(path.join(templates, `${hostSource}.template`), path.join(iosRoot, hostSource));
+  return project;
+}
+
+function guardBrokerApplication(contents, language) {
+  const guard = 'if (dev.oliphaunt.OliphauntBroker.isWorkerProcess(this)) return';
+  if (
+    contents.includes(guard) ||
+    contents.includes('if (dev.oliphaunt.OliphauntBroker.INSTANCE.isWorkerProcess(this)) return;')
+  )
+    return contents;
+  const anchor = /super\.onCreate\(\);?/;
+  if (!anchor.test(contents))
+    throw new Error('broker topology requires an Application.onCreate super call');
+  return contents.replace(
+    anchor,
+    (call) =>
+      `${call}\n    ${language === 'java' ? 'if (dev.oliphaunt.OliphauntBroker.INSTANCE.isWorkerProcess(this)) return;' : guard}`,
+  );
+}
+
 function withOliphaunt(config, options = {}) {
   const plugin = require('expo/config-plugins');
   // Expo's built-in iOS mods consume this synchronously and propagate it to
   // both the Xcode project and Podfile.properties.json during prebuild.
-  config = ensureIosConfigDeploymentTarget(config);
+  const topology = normalizeOptions(options).topology;
+  config =
+    topology === 'broker' ? configureBroker(config) : ensureIosConfigDeploymentTarget(config);
+  if (topology === 'broker') {
+    config = plugin.withMainApplication(config, (modConfig) => {
+      modConfig.modResults.contents = guardBrokerApplication(
+        modConfig.modResults.contents,
+        modConfig.modResults.language,
+      );
+      return modConfig;
+    });
+    config = plugin.withXcodeProject(config, (modConfig) => {
+      addBrokerTarget(modConfig.modResults, modConfig.modRequest.platformProjectRoot, modConfig);
+      return modConfig;
+    });
+  }
 
   config = plugin.withDangerousMod(config, [
     'android',
@@ -1070,6 +1282,7 @@ function withOliphaunt(config, options = {}) {
       };
       writeJson(path.join(androidRoot, 'oliphaunt.json'), androidOptions);
       mergeProperties(path.join(androidRoot, 'gradle.properties'), {
+        oliphauntTopology: normalized.topology,
         oliphauntExtensions: normalized.extensions.join(','),
         oliphauntExtensionVersions: serializeExtensionVersions(
           installedExtensions.extensionVersions,
@@ -1103,7 +1316,11 @@ function withOliphaunt(config, options = {}) {
         liboliphauntVersion: normalized.liboliphauntVersion,
         assetBaseUrl: normalized.assetBaseUrl,
       });
-      ensureIosDeploymentTargetFile(path.join(iosRoot, 'Podfile.properties.json'));
+      if (normalized.topology === 'broker') {
+        const file = path.join(iosRoot, 'Podfile.properties.json');
+        const properties = fs.existsSync(file) ? readJsonObject(file, 'Podfile properties') : {};
+        writeJson(file, { ...properties, 'ios.deploymentTarget': modConfig.ios.deploymentTarget });
+      } else ensureIosDeploymentTargetFile(path.join(iosRoot, 'Podfile.properties.json'));
       patchIosPodfile(path.join(iosRoot, 'Podfile'), { ...normalized, packageJsonResolver });
       return modConfig;
     },
@@ -1130,3 +1347,8 @@ module.exports.iosPodfileBlock = iosPodfileBlock;
 module.exports.ensureIosDeploymentTarget = ensureIosDeploymentTarget;
 module.exports.ensureIosConfigDeploymentTarget = ensureIosConfigDeploymentTarget;
 module.exports.insertAppGradlePlugin = insertAppGradlePlugin;
+
+module.exports.configureBroker = configureBroker;
+module.exports.addBrokerTarget = addBrokerTarget;
+
+module.exports.guardBrokerApplication = guardBrokerApplication;

@@ -148,6 +148,10 @@ int main(void) {
         OliphauntErrorCapture *) = oliphaunt_exec_protocol_raw_stream_with_error;
     int32_t (*backup_with_error_fn)(OliphauntHandle *, OliphauntResponse *, OliphauntErrorCapture *) =
         oliphaunt_backup_with_error;
+    int32_t (*backup_stream_fn)(OliphauntHandle *, OliphauntStreamCallback, void *, OliphauntErrorCapture *) =
+        oliphaunt_backup_stream_with_error;
+    int32_t (*restore_stream_fn)(const OliphauntRestoreStreamOptions *, OliphauntErrorCapture *) =
+        oliphaunt_restore_stream_with_error;
     int32_t (*restore_with_error_fn)(const OliphauntRestoreOptions *, OliphauntErrorCapture *) =
         oliphaunt_restore_with_error;
     int32_t (*detach_with_error_fn)(OliphauntHandle *, OliphauntErrorCapture *) =
@@ -178,6 +182,8 @@ int main(void) {
     CHECK(exec_protocol_raw_stream_with_error_fn != NULL,
           "oliphaunt_exec_protocol_raw_stream_with_error must link");
     CHECK(backup_with_error_fn != NULL, "oliphaunt_backup_with_error must link");
+    CHECK(backup_stream_fn != NULL, "oliphaunt_backup_stream_with_error must link");
+    CHECK(restore_stream_fn != NULL, "oliphaunt_restore_stream_with_error must link");
     CHECK(restore_with_error_fn != NULL, "oliphaunt_restore_with_error must link");
     CHECK(detach_with_error_fn != NULL, "oliphaunt_detach_with_error must link");
     CHECK(cancel_fn != NULL, "oliphaunt_cancel must link");

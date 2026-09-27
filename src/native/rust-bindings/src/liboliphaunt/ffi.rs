@@ -6,7 +6,7 @@ use libloading::Library;
 
 use crate::error::{Error, Result};
 
-pub(super) const ABI_VERSION: u32 = 11;
+pub(super) const ABI_VERSION: u32 = 12;
 pub(super) const CONFIG_EXTERNAL_ROOT_LOCK: u64 = 1 << 0;
 pub(super) const ERROR_CAPTURE_CAPACITY: usize = 1024;
 /// Positive stream status reserved by ABI 10 for a callback abort after the
@@ -65,6 +65,23 @@ pub(super) struct NativeRestoreOptions {
     pub(super) data: *const c_uchar,
     pub(super) len: usize,
 }
+
+#[repr(C)]
+pub(super) struct NativeRestoreStreamOptions {
+    pub abi_version: u32,
+    pub destination: *const c_char,
+    pub read: unsafe extern "C" fn(*mut c_void, *mut u8, usize, *mut usize) -> c_int,
+    pub context: *mut c_void,
+}
+
+pub(super) type BackupStreamFn = unsafe extern "C" fn(
+    *mut NativeHandle,
+    StreamCallbackFn,
+    *mut c_void,
+    *mut NativeErrorCapture,
+) -> c_int;
+pub(super) type RestoreStreamFn =
+    unsafe extern "C" fn(*const NativeRestoreStreamOptions, *mut NativeErrorCapture) -> c_int;
 
 pub(super) type NativeHandle = c_void;
 type InitWithErrorFn = unsafe extern "C" fn(
@@ -144,6 +161,14 @@ unsafe impl Send for NativeSymbols {}
 unsafe impl Sync for NativeSymbols {}
 
 impl NativeSymbols {
+    pub(super) fn backup_stream(&self) -> Result<BackupStreamFn> {
+        load_symbol(&self._library, b"oliphaunt_backup_stream_with_error\0")
+    }
+
+    pub(super) fn restore_stream(&self) -> Result<RestoreStreamFn> {
+        load_symbol(&self._library, b"oliphaunt_restore_stream_with_error\0")
+    }
+
     /// Register the app-selected static table before native initialization. The
     /// table is opaque here: its layout remains owned by the canonical C ABI.
     pub(super) fn register_selected_extensions(&self) -> Result<()> {

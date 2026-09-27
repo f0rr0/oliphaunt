@@ -226,7 +226,16 @@ typedef struct OliphauntByteBuffer {
     uint8_t *data;
     size_t len;
     size_t cap;
+    OliphauntStreamCallback write;
+    void *context;
+    bool write_failed;
 } OliphauntByteBuffer;
+
+typedef struct OliphauntArchiveMemorySource {
+    const uint8_t *data;
+    size_t remaining;
+} OliphauntArchiveMemorySource;
+int32_t oliphaunt_archive_read_memory(void *context, uint8_t *data, size_t capacity, size_t *read_len);
 
 typedef struct OliphauntBackendArgv {
     int argc;
@@ -360,6 +369,7 @@ int oliphaunt_archive_append_text(OliphauntByteBuffer *archive, OliphauntHandle 
 int oliphaunt_archive_append_bytes(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const uint8_t *contents, size_t len);
 int oliphaunt_archive_finish(OliphauntByteBuffer *archive, OliphauntHandle *handle);
 int oliphaunt_unpack_physical_archive(OliphauntHandle *handle, const uint8_t *data, size_t len, const char *staging_root);
+int oliphaunt_unpack_physical_archive_stream(OliphauntHandle *handle, OliphauntArchiveReadCallback read, void *context, const char *staging_root);
 
 #define set_error oliphaunt_set_error
 

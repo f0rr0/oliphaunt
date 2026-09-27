@@ -78,6 +78,11 @@ def oliphauntProperty = { String name ->
   return null
 }
 
+def oliphauntTopology = (oliphauntProperty("oliphauntTopology") ?: "direct").toString()
+if (!(oliphauntTopology in ["direct", "broker"])) {
+  throw new GradleException("oliphauntTopology must be direct or broker")
+}
+
 def generatedCodegenDir = file("${buildDir}/generated/source/codegen")
 def generatedCodegenSchema = file("${generatedCodegenDir}/schema.json")
 def codegenSpec = file("../src/specs/NativeOliphaunt.ts")
@@ -846,6 +851,7 @@ android {
 
   defaultConfig {
     minSdk = 24
+    buildConfigField "String", "OLIPHAUNT_TOPOLOGY", "\"${oliphauntTopology}\""
     if (!androidAbiFilters.isEmpty()) {
       ndk {
         abiFilters.addAll(androidAbiFilters)
@@ -874,6 +880,7 @@ android {
   }
 
   buildFeatures {
+    buildConfig = true
     prefab = true
   }
 

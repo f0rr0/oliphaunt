@@ -1,3 +1,4 @@
+@testable import OliphauntCore
 import Foundation
 @testable @_spi(ExtensionSupport) import Oliphaunt
 import Testing
@@ -18,14 +19,14 @@ func runtimeCacheUsesApplicationDataNamespaceCasing() {
 }
 
 @Test
-func selectedExtensionRegistersBeforeOpeningEngine() async throws {
+func selectedExtensionRegistersInsideDirectEngine() async throws {
     let resource = OliphauntExtension(sqlName: "vector", product: "oliphaunt-extension-vector", version: "9.8.7") {
         throw OliphauntError.engine("selected package registration failed")
     }
     do {
         _ = try await OliphauntDatabase.open(
             configuration: OliphauntConfiguration(extensions: [resource]),
-            engine: TestEngine(session: TestSession(response: commandResponse("SELECT 1")))
+            engine: OliphauntNativeDirectEngine()
         )
         Issue.record("opening must not bypass the selected resource registration")
     } catch {
@@ -762,6 +763,13 @@ func backupAndRestoreUsePhysicalBytesDirectly() async throws {
     )
     #expect(engine.restoredDestination == destination)
     #expect(engine.restoredBytes == Data([4, 5]))
+}
+
+@Test
+func restoreRejectsTemporaryStorage() async {
+    await #expect(throws: OliphauntError.engine("restore requires persistent storage")) {
+        try await OliphauntDatabase.restore(storage: .temporaryDirectory, bytes: Data())
+    }
 }
 
 @Test

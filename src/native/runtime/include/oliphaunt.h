@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OLIPHAUNT_ABI_VERSION 11u
+#define OLIPHAUNT_ABI_VERSION 12u
 #define OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION 1u
 #define OLIPHAUNT_ERROR_CAPTURE_CAPACITY 1024u
 #define OLIPHAUNT_STREAM_CALLBACK_ABORTED 1
@@ -134,6 +134,25 @@ typedef struct OliphauntRestoreOptions {
  * unsafe.
  */
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
+
+/* Returns zero and sets read_len (zero at EOF), or nonzero on failure.
+ * Read/write callbacks run synchronously and must not reenter this database.
+ * A failed backup sink still runs backup-mode cleanup before returning.
+ * Restore writes only to private staging until the entire archive validates. */
+typedef int32_t (*OliphauntArchiveReadCallback)(
+    void *context, uint8_t *data, size_t capacity, size_t *read_len);
+typedef struct OliphauntRestoreStreamOptions {
+    uint32_t abi_version;
+    const char *destination;
+    OliphauntArchiveReadCallback read;
+    void *context;
+} OliphauntRestoreStreamOptions;
+
+OLIPHAUNT_API int32_t oliphaunt_backup_stream_with_error(
+    OliphauntHandle *handle, OliphauntStreamCallback write, void *context,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_restore_stream_with_error(
+    const OliphauntRestoreStreamOptions *options, OliphauntErrorCapture *error);
 
 /*
  * Incremental extended-query or COPY input for an active raw stream. The token is zero

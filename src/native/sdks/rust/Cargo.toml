@@ -25,7 +25,7 @@ path = "src/lib.rs"
 [features]
 default = ["desktop"]
 desktop = ["dep:oliphaunt-broker", "dep:getrandom"]
-mobile-bindings = []
+mobile-bindings = ["dep:oliphaunt-broker", "dep:libc"]
 
 [package.metadata.oliphaunt]
 broker-helper = "oliphaunt-broker"
@@ -37,6 +37,7 @@ oliphaunt-broker = { path = "../../broker", version = "0.2.0", optional = true }
 liboliphaunt-native-bindings = { version = "0.1.0", path = "../../rust-bindings" }
 oliphaunt-query = { version = "0.1.0", path = "../../../query/rust" }
 getrandom = { version = "0.3", optional = true }
+libc = { version = "0.2", optional = true }
 
 [build-dependencies]
 oliphaunt-build = { version = "0.2.0", path = "crates/oliphaunt-build" }

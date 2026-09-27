@@ -118,7 +118,7 @@ class OliphauntAndroidBoundaryTest {
 
     assertTrue(
       "React Native iOS JSI must use the bounded callback contract",
-      iosSource.contains("class OliphauntChunkAcknowledgement") &&
+      File("../cpp/Lifecycle.h").readText().contains("class ChunkAcknowledgement") &&
         iosSource.contains("acknowledgement->wait()") &&
       iosSource.contains("OliphauntProtocolStreamCallbackError") &&
         adapterSource.contains("if let error = chunkBox.value") &&
@@ -210,7 +210,7 @@ class OliphauntAndroidBoundaryTest {
       invalidateSource.contains("runBlocking"),
     )
 
-    val jsiSource = File(nativeSourceDir, "OliphauntJsiBindings.cpp").readText()
+    val jsiSource = File("src/main/cpp/OliphauntJsiBindings.cpp").readText() + File("../cpp/Jsi.h").readText() + File("../cpp/Lifecycle.h").readText()
     assertTrue(
       "React Native Android JSI must validate handles before native Long casts",
       jsiSource.contains("copyHandleArgument") &&
@@ -252,7 +252,7 @@ class OliphauntAndroidBoundaryTest {
     ).readText()
     assertTrue(
       "React Native Android must surface callback failure to Kotlin and defer JS rejection until typed completion",
-      callbackSource.contains("nativeEmitChunk(token, chunk)?.let") &&
+      callbackSource.contains("nativeEmitChunk(ownerId, token, chunk)?.let") &&
         callbackSource.contains("throw IllegalStateException(error)") &&
         callbackSource.contains("nativeRejectCallbackAborted"),
     )

@@ -2,6 +2,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 rm -rf lib .generated-tools
+mkdir -p ios/templates
+cp -R ../swift/Templates/OliphauntBroker ios/templates/
 tsc --ignoreConfig --noCheck --target ES2022 --module nodenext --rewriteRelativeImportExtensions \
   --rootDir . --outDir .generated-tools \
   app.plugin.cts react-native.config.cts tools/codegen-check.cts \

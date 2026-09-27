@@ -137,6 +137,8 @@ assert_library_slice() {
     _oliphaunt_exec_simple_query_with_error \
     _oliphaunt_exec_protocol_raw_stream_with_error \
     _oliphaunt_backup_with_error \
+    _oliphaunt_backup_stream_with_error \
+    _oliphaunt_restore_stream_with_error \
     _oliphaunt_restore_with_error \
     _oliphaunt_detach_with_error \
     _oliphaunt_cancel \

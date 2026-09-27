@@ -16,8 +16,25 @@ test('stages standalone Swift sources at the established source-tag paths', asyn
     await writeFile(bindings, '// generated bindings fixture\n');
     await stageSwiftpmSources(path.join(scratch, 'release-tree'), bindings);
     const sources = path.join(scratch, 'release-tree/src/sdks/swift/Sources');
-    for (const target of ['COliphaunt', 'Oliphaunt', 'OliphauntExtensionSupport']) {
+    for (const target of [
+      'COliphaunt',
+      'Oliphaunt',
+      'OliphauntCore',
+      'OliphauntBroker',
+      'OliphauntBrokerExtension',
+      'OliphauntExtensionSupport',
+    ]) {
       expect((await readdir(path.join(sources, target))).length).toBeGreaterThan(0);
+    }
+    for (const file of [
+      'OliphauntBroker.swift.template',
+      'OliphauntBrokerHost.swift.template',
+      'Info.plist',
+      'Broker.xcconfig',
+    ]) {
+      expect(await readFile(path.join(sources, '../Templates/OliphauntBroker', file), 'utf8')).toBe(
+        await readFile(new URL(`../Templates/OliphauntBroker/${file}`, import.meta.url), 'utf8'),
+      );
     }
     expect(await readFile(path.join(sources, 'COliphaunt/include/oliphaunt.h'), 'utf8')).toBe(
       await readFile(new URL('../../../runtime/include/oliphaunt.h', import.meta.url), 'utf8'),

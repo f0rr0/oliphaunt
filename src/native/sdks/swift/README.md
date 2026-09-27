@@ -1,5 +1,11 @@
 # Oliphaunt Swift SDK
 
+Broker mode is an explicit alternative to the default native-direct path. See
+[mobile broker setup and semantics](../../../docs/content/learn/mobile-stability.mdx#broker-mode)
+for platform requirements, resource placement, deadlines, errors, and migration.
+Apple and installed-worker qualification remains required before release support.
+
+
 ## Install
 
 Add Oliphaunt from Swift Package Manager:
@@ -298,8 +304,12 @@ bytes and a new destination; it never replaces an existing database root.
 ```swift
 let bytes = try await db.backup()
 try await db.close()
-try await OliphauntDatabase.restore(destination: restoredDatabaseURL, bytes: bytes)
+try await OliphauntDatabase.restore(storage: .applicationData(name: "restored"), bytes: bytes)
 ```
+
+Restore accepts the same persistent storage selectors as open, including
+`.directory(url)`. The existing `destination: URL` overload remains available.
+Temporary storage is not a restore destination.
 
 A persistent database directory is a managed root:
 

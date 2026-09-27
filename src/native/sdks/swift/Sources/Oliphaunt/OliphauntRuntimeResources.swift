@@ -1,3 +1,4 @@
+import OliphauntCore
 import Foundation
 
 private let oliphauntRuntimeResourcesSchema = "oliphaunt-runtime-resources-v1"
@@ -1023,7 +1024,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     }
 
     static func validateExtensionIds(_ values: [String]) throws -> Set<String> {
-        Set(try normalizedExtensionIds(values))
+        try validateOliphauntExtensionIds(values)
     }
 
     static func validateRuntimeFeatures(_ values: [String]) throws -> Set<String> {

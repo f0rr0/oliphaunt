@@ -52,6 +52,8 @@ const WINDOWS_RUNTIME_IMPORT_SYMBOLS = Object.freeze([
   'oliphaunt_exec_simple_query_with_error',
   'oliphaunt_exec_protocol_raw_stream_with_error',
   'oliphaunt_backup_with_error',
+  'oliphaunt_backup_stream_with_error',
+  'oliphaunt_restore_stream_with_error',
   'oliphaunt_restore_with_error',
   'oliphaunt_detach_with_error',
   'oliphaunt_cancel',

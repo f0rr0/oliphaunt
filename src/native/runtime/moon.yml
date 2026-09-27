@@ -109,6 +109,8 @@ tasks:
       - liboliphaunt-native:external-source-fetch-test
       - liboliphaunt-native:error-attribution-test
       - liboliphaunt-native:generation-lifecycle-test
+      - liboliphaunt-native:stream-queue-test
+      - liboliphaunt-native:archive-stream-test
       - liboliphaunt-native:ios-extension-packager-test
       - liboliphaunt-native:module-dir-resolver-test
       - liboliphaunt-native:postgis-reproducible-time-test
@@ -136,6 +138,35 @@ tasks:
       - /src/native/runtime/src/liboliphaunt_platform.h
       - /src/native/runtime/smoke/liboliphaunt_error_attribution.c
       - /src/native/runtime/tools/test-error-attribution.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  archive-stream-test:
+    command: bash src/native/runtime/tools/test-archive-stream.sh
+    inputs:
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/runtime/src/liboliphaunt_internal.h
+      - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/src/liboliphaunt_archive_tar.c
+      - /src/native/runtime/src/liboliphaunt_fs.c
+      - /src/native/runtime/src/liboliphaunt_error.c
+      - /src/native/runtime/smoke/liboliphaunt_archive_stream.c
+      - /src/native/runtime/tools/test-archive-stream.sh
+    options:
+      cache: true
+      internal: true
+      runFromWorkspaceRoot: true
+  stream-queue-test:
+    command: bash src/native/runtime/tools/test-stream-queue.sh
+    inputs:
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/runtime/src/liboliphaunt_internal.h
+      - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/src/liboliphaunt_protocol.c
+      - /src/native/runtime/src/liboliphaunt_error.c
+      - /src/native/runtime/smoke/liboliphaunt_stream_queue.c
+      - /src/native/runtime/tools/test-stream-queue.sh
     options:
       cache: true
       internal: true
