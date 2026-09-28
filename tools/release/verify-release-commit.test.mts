@@ -93,12 +93,28 @@ function prepareCargo(base) {
         'release-type': 'rust',
         component: broker,
         'changelog-path': 'CHANGELOG.md',
+        'extra-files': [
+          { type: 'json', path: 'packages/darwin-arm64/package.json', jsonpath: '$.version' },
+        ],
       },
     },
   });
   const version = base ? '0.0.0' : '0.1.0';
   json('.release-please-manifest.json', { 'src/native/broker': version });
   write('src/native/broker/Cargo.toml', cargo(broker, version));
+  const carrier = 'src/native/broker/packages/darwin-arm64';
+  json(`${carrier}/package.json`, { name: '@oliphaunt/broker-darwin-arm64', version });
+  json('bun.lock', {
+    lockfileVersion: 2,
+    workspaces: {
+      [carrier]: {
+        name: '@oliphaunt/broker-darwin-arm64',
+        version: scenario === 'wrong-workspace-version' ? '0.2.0' : version,
+        os: [scenario === 'workspace-metadata' ? 'linux' : 'darwin'],
+      },
+      unrelated: { version: scenario === 'unrelated-workspace-version' ? version : '0.0.0' },
+    },
+  });
   if (base) {
     write('src/native/broker/CHANGELOG.md', '# Changelog\n');
     write('src/shared/unrelated/Cargo.toml', cargo('unrelated', '0.0.0'));
@@ -248,6 +264,9 @@ if (phase === 'write') {
         'unrelated-pin': /derived file.*dependencies[.]unrelated[.]version/u,
         'unrelated-package': /derived file.*package[.]version/u,
         'unrelated-lock': /derived file.*package[.]1[.]version/u,
+        'wrong-workspace-version': /workspace lock version.*non-version semantic change/u,
+        'unrelated-workspace-version': /derived file.*workspaces[.]unrelated[.]version/u,
+        'workspace-metadata': /derived file.*workspaces[.].*[.]os[.]0/u,
         'wrong-registry-version': /derived file.*liboliphaunt-native-linux-x64-gnu[.]version/u,
         'wrong-runtime-version': /derived file.*runtime-version/u,
         'unrelated-registry-version': /derived file.*unrelated[.]version/u,

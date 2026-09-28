@@ -881,8 +881,23 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
   const fieldsByFile = new Map();
   const changelogs = new Set();
   const transitions = [];
-  const addField = (file, field) =>
+  const addField = (file, field) => {
     fieldsByFile.set(file, [...(fieldsByFile.get(file) ?? []), field]);
+    if (
+      field.type === 'json' &&
+      file.endsWith('/package.json') &&
+      field.parts?.length === 1 &&
+      field.parts[0] === 'version' &&
+      changed.has('bun.lock')
+    ) {
+      addField('bun.lock', {
+        ...field,
+        type: 'jsonc',
+        parts: ['workspaces', path.posix.dirname(file), 'version'],
+        role: 'workspace lock version',
+      });
+    }
+  };
   for (const product of selected) {
     const { packagePath, config: packageConfig } = byProduct.get(product);
     const version = after[packagePath];
@@ -913,14 +928,6 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
     changelogs.add(changelogFile);
     transitions.push({ product, before: priorVersion, after: version });
     if (packageConfig['release-type'] === 'node' || packageConfig['release-type'] === 'expo') {
-      if (changed.has('bun.lock'))
-        addField('bun.lock', {
-          type: 'jsonc',
-          parts: ['workspaces', packagePath, 'version'],
-          before: priorVersion,
-          after: version,
-          role: 'workspace lock version',
-        });
       addField(versionFile, {
         type: 'json',
         parts: ['version'],
