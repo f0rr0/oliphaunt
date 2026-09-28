@@ -410,6 +410,9 @@ let package = Package(
     products: [
         .library(name: "COliphaunt", targets: ["COliphaunt"]),
         .library(name: "Oliphaunt", targets: ["Oliphaunt"]),
+        .library(name: "OliphauntCore", targets: ["OliphauntCore"]),
+        .library(name: "OliphauntBroker", targets: ["OliphauntBroker"]),
+        .library(name: "OliphauntBrokerExtension", targets: ["OliphauntBrokerExtension"]),
         .library(name: "OliphauntExtensionSupport", targets: ["OliphauntExtensionSupport"])
     ],
     targets: [
@@ -436,8 +439,23 @@ let package = Package(
             cSettings: [.define("OLIPHAUNT_LINK_RUNTIME")]
         ),
         .target(
+            name: "OliphauntCore",
+            dependencies: ["OliphauntNativeBindings"],
+            path: "src/sdks/swift/Sources/OliphauntCore"
+        ),
+        .target(
+            name: "OliphauntBroker",
+            dependencies: ["OliphauntCore", "OliphauntNativeBindings"],
+            path: "src/sdks/swift/Sources/OliphauntBroker"
+        ),
+        .target(
+            name: "OliphauntBrokerExtension",
+            dependencies: ["Oliphaunt", "OliphauntCore", "OliphauntNativeBindings"],
+            path: "src/sdks/swift/Sources/OliphauntBrokerExtension"
+        ),
+        .target(
             name: "Oliphaunt",
-            dependencies: ["COliphaunt", "OliphauntNativeBindings"],
+            dependencies: ["COliphaunt", "OliphauntCore", "OliphauntNativeBindings"],
             path: "src/sdks/swift/Sources/Oliphaunt"
         ),
         .target(
@@ -501,6 +519,11 @@ export async function stageSwiftpmSources(generatedTree, bindingsFile) {
   // Published source tags keep their established paths for pinned CocoaPods consumers.
   const sources = path.join(generatedTree, 'src/sdks/swift/Sources');
   await fs.cp(path.join(ROOT, 'src/native/sdks/swift/Sources'), sources, { recursive: true });
+  await fs.cp(
+    path.join(ROOT, 'src/native/sdks/swift/Templates'),
+    path.join(generatedTree, 'src/sdks/swift/Templates'),
+    { recursive: true },
+  );
   await fs.copyFile(
     path.join(ROOT, 'src/native/runtime/include/oliphaunt.h'),
     path.join(sources, 'COliphaunt/include/oliphaunt.h'),

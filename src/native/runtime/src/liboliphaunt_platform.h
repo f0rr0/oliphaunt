@@ -69,6 +69,7 @@ typedef int gid_t;
 #define read _read
 #define write _write
 #define close _close
+#define fsync _commit
 #define access _access
 #define unlink _unlink
 #define rmdir _rmdir

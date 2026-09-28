@@ -29,6 +29,9 @@ static int buffer_reserve(OliphauntByteBuffer *buffer, size_t additional) {
     if (additional > SIZE_MAX - buffer->len) {
         return -1;
     }
+    if (buffer->write != NULL) {
+        return 0;
+    }
     size_t required = buffer->len + additional;
     if (required <= buffer->cap) {
         return 0;
@@ -57,7 +60,14 @@ static int buffer_append(OliphauntByteBuffer *buffer, const void *data, size_t l
     if (buffer_reserve(buffer, len) != 0) {
         return -1;
     }
-    memcpy(buffer->data + buffer->len, data, len);
+    if (buffer->write != NULL) {
+        if (buffer->write(buffer->context, data, len) != 0) {
+            buffer->write_failed = true;
+            return -1;
+        }
+    } else {
+        memcpy(buffer->data + buffer->len, data, len);
+    }
     buffer->len += len;
     return 0;
 }
@@ -1215,60 +1225,81 @@ static int ensure_parent_dir_for_path(OliphauntHandle *handle, const char *path)
     return rc;
 }
 
-static int unpack_tar_file(OliphauntHandle *handle, const char *path, const uint8_t *data, size_t len) {
-    if (ensure_parent_dir_for_path(handle, path) != 0) {
-        return -1;
-    }
-    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, 0600);
-    if (fd < 0) {
-        char message[1024];
-        snprintf(message, sizeof(message), "create restored file %s: %s", path, strerror(errno));
-        set_error(handle, message);
-        return -1;
-    }
-    size_t off = 0;
-    while (off < len) {
-        ssize_t written = write(fd, data + off, len - off);
-        if (written <= 0) {
-            if (written == 0) {
-                errno = EIO;
-            }
-            char message[1024];
-            snprintf(message, sizeof(message), "write restored file %s: %s", path, strerror(errno));
-            close(fd);
-            set_error(handle, message);
+typedef struct ArchiveReader {
+    OliphauntArchiveReadCallback read;
+    void *context;
+} ArchiveReader;
+
+/* 1 means clean EOF before any requested bytes; a partial record is invalid. */
+static int archive_read_exact(OliphauntHandle *handle, ArchiveReader *reader, uint8_t *data, size_t len) {
+    size_t offset = 0;
+    while (offset < len) {
+        size_t received = 0;
+        if (reader->read(reader->context, data + offset, len - offset, &received) != 0 ||
+            received > len - offset) {
+            set_error(handle, "physical archive input callback failed");
             return -1;
         }
-        off += (size_t)written;
-    }
-    if (fchmod(fd, 0600) != 0) {
-        char message[1024];
-        snprintf(message, sizeof(message), "set restored file permissions %s: %s", path, strerror(errno));
-        close(fd);
-        unlink(path);
-        set_error(handle, message);
-        return -1;
-    }
-    if (close(fd) != 0) {
-        char message[1024];
-        snprintf(message, sizeof(message), "close restored file %s: %s", path, strerror(errno));
-        unlink(path);
-        set_error(handle, message);
-        return -1;
+        if (received == 0) {
+            if (offset == 0) return 1;
+            set_error(handle, "physical archive contains a truncated record");
+            return -1;
+        }
+        offset += received;
     }
     return 0;
 }
 
-static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data, size_t len, const char *staging_root, bool write_entries) {
-    if (len < 1024 || (len % 512) != 0) {
-        set_error(handle, "physical archive has invalid tar block framing");
-        return -1;
+static int unpack_tar_file(OliphauntHandle *handle, const char *path, ArchiveReader *reader, size_t len) {
+    int fd = -1;
+    if (path != NULL) {
+        if (ensure_parent_dir_for_path(handle, path) != 0) return -1;
+        fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, 0600);
+        if (fd < 0) {
+            set_error(handle, "cannot create physical archive file in restore staging");
+            return -1;
+        }
     }
-    if (!tar_block_is_zero(data + len - 1024) || !tar_block_is_zero(data + len - 512)) {
-        set_error(handle, "physical archive ended before final tar zero block");
-        return -1;
+    uint8_t data[64 * 1024];
+    int result = -1;
+    while (len > 0) {
+        size_t take = len < sizeof(data) ? len : sizeof(data);
+        int rc = archive_read_exact(handle, reader, data, take);
+        if (rc != 0) {
+            if (rc == 1) set_error(handle, "physical archive entry is truncated");
+            goto cleanup;
+        }
+        if (fd >= 0) {
+            size_t off = 0;
+            while (off < take) {
+                ssize_t written = write(fd, data + off, take - off);
+                if (written < 0 && errno == EINTR) continue;
+                if (written <= 0) {
+                    set_error(handle, "cannot write physical archive file in restore staging");
+                    goto cleanup;
+                }
+                off += (size_t)written;
+            }
+        }
+        len -= take;
     }
+    if (fd >= 0 && (fchmod(fd, 0600) != 0 || fsync(fd) != 0)) {
+        set_error(handle, "cannot sync physical archive file in restore staging");
+        goto cleanup;
+    }
+    result = 0;
+cleanup:
+    if (fd >= 0) {
+        if (close(fd) != 0 && result == 0) {
+            set_error(handle, "cannot close physical archive file in restore staging");
+            result = -1;
+        }
+        if (result != 0) unlink(path);
+    }
+    return result;
+}
 
+static int process_physical_archive(OliphauntHandle *handle, ArchiveReader *reader, const char *staging_root, bool write_entries) {
     char **seen_paths = NULL;
     size_t seen_count = 0;
     size_t seen_cap = 0;
@@ -1283,29 +1314,31 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
     char *dest = NULL;
     char *link = NULL;
     int result = -1;
-    size_t off = 0;
-    while (off + 512 <= len) {
-        const uint8_t *header = data + off;
-        off += 512;
+    for (;;) {
+        uint8_t header[512];
+        int read_rc = archive_read_exact(handle, reader, header, sizeof(header));
+        if (read_rc != 0) {
+            if (read_rc == 1) set_error(handle, "physical archive ended before final tar zero block");
+            goto cleanup;
+        }
         if (tar_block_is_zero(header)) {
-            if (off + 512 > len) {
-                set_error(handle, "physical archive ended before final tar zero block");
+            read_rc = archive_read_exact(handle, reader, header, sizeof(header));
+            if (read_rc != 0) {
+                if (read_rc == 1) set_error(handle, "physical archive ended before final tar zero block");
                 goto cleanup;
             }
-            if (!tar_block_is_zero(data + off)) {
-                set_error(handle, "physical archive has trailing data after tar terminator");
-                goto cleanup;
-            }
-            off += 512;
-            while (off < len) {
-                if (!tar_block_is_zero(data + off)) {
+            for (;;) {
+                if (!tar_block_is_zero(header)) {
                     set_error(handle, "physical archive has trailing data after tar terminator");
                     goto cleanup;
                 }
-                off += 512;
+                read_rc = archive_read_exact(handle, reader, header, sizeof(header));
+                if (read_rc == 1) {
+                    result = 0;
+                    goto cleanup;
+                }
+                if (read_rc != 0) goto cleanup;
             }
-            result = 0;
-            goto cleanup;
         }
         if (validate_tar_header_checksum(handle, header) != 0) {
             goto cleanup;
@@ -1343,8 +1376,8 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
         if (remember_archive_path(handle, &seen_paths, &seen_count, &seen_cap, canonical_name) != 0) {
             goto cleanup;
         }
-        if (size > SIZE_MAX || (size_t)size > len - off) {
-            set_error(handle, "physical archive entry is truncated");
+        if (size > SIZE_MAX) {
+            set_error(handle, "physical archive entry size overflows");
             goto cleanup;
         }
         if ((size_t)size > SIZE_MAX - 511) {
@@ -1352,10 +1385,6 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
             goto cleanup;
         }
         size_t padded = ((size_t)size + 511) & ~(size_t)511;
-        if (padded > len - off) {
-            set_error(handle, "physical archive entry padding is truncated");
-            goto cleanup;
-        }
         char type = header[156] == '\0' ? '0' : (char)header[156];
         if (type != '0' && type != '5') {
             char message[1024];
@@ -1436,7 +1465,7 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
                     rc = -1;
                 }
             } else {
-                rc = unpack_tar_file(handle, dest, data + off, (size_t)size);
+                rc = unpack_tar_file(handle, dest, reader, (size_t)size);
             }
             free(dest);
             dest = NULL;
@@ -1444,11 +1473,19 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
                 goto cleanup;
             }
         }
+        if (!write_entries && unpack_tar_file(handle, NULL, reader, (size_t)size) != 0) {
+            goto cleanup;
+        }
+        uint8_t padding[512];
+        int padding_rc = archive_read_exact(handle, reader, padding, padded - (size_t)size);
+        if (padding_rc != 0) {
+            if (padding_rc == 1) set_error(handle, "physical archive entry padding is truncated");
+            goto cleanup;
+        }
         free(canonical_name);
         canonical_name = NULL;
         free(name);
         name = NULL;
-        off += padded;
     }
     set_error(handle, "physical archive ended before final tar zero block");
 cleanup:
@@ -1462,9 +1499,30 @@ cleanup:
     return result;
 }
 
+int32_t oliphaunt_archive_read_memory(void *context, uint8_t *data, size_t capacity, size_t *read_len) {
+    OliphauntArchiveMemorySource *source = context;
+    *read_len = source->remaining < capacity ? source->remaining : capacity;
+    if (*read_len != 0) {
+        memcpy(data, source->data, *read_len);
+        source->data += *read_len;
+        source->remaining -= *read_len;
+    }
+    return 0;
+}
+
 int oliphaunt_unpack_physical_archive(OliphauntHandle *handle, const uint8_t *data, size_t len, const char *staging_root) {
-    if (process_physical_archive(handle, data, len, NULL, false) != 0) {
+    if (data == NULL) {
+        set_error(handle, "physical archive data is null");
         return -1;
     }
-    return process_physical_archive(handle, data, len, staging_root, true);
+    OliphauntArchiveMemorySource source = {.data = data, .remaining = len};
+    ArchiveReader reader = {.read = oliphaunt_archive_read_memory, .context = &source};
+    if (process_physical_archive(handle, &reader, NULL, false) != 0) return -1;
+    source = (OliphauntArchiveMemorySource){.data = data, .remaining = len};
+    return process_physical_archive(handle, &reader, staging_root, true);
+}
+
+int oliphaunt_unpack_physical_archive_stream(OliphauntHandle *handle, OliphauntArchiveReadCallback read, void *context, const char *staging_root) {
+    ArchiveReader reader = {.read = read, .context = context};
+    return process_physical_archive(handle, &reader, staging_root, true);
 }

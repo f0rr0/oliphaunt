@@ -1,3 +1,4 @@
+import { applicationData } from './storage';
 import { normalizeExtensions, type NativeExtension } from './extensions.js';
 import {
   backupJsi,
@@ -53,7 +54,15 @@ type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
 export type RestoreDestination = Exclude<DatabaseStorage, { readonly kind: 'temporaryDirectory' }>;
 
+export type BrokerOptions = {
+  startupTimeoutMs?: number;
+  operationTimeoutMs?: number;
+};
+
+export type RestoreOptions = { broker?: BrokerOptions };
+
 export type OpenConfig = {
+  broker?: BrokerOptions;
   storage?: DatabaseStorage;
   startupGUCs?: Readonly<Record<string, string>>;
   username?: string;
@@ -63,7 +72,11 @@ export type OpenConfig = {
 
 export type OliphauntClient = {
   open(config?: OpenConfig): Promise<OliphauntDatabase>;
-  restore(destination: RestoreDestination, backup: BinaryInput): Promise<void>;
+  restore(
+    destination: RestoreDestination,
+    backup: BinaryInput,
+    options?: RestoreOptions,
+  ): Promise<void>;
 };
 
 export type OliphauntTransaction = {
@@ -164,13 +177,20 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   #activeTransaction = false;
   #streamCallbackActive = false;
   #poisoned?: Error;
+  readonly #broker: boolean;
+  readonly #operationTimeout?: number;
+  #deadline?: number;
 
   constructor(
     native: NativeOliphauntModule,
     handle: number,
     jsiTransport: JsiRawProtocolTransport,
     forgottenRegistry: ForgottenDatabaseRegistry | undefined,
+    config: NativeOpenConfig,
+    broker: boolean,
   ) {
+    this.#broker = broker;
+    this.#operationTimeout = config.operationTimeoutMs;
     this.#native = native;
     this.#handle = handle;
     this.#jsiTransport = jsiTransport;
@@ -290,7 +310,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   async #execProtocolRawUnlocked(input: BinaryInput): Promise<Uint8Array> {
     const requestBytes = toUint8Array(input);
     return this.#runNativeOperation(() =>
-      execProtocolRawJsi(this.#jsiTransport, this.#handle, requestBytes),
+      execProtocolRawJsi(this.#jsiTransport, this.#handle, requestBytes, this.#deadline),
     );
   }
 
@@ -334,14 +354,22 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         this.#streamCallbackActive = false;
       },
     );
-    return execProtocolStreamJsi(this.#jsiTransport, this.#handle, toUint8Array(input), consumer);
+    return execProtocolStreamJsi(
+      this.#jsiTransport,
+      this.#handle,
+      toUint8Array(input),
+      consumer,
+      this.#deadline,
+    );
   }
 
   backup(): Promise<Uint8Array> {
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       return this.#serialize(() => {
-        return this.#runNativeOperation(() => backupJsi(this.#jsiTransport, this.#handle));
+        return this.#runNativeOperation(() =>
+          backupJsi(this.#jsiTransport, this.#handle, this.#deadline),
+        );
       });
     });
   }
@@ -353,7 +381,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     // Cancellation must not wait behind the operation it is intended to interrupt.
     // A close admission cutoff does not revoke cancellation while previously
     // admitted work still drains; native teardown is the terminal boundary.
-    const cancellation = this.#native.cancel(this.#handle);
+    const cancellation = this.#native.cancel(this.#handle).catch(rethrowNativeFailure);
     this.#activeCancellations.add(cancellation);
     try {
       await cancellation;
@@ -377,9 +405,11 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
           (input, parse) => this.#runKnownExchangeUnlocked(input, parse, true),
           () => this.#rollbackControlUnlocked(),
           (cause) => this.#poison(cause),
+          (predecessor, body) => this.#admit(predecessor, body),
         );
         try {
           await this.#beginControlUnlocked();
+          this.#deadline = undefined;
 
           let result: T;
           try {
@@ -457,11 +487,17 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
       }
 
       this.#closing = true;
-      const attempt = this.#operationTail
+      const nativeClose = this.#broker
+        ? (() => {
+            this.#closeTeardownStarted = true;
+            return this.#native.close(this.#handle).catch(rethrowNativeFailure);
+          })()
+        : undefined;
+      const attempt = (nativeClose ?? this.#operationTail)
         .then(async () => {
           this.#closeTeardownStarted = true;
           await Promise.allSettled([...this.#activeCancellations]);
-          return this.#native.close(this.#handle);
+          if (!nativeClose) return this.#native.close(this.#handle).catch(rethrowNativeFailure);
         })
         .then(() => {
           this.#closing = false;
@@ -471,6 +507,10 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         .catch((error: unknown) => {
           this.#closeTeardownStarted = false;
           this.#closing = false;
+          if (this.#broker && isBrokerFailure(error) && error.requiresReopen) {
+            this.#closed = true;
+            this.#forgottenRegistry?.unregister(this);
+          }
           throw error;
         })
         .finally(() => {
@@ -502,7 +542,16 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   #assertHealthy(): void {
-    if (this.#poisoned !== undefined) throw this.#poisoned;
+    if (this.#poisoned !== undefined) {
+      if (isBrokerFailure(this.#poisoned)) {
+        throw Object.assign(
+          new Error(this.#poisoned.message, { cause: this.#poisoned }),
+          this.#poisoned,
+          { execution: 'notStarted' },
+        );
+      }
+      throw this.#poisoned;
+    }
   }
 
   #assertNoActiveTransaction(): void {
@@ -529,19 +578,61 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   #serialize<T>(body: () => T | Promise<T>): Promise<T> {
-    const operation = this.#operationTail.then(async () => {
-      this.#assertHealthy();
-      return body();
-    });
-    this.#operationTail = operation.then(
-      () => undefined,
+    const operation = this.#admit(this.#operationTail, body);
+    this.#operationTail = Promise.allSettled([this.#operationTail, operation]).then(
       () => undefined,
     );
     return operation;
   }
 
+  #admit<T>(predecessor: Promise<void>, body: () => T | Promise<T>): Promise<T> {
+    const clock = this.#jsiTransport.continuousTimeMillis;
+    const deadline =
+      this.#operationTimeout === undefined
+        ? undefined
+        : Math.ceil(clock!() + this.#operationTimeout);
+    let admitted = false;
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waiting = predecessor.then(async () => {
+      if (expired) return undefined as T; // Keep the queue behind the previous owner.
+      admitted = true;
+      if (timer !== undefined) clearTimeout(timer);
+      this.#assertHealthy();
+      if (this.#broker && this.#closeTeardownStarted) throw brokerDeadlineError('cancelled', true);
+      if (deadline !== undefined && clock!() >= deadline)
+        throw brokerDeadlineError('deadline', false);
+      this.#deadline = deadline;
+      try {
+        return await body();
+      } finally {
+        this.#deadline = undefined;
+      }
+    });
+    if (deadline === undefined) return waiting;
+    // Native clocks include suspend; JS timers are only wakeups for waiting admission.
+    const timeout = new Promise<T>((_, reject) => {
+      const check = () => {
+        if (admitted) return;
+        const remaining = deadline - clock!();
+        if (remaining <= 0) {
+          expired = true;
+          reject(brokerDeadlineError('deadline', this.#poisoned !== undefined));
+        } else timer = setTimeout(check, Math.min(remaining, 100));
+      };
+      check();
+    });
+    // Return promptly on expiry, but never let its successor overtake predecessor.
+    return Promise.race([waiting, timeout]);
+  }
+
   async #runNativeOperation<T>(body: () => Promise<T>): Promise<T> {
-    return body();
+    try {
+      return await body();
+    } catch (error) {
+      if (isBrokerFailure(error)) this.#poison(error);
+      throw error;
+    }
   }
 
   async #runKnownExchangeUnlocked<T extends object>(
@@ -658,6 +749,10 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   async #commitControlUnlocked(): Promise<'committed' | 'rolledBack'> {
+    return this.#admit(Promise.resolve(), () => this.#commitControlUnlockedBody());
+  }
+
+  async #commitControlUnlockedBody(): Promise<'committed' | 'rolledBack'> {
     let result: CommandResult;
     try {
       result = await this.#runKnownExchangeUnlocked(
@@ -678,6 +773,10 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   async #rollbackControlUnlocked(): Promise<void> {
+    return this.#admit(Promise.resolve(), () => this.#rollbackControlUnlockedBody());
+  }
+
+  async #rollbackControlUnlockedBody(): Promise<void> {
     try {
       const result = await this.#runKnownExchangeUnlocked(
         extendedQuery('ROLLBACK', []),
@@ -696,6 +795,10 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   #poison(cause: Error, replace = false): void {
+    if (isBrokerFailure(cause)) {
+      if (cause.requiresReopen) this.#poisoned = cause;
+      return;
+    }
     if (!replace && this.#poisoned !== undefined) return;
     this.#poisoned = errorWithCause(
       'Oliphaunt PostgreSQL session state is unknown; close the database',
@@ -720,6 +823,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   readonly #exchange: StructuredExchange;
   readonly #rollbackControl: () => Promise<void>;
   readonly #poison: (cause: Error) => void;
+  readonly #admit: <T>(predecessor: Promise<void>, body: () => T | Promise<T>) => Promise<T>;
   #state: TransactionState = 'active';
   #tail = Promise.resolve();
   #failure?: Readonly<{ error: Error; needsRollback: boolean }>;
@@ -729,10 +833,12 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     exchange: StructuredExchange,
     rollbackControl: () => Promise<void>,
     poison: (cause: Error) => void,
+    admit: <T>(predecessor: Promise<void>, body: () => T | Promise<T>) => Promise<T>,
   ) {
     this.#exchange = exchange;
     this.#rollbackControl = rollbackControl;
     this.#poison = poison;
+    this.#admit = admit;
   }
 
   get closed(): boolean {
@@ -868,13 +974,11 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   }
 
   #enqueueAdmitted<T>(body: () => T | Promise<T>): Promise<T> {
-    const operation = this.#tail.then(body);
-    this.#tail = operation.then(
-      () => undefined,
-      (error: unknown) => {
-        this.#firstFailure ??= asError(error);
-      },
-    );
+    const operation = this.#admit(this.#tail, body);
+    void operation.catch((error: unknown) => {
+      this.#firstFailure ??= asError(error);
+    });
+    this.#tail = Promise.allSettled([this.#tail, operation]).then(() => undefined);
     return operation;
   }
 
@@ -1077,15 +1181,42 @@ export function createOliphauntClient(
   native: NativeOliphauntModule,
   registry: ForgottenDatabaseRegistry | undefined = forgottenDatabaseRegistry,
 ): OliphauntClient {
+  const topology = native.getTopology();
+  if (topology !== 'direct' && topology !== 'broker') {
+    throw new Error(`unsupported native database topology: ${topology}`);
+  }
   const client = {
     async open(config: OpenConfig = {}): Promise<OliphauntDatabase> {
-      const nativeConfig = normalizeOpenConfig(config);
+      const nativeConfig = normalizeOpenConfig(config, topology);
       const jsiTransport = requireJsiRawProtocolTransport();
-      const handle = await native.open(nativeConfig);
-      return new NativeOliphauntDatabase(native, handle, jsiTransport, registry);
+      if (nativeConfig.operationTimeoutMs !== undefined && !jsiTransport.continuousTimeMillis) {
+        throw new Error('broker deadlines require rebuilt native JSI bindings');
+      }
+      const handle = await native.open(nativeConfig).catch(rethrowNativeFailure);
+      return new NativeOliphauntDatabase(
+        native,
+        handle,
+        jsiTransport,
+        registry,
+        nativeConfig,
+        topology === 'broker',
+      );
     },
-    async restore(destination: RestoreDestination, backup: BinaryInput): Promise<void> {
+    async restore(
+      destination: RestoreDestination,
+      backup: BinaryInput,
+      options?: RestoreOptions,
+    ): Promise<void> {
       const storage = normalizeRestoreDestination(destination);
+      const normalized = normalizeOpenConfig({ ...options, storage: destination }, topology);
+      Object.assign(storage, {
+        ...(normalized.startupTimeoutMs === undefined
+          ? {}
+          : { startupTimeoutMs: normalized.startupTimeoutMs }),
+        ...(normalized.operationTimeoutMs === undefined
+          ? {}
+          : { operationTimeoutMs: normalized.operationTimeoutMs }),
+      });
       const bytes = toUint8Array(backup).slice();
       await restoreJsi(requireJsiRawProtocolTransport(), storage, bytes);
     },
@@ -1105,7 +1236,7 @@ function normalizeRestoreDestination(destination: RestoreDestination): {
   if (destination.kind === 'applicationData') {
     return {
       storageKind: 'applicationData',
-      storageName: validateApplicationDataName(destination.name),
+      storageName: applicationData(destination.name).name,
     };
   }
   throw new Error(
@@ -1113,13 +1244,28 @@ function normalizeRestoreDestination(destination: RestoreDestination): {
   );
 }
 
-function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
+function normalizeOpenConfig(config: OpenConfig, topology: 'direct' | 'broker'): NativeOpenConfig {
+  if ('execution' in config || 'topology' in config) {
+    throw new TypeError('select topology in the native build configuration, not open or restore');
+  }
+  if (config.broker !== undefined && topology !== 'broker') {
+    throw new TypeError('broker options require a broker native build');
+  }
+  for (const value of [config.broker?.startupTimeoutMs, config.broker?.operationTimeoutMs]) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+      throw new TypeError('broker timeouts must be positive safe integer milliseconds');
+    }
+  }
+  if (topology === 'broker' && config.storage?.kind === 'directory') {
+    throw new TypeError('broker storage must be applicationData or temporaryDirectory');
+  }
   validateStartupIdentity(config.username, 'username');
   validateStartupIdentity(config.database, 'database');
   const startupGUCs = config.startupGUCs ? validateStartupGUCs(config.startupGUCs) : undefined;
   const storage = normalizeDatabaseStorage(config.storage);
   return {
     ...storage,
+    ...(config.broker ?? {}),
     startupGUCs,
     username: config.username,
     database: config.database,
@@ -1155,20 +1301,10 @@ function normalizeDatabaseStorage(
   if (storage.kind === 'applicationData') {
     return {
       storageKind: 'applicationData',
-      storageName: validateApplicationDataName(storage.name),
+      storageName: applicationData(storage.name).name,
     };
   }
   throw new Error(`unknown database storage kind ${String((storage as { kind?: unknown }).kind)}`);
-}
-
-function validateApplicationDataName(value: string): string {
-  const name = value.trim();
-  if (!/^[A-Za-z0-9._-]{1,128}$/.test(name) || name === '.' || name === '..') {
-    throw new Error(
-      'applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen',
-    );
-  }
-  return name;
 }
 
 function validateStartupIdentity(value: string | undefined, label: string): void {
@@ -1212,4 +1348,38 @@ function validateStartupGUCs(gucs: Readonly<Record<string, string>>): string[] {
   return entries
     .filter(({ name }, index) => lastIndexByName.get(name) === index)
     .map(({ name, value }) => `${name}=${value}`);
+}
+
+function isBrokerFailure(error: unknown): error is Error & {
+  reason: string;
+  execution: 'notStarted' | 'completed' | 'unknown';
+  requiresReopen: boolean;
+} {
+  return (
+    error instanceof Error &&
+    typeof (error as { reason?: unknown }).reason === 'string' &&
+    typeof (error as { requiresReopen?: unknown }).requiresReopen === 'boolean'
+  );
+}
+
+function brokerDeadlineError(reason: 'deadline' | 'cancelled', requiresReopen: boolean): Error {
+  return Object.assign(new Error(`broker operation ${reason} before admission`), {
+    reason,
+    execution: 'notStarted' as const,
+    requiresReopen,
+  });
+}
+
+function rethrowNativeFailure(error: unknown): never {
+  if (error instanceof Error) {
+    const info = (error as Error & { userInfo?: Record<string, unknown> }).userInfo;
+    if (info && typeof info.reason === 'string' && typeof info.requiresReopen === 'boolean') {
+      Object.assign(error, {
+        reason: info.reason,
+        execution: info.execution,
+        requiresReopen: info.requiresReopen,
+      });
+    }
+  }
+  throw error;
 }

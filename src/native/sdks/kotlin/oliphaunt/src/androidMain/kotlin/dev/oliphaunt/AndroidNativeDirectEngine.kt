@@ -2,6 +2,7 @@ package dev.oliphaunt
 
 import android.content.Context
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.system.ErrnoException
 import android.system.Os
@@ -32,6 +33,10 @@ internal class AndroidNativeDirectEngine(
     private val appContext = context.applicationContext
 
     override suspend fun open(config: EngineConfig): OliphauntSession = withContext(Dispatchers.IO) {
+        nativeOperation { AndroidNativeDirectSession(NativeDatabase.open(prepare(config))) }
+    }
+
+    internal fun prepare(config: EngineConfig): OpenOptions {
         validateDatabaseStorage(config.storage)
         validateStartupIdentity(config.username, "username")
         validateStartupIdentity(config.database, "database")
@@ -46,12 +51,7 @@ internal class AndroidNativeDirectEngine(
                 requestedExtensions = config.extensions,
                 resourceRoot = resourceRoot,
             )
-        val storageDirectory =
-            when (val storage = config.storage) {
-                EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
-                is EngineStorage.Directory -> File(storage.path)
-            }
-        var nativeOpenAttempted = false
+        val storageDirectory = resolveAndroidStorage(appContext, config.storage)
         try {
             if (isAndroidSymbolicLink(storageDirectory)) {
                 throw OliphauntException(
@@ -74,39 +74,26 @@ internal class AndroidNativeDirectEngine(
 
                 AndroidManagedRootState.Empty -> {
                     requireAndroidFreshRootRole(effectiveUsername)
-                    var ownsPublishedPgdata = false
-                    try {
+                    // Publish PGDATA and its descriptor together. A killed initializer
+                    // may leave a sibling staging tree, but never poisons the live root.
+                    val stagingRoot = File(storageDirectory.parentFile, ".oliphaunt-root-${UUID.randomUUID()}")
+                    check(stagingRoot.mkdir()) { "failed to create database root staging directory" }
+                    val result = runCatching {
+                        Os.chmod(stagingRoot.absolutePath, 448) // 0700
+                        val stagedPgdata = File(stagingRoot, "pgdata")
                         OliphauntAndroidRuntimeAssets.preparePgdata(
                             assetManager = appContext.assets,
-                            pgdata = pgdata,
+                            pgdata = stagedPgdata,
                             clusterSeed = runtime.clusterSeed,
-                            didPublishDestination = { ownsPublishedPgdata = true },
                         )
-                        validateCompleteAndroidPgdata(pgdata)
-                        writeAndroidManagedRootDescriptor(storageDirectory)
-                    } catch (publicationError: Throwable) {
-                        recoverAndroidManagedRootPublicationFailure(
-                            publicationError = publicationError,
-                            ownsPublishedPgdata = ownsPublishedPgdata,
-                            descriptorDefinitelyAbsent = {
-                                isAndroidPathDefinitelyAbsent(
-                                    File(storageDirectory, ".oliphaunt.json"),
-                                )
-                            },
-                            removePublishedPgdata = {
-                                if (
-                                    !isAndroidPathDefinitelyAbsent(pgdata) &&
-                                    !pgdata.deleteRecursively()
-                                ) {
-                                    throw OliphauntException(
-                                        "failed to remove uncommitted PGDATA at ${pgdata.absolutePath}",
-                                    )
-                                }
-                            },
-                            syncRoot = {
-                                OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory)
-                            },
-                        )
+                        validateCompleteAndroidPgdata(stagedPgdata)
+                        writeAndroidManagedRootDescriptor(stagingRoot)
+                        // POSIX rename replaces an empty directory, never a nonempty root.
+                        Os.rename(stagingRoot.absolutePath, storageDirectory.absolutePath)
+                        OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory.parentFile!!)
+                    }
+                    finishAndroidStaging(result, operation = "database root publication") {
+                        removeAndroidStagingIfPresent(stagingRoot)
                     }
                 }
             }
@@ -117,26 +104,20 @@ internal class AndroidNativeDirectEngine(
                     sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
                     supportedAbis = Build.SUPPORTED_ABIS.asList(),
                 )
-            nativeOpenAttempted = true
-            val database = NativeDatabase.open(
-                OpenOptions(
-                    libraryPath = effectiveLibraryPath,
-                    pgdata = pgdata.absolutePath,
-                    runtimeDirectory = runtime.runtimeDirectory,
-                    moduleDirectory = null,
-                    icuDataDirectory = File(runtime.runtimeDirectory, "share/icu")
-                        .takeIf { it.isDirectory }?.absolutePath,
-                    username = effectiveUsername,
-                    database = effectiveDatabase,
-                    startupArgs = config.postgresStartupArgs(runtime.sharedPreloadLibraries),
-                ),
+            return OpenOptions(
+                libraryPath = effectiveLibraryPath,
+                pgdata = pgdata.absolutePath,
+                runtimeDirectory = runtime.runtimeDirectory,
+                moduleDirectory = null,
+                icuDataDirectory = File(runtime.runtimeDirectory, "share/icu")
+                    .takeIf { it.isDirectory }?.absolutePath,
+                username = effectiveUsername,
+                database = effectiveDatabase,
+                startupArgs = config.postgresStartupArgs(runtime.sharedPreloadLibraries),
             )
-            AndroidNativeDirectSession(database)
         } catch (error: Throwable) {
-            // Preparation failures are safe to clean. Once control reaches the
-            // process-resident runtime, a rejected logical reopen may leave it
-            // owning the same directory.
-            if (config.storage == EngineStorage.TemporaryDirectory && !nativeOpenAttempted) {
+            // No process-resident session has been opened by preparation.
+            if (config.storage == EngineStorage.TemporaryDirectory) {
                 storageDirectory.deleteRecursively()
             }
             throw if (error is NativeException.Database) OliphauntException(error.detail) else error
@@ -227,42 +208,6 @@ internal fun writeAndroidManagedRootDescriptor(directory: File) {
     finishAndroidStaging(result, operation = "database root descriptor publication") {
         removeAndroidStagingIfPresent(temporary)
     }
-}
-
-internal fun recoverAndroidManagedRootPublicationFailure(
-    publicationError: Throwable,
-    ownsPublishedPgdata: Boolean,
-    descriptorDefinitelyAbsent: () -> Boolean,
-    removePublishedPgdata: () -> Unit,
-    syncRoot: () -> Unit,
-): Nothing {
-    if (!ownsPublishedPgdata) throw publicationError
-    val descriptorIsAbsent =
-        try {
-            descriptorDefinitelyAbsent()
-        } catch (inspectionError: Throwable) {
-            throw OliphauntException(
-                "database root descriptor publication failed (${publicationError.message}); " +
-                    "preserved PGDATA because descriptor publication is uncertain (${inspectionError.message})",
-            ).apply {
-                addSuppressed(publicationError)
-                addSuppressed(inspectionError)
-            }
-        }
-    if (!descriptorIsAbsent) throw publicationError
-    try {
-        removePublishedPgdata()
-        syncRoot()
-    } catch (cleanupError: Throwable) {
-        throw OliphauntException(
-            "database root descriptor publication failed (${publicationError.message}); " +
-                "failed to clean uncommitted PGDATA (${cleanupError.message})",
-        ).apply {
-            addSuppressed(publicationError)
-            addSuppressed(cleanupError)
-        }
-    }
-    throw publicationError
 }
 
 internal fun isAndroidPathDefinitelyAbsent(path: File): Boolean = try {
@@ -501,6 +446,15 @@ private fun requireRealAndroidFile(
 internal const val NATIVE_ROOT_DESCRIPTOR: String =
     "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n"
 
+internal fun resolveAndroidStorage(context: Context, storage: EngineStorage): File {
+    validateDatabaseStorage(storage)
+    return when (storage) {
+        EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(context)
+        is EngineStorage.Directory -> File(storage.path)
+        is EngineStorage.ApplicationData -> File(context.filesDir, "Oliphaunt/${storage.name}")
+    }
+}
+
 private object AndroidDirectTemporaryStorage {
     @Volatile
     private var root: File? = null
@@ -532,6 +486,8 @@ internal class AndroidNativeDirectSession(
             return result
         } catch (_: NativeException.NotSubmitted) {
             throw OliphauntRequestNotSubmitted()
+        } catch (error: NativeException.Broker) {
+            throw error.toPublicError()
         } catch (error: NativeException.Database) {
             throw OliphauntException(error.detail)
         } finally {
@@ -571,13 +527,31 @@ internal class AndroidNativeDirectSession(
         }
     }
 
-    override suspend fun backup(): ByteArray = nativeOperation { database.backup() }
+    override suspend fun backup(): ByteArray = runRequest { it.backup() }
+    override suspend fun backupToPath(destination: String) {
+        val target = File(destination)
+        val temporary = File.createTempFile(".oliphaunt-archive-", ".tmp", target.absoluteFile.parentFile)
+        try {
+            ParcelFileDescriptor.open(temporary, ParcelFileDescriptor.MODE_WRITE_ONLY).use { output ->
+                runRequest { it.backupToFd(output.fd) }
+                Os.fsync(output.fileDescriptor)
+            }
+            nativeOperation {
+                dev.oliphaunt.bindings.publishBackup(temporary.absolutePath, target.absolutePath)
+            }
+            OliphauntAndroidRuntimeAssets.syncAndroidDirectory(target.absoluteFile.parentFile!!)
+        } finally {
+            temporary.delete()
+        }
+    }
     override suspend fun cancel() = nativeOperation { database.cancel() }
     override suspend fun close() = nativeOperation { database.detach() }
 }
 
-private suspend fun <T> nativeOperation(block: suspend () -> T): T = try {
+internal suspend fun <T> nativeOperation(block: suspend () -> T): T = try {
     block()
+} catch (error: NativeException.Broker) {
+    throw error.toPublicError()
 } catch (error: NativeException.Database) {
     throw OliphauntException(error.detail)
 }
@@ -601,7 +575,7 @@ private fun packagedAndroidLiboliphauntPath(nativeLibraryDirectory: String?): St
     ?.takeIf(File::isFile)
     ?.absolutePath
 
-private fun android.content.pm.ApplicationInfo.liboliphauntSourceArchivePaths(): List<String> = buildList {
+internal fun android.content.pm.ApplicationInfo.liboliphauntSourceArchivePaths(): List<String> = buildList {
     add(sourceDir)
     add(publicSourceDir)
     splitSourceDirs?.forEach(::add)

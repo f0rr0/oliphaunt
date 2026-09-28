@@ -28,6 +28,14 @@ NSString * const OliphauntProtocolStreamCallbackAbortedErrorDomain =
 #ifdef RCT_NEW_ARCH_ENABLED
 using namespace oliphaunt::reactnative;
 
+static BrokerFailure OliphauntBrokerFailure(NSError *error)
+{
+  NSString *reason = error.userInfo[@"reason"];
+  NSString *execution = error.userInfo[@"execution"];
+  if (![reason isKindOfClass:NSString.class] || ![execution isKindOfClass:NSString.class]) return {};
+  return {reason.UTF8String, execution.UTF8String, [error.userInfo[@"requiresReopen"] boolValue] != NO};
+}
+
 static NSError *OliphauntProtocolStreamCallbackError(const std::string &message)
 {
   NSString *description = [NSString stringWithUTF8String:message.c_str()];
@@ -224,7 +232,7 @@ static void OliphauntFinishNativeDirectCleanup(
       return;
     }
     OliphauntNativeDirectCleanupInFlight = NO;
-    if (error == nil) {
+    if (error == nil || [error.userInfo[@"oliphauntClosed"] boolValue]) {
       OliphauntRetainedNativeDirectDatabase = nil;
       OliphauntNativeDirectClaim = 0;
     } else if (!retainOnFailure) {
@@ -249,6 +257,8 @@ static NSDictionary *OliphauntNativeOpenConfigToDictionary(
 {
   NSMutableDictionary *dictionary = [NSMutableDictionary new];
   dictionary[@"storageKind"] = config.storageKind();
+  if (config.startupTimeoutMs()) dictionary[@"startupTimeoutMs"] = @(*config.startupTimeoutMs());
+  if (config.operationTimeoutMs()) dictionary[@"operationTimeoutMs"] = @(*config.operationTimeoutMs());
   OliphauntSetIfPresent(dictionary, @"storagePath", config.storagePath());
   OliphauntSetIfPresent(dictionary, @"storageName", config.storageName());
   OliphauntSetIfPresent(dictionary, @"startupGUCs", RCTConvertOptionalVecToArray(config.startupGUCs()));
@@ -325,6 +335,11 @@ RCT_EXPORT_MODULE(Oliphaunt)
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
+- (NSString *)getTopology
+{
+  return [OliphauntAdapterDatabase topology];
+}
+
 - (void)open:(JS::NativeOliphaunt::NativeOpenConfig &)config
      resolve:(RCTPromiseResolveBlock)resolve
       reject:(RCTPromiseRejectBlock)reject
@@ -452,6 +467,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
 
 - (void)execProtocolRawDataForJsi:(double)handle
                           request:(NSData *)request
+                         deadline:(double)deadline
                        completion:(OliphauntDataCompletion)completion
 {
   if (!OliphauntIsValidHandle(handle)) {
@@ -467,11 +483,12 @@ RCT_EXPORT_MODULE(Oliphaunt)
                                     userInfo:@{NSLocalizedDescriptionKey: @"unknown Oliphaunt handle"}]);
     return;
   }
-  [database execProtocolData:request completion:completion];
+  [database execProtocolData:request deadline:deadline completion:completion];
 }
 
 - (void)execProtocolStreamDataForJsi:(double)handle
                               request:(NSData *)request
+                             deadline:(double)deadline
                               onChunk:(OliphauntStreamChunk)onChunk
                            completion:(OliphauntVoidCompletion)completion
 {
@@ -488,10 +505,10 @@ RCT_EXPORT_MODULE(Oliphaunt)
                                userInfo:@{NSLocalizedDescriptionKey: @"unknown Oliphaunt handle"}]);
     return;
   }
-  [database execProtocolStreamData:request onChunk:onChunk completion:completion];
+  [database execProtocolStreamData:request deadline:deadline onChunk:onChunk completion:completion];
 }
 
-- (void)backupDataForJsi:(double)handle completion:(OliphauntDataCompletion)completion
+- (void)backupDataForJsi:(double)handle deadline:(double)deadline completion:(OliphauntDataCompletion)completion
 {
   if (!OliphauntIsValidHandle(handle)) {
     completion(nil, [NSError errorWithDomain:@"dev.oliphaunt.reactnative.ios"
@@ -506,18 +523,20 @@ RCT_EXPORT_MODULE(Oliphaunt)
                                     userInfo:@{NSLocalizedDescriptionKey: @"unknown Oliphaunt handle"}]);
     return;
   }
-  [database backupDataWithCompletion:completion];
+  [database backupDataWithDeadline:deadline completion:completion];
 }
 
 - (void)restoreDataForJsi:(NSString *)storageKind
                 storagePath:(NSString *_Nullable)storagePath
                 storageName:(NSString *_Nullable)storageName
+                    options:(NSDictionary *)options
                backupData:(NSData *)backupData
                completion:(OliphauntVoidCompletion)completion
 {
   [OliphauntAdapterDatabase restoreWithStorageKind:storageKind
                                         storagePath:storagePath
                                         storageName:storageName
+                                            options:options
                                         backupData:backupData
                                         completion:completion];
 }
@@ -536,6 +555,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
   }
   auto transport = facebook::jsi::Object(runtime);
   transport.setProperty(runtime, "version", 1);
+  installContinuousClock(runtime, transport);
   transport.setProperty(
       runtime,
       "closeIfGeneration",
@@ -572,11 +592,12 @@ RCT_EXPORT_MODULE(Oliphaunt)
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
               size_t count) -> facebook::jsi::Value {
-            if (count != 2) {
+            if ((count < 2 || count > 3)) {
               throw facebook::jsi::JSError(runtime, "liboliphaunt JSI execProtocolRaw expects handle and request");
             }
 
             double handle = copyHandleArgument(runtime, args[0]);
+                    const double deadline = count > 2 ? copyOptionalMilliseconds(runtime, args[2]) : 0;
             std::vector<uint8_t> request = copyBinaryArgument(runtime, args[1]);
             auto requestData = [NSData dataWithBytes:request.data() length:request.size()];
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
@@ -584,7 +605,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolRawExecutor"),
                 2,
-                [lifetime, weakSelf, callInvoker, handle, requestData](
+                [lifetime, weakSelf, callInvoker, handle, deadline, requestData](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
@@ -602,12 +623,14 @@ RCT_EXPORT_MODULE(Oliphaunt)
 
                   [strongSelf execProtocolRawDataForJsi:handle
                                                 request:requestData
+                                               deadline:deadline
                                              completion:^(NSData *_Nullable response, NSError *_Nullable error) {
                     if (error != nil) {
+                      const auto failure = OliphauntBrokerFailure(error);
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt exec failed";
-                      reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                        rejectFunction.call(runtime, createError(runtime, message));
+                      reject->call([message, failure](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
+                        rejectFunction.call(runtime, createError(runtime, message, failure));
                       });
                       return;
                     }
@@ -634,11 +657,12 @@ RCT_EXPORT_MODULE(Oliphaunt)
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
               size_t count) -> facebook::jsi::Value {
-            if (count != 3 || !args[2].isObject() || !args[2].asObject(runtime).isFunction(runtime)) {
+            if ((count < 3 || count > 4) || !args[2].isObject() || !args[2].asObject(runtime).isFunction(runtime)) {
               throw facebook::jsi::JSError(runtime, "liboliphaunt JSI execProtocolStream expects handle, request, and onChunk");
             }
 
             double handle = copyHandleArgument(runtime, args[0]);
+                    const double deadline = count > 3 ? copyOptionalMilliseconds(runtime, args[3]) : 0;
             std::vector<uint8_t> request = copyBinaryArgument(runtime, args[1]);
             auto requestData = [NSData dataWithBytes:request.data() length:request.size()];
             auto chunkCallback = std::make_shared<RuntimeCallback>(
@@ -650,7 +674,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolStreamExecutor"),
                 2,
-                [lifetime, weakSelf, callInvoker, handle, requestData, chunkCallback](
+                [lifetime, weakSelf, callInvoker, handle, deadline, requestData, chunkCallback](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
@@ -668,6 +692,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
 
                   [strongSelf execProtocolStreamDataForJsi:handle
                                                    request:requestData
+                                               deadline:deadline
                                                    onChunk:^(NSData *chunk) {
                     @synchronized (strongSelf) {
                       if (strongSelf->_invalidated) {
@@ -705,16 +730,17 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       }
                     }
                     if (error != nil) {
+                      const auto failure = OliphauntBrokerFailure(error);
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt stream failed";
                       BOOL callbackAborted =
                           [error.domain isEqualToString:OliphauntProtocolStreamCallbackAbortedErrorDomain];
-                      reject->call([message, callbackAborted](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
+                      reject->call([message, failure, callbackAborted](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
                         rejectFunction.call(
                             runtime,
                             callbackAborted
                                 ? createProtocolCallbackAbortedError(runtime, message)
-                                : createError(runtime, message));
+                                : createError(runtime, message, failure));
                       });
                       return;
                     }
@@ -738,17 +764,18 @@ RCT_EXPORT_MODULE(Oliphaunt)
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
               size_t count) -> facebook::jsi::Value {
-            if (count != 1) {
+            if ((count < 1 || count > 2)) {
               throw facebook::jsi::JSError(runtime, "liboliphaunt JSI backup expects a handle");
             }
 
             double handle = copyHandleArgument(runtime, args[0]);
+                    const double deadline = count > 1 ? copyOptionalMilliseconds(runtime, args[1]) : 0;
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
             auto executor = facebook::jsi::Function::createFromHostFunction(
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntBackupExecutor"),
                 2,
-                [lifetime, weakSelf, callInvoker, handle](
+                [lifetime, weakSelf, callInvoker, handle, deadline](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
@@ -765,12 +792,14 @@ RCT_EXPORT_MODULE(Oliphaunt)
                   }
 
                   [strongSelf backupDataForJsi:handle
+                                      deadline:deadline
                                     completion:^(NSData *_Nullable response, NSError *_Nullable error) {
                     if (error != nil) {
+                      const auto failure = OliphauntBrokerFailure(error);
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt backup failed";
-                      reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                        rejectFunction.call(runtime, createError(runtime, message));
+                      reject->call([message, failure](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
+                        rejectFunction.call(runtime, createError(runtime, message, failure));
                       });
                       return;
                     }
@@ -818,6 +847,11 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 runtime,
                 destination.getProperty(runtime, "storageName"),
                 "restore storageName");
+            const double startup = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "startupTimeoutMs"));
+            const double operation = copyOptionalMilliseconds(runtime, destination.getProperty(runtime, "operationTimeoutMs"));
+            NSMutableDictionary *options = [NSMutableDictionary dictionary];
+            if (startup != 0) options[@"startupTimeoutMs"] = @(startup);
+            if (operation != 0) options[@"operationTimeoutMs"] = @(operation);
             std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);
             auto artifactData = [NSData dataWithBytes:artifact.data() length:artifact.size()];
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
@@ -825,7 +859,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntRestoreExecutor"),
                 2,
-                [lifetime, weakSelf, callInvoker, storageKind, storagePath, storageName, artifactData](
+                [lifetime, weakSelf, callInvoker, storageKind, storagePath, storageName, options, artifactData](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
@@ -844,13 +878,15 @@ RCT_EXPORT_MODULE(Oliphaunt)
                   [strongSelf restoreDataForJsi:storageKind
                                       storagePath:storagePath
                                       storageName:storageName
+                                          options:options
                                       backupData:artifactData
                                       completion:^(NSError *_Nullable error) {
                     if (error != nil) {
+                      const auto failure = OliphauntBrokerFailure(error);
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt restore failed";
-                      reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                        rejectFunction.call(runtime, createError(runtime, message));
+                      reject->call([message, failure](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
+                        rejectFunction.call(runtime, createError(runtime, message, failure));
                       });
                       return;
                     }
@@ -950,7 +986,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
       retainOnFailure = self->_invalidated;
     }
     OliphauntFinishNativeDirectCleanup(claim, database, error, retainOnFailure);
-    if (error != nil) {
+    if (error != nil && ![error.userInfo[@"oliphauntClosed"] boolValue]) {
       OliphauntReject(reject, @"liboliphaunt_close_failed", @"liboliphaunt close failed", error);
       return;
     }
@@ -962,7 +998,8 @@ RCT_EXPORT_MODULE(Oliphaunt)
         }
       }
     }
-    resolve(nil);
+    if (error != nil) OliphauntReject(reject, @"liboliphaunt_close_failed", @"liboliphaunt close failed", error);
+    else resolve(nil);
   }];
 }
 

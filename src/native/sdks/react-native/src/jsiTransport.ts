@@ -11,6 +11,7 @@ export type JsiProtocolStreamOutcome =
 
 export type JsiRawProtocolTransport = {
   readonly version: 1;
+  readonly continuousTimeMillis?: () => number;
   /**
    * Schedules best-effort cleanup for this exact process-unique session
    * generation. A stale or already-closed generation is a successful no-op.
@@ -19,15 +20,19 @@ export type JsiRawProtocolTransport = {
   readonly execProtocolRaw: (
     handle: number,
     request: Uint8Array,
+    deadline?: number,
   ) => Promise<ArrayBuffer | ArrayBufferView>;
   readonly execProtocolStream: (
     handle: number,
     request: Uint8Array,
     onChunk: (chunk: ArrayBuffer | ArrayBufferView) => JsiProtocolChunkResult,
+    deadline?: number,
   ) => Promise<void>;
-  readonly backup: (handle: number) => Promise<ArrayBuffer | ArrayBufferView>;
+  readonly backup: (handle: number, deadline?: number) => Promise<ArrayBuffer | ArrayBufferView>;
   readonly restore: (
     destination: {
+      startupTimeoutMs?: number;
+      operationTimeoutMs?: number;
       storageKind: 'directory' | 'applicationData';
       storagePath?: string;
       storageName?: string;
@@ -69,8 +74,13 @@ export async function execProtocolRawJsi(
   transport: JsiRawProtocolTransport,
   handle: number,
   request: Uint8Array,
+  deadline?: number,
 ): Promise<Uint8Array> {
-  return binaryResponseToUint8Array(await transport.execProtocolRaw(handle, request));
+  return binaryResponseToUint8Array(
+    await (deadline === undefined
+      ? transport.execProtocolRaw(handle, request)
+      : transport.execProtocolRaw(handle, request, deadline)),
+  );
 }
 
 export async function execProtocolStreamJsi(
@@ -78,11 +88,12 @@ export async function execProtocolStreamJsi(
   handle: number,
   request: Uint8Array,
   onChunk: (chunk: Uint8Array) => void,
+  deadline?: number,
 ): Promise<JsiProtocolStreamOutcome> {
   let callbackFailed = false;
   let callbackFailure: unknown;
   try {
-    await transport.execProtocolStream(handle, request, (chunk) => {
+    const consume = (chunk: ArrayBuffer | ArrayBufferView) => {
       if (callbackFailed) {
         return protocolChunkFailure(callbackFailure);
       }
@@ -94,7 +105,10 @@ export async function execProtocolStreamJsi(
         callbackFailure = error;
         return protocolChunkFailure(error);
       }
-    });
+    };
+    await (deadline === undefined
+      ? transport.execProtocolStream(handle, request, consume)
+      : transport.execProtocolStream(handle, request, consume, deadline));
   } catch (error) {
     if (callbackFailed && isProtocolCallbackAborted(error)) {
       return { kind: 'callbackAborted', error: callbackFailure };
@@ -128,8 +142,11 @@ function protocolChunkFailure(error: unknown): Exclude<JsiProtocolChunkResult, u
 export async function backupJsi(
   transport: JsiRawProtocolTransport,
   handle: number,
+  deadline?: number,
 ): Promise<Uint8Array> {
-  return binaryResponseToUint8Array(await transport.backup(handle));
+  return binaryResponseToUint8Array(
+    await (deadline === undefined ? transport.backup(handle) : transport.backup(handle, deadline)),
+  );
 }
 
 export async function restoreJsi(

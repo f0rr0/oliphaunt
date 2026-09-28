@@ -1,0 +1,9 @@
+// Generated broker extension-point declaration; compile in the containing app.
+import ExtensionFoundation
+
+extension AppExtensionPoint {
+    @Definition static var oliphauntBrokerHost: AppExtensionPoint {
+        Name("OliphauntBroker")
+        UserInterface(false)
+    }
+}

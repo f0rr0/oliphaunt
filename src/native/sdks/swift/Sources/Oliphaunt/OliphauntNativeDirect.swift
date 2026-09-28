@@ -1,13 +1,19 @@
+import OliphauntCore
 import Foundation
 import COliphaunt
 import OliphauntNativeBindings
+#if canImport(Darwin)
+    import Darwin
+#else
+    import Glibc
+#endif
 
-struct OliphauntNativeDirectEngine: OliphauntEngine {
+package struct OliphauntNativeDirectEngine: OliphauntEngine {
     var libraryURL: URL?
     var runtimeDirectory: URL?
     var runtimeResources: OliphauntRuntimeResources?
 
-    init(
+    package init(
         libraryURL: URL? = nil,
         runtimeDirectory: URL? = nil,
         runtimeResources: OliphauntRuntimeResources? = nil
@@ -23,8 +29,7 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
             .first { !$0.isEmpty }
     }
 
-    func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
-        oliphaunt_swift_link_runtime()
+    package func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
         let options = try await Task.detached { [self] in
             try prepare(configuration: configuration)
         }.value
@@ -33,7 +38,9 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         } catch { throw nativeError(error) }
     }
 
-    private func prepare(configuration: OliphauntConfiguration) throws -> OpenOptions {
+    package func prepare(configuration: OliphauntConfiguration) throws -> OpenOptions {
+        oliphaunt_swift_link_runtime()
+        for resource in configuration.extensions { try resource.prepare() }
         try validateOliphauntStorage(configuration.storage)
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database, label: "database")
@@ -56,15 +63,20 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
             try validateOliphauntCompletePgdata(pgdata)
         case .empty:
             try requireOliphauntFreshRootRole(username)
-            var ownsPublishedPgdata = false
-            do {
+            // Publish PGDATA and its descriptor together. An interrupted initializer
+            // leaves only a sibling staging tree, keeping the live root retryable.
+            let stagingRoot = storageDirectory.deletingLastPathComponent().appendingPathComponent(
+                ".oliphaunt-root-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700])
+            let result: Result<Void, Error> = Result {
+                let pgdata = stagingRoot.appendingPathComponent("pgdata", isDirectory: true)
                 let preparation = try resolvedRuntime.resources?.preparePgdata(
                     at: pgdata,
-                    profile: resolvedRuntime.catalogProfile,
-                    didPublishDestination: { ownsPublishedPgdata = true }
+                    profile: resolvedRuntime.catalogProfile
                 )
                 if preparation == nil {
-                    let staging = storageDirectory.appendingPathComponent(
+                    let staging = stagingRoot.appendingPathComponent(
                         ".pgdata-initdb-\(UUID().uuidString)",
                         isDirectory: true
                     )
@@ -77,8 +89,7 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
                         )
                         return try publishOliphauntPreparedPgdata(
                             staging,
-                            to: pgdata,
-                            didPublishDestination: { ownsPublishedPgdata = true }
+                            to: pgdata
                         )
                     }
                     _ = try finishOliphauntStaging(result, operation: "PGDATA preparation") {
@@ -86,26 +97,15 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
                     }
                 }
                 try validateOliphauntCompletePgdata(pgdata)
-                try Self.writeManagedRootDescriptor(storageDirectory)
-            } catch let publicationError {
-                try recoverOliphauntManagedRootPublicationFailure(
-                    publicationError,
-                    ownsPublishedPgdata: ownsPublishedPgdata,
-                    descriptorDefinitelyAbsent: {
-                        try isOliphauntPathDefinitelyAbsent(
-                            storageDirectory.appendingPathComponent(
-                                ".oliphaunt.json",
-                                isDirectory: false
-                            )
-                        )
-                    },
-                    removePublishedPgdata: {
-                        if !(try isOliphauntPathDefinitelyAbsent(pgdata)) {
-                            try FileManager.default.removeItem(at: pgdata)
-                        }
-                    },
-                    syncRoot: { try syncOliphauntDirectory(storageDirectory) }
-                )
+                try Self.writeManagedRootDescriptor(stagingRoot)
+                // POSIX rename replaces an empty directory, never a nonempty root.
+                guard rename(stagingRoot.path, storageDirectory.path) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                try syncOliphauntDirectory(storageDirectory.deletingLastPathComponent())
+            }
+            try finishOliphauntStaging(result, operation: "database root publication") {
+                try removeOliphauntStagingIfPresent(stagingRoot)
             }
         }
 
@@ -125,7 +125,7 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         )
     }
 
-    func restore(destination: URL, bytes: Data) async throws {
+    package func restore(destination: URL, bytes: Data) async throws {
         oliphaunt_swift_link_runtime()
         try validateOliphauntDirectory(destination, label: "restore destination")
         do {
@@ -320,14 +320,24 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
 #endif
     }
 
-    private static func resolveStorage(_ storage: OliphauntDatabaseStorage) throws -> URL {
+    static func storageDirectory(_ storage: OliphauntDatabaseStorage) throws -> URL {
+        try validateOliphauntStorage(storage)
         let directory: URL
         switch storage {
         case .temporaryDirectory:
             directory = processTemporaryDirectory
+        case .applicationData(let name):
+            directory = try FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+            ).appendingPathComponent("Oliphaunt/\(name)", isDirectory: true)
         case .directory(let configuredDirectory):
             directory = configuredDirectory
         }
+        return directory
+    }
+
+    private static func resolveStorage(_ storage: OliphauntDatabaseStorage) throws -> URL {
+        let directory = try storageDirectory(storage)
         if FileManager.default.fileExists(atPath: directory.path) {
             let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             guard values.isDirectory == true, values.isSymbolicLink != true else {
@@ -581,84 +591,4 @@ private struct OliphauntFlatJSONParser {
     private enum ParseError: Error {
         case invalid
     }
-}
-
-private final class NativeDirectSession: OliphauntSession, Sendable {
-    private let database: NativeDatabase
-
-    init(database: NativeDatabase) { self.database = database }
-
-    func execProtocolRaw(_ bytes: Data) async throws -> Data {
-        let request = database.request()
-        return try await withTaskCancellationHandler {
-            do {
-                let result = try await request.execute(bytes: bytes)
-                return result
-            } catch NativeError.NotSubmitted {
-                throw OliphauntRequestNotSubmitted()
-            } catch {
-                throw nativeError(error)
-            }
-        } onCancel: { try? request.cancel() }
-    }
-
-    func execProtocolRawUncancelled(_ bytes: Data) async throws -> Data {
-        do { return try await database.request().execute(bytes: bytes) }
-        catch { throw nativeError(error) }
-    }
-
-    func execProtocolRawStream(
-        _ bytes: Data,
-        onChunk: @escaping @Sendable (Data) throws -> Void
-    ) async throws -> OliphauntProtocolStreamOutcome {
-        let request = database.request()
-        let sink = NativeStreamSink(onChunk: onChunk)
-        return try await withTaskCancellationHandler {
-            do {
-                try await request.stream(bytes: bytes, sink: sink)
-                return .complete
-            } catch NativeError.Callback {
-                // Rust reports Callback only after confirming ReadyForQuery.
-                guard let error = sink.callbackError else {
-                    throw OliphauntError.engine("stream callback failed without its original error")
-                }
-                return .callbackAborted(error)
-            } catch NativeError.NotSubmitted {
-                throw OliphauntRequestNotSubmitted()
-            } catch {
-                throw nativeError(error)
-            }
-        } onCancel: { try? request.cancel() }
-    }
-
-    func backup() async throws -> Data {
-        do { return try await database.backup() }
-        catch { throw nativeError(error) }
-    }
-    func cancel() async throws {
-        do { try await database.cancel() }
-        catch { throw nativeError(error) }
-    }
-    func close() async throws {
-        do { try await database.detach() }
-        catch { throw nativeError(error) }
-    }
-}
-
-private final class NativeStreamSink: ChunkSink, @unchecked Sendable {
-    private let lock = NSLock()
-    private let onChunk: @Sendable (Data) throws -> Void
-    private var error: Error?
-
-    init(onChunk: @escaping @Sendable (Data) throws -> Void) { self.onChunk = onChunk }
-    var callbackError: Error? { lock.withLock { error } }
-    func onChunk(bytes: Data) -> Bool {
-        do { try onChunk(bytes); return true }
-        catch { lock.withLock { self.error = error }; return false }
-    }
-}
-
-private func nativeError(_ error: Error) -> OliphauntError {
-    if case NativeError.Database(let detail) = error { return .engine(detail) }
-    return .engine(String(describing: error))
 }

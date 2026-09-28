@@ -12,7 +12,7 @@ public struct OliphauntExtension: Sendable, Equatable {
 
     /// Select an extension whose native resources are already linked by the application.
     public init(sqlName: String) throws {
-        _ = try OliphauntRuntimeResources.validateExtensionIds([sqlName])
+        _ = try validateOliphauntExtensionIds([sqlName])
         self.sqlName = sqlName
         self.product = nil
         self.version = nil
@@ -31,7 +31,7 @@ public struct OliphauntExtension: Sendable, Equatable {
         lhs.sqlName == rhs.sqlName && lhs.product == rhs.product && lhs.version == rhs.version
     }
 
-    func prepare() throws { try registration() }
+    package func prepare() throws { try registration() }
 
     public static let amcheck = OliphauntExtension(sqlName: "amcheck", registration: {})
     public static let autoExplain = OliphauntExtension(sqlName: "auto_explain", registration: {})

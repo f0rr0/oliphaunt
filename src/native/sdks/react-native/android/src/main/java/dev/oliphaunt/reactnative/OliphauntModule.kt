@@ -1,6 +1,7 @@
 package dev.oliphaunt.reactnative
 
 import com.facebook.proguard.annotations.DoNotStrip
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
@@ -11,9 +12,13 @@ import com.facebook.react.turbomodule.core.interfaces.TurboModuleWithJSIBindings
 import com.facebook.soloader.SoLoader
 import dev.oliphaunt.DatabaseStorage
 import dev.oliphaunt.Oliphaunt
+import dev.oliphaunt.OliphauntBroker
+import dev.oliphaunt.OliphauntBrokerException
+import dev.oliphaunt.OliphauntBrokerOptions
 import dev.oliphaunt.OliphauntConfig
 import dev.oliphaunt.OliphauntDatabase
 import dev.oliphaunt.PostgresStartupGuc
+import dev.oliphaunt.withOliphauntBridgeDeadline
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -72,6 +77,8 @@ class OliphauntModule(
 
   override fun getName(): String = NAME
 
+  override fun getTopology(): String = BuildConfig.OLIPHAUNT_TOPOLOGY
+
   @DoNotStrip
   external override fun getBindingsInstaller(): BindingsInstallerHolder
 
@@ -100,7 +107,8 @@ class OliphauntModule(
             throw error
           }
           val session = try {
-            Oliphaunt.open(
+            if (getTopology() == "broker") OliphauntBroker.open(reactContext, openConfig.config, openConfig.broker)
+            else Oliphaunt.open(
               context = reactContext,
               config = openConfig.config,
               runtimeDirectory = openConfig.runtimeDirectory,
@@ -131,14 +139,14 @@ class OliphauntModule(
         }
       }.fold(
         onSuccess = promise::resolve,
-        onFailure = { error -> promise.reject("liboliphaunt_open_failed", error.message, error) },
+        onFailure = { error -> promise.rejectOliphaunt("liboliphaunt_open_failed", error) },
       )
     }
     synchronized(lifecycleLock) {
       if (invalidated.get()) {
         job.cancel()
         val error = IllegalStateException("React Native Oliphaunt module has been invalidated")
-        promise.reject("liboliphaunt_invalidated", error.message, error)
+        promise.rejectOliphaunt("liboliphaunt_invalidated", error)
         return
       }
       if (!pendingOpen.compareAndSet(null, job)) {
@@ -146,7 +154,7 @@ class OliphauntModule(
         val error = IllegalStateException(
           "React Native nativeDirect already has an active or pending open; close the active instance before opening another",
         )
-        promise.reject("liboliphaunt_open_failed", error.message, error)
+        promise.rejectOliphaunt("liboliphaunt_open_failed", error)
         return
       }
       job.invokeOnCompletion { pendingOpen.compareAndSet(job, null) }
@@ -157,6 +165,7 @@ class OliphauntModule(
   @DoNotStrip
   fun execProtocolRawBytes(
     handle: Long,
+    deadline: Long,
     request: ByteArray,
     callback: OliphauntJsiPromiseCallback,
   ) {
@@ -173,10 +182,10 @@ class OliphauntModule(
     }
     scope.launch {
       runCatching {
-        session.execProtocolRaw(request)
+        withOliphauntBridgeDeadline(deadline) { session.execProtocolRaw(request) }
       }.fold(
         onSuccess = callback::resolveBytes,
-        onFailure = { error -> callback.reject("liboliphaunt_exec_failed", error.message) },
+        onFailure = { error -> callback.reject(error) },
       )
     }
   }
@@ -184,6 +193,7 @@ class OliphauntModule(
   @DoNotStrip
   fun execProtocolStreamBytes(
     handle: Long,
+    deadline: Long,
     request: ByteArray,
     callback: OliphauntJsiStreamCallback,
   ) {
@@ -200,12 +210,14 @@ class OliphauntModule(
     }
     scope.launch {
       try {
+        withOliphauntBridgeDeadline(deadline) {
         session.execProtocolRawStream(request) { chunk ->
           try {
             callback.emitChunk(chunk)
           } catch (error: Throwable) {
             throw ReactNativeProtocolStreamCallbackFailure(error)
           }
+        }
         }
         callback.resolveUnit()
       } catch (error: Throwable) {
@@ -214,7 +226,7 @@ class OliphauntModule(
           // callback-aborted result after native recovery reached ReadyForQuery.
           callback.rejectCallbackAborted(error.callbackError.message)
         } else {
-          callback.reject("liboliphaunt_stream_failed", error.message)
+          callback.reject(error)
         }
       }
     }
@@ -223,6 +235,7 @@ class OliphauntModule(
   @DoNotStrip
   fun backupBytes(
     handle: Long,
+    deadline: Long,
     callback: OliphauntJsiPromiseCallback,
   ) {
     val key = try {
@@ -238,10 +251,10 @@ class OliphauntModule(
     }
     scope.launch {
       runCatching {
-        session.backup()
+        withOliphauntBridgeDeadline(deadline) { session.backup() }
       }.fold(
         onSuccess = callback::resolveBytes,
-        onFailure = { error -> callback.reject("liboliphaunt_backup_failed", error.message) },
+        onFailure = { error -> callback.reject(error) },
       )
     }
   }
@@ -279,7 +292,7 @@ class OliphauntModule(
     val key = try {
       requireReactNativeHandle(handle)
     } catch (error: IllegalArgumentException) {
-      promise.reject("liboliphaunt_invalid_handle", error.message, error)
+      promise.rejectOliphaunt("liboliphaunt_invalid_handle", error)
       return
     }
     scope.launch {
@@ -287,16 +300,17 @@ class OliphauntModule(
         sessionMutex.withLock {
           val session = sessions[key]
           if (session != null) {
-            session.close()
-            if (sessions.remove(key, session)) {
-              nativeDirectClaim?.let { claim -> nativeDirectProcessOwner.release(claim) }
-              nativeDirectClaim = null
+            try { session.close() } finally {
+              if (session.isClosed && sessions.remove(key, session)) {
+                nativeDirectClaim?.let { claim -> nativeDirectProcessOwner.release(claim) }
+                nativeDirectClaim = null
+              }
             }
           }
         }
       }.fold(
         onSuccess = { promise.resolve(null) },
-        onFailure = { error -> promise.reject("liboliphaunt_close_failed", error.message, error) },
+        onFailure = { error -> promise.rejectOliphaunt("liboliphaunt_close_failed", error) },
       )
     }
   }
@@ -338,27 +352,37 @@ class OliphauntModule(
     storageKind: String,
     storagePath: String?,
     storageName: String?,
+    startupTimeoutMs: Long,
+    operationTimeoutMs: Long,
     artifact: ByteArray,
     callback: OliphauntJsiPromiseCallback,
   ) {
     scope.launch {
       runCatching {
-        val destination = when (storageKind) {
-          "directory" -> File(validatePath(storagePath, "restore destination directory"))
-          "applicationData" -> File(
-            File(reactContext.filesDir, "Oliphaunt"),
-            validateApplicationDataName(storageName),
-          )
+        if (getTopology() == "broker") {
+          require(storageKind == "applicationData") { "broker restore requires named applicationData storage" }
+          val archive = File.createTempFile("oliphaunt-restore-", ".tar", reactContext.cacheDir)
+          try {
+            archive.outputStream().use { it.write(artifact) }
+            OliphauntBroker.restore(reactContext, DatabaseStorage.ApplicationData(validateApplicationDataName(storageName)), archive,
+              OliphauntBrokerOptions(startupTimeoutMs.takeIf { it > 0 } ?: 30_000, operationTimeoutMs.takeIf { it > 0 }))
+          } finally { archive.delete() }
+          return@runCatching
+        }
+        require(startupTimeoutMs == 0L && operationTimeoutMs == 0L) { "broker timeouts require a broker native build" }
+        val storage = when (storageKind) {
+          "directory" -> DatabaseStorage.Directory(File(validatePath(storagePath, "restore destination directory")))
+          "applicationData" -> DatabaseStorage.ApplicationData(validateApplicationDataName(storageName))
           else -> throw IllegalArgumentException("unknown restore destination kind '$storageKind'")
         }
         Oliphaunt.restore(
           context = reactContext,
-          destination = destination,
+          storage = storage,
           bytes = artifact,
         )
       }.fold(
         onSuccess = { callback.resolveUnit() },
-        onFailure = { error -> callback.reject("liboliphaunt_restore_failed", error.message) },
+        onFailure = { error -> callback.reject(error) },
       )
     }
   }
@@ -370,7 +394,7 @@ class OliphauntModule(
         session.cancel()
       }.fold(
         onSuccess = { promise.resolve(null) },
-        onFailure = { error -> promise.reject("liboliphaunt_cancel_failed", error.message, error) },
+        onFailure = { error -> promise.rejectOliphaunt("liboliphaunt_cancel_failed", error) },
       )
     }
   }
@@ -379,7 +403,7 @@ class OliphauntModule(
     val key = try {
       requireReactNativeHandle(handle)
     } catch (error: IllegalArgumentException) {
-      promise.reject("liboliphaunt_invalid_handle", error.message, error)
+      promise.rejectOliphaunt("liboliphaunt_invalid_handle", error)
       return null
     }
     val session = sessions[key]
@@ -397,7 +421,7 @@ class OliphauntModule(
       )
       "applicationData" -> {
         val name = validateApplicationDataName(config.string("storageName"))
-        DatabaseStorage.Directory(File(File(reactContext.filesDir, "Oliphaunt"), name))
+        DatabaseStorage.ApplicationData(name)
       }
       else -> throw IllegalArgumentException("unknown database storage kind '$kind'")
     }
@@ -405,7 +429,17 @@ class OliphauntModule(
     val username = config.startupIdentity("username")
     val database = config.startupIdentity("database")
 
+    require(getTopology() == "broker" || (!config.hasKey("startupTimeoutMs") && !config.hasKey("operationTimeoutMs"))) {
+      "broker timeouts require a broker native build"
+    }
+    fun timeout(key: String): Long? {
+      if (!config.hasKey(key) || config.isNull(key)) return null
+      val value = config.getDouble(key)
+      require(value.isFinite() && value > 0 && value <= 9007199254740991.0 && value.toLong().toDouble() == value) { "invalid broker timeout" }
+      return value.toLong()
+    }
     return ReactNativeAndroidOpenConfig(
+      broker = OliphauntBrokerOptions(timeout("startupTimeoutMs") ?: 30000, timeout("operationTimeoutMs")),
       config = OliphauntConfig(
         storage = storage,
         startupGucs = config.startupGucs("startupGUCs"),
@@ -420,6 +454,7 @@ class OliphauntModule(
 
   private data class ReactNativeAndroidOpenConfig(
     val config: OliphauntConfig,
+    val broker: OliphauntBrokerOptions,
     val runtimeDirectory: File?,
     val resourceRoot: File?,
   )
@@ -567,4 +602,15 @@ class OliphauntModule(
         ?: environment("OLIPHAUNT_RUNTIME_DIR")
 
   }
+}
+
+private fun Promise.rejectOliphaunt(code: String, error: Throwable) {
+  val info = (error as? OliphauntBrokerException)?.let { broker ->
+    Arguments.createMap().apply {
+      putString("reason", broker.reason.name.replaceFirstChar { it.lowercaseChar() })
+      putString("execution", broker.execution.name.replaceFirstChar { it.lowercaseChar() })
+      putBoolean("requiresReopen", broker.requiresReopen)
+    }
+  }
+  reject(code, error.message, error, info)
 }

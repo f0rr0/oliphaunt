@@ -1,5 +1,10 @@
 # Oliphaunt React Native SDK
 
+Broker mode is an explicit alternative to the default native-direct path. See
+[mobile broker setup and semantics](../../../docs/content/learn/mobile-stability.mdx#broker-mode)
+for platform requirements, resource placement, deadlines, errors, and migration.
+Apple and installed-worker qualification remains required before release support.
+
 `@oliphaunt/react-native` embeds PostgreSQL 18 on the React Native New
 Architecture. It presents the same deliberate database vocabulary as the other
 native SDKs while using platform-native storage and lifecycle adapters.
@@ -14,7 +19,7 @@ future platform targets.
 For Expo, install the extension packages your app needs and enable the plugin:
 
 ```sh
-npx expo install @oliphaunt/react-native @oliphaunt/extension-vector
+npx expo install @oliphaunt/react-native @oliphaunt/seed-native-ios-datum64-standard @oliphaunt/extension-vector
 ```
 
 ```json
@@ -25,7 +30,7 @@ npx expo install @oliphaunt/react-native @oliphaunt/extension-vector
 }
 ```
 
-Prebuild discovers installed extension packages and `@oliphaunt/icu` through
+Prebuild discovers installed seed and extension packages and `@oliphaunt/icu` through
 the app's Expo autolinker. It follows dependencies, workspace links, and Expo's
 platform-specific `searchPaths` and `exclude` settings. Install resource packages
 under their published names. Conflicting versions must be deduplicated before
@@ -38,22 +43,28 @@ Per-database extension selection
 still belongs in `open()`.
 
 Initialization seeds are optional dependencies owned by `database-resources`.
-On Android, `seedProfile` selects the standard or ICU Maven seed; omit it when
-opening an existing database or supplying application-owned seed resources.
-On iOS, install exactly one `@oliphaunt/seed-native-ios-datum64-standard` or
-`@oliphaunt/seed-native-ios-datum64-icu` npm package. Set `seedProfile` to
-`standard` or `icu`; the plugin adds the selected resource CocoaPod to the app.
-Omit it when using an existing database or application-owned resources.
-An ICU profile also requires the separately installed
-`@oliphaunt/icu` package. Its data bundle stays separate from the runtime payload;
-the Swift initializer validates and uses it with the selected seed.
-These are build-time choices and do not add a database-open option.
+Fresh mobile databases require a seed; `open()` initializes them automatically.
+Install one of `@oliphaunt/seed-native-ios-datum64-standard` or
+`@oliphaunt/seed-native-ios-datum64-icu`. The plugin infers its profile and version,
+adds the iOS resource CocoaPod, and selects the matching Android Maven seed.
+If both profiles are installed, select `seedProfile: 'standard'` or `'icu'`
+explicitly. Android-only apps can set `seedProfile` without installing an iOS
+seed package. Existing databases, physical restore, and application-owned seed
+resources do not require these packages. An ICU seed also requires
+`@oliphaunt/icu`. Resource selection is a build-time choice.
+
+The default topology is `direct`. To use broker mode on both platforms, set
+`topology: 'broker'` in the Expo plugin options. The plugin defaults the iOS
+minimum to 26.0; an explicitly lower minimum is rejected. Native target setup
+requires prebuild configuration, so topology belongs here once, not in each
+`open()` or `restore()` call. Rebuild with `npx expo prebuild --clean` after
+changing topology. See the [broker setup](../../../docs/content/learn/mobile-stability.mdx#react-native-and-expo).
 
 ```typescript
-import Oliphaunt from '@oliphaunt/react-native';
+import Oliphaunt, { applicationData } from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
-  storage: { kind: 'applicationData', name: 'primary' },
+  storage: applicationData('primary'),
   startupGUCs: { application_name: 'my-app' },
 });
 
@@ -64,10 +75,7 @@ console.log(result.rows[0]?.value);
 
 const bytes = await db.backup();
 await db.close();
-await Oliphaunt.restore(
-  { kind: 'applicationData', name: 'restored' },
-  bytes,
-);
+await Oliphaunt.restore(applicationData('restored'), bytes);
 ```
 
 `username` selects an existing PostgreSQL role. New roots are bootstrapped with
@@ -75,7 +83,10 @@ await Oliphaunt.restore(
 
 Storage is `temporaryDirectory`, an explicit `directory`, or an
 `applicationData` name resolved by the native platform adapter. Restore accepts
-only persistent directory/application-data destinations.
+only persistent destinations. Broker builds accept application-data names and
+temporary storage for open, and application-data names for restore; direct
+builds also accept explicit directories. Omitting storage keeps the temporary
+default in both topologies.
 
 ## API contract
 
@@ -125,7 +136,10 @@ speculative SDK `COMMIT` or `ROLLBACK`.
 
 ## Backup and storage
 
-`directory` from `@oliphaunt/react-native/storage` converts an absolute native
+`applicationData(name)` and `directory(path)` are exported from both
+`@oliphaunt/react-native` and `@oliphaunt/react-native/storage`.
+`applicationData(name)` selects named persistent storage managed by the native
+platform. `directory` converts an absolute native
 path or a local `file:` URI into a directory storage descriptor for open or
 restore. For example, `directory('file:///data/my%20database')` selects
 `/data/my database`. It performs no filesystem operations.

@@ -307,6 +307,8 @@ pub struct Error {
 
 #[derive(Debug, Clone)]
 enum ErrorInner {
+    #[cfg(feature = "mobile-bindings")]
+    Broker(oliphaunt_broker::mobile::Completion),
     EngineStopped,
     Engine(String),
     Postgres(Box<PostgresError>),
@@ -326,6 +328,8 @@ impl Error {
     /// Return the stable recovery category for this failure.
     pub const fn kind(&self) -> ErrorKind {
         match &self.inner {
+            #[cfg(feature = "mobile-bindings")]
+            ErrorInner::Broker(_) => ErrorKind::Other,
             ErrorInner::EngineStopped => ErrorKind::Lifecycle,
             ErrorInner::Postgres(_) => ErrorKind::Postgres,
             ErrorInner::TransactionActive => ErrorKind::TransactionActive,
@@ -342,6 +346,30 @@ impl Error {
             ErrorInner::Postgres(error) => Some(error.as_ref()),
             _ => None,
         }
+    }
+
+    #[cfg(feature = "mobile-bindings")]
+    #[doc(hidden)]
+    pub fn broker_failure(&self) -> Option<&oliphaunt_broker::mobile::Completion> {
+        match &self.inner {
+            ErrorInner::Broker(completion) => Some(completion),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "mobile-bindings")]
+    pub(crate) fn broker(completion: oliphaunt_broker::mobile::Completion) -> Self {
+        Self {
+            inner: ErrorInner::Broker(completion),
+        }
+    }
+
+    pub(crate) fn requires_reopen(&self) -> bool {
+        #[cfg(feature = "mobile-bindings")]
+        if let Some(completion) = self.broker_failure() {
+            return completion.requires_reopen;
+        }
+        true
     }
 
     /// Return both failures when a transaction callback and rollback failed.
@@ -418,6 +446,8 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.inner {
+            #[cfg(feature = "mobile-bindings")]
+            ErrorInner::Broker(completion) => f.write_str(&completion.detail),
             ErrorInner::EngineStopped => f.write_str("native database session has stopped"),
             ErrorInner::Engine(message) => f.write_str(message),
             ErrorInner::Postgres(error) => error.fmt(f),

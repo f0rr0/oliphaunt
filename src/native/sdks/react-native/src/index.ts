@@ -1,12 +1,14 @@
 import NativeOliphaunt from './specs/NativeOliphaunt';
 import { createOliphauntClient } from './client';
-export { directory } from './storage';
+export { directory, applicationData } from './storage';
 
 export type {
   BinaryInput,
   DatabaseStorage,
   RestoreDestination,
   OpenConfig,
+  BrokerOptions,
+  RestoreOptions,
   OliphauntDatabase,
   OliphauntClient,
   OliphauntTransaction,

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { directory } from '../storage';
+import { directory, applicationData } from '../storage';
 
 test('directory accepts native paths and decodes local filesystem URIs once', () => {
   expect(directory('/data/my db')).toEqual({ kind: 'directory', path: '/data/my db' });
@@ -27,5 +27,13 @@ test('directory rejects non-local resources and malformed file URIs', () => {
     'file:///bad%',
   ]) {
     expect(() => directory(input), input).toThrow();
+  }
+});
+
+test('applicationData validates and freezes the portable storage name', () => {
+  expect(applicationData(' primary ')).toEqual({ kind: 'applicationData', name: 'primary' });
+  expect(Object.isFrozen(applicationData('primary'))).toBe(true);
+  for (const name of ['', '.', '..', '../db', '/data/db', 'a/b', 'a\\b', 'a'.repeat(129)]) {
+    expect(() => applicationData(name)).toThrow();
   }
 });

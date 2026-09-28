@@ -1,5 +1,6 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -8,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const {
+  configureBroker,
+  addBrokerTarget,
+  guardBrokerApplication,
   extensionPackageName,
   ensureIosDeploymentTarget,
   ensureIosConfigDeploymentTarget,
@@ -220,6 +224,7 @@ test('Expo discovery follows workspace dependencies and supplies the same resour
     const config = withOliphaunt({ name: 'consumer', slug: 'consumer' });
     await config.mods.android.dangerous({ ...config, modRequest: { projectRoot: app } });
     const output = fs.readFileSync(path.join(app, 'android/gradle.properties'), 'utf8');
+    assert.match(output, /^oliphauntTopology=direct$/m);
     assert.match(output, /^oliphauntExtensions=vector$/m);
     assert.match(output, /^oliphauntIcu=true$/m);
     assert.match(output, /^oliphauntDatabaseResourcesVersion=1.2.3$/m);
@@ -291,6 +296,7 @@ test('normalizes exact extension selection', () => {
   });
 
   assert.deepEqual(normalized, {
+    topology: 'direct',
     seedProfile: undefined,
     databaseResourcesVersion: undefined,
     extensions: ['pg_trgm', 'vector'],
@@ -788,5 +794,153 @@ test('carrier discovery and staging fail closed', async () => {
     );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('broker Expo target, EAS identity and worker-only pods are idempotent on the upstream template', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-broker-project-'));
+  try {
+    const config = configureBroker({
+      ios: { bundleIdentifier: 'dev.example.app' },
+    });
+    assert.equal(config.ios.deploymentTarget, '26.0');
+    assert.equal(
+      configureBroker({ ios: { bundleIdentifier: 'dev.example.app', deploymentTarget: '27.0' } })
+        .ios.deploymentTarget,
+      '27.0',
+    );
+    assert.deepEqual(configureBroker(structuredClone(config)), config);
+    assert.throws(
+      () =>
+        configureBroker({ ios: { bundleIdentifier: 'dev.example.app', deploymentTarget: '17.0' } }),
+      /26.0/,
+    );
+    const expoManifest = require.resolve('expo/package.json', {
+      paths: [path.resolve(sdkRoot, '../../../examples/native/react-native-expo')],
+    });
+    const expoRequire = createRequire(expoManifest);
+    const pluginsRequire = createRequire(expoRequire.resolve('@expo/config-plugins/package.json'));
+    const xcode = pluginsRequire('xcode');
+    const projectFile = path.join(root, 'project.pbxproj');
+    fs.writeFileSync(
+      projectFile,
+      execFileSync('tar', [
+        '-xOf',
+        path.join(path.dirname(expoManifest), 'template.tgz'),
+        'package/ios/HelloWorld.xcodeproj/project.pbxproj',
+      ]),
+    );
+    const project = xcode.project(projectFile);
+    project.parseSync();
+    addBrokerTarget(project, root, config);
+    const first = project.writeSync();
+    addBrokerTarget(project, root, config);
+    assert.equal(project.writeSync(), first);
+    assert.match(first, /com.apple.product-type.extensionkit-extension/);
+    assert.match(first, /PRODUCT_MODULE_NAME = OliphauntBrokerWorker/);
+    assert.match(first, /EXTENSIONS_FOLDER_PATH/);
+    assert.match(first, /OliphauntBrokerHost.swift in Sources/);
+    const group = project.pbxGroupByName('OliphauntBroker');
+    const source = project.hash.project.objects.PBXFileReference[group.children[0].value];
+    assert.equal(
+      path.join(group.path.replaceAll('"', ''), source.path.replaceAll('"', '')),
+      'OliphauntBroker/OliphauntBroker.swift',
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, 'OliphauntBrokerHost.swift'), 'utf8'),
+      /Name\("OliphauntBroker"\)/,
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, 'OliphauntBroker/OliphauntBroker.swift'), 'utf8'),
+      /host: "dev.example.app"/,
+    );
+    const pods = insertIosPodfileBlock(
+      "target 'HelloWorld' do\n  config = use_native_modules!\nend\n",
+      { topology: 'broker' },
+    );
+    assert.equal(insertIosPodfileBlock(pods, { topology: 'broker' }), pods);
+    assert.ok(
+      pods.indexOf("ENV['OLIPHAUNT_REACT_NATIVE_TOPOLOGY']") < pods.indexOf('use_native_modules!'),
+    );
+    const [host, worker] = pods.split("target 'OliphauntBroker' do");
+    assert.match(host, /pod 'OliphauntBroker'/);
+    assert.doesNotMatch(host, /pod '(?:COliphaunt|Oliphaunt|OliphauntReactNativePayload)'/);
+    assert.doesNotMatch(worker, /inherit!/);
+    assert.match(host, /use_native_modules!\nend\n/);
+    assert.match(worker, /pod 'OliphauntBrokerExtension'/);
+    assert.match(worker, /pod 'OliphauntReactNativePayload'/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('broker process guard skips app initialization once in Kotlin and Java', () => {
+  for (const language of ['kt', 'java'] as const) {
+    const source =
+      'override fun onCreate() {\n    super.onCreate()\n    initializeReactNative()\n}';
+    const guarded = guardBrokerApplication(source, language);
+    assert.equal(guardBrokerApplication(guarded, language), guarded);
+    assert.ok(guarded.indexOf('isWorkerProcess') < guarded.indexOf('initializeReactNative()'));
+    assert.match(
+      guarded,
+      language === 'java'
+        ? /OliphauntBroker.INSTANCE.isWorkerProcess/
+        : /OliphauntBroker.isWorkerProcess/,
+    );
+  }
+});
+
+test('Expo discovers a single installed seed and binds its resource version on both platforms', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-seed-discovery-'));
+  const standard = '@oliphaunt/seed-native-ios-datum64-standard';
+  const icu = '@oliphaunt/seed-native-ios-datum64-icu';
+  try {
+    writeExpoApp(root, { [standard]: '1.2.3' });
+    writeJson(path.join(root, 'node_modules', standard, 'package.json'), {
+      name: standard,
+      version: '1.2.3',
+    });
+    fs.writeFileSync(
+      path.join(root, 'node_modules', standard, 'OliphauntSeedNativeIOSStandard.podspec'),
+      'Pod::Spec.new {}',
+    );
+    for (const platform of ['ios', 'android']) {
+      const discovered = await resolveInstalledResources(root, platform, { topology: 'broker' });
+      assert.equal(discovered.seedProfile, 'standard');
+      assert.equal(discovered.databaseResourcesVersion, '1.2.3');
+      assert.equal(discovered.topology, 'broker');
+      assert.match(
+        insertIosPodfileBlock('use_expo_modules!\n', { ...discovered, projectRoot: root }),
+        /OliphauntSeedNativeIOSStandard/,
+      );
+      await assert.rejects(
+        resolveInstalledResources(root, platform, { databaseResourcesVersion: '9.0.0' }),
+        /must match installed/,
+      );
+    }
+    writeExpoApp(root, { [standard]: '1.2.3', [icu]: '1.2.3', '@oliphaunt/icu': '1.2.3' });
+    writeJson(path.join(root, 'node_modules', icu, 'package.json'), {
+      name: icu,
+      version: '1.2.3',
+    });
+    writeJson(path.join(root, 'node_modules/@oliphaunt/icu/package.json'), {
+      name: '@oliphaunt/icu',
+      version: '1.2.3',
+    });
+    for (const platform of ['ios', 'android']) {
+      await assert.rejects(
+        resolveInstalledResources(root, platform),
+        /Multiple installed seed profiles/,
+      );
+      const selected = await resolveInstalledResources(root, platform, { seedProfile: 'icu' });
+      assert.equal(selected.seedProfile, 'icu');
+      assert.equal(selected.icu, true);
+      writeExpoApp(root, { [standard]: '1.2.3' }, { [platform]: { exclude: [standard] } });
+      assert.equal((await resolveInstalledResources(root, platform)).seedProfile, undefined);
+      writeExpoApp(root, { [standard]: '1.2.3', [icu]: '1.2.3', '@oliphaunt/icu': '1.2.3' });
+    }
+    assert.throws(() => normalizeOptions({ execution: 'broker' }), /use topology/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

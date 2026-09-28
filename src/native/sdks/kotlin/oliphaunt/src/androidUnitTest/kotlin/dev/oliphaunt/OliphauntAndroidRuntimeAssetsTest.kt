@@ -497,18 +497,15 @@ class OliphauntAndroidRuntimeAssetsTest {
         try {
             writeCompletePgdata(staging)
 
-            var didPublish = false
             val publication =
                 OliphauntAndroidRuntimeAssets.publishPreparedAndroidPgdata(
                     staging,
                     destination,
-                    didPublishDestination = { didPublish = true },
                     syncPublicationTree = {},
                     syncParentDirectory = {},
                 )
 
             assertEquals(AndroidPgdataPublication.Published, publication)
-            assertTrue(didPublish)
             assertFalse(staging.exists())
             assertEquals(
                 java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"),
@@ -541,73 +538,6 @@ class OliphauntAndroidRuntimeAssetsTest {
         assertTrue(failureError.message.orEmpty().contains("PGDATA preparation failed"))
         assertTrue(failureError.message.orEmpty().contains("staging cleanup failed"))
         assertEquals(2, failureError.suppressed.size)
-    }
-
-    @Test
-    fun managedRootFailureCleansOnlyWhenDescriptorIsDefinitelyAbsent() {
-        data class Scenario(
-            val owns: Boolean,
-            val descriptorAbsent: Boolean,
-            val expectedCalls: List<String>,
-        )
-
-        val scenarios =
-            listOf(
-                Scenario(owns = true, descriptorAbsent = true, expectedCalls = listOf("remove", "sync")),
-                Scenario(owns = true, descriptorAbsent = false, expectedCalls = emptyList()),
-                Scenario(owns = false, descriptorAbsent = true, expectedCalls = emptyList()),
-            )
-        for (scenario in scenarios) {
-            val calls = mutableListOf<String>()
-            assertFailsWith<ManagedRootPublicationTestException> {
-                recoverAndroidManagedRootPublicationFailure(
-                    publicationError = ManagedRootPublicationTestException(),
-                    ownsPublishedPgdata = scenario.owns,
-                    descriptorDefinitelyAbsent = { scenario.descriptorAbsent },
-                    removePublishedPgdata = { calls += "remove" },
-                    syncRoot = { calls += "sync" },
-                )
-            }
-            assertEquals(scenario.expectedCalls, calls)
-        }
-    }
-
-    @Test
-    fun managedRootFailureSurfacesCleanupFailure() {
-        val error =
-            assertFailsWith<OliphauntException> {
-                recoverAndroidManagedRootPublicationFailure(
-                    publicationError = ManagedRootPublicationTestException(),
-                    ownsPublishedPgdata = true,
-                    descriptorDefinitelyAbsent = { true },
-                    removePublishedPgdata = { error("cleanup failed") },
-                    syncRoot = {},
-                )
-            }
-
-        assertTrue(error.message.orEmpty().contains("descriptor publication failed"))
-        assertTrue(error.message.orEmpty().contains("failed to clean uncommitted PGDATA"))
-        assertEquals(2, error.suppressed.size)
-    }
-
-    @Test
-    fun managedRootFailurePreservesPgdataWhenDescriptorInspectionIsUncertain() {
-        val calls = mutableListOf<String>()
-        val error =
-            assertFailsWith<OliphauntException> {
-                recoverAndroidManagedRootPublicationFailure(
-                    publicationError = ManagedRootPublicationTestException(),
-                    ownsPublishedPgdata = true,
-                    descriptorDefinitelyAbsent = { error("inspection failed") },
-                    removePublishedPgdata = { calls += "remove" },
-                    syncRoot = { calls += "sync" },
-                )
-            }
-
-        assertTrue(error.message.orEmpty().contains("descriptor publication is uncertain"))
-        assertTrue(error.message.orEmpty().contains("publication failed"))
-        assertTrue(calls.isEmpty())
-        assertEquals(2, error.suppressed.size)
     }
 
     @Test

@@ -1,6 +1,9 @@
 use liboliphaunt_native_bindings::NativeOpenOptions;
 use std::sync::Arc;
 
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+mod broker;
+
 uniffi::setup_scaffolding!();
 
 #[uniffi::export]
@@ -20,10 +23,56 @@ pub enum NativeError {
     Database { detail: String },
     #[error("stream callback stopped delivery")]
     Callback,
+    #[error("{detail}")]
+    Broker {
+        reason: BrokerReason,
+        execution: BrokerExecution,
+        requires_reopen: bool,
+        detail: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, uniffi::Enum)]
+pub enum BrokerExecution {
+    NotStarted,
+    Completed,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, uniffi::Enum)]
+pub enum BrokerReason {
+    InvalidRequest,
+    Cancelled,
+    Deadline,
+    WorkerInterrupted,
+    Transport,
+    Database,
+    Callback,
 }
 
 impl From<oliphaunt::Error> for NativeError {
     fn from(error: oliphaunt::Error) -> Self {
+        if let Some(failure) = error.broker_failure() {
+            use oliphaunt::mobile::{Execution, Reason};
+            return Self::Broker {
+                reason: match failure.reason {
+                    Reason::InvalidRequest => BrokerReason::InvalidRequest,
+                    Reason::Cancelled => BrokerReason::Cancelled,
+                    Reason::Deadline => BrokerReason::Deadline,
+                    Reason::WorkerInterrupted => BrokerReason::WorkerInterrupted,
+                    Reason::Transport => BrokerReason::Transport,
+                    Reason::Database | Reason::Success => BrokerReason::Database,
+                    Reason::Callback => BrokerReason::Callback,
+                },
+                execution: match failure.execution {
+                    Execution::NotStarted => BrokerExecution::NotStarted,
+                    Execution::Completed => BrokerExecution::Completed,
+                    Execution::Unknown => BrokerExecution::Unknown,
+                },
+                requires_reopen: failure.requires_reopen,
+                detail: failure.detail.clone(),
+            };
+        }
         Self::Database {
             detail: error.to_string(),
         }
@@ -50,6 +99,8 @@ pub trait ChunkSink: Send + Sync {
 #[derive(uniffi::Object)]
 pub struct NativeDatabase {
     database: oliphaunt::AsyncOliphaunt,
+    #[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+    connection: Option<Arc<oliphaunt::mobile::broker::Connection>>,
 }
 
 #[uniffi::export]
@@ -67,7 +118,11 @@ impl NativeDatabase {
             startup_args: options.startup_args,
         })
         .await?;
-        Ok(Arc::new(Self { database }))
+        Ok(Arc::new(Self {
+            database,
+            #[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+            connection: None,
+        }))
     }
 
     pub fn request(&self) -> Arc<NativeRequest> {
@@ -78,9 +133,6 @@ impl NativeDatabase {
 
     pub async fn cancel(&self) -> Result<(), NativeError> {
         Ok(self.database.cancel().await?)
-    }
-    pub async fn backup(&self) -> Result<Vec<u8>, NativeError> {
-        Ok(self.database.backup().await?)
     }
     pub async fn detach(&self) -> Result<(), NativeError> {
         Ok(self.database.close().await?)
@@ -94,14 +146,18 @@ pub struct NativeRequest {
 
 #[uniffi::export]
 impl NativeRequest {
+    pub async fn backup(&self) -> Result<Vec<u8>, NativeError> {
+        self.request
+            .backup()
+            .await
+            .map_err(|error| self.failure(error))
+    }
+
     pub async fn execute(&self, bytes: Vec<u8>) -> Result<Vec<u8>, NativeError> {
-        self.request.execute(bytes).await.map_err(|error| {
-            if self.request.was_cancelled() && !self.request.was_submitted() {
-                NativeError::NotSubmitted
-            } else {
-                error.into()
-            }
-        })
+        self.request
+            .execute(bytes)
+            .await
+            .map_err(|error| self.failure(error))
     }
 
     pub async fn stream(
@@ -119,7 +175,15 @@ impl NativeRequest {
             })
             .await
             .map_err(|error| {
-                if self.request.was_cancelled() && !self.request.was_submitted() {
+                let broker_failure = match &error {
+                    oliphaunt::RawStreamError::Database(error)
+                    | oliphaunt::RawStreamError::CallbackPanicked(error) => {
+                        error.broker_failure().is_some()
+                    }
+                    _ => false,
+                };
+                if !broker_failure && self.request.was_cancelled() && !self.request.was_submitted()
+                {
                     NativeError::NotSubmitted
                 } else {
                     match error {
@@ -136,5 +200,18 @@ impl NativeRequest {
 
     pub fn cancel(&self) -> Result<(), NativeError> {
         Ok(self.request.cancel()?)
+    }
+}
+
+impl NativeRequest {
+    fn failure(&self, error: oliphaunt::Error) -> NativeError {
+        if error.broker_failure().is_none()
+            && self.request.was_cancelled()
+            && !self.request.was_submitted()
+        {
+            NativeError::NotSubmitted
+        } else {
+            error.into()
+        }
     }
 }

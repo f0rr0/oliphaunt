@@ -11,7 +11,7 @@ class OliphauntPackage : BaseReactPackage() {
     name: String,
     reactContext: ReactApplicationContext,
   ): NativeModule? =
-    if (name == OliphauntModule.NAME) {
+    if (name == "Oliphaunt" && !dev.oliphaunt.OliphauntBroker.isWorkerProcess(reactContext)) {
       OliphauntModule(reactContext)
     } else {
       null

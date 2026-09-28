@@ -1,5 +1,6 @@
 import Foundation
 @testable import Oliphaunt
+@testable import OliphauntCore
 import Testing
 
 #if os(iOS) || os(macOS) || os(tvOS) || os(watchOS) || os(visionOS)

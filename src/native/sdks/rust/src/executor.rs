@@ -57,15 +57,15 @@ pub(crate) struct RequestCancellation {
 enum RequestPhase {
     Queued,
     Active,
-    Finished,
+    Finished { submitted: bool },
 }
 
 #[cfg(feature = "mobile-bindings")]
 impl RequestCancellation {
     pub(crate) fn was_submitted(&self) -> bool {
-        !matches!(
+        matches!(
             *self.phase.lock().unwrap_or_else(|error| error.into_inner()),
-            RequestPhase::Queued
+            RequestPhase::Active | RequestPhase::Finished { submitted: true }
         )
     }
     pub(crate) fn was_cancelled(&self) -> bool {
@@ -118,7 +118,8 @@ impl Drop for ActiveRequest {
             .0
             .phase
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) = RequestPhase::Finished;
+            .unwrap_or_else(|error| error.into_inner()) =
+            RequestPhase::Finished { submitted: true };
     }
 }
 
@@ -142,6 +143,8 @@ struct ExecutorShared {
     active_work: AtomicBool,
     session_pinned: AtomicBool,
     transaction_poisoned: AtomicBool,
+    #[cfg(feature = "mobile-bindings")]
+    broker_failure: Mutex<Option<oliphaunt_broker::mobile::Completion>>,
     // This is an admission cutoff, not an owner-side execution predicate.
     // Commands already ahead of `Command::Close` must run even while it is set.
     closing: AtomicBool,
@@ -153,6 +156,32 @@ struct ExecutorShared {
 }
 
 impl ExecutorShared {
+    fn remember_failure(&self, error: &Error) {
+        #[cfg(feature = "mobile-bindings")]
+        if let Some(completion) = error.broker_failure() {
+            *self
+                .broker_failure
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(completion.clone());
+        }
+        #[cfg(not(feature = "mobile-bindings"))]
+        let _ = error;
+    }
+
+    fn unsubmitted_error(&self, fallback: Error) -> Error {
+        #[cfg(feature = "mobile-bindings")]
+        if let Some(mut completion) = self
+            .broker_failure
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            completion.execution = oliphaunt_broker::mobile::Execution::NotStarted;
+            return Error::broker(completion);
+        }
+        fallback
+    }
+
     fn new() -> Self {
         Self {
             queue: CommandQueue::new(),
@@ -161,6 +190,8 @@ impl ExecutorShared {
             active_work: AtomicBool::new(false),
             session_pinned: AtomicBool::new(false),
             transaction_poisoned: AtomicBool::new(false),
+            #[cfg(feature = "mobile-bindings")]
+            broker_failure: Mutex::new(None),
             closing: AtomicBool::new(false),
             teardown_started: AtomicBool::new(false),
             closed: AtomicBool::new(false),
@@ -674,6 +705,27 @@ impl EngineExecutor {
         receiver.await
     }
 
+    #[cfg(feature = "mobile-bindings")]
+    pub(crate) async fn backup_cancellable(
+        &self,
+        cancellation: Arc<RequestCancellation>,
+    ) -> Result<Vec<u8>> {
+        let (reply, receiver) = reply::channel();
+        self.run_cancellable(Command::Backup { reply }, receiver, cancellation)
+            .await
+    }
+
+    #[cfg(feature = "mobile-bindings")]
+    pub(crate) async fn backup_to(
+        &self,
+        writer: Box<dyn std::io::Write + Send>,
+        cancellation: Arc<RequestCancellation>,
+    ) -> Result<()> {
+        let (reply, receiver) = reply::channel();
+        self.run_cancellable(Command::BackupTo { writer, reply }, receiver, cancellation)
+            .await
+    }
+
     pub(crate) async fn close(&self) -> Result<()> {
         self.ensure_not_owner_thread()?;
         let (reply, receiver) = reply::channel();
@@ -736,10 +788,12 @@ impl EngineExecutor {
                 if self.shared.closed.load(Ordering::SeqCst)
                     || self.shared.closing.load(Ordering::SeqCst)
                 {
-                    return Poll::Ready(Err(Error::EngineStopped));
+                    return Poll::Ready(Err(self.shared.unsubmitted_error(Error::EngineStopped)));
                 }
                 if self.shared.transaction_poisoned.load(Ordering::SeqCst) {
-                    return Poll::Ready(Err(Error::Engine(SESSION_STATE_UNKNOWN.to_owned())));
+                    return Poll::Ready(Err(self
+                        .shared
+                        .unsubmitted_error(Error::Engine(SESSION_STATE_UNKNOWN.to_owned()))));
                 }
                 self.shared
                     .queue
@@ -860,6 +914,11 @@ enum Command {
     Backup {
         reply: reply::Sender<Vec<u8>>,
     },
+    #[cfg(feature = "mobile-bindings")]
+    BackupTo {
+        writer: Box<dyn std::io::Write + Send>,
+        reply: reply::Sender<()>,
+    },
     Close,
 }
 
@@ -887,6 +946,8 @@ impl Command {
             Self::Stream { reply, .. } => reply.is_abandoned(),
             Self::Begin { reply } => reply.is_abandoned(),
             Self::Backup { reply } => reply.is_abandoned(),
+            #[cfg(feature = "mobile-bindings")]
+            Self::BackupTo { reply, .. } => reply.is_abandoned(),
             Self::PinnedExec { .. }
             | Self::ReleasePin { .. }
             | Self::RollbackAndReleasePin { .. }
@@ -1042,7 +1103,7 @@ fn execute_command(
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             if cancellation.cancelled.load(Ordering::Acquire) {
-                *phase = RequestPhase::Finished;
+                *phase = RequestPhase::Finished { submitted: false };
                 return OwnerAction::Continue;
             }
             *phase = RequestPhase::Active;
@@ -1055,7 +1116,7 @@ fn execute_command(
                 Err(Error::TransactionActive)
             } else {
                 run_active_work(&shared.active_work, || {
-                    execute_raw_operation(session, request, &shared.transaction_poisoned, None)
+                    execute_raw_operation(session, request, shared, None)
                 })
             };
             reply.send(result);
@@ -1092,7 +1153,7 @@ fn execute_command(
                     .unwrap_or_else(|| Error::Engine(SESSION_STATE_UNKNOWN.to_owned())))
             } else {
                 run_active_work(&shared.active_work, || {
-                    execute_raw_operation(session, request, &shared.transaction_poisoned, None)
+                    execute_raw_operation(session, request, shared, None)
                 })
             };
             reply.send(result);
@@ -1128,7 +1189,7 @@ fn execute_command(
                 Err(Error::TransactionActive)
             } else {
                 Ok(run_active_work(&shared.active_work, || {
-                    execute_stream(session, request, on_chunk, &shared.transaction_poisoned)
+                    execute_stream(session, request, on_chunk, shared)
                 }))
             };
             reply.send(result);
@@ -1175,6 +1236,31 @@ fn execute_command(
             } else {
                 run_active_work(&shared.active_work, || session.backup())
             };
+            #[cfg(feature = "mobile-bindings")]
+            if let Err(error) = &result
+                && error.broker_failure().is_some()
+                && error.requires_reopen()
+            {
+                shared.remember_failure(error);
+                shared.transaction_poisoned.store(true, Ordering::SeqCst);
+            }
+            reply.send(result);
+        }
+        #[cfg(feature = "mobile-bindings")]
+        Command::BackupTo { mut writer, reply } => {
+            let result = if owner.active_pin.is_some() {
+                Err(Error::TransactionActive)
+            } else {
+                run_active_work(&shared.active_work, || session.backup_to(writer.as_mut()))
+            };
+            #[cfg(feature = "mobile-bindings")]
+            if let Err(error) = &result
+                && error.broker_failure().is_some()
+                && error.requires_reopen()
+            {
+                shared.remember_failure(error);
+                shared.transaction_poisoned.store(true, Ordering::SeqCst);
+            }
             reply.send(result);
         }
         Command::Close => {
@@ -1269,14 +1355,17 @@ fn transaction_terminal_error(guard: &TransactionGuard) -> Option<Error> {
 fn execute_raw_operation(
     session: &mut dyn EngineSession,
     request: ProtocolRequest,
-    transaction_poisoned: &AtomicBool,
+    shared: &ExecutorShared,
     guard: Option<&TransactionGuard>,
 ) -> Result<ProtocolResponse> {
     let result = session.exec_protocol_raw(request);
-    if let Err(error) = &result {
+    if let Err(error) = &result
+        && error.requires_reopen()
+    {
         // Unlike a returned ErrorResponse byte stream, an engine error does
         // not prove a terminal ReadyForQuery boundary for this raw exchange.
-        transaction_poisoned.store(true, Ordering::SeqCst);
+        shared.remember_failure(error);
+        shared.transaction_poisoned.store(true, Ordering::SeqCst);
         if let Some(guard) = guard {
             guard.fail(error.clone());
         }
@@ -1288,7 +1377,7 @@ fn execute_stream(
     session: &mut dyn EngineSession,
     request: ProtocolRequest,
     mut on_chunk: ProtocolChunkCallback,
-    transaction_poisoned: &AtomicBool,
+    shared: &ExecutorShared,
 ) -> ExecutorStreamOutcome {
     let mut callback_panic = None;
     let outcome = {
@@ -1314,7 +1403,8 @@ fn execute_stream(
             ExecutorStreamOutcome::ReadyForQuery(result)
         }
         ProtocolStreamOutcome::SessionStateUnknown(error) => {
-            transaction_poisoned.store(true, Ordering::SeqCst);
+            shared.remember_failure(&error);
+            shared.transaction_poisoned.store(true, Ordering::SeqCst);
             ExecutorStreamOutcome::SessionStateUnknown(error)
         }
     }
@@ -1464,6 +1554,45 @@ mod tests {
 
     #[cfg(feature = "mobile-bindings")]
     #[test]
+    fn cancellation_between_abandonment_check_and_dispatch_is_not_submitted() {
+        let shared = Arc::new(ExecutorShared::new());
+        let executor = EngineExecutor {
+            shared: shared.clone(),
+        };
+        let cancellation = executor.request_cancellation();
+        let (reply, receiver) = reply::channel();
+        let command = Command::Cancellable {
+            command: Box::new(Command::Exec {
+                request: ProtocolRequest::new([1]),
+                reply,
+            }),
+            cancellation: cancellation.clone(),
+        };
+        assert!(!command.is_abandoned());
+        cancellation.cancel().unwrap();
+        execute_command(
+            &mut EchoSession,
+            &shared,
+            &mut OwnerState {
+                active_pin: None,
+                next_pin: 1,
+            },
+            command,
+        );
+        assert!(
+            block_on(receiver).is_err(),
+            "cancelled command must not execute"
+        );
+        assert!(!cancellation.was_submitted());
+        assert!(matches!(
+            *cancellation.phase.lock().unwrap(),
+            RequestPhase::Finished { submitted: false }
+        ));
+        shared.closed.store(true, Ordering::SeqCst);
+    }
+
+    #[cfg(feature = "mobile-bindings")]
+    #[test]
     fn request_cancellation_is_scoped_and_abandoned_queued_work_never_runs() {
         struct Cancel {
             calls: AtomicUsize,
@@ -1508,6 +1637,7 @@ mod tests {
         let old = executor.request_cancellation();
         block_on(executor.exec_cancellable(ProtocolRequest::new([1]), old.clone())).unwrap();
         assert_eq!(started_rx.recv().unwrap(), 1);
+        assert!(old.was_submitted());
         let current = executor.request_cancellation();
         let mut active =
             Box::pin(executor.exec_cancellable(ProtocolRequest::new([2]), current.clone()));
@@ -1533,6 +1663,7 @@ mod tests {
         assert!(started_rx.try_recv().is_err());
         assert!(cancel.calls.load(Ordering::SeqCst) >= 1);
         assert!(block_on(waiting).is_err());
+        assert!(!queued.was_submitted());
         block_on(executor.close()).unwrap();
     }
 

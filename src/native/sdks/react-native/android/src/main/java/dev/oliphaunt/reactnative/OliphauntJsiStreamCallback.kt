@@ -1,6 +1,7 @@
 package dev.oliphaunt.reactnative
 
 import com.facebook.proguard.annotations.DoNotStrip
+import dev.oliphaunt.OliphauntBrokerException
 
 @DoNotStrip
 class OliphauntJsiStreamCallback @DoNotStrip constructor(
@@ -26,7 +27,15 @@ class OliphauntJsiStreamCallback @DoNotStrip constructor(
   }
 
   fun reject(code: String, message: String?) {
-    nativeReject(ownerId, token, if (message.isNullOrBlank()) code else "$code: $message")
+    nativeReject(ownerId, token, if (message.isNullOrBlank()) code else "$code: $message", "", "", false)
+  }
+
+  fun reject(error: Throwable) {
+    val broker = error as? OliphauntBrokerException
+    nativeReject(ownerId, token, error.message ?: "Oliphaunt operation failed",
+      broker?.reason?.name?.replaceFirstChar { it.lowercaseChar() } ?: "",
+      broker?.execution?.name?.replaceFirstChar { it.lowercaseChar() } ?: "",
+      broker?.requiresReopen ?: false)
   }
 
   private external fun nativeEmitChunk(ownerId: Long, token: Long, chunk: ByteArray): String?
@@ -35,5 +44,5 @@ class OliphauntJsiStreamCallback @DoNotStrip constructor(
 
   private external fun nativeRejectCallbackAborted(ownerId: Long, token: Long, message: String)
 
-  private external fun nativeReject(ownerId: Long, token: Long, message: String)
+  private external fun nativeReject(ownerId: Long, token: Long, message: String, reason: String, execution: String, requiresReopen: Boolean)
 }

@@ -1,4 +1,5 @@
 import { extensions } from '../extensions.js';
+import { applicationData, directory } from '../storage';
 import { test, vi } from 'bun:test';
 import assert from 'node:assert/strict';
 
@@ -106,6 +107,7 @@ async function main(): Promise<void> {
   await testCommitNonIdleDoesNotSendRollback();
   await testCloseDuringTransactionIsRejected();
   await testCloseIsIdempotent();
+  await testBrokerAdmissionAndFailures();
 }
 
 async function testStartupGUCValidation(): Promise<void> {
@@ -1219,10 +1221,11 @@ class MockNative implements Spec {
   readonly #transactionStatus = new Map<number, number>();
   readonly #activeGenerations = new Set<number>();
 
-  constructor() {
+  constructor(readonly topology: string = 'direct') {
     const native = this;
     (globalThis as GlobalWithJsi).__oliphauntReactNativeJsi = {
       version: 1,
+      continuousTimeMillis: () => performance.now(),
       closeIfGeneration(generation) {
         native.closeIfGenerationJsi(generation);
       },
@@ -1252,6 +1255,10 @@ class MockNative implements Spec {
         return native.restoreJsi(destination, artifact);
       },
     };
+  }
+
+  getTopology(): string {
+    return this.topology;
   }
 
   getConstants(): {} {
@@ -1437,6 +1444,7 @@ class MockForgottenDatabaseRegistry implements ForgottenDatabaseRegistry {
 type GlobalWithJsi = typeof globalThis & {
   __oliphauntReactNativeJsi?: {
     version: 1;
+    continuousTimeMillis?: () => number;
     closeIfGeneration(generation: number): void;
     execProtocolRaw(handle: number, request: Uint8Array): Promise<ArrayBuffer | ArrayBufferView>;
     execProtocolStream(
@@ -1675,4 +1683,126 @@ function deferred<T>(): {
 
 test('client', async () => {
   await main();
+});
+
+async function testBrokerAdmissionAndFailures(): Promise<void> {
+  const native = new MockNative('broker');
+  const db = await createOliphauntClient(native).open({
+    broker: { operationTimeoutMs: 30 },
+  });
+  const started = deferred<void>();
+  const release = deferred<void>();
+  native.pauseNextRequest = release.promise;
+  native.onPausedRequest = () => started.resolve();
+  const first = db.query('SELECT 1');
+  await started.promise;
+  await assert.rejects(db.query('SELECT 2'), {
+    reason: 'deadline',
+    execution: 'notStarted',
+    requiresReopen: false,
+  });
+  assert.equal(native.execRequests.length, 1);
+  const successor = db.query('SELECT 3');
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(
+    native.execRequests.length,
+    1,
+    'expired admission must not allow its successor to overtake active work',
+  );
+  release.resolve();
+  await first;
+  await successor;
+  const failure = Object.assign(new Error('invalid request'), {
+    reason: 'invalidRequest',
+    execution: 'notStarted',
+    requiresReopen: false,
+  });
+  native.rawTransportFailure = failure;
+  await assert.rejects(db.query('SELECT rejected'), (error) => error === failure);
+  native.rawTransportFailure = undefined;
+  await db.query('SELECT healthy');
+  native.rawTransportFailure = Object.assign(new Error('worker died'), {
+    reason: 'workerInterrupted',
+    execution: 'unknown',
+    requiresReopen: true,
+  });
+  const failed = db.query('SELECT failed');
+  const queued = db.query('SELECT queued');
+  await assert.rejects(failed, {
+    reason: 'workerInterrupted',
+    execution: 'unknown',
+    requiresReopen: true,
+  });
+  await assert.rejects(queued, {
+    reason: 'workerInterrupted',
+    execution: 'notStarted',
+    requiresReopen: true,
+  });
+  await db.close();
+
+  const closingNative = new MockNative('broker');
+  const closingDb = await createOliphauntClient(closingNative).open();
+  const activeStarted = deferred<void>();
+  const activeRelease = deferred<void>();
+  closingNative.pauseNextRequest = activeRelease.promise;
+  closingNative.onPausedRequest = () => activeStarted.resolve();
+  const active = closingDb.query('SELECT active');
+  await activeStarted.promise;
+  const pending = closingDb.query('SELECT pending');
+  const pendingRejection = assert.rejects(pending, {
+    reason: 'cancelled',
+    execution: 'notStarted',
+    requiresReopen: true,
+  });
+  await closingDb.close();
+  assert.equal(
+    closingNative.closedHandles.length,
+    1,
+    'close must reach native while JS admission is occupied',
+  );
+  activeRelease.resolve();
+  await active;
+  await pendingRejection;
+}
+
+test('native build selects topology for open and restore without runtime overrides', async () => {
+  for (const topology of ['direct', 'broker']) {
+    const native = new MockNative(topology);
+    const client = createOliphauntClient(native);
+    const db = await client.open({ storage: applicationData('primary') });
+    assert.equal((native.openCalls[0] as NativeOpenConfig).storageName, 'primary');
+    assert.ok(!('execution' in (native.openCalls[0] as object)));
+    await db.close();
+    await client.restore(
+      applicationData('restored'),
+      encoder.encode('archive'),
+      topology === 'broker' ? { broker: { operationTimeoutMs: 123 } } : undefined,
+    );
+    assert.deepEqual(native.restoreCalls[0]?.destination, {
+      storageKind: 'applicationData',
+      storageName: 'restored',
+      ...(topology === 'broker' ? { operationTimeoutMs: 123 } : {}),
+    });
+    if (topology === 'broker') {
+      await assert.rejects(client.open({ storage: directory('/data/db') }), /broker storage/);
+      await assert.rejects(client.restore(directory('/data/db'), []), /broker storage/);
+    } else {
+      await assert.rejects(client.open({ broker: {} }), /broker native build/);
+      await assert.rejects(
+        client.restore(applicationData('restored'), [], { broker: {} }),
+        /broker native build/,
+      );
+    }
+    // @ts-expect-error Topology is a build-time choice.
+    await assert.rejects(client.open({ execution: 'broker' }), /native build configuration/);
+    await assert.rejects(
+      // @ts-expect-error Topology cannot be overridden during restore either.
+      client.restore(applicationData('restored'), [], { topology: 'direct' }),
+      /native build configuration/,
+    );
+  }
+  assert.throws(
+    () => createOliphauntClient(new MockNative('unexpected')),
+    /unsupported native database topology/,
+  );
 });

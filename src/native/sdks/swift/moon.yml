@@ -86,6 +86,16 @@ tasks:
       - "!/src/native/sdks/swift/.build/**"
     options:
       cache: true
+  check-broker-ios:
+    deps: ["oliphaunt-mobile-bindings:generate"]
+    tags: ["quality", "static", "requires-apple", "requires-swift", "requires-rust"]
+    command: "bash tools/check-broker-ios.sh"
+    inputs:
+      - "@group(code)"
+      - "/src/native/runtime/include/oliphaunt.h"
+      - "/src/native/sdks/react-native/ios/OliphauntAdapter.{h,swift}"
+    options:
+      cache: false
   test-apple:
     deps:
       - "prepare-bindings"
@@ -211,6 +221,8 @@ tasks:
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"
       - "**/*.{mjs,mts,sh}"
+      - "Sources/**/*"
+      - "Templates/**/*"
       - "Tests/Fixtures/**/*"
       - "@group(legal-files)"
       - "/tools/packaging/testdata/**/*"

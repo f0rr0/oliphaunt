@@ -17,6 +17,8 @@ public data class PostgresStartupGuc(
 internal sealed interface EngineStorage {
     data object TemporaryDirectory : EngineStorage
 
+    data class ApplicationData(val name: String) : EngineStorage
+
     data class Directory(
         val path: String,
     ) : EngineStorage
@@ -104,7 +106,14 @@ internal fun EngineConfig.postgresStartupArgs(sharedPreloadLibraries: Collection
         listOf("-c", "shared_preload_libraries=${mergedPreloads.joinToString(",")}")
 }
 
+internal fun validateDatabaseName(name: String) {
+    if (name == "." || name == ".." || !Regex("[A-Za-z0-9._-]{1,128}").matches(name)) {
+        throw OliphauntException("applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen")
+    }
+}
+
 internal fun validateDatabaseStorage(storage: EngineStorage) {
+    if (storage is EngineStorage.ApplicationData) validateDatabaseName(storage.name)
     if (storage is EngineStorage.Directory) validateDirectoryPath(storage.path, "database storage directory")
 }
 
@@ -145,6 +154,10 @@ internal class OliphauntOperationCancellation(val caller: kotlinx.coroutines.Job
 }
 
 internal interface OliphauntSession {
+    val operationTimeoutMillis: Long? get() = null
+    fun operationTimeMillis(): Long = 0
+    fun beginOperation(remainingMillis: Long?) {}
+    fun isUsable(): Boolean = true
     suspend fun execProtocolRaw(request: ByteArray): ByteArray
 
     suspend fun execProtocolRawStream(
@@ -154,7 +167,11 @@ internal interface OliphauntSession {
 
     suspend fun backup(): ByteArray
 
+    suspend fun backupToPath(destination: String): Unit = throw OliphauntException("file backup is not available in this session")
+
     suspend fun cancel()
+
+    fun beginClose() {}
 
     suspend fun close()
 }
@@ -239,6 +256,7 @@ public class OliphauntDatabase private constructor(
     private data class Admission(
         val predecessor: Deferred<Unit>,
         val completion: CompletableDeferred<Unit>,
+        val deadline: Long?,
     )
 
     private data class BeginAdmission(
@@ -270,6 +288,7 @@ public class OliphauntDatabase private constructor(
     private var protocolStreamCallbackActive = false
 
     private var poisonedMessage: String? = null
+    private var brokerFailure: OliphauntBrokerException? = null
     private var activeTransaction: ActiveTransaction? = null
     private var nextTransactionToken = 1L
 
@@ -285,6 +304,11 @@ public class OliphauntDatabase private constructor(
     public suspend fun backup(): ByteArray = runAdmitted(admitOperation(transactionToken = null)) {
         ensureAdmittedOperationUsable()
         session.backup().copyOf()
+    }
+
+    internal suspend fun backupToPath(destination: String): Unit = runAdmitted(admitOperation(transactionToken = null)) {
+        ensureAdmittedOperationUsable()
+        session.backupToPath(destination)
     }
 
     public suspend fun <T> transaction(block: suspend (OliphauntTransaction) -> T): T {
@@ -485,11 +509,12 @@ public class OliphauntDatabase private constructor(
 
                     else -> {
                         closing = true
-                        enqueueOperationLocked()
+                        enqueueOperationLocked().copy(deadline = null)
                     }
                 }
             }
         if (admission == null) return
+        session.beginClose()
         try {
             runAdmitted(admission) {
                 val cancellationDrain =
@@ -511,10 +536,9 @@ public class OliphauntDatabase private constructor(
         } catch (error: Throwable) {
             withContext(NonCancellable) {
                 stateMutex.withLock {
-                    if (!closed) {
-                        closeTeardownStarted = false
-                        closing = false
-                    }
+                    if (!session.isUsable()) closed = true
+                    closeTeardownStarted = false
+                    closing = false
                 }
             }
             throw error
@@ -523,6 +547,7 @@ public class OliphauntDatabase private constructor(
 
     private fun ensureOpenLocked() {
         if (closed || closing || closeTeardownStarted) throw OliphauntException("database is closed")
+        brokerFailure?.let { throw it.unsubmitted() }
         poisonedMessage?.let { throw OliphauntException(it) }
     }
 
@@ -854,11 +879,12 @@ public class OliphauntDatabase private constructor(
         transactionToken: Long?,
         error: Throwable,
     ) {
-        if (error is OliphauntRequestNotSubmitted) return
+        if (error is OliphauntRequestNotSubmitted || (error is OliphauntBrokerException && !error.requiresReopen)) return
         val message =
             "typed operation outcome is unknown before a complete ReadyForQuery boundary; close and reopen the database: $error"
         stateMutex.withLock {
             poisonedMessage = message
+            if (error is OliphauntBrokerException) brokerFailure = error
             val active = activeTransaction
             if (transactionToken != null && active?.token == transactionToken) {
                 active.completion = TransactionCompletion.Failed(message)
@@ -883,6 +909,7 @@ public class OliphauntDatabase private constructor(
     ) {
         stateMutex.withLock {
             poisonedMessage = message
+            if (error is OliphauntBrokerException) brokerFailure = error
             activeTransaction?.takeIf { it.token == token }?.let { active ->
                 active.completion = TransactionCompletion.Failed(message)
                 if (active.databaseFailure == null) active.databaseFailure = error
@@ -1014,12 +1041,13 @@ public class OliphauntDatabase private constructor(
     private suspend fun poisonUnknownRawProtocolOperation(
         error: Throwable,
     ) {
-        if (error is OliphauntRequestNotSubmitted) return
+        if (error is OliphauntRequestNotSubmitted || (error is OliphauntBrokerException && !error.requiresReopen)) return
         val message =
             "raw protocol operation outcome is unknown before confirmed recovery; " +
                 "close and reopen the database: $error"
         stateMutex.withLock {
             poisonedMessage = message
+            if (error is OliphauntBrokerException) brokerFailure = error
         }
     }
 
@@ -1030,14 +1058,15 @@ public class OliphauntDatabase private constructor(
         enqueueOperationLocked()
     }
 
-    private fun enqueueOperationLocked(): Admission {
+    private suspend fun enqueueOperationLocked(): Admission {
         val completion = CompletableDeferred<Unit>()
-        return Admission(admissionTail, completion).also { admissionTail = completion }
+        return Admission(admissionTail, completion, currentCoroutineContext()[OliphauntBridgeDeadline]?.milliseconds ?: session.operationTimeoutMillis?.let { session.operationTimeMillis() + it }).also { admissionTail = completion }
     }
 
     private suspend fun ensureAdmittedOperationUsable() {
         stateMutex.withLock {
             if (closed) throw OliphauntException("database is closed")
+            brokerFailure?.let { throw it.unsubmitted() }
             poisonedMessage?.let { throw OliphauntException(it) }
         }
     }
@@ -1088,7 +1117,28 @@ public class OliphauntDatabase private constructor(
         operation: suspend () -> T,
     ): T {
         try {
-            admission.predecessor.await()
+            if (admission.deadline == null) {
+                admission.predecessor.await()
+            } else {
+                while (true) {
+                    val remaining = admission.deadline - session.operationTimeMillis()
+                    if (remaining <= 0) {
+                        throw OliphauntBrokerException(
+                            BrokerFailureReason.Deadline,
+                            BrokerExecution.NotStarted,
+                            !session.isUsable(),
+                            "operation deadline exceeded before admission",
+                        )
+                    }
+                    if (kotlinx.coroutines.withTimeoutOrNull(minOf(remaining, 100)) {
+                            admission.predecessor.await()
+                            true
+                        } == true
+                    ) {
+                        break
+                    }
+                }
+            }
             currentCoroutineContext().ensureActive()
         } catch (error: Throwable) {
             // A skipped node must remain behind its predecessor. Completing it
@@ -1103,6 +1153,7 @@ public class OliphauntDatabase private constructor(
         val result =
             withContext(NonCancellable + cancellation) {
                 try {
+                    session.beginOperation(admission.deadline?.let { (it - session.operationTimeMillis()).coerceAtLeast(0) })
                     operation()
                 } finally {
                     admission.completion.complete(Unit)
@@ -1203,4 +1254,8 @@ private fun failuresShareIdentity(
         current = current.cause
     }
     return false
+}
+
+internal class OliphauntBridgeDeadline(val milliseconds: Long) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<OliphauntBridgeDeadline>
 }

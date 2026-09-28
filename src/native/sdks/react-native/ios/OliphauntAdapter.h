@@ -13,18 +13,21 @@ typedef void (^OliphauntVoidCompletion)(NSError *_Nullable error);
 
 @interface OliphauntAdapterDatabase : NSObject
 
++ (NSString *)topology;
 + (void)openWithConfig:(NSDictionary *)config completion:(OliphauntOpenCompletion)completion;
 + (void)restoreWithStorageKind:(NSString *)storageKind
                     storagePath:(nullable NSString *)storagePath
                     storageName:(nullable NSString *)storageName
+                        options:(NSDictionary *)options
                      backupData:(NSData *)backupData
                      completion:(OliphauntVoidCompletion)completion;
 
-- (void)execProtocolData:(NSData *)request completion:(OliphauntDataCompletion)completion;
+- (void)execProtocolData:(NSData *)request deadline:(double)deadline completion:(OliphauntDataCompletion)completion;
 - (void)execProtocolStreamData:(NSData *)request
+                      deadline:(double)deadline
                        onChunk:(OliphauntStreamChunk)onChunk
                     completion:(OliphauntVoidCompletion)completion;
-- (void)backupDataWithCompletion:(OliphauntDataCompletion)completion;
+- (void)backupDataWithDeadline:(double)deadline completion:(OliphauntDataCompletion)completion;
 - (void)cancelWithCompletion:(OliphauntVoidCompletion)completion;
 - (void)closeWithCompletion:(OliphauntVoidCompletion)completion;
 

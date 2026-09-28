@@ -7,6 +7,13 @@
 #include <limits>
 #include <cstdint>
 #include <utility>
+#include <stdexcept>
+
+#if defined(__APPLE__)
+#include <mach/mach_time.h>
+#else
+#include <time.h>
+#endif
 
 namespace oliphaunt::reactnative {
 namespace jsi = facebook::jsi;
@@ -84,11 +91,49 @@ inline jsi::ArrayBuffer arrayBufferFromBytes(jsi::Runtime &runtime, std::vector<
       std::make_shared<OliphauntMutableBuffer>(std::move(bytes)));
 }
 
+inline double continuousTimeMillis()
+{
+#if defined(__APPLE__)
+  mach_timebase_info_data_t scale;
+  mach_timebase_info(&scale);
+  return static_cast<double>(mach_continuous_time()) * scale.numer / scale.denom / 1000000.0;
+#else
+  timespec time;
+  if (clock_gettime(CLOCK_BOOTTIME, &time) != 0) throw std::runtime_error("continuous clock unavailable");
+  return time.tv_sec * 1000.0 + time.tv_nsec / 1000000.0;
+#endif
+}
+
+inline void installContinuousClock(jsi::Runtime &runtime, jsi::Object &transport)
+{
+  transport.setProperty(runtime, "continuousTimeMillis", jsi::Function::createFromHostFunction(
+      runtime, jsi::PropNameID::forAscii(runtime, "continuousTimeMillis"), 0,
+      [](jsi::Runtime &, const jsi::Value &, const jsi::Value *, size_t) -> jsi::Value { return continuousTimeMillis(); }));
+}
+
 inline jsi::Value createError(jsi::Runtime &runtime, const std::string &message)
 {
   return runtime.global()
       .getPropertyAsFunction(runtime, "Error")
       .callAsConstructor(runtime, jsi::String::createFromUtf8(runtime, message));
+}
+
+// Copied off the platform callback thread before scheduling JavaScript.
+struct BrokerFailure {
+  std::string reason;
+  std::string execution;
+  bool requiresReopen = false;
+};
+
+inline jsi::Value createError(jsi::Runtime &runtime, const std::string &message, const BrokerFailure &failure)
+{
+  auto value = createError(runtime, message);
+  if (failure.reason.empty()) return value;
+  auto object = value.asObject(runtime);
+  object.setProperty(runtime, "reason", jsi::String::createFromUtf8(runtime, failure.reason));
+  object.setProperty(runtime, "execution", jsi::String::createFromUtf8(runtime, failure.execution));
+  object.setProperty(runtime, "requiresReopen", failure.requiresReopen);
+  return object;
 }
 
 inline jsi::Value createProtocolCallbackAbortedError(
@@ -114,6 +159,16 @@ inline size_t copySizeArgument(jsi::Runtime &runtime, double value, const char *
         std::string("liboliphaunt JSI ") + name + " must be a non-negative integer");
   }
   return static_cast<size_t>(value);
+}
+
+inline double copyOptionalMilliseconds(jsi::Runtime &runtime, const jsi::Value &value)
+{
+  if (value.isUndefined() || value.isNull()) return 0;
+  if (!value.isNumber() || !std::isfinite(value.asNumber()) || value.asNumber() <= 0 ||
+      std::trunc(value.asNumber()) != value.asNumber() || value.asNumber() > 9007199254740991.0) {
+    throw jsi::JSError(runtime, "broker milliseconds must be a positive safe integer");
+  }
+  return value.asNumber();
 }
 
 inline int64_t copyHandleArgument(jsi::Runtime &runtime, const jsi::Value &value)

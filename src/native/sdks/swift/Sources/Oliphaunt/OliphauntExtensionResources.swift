@@ -1,3 +1,4 @@
+import OliphauntCore
 import Foundation
 
 struct OliphauntPackagedExtensionResource: Sendable {

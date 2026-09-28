@@ -160,9 +160,9 @@ mavenPublishing {
 
 val generatedAndroidAssetsDir = layout.buildDirectory.dir("generated/oliphaunt-android-assets")
 val generatedAndroidJniLibsDir = layout.buildDirectory.dir("generated/oliphaunt-android-jniLibs")
-val mobileBindingsRoot = rootProject.layout.projectDirectory.dir("../../../../target/mobile-bindings")
+val mobileBindingsRoot = layout.projectDirectory.dir("../../../../../target/mobile-bindings")
 val generateNativeBindings by tasks.registering(Exec::class) {
-    workingDir(rootProject.layout.projectDirectory.dir("../../../.."))
+    workingDir(layout.projectDirectory.dir("../../../../.."))
     commandLine("bash", "src/native/mobile-bindings/tools/generate.sh")
     // Cargo tracks the complete Rust dependency graph, including local crates.
     outputs.upToDateWhen { false }
@@ -758,8 +758,8 @@ val supportedMavenPublication = "androidRelease"
 val supportedMavenPublicationTaskToken = "AndroidRelease"
 val baseReleaseNoticeFiles =
     files(
-        rootProject.file("../../../../LICENSE"),
-        rootProject.file("../../../../THIRD_PARTY_NOTICES.md"),
+        layout.projectDirectory.file("../../../../../LICENSE"),
+        layout.projectDirectory.file("../../../../../THIRD_PARTY_NOTICES.md"),
     )
 val publishedArchiveTaskNames =
     setOf(
@@ -868,12 +868,12 @@ gradle.projectsEvaluated {
 }
 
 val sharedFixturesDirectory =
-    rootProject.layout.projectDirectory
-        .dir("../../../test-fixtures")
+    layout.projectDirectory
+        .dir("../../../../test-fixtures")
         .asFile
 val sharedClusterSeedFixturesDirectory =
-    rootProject.layout.projectDirectory
-        .dir("../../../database-resources/contracts/fixtures")
+    layout.projectDirectory
+        .dir("../../../../database-resources/contracts/fixtures")
         .asFile
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
@@ -889,6 +889,9 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 }
 
 android {
+    buildFeatures { aidl = true }
+    sourceSets["main"].aidl.srcDir("src/androidMain/aidl")
+    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
     namespace = "dev.oliphaunt"
     compileSdk = 36
 
@@ -945,7 +948,7 @@ val buildNativeBindings =
     (androidAbiFilters.ifEmpty { listOf("arm64-v8a", "x86_64") }).map { abi ->
         tasks.register<Exec>("buildNativeBindings${abi.replace("-", "").replace("_", "")}") {
             val output = layout.buildDirectory.dir("generated/oliphaunt-rust-jniLibs")
-            workingDir(rootProject.layout.projectDirectory.dir("../../../.."))
+            workingDir(layout.projectDirectory.dir("../../../../.."))
             commandLine(
                 "bash",
                 "src/native/mobile-bindings/tools/build-android.sh",

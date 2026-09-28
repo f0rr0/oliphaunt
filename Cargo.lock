@@ -2448,6 +2448,7 @@ name = "oliphaunt"
 version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
+ "libc",
  "liboliphaunt-native-bindings",
  "oliphaunt-broker",
  "oliphaunt-build",

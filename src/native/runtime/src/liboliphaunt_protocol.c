@@ -166,10 +166,7 @@ static bool stream_queue_has_room_locked(OliphauntHandle *handle, size_t len, si
     if (len == 0) {
         return true;
     }
-    if (len > max_bytes) {
-        return handle->stream_bytes_queued == 0;
-    }
-    return handle->stream_bytes_queued <= max_bytes - len;
+    return len <= max_bytes && handle->stream_bytes_queued <= max_bytes - len;
 }
 
 static int wait_for_stream_queue_room_locked(OliphauntHandle *handle, size_t len) {
@@ -224,6 +221,24 @@ static int enqueue_stream_chunk_locked(OliphauntHandle *handle, const void *buf,
         handle->stream_tail = chunk;
     }
     handle->stream_bytes_queued += len;
+    // Wake the reader before a subsequent slice waits for queue capacity.
+    pthread_cond_broadcast(&handle->output_cond);
+    return 0;
+}
+
+static int enqueue_stream_output_locked(OliphauntHandle *handle, const void *buf, size_t len) {
+    const unsigned char *bytes = buf;
+    size_t max_bytes = handle->stream_queue_max_bytes > 0
+                           ? handle->stream_queue_max_bytes
+                           : DEFAULT_STREAM_QUEUE_MAX_BYTES;
+    while (len > 0) {
+        size_t take = len < max_bytes ? len : max_bytes;
+        if (enqueue_stream_chunk_locked(handle, bytes, take) != 0) {
+            return -1;
+        }
+        bytes += take;
+        len -= take;
+    }
     return 0;
 }
 
@@ -418,7 +433,7 @@ ssize_t oliphaunt_embedded_write(void *context, const void *ptr, size_t len) {
     int rc;
     bool ready = false;
     if (handle->streaming) {
-        rc = enqueue_stream_chunk_locked(handle, ptr, len);
+        rc = enqueue_stream_output_locked(handle, ptr, len);
         if (rc == 0) {
             ready = scan_stream_ready_locked(handle, (const unsigned char *)ptr, len);
             if (ready) {
@@ -936,8 +951,23 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
             }
             free_stream_chunk(chunk);
             pthread_mutex_lock(&handle->mutex);
+            if (callback_failed && handle->stream_copy_input) {
+                /* A rejected callback cannot supply COPY input. Finish that
+                 * subprotocol explicitly; query cancellation alone cannot wake
+                 * PostgreSQL while it is reading a frontend message. Extended
+                 * COPY consumes the original Sync, so supply its recovery Sync. */
+                static const uint8_t copy_fail[] = {'f', 0, 0, 0, 5, 0,
+                                                   'S', 0, 0, 0, 4};
+                size_t length = request[0] == 'Q' ? 6 : sizeof(copy_fail);
+                if (oliphaunt_set_input_locked(handle, copy_fail, length) != 0) {
+                    status = -1;
+                    break;
+                }
+                handle->stream_copy_input = false;
+            }
         }
 
+        if (status != 0) break;
         if (handle->stream_failed) {
             /* Embedded writes report queue/scanner failures from PostgreSQL's
              * backend thread. Snapshot that shared error before releasing the

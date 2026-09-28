@@ -1,3 +1,4 @@
+@testable import OliphauntCore
 import Foundation
 import Oliphaunt
 import Testing
@@ -52,15 +53,32 @@ struct NativeRuntimeTests {
             catch is CancellationError {}
             catch OliphauntError.postgres(let error) { #expect(error.sqlstate == "57014") }
             _ = try await database.query("SELECT 1")
-            let backup = try await database.backup()
+            let archive = FileManager.default.temporaryDirectory.appendingPathComponent("oliphaunt-swift-backup-\(UUID().uuidString).tar")
+            defer { try? FileManager.default.removeItem(at: archive) }
+            try await database.backup(to: archive)
+            let backup = try Data(contentsOf: archive)
             #expect(!backup.isEmpty)
+            await #expect(throws: (any Error).self) { try await database.backup(to: archive) }
+            #expect(try Data(contentsOf: archive) == backup)
             try await database.close()
             #expect(await database.isClosed)
-            let restored = FileManager.default.temporaryDirectory
-                .appendingPathComponent("oliphaunt-swift-restore-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: restored) }
-            try await OliphauntDatabase.restore(destination: restored, bytes: backup)
-            #expect(FileManager.default.fileExists(atPath: restored.appendingPathComponent("pgdata/PG_VERSION").path))
+            let name = "oliphaunt-swift-restore-\(UUID().uuidString)"
+            let support = try FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            let destinations: [(OliphauntDatabaseStorage, URL)] = [
+                (.directory(FileManager.default.temporaryDirectory.appendingPathComponent(name)),
+                 FileManager.default.temporaryDirectory.appendingPathComponent(name)),
+                (.applicationData(name: name), support.appendingPathComponent("Oliphaunt/\(name)")),
+            ]
+            for (storage, destination) in destinations {
+                defer { try? FileManager.default.removeItem(at: destination) }
+                try await OliphauntDatabase.restore(storage: storage, bytes: backup)
+                #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("pgdata/PG_VERSION").path))
+                #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent(".oliphaunt.json").path))
+                await #expect(throws: (any Error).self) {
+                    try await OliphauntDatabase.restore(storage: storage, bytes: backup)
+                }
+            }
         } catch {
             try? await database.close()
             throw error

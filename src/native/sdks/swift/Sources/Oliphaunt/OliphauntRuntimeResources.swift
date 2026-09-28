@@ -1,3 +1,4 @@
+import OliphauntCore
 import Foundation
 
 private let oliphauntRuntimeResourcesSchema = "oliphaunt-runtime-resources-v1"
@@ -310,8 +311,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     @discardableResult
     func preparePgdata(
         at pgdata: URL,
-        profile: OliphauntNativeCatalogProfile,
-        didPublishDestination: () -> Void
+        profile: OliphauntNativeCatalogProfile
     ) throws -> OliphauntPgdataPublication? {
         if FileManager.default.fileExists(
             atPath: pgdata.appendingPathComponent("PG_VERSION").path
@@ -349,8 +349,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             try ensurePgdataDirectoryLayout(at: temp)
             return try publishOliphauntPreparedPgdata(
                 temp,
-                to: pgdata,
-                didPublishDestination: didPublishDestination
+                to: pgdata
             )
         }
         return try finishOliphauntStaging(result, operation: "PGDATA preparation") {
@@ -1023,7 +1022,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     }
 
     static func validateExtensionIds(_ values: [String]) throws -> Set<String> {
-        Set(try normalizedExtensionIds(values))
+        try validateOliphauntExtensionIds(values)
     }
 
     static func validateRuntimeFeatures(_ values: [String]) throws -> Set<String> {
