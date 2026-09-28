@@ -294,7 +294,18 @@ export function requiredTasksForAffected(tasks, excludedTargets = RELEASE_ONLY_T
     const target = pending.pop();
     const task = TASKS_BY_TARGET.get(target);
     if (!task) fail(`affected Moon selection references missing target ${target}`);
-    for (const dependency of taskDependencyTargets(task)) {
+    const dependencies = taskDependencyTargets(task);
+    // Selecting the portable WASIX job also requires full same-run lifecycle
+    // evidence. Include every producer downloaded by wasix-release-regression.
+    if (task.tags?.includes('ci-liboliphaunt-wasix-runtime')) {
+      dependencies.push(
+        'liboliphaunt-wasix:runtime-aot',
+        'extension-artifacts-wasix:build-target',
+        'extension-artifacts-wasix:build-aot',
+        'postgres-tools-wasix:build-aot',
+      );
+    }
+    for (const dependency of dependencies) {
       if (!selected.has(dependency)) {
         selected.add(dependency);
         pending.push(dependency);

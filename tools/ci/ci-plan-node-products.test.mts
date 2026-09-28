@@ -161,6 +161,27 @@ test('an empty Moon selection requires no product tasks or releases', () => {
   assert.deepEqual(buildPlan(GRAPH, [], 'ci-plan-node-products.test.mts').releaseProducts, []);
 });
 
+test('WASIX qualification selects all same-run release regression inputs', () => {
+  const required = [
+    'liboliphaunt-wasix:runtime-portable',
+    'liboliphaunt-wasix:runtime-aot',
+    'extension-artifacts-wasix:compiler-output',
+    'extension-artifacts-wasix:build-target',
+    'extension-artifacts-wasix:build-aot',
+    'postgres-tools-wasix:compiler-output',
+    'postgres-tools-wasix:build-aot',
+  ];
+  const roots = new Set(['liboliphaunt-wasix:release-assets']);
+  const jobs = planJobsForAffected(roots);
+  const affected = jobTargetsForJobs(jobs, requiredTasksForAffected(roots));
+  const release = planForReleaseProducts(['liboliphaunt-wasix'], 'a'.repeat(40));
+  for (const targets of [affected, release.job_targets]) {
+    const selected = new Set(Object.values(targets).flat());
+    for (const target of required) assert(selected.has(target), `missing evidence input ${target}`);
+  }
+  assert(jobs.has('extension-artifacts-wasix'));
+});
+
 test('shared Rust query changes stage the native and WASIX consumer artifacts', () => {
   const result = effects(paths.sdksRustQuerySrcLibRs);
   for (const consumer of ['oliphaunt-wasix-ts:package', 'oliphaunt-wasix-ts:test-consumer']) {

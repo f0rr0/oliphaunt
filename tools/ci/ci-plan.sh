@@ -36,4 +36,4 @@ if [[ $# == 0 && ${GITHUB_EVENT_NAME:-} != workflow_dispatch && (-z ${CI_RELEASE
   : "${MOON_HEAD:?MOON_HEAD is required for affected CI planning}"
   "$moon_bin" query affected --upstream none --downstream deep </dev/null >"$OLIPHAUNT_MOON_AFFECTED_FILE"
 fi
-bash tools/dev/bun.sh tools/ci/ci_plan.mts "$@"
+bash tools/ci/with-projects.sh tools/ci/ci_plan.mts "$@"
