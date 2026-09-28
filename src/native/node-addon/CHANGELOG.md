@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1]() (2026-09-29)
+
+
+### Code Refactoring
+
+* organize sources by native and WASIX runtime families ([#215](https://github.com/f0rr0/oliphaunt/issues/215)) ([a8f9bfe](https://github.com/f0rr0/oliphaunt/commit/a8f9bfe75f4cff0426f0089eb248783efacbde2e))
+
 ## [0.2.0](https://github.com/f0rr0/oliphaunt/compare/oliphaunt-node-direct-v0.1.1...oliphaunt-node-direct-v0.2.0) (2026-09-05)
 
 

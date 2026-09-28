@@ -12,7 +12,7 @@ Add Oliphaunt from Swift Package Manager:
 
 ```text
 dependencies: [
-    .package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "0.7.0")
+    .package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "0.8.0")
 ]
 ```
 
