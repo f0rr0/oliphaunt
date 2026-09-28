@@ -792,6 +792,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                   }
 
                   [strongSelf backupDataForJsi:handle
+                                      deadline:deadline
                                     completion:^(NSData *_Nullable response, NSError *_Nullable error) {
                     if (error != nil) {
                       const auto failure = OliphauntBrokerFailure(error);
