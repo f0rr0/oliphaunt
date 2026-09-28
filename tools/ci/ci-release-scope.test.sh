@@ -16,12 +16,16 @@ git -C "$repo" add .
 git -C "$repo" commit -qm 'chore(release): prepare products'
 head="$(git -C "$repo" rev-parse HEAD)"
 ln -s "$root/tools" "$repo/tools"
+"${MOON_BIN:-moon}" query projects > "$scratch/projects.json"
+export FIXTURE_PROJECTS="$scratch/projects.json"
+unset OLIPHAUNT_MOON_PROJECTS_FILE
 cat > "$repo/moon" <<'SH'
 #!/usr/bin/env bash
 set -eu
 case "$1" in
   --version) echo "moon $FIXTURE_MOON_VERSION" ;;
   task-graph) cat "$FIXTURE_TASK_GRAPH" ;;
+  query) [[ "$2" == projects ]]; cat "$FIXTURE_PROJECTS" ;;
   *) echo 'unexpected affected query' >&2; exit 82 ;;
 esac
 SH
@@ -39,6 +43,10 @@ for event in pull_request push; do
   else export CI_GENERATED_RELEASE_PR=false; fi
   bash "$root/tools/ci/ci-plan.sh" > "$scratch/$event.out"
 done
+export GITHUB_EVENT_NAME=workflow_dispatch CI_GENERATED_RELEASE_PR=false
+export CI_RELEASE_PRODUCTS_JSON='["oliphaunt-extension-vector","oliphaunt-js"]'
+bash "$root/tools/ci/ci-plan.sh" > "$scratch/workflow_dispatch.out"
+export GITHUB_EVENT_NAME=push CI_RELEASE_PRODUCTS_JSON='[]'
 bash "$root/tools/dev/bun.sh" "$root/tools/ci/ci-release-scope.test.mts" invalid "$repo"
 git add .release-please-manifest.json
 git commit -qm 'chore(release): invalid product'
