@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-wasix"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Embedded PostgreSQL 18 for Rust with synchronous and asynchronous APIs."
@@ -21,7 +21,7 @@ exclude = [
 ]
 
 [package.metadata.oliphaunt]
-runtime-version = "0.2.0"
+runtime-version = "0.3.0"
 
 [features]
 default = []
@@ -82,7 +82,7 @@ extension-vector = ["extensions", "liboliphaunt-wasix-portable/extension-vector"
 icu = ["dep:oliphaunt-icu"]
 
 [dependencies]
-oliphaunt-query = { version = "0.1.0", path = "../../../query/rust" }
+oliphaunt-query = { version = "0.1.1", path = "../../../query/rust" }
 anyhow = "1"
 async-trait = "0.1"
 cap-fs-ext = "4"

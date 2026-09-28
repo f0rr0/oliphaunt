@@ -23,7 +23,7 @@ plugins {
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.2.0")
+    implementation("dev.oliphaunt:oliphaunt-android:0.3.0")
 }
 
 oliphaunt {

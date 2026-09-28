@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-tools",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Optional in-process PostgreSQL pg_dump and psql runners for Oliphaunt WASIX.",
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,7 @@
   },
   "oliphaunt": {
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.2.0"
+    "runtimeVersion": "0.3.0"
   },
   "exports": {
     ".": {

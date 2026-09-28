@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-napi-linux-x64-gnu",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Linux x64 glibc prebuilt Oliphaunt WASIX Node-API runtime.",
   "license": "MIT AND PostgreSQL AND Unicode-3.0 AND Apache-2.0",
   "type": "commonjs",
@@ -22,7 +22,7 @@
   "oliphaunt": {
     "target": "linux-x64-gnu",
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.2.0",
+    "runtimeVersion": "0.3.0",
     "addonAbiVersion": 3,
     "nodeApiVersion": 8,
     "profiles": [
