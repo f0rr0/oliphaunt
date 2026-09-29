@@ -69,3 +69,4 @@ tasks:
       - "tools/smoke-built-site.mts"
     options:
       cache: false
+      mutex: "docs-generated-files"
