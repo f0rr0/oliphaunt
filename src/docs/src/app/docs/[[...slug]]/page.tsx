@@ -9,6 +9,7 @@ import { createRelativeLink } from 'fumadocs-ui/mdx';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { DitherElephant } from '@/components/dither-elephant';
 import { getMDXComponents } from '@/components/mdx';
 import { getPageImage, getPageMarkdownUrl, source } from '@/lib/source';
 
@@ -33,37 +34,44 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
 
   return (
     <DocsPage
+      role="main"
+      tabIndex={-1}
       toc={page.data.toc}
       full={page.data.full}
       breadcrumb={{ enabled: false }}
       footer={{ enabled: false }}
-      className="oliphaunt-doc-page"
+      className="max-w-[800px]"
     >
       <div className="oliphaunt-doc-header not-prose">
-        <nav className="oliphaunt-doc-header__path" aria-label="Breadcrumb">
-          <ol>
-            {breadcrumbItems.map((item, index) => {
-              const current = index === breadcrumbItems.length - 1;
+        <div className="mb-8 flex min-h-8 flex-wrap items-center justify-between gap-4">
+          <nav className="oliphaunt-doc-header__path" aria-label="Breadcrumb">
+            <ol>
+              {breadcrumbItems.map((item, index) => {
+                const current = index === breadcrumbItems.length - 1;
 
-              return (
-                <li key={item.href}>
-                  {current ? (
-                    <span aria-current="page">{item.label}</span>
-                  ) : (
-                    <Link href={item.href}>{item.label}</Link>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        </nav>
-        <div className="oliphaunt-title-row">
-          <DocsTitle className="oliphaunt-doc-title">{page.data.title}</DocsTitle>
+                return (
+                  <li key={item.href}>
+                    {current ? (
+                      <span aria-current="page">{item.label}</span>
+                    ) : (
+                      <Link href={item.href}>{item.label}</Link>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
           <MarkdownCopyButton markdownUrl={markdownUrl} />
         </div>
-        <DocsDescription className="oliphaunt-doc-description">
-          {page.data.description}
-        </DocsDescription>
+        <div className="oliphaunt-title-row">
+          <div className="min-w-0">
+            <DocsTitle className="oliphaunt-doc-title">{page.data.title}</DocsTitle>
+            <DocsDescription className="oliphaunt-doc-description">
+              {page.data.description}
+            </DocsDescription>
+          </div>
+          {page.slugs.join('/') === 'start' ? <DitherElephant /> : null}
+        </div>
       </div>
       <DocsBody className="oliphaunt-doc-body">
         <MDX

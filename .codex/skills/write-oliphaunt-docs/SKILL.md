@@ -35,6 +35,7 @@ Use [research.md](references/research.md) when changing information architecture
 - Explain prerequisites before commands. Distinguish a complete program from a fragment that uses an existing `db`. Show expected output only when supported by execution or an unambiguous deterministic expression.
 - Keep warnings next to actions that can lose data or block an integration. Do not hide mandatory steps in tabs or disclosures. Use tabs only for interchangeable choices, such as package managers.
 - Reuse Fumadocs and its accessible primitives before adding components or dependencies. Use the available `better-interface` skills for layout, writing, typography, color, UI, and accessibility; use the React/Next.js skills when changing site code.
+- Follow the [design grounding](../../../src/docs/DESIGN_GROUNDING.md) for the site's dark default, constrained typography, spacing, and illustration style. Keep decorative artwork in the site shell rather than the exported developer instructions.
 
 ## Verify the actual result
 

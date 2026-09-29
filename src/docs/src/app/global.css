@@ -5,41 +5,47 @@
 @theme {
   --font-sans: var(--font-oliphaunt-sans);
   --font-mono: var(--font-oliphaunt-mono);
-  --color-fd-background: hsl(0 0% 100%);
-  --color-fd-foreground: hsl(160 8% 14%);
-  --color-fd-card: hsl(0 0% 100%);
-  --color-fd-card-foreground: hsl(160 8% 14%);
-  --color-fd-popover: hsl(0 0% 100%);
-  --color-fd-popover-foreground: hsl(160 8% 14%);
-  --color-fd-primary: hsl(158 72% 25%);
-  --color-fd-primary-foreground: hsl(0 0% 100%);
-  --color-fd-secondary: hsl(150 7% 96%);
-  --color-fd-secondary-foreground: hsl(160 8% 14%);
-  --color-fd-muted: hsl(150 7% 96%);
-  --color-fd-muted-foreground: hsl(160 4% 40%);
-  --color-fd-accent: hsl(150 15% 94%);
-  --color-fd-accent-foreground: hsl(158 72% 25%);
-  --color-fd-border: hsl(150 6% 89%);
-  --color-fd-ring: hsl(158 72% 25%);
+  --font-serif: var(--font-oliphaunt-serif);
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
+  --radius-2xl: 8px;
+  --color-fd-background: #fafafa;
+  --color-fd-foreground: #171717;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #171717;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #171717;
+  --color-fd-primary: #262626;
+  --color-fd-primary-foreground: #fafafa;
+  --color-fd-secondary: #f0f0f0;
+  --color-fd-secondary-foreground: #404040;
+  --color-fd-muted: #f0f0f0;
+  --color-fd-muted-foreground: #626262;
+  --color-fd-accent: #ededed;
+  --color-fd-accent-foreground: #171717;
+  --color-fd-border: #e2e2e2;
+  --color-fd-ring: #626262;
 }
 
 .dark {
-  --color-fd-background: hsl(160 6% 8%);
-  --color-fd-foreground: hsl(150 6% 93%);
-  --color-fd-card: hsl(160 5% 10%);
-  --color-fd-card-foreground: hsl(150 6% 93%);
-  --color-fd-popover: hsl(160 5% 10%);
-  --color-fd-popover-foreground: hsl(150 6% 93%);
-  --color-fd-primary: hsl(156 48% 66%);
-  --color-fd-primary-foreground: hsl(160 6% 8%);
-  --color-fd-secondary: hsl(160 5% 14%);
-  --color-fd-secondary-foreground: hsl(150 6% 93%);
-  --color-fd-muted: hsl(160 5% 13%);
-  --color-fd-muted-foreground: hsl(150 4% 66%);
-  --color-fd-accent: hsl(158 16% 16%);
-  --color-fd-accent-foreground: hsl(156 48% 66%);
-  --color-fd-border: hsl(160 5% 21%);
-  --color-fd-ring: hsl(156 48% 66%);
+  --color-fd-background: #111111;
+  --color-fd-foreground: #ededed;
+  --color-fd-card: #191919;
+  --color-fd-card-foreground: #ededed;
+  --color-fd-popover: #1c1c1c;
+  --color-fd-popover-foreground: #ededed;
+  --color-fd-primary: #e5e5e5;
+  --color-fd-primary-foreground: #171717;
+  --color-fd-secondary: #242424;
+  --color-fd-secondary-foreground: #d4d4d4;
+  --color-fd-muted: #202020;
+  --color-fd-muted-foreground: #a3a3a3;
+  --color-fd-accent: #292929;
+  --color-fd-accent-foreground: #fafafa;
+  --color-fd-border: #303030;
+  --color-fd-ring: #a3a3a3;
 }
 
 html {
@@ -47,6 +53,7 @@ html {
 }
 body {
   font-family: var(--font-sans), system-ui, sans-serif;
+  font-weight: 400;
 }
 code,
 pre,
@@ -62,8 +69,8 @@ button {
   outline-offset: 3px;
 }
 ::selection {
-  background: var(--color-fd-accent);
-  color: var(--color-fd-accent-foreground);
+  background: var(--color-fd-foreground);
+  color: var(--color-fd-background);
 }
 
 #nd-sidebar {
@@ -71,111 +78,115 @@ button {
 }
 #nd-sidebar a,
 #nd-sidebar button {
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 #nd-sidebar a[data-active="true"] {
-  font-weight: 600;
+  font-weight: 500;
 }
 .oliphaunt-wordmark {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.025em;
+  gap: 8px;
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
 }
 .oliphaunt-wordmark__mark {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  color: var(--color-fd-primary);
+  width: 24px;
+  height: 24px;
+  color: var(--color-fd-foreground);
 }
 .oliphaunt-mark {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
 }
 
-.oliphaunt-doc-page {
-  --fd-page-width: 860px;
-}
 .oliphaunt-doc-header {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 .oliphaunt-doc-header__path ol {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   padding: 0;
-  margin: 0 0 24px;
+  margin: 0;
   list-style: none;
   font-size: 13px;
+  line-height: 1.5;
   color: var(--color-fd-muted-foreground);
 }
 .oliphaunt-doc-header__path li + li::before {
   content: "/";
   margin-inline-end: 8px;
-  opacity: 0.5;
+  color: var(--color-fd-muted-foreground);
 }
 .oliphaunt-title-row {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 24px;
 }
 .oliphaunt-doc-title {
   margin: 0;
-  font-size: clamp(1.9rem, 4vw, 2.5rem);
-  font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -0.04em;
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: 2rem;
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: 0;
   text-wrap: balance;
-}
-.oliphaunt-title-row > button {
-  flex: none;
-  margin-top: 4px;
 }
 .oliphaunt-doc-description {
   margin: 16px 0 0;
   max-width: 65ch;
-  font-size: 17px;
-  line-height: 1.65;
+  font-size: 16px;
+  line-height: 1.6;
   color: var(--color-fd-muted-foreground);
   text-wrap: pretty;
 }
 .oliphaunt-doc-body {
   font-size: 16px;
-  line-height: 1.75;
+  line-height: 1.6;
   overflow-wrap: break-word;
 }
 .oliphaunt-doc-body h2 {
-  font-size: 1.4rem;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  margin-top: 2.5rem;
-  scroll-margin-top: 6rem;
+  margin-top: 48px;
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: 1.375rem;
+  font-weight: 400;
+  line-height: 1.2;
 }
 .oliphaunt-doc-body h3 {
-  font-size: 1.1rem;
-  font-weight: 600;
-  scroll-margin-top: 6rem;
+  margin-top: 32px;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.5;
 }
 .oliphaunt-doc-body :where(h2, h3) {
+  letter-spacing: 0;
   text-wrap: balance;
+  scroll-margin-top: 6rem;
 }
 .oliphaunt-doc-body :where(p, li) {
   max-width: 75ch;
 }
+.oliphaunt-doc-body strong {
+  font-weight: 500;
+}
 .oliphaunt-doc-body a {
-  text-underline-offset: 3px;
+  font-weight: 400;
+  text-underline-offset: 4px;
+  text-underline-position: from-font;
   text-decoration-thickness: from-font;
 }
 .oliphaunt-doc-body pre {
   font-size: 13px;
-  line-height: 1.8;
+  line-height: 1.75;
 }
 .oliphaunt-doc-body figure {
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   box-shadow: none;
 }
 .oliphaunt-doc-body table {
@@ -183,6 +194,7 @@ button {
 }
 .oliphaunt-doc-body th {
   white-space: normal;
+  font-weight: 500;
 }
 .oliphaunt-doc-body :where(td, th) {
   min-width: 120px;
@@ -193,70 +205,23 @@ button {
 }
 .oliphaunt-doc-body [role="tab"] {
   min-height: 40px;
+  font-weight: 400;
 }
 
-.sdk-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin: 24px 0;
-}
-.sdk-link {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 12px;
-  padding: 18px 16px;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 8px;
-  background: var(--color-fd-card);
-  color: var(--color-fd-foreground);
-  text-decoration: none;
-  transition: background-color 120ms;
-}
-.sdk-mark {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 5px;
-  background: var(--color-fd-muted);
-  font: 500 13px var(--font-mono);
-}
-.sdk-title {
-  display: block;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.5;
-}
-.sdk-description {
-  display: block;
-  margin-top: 3px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--color-fd-muted-foreground);
-}
-.sdk-link > svg {
-  color: var(--color-fd-muted-foreground);
-}
 @media (hover: hover) {
   .sdk-link:hover {
-    background: var(--color-fd-muted);
+    color: var(--color-fd-accent-foreground);
   }
   .oliphaunt-doc-header__path a:hover {
     text-decoration: underline;
   }
 }
 @media (max-width: 40rem) {
-  .sdk-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
   .oliphaunt-title-row {
-    flex-wrap: wrap;
-    gap: 8px;
+    gap: 16px;
   }
-  .oliphaunt-doc-description {
-    font-size: 16px;
+  .oliphaunt-title-row > svg {
+    width: 80px;
   }
   input {
     font-size: 16px;

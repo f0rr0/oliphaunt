@@ -100,3 +100,24 @@ Reviewed production screenshots at desktop width in light and dark themes and at
 Browser interactions passed: arrow-key installation tabs, code copying with resolved versions, Copy Markdown, Ctrl+K search and navigation to the Rust API result, and opening the mobile sidebar. Clipboard checks required the isolated test browser's clipboard permissions; no site change was needed.
 
 Artifacts remain outside the repository under the thread's visualization directory in `docs-rebase/`: `desktop.png`, `typescript-dark.png`, `swift-mobile.png`, and `layout-audit.json`.
+
+## Visual refinement — 2026-09-29
+
+Inspected the live pages and repository styles for f0rr0.dev, GPU Postal and mealprep.party. The [design grounding](../DESIGN_GROUNDING.md) now records their influence: a neutral dark default, DM Sans reading text, restrained Instrument Serif headings, Geist Mono code, thin dividers and an 8px spacing rhythm. SDK cards became open rows; the start header carries a small static dithered elephant. Removed the repeated introduction so SDK selection comes earlier. No dependency was added.
+
+Replaced an unused legacy Fumadocs width variable with an actual 800px article constraint. Added a first-tab skip link and a main landmark to the shared docs layout. Both themes retain visible focus and reduced-motion support.
+
+| Check | Result and boundary |
+| --- | --- |
+| Moon docs format, lint, check and test-package | Passed; 44 routes and 49 exported HTML files. |
+| All routes at 320px | Passed: one H1 and main landmark, no horizontal page overflow, no unresolved versions. |
+| Seven screenshot and axe samples | Start, TypeScript quickstart, Rust reference, version table, mobile, light theme, and 720×540 CSS viewport at DPR 2 (200% reflow equivalent). No WCAG A/AA violations in these page samples. |
+| Default theme | A fresh visit with a light OS preference starts dark; an explicit light choice persists after reload. |
+| Browser interactions | Skip link, installation tabs, code copy, Markdown copy, search, mobile sidebar toggle and theme toggle checked by keyboard where applicable. Clipboard grants were configured in the isolated browser. |
+| Assistive technology | Accessible roles/names inspected in Chrome; full NVDA/VoiceOver testing and physical-device zoom were not performed. |
+
+Contrast was calculated from rendered foreground/background pairs on the TypeScript quickstart, including composed background colors. Body text measured 16.13:1 dark / 17.18:1 light; muted text 7.49:1 / 5.84:1; inactive tabs 6.15:1 / 5.35:1; the lowest visible syntax-token contrast was 5.72:1 / 4.57:1. These text pairs meet WCAG AA.
+
+The separately opened search dialog retains an upstream Fumadocs 16.9.3 warning: result buttons have `aria-selected` without a supporting role. This is a medium-severity semantic issue, distinct from the passing page samples; keyboard search works. Changing the dependency's search implementation is outside this visual iteration. Do not describe the entire site as accessibility-certified.
+
+Screenshots, reference captures and measurements are in the thread visualization directory under `docs-style/`, including `start.png`, `typescript.png`, `mobile.png`, `light.png`, `reference.png`, `table.png`, `zoom.png`, and `style-audit.json`.

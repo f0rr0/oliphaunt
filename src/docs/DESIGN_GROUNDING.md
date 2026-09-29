@@ -6,7 +6,7 @@ The reading task comes first: choose a runtime, install a package, run a query, 
 
 - One documentation shell at the homepage and every docs route.
 - A shallow sidebar: Get started, SDKs, Guides, Reference. Expand the active SDK and expose its guide and API reference.
-- SDK cards only where the reader chooses a language/runtime. Use prose, lists, and tables within documentation.
+- SDK rows where the reader chooses a language/runtime. Use prose, lists, and tables within documentation.
 - Compact page titles, readable code, a restrained line length, and a local table of contents.
 - Shared concepts live in shared guides. Put platform exceptions next to the relevant command.
 
@@ -14,9 +14,13 @@ The reading task comes first: choose a runtime, install a package, run a query, 
 
 Reuse Fumadocs navigation, search, code copying, cards, callouts, steps, and Radix tabs. These provide the same accessible primitive approach used by shadcn/ui. Do not add a second component framework for equivalent controls.
 
-Use the available better-interface skills for layout, writing, typography, color, accessibility, and UI review. Use IBM Plex Sans for prose and IBM Plex Mono for code, neutral surfaces, and green for links, focus, and active navigation. Use existing language icons and the Oliphaunt mark.
+Use the available better-interface skills for layout, writing, typography, color, accessibility, and UI review. The visual references are [f0rr0.dev](https://f0rr0.dev), [GPU Postal](https://gpu-postal.f0rr0.dev), and [mealprep.party](https://mealprep.party). Their live pages and repository styles informed the near-black surfaces, quiet gray dividers, compact regular-weight headings, and limited illustration.
 
-Keep interactions quiet and functional. Respect reduced motion. Maintain contrast in both themes and visible keyboard focus. Long code and tables scroll within their containers; the page must fit a 320px viewport.
+Use DM Sans for reading, Instrument Serif for the wordmark and first two heading levels, and Geist Mono for code. Keep the type scale small: 32px page titles, 22px section titles, 16px prose, 14px supporting text, and 13px code. Favor regular and medium weights. Use an 8px spacing rhythm and an 800px article including its padding.
+
+Default to dark, while retaining the reader's light-theme choice. Use neutral semantic Tailwind tokens for surfaces, text, focus, and active navigation; keep syntax highlighting useful. SDK choices use open rows with thin dividers and existing language icons. A small, static dithered elephant gives the start page character without animation or a canvas dependency.
+
+Keep interactions quiet and functional. Respect reduced motion. Maintain contrast in both themes and visible keyboard focus. Provide a first-tab skip link and a main landmark. Long code and tables scroll within their containers; the page must fit a 320px viewport.
 
 ## Visual review
 

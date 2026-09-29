@@ -1,18 +1,22 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
 import type { Metadata } from 'next';
-import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
+import { DM_Sans, Geist_Mono, Instrument_Serif } from 'next/font/google';
 
-const plexSans = IBM_Plex_Sans({
+const sans = DM_Sans({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
   variable: '--font-oliphaunt-sans',
 });
 
-const plexMono = IBM_Plex_Mono({
+const mono = Geist_Mono({
   subsets: ['latin'],
-  weight: ['400', '500', '600'],
   variable: '--font-oliphaunt-mono',
+});
+
+const serif = Instrument_Serif({
+  subsets: ['latin'],
+  weight: '400',
+  variable: '--font-oliphaunt-serif',
 });
 
 export const metadata: Metadata = {
@@ -32,11 +36,12 @@ export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html
       lang="en"
-      className={`${plexSans.variable} ${plexMono.variable}`}
+      className={`${sans.variable} ${mono.variable} ${serif.variable}`}
       suppressHydrationWarning
     >
       <body className="flex flex-col min-h-screen antialiased">
         <RootProvider
+          theme={{ defaultTheme: 'dark' }}
           search={{
             options: {
               type: 'static',
