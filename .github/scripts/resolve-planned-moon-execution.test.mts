@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { resolveExecution } from './resolve-planned-moon-execution.mts';
+import { executionBatches, resolveExecution } from './resolve-planned-moon-execution.mts';
 
 const tasks = new Map([
   [
@@ -25,6 +25,21 @@ const tasks = new Map([
     { target: 'sdk:cargo-sources', command: 'noop', deps: [], options: { internal: true } },
   ],
 ]);
+
+test('batches independent artifact consumers without starting their dependents early', () => {
+  const graph = new Map([
+    ['import:bytes', { deps: [] }],
+    ['a:build', { deps: ['import:bytes'] }],
+    ['b:build', { deps: ['import:bytes'] }],
+    ['c:test', { deps: ['a:build', 'b:build'] }],
+    ['d:test', { deps: ['a:build'] }],
+  ]);
+  const execution = resolveExecution(['c:test', 'd:test'], ['import:bytes'], graph);
+  assert.deepEqual(executionBatches(execution.targets, graph), [
+    ['a:build', 'b:build'],
+    ['c:test', 'd:test'],
+  ]);
+});
 
 test('leaves ordinary Moon execution intact when no dependency was transferred', () => {
   assert.deepEqual(resolveExecution(['release:package'], [], tasks), {

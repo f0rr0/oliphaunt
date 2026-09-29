@@ -179,7 +179,9 @@ containing only `noble`, `noble-updates`, and `noble-security` with the `main`
 and `universe` components. Every update and install explicitly binds that
 source, disabled source-parts discovery (`Dir::Etc::sourceparts=-`), a reset
 list directory, and the verified CA bundle. A transient failure retries the
-complete update/install transaction with a fixed bound; it never falls back to
+complete update/install transaction within one 15-minute default deadline,
+including APT retries and outer retry waits (see
+[acquisition deadlines](testing.md#acquisition-deadlines)); it never falls back to
 a live mirror or disables TLS verification. `ca-certificates` is installed in
 the same pinned transaction as the builder packages.
 

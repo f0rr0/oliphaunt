@@ -83,7 +83,7 @@ export function evidenceMatrix(catalog: Row): string {
             'postgres-major = 18',
             'artifact-family = "wasix-runtime"',
             'platform-targets = ["portable"]',
-            'runtime-modes = ["direct", "server", "restart", "backup-restore"]',
+            `runtime-modes = ${JSON.stringify(modes)}`,
             `evidence-required = ["${tier}"]`,
             '',
           ];

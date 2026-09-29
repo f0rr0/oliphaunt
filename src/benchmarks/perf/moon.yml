@@ -118,6 +118,7 @@ tasks:
       bun src/wasix/sdks/ts/tools/stage-host.mts
       bash src/wasix/sdks/ts/tools/integration/smoke-browser.sh --benchmark
     deps:
+      - "oliphaunt-query-ts:build"
       - "perf-tools:wasix-plan"
       - "liboliphaunt-wasix:runtime-portable"
       - "database-resources:build-wasix-standard"

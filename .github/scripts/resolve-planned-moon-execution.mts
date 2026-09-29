@@ -91,6 +91,23 @@ function parseTransferred() {
   return value;
 }
 
+export function executionBatches(targets, tasks) {
+  const levels = new Map();
+  const batches = [];
+  // resolveExecution already orders prerequisites before consumers. Only batch
+  // independent tasks; --upstream none does not enforce their dependency order.
+  for (const target of targets) {
+    const level = Math.max(
+      0,
+      ...dependencyTargets(tasks.get(target), tasks).map((dep) => (levels.get(dep) ?? -1) + 1),
+    );
+    levels.set(target, level);
+    batches[level] ??= [];
+    batches[level].push(target);
+  }
+  return batches;
+}
+
 function taskMap() {
   const graph = JSON.parse(readFileSync(process.env.OLIPHAUNT_MOON_TASK_GRAPH_FILE, 'utf8'));
   return new Map(Object.values(graph.data ?? {}).map((task) => [task.target, task]));
@@ -126,7 +143,10 @@ if (import.meta.main) {
     for (const target of targets) collect(target);
     const execution = resolveExecution(targets, transferred, tasks);
     for (const target of execution.localDependencies) console.log(`local\t${target}`);
-    for (const target of execution.targets) console.log(`target\t${target}`);
+    const batches = execution.transferred.length
+      ? executionBatches(execution.targets, tasks)
+      : [execution.targets];
+    for (const batch of batches) console.log(`target\t${batch.join(' ')}`);
     for (const target of execution.transferred) console.log(`transferred\t${target}`);
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));

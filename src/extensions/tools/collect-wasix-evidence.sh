@@ -33,7 +33,7 @@ trap 'rm -rf "$OLIPHAUNT_EXTENSION_EVIDENCE_DIR"' EXIT
 # This command exercises every catalogued extension in direct, server, restart,
 # materialization, and physical backup/restore modes. The record command is deliberately
 # after it so a failing or interrupted run cannot produce passed evidence.
-bash src/wasix/runtime/tools/runtime-smoke.sh regression
+.github/scripts/run-planned-moon-job.sh wasix-release-regression
 bash src/extensions/tools/check-extension-model.sh \
   --record-wasix-evidence-run "$run_id" \
   --observed-at "$observed_at"

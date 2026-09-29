@@ -2,7 +2,7 @@
 
 # Shared report helpers for React Native Expo mobile runners. Platform runners
 # own platform metrics and artifact copying; this file only normalizes runner
-# pass/report JSON emitted from Metro logs or Maestro installed-app flows.
+# pass/report JSON emitted by the app through Metro or platform logs.
 
 configure_mobile_catalog_profile_probe() {
   local profile="$1"
@@ -307,19 +307,6 @@ verify_mobile_e2e_smoke_receipt() {
   echo "$platform mobile E2E extension receipt postcondition: $receipt" >&2
 }
 
-write_maestro_runner_report() {
-  local platform="$1"
-  local reports_dir="$scratch_root/reports"
-  mkdir -p "$reports_dir"
-  OLIPHAUNT_MAESTRO_PLATFORM="$platform" \
-    OLIPHAUNT_MAESTRO_APP_ID="$app_id" \
-    OLIPHAUNT_MAESTRO_FLOW="$maestro_flow" \
-    bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" maestro-report >"$reports_dir/$runner-report.json"
-  OLIPHAUNT_MAESTRO_PLATFORM="$platform" \
-    OLIPHAUNT_MAESTRO_APP_ID="$app_id" \
-    OLIPHAUNT_MAESTRO_FLOW="$maestro_flow" \
-    bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" maestro-pass >"$reports_dir/$runner-pass.log"
-}
 
 write_mobile_package_size_report() {
   local artifact_size_key="$1"

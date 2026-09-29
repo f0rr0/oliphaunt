@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/wasix_third_party.sh"
 REPO_ROOT="$(oliphaunt_wasix_repo_root "$SCRIPT_DIR")"
+. "$REPO_ROOT/tools/dev/acquisition.sh"
 . "$REPO_ROOT/src/third-party/postgres/fetch-source.sh"
 SOURCE_TOML="$REPO_ROOT/src/third-party/postgres/source.toml"
 PATCH_DIR="$REPO_ROOT"

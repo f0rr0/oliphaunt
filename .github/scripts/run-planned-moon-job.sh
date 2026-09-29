@@ -52,13 +52,17 @@ if [[ "${#transferred_dependencies[@]}" -gt 0 ]]; then
   if [[ "${#local_dependencies[@]}" -gt 0 ]]; then
     .github/scripts/run-moon-targets.sh "${local_dependencies[@]}"
   fi
-  for target in "${targets[@]}"; do
+  for batch in "${targets[@]}"; do
     # Omitting transferred producers also omits their source hashes in Moon.
     # Execute intermediate prerequisites and roots against the downloaded bytes.
-    MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none "$target"
+    read -r -a batch_targets <<<"$batch"
+    MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none "${batch_targets[@]}"
   done
   exit 0
 fi
+
+# Without transfers the resolver emits one batch and Moon owns the whole DAG.
+read -r -a targets <<<"${targets[0]}"
 
 if [[ "${#moon_args[@]}" -gt 0 ]]; then
   exec .github/scripts/run-moon-targets.sh "${moon_args[@]}" "${targets[@]}"

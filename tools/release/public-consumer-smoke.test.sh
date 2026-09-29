@@ -12,6 +12,19 @@ while IFS= read -r -d '' entry; do clean+=("$entry"); done < "$scratch/cargo/env
 (cd "$scratch/cargo"; "${clean[@]}" cargo generate-lockfile)
 [[ -f "$scratch/cargo/Cargo.lock" ]]
 mkdir "$scratch/bin"
+export PUBLIC_PROBE_TIMEOUT="$(command -v gtimeout || command -v timeout)"
+cat > "$scratch/bin/gtimeout" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+# Stage/startup has its own generous budget. Shorten only the deliberate
+# hanging consumer, while still exercising the real process-group timeout.
+if [[ " $* " == *" npm install "* && -n "${HANG_PUBLIC_PROBE:-}" ]]; then
+  sleep 2
+  set -- "$1" 2s "${@:3}"
+fi
+exec "$PUBLIC_PROBE_TIMEOUT" "$@"
+SH
+chmod +x "$scratch/bin/gtimeout"
 cat > "$scratch/bin/npm" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -28,16 +41,18 @@ SH
 chmod +x "$scratch/bin/npm"
 export PATH="$scratch/bin:$PATH" SENSITIVE_TOKEN=must-not-survive CARGO_REGISTRY_TOKEN=must-not-survive
 export PUBLIC_PROBE_COUNTER="$scratch/attempts" PUBLIC_PROBE_FIXTURE="$source_root/tools/release/public-consumer-smoke.test.mts"
-for mode in success fail timeout; do
+for mode in success fail timeout expired; do
   mkdir "$scratch/$mode"
   bun tools/release/public-consumer-smoke.test.mts prepare-npm "$scratch/$mode" "$mode"
   unset FAIL_PUBLIC_PROBE HANG_PUBLIC_PROBE PUBLIC_PROBE_CHILD
   expected=0
+  if [[ "$mode" == expired ]]; then expected=1; fi
   if [[ "$mode" == fail ]]; then export FAIL_PUBLIC_PROBE=1; expected=7; fi
   if [[ "$mode" == timeout ]]; then export HANG_PUBLIC_PROBE=1 PUBLIC_PROBE_CHILD="$scratch/child-pid"; expected=124; fi
   status=0
   bash tools/release/public-consumer-smoke.sh --surface "$scratch/$mode" npm > "$scratch/$mode/output" 2>&1 || status=$?
   if [[ "$status" != "$expected" ]]; then cat "$scratch/$mode/output" >&2; exit 1; fi
+  if [[ "$mode" == expired ]]; then grep -q "shared public-consumer deadline reached" "$scratch/$mode/output"; fi
   bun tools/release/public-consumer-smoke.test.mts assert-npm "$scratch/$mode" "$mode"
 done
 [[ "$(wc -l < "$scratch/attempts")" -eq 3 ]]

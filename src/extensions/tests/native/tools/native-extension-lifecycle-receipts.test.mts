@@ -2,11 +2,25 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-
+import {
+  affectedPlanBinding,
+  assertBindingMatches,
+  assertCandidateBindingShape,
+  nativeEvidenceBinding,
+} from '../../../../../.github/scripts/release-candidate-lib.mts';
 import {
   compareText,
   exactExtensionProducts,
@@ -366,5 +380,140 @@ test('aggregate verification rejects candidate, shard, and PASS-record drift eve
     } finally {
       rmSync(value.root, { force: true, recursive: true });
     }
+  }
+});
+
+test('release qualification binds and revalidates same-run native lifecycle shards', () => {
+  const value = fixture(['cube', 'earthdistance']);
+  try {
+    const root = path.join(value.root, 'evidence');
+    mkdirSync(path.join(root, 'input'), { recursive: true });
+    mkdirSync(path.join(root, 'output'));
+    const receipt = writeShard(value, 0, { shardCount: 1 });
+    const transferred = path.join(root, 'input', path.basename(receipt));
+    copyFileSync(receipt, transferred);
+    const output = path.join(root, 'output/aggregate-receipt.json');
+    verifyReceipts({
+      receipts: path.join(root, 'input'),
+      'candidate-sha': CANDIDATE_SHA,
+      'candidate-tree': CANDIDATE_TREE,
+      'expected-extensions-csv': 'cube,earthdistance',
+      'expected-shard-count': '1',
+      repository: 'f0rr0/oliphaunt',
+      'run-id': '123',
+      'run-attempt': '1',
+      output,
+    });
+    const planFile = path.join(value.root, 'plan.json');
+    writeFileSync(
+      planFile,
+      JSON.stringify({
+        jobs: ['affected', 'native-extension-lifecycle'],
+        projects: [],
+        native_extension_lifecycle_sql_names: ['cube', 'earthdistance'],
+        native_extension_lifecycle_shard_count: 1,
+      }),
+    );
+    const affectedPlan = affectedPlanBinding(planFile, false);
+    const provenance = {
+      repository: 'f0rr0/oliphaunt',
+      runId: '123',
+      runAttempt: 2,
+      sha: CANDIDATE_SHA,
+      tree: CANDIDATE_TREE,
+      selection: affectedPlan.nativeExtensionLifecycle,
+    };
+    const candidateFile = path.join(value.root, 'candidate.json');
+    const env = {
+      ...process.env,
+      CI_HEAD_SHA: CANDIDATE_SHA,
+      CI_CHECKED_OUT_SHA: CANDIDATE_SHA,
+      CI_SOURCE_TREE: CANDIDATE_TREE,
+      CI_PLAN_PATH: planFile,
+      CI_QUALIFICATION_MODE: 'full-payload',
+      WASIX_RELEASE_REGRESSION_REQUIRED: 'false',
+      NATIVE_EVIDENCE_ROOT: root,
+      GITHUB_REPOSITORY: provenance.repository,
+      GITHUB_WORKFLOW: 'CI',
+      GITHUB_RUN_ID: '123',
+      GITHUB_RUN_ATTEMPT: '2',
+      GITHUB_EVENT_NAME: 'push',
+      GITHUB_REF: 'refs/heads/main',
+      GITHUB_WORKFLOW_REF: 'f0rr0/oliphaunt/.github/workflows/ci.yml@refs/heads/main',
+      CI_RUN_ID: '123',
+      RELEASE_HEAD_SHA: CANDIDATE_SHA,
+      PRODUCER_RECEIPTS_JSON: '[]',
+    };
+    const run = (command, ...args) => {
+      const result = Bun.spawnSync(
+        ['bun', `.github/scripts/${command}-release-candidate.mts`, candidateFile, ...args],
+        { env },
+      );
+      return { code: result.exitCode, output: result.stdout.toString() + result.stderr.toString() };
+    };
+    const written = run('write');
+    assert.equal(written.code, 0, written.output);
+    const verifyArgs = [
+      '--plan',
+      planFile,
+      '--wasix-evidence-required',
+      'false',
+      '--native-evidence-required',
+      'true',
+      '--native-evidence-root',
+      root,
+    ];
+    const verified = run('verify', ...verifyArgs);
+    assert.equal(verified.code, 0, verified.output);
+    const missingProduct = run(
+      'verify',
+      ...verifyArgs,
+      '--products-json',
+      '["oliphaunt-extension-vector"]',
+    );
+    assert.notEqual(missingProduct.code, 0);
+    assert.match(missingProduct.output, /missing published extension vector/);
+    const binding = nativeEvidenceBinding(root, provenance);
+    const candidate = {
+      schemaVersion: 2,
+      ...provenance,
+      affectedPlan,
+      evidenceRequirements: {
+        wasixReleaseRegression: false,
+        nativeExtensionLifecycle: true,
+        artifacts: ['native-extension-lifecycle-evidence'],
+      },
+      evidence: { wasixReleaseRegression: null, nativeExtensionLifecycle: binding },
+    };
+    assert.doesNotThrow(() => assertCandidateBindingShape(candidate));
+    assert.throws(
+      () =>
+        assertCandidateBindingShape({ ...candidate, evidence: { wasixReleaseRegression: null } }),
+      /native evidence digest/,
+    );
+    for (const patch of [
+      { runId: '124' },
+      { repository: 'other/repo' },
+      { runAttempt: 0 },
+      { sha: 'c'.repeat(40) },
+      { tree: 'c'.repeat(40) },
+      { selection: { extensions: ['cube'], shardCount: 1 } },
+      { selection: { extensions: ['cube', 'earthdistance'], shardCount: 2 } },
+    ])
+      assert.throws(() => nativeEvidenceBinding(root, { ...provenance, ...patch }));
+    writeFileSync(output, `${readFileSync(output, 'utf8')}\n`);
+    assert.throws(
+      () =>
+        assertBindingMatches(binding, nativeEvidenceBinding(root, provenance), 'native evidence'),
+      /does not match/,
+    );
+    const shard = JSON.parse(readFileSync(transferred, 'utf8'));
+    shard.passRecords.pop();
+    writeFileSync(transferred, JSON.stringify(shard));
+    assert.throws(() => nativeEvidenceBinding(root, provenance), /digest mismatch/);
+    rmSync(transferred);
+    assert.throws(() => nativeEvidenceBinding(root, provenance), /exactly 1 shard/);
+  } finally {
+    rmSync(value.root, { force: true, recursive: true });
   }
 });

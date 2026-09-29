@@ -271,6 +271,12 @@ test('source pins reject unsafe URLs, branches, names, and unpinned archives', (
     stripPrefix: 'pkg',
   };
   assert.doesNotThrow(() => validateSource(archive));
+  assert.doesNotThrow(() =>
+    validateSource({
+      ...archive,
+      url: 'https://static.crates.io/crates/wasmer/wasmer-6.1.0.crate',
+    }),
+  );
   assert.throws(() => validateSource({ ...archive, mirrorUrl: archive.url }));
   for (const url of [
     'https://example.invalid/libiconv/libiconv-1.19.tar.gz',

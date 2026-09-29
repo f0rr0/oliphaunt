@@ -30,99 +30,6 @@ latest_metro_runner_failure() {
   } | grep -E "$failure_tag|metro:bundling:failed|Unable to resolve" | tail -20 || true
 }
 
-should_use_maestro_e2e() {
-  [ "$runner" = "smoke" ] || return 1
-  [ "$sdk" = "iphonesimulator" ] || return 1
-  case "$e2e_assertion_runner" in
-    maestro)
-      maestro_binary >/dev/null || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
-      return 0
-      ;;
-    auto)
-      maestro_binary >/dev/null
-      return
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-run_maestro_installed_smoke() {
-  local device_udid="$1"
-  local reports_dir="$scratch_root/reports"
-  [ -f "$maestro_flow" ] || fail "missing Maestro installed-app smoke flow: $maestro_flow"
-  local maestro
-  maestro="$(maestro_binary)" || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
-  mkdir -p "$reports_dir"
-  echo "==> $maestro --device $device_udid test $maestro_flow"
-  MAESTRO_CLI_NO_ANALYTICS=true \
-    MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true \
-    "$maestro" --device "$device_udid" test \
-    -e APP_ID="$app_id" \
-    -e SMOKE_TIMEOUT_MS="$((timeout_seconds * 1000))" \
-    "$maestro_flow" \
-    >"$reports_dir/maestro.log" 2>&1 &
-  local maestro_pid=$!
-  local failure_receipt=""
-  local capture_failed=0
-  while kill -0 "$maestro_pid" 2>/dev/null; do
-    failure_receipt="$(latest_ios_simulator_capture_tag "$failure_tag")"
-    [ -z "$failure_receipt" ] || break
-    if ! ios_simulator_log_capture_is_alive; then
-      capture_failed=1
-      break
-    fi
-    sleep 1
-  done
-  if [ -z "$failure_receipt" ]; then
-    # Close the race where the app emits its terminal receipt as Maestro exits
-    # after observing the corresponding UI state.
-    failure_receipt="$(latest_ios_simulator_capture_tag "$failure_tag")"
-  fi
-  if [ -n "$failure_receipt" ]; then
-    {
-      printf '%s\n' "$failure_receipt"
-      printf 'maestroPid=%s\n' "$maestro_pid"
-      printf 'simulatorLog=%s\n' "${ios_simulator_log_file:-}"
-    } >"$reports_dir/maestro-authoritative-failure.txt"
-    terminate_ios_maestro_process "$maestro_pid"
-    wait "$maestro_pid" 2>/dev/null || true
-    printf '%s\n' "$failure_receipt" >&2
-    tail -160 "$reports_dir/maestro.log" >&2 || true
-    return 2
-  fi
-  if [ "$capture_failed" = "1" ]; then
-    {
-      printf 'maestroPid=%s\n' "$maestro_pid"
-      printf 'simulatorLog=%s\n' "${ios_simulator_log_file:-}"
-      printf 'reason=unified-log-capture-ended-before-maestro\n'
-    } >"$reports_dir/maestro-log-capture-failure.txt"
-    terminate_ios_maestro_process "$maestro_pid"
-    wait "$maestro_pid" 2>/dev/null || true
-    tail -160 "$reports_dir/maestro.log" >&2 || true
-    [ -z "${ios_simulator_log_file:-}" ] || tail -160 "$ios_simulator_log_file" >&2 || true
-    return 3
-  fi
-  local maestro_status=0
-  wait "$maestro_pid" || maestro_status=$?
-  if [ "$maestro_status" -ne 0 ]; then
-    tail -160 "$reports_dir/maestro.log" >&2 || true
-    return 1
-  fi
-  tail -80 "$reports_dir/maestro.log" >&2 || true
-}
-
-terminate_ios_maestro_process() {
-  local maestro_pid="$1"
-  kill -0 "$maestro_pid" 2>/dev/null || return 0
-  # The checksum-pinned Maestro launcher ends with `exec "$JAVACMD" "$@"`,
-  # so this PID is the JVM rather than a shell wrapper that could orphan it.
-  kill -TERM "$maestro_pid" 2>/dev/null || true
-  sleep 0.2
-  kill -KILL "$maestro_pid" 2>/dev/null || true
-}
-
 resolve_ios_app_process_name() {
   local app="$1"
   local plist="$app/Info.plist"
@@ -178,7 +85,7 @@ start_ios_simulator_log_capture() {
   ios_simulator_log_pid=$!
 
   # Start the stream before launching the app so a fast Release smoke cannot
-  # age out while Maestro starts its driver. The scoped file is also durable
+  # age out before the runner observes it. The scoped file is also durable
   # evidence and cannot contain a receipt from an already-terminated launch.
   sleep "${OLIPHAUNT_EXPO_IOS_LOG_CAPTURE_STARTUP_SECONDS:-1}"
   if ! ios_simulator_log_capture_is_alive; then
@@ -214,62 +121,6 @@ stop_ios_simulator_log_capture() {
     return 1
   fi
   return 0
-}
-
-latest_ios_simulator_capture_tag() {
-  local tag="$1"
-  [ -n "${ios_simulator_log_file:-}" ] && [ -f "$ios_simulator_log_file" ] || return 0
-  grep -F "$tag" "$ios_simulator_log_file" | tail -1 || true
-}
-
-wait_for_ios_simulator_maestro_receipt() {
-  local grace_seconds="${OLIPHAUNT_EXPO_IOS_RECEIPT_GRACE_SECONDS:-15}"
-  case "$grace_seconds" in
-    '' | *[!0-9]*)
-      echo "OLIPHAUNT_EXPO_IOS_RECEIPT_GRACE_SECONDS must be a nonnegative integer, got $grace_seconds" >&2
-      return 4
-      ;;
-  esac
-  local deadline=$((SECONDS + grace_seconds))
-  local pass failure_receipt
-  while :; do
-    failure_receipt="$(latest_ios_simulator_capture_tag "$failure_tag")"
-    if [ -n "$failure_receipt" ]; then
-      printf '%s\n' "$failure_receipt" >&2
-      return 2
-    fi
-    pass="$(latest_ios_simulator_capture_tag "$success_tag")"
-    if [ -n "$pass" ]; then
-      printf '%s\n' "$pass"
-      return 0
-    fi
-    ios_simulator_log_capture_is_alive || return 3
-    [ "$SECONDS" -lt "$deadline" ] || return 1
-    sleep 1
-  done
-}
-
-write_ios_maestro_diagnostics() {
-  local device_udid="$1"
-  local process_name="$2"
-  local reason="$3"
-  local reports_dir="$scratch_root/reports"
-  mkdir -p "$reports_dir"
-  {
-    printf 'reason=%s\n' "$reason"
-    printf 'deviceUdid=%s\n' "$device_udid"
-    printf 'processName=%s\n' "$process_name"
-    printf 'simulatorLog=%s\n' "${ios_simulator_log_file:-}"
-  } >"$reports_dir/maestro-$reason.txt"
-  xcrun simctl spawn "$device_udid" log show \
-    --style compact \
-    --last 15m \
-    --predicate "process == '$process_name'" \
-    >"$reports_dir/maestro-unified-log-$reason.txt" 2>&1 || true
-  xcrun simctl io "$device_udid" screenshot \
-    "$reports_dir/maestro-screen-$reason.png" >/dev/null 2>&1 || true
-  [ -s "$reports_dir/maestro-screen-$reason.png" ] || rm -f "$reports_dir/maestro-screen-$reason.png"
-  tail -200 "$reports_dir/maestro-unified-log-$reason.txt" >&2 || true
 }
 
 write_ios_process_metrics() {
@@ -707,16 +558,10 @@ install_and_launch() {
   local scratch_metro_offset dev_metro_offset
   scratch_metro_offset="$(file_bytes "$scratch_root/metro.log")"
   dev_metro_offset="$(file_bytes "$metro_dev_log")"
-  local use_maestro_e2e=0 app_process_name=""
-  if should_use_maestro_e2e; then
-    [ "$lifecycle_smoke" != "1" ] ||
-      fail "Maestro mobile E2E does not drive lifecycle transitions; use mobile-drill or set OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE=0"
-    app_process_name="$(resolve_ios_app_process_name "$app")" ||
-      fail "failed to resolve the installed iOS app executable for unified-log capture"
-    start_ios_simulator_log_capture "$device_udid" "$app_process_name" ||
-      fail "failed to start exact-launch iOS unified-log capture"
-    use_maestro_e2e=1
-  fi
+  local app_process_name
+  app_process_name="$(resolve_ios_app_process_name "$app")" || fail "missing iOS executable"
+  start_ios_simulator_log_capture "$device_udid" "$app_process_name" ||
+    fail "failed to start exact-launch iOS unified-log capture"
   local url
   url="$(ios_runner_url "$runner")"
   local launch_output launch_pid
@@ -731,45 +576,18 @@ install_and_launch() {
   fi
 
   local logs pass
-  if [ "$use_maestro_e2e" = "1" ]; then
-    local maestro_status=0
-    run_maestro_installed_smoke "$device_udid" || maestro_status=$?
-    if [ "$maestro_status" -ne 0 ]; then
-      stop_ios_simulator_log_capture || true
-      if [ "$maestro_status" = "2" ]; then
-        write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "authoritative-smoke-failure"
-        fail "Expo iOS installed app emitted $failure_tag while Maestro was running"
-      fi
-      if [ "$maestro_status" = "3" ]; then
-        write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "log-capture-failure"
-        fail "Expo iOS exact-launch unified-log capture ended while Maestro was running"
-      fi
-      write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "maestro-failure"
-      fail "Expo iOS installed-app Maestro smoke failed"
-    fi
-
+  if [ "$runner" = smoke ] && [ "$lifecycle_smoke" != 1 ]; then
     local receipt_status=0
-    pass="$(wait_for_ios_simulator_maestro_receipt)" || receipt_status=$?
-    stop_ios_simulator_log_capture || true
-    if [ "$receipt_status" = "0" ]; then
-      printf '\n%s\n' "$pass"
-      if ! write_runner_report "$pass"; then
-        write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "invalid-authoritative-pass-receipt"
-        fail "Expo iOS app emitted an invalid authoritative OLIPHAUNT_EXPO_SMOKE_PASS receipt"
-      fi
-    elif [ "$receipt_status" = "2" ]; then
-      write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "authoritative-smoke-failure"
-      fail "Expo iOS installed app emitted $failure_tag after Maestro observed the UI"
-    elif [ "$receipt_status" = "3" ]; then
-      write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "log-capture-failure"
-      fail "Expo iOS exact-launch unified-log capture ended before the app receipt was collected"
-    elif [ "$receipt_status" = "4" ]; then
-      write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "invalid-receipt-grace"
-      fail "Expo iOS receipt grace configuration is invalid"
-    else
-      write_ios_maestro_diagnostics "$device_udid" "$app_process_name" "missing-authoritative-pass-receipt"
-      fail "Expo iOS installed-app smoke UI passed without an authoritative OLIPHAUNT_EXPO_SMOKE_PASS receipt"
+    mobile_app_is_alive() { [ -n "$launch_pid" ] && kill -0 "$launch_pid" 2>/dev/null; }
+    pass="$(wait_for_mobile_receipt "$ios_simulator_log_file" "$ios_simulator_log_pid")" || receipt_status=$?
+    stop_ios_simulator_log_capture || receipt_status=3
+    mobile_log_has_failure "$ios_simulator_log_file" && receipt_status=2
+    mobile_app_is_alive || receipt_status=4
+    if [ "$receipt_status" != 0 ]; then
+      tail -200 "$ios_simulator_log_file" >&2 || true
+      fail "iOS smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
     fi
+    write_runner_report "$pass" || fail "invalid iOS smoke receipt"
     write_ios_process_metrics "$launch_pid"
     return
   fi
@@ -777,7 +595,7 @@ install_and_launch() {
   local deadline=$((SECONDS + timeout_seconds))
   local fail_line lifecycle_exercised=0
   while [ "$SECONDS" -lt "$deadline" ]; do
-    logs="$(xcrun simctl spawn "$device_udid" log show --style compact --last 30s --predicate "process == 'reactnativeoliphauntexpo'" 2>/dev/null || true)"
+    logs="$(cat "$ios_simulator_log_file")"
     if [ "$lifecycle_smoke" = "1" ] && [ "$lifecycle_exercised" = "0" ]; then
       if {
         printf '%s\n' "$logs"

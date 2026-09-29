@@ -71,7 +71,7 @@ describe('Moon task capabilities', () => {
       groups.map(({ target_count }) => target_count),
       [1, 1, 1, 4, 4, 1, 2, 1],
     );
-    assert.equal(groups[3].label, 'Plain / 0 + Plain / 1 + Plain / 2 + Plain / 3');
+    assert.equal(groups[3].label, 'Source 4');
     assert.equal(groups.filter(({ requires_rust }) => requires_rust).length, 1);
     assert.equal(groups.filter(({ requires_android_sdk }) => requires_android_sdk).length, 1);
     assert.equal(groups.filter(({ requires_apple }) => requires_apple).length, 1);

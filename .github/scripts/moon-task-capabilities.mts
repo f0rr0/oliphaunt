@@ -133,10 +133,22 @@ function compareTargets(left, right) {
   return left.target < right.target ? -1 : left.target > right.target ? 1 : 0;
 }
 
-function groupRow(targets) {
+function groupRow(targets, index) {
   const first = targets[0];
   return {
-    label: targets.map(({ label }) => label).join(' + '),
+    label: `${
+      [
+        first.requires_apple && 'Apple',
+        first.requires_android_sdk && 'Android',
+        first.requires_wasmer_llvm && 'WASIX',
+        first.requires_swift && 'Swift',
+        first.requires_rust && 'Rust',
+        first.requires_maintainer_tools && 'Tooling',
+        first.requires_workspace && 'JavaScript',
+      ]
+        .filter(Boolean)
+        .join(' / ') || 'Source'
+    } ${index + 1}`,
     target_count: targets.length,
     requires_rust: first.requires_rust,
     requires_maintainer_tools: first.requires_maintainer_tools,

@@ -48,6 +48,8 @@ if [ ! -f "$curl_platform_flags" ] || [ -L "$curl_platform_flags" ]; then
 fi
 # shellcheck source=tools/dev/curl-platform-flags.sh disable=SC1091
 . "$curl_platform_flags"
+. "${curl_platform_flags%/*}/acquisition.sh"
+oliphaunt_acquisition_start "$tool bootstrap" 300
 
 manifest_value() {
   local section="$1"
@@ -284,20 +286,22 @@ for candidate_url in "$url" ${mirror_url:+"$mirror_url"}; do
   curl_args=(
     --fail --location --silent --show-error
     --proto '=https' --proto-redir '=https'
-    --retry 6 --retry-all-errors --retry-max-time 120
-    --connect-timeout 20 --max-time 180 --max-filesize 200000000
+    --connect-timeout 20 --max-filesize 200000000
   )
   if [ -n "$curl_platform_tls_flag" ]; then
     curl_args+=("$curl_platform_tls_flag")
   fi
   curl_args+=(--remove-on-error --output "$archive" "$candidate_url")
-  if "${OLIPHAUNT_PINNED_TOOL_CURL:-curl}" "${curl_args[@]}"; then
+  if oliphaunt_acquisition_curl 120 7 2 "${OLIPHAUNT_PINNED_TOOL_CURL:-curl}" "${curl_args[@]}"; then
     actual_archive_sha256="$(sha256_file "$archive")"
     if [ "$actual_archive_sha256" = "$archive_sha256" ]; then
       downloaded=1
       break
     fi
     echo "$tool archive checksum mismatch from $candidate_url; trying the next pinned origin" >&2
+  else
+    status=$?
+    case "$status" in 126|127|129|130|137|143) exit "$status" ;; esac
   fi
 done
 [ "$downloaded" = "1" ] || fail "could not download the verified $tool $version $target archive"

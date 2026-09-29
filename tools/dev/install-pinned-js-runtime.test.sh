@@ -4,6 +4,10 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 installer="$root/tools/dev/install-pinned-js-runtime.sh"
 tmp="$(mktemp -d)"
+mkdir -p "$tmp/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/no-delay/sleep"
+chmod +x "$tmp/no-delay/sleep"
+export PATH="$tmp/no-delay:$PATH"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
 

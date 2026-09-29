@@ -23,6 +23,7 @@ tasks:
       - "**/*"
       - "!**/*.test.*"
       - /tools/dev/curl-platform-flags.sh
+      - /tools/dev/acquisition.sh
       - "@group(release-archive-contract)"
     options:
       cache: false
@@ -34,6 +35,7 @@ tasks:
     script: "set -e\nbash src/third-party/tools/fetch-sources.sh production-all --validate-only\nbash src/third-party/tools/source-fetch-core.test.sh\nbash tools/dev/bun.sh test ./src/third-party/tools/source-fetch-scopes.test.mts\nbash src/third-party/postgres/fetch-source.test.sh\n"
     inputs:
       - "/tools/dev/bun.sh"
+      - /tools/dev/acquisition.sh
       - /src/third-party/postgres/**/*
       - "/src/third-party/{icu,openssl}/source.toml"
       - /src/native/runtime/sources/*.toml
@@ -64,6 +66,7 @@ tasks:
       - "!**/*.test.*"
       - "!verify-source-tree.mts"
       - /tools/dev/curl-platform-flags.sh
+      - /tools/dev/acquisition.sh
       - /src/extensions/tools/extension-upstream-licenses.mts
       - "@group(release-archive-contract)"
     options:
@@ -83,6 +86,7 @@ tasks:
       - "!**/*.test.*"
       - "!verify-source-tree.mts"
       - /tools/dev/curl-platform-flags.sh
+      - /tools/dev/acquisition.sh
       - "@group(release-archive-contract)"
     options:
       cache: false
@@ -103,6 +107,7 @@ tasks:
       - "!**/*.test.*"
       - "!verify-source-tree.mts"
       - /tools/dev/curl-platform-flags.sh
+      - /tools/dev/acquisition.sh
       - "@group(release-archive-contract)"
     options:
       cache: false
@@ -121,6 +126,7 @@ tasks:
       - "!**/*.test.*"
       - "!verify-source-tree.mts"
       - /tools/dev/curl-platform-flags.sh
+      - /tools/dev/acquisition.sh
     options:
       cache: false
       internal: true
@@ -138,6 +144,7 @@ tasks:
       - "!**/*.test.*"
       - "!verify-source-tree.mts"
       - /tools/dev/curl-platform-flags.sh
+      - /tools/dev/acquisition.sh
       - /src/extensions/tools/extension-upstream-licenses.mts
       - "@group(release-archive-contract)"
     options:

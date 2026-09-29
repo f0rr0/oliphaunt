@@ -8,6 +8,7 @@ import {
   assertCandidateBindingShape,
   candidateQualificationMode,
   FULL_PAYLOAD_QUALIFICATION_MODE,
+  nativeEvidenceBinding,
   PRODUCT_QUALIFICATION_MODE,
   wasixEvidenceBinding,
 } from './release-candidate-lib.mts';
@@ -81,6 +82,23 @@ if (wasixRequired) {
   }
 }
 
+const nativeRequired = affectedPlan.nativeExtensionLifecycle !== undefined;
+let nativeEvidence = null;
+if (nativeRequired) {
+  try {
+    nativeEvidence = nativeEvidenceBinding(requiredEnv('NATIVE_EVIDENCE_ROOT'), {
+      repository: requiredEnv('GITHUB_REPOSITORY'),
+      runId: requiredEnv('GITHUB_RUN_ID'),
+      runAttempt,
+      sha: checkedOutSha,
+      tree,
+      selection: affectedPlan.nativeExtensionLifecycle,
+    });
+  } catch (error) {
+    fail(error.message);
+  }
+}
+
 const candidate = {
   schemaVersion: 2,
   repository: requiredEnv('GITHUB_REPOSITORY'),
@@ -96,10 +114,15 @@ const candidate = {
   affectedPlan,
   evidenceRequirements: {
     wasixReleaseRegression: wasixRequired,
-    artifacts: wasixRequired ? ['wasix-release-regression-evidence'] : [],
+    nativeExtensionLifecycle: nativeRequired,
+    artifacts: [
+      ...(nativeRequired ? ['native-extension-lifecycle-evidence'] : []),
+      ...(wasixRequired ? ['wasix-release-regression-evidence'] : []),
+    ],
   },
   evidence: {
     wasixReleaseRegression: wasixEvidence,
+    nativeExtensionLifecycle: nativeEvidence,
   },
 };
 

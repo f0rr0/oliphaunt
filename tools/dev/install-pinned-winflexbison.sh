@@ -28,6 +28,8 @@ esac
   fail "missing regular curl platform policy: $curl_platform_flags"
 # shellcheck source=tools/dev/curl-platform-flags.sh disable=SC1091
 . "$curl_platform_flags"
+. "${curl_platform_flags%/*}/acquisition.sh"
+oliphaunt_acquisition_start "winflexbison bootstrap" 180
 
 manifest_value() {
   local section="$1"
@@ -176,13 +178,12 @@ trap 'exit 143' TERM
 curl_args=(
   --fail --location --silent --show-error
   --proto '=https' --proto-redir '=https'
-  --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 120
-  --connect-timeout 20 --max-time 180 --max-filesize 2000000
+  --connect-timeout 20 --max-filesize 2000000
 )
 curl_platform_tls_flag="$(oliphaunt_curl_platform_tls_flag)"
 if [ -n "$curl_platform_tls_flag" ]; then curl_args+=("$curl_platform_tls_flag"); fi
 curl_args+=(--remove-on-error --output "$archive" "$url")
-"$curl_command" "${curl_args[@]}" || fail "could not download pinned winflexbison $version"
+oliphaunt_acquisition_curl 180 6 2 "$curl_command" "${curl_args[@]}" || fail "could not download pinned winflexbison $version"
 actual_bytes="$(wc -c <"$archive" | tr -d '[:space:]')"
 [ "$actual_bytes" = "$archive_bytes" ] ||
   fail "winflexbison archive size mismatch: expected $archive_bytes, got $actual_bytes"

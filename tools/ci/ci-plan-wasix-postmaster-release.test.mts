@@ -1,5 +1,3 @@
-import { affectedObservation, taskObservation } from './ci-plan-test-observations.mts';
-import { paths, taskRoots } from './ci-plan-test-inputs.mts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildPlan, loadGraph, normalizeFiles } from '../release/release-graph.mts';
@@ -10,6 +8,8 @@ import {
   renderPlanWithSelection,
   selectedExtensionProductsForPlan,
 } from './ci_plan.mts';
+import { paths, taskRoots } from './ci-plan-test-inputs.mts';
+import { affectedObservation, taskObservation } from './ci-plan-test-observations.mts';
 
 const taskGraph = taskObservation;
 
@@ -170,7 +170,6 @@ test('source prose, transport tests, and unrelated toolchains do not rebuild run
       'liboliphaunt-wasix-postmaster:test',
     ],
     [paths.srcSourcesThirdPartyNativeREADMEMd, null],
-    [paths.toolsDevMaestroToml, 'ci-workflows:check'],
   ];
   for (const [relativePath, expectedTask] of cases) {
     const effects = directEffects(relativePath);
@@ -243,4 +242,14 @@ test('native lifecycle supervisor changes select its exact hosted proof', () => 
   assertNativeExtensionLifecycleSelection(
     paths.runtimesLiboliphauntWasixPostmasterLibProcessSupervisionSh,
   );
+});
+
+test('shipped Postmaster documentation has a cheap producer without losing release ownership', () => {
+  const effects = directEffects(paths.postmasterReadme);
+  assert(effects.directTasks.includes('liboliphaunt-wasix-postmaster:package-docs'));
+  assert(!effects.jobs.includes('wasix-postmaster'));
+  const release = buildPlan(loadGraph(), normalizeFiles([paths.postmasterReadme]));
+  assert(release.releaseProducts.includes('liboliphaunt-wasix-postmaster'));
+  const closure = taskGraph(taskRoots.liboliphauntWasixPostmasterReleaseAssets);
+  assert(closure.some(({ target }) => target === 'liboliphaunt-wasix-postmaster:package-docs'));
 });

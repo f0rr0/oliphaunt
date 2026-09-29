@@ -29,6 +29,8 @@ for path in "$manifest" "$extractor" "$curl_platform_flags"; do
 done
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
+. "${curl_platform_flags%/*}/acquisition.sh"
+oliphaunt_acquisition_start "npm publisher bootstrap" 300
 
 command -v node >/dev/null 2>&1 || fail "the verified Node.js runtime must be on PATH"
 
@@ -196,12 +198,12 @@ if ! { [ -f "$archive" ] && [ ! -L "$archive" ] &&
   partial="$(mktemp "$archive_root/.download.XXXXXX")"
   tls_flag="$(oliphaunt_curl_platform_tls_flag)"
   curl_args=(--fail --location --silent --show-error --proto '=https' --proto-redir '=https'
-    --tlsv1.2 --retry 5 --retry-all-errors --retry-connrefused --retry-delay 2
-    --retry-max-time 300 --connect-timeout 20 --max-time 300 --speed-limit 1024
+    --tlsv1.2
+    --connect-timeout 20 --speed-limit 1024
     --speed-time 30 --remove-on-error --max-filesize "$archive_bytes" --output "$partial")
   [ -z "$tls_flag" ] || curl_args+=("$tls_flag")
   curl_args+=("$url")
-  if ! "$curl_command" "${curl_args[@]}"; then
+  if ! oliphaunt_acquisition_curl 300 6 2 "$curl_command" "${curl_args[@]}"; then
     rm -f "$partial"; fail "could not download pinned npm publisher archive"
   fi
   [ "$(wc -c <"$partial" | tr -d '[:space:]')" = "$archive_bytes" ] &&
@@ -212,7 +214,6 @@ if ! { [ -f "$archive" ] && [ ! -L "$archive" ] &&
   chmod 0444 "$partial"
   mv "$partial" "$archive"
 fi
-
 stage="$(mktemp -d "$install_parent/.verified.stage.XXXXXX")"
 backup=""
 old_moved=0
@@ -229,7 +230,6 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
 extract_args=(extract --archive "$archive" --format "$format" --prefix "$prefix"
   --entry-count "$entry_count" --expected-bytes "$archive_bytes"
   --expanded-bytes "$expanded_bytes" --destination "$stage/npm"
@@ -248,7 +248,6 @@ chmod 0444 "$stage/bin/npm.cmd" "$stage/bin/npx.cmd"
 printf '%s\n' "$receipt_text" >"$stage/receipt"
 chmod 0444 "$stage/receipt"
 cache_valid "$stage" || fail "staged npm publisher failed integrity or version validation"
-
 if [ -e "$final" ] || [ -L "$final" ]; then
   backup="$(mktemp -d "$install_parent/.verified.backup.XXXXXX")"; rmdir "$backup"
   mv "$final" "$backup"; old_moved=1

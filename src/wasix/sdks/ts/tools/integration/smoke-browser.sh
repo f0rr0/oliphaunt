@@ -37,7 +37,6 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-bun run --cwd "$root/src/query/ts" build
 bun pm --cwd "$root/src/query/ts" pack --filename "$scratch/query.tgz" --quiet
 bun "$tool" --prepare "$scratch" "$@"
 configuration="$scratch/browser.json"

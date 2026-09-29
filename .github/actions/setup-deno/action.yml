@@ -3,9 +3,9 @@ description: Install the pinned Deno toolchain for TypeScript runtime checks.
 
 inputs:
   deno-version:
-    description: Deno version.
+    description: Optional assertion against the repository Deno pin.
     required: false
-    default: "v2.8.1"
+    default: ""
 
 outputs:
   execution-envelope:

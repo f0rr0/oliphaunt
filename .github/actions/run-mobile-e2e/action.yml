@@ -1,0 +1,111 @@
+name: Run installed mobile app
+description: Shared platform setup, exact-launch SDK smoke, and reports for CI and replay.
+inputs:
+  platform:
+    required: true
+    description: android or ios
+  source-sha:
+    required: true
+    description: Exact source SHA of the downloaded app
+runs:
+  using: composite
+  steps:
+    - name: Set up Node and Bun
+      uses: ./.github/actions/setup-node-bun
+
+    - name: Reclaim Android emulator disk
+      if: ${{ inputs.platform == 'android' }}
+      shell: bash
+      run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
+
+    - name: Set up Android
+      if: ${{ inputs.platform == 'android' }}
+      uses: ./.github/actions/setup-android
+      with:
+        gradle-cache: "false"
+        native-tools: "false"
+
+    - name: List Android app artifact
+      if: ${{ inputs.platform == 'android' }}
+      shell: bash
+      run: find target/mobile-build/react-native/android -maxdepth 2 -type f -print
+
+    - name: Provision runner KVM access
+      if: ${{ inputs.platform == 'android' }}
+      shell: bash
+      run: |
+        test -c /dev/kvm
+        if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+          sudo chmod a+rw /dev/kvm
+        fi
+
+    - name: Start Android emulator
+      if: ${{ inputs.platform == 'android' }}
+      env:
+        OLIPHAUNT_ANDROID_EMULATOR_API: "35"
+        OLIPHAUNT_ANDROID_EMULATOR_DISK_HEADROOM_MB: "2048"
+        OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB: "6144"
+      shell: bash
+      run: tools/ci/start-android-emulator-ci.sh
+
+    - name: Run Android installed-app E2E
+      if: ${{ inputs.platform == 'android' }}
+      env:
+        CI_HEAD_SHA: ${{ inputs.source-sha }}
+        OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/android
+        OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
+        OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
+      shell: bash
+      run: bash src/native/sdks/react-native/tools/mobile-e2e.sh android
+
+    - name: Upload Android E2E reports
+      if: ${{ always() && inputs.platform == 'android' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: react-native-mobile-android-e2e-reports
+        path: |
+          target/mobile/react-native/android-e2e/reports
+          target/mobile/react-native/android-e2e/logs
+          ${{ runner.temp }}/oliphaunt-android-emulator.log
+        if-no-files-found: ignore
+    - name: Set up Apple
+      if: ${{ inputs.platform == 'ios' }}
+      uses: ./.github/actions/setup-apple
+      with:
+        install-build-dependencies: "false"
+
+    - name: Verify and extract iOS app artifact
+      if: ${{ inputs.platform == 'ios' }}
+      shell: bash
+      run: |
+        rm -rf target/mobile-build/react-native/ios
+        bash src/native/sdks/react-native/tools/ios-app-transport.sh verify-extract \
+          --transport-dir target/mobile-build/react-native/ios-transport \
+          --output-dir target/mobile-build/react-native/ios
+
+    - name: List iOS app artifact
+      if: ${{ inputs.platform == 'ios' }}
+      shell: bash
+      run: find target/mobile-build/react-native/ios -maxdepth 2 -print
+
+    - name: Run iOS installed-app E2E
+      if: ${{ inputs.platform == 'ios' }}
+      env:
+        CI_HEAD_SHA: ${{ inputs.source-sha }}
+        OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/ios
+        OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
+        OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
+        OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
+      shell: bash
+      run: bash src/native/sdks/react-native/tools/mobile-e2e.sh ios
+
+    - name: Upload iOS E2E reports
+      if: ${{ always() && inputs.platform == 'ios' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: react-native-mobile-ios-e2e-reports
+        path: |
+          target/mobile/react-native/ios-e2e/reports
+          target/mobile/react-native/ios-e2e/logs
+          target/mobile/react-native/ios-e2e/*.log
+        if-no-files-found: ignore

@@ -70,8 +70,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  NPM_VERSION: 11.18.0
-  DENO_VERSION: v2.8.1
   ACTIONLINT_VERSION: 1.7.12
   ASSET_PROFILE: release
   WASMER_LLVM_VERSION: "22.1"
@@ -98,6 +96,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      liboliphaunt_wasix_aot_runtime_matrix_linux: ${{ steps.plan.outputs.liboliphaunt_wasix_aot_runtime_matrix_linux }}
+      liboliphaunt_wasix_aot_runtime_matrix_other: ${{ steps.plan.outputs.liboliphaunt_wasix_aot_runtime_matrix_other }}
+      wasix_napi_targets: ${{ steps.plan.outputs.wasix_napi_targets }}
+      reuse_ios_carrier: ${{ steps.plan.outputs.reuse_ios_carrier }}
+      cache_save_if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+      llvm_version: ${{ env.WASMER_LLVM_VERSION }}
       published_dependencies: ${{ steps.plan.outputs.published_dependencies }}
       mobile_extension_package_native_targets_ios_csv: ${{ steps.plan.outputs.mobile_extension_package_native_targets_ios_csv }}
       mobile_extension_package_native_targets_android_csv: ${{ steps.plan.outputs.mobile_extension_package_native_targets_android_csv }}
@@ -155,7 +159,7 @@ jobs:
       qualification_mode: ${{ steps.plan.outputs.qualification_mode }}
       qualification_base_sha: ${{ steps.plan.outputs.qualification_base_sha }}
       qualification_head_sha: ${{ steps.plan.outputs.qualification_head_sha }}
-      wasix_release_regression_required: ${{ contains(fromJson(steps.plan.outputs.jobs), 'liboliphaunt-wasix-runtime') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all' || inputs.wasm_target == 'linux-x64-gnu') }}
+      wasix_release_regression_required: ${{ contains(fromJson(steps.plan.outputs.jobs), 'wasix-release-regression') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all' || inputs.wasm_target == 'linux-x64-gnu') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -167,7 +171,16 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
+          task-cache: "false"
           install-workspace: "false"
+
+      - name: Restore frozen iOS carrier metadata
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target/ci/ios-carrier
+          key: ios-carrier-v1-${{ hashFiles('src/native/runtime/VERSION', 'src/native/sdks/swift/tools/ios-carrier-manifest.mts', 'tools/packaging/**', 'tools/release/**') }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: |
+            ios-carrier-v1-${{ hashFiles('src/native/runtime/VERSION', 'src/native/sdks/swift/tools/ios-carrier-manifest.mts', 'tools/packaging/**', 'tools/release/**') }}-
 
       - name: Plan artifact builder jobs
         id: plan
@@ -191,6 +204,15 @@ jobs:
           MOON_BASE: ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha }}
           MOON_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: bash .github/scripts/write-affected-moon-target-matrices.sh
+
+      - name: Transfer verified unchanged iOS carrier metadata
+        if: ${{ steps.plan.outputs.reuse_ios_carrier == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: frozen-ios-carrier
+          path: target/ci/ios-carrier
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload build plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -218,6 +240,7 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
+          task-cache: "false"
           install-workspace: "false"
 
       - name: Check release intent
@@ -266,6 +289,8 @@ jobs:
       - name: Set up Rust
         if: ${{ matrix.requires_rust }}
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Install Android Rust targets
         if: ${{ matrix.requires_rust && matrix.requires_android_sdk }}
@@ -284,11 +309,15 @@ jobs:
       - name: Set up Android
         if: ${{ matrix.requires_android_sdk }}
         uses: ./.github/actions/setup-android
+        with:
+          native-tools: ${{ matrix.requires_rust && 'true' || 'false' }}
+          gradle-cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Set up Wasmer LLVM
         if: ${{ matrix.requires_wasmer_llvm }}
         uses: ./.github/actions/setup-wasmer-llvm
         with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
           url: ${{ runner.os == 'macOS' && env.WASMER_LLVM_MACOS_ARM64_URL || env.WASMER_LLVM_LINUX_X64_URL }}
           sha256: ${{ runner.os == 'macOS' && env.WASMER_LLVM_MACOS_ARM64_SHA256 || env.WASMER_LLVM_LINUX_X64_SHA256 }}
           bytes: ${{ runner.os == 'macOS' && env.WASMER_LLVM_MACOS_ARM64_BYTES || env.WASMER_LLVM_LINUX_X64_BYTES }}
@@ -326,6 +355,8 @@ jobs:
       - name: Set up Rust
         if: ${{ needs.affected.outputs.policy_requires_rust == 'true' }}
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Set up Swift
         if: ${{ needs.affected.outputs.policy_requires_swift == 'true' }}
@@ -334,11 +365,14 @@ jobs:
       - name: Set up Android
         if: ${{ needs.affected.outputs.policy_requires_android_sdk == 'true' }}
         uses: ./.github/actions/setup-android
+        with:
+          gradle-cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Set up Wasmer LLVM
         if: ${{ needs.affected.outputs.policy_requires_wasmer_llvm == 'true' }}
         uses: ./.github/actions/setup-wasmer-llvm
         with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
           url: ${{ env.WASMER_LLVM_LINUX_X64_URL }}
           sha256: ${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}
           bytes: ${{ env.WASMER_LLVM_LINUX_X64_BYTES }}
@@ -408,6 +442,7 @@ jobs:
         if: ${{ matrix.requires_rust }}
         uses: ./.github/actions/setup-rust
         with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
           tools: cargo-nextest@0.9.137
 
       - name: Set up Swift
@@ -423,11 +458,15 @@ jobs:
       - name: Set up Android
         if: ${{ matrix.requires_android_sdk }}
         uses: ./.github/actions/setup-android
+        with:
+          native-tools: ${{ matrix.requires_rust && 'true' || 'false' }}
+          gradle-cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Set up Wasmer LLVM
         if: ${{ matrix.requires_wasmer_llvm }}
         uses: ./.github/actions/setup-wasmer-llvm
         with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
           url: ${{ runner.os == 'macOS' && env.WASMER_LLVM_MACOS_ARM64_URL || env.WASMER_LLVM_LINUX_X64_URL }}
           sha256: ${{ runner.os == 'macOS' && env.WASMER_LLVM_MACOS_ARM64_SHA256 || env.WASMER_LLVM_LINUX_X64_SHA256 }}
           bytes: ${{ runner.os == 'macOS' && env.WASMER_LLVM_MACOS_ARM64_BYTES || env.WASMER_LLVM_LINUX_X64_BYTES }}
@@ -470,39 +509,59 @@ jobs:
         run: bun .github/scripts/check-ci-gate.mts selected
 
   extension-artifacts-native-linux:
+    name: Native Extensions (Linux)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.extension_artifacts_native_matrix_linux }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
-  extension-artifacts-native-android:
+  extension-artifacts-native-android-static:
+    name: Native Extensions (Android Compilation)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
+      phase: android-static
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
+      matrix: ${{ needs.affected.outputs.extension_artifacts_native_matrix_android }}
+      job-targets: ${{ needs.affected.outputs.job_targets }}
+
+  extension-artifacts-native-android:
+    name: Native Extensions (Android Packaging)
+    needs: [affected, extension-artifacts-native-android-static, extension-artifacts-native-linux]
+    if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
+    uses: ./.github/workflows/extension-artifacts-native.yml
+    with:
+      phase: android-package
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.extension_artifacts_native_matrix_android }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   extension-artifacts-native-ios:
+    name: Native Extensions (iOS)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_ios).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.extension_artifacts_native_matrix_ios }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   extension-artifacts-native-other:
+    name: Native Extensions (Desktop)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix_other).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.extension_artifacts_native_matrix_other }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   extension-artifacts-native:
-    name: Builds / extension-artifacts-native
+    name: Builds / Native Extensions
     needs: [affected, extension-artifacts-native-linux, extension-artifacts-native-android, extension-artifacts-native-ios, extension-artifacts-native-other]
     if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
     runs-on: ubuntu-24.04
@@ -517,7 +576,7 @@ jobs:
           esac
 
   extension-artifacts-wasix:
-    name: Builds / WASIX Extension Artifacts (${{ matrix.target }})
+    name: Builds / WASIX Extensions (${{ matrix.target }})
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -540,6 +599,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Download portable WASIX runtime outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -568,7 +629,7 @@ jobs:
           if-no-files-found: error
 
   extension-packages:
-    name: Builds / Extension Packages
+    name: Packages / Extensions
     needs:
       - affected
       - extension-artifacts-native
@@ -590,6 +651,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Download native exact-extension artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -626,20 +689,24 @@ jobs:
           if-no-files-found: error
 
   mobile-extension-packages-android:
+    name: Extension Packages (Android)
     needs: [affected, extension-artifacts-native-android]
     if: ${{ needs.affected.outputs.mobile_extension_package_native_targets_android_csv != '' }}
     uses: ./.github/workflows/mobile-extension-packages.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       family: android
       targets: ${{ needs.affected.outputs.mobile_extension_package_native_targets_android_csv }}
       products: ${{ needs.affected.outputs.extension_package_products_csv }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   mobile-extension-packages-ios:
+    name: Extension Packages (iOS)
     needs: [affected, extension-artifacts-native-ios]
     if: ${{ needs.affected.outputs.mobile_extension_package_native_targets_ios_csv != '' }}
     uses: ./.github/workflows/mobile-extension-packages.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       family: ios
       targets: ${{ needs.affected.outputs.mobile_extension_package_native_targets_ios_csv }}
       products: ${{ needs.affected.outputs.extension_package_products_csv }}
@@ -660,23 +727,27 @@ jobs:
           esac
 
   liboliphaunt-native-desktop-linux:
+    name: Native Runtime (Linux)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/liboliphaunt-native-desktop.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_linux }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   liboliphaunt-native-desktop-other:
+    name: Native Runtime (Desktop)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_other).include[0] != null }}
     uses: ./.github/workflows/liboliphaunt-native-desktop.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_other }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   liboliphaunt-native-desktop:
-    name: Builds / liboliphaunt-native-desktop
+    name: Builds / Native Desktop Runtime
     needs: [affected, liboliphaunt-native-desktop-linux, liboliphaunt-native-desktop-other]
     if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
     runs-on: ubuntu-24.04
@@ -715,6 +786,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Set up Android
         uses: ./.github/actions/setup-android
@@ -807,6 +880,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Prepare native build paths
         env:
@@ -866,7 +941,7 @@ jobs:
           if-no-files-found: ignore
 
   liboliphaunt-native-android-abi:
-    name: Builds / Native Runtime ABI Compatibility (Android)
+    name: Builds / Android ABI + Seeds
     needs:
       - affected
       - liboliphaunt-native-android
@@ -883,6 +958,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Download Android arm64 ABI receipts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -938,7 +1015,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-native-ios-abi:
-    name: Builds / Native Runtime ABI Compatibility (iOS)
+    name: Builds / iOS ABI + Seeds
     needs:
       - affected
       - liboliphaunt-native-ios
@@ -955,6 +1032,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Download iOS ABI receipts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -998,7 +1077,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-native-release-assets:
-    name: Builds / Native Runtime Release Assets
+    name: Packages / Native Runtime
     needs:
       - affected
       - liboliphaunt-native-android
@@ -1019,9 +1098,13 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Download liboliphaunt target release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1070,7 +1153,7 @@ jobs:
           if-no-files-found: error
 
   rust-sdk-package:
-    name: Builds / Rust SDK Package
+    name: Packages / Rust SDK
     needs:
       - affected
       - checks
@@ -1091,6 +1174,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Build Rust SDK package artifacts
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh rust-sdk-package
@@ -1152,23 +1237,27 @@ jobs:
           if-no-files-found: error
 
   broker-runtime-linux:
+    name: Broker Runtime (Linux)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.broker_runtime_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/broker-runtime.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.broker_runtime_matrix_linux }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   broker-runtime-other:
+    name: Broker Runtime (Desktop)
     needs: [affected, checks, tests]
     if: ${{ fromJson(needs.affected.outputs.broker_runtime_matrix_other).include[0] != null }}
     uses: ./.github/workflows/broker-runtime.yml
     with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
       matrix: ${{ needs.affected.outputs.broker_runtime_matrix_other }}
       job-targets: ${{ needs.affected.outputs.job_targets }}
 
   broker-runtime:
-    name: Builds / broker-runtime
+    name: Builds / Broker Runtime
     needs: [affected, broker-runtime-linux, broker-runtime-other]
     if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
     runs-on: ubuntu-24.04
@@ -1207,6 +1296,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Set up MSVC
         if: ${{ runner.os == 'Windows' }}
@@ -1230,7 +1321,7 @@ jobs:
           if-no-files-found: error
 
   broker-release-assets:
-    name: Builds / Broker Release Assets
+    name: Packages / Broker Runtime
     needs:
       - affected
       - broker-runtime
@@ -1247,6 +1338,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Download broker target release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1262,7 +1355,7 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh broker-release-assets
 
   node-direct-release-assets:
-    name: Builds / Node.js Direct Release Assets
+    name: Packages / Node.js Direct
     needs:
       - affected
       - node-direct
@@ -1279,6 +1372,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Download Node direct target release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1301,115 +1396,22 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh node-direct-release-assets
 
   wasix-napi:
-    name: Builds / WASIX Node-API (${{ matrix.target }})
-    needs:
-      - affected
-      - extension-artifacts-wasix
-      - liboliphaunt-wasix-aot
-      - liboliphaunt-wasix-runtime
-    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.affected.outputs.wasix_napi_runtime_matrix) }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    name: Builds / WASIX Node-API
+    needs: [affected, wasix-host-linux, wasix-host-other]
+    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-
-      - name: Set up Rust
-        uses: ./.github/actions/setup-rust
-
-      - name: Set up MSVC
-        if: ${{ runner.os == 'Windows' }}
-        uses: ./.github/actions/setup-msvc
-
-      - name: Download same-run portable WASIX outputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: liboliphaunt-wasix-runtime-portable
-          path: .
-
-      - name: Download same-run WASIX exact-extension outputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: liboliphaunt-wasix-extension-artifacts-*
-          path: target/extensions/wasix/release-assets
-          merge-multiple: true
-
-      - name: Download same-run target extension AOT outputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: liboliphaunt-wasix-extension-aot-${{ matrix.target }}
-          path: target/extensions/wasix/aot-artifacts
-
-      - name: Download same-run target core and tool AOT outputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: liboliphaunt-wasix-runtime-aot-${{ matrix.target }}
-          path: target/oliphaunt-wasix/napi-aot-download
-
-      - name: Restore exact target core and tool AOT layout
-        shell: bash
+      - name: Check selected hosts
         env:
-          EXPECTED_TARGET_TRIPLE: ${{ matrix.target_triple }}
+          RESULTS: ${{ join(needs.*.result, ',') }}
         run: |
-          artifact_dir=target/oliphaunt-wasix/napi-aot-download
-          marker="$artifact_dir/target-triple.txt"
-          raw_target_dir="$artifact_dir/files"
-          if [[ ! -f "$marker" || ! -d "$raw_target_dir" ]]; then
-            echo "invalid WASIX N-API AOT artifact envelope in $artifact_dir" >&2
-            exit 1
-          fi
-          target="$(tr -d '\r\n' < "$marker")"
-          if [[ "$target" != "${EXPECTED_TARGET_TRIPLE:?EXPECTED_TARGET_TRIPLE is required}" ]]; then
-            echo "WASIX N-API AOT artifact targets $target, expected $EXPECTED_TARGET_TRIPLE" >&2
-            exit 1
-          fi
-          destination="target/oliphaunt-wasix/aot/$target"
-          mkdir -p "$destination"
-          cp -R "$raw_target_dir/." "$destination/"
-
-      - name: Set up macOS smoke timeout
-        if: ${{ runner.os == 'macOS' }}
-        shell: bash
-        run: brew list coreutils >/dev/null 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
-
-      - name: Build WASIX Node-API release assets
-        shell: bash
-        env:
-          OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1"
-          OLIPHAUNT_ICU_DATA_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu
-          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
-          OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
-          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
-          OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "liboliphaunt-wasix:runtime-aot"]'
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh wasix-napi
-
-      - name: Upload WASIX Node-API release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: oliphaunt-wasix-napi-release-assets-${{ matrix.target }}
-          path: target/oliphaunt-wasix-napi/release-assets
-          if-no-files-found: error
-
-      - name: Upload WASIX Node-API optional npm package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: oliphaunt-wasix-napi-npm-package-${{ matrix.target }}
-          path: target/oliphaunt-wasix-napi/npm-packages/*.tgz
-          if-no-files-found: error
+          case ",$RESULTS," in
+            *,failure,*|*,cancelled,*) exit 1 ;;
+          esac
 
   wasix-napi-release-assets:
-    name: Builds / WASIX Node-API Release Assets
+    name: Packages / WASIX Node-API
     needs:
       - affected
       - wasix-napi
@@ -1426,6 +1428,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Download WASIX Node-API target release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1464,6 +1468,8 @@ jobs:
         uses: ./.github/actions/setup-moon
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
       - name: Install Apple Rust targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin
       - name: Select Apple framework toolchain
@@ -1482,7 +1488,7 @@ jobs:
           if-no-files-found: error
 
   swift-sdk-package:
-    name: Builds / Swift SDK Package
+    name: Packages / Swift SDK
     needs:
       - affected
       - liboliphaunt-native-ios-abi
@@ -1527,7 +1533,7 @@ jobs:
           if-no-files-found: error
 
   kotlin-sdk-package:
-    name: Builds / Kotlin SDK Package
+    name: Packages / Kotlin SDK
     needs:
       - affected
       - checks
@@ -1548,6 +1554,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Install Android Rust targets
         run: rustup target add aarch64-linux-android x86_64-linux-android
@@ -1568,7 +1576,7 @@ jobs:
           if-no-files-found: error
 
   kotlin-maven-staging:
-    name: Builds / Kotlin SDK Maven Staging
+    name: Packages / Kotlin Maven
     needs:
       - affected
       - kotlin-sdk-package
@@ -1585,6 +1593,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Download exact same-run Kotlin SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1599,11 +1609,13 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh kotlin-maven-staging
 
   react-native-sdk-package:
-    name: Builds / React Native SDK Package
+    name: Packages / React Native SDK
     needs:
       - affected
+      - checks
+      - tests
       - liboliphaunt-native-ios-abi
-    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'react-native-sdk-package') }}
+    if: ${{ !cancelled() && !failure() && needs.checks.result == 'success' && needs.tests.result == 'success' && (needs.affected.outputs.reuse_ios_carrier == 'true' || needs.liboliphaunt-native-ios-abi.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'react-native-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -1620,13 +1632,22 @@ jobs:
           install-workspace: "true"
 
       - name: Download Apple liboliphaunt release assets
+        if: ${{ needs.affected.outputs.reuse_ios_carrier != 'true' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: liboliphaunt-native-abi-compatible-release-assets-ios-datum64
           path: target/liboliphaunt/abi-compatible-release-assets/ios-datum64
 
+      - name: Download frozen iOS carrier metadata
+        if: ${{ needs.affected.outputs.reuse_ios_carrier == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: frozen-ios-carrier
+          path: target/ci/ios-carrier
+
       - name: Build React Native SDK package artifacts
         env:
+          OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: ${{ needs.affected.outputs.reuse_ios_carrier == 'true' && 'target/ci/ios-carrier/manifest.json' || '' }}
           OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: ${{ github.workspace }}/target/liboliphaunt/abi-compatible-release-assets/ios-datum64
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-native:finalize-runtime-ios-abi"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh react-native-sdk-package
@@ -1638,8 +1659,24 @@ jobs:
           path: target/sdk-artifacts/oliphaunt-react-native
           if-no-files-found: error
 
+      - name: Freeze current iOS carrier metadata
+        if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' }}
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p target/ci/ios-carrier
+          cp target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json target/ci/ios-carrier/manifest.json
+          printf '%s\n' "$SOURCE_SHA" > target/ci/ios-carrier/source-sha
+
+      - name: Save frozen iOS carrier metadata
+        if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target/ci/ios-carrier
+          key: ios-carrier-v1-${{ hashFiles('src/native/runtime/VERSION', 'src/native/sdks/swift/tools/ios-carrier-manifest.mts', 'tools/packaging/**', 'tools/release/**') }}-${{ github.event.pull_request.head.sha || github.sha }}
+
   js-sdk-package:
-    name: Builds / JavaScript SDK Package
+    name: Packages / JavaScript SDK + ICU
     permissions:
       contents: read
       actions: read
@@ -1667,8 +1704,6 @@ jobs:
 
       - name: Set up Deno
         uses: ./.github/actions/setup-deno
-        with:
-          deno-version: ${{ env.DENO_VERSION }}
 
       - name: Build TypeScript SDK package artifacts
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh js-sdk-package
@@ -1728,11 +1763,11 @@ jobs:
           bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts src/query/ts
 
   native-consumers:
-    name: Builds / Native Product Consumers
-    needs: [affected, js-sdk-package, rust-sdk-package, liboliphaunt-native-desktop, broker-runtime, node-direct]
+    name: Tests / Native Consumers
+    needs: [affected, js-sdk-package, rust-sdk-package, liboliphaunt-native-desktop-linux, broker-runtime-linux, node-direct]
     if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'native-consumers') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -1746,11 +1781,21 @@ jobs:
           install-workspace: "true"
       - name: Set up Deno
         uses: ./.github/actions/setup-deno
-        with:
-          deno-version: ${{ env.DENO_VERSION }}
       - name: Set up Rust
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-integration') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-swift:test-native') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-kotlin:test-native-bindings') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-mobile-bindings:test-native') }}
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+          tools: nextest
+      - name: Set up Swift for native SDK tests
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-swift:test-native') }}
+        uses: ./.github/actions/setup-swift
+      - name: Set up Android SDK for Kotlin host tests
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-kotlin:test-native-bindings') }}
+        uses: ./.github/actions/setup-android
+        with:
+          native-tools: "false"
+          gradle-cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
       - name: Download Rust SDK package for installed consumer
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1788,13 +1833,13 @@ jobs:
           name: oliphaunt-query-ts-sdk-package-artifacts
           path: target/sdk-artifacts/oliphaunt-query-ts
       - name: Download Linux runtime archive
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-integration') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-swift:test-native') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-kotlin:test-native-bindings') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-mobile-bindings:test-native') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: liboliphaunt-native-release-assets-linux-x64-gnu
           path: target/liboliphaunt/desktop-release-assets/linux-x64-gnu
       - name: Download Linux broker archive
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-js:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-broker:test-consumer') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-integration') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: oliphaunt-broker-release-assets-linux-x64-gnu
@@ -1809,7 +1854,7 @@ jobs:
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
         run: chmod 0755 target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer
       - name: Download Linux tools archive
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') }}
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-consumer-runtime') || contains(fromJson(needs.affected.outputs.job_targets)['native-consumers'], 'oliphaunt-rust:test-integration') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: postgres-tools-native-release-assets-linux-x64-gnu
@@ -1826,17 +1871,12 @@ jobs:
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-rust:test-consumer", "postgres-tools-native:package-assets", "oliphaunt-js:package", "oliphaunt-query-ts:package", "liboliphaunt-native:package-runtime-desktop-target", "oliphaunt-broker:build-release-assets", "oliphaunt-node-direct:build-release-assets"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh native-consumers
 
-  wasix-ts-sdk-package:
-    name: Builds / WASIX TypeScript SDK
-    needs:
-      - affected
-      - liboliphaunt-wasix-runtime
-      - wasix-napi
-      - js-sdk-package
-      - liboliphaunt-wasix-aot
-    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && (!contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') || needs.wasix-napi.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') || needs.js-sdk-package.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') || needs.liboliphaunt-wasix-aot.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
+  wasix-ts-package:
+    name: Packages / WASIX TypeScript SDK
+    needs: [affected, checks, tests]
+    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-package') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -1853,12 +1893,79 @@ jobs:
       - name: Set up Rust and wasm-pack
         uses: ./.github/actions/setup-rust
         with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
           tools: wasm-pack@0.15.0
+
+      - name: Restore browser host compiler cache
+        id: browser-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target/oliphaunt-wasix-ts/host/cargo
+          key: wasix-browser-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('src/wasix/browser-host/**') }}
+          restore-keys: |
+            wasix-browser-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+
+      - name: Package WASIX TypeScript SDK
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh wasix-ts-package
+
+      - name: Save browser host compiler cache
+        if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.browser-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target/oliphaunt-wasix-ts/host/cargo
+          key: ${{ steps.browser-cache.outputs.cache-primary-key }}
+
+      - name: Upload WASIX TypeScript SDK package artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-ts-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-wasix-ts
+          if-no-files-found: error
+
+      - name: Upload WASIX TypeScript consumer inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-ts-consumer-inputs
+          path: |
+            target/sdk-artifacts/oliphaunt-wasix-ts
+            target/oliphaunt-wasix-ts/package
+            target/oliphaunt-wasix-ts/host/wasmer-sdk
+            src/wasix/sdks/ts/lib
+          if-no-files-found: error
+          retention-days: 30
+
+  wasix-ts-sdk-package:
+    name: Tests / WASIX TypeScript Consumers
+    needs:
+      - affected
+      - wasix-ts-package
+      - liboliphaunt-wasix-runtime
+      - js-sdk-package
+      - wasix-host-linux
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.wasix-ts-package.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && (!contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') || needs.wasix-host-linux.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') || needs.js-sdk-package.result == 'success') && (!contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') || needs.wasix-host-linux.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Download WASIX TypeScript consumer inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-wasix-ts-consumer-inputs
+          path: .
 
       - name: Set up Deno
         uses: ./.github/actions/setup-deno
-        with:
-          deno-version: ${{ env.DENO_VERSION }}
 
       - name: Download same-run portable WASIX outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1915,21 +2022,14 @@ jobs:
           name: database-resources-icu-npm
           path: target/release/npm-packages/oliphaunt-icu
 
-      - name: Build, test, and package the WASIX TypeScript SDK
+      - name: Test WASIX TypeScript consumers
         env:
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "extension-artifacts-wasix:compiler-output", "database-resources:build-wasix-standard", "database-resources:build-wasix-icu", "database-resources:package-icu", "oliphaunt-wasix-napi:build-release-assets", "oliphaunt-wasix-tools-ts:package", "postgres-tools-wasix:package-portable", "postgres-tools-wasix:package-aot"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-wasix-ts:build", "wasix-browser-host:build", "oliphaunt-wasix-ts:package", "liboliphaunt-wasix:runtime-portable", "extension-artifacts-wasix:compiler-output", "database-resources:build-wasix-standard", "database-resources:build-wasix-icu", "database-resources:package-icu", "oliphaunt-wasix-napi:build-release-assets", "oliphaunt-wasix-tools-ts:package", "postgres-tools-wasix:package-portable", "postgres-tools-wasix:package-aot"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
 
-      - name: Upload WASIX TypeScript SDK package artifacts
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['wasix-ts-sdk-package'], 'oliphaunt-wasix-ts:package') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: oliphaunt-wasix-ts-sdk-package-artifacts
-          path: target/sdk-artifacts/oliphaunt-wasix-ts
-          if-no-files-found: error
 
   wasix-rust-package:
-    name: Builds / WASIX Rust Binding Package
+    name: Packages / WASIX Rust Binding
     needs:
       - affected
       - checks
@@ -1952,6 +2052,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Build Rust WASIX binding package artifacts
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh wasix-rust-package
@@ -1973,7 +2075,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-wasix-runtime:
-    name: Builds / liboliphaunt WASIX Runtime
+    name: Builds / WASIX Portable Runtime
     needs:
       - affected
       - checks
@@ -2023,33 +2125,14 @@ jobs:
             target/oliphaunt-wasix/wasix-build/work/geos-wasix
             target/oliphaunt-wasix/wasix-build/work/geos-wasix-build
             target/oliphaunt-wasix/wasix-build/build
-          key: wasix-build-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ env.WASMER_LLVM_VERSION }}-${{ env.WASMER_LLVM_LINUX_X64_BYTES }}-${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}-${{ github.event.pull_request.head.sha || github.sha }}
+          key: wasix-build-v2-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ hashFiles('tools/dev/acquisition.sh', 'src/wasix/runtime/assets/build/docker/Dockerfile.dockerignore', 'src/wasix/runtime/toolchain.toml', 'src/wasix/runtime/assets/build/docker/Dockerfile', 'src/wasix/runtime/assets/build/docker/*.sh', '!src/wasix/runtime/assets/build/docker/*.test.sh') }}-${{ github.event.pull_request.head.sha || github.sha }}
           restore-keys: |
-            wasix-build-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ env.WASMER_LLVM_VERSION }}-${{ env.WASMER_LLVM_LINUX_X64_BYTES }}-${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}-${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+            wasix-build-v2-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ hashFiles('tools/dev/acquisition.sh', 'src/wasix/runtime/assets/build/docker/Dockerfile.dockerignore', 'src/wasix/runtime/toolchain.toml', 'src/wasix/runtime/assets/build/docker/Dockerfile', 'src/wasix/runtime/assets/build/docker/*.sh', '!src/wasix/runtime/assets/build/docker/*.test.sh') }}-
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-
-      - name: Build WASIX builder image and save cache
-        if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' }}
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+      - name: Set up WASIX builder
+        uses: ./.github/actions/setup-wasix-builder
         with:
-          context: src/wasix/runtime/assets/build/docker
-          file: src/wasix/runtime/assets/build/docker/Dockerfile
-          tags: oliphaunt-wasix-wasix-build:ci
-          load: true
-          cache-from: type=gha,scope=wasix-builder
-          cache-to: type=gha,mode=max,scope=wasix-builder,ignore-error=true
-
-      - name: Build WASIX builder image
-        if: ${{ env.HEAVY_CACHE_SAVE_IF != 'true' }}
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
-        with:
-          context: src/wasix/runtime/assets/build/docker
-          file: src/wasix/runtime/assets/build/docker/Dockerfile
-          tags: oliphaunt-wasix-wasix-build:ci
-          load: true
-          cache-from: type=gha,scope=wasix-builder
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Install Wasmer LLVM 22.1 for WASIX cluster-seed generation
         uses: ./.github/actions/setup-wasmer-llvm
@@ -2093,7 +2176,7 @@ jobs:
             target/oliphaunt-wasix/wasix-build/work/geos-wasix
             target/oliphaunt-wasix/wasix-build/work/geos-wasix-build
             target/oliphaunt-wasix/wasix-build/build
-          key: wasix-build-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ env.WASMER_LLVM_VERSION }}-${{ env.WASMER_LLVM_LINUX_X64_BYTES }}-${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}-${{ github.event.pull_request.head.sha || github.sha }}
+          key: wasix-build-v2-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ hashFiles('tools/dev/acquisition.sh', 'src/wasix/runtime/assets/build/docker/Dockerfile.dockerignore', 'src/wasix/runtime/toolchain.toml', 'src/wasix/runtime/assets/build/docker/Dockerfile', 'src/wasix/runtime/assets/build/docker/*.sh', '!src/wasix/runtime/assets/build/docker/*.test.sh') }}-${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Upload portable WASIX tools compiler outputs
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-runtime'], 'postgres-tools-wasix:compiler-output') }}
@@ -2139,121 +2222,47 @@ jobs:
             src/wasix/runtime/assets/generated/**
           if-no-files-found: error
 
+  wasix-host-linux:
+    name: WASIX (Linux)
+    needs: [affected, liboliphaunt-wasix-runtime, extension-artifacts-wasix]
+    if: ${{ !cancelled() && !failure() && needs.liboliphaunt-wasix-runtime.result == 'success' && (!contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-wasix') || needs.extension-artifacts-wasix.result == 'success') && fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_linux).include[0] != null }}
+    uses: ./.github/workflows/wasix-host.yml
+    with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
+      matrix: ${{ needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_linux }}
+      job-targets: ${{ needs.affected.outputs.job_targets }}
+      napi-targets: ${{ needs.affected.outputs.wasix_napi_targets }}
+      llvm-version: ${{ needs.affected.outputs.llvm_version }}
+
+  wasix-host-other:
+    name: WASIX (Desktop)
+    needs: [affected, liboliphaunt-wasix-runtime, extension-artifacts-wasix]
+    if: ${{ !cancelled() && !failure() && needs.liboliphaunt-wasix-runtime.result == 'success' && (!contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-wasix') || needs.extension-artifacts-wasix.result == 'success') && fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_other).include[0] != null }}
+    uses: ./.github/workflows/wasix-host.yml
+    with:
+      cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
+      matrix: ${{ needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_other }}
+      job-targets: ${{ needs.affected.outputs.job_targets }}
+      napi-targets: ${{ needs.affected.outputs.wasix_napi_targets }}
+      llvm-version: ${{ needs.affected.outputs.llvm_version }}
+
   liboliphaunt-wasix-aot:
-    name: Builds / liboliphaunt WASIX AOT (${{ matrix.target_id }})
-    needs:
-      - affected
-      - liboliphaunt-wasix-runtime
-    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix || '{"include":[]}') }}
+    name: Builds / WASIX AOT
+    needs: [affected, wasix-host-linux, wasix-host-other]
+    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-
-      - name: Set up Rust
-        uses: ./.github/actions/setup-rust
-
-      - name: Set up MSVC
-        if: ${{ runner.os == 'Windows' }}
-        uses: ./.github/actions/setup-msvc
-
-      - name: Download portable WASIX build outputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: liboliphaunt-wasix-runtime-portable
-          path: .
-
-      - name: Download portable WASIX tools compiler outputs
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:build-aot') }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: postgres-tools-wasix-compiler-output
-          path: target/postgres-tools/wasix/assets
-
-      - name: Download portable WASIX extension compiler outputs
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-aot'], 'extension-artifacts-wasix:build-aot') }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: extensions-wasix-compiler-output
-          path: target/extensions/wasix/assets
-
-      - name: Install Wasmer LLVM 22.1 for AOT generation
-        uses: ./.github/actions/setup-wasmer-llvm
-        with:
-          url: ${{ matrix.llvm_url }}
-          sha256: ${{ matrix.llvm_sha256 }}
-          bytes: ${{ matrix.llvm_bytes }}
-          version: ${{ env.WASMER_LLVM_VERSION }}
-
-      - name: Build, validate, and smoke target AOT artifacts
+      - name: Check selected hosts
         env:
-          AOT_TARGET: ${{ matrix.target }}
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "postgres-tools-wasix:compiler-output", "extension-artifacts-wasix:compiler-output"]'
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh liboliphaunt-wasix-aot
-
-      - name: Upload target PostgreSQL WASIX tools
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:package-aot') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: postgres-tools-wasix-release-assets-${{ matrix.target_id }}
-          path: target/postgres-tools/wasix/release-assets/*-aot-${{ matrix.target_id }}.tar.gz
-          if-no-files-found: error
-
-      - name: Stage target AOT artifact envelope
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-aot'], 'liboliphaunt-wasix:runtime-aot') }}
-        env:
-          AOT_TARGET: ${{ matrix.target }}
+          RESULTS: ${{ join(needs.*.result, ',') }}
         run: |
-          target="${AOT_TARGET:?AOT_TARGET is required}"
-          source="target/oliphaunt-wasix/aot/$target"
-          if [ ! -d "$source" ]; then
-            echo "missing AOT output directory: $source" >&2
-            exit 1
-          fi
-          upload="target/oliphaunt-wasix/aot-upload"
-          rm -rf "$upload"
-          mkdir -p "$upload/files"
-          cp -R "$source/." "$upload/files/"
-          printf '%s\n' "$target" >"$upload/target-triple.txt"
-
-      - name: Upload target artifacts
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-aot'], 'liboliphaunt-wasix:runtime-aot') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: liboliphaunt-wasix-runtime-aot-${{ matrix.target_id }}
-          path: |
-            target/oliphaunt-wasix/aot-upload/**
-          if-no-files-found: error
-
-      - name: Upload target WASIX tools compiler outputs
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:build-aot') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: postgres-tools-wasix-aot-${{ matrix.target_id }}
-          path: target/postgres-tools/wasix/aot
-          if-no-files-found: error
-
-      - name: Upload target extension AOT artifacts
-        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['liboliphaunt-wasix-aot'], 'extension-artifacts-wasix:build-aot') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: liboliphaunt-wasix-extension-aot-${{ matrix.target_id }}
-          path: target/extensions/wasix/aot-artifacts
-          if-no-files-found: error
+          case ",$RESULTS," in
+            *,failure,*|*,cancelled,*) exit 1 ;;
+          esac
 
   liboliphaunt-wasix-release-assets:
-    name: Builds / liboliphaunt WASIX Release Assets
+    name: Packages / WASIX Runtime
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -2271,9 +2280,13 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          task-cache: "false"
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Download portable WASIX runtime outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2320,7 +2333,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster-portable:
-    name: Builds / WASIX Postmaster / Portable + qualification
+    name: Builds / WASIX Postmaster (Portable + Tests)
     needs:
       - affected
       - checks
@@ -2339,8 +2352,21 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
 
+      - name: Set up WASIX builder
+        uses: ./.github/actions/setup-wasix-builder
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+          # Runtime Cargo commands use the executor workspace's patched dependency config.
+          cache-workspaces: |
+            src/wasix/postmaster/executor -> ../../../../target/oliphaunt-wasix-postmaster/runtime/wasmer/target
+            src/wasix/postmaster/executor -> ../../../../target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target
+            src/wasix/postmaster/executor -> ../../../../target/oliphaunt-wasix-postmaster/runtime/postmaster-compiler-target
+            src/wasix/postmaster/tools/sealed-export-closure -> ../../../../../target/oliphaunt-wasix-postmaster/runtime/sealed-export-closure-target
 
       - name: Install Wasmer LLVM 22.1
         uses: ./.github/actions/setup-wasmer-llvm
@@ -2395,7 +2421,7 @@ jobs:
           retention-days: 3
 
   wasix-postmaster-target:
-    name: Builds / WASIX Postmaster / ${{ matrix.target_id }} + qualification
+    name: Builds / WASIX Postmaster (${{ matrix.target_id }} + Tests)
     needs:
       - affected
       - wasix-postmaster-portable
@@ -2418,6 +2444,15 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+          cache: ${{ matrix.target_id != 'linux-x64-gnu' }}
+          # Runtime Cargo commands use the executor workspace's patched dependency config.
+          cache-workspaces: |
+            src/wasix/postmaster/executor -> ../../../../target/oliphaunt-wasix-postmaster/runtime/wasmer/target
+            src/wasix/postmaster/executor -> ../../../../target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target
+            src/wasix/postmaster/executor -> ../../../../target/oliphaunt-wasix-postmaster/runtime/postmaster-compiler-target
+            src/wasix/postmaster/tools/sealed-export-closure -> ../../../../../target/oliphaunt-wasix-postmaster/runtime/sealed-export-closure-target
 
       - name: Install portable shell utilities
         if: ${{ runner.os == 'macOS' }}
@@ -2433,6 +2468,7 @@ jobs:
       - name: Install Wasmer LLVM 22.1
         uses: ./.github/actions/setup-wasmer-llvm
         with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
           url: ${{ matrix.llvm_url }}
           sha256: ${{ matrix.llvm_sha256 }}
           bytes: ${{ matrix.llvm_bytes }}
@@ -2479,7 +2515,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster:
-    name: Builds / WASIX Postmaster / Aggregate release assets
+    name: Packages / WASIX Postmaster
     needs:
       - affected
       - wasix-postmaster-target
@@ -2547,8 +2583,6 @@ jobs:
       - name: Set up Deno for packed native tools smoke
         if: ${{ matrix.shard == 0 }}
         uses: ./.github/actions/setup-deno
-        with:
-          deno-version: ${{ env.DENO_VERSION }}
 
       - name: Download same-run Linux native runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2600,6 +2634,7 @@ jobs:
           name: native-extension-lifecycle-evidence-${{ matrix.shard }}
           path: target/native-extension-lifecycle/evidence
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
 
   native-extension-lifecycle-aggregate:
@@ -2621,6 +2656,7 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
+          task-cache: "false"
           install-workspace: "false"
 
       - name: Download all same-run native lifecycle shard receipts
@@ -2650,6 +2686,9 @@ jobs:
             --candidate-tree "$candidate_tree" \
             --expected-extensions-csv "$OLIPHAUNT_NATIVE_EXTENSION_PROOF_SQL_NAMES" \
             --expected-shard-count "$OLIPHAUNT_NATIVE_EXTENSION_PROOF_SHARD_COUNT" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --output target/native-extension-lifecycle/aggregate/output/aggregate-receipt.json
 
       - name: Upload aggregate native extension lifecycle evidence
@@ -2660,7 +2699,8 @@ jobs:
           name: native-extension-lifecycle-evidence
           path: target/native-extension-lifecycle/aggregate
           if-no-files-found: error
-          retention-days: 30
+          overwrite: true
+          retention-days: 90
 
   wasix-release-regression:
     name: E2E / WASIX Release Regression
@@ -2668,8 +2708,9 @@ jobs:
       - affected
       - extension-artifacts-wasix
       - liboliphaunt-wasix-runtime
-      - liboliphaunt-wasix-aot
-    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && needs.affected.outputs.wasix_release_regression_required == 'true' }}
+      - wasix-host-linux
+      - js-sdk-package
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.wasix-host-linux.result == 'success' && needs.affected.outputs.wasix_release_regression_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
@@ -2688,6 +2729,7 @@ jobs:
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
         with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
           components: rustfmt
 
       - name: Download same-run portable WASIX outputs
@@ -2751,12 +2793,28 @@ jobs:
           mkdir -p "$destination"
           rsync -a "$raw_target_dir/" "$destination/"
 
+      - name: Download same-run WASIX cluster seeds
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['wasix-release-regression'], 'oliphaunt-wasix-rust:test-integration') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: database-resources-wasix-seeds-portable
+          path: target/database-resources/release-assets
+
+      - name: Download same-run ICU data
+        if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['wasix-release-regression'], 'oliphaunt-wasix-rust:test-integration') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: database-resources-icu-data-portable
+          path: target/database-resources/release-assets
+
       - name: Stage exact-extension WASIX evidence inputs
         run: tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts --all --family wasix --require-wasix
 
       - name: Collect WASIX extension evidence
         id: regression
         env:
+          OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ needs.affected.outputs.job_targets }}
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "postgres-tools-wasix:build-aot", "database-resources:build-wasix-standard", "database-resources:build-wasix-icu", "database-resources:package-icu"]'
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
         run: |
@@ -2827,10 +2885,14 @@ jobs:
       - name: Set up Android
         uses: ./.github/actions/setup-android
         with:
+          gradle-cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+          expo: "true"
           native-ccache: "true"
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Reclaim Android mobile build disk
         run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
@@ -2970,6 +3032,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Download iOS liboliphaunt target
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -3209,6 +3273,7 @@ jobs:
       - kotlin-maven-staging
       - react-native-sdk-package
       - js-sdk-package
+      - wasix-ts-package
       - wasix-ts-sdk-package
       - native-consumers
       - wasix-rust-package
@@ -3216,7 +3281,6 @@ jobs:
       - liboliphaunt-wasix-aot
       - liboliphaunt-wasix-release-assets
       - wasix-postmaster
-      - wasix-release-regression
       - mobile-build-android
       - mobile-build-ios
     runs-on: ubuntu-24.04
@@ -3240,13 +3304,6 @@ jobs:
           GATE_LABEL: selected build jobs
         run: bun .github/scripts/check-ci-gate.mts selected
 
-      - name: Check WASIX release regression
-        id: wasix_regression_gate
-        env:
-          NEEDS_JSON: ${{ toJson(needs) }}
-          SELECTED_JOBS_JSON: ${{ needs.affected.outputs.wasix_release_regression_required == 'true' && '["wasix-release-regression"]' || '[]' }}
-          GATE_LABEL: WASIX release regression
-        run: bun .github/scripts/check-ci-gate.mts selected
 
   mobile-e2e-android:
     name: E2E / Android App
@@ -3264,66 +3321,17 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Node and Bun
-        id: setup_android_e2e_node
-        uses: ./.github/actions/setup-node-bun
-
-      - name: Reclaim Android emulator disk
-        id: reclaim_android_emulator_disk
-        run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
-
-      - name: Set up Android
-        id: setup_android_e2e
-        uses: ./.github/actions/setup-android
-        with:
-          gradle-cache: "false"
-
-      - name: Set up Maestro
-        uses: ./.github/actions/setup-maestro
-
       - name: Download Android app artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: react-native-mobile-android-app-android-x86_64
           path: target/mobile-build/react-native/android
 
-      - name: List Android app artifact
-        run: find target/mobile-build/react-native/android -maxdepth 2 -type f -print
-
-      - name: Provision runner KVM access
-        run: |
-          test -c /dev/kvm
-          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-            sudo chmod a+rw /dev/kvm
-          fi
-
-      - name: Start Android emulator
-        id: start_android_emulator
-        env:
-          OLIPHAUNT_ANDROID_EMULATOR_API: "35"
-          OLIPHAUNT_ANDROID_EMULATOR_DISK_HEADROOM_MB: "2048"
-          OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB: "6144"
-        run: tools/ci/start-android-emulator-ci.sh
-
-      - name: Run Android installed-app E2E
-        env:
-          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/android
-          OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
-          OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
-          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-        run: bash src/native/sdks/react-native/tools/mobile-e2e.sh android
-
-      - name: Upload Android E2E reports
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - name: Test installed app
+        uses: ./.github/actions/run-mobile-e2e
         with:
-          name: react-native-mobile-android-e2e-reports
-          path: |
-            target/mobile/react-native/android-e2e/reports
-            target/mobile/react-native/android-e2e/logs
-            ${{ runner.temp }}/oliphaunt-android-emulator.log
-          if-no-files-found: ignore
+          platform: android
+          source-sha: ${{ github.event.pull_request.head.sha || github.sha }}
 
   mobile-e2e-ios:
     name: E2E / iOS App
@@ -3341,59 +3349,24 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Node and Bun
-        uses: ./.github/actions/setup-node-bun
-
-      - name: Set up Apple
-        uses: ./.github/actions/setup-apple
-
-      - name: Set up Maestro
-        uses: ./.github/actions/setup-maestro
-
       - name: Download iOS app artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: react-native-mobile-ios-app
           path: target/mobile-build/react-native/ios-transport
 
-      - name: Verify and extract iOS app artifact
-        id: ios_app_transport_verify
-        run: |
-          rm -rf target/mobile-build/react-native/ios
-          bash src/native/sdks/react-native/tools/ios-app-transport.sh verify-extract \
-            --transport-dir target/mobile-build/react-native/ios-transport \
-            --output-dir target/mobile-build/react-native/ios
-
-      - name: List iOS app artifact
-        run: find target/mobile-build/react-native/ios -maxdepth 2 -print
-
-      - name: Run iOS installed-app E2E
-        env:
-          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/ios
-          OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
-          OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
-          OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
-          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-          MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-        run: bash src/native/sdks/react-native/tools/mobile-e2e.sh ios
-
-      - name: Upload iOS E2E reports
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - name: Test installed app
+        uses: ./.github/actions/run-mobile-e2e
         with:
-          name: react-native-mobile-ios-e2e-reports
-          path: |
-            target/mobile/react-native/ios-e2e/reports
-            target/mobile/react-native/ios-e2e/logs
-            target/mobile/react-native/ios-e2e/*.log
-          if-no-files-found: ignore
+          platform: ios
+          source-sha: ${{ github.event.pull_request.head.sha || github.sha }}
 
   e2e:
     name: E2E
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
+      - wasix-release-regression
       - native-extension-lifecycle-aggregate
       - mobile-e2e-android
       - mobile-e2e-ios
@@ -3416,6 +3389,14 @@ jobs:
           NEEDS_JSON: ${{ toJson(needs) }}
           SELECTED_JOBS_JSON: ${{ needs.affected.outputs.e2e_jobs }}
           GATE_LABEL: final release execution qualification
+        run: bun .github/scripts/check-ci-gate.mts selected
+
+      - name: Check WASIX release regression
+        id: wasix_regression_gate
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          SELECTED_JOBS_JSON: ${{ needs.affected.outputs.wasix_release_regression_required == 'true' && '["wasix-release-regression"]' || '[]' }}
+          GATE_LABEL: WASIX release regression
         run: bun .github/scripts/check-ci-gate.mts selected
 
   required:
@@ -3500,6 +3481,13 @@ jobs:
           name: wasix-release-regression-evidence
           path: target/qualification/wasix-release-regression-evidence
 
+      - name: Download required same-run native evidence
+        if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'native-extension-lifecycle') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: native-extension-lifecycle-evidence
+          path: target/qualification/native-extension-lifecycle-evidence
+
       - name: Write exact-SHA qualification record
         id: qualification_record
         env:
@@ -3508,6 +3496,7 @@ jobs:
           CI_PLAN_PATH: target/qualification/affected-plan/ci-plan.json
           WASIX_RELEASE_REGRESSION_REQUIRED: ${{ needs.affected.outputs.wasix_release_regression_required }}
           WASIX_EVIDENCE_ROOT: target/qualification/wasix-release-regression-evidence
+          NATIVE_EVIDENCE_ROOT: target/qualification/native-extension-lifecycle-evidence
           PRODUCER_RECEIPTS_JSON: ${{ format('[{0}]', needs.js-sdk-package.outputs.producer_receipt || '') }}
         run: bash .github/scripts/release-candidate.sh write
 

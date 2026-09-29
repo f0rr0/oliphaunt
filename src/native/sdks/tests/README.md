@@ -29,7 +29,7 @@ runtime resources plus a seed. Do not mix a released runtime with changed C APIs
 
 The Swift builder expects these repository-relative artifacts:
 
-- `target/mobile-bindings/generated/` (run the Swift `prepare-bindings.sh`).
+- `target/mobile-bindings/generated/` (run `moon run oliphaunt-swift:prepare-bindings`).
 - `target/aarch64-apple-ios/debug/liboliphaunt_mobile_bindings.a` and
   `target/aarch64-apple-ios-sim/debug/liboliphaunt_mobile_bindings.a`.
 - `target/liboliphaunt-ios-simulator/out/liboliphaunt.dylib`.

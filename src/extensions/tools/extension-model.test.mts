@@ -47,6 +47,7 @@ function run() {
             direct: 'passed',
             server: 'passed',
             restart: 'passed',
+            materialization: 'passed',
             'backup-restore': 'passed',
           },
         },
@@ -77,6 +78,9 @@ test('only observed passing results for the current source commit qualify', () =
     },
     (run: any) => {
       run.results[0].runtimeModeStatuses['backup-restore'] = 'failed';
+    },
+    (run: any) => {
+      delete run.results[0].runtimeModeStatuses.materialization;
     },
     (run: any) => {
       run.status = 'failed';

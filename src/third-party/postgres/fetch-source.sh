@@ -2,7 +2,7 @@
 
 # Shared, fail-closed transport for the pinned PostgreSQL source archive.
 # Keep this file POSIX-compatible: native and WASIX build scripts source it on
-# both macOS and Linux.
+# both macOS and Linux. Callers source tools/dev/acquisition.sh first.
 
 oliphaunt_postgresql_sha256_file() (
   oliphaunt_sha_path="${1:?oliphaunt_postgresql_sha256_file requires a path}"
@@ -17,6 +17,7 @@ oliphaunt_postgresql_sha256_file() (
 )
 
 oliphaunt_fetch_postgresql_source_archive() (
+  oliphaunt_acquisition_start 'PostgreSQL source archive' 180 || return $?
   if [ "$#" -ne 4 ]; then
     echo "usage: oliphaunt_fetch_postgresql_source_archive DESTINATION VERSION SHA256 PRIMARY_URL" >&2
     return 2
@@ -91,17 +92,12 @@ oliphaunt_fetch_postgresql_source_archive() (
   for oliphaunt_url in "$oliphaunt_primary_url" "$oliphaunt_fallback_url"; do
     rm -f "$oliphaunt_partial"
     oliphaunt_curl_status=0
-    if curl \
+    if oliphaunt_acquisition_curl 90 5 3 curl \
       --location \
       --fail \
       --silent \
       --show-error \
-      --retry 4 \
-      --retry-all-errors \
-      --retry-delay 3 \
-      --retry-max-time 90 \
       --connect-timeout 20 \
-      --max-time 60 \
       --max-filesize 67108864 \
       --proto '=https' \
       --proto-redir '=https' \
@@ -117,6 +113,7 @@ oliphaunt_fetch_postgresql_source_archive() (
       echo "discarding PostgreSQL $oliphaunt_version source from $oliphaunt_url with checksum $oliphaunt_actual_sha instead of $oliphaunt_expected_sha" >&2
     else
       oliphaunt_curl_status=$?
+      case "$oliphaunt_curl_status" in 126|127|129|130|137|143) return "$oliphaunt_curl_status" ;; esac
       echo "PostgreSQL $oliphaunt_version source download from $oliphaunt_url failed after bounded retries (curl exit $oliphaunt_curl_status)" >&2
     fi
   done

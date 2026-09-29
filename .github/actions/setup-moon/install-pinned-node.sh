@@ -33,6 +33,8 @@ done
 
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
+. "${curl_platform_flags%/*}/acquisition.sh"
+oliphaunt_acquisition_start "Node.js bootstrap" 300
 
 
 manifest_value() {
@@ -204,15 +206,14 @@ if [ "$archive_valid" != "1" ]; then
   curl_args=(
     --fail --location --silent --show-error
     --proto '=https' --proto-redir '=https' --tlsv1.2
-    --retry 5 --retry-all-errors --retry-connrefused --retry-delay 2 --retry-max-time 300
-    --connect-timeout 20 --max-time 300 --speed-limit 1024 --speed-time 30
+    --connect-timeout 20 --speed-limit 1024 --speed-time 30
     --remove-on-error --max-filesize "$archive_bytes" --output "$partial"
   )
   if [ -n "$curl_tls_flag" ]; then
     curl_args+=("$curl_tls_flag")
   fi
   curl_args+=("$url")
-  if ! "$curl_command" "${curl_args[@]}"; then
+  if ! oliphaunt_acquisition_curl 300 6 2 "$curl_command" "${curl_args[@]}"; then
     rm -f "$partial"
     fail "could not download pinned Node.js archive $url"
   fi

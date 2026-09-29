@@ -5,7 +5,7 @@ inputs:
   toolchain:
     description: Rust toolchain version.
     required: false
-    default: "1.93.1"
+    default: ""
   components:
     description: Comma-separated Rust components.
     required: false
@@ -30,10 +30,24 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Resolve Rust toolchain
+      id: toolchain
+      shell: bash
+      env:
+        TOOLCHAIN_INPUT: ${{ inputs.toolchain }}
+      run: |
+        set -euo pipefail
+        version="$TOOLCHAIN_INPUT"
+        if [[ -z "$version" ]]; then
+          version="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+        fi
+        [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'expected a pinned Rust version' >&2; exit 1; }
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
       with:
-        toolchain: ${{ inputs.toolchain }}
+        toolchain: ${{ steps.toolchain.outputs.version }}
         components: ${{ inputs.components }}
 
     - name: Cache Cargo output

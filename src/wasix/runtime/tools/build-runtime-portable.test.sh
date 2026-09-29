@@ -52,4 +52,24 @@ bash "$fixture/$owner/tools/build-runtime-portable.sh" --package-only
 echo profile=debug > "$receipt"
 if OLIPHAUNT_SKIP_BUILD=1 bash "$fixture/$owner/tools/build-runtime-portable.sh"; then exit 1; fi
 [ "$(tail -1 "$BUILD_LOG")" = prepare_postgres_source ]
+# Only a complete matching input/output receipt skips the compiler. Corrupt
+# bytes and a changed input hash must both return to the build path.
+echo profile=release > "$receipt"
+export MOON_TARGET=liboliphaunt-wasix:compiler-output
+export MOON_TASK_HASH="$(printf '%064d' 1)"
+: > "$BUILD_LOG"
+bash "$fixture/$owner/tools/build-compiler-output.sh"
+: > "$BUILD_LOG"
+bash "$fixture/$owner/tools/build-compiler-output.sh"
+! grep -q '^docker_' "$BUILD_LOG"
+echo corrupted >> "$receipt"
+: > "$BUILD_LOG"
+# The fixture build scripts do not repair the profile marker; its release line
+# remains present, so the assertion still allows the fresh compiler path.
+bash "$fixture/$owner/tools/build-compiler-output.sh"
+grep -q '^docker_oliphaunt$' "$BUILD_LOG"
+export MOON_TASK_HASH="$(printf '%064d' 2)"
+: > "$BUILD_LOG"
+bash "$fixture/$owner/tools/build-compiler-output.sh"
+grep -q '^docker_oliphaunt$' "$BUILD_LOG"
 echo 'WASIX build order, core-only selection, failure propagation, and stale-profile refusal passed.'

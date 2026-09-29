@@ -42,6 +42,8 @@ done
 
 # shellcheck source=tools/dev/curl-platform-flags.sh
 . "$curl_platform_flags"
+. "${curl_platform_flags%/*}/acquisition.sh"
+oliphaunt_acquisition_start "Moon toolchain and plugins" 900
 
 command -v bun >/dev/null 2>&1 || fail "Bun is required; run setup-node-bun first"
 
@@ -257,8 +259,7 @@ curl_tls_flag="$(oliphaunt_curl_platform_tls_flag)"
 curl_common=(
   --fail --location --silent --show-error
   --proto '=https' --proto-redir '=https' --tlsv1.2
-  --retry 6 --retry-all-errors --retry-connrefused --retry-max-time 300
-  --connect-timeout 20 --max-time 300 --speed-limit 1024 --speed-time 30
+  --connect-timeout 20 --speed-limit 1024 --speed-time 30
   --remove-on-error
 )
 if [ -n "$curl_tls_flag" ]; then
@@ -287,7 +288,7 @@ download_verified() {
     args+=(--header "Authorization: Bearer $bearer")
   fi
   args+=("$url")
-  if "${OLIPHAUNT_MOON_CURL:-curl}" "${args[@]}"; then
+  if oliphaunt_acquisition_curl 300 7 2 "${OLIPHAUNT_MOON_CURL:-curl}" "${args[@]}"; then
     :
   else
     rc=$?
@@ -317,7 +318,7 @@ registry_token() {
     --output "$response"
     "https://ghcr.io/token?scope=repository:$repository:pull"
   )
-  if ! "${OLIPHAUNT_MOON_CURL:-curl}" "${args[@]}"; then
+  if ! oliphaunt_acquisition_curl 300 7 2 "${OLIPHAUNT_MOON_CURL:-curl}" "${args[@]}"; then
     rm -f "$response"
     fail "could not obtain a bounded read-only GHCR token for $repository"
   fi
@@ -356,7 +357,7 @@ download_oci_manifest() {
     --output "$partial"
     "https://ghcr.io/v2/$repository/manifests/sha256:$digest"
   )
-  if ! "${OLIPHAUNT_MOON_CURL:-curl}" "${args[@]}"; then
+  if ! oliphaunt_acquisition_curl 300 7 2 "${OLIPHAUNT_MOON_CURL:-curl}" "${args[@]}"; then
     rm -f "$partial" "$headers"
     fail "could not fetch pinned OCI manifest $repository@sha256:$digest"
   fi

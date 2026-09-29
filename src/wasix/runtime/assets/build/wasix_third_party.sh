@@ -69,7 +69,7 @@ oliphaunt_wasix_run_extension_build_in_docker_if_needed() {
     "$docker" build \
       -t "$image" \
       -f "$root/docker/Dockerfile" \
-      "$root/docker"
+      "$(cd "$root/../../../../.." && pwd)"
   else
     echo "reusing Docker image $image"
   fi

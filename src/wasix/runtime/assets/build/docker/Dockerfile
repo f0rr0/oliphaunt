@@ -12,8 +12,9 @@ ARG OLIPHAUNT_UBUNTU_SNAPSHOT_TLS_ROOT_SHA256=22b557a27055b33606b6559f37703928d3
 LABEL dev.oliphaunt.ubuntu-apt-snapshot="${OLIPHAUNT_UBUNTU_APT_SNAPSHOT}" \
       dev.oliphaunt.ubuntu-snapshot-tls-root-sha256="${OLIPHAUNT_UBUNTU_SNAPSHOT_TLS_ROOT_SHA256}"
 
-COPY --chmod=0444 isrg-root-x1.pem /usr/local/share/oliphaunt/isrg-root-x1.pem
-COPY --chmod=0555 install-pinned-apt-packages.sh /usr/local/libexec/oliphaunt/install-pinned-apt-packages.sh
+COPY --chmod=0444 src/wasix/runtime/assets/build/docker/isrg-root-x1.pem /usr/local/share/oliphaunt/isrg-root-x1.pem
+COPY --chmod=0555 tools/dev/acquisition.sh /usr/local/libexec/oliphaunt/acquisition.sh
+COPY --chmod=0555 src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.sh /usr/local/libexec/oliphaunt/install-pinned-apt-packages.sh
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
@@ -61,8 +62,8 @@ ENV PATH=/opt/wasixcc-home/.wasixcc/bin:$PATH
 ARG OLIPHAUNT_WASIXCC_ASSET_MANIFEST_SHA256=9b0ee1aabcfecda1be72c94a9f14a16c9d8a2fc020f3dc471394d5335766c519
 LABEL dev.oliphaunt.wasixcc.asset-manifest-sha256="${OLIPHAUNT_WASIXCC_ASSET_MANIFEST_SHA256}"
 
-COPY --chmod=0444 pinned-wasixcc-assets.tsv /usr/local/share/oliphaunt-wasixcc/pinned-wasixcc-assets.tsv
-COPY --chmod=0555 install-pinned-wasixcc.sh /usr/local/libexec/oliphaunt/install-pinned-wasixcc.sh
+COPY --chmod=0444 src/wasix/runtime/assets/build/docker/pinned-wasixcc-assets.tsv /usr/local/share/oliphaunt-wasixcc/pinned-wasixcc-assets.tsv
+COPY --chmod=0555 src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.sh /usr/local/libexec/oliphaunt/install-pinned-wasixcc.sh
 
 RUN printf '%s  %s\n' \
       "$OLIPHAUNT_WASIXCC_ASSET_MANIFEST_SHA256" \

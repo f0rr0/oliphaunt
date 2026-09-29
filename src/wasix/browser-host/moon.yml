@@ -14,6 +14,9 @@ tasks:
     inputs:
       - "**/*"
       - "/tools/dev/node-info.mts"
+      - "/tools/dev/curl-platform-flags.sh"
+      - "/tools/dev/acquisition.sh"
+      - "/src/third-party/tools/{fetch-sources.sh,source-fetch-core.mts,source-archive.mts}"
       - "@group(cargo-workspace)"
     outputs:
       - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"

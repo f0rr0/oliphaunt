@@ -2,18 +2,12 @@ name: Set up Android
 description: Set up Java and expose Android SDK paths for Gradle/Expo jobs.
 
 inputs:
-  ndk-version:
-    description: Android NDK side-by-side version required by native SDK builds.
-    required: false
-    default: "27.0.12077973"
-  cmake-version:
-    description: Android CMake version required by native SDK builds.
-    required: false
-    default: "3.22.1"
-  compile-sdk:
-    description: Android platform API level used by SDK checks.
-    required: false
-    default: "36"
+  native-tools:
+    description: Install NDK and CMake for native compilation.
+    default: "true"
+  expo:
+    description: Also provision the Expo app NDK before Gradle runs.
+    default: "false"
   native-ccache:
     description: Whether to install and configure ccache for native Android C/C++ builds.
     required: false
@@ -109,12 +103,21 @@ runs:
         ccache --set-config=max_size=2G
         ccache --zero-stats
 
+    - name: Set up macOS acquisition timer
+      if: ${{ runner.os == 'macOS' }}
+      shell: bash
+      run: |
+        . tools/dev/acquisition.sh
+        if ! oliphaunt_acquisition_timeout >/dev/null 2>&1; then
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
+        fi
+        oliphaunt_acquisition_timeout >/dev/null
+
     - name: Configure Android SDK
       shell: bash
       env:
-        NDK_VERSION: ${{ inputs.ndk-version }}
-        CMAKE_VERSION: ${{ inputs.cmake-version }}
-        COMPILE_SDK: ${{ inputs.compile-sdk }}
+        NATIVE_TOOLS: ${{ inputs.native-tools }}
+        EXPO: ${{ inputs.expo }}
       run: | # zizmor: ignore[github-env] Android SDK paths are runner-owned or HOME-scoped and validated before export.
         set -euo pipefail
         if [[ -z "${ANDROID_HOME:-}" ]]; then
@@ -128,16 +131,12 @@ runs:
             export ANDROID_HOME="$HOME/android-sdk"
           fi
         fi
-        tools/dev/setup-android-sdk.sh \
-          --sdk-root "$ANDROID_HOME" \
-          --ndk-version "$NDK_VERSION" \
-          --cmake-version "$CMAKE_VERSION" \
-          --compile-sdk "$COMPILE_SDK"
+        args=(--sdk-root "$ANDROID_HOME" --native-tools "$NATIVE_TOOLS")
+        case "$EXPO" in true) args+=(--expo) ;; false) ;; *) exit 1 ;; esac
+        tools/dev/setup-android-sdk.sh "${args[@]}"
 
         echo "ANDROID_HOME=${ANDROID_HOME}" >> "$GITHUB_ENV"
         echo "ANDROID_SDK_ROOT=${ANDROID_HOME}" >> "$GITHUB_ENV"
-        echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
         echo "${ANDROID_HOME}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
         echo "${ANDROID_HOME}/platform-tools" >> "$GITHUB_PATH"
         echo "ANDROID_HOME=${ANDROID_HOME}"
-        echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}"

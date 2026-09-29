@@ -30,6 +30,25 @@ if [[ $# == 0 && (${CI_GENERATED_RELEASE_PR:-false} == true || (${GITHUB_EVENT_N
     export CI_RELEASE_PRODUCTS_JSON
   fi
 fi
+# A frozen carrier replaces only the React Native package's unchanged Apple
+# metadata input. Missing/stale state falls back to the normal producers.
+unset OLIPHAUNT_REUSE_IOS_CARRIER
+carrier_cache=target/ci/ios-carrier
+if [[ $# == 0 && ${GITHUB_EVENT_NAME:-} != workflow_dispatch && ${CI_RELEASE_PRODUCTS_JSON:-[]} == '[]' && -s "$carrier_cache/source-sha" && -s "$carrier_cache/manifest.json" ]]; then
+  producer_sha="$(cat "$carrier_cache/source-sha")"
+  if [[ "$producer_sha" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$producer_sha^{commit}" 2>/dev/null; then
+    git diff --name-only "$producer_sha" HEAD > "$plan_dir/carrier-changes"
+    if [[ -s "$plan_dir/carrier-changes" ]]; then
+      (unset MOON_BASE MOON_HEAD; "$moon_bin" query affected stdin --upstream none --downstream deep < "$plan_dir/carrier-changes") > "$plan_dir/carrier-affected.json"
+    else
+      printf '{"tasks":{}}\n' > "$plan_dir/carrier-affected.json"
+    fi
+    if bun -e 'const data=await Bun.file(process.argv[1]).json(); process.exit(Object.hasOwn(data.tasks ?? {}, "liboliphaunt-native:finalize-runtime-ios-abi") ? 1 : 0)' "$plan_dir/carrier-affected.json" &&
+      bun src/native/sdks/swift/tools/ios-carrier-manifest.mts --base-carrier "$carrier_cache/manifest.json" --output "$plan_dir/carrier.json"; then
+      export OLIPHAUNT_REUSE_IOS_CARRIER=true
+    fi
+  fi
+fi
 "$moon_bin" task-graph --json >"$OLIPHAUNT_MOON_TASK_GRAPH_FILE"
 if [[ $# == 0 && ${GITHUB_EVENT_NAME:-} != workflow_dispatch && (-z ${CI_RELEASE_PRODUCTS_JSON:-} || ${CI_RELEASE_PRODUCTS_JSON:-} == '[]') ]]; then
   : "${MOON_BASE:?MOON_BASE is required for affected CI planning}"

@@ -1,22 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildPlan, loadGraph, normalizeFiles } from '../release/release-graph.mts';
-import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
-import {
-  dependencyPlatformTargets,
-  jobTargetsForJobs,
-  planForReleaseProducts,
-  planJobsForAffected,
-  requiredTasksForAffected,
-} from './ci_plan.mts';
-import { combinedNativeWasix, paths, taskRoots } from './ci-plan-test-inputs.mts';
-import { affectedObservation, taskObservation } from './ci-plan-test-observations.mts';
 import { loadExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
+import { publishedConsumerDependencies } from '../../src/native/sdks/ts/tools/published-consumer.mts';
 import {
   contribCarrierDescriptor,
   extensionProductForSqlName,
 } from '../release/release-artifact-targets.mts';
-import { publishedConsumerDependencies } from '../../src/native/sdks/ts/tools/published-consumer.mts';
+import { buildPlan, loadGraph, normalizeFiles } from '../release/release-graph.mts';
+import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
+import {
+  dependencyPlatformTargets,
+  extensionArtifactsNativeMatrixForPlan,
+  jobTargetsForJobs,
+  planForReleaseProducts,
+  planJobsForAffected,
+  renderPlanForFullRun,
+  requiredTasksForAffected,
+} from './ci_plan.mts';
+import { combinedNativeWasix, paths, taskRoots } from './ci-plan-test-inputs.mts';
+import { affectedObservation, taskObservation } from './ci-plan-test-observations.mts';
 
 const GRAPH = loadGraph('ci-plan-node-products.test.mts');
 const NATIVE_TS_CONSUMER_JOBS = [
@@ -161,8 +163,10 @@ test('an empty Moon selection requires no product tasks or releases', () => {
   assert.deepEqual(buildPlan(GRAPH, [], 'ci-plan-node-products.test.mts').releaseProducts, []);
 });
 
-test('WASIX qualification selects all same-run release regression inputs', () => {
+test('WASIX qualification and Linux diagnostics select all same-run regression inputs', () => {
   const required = [
+    'oliphaunt-wasix-rust:test-regression',
+    'oliphaunt-wasix-rust:test-integration',
     'liboliphaunt-wasix:runtime-portable',
     'liboliphaunt-wasix:runtime-aot',
     'extension-artifacts-wasix:compiler-output',
@@ -170,23 +174,37 @@ test('WASIX qualification selects all same-run release regression inputs', () =>
     'extension-artifacts-wasix:build-aot',
     'postgres-tools-wasix:compiler-output',
     'postgres-tools-wasix:build-aot',
+    'database-resources:build-wasix-standard',
+    'database-resources:build-wasix-icu',
+    'database-resources:package-icu',
   ];
   const roots = new Set(['liboliphaunt-wasix:release-assets']);
   const jobs = planJobsForAffected(roots);
   const affected = jobTargetsForJobs(jobs, requiredTasksForAffected(roots));
   const release = planForReleaseProducts(['liboliphaunt-wasix'], 'a'.repeat(40));
-  for (const targets of [affected, release.job_targets]) {
+  const full = renderPlanForFullRun();
+  const linux = renderPlanForFullRun({ wasmTarget: 'linux-x64-gnu' });
+  for (const plan of [release, full, linux]) {
+    assert(plan.jobs.includes('wasix-release-regression'));
+    assert(!plan.builder_jobs.includes('wasix-release-regression'));
+    assert(plan.jobs.includes('js-sdk-package'));
+    assert(plan.extension_artifacts_wasix_matrix.include.length > 0);
+    assert(plan.liboliphaunt_wasix_aot_runtime_matrix_linux.include.length > 0);
+  }
+  for (const targets of [affected, release.job_targets, full.job_targets, linux.job_targets]) {
     const selected = new Set(Object.values(targets).flat());
     for (const target of required) assert(selected.has(target), `missing evidence input ${target}`);
   }
   assert(jobs.has('extension-artifacts-wasix'));
+  assert(
+    !renderPlanForFullRun({ wasmTarget: 'macos-arm64' }).jobs.includes('wasix-release-regression'),
+  );
 });
 
 test('shared Rust query changes stage the native and WASIX consumer artifacts', () => {
   const result = effects(paths.sdksRustQuerySrcLibRs);
-  for (const consumer of ['oliphaunt-wasix-ts:package', 'oliphaunt-wasix-ts:test-consumer']) {
-    assert(result.jobTargets['wasix-ts-sdk-package'].includes(consumer), consumer);
-  }
+  assert(result.jobTargets['wasix-ts-package'].includes('oliphaunt-wasix-ts:package'));
+  assert(result.jobTargets['wasix-ts-sdk-package'].includes('oliphaunt-wasix-ts:test-consumer'));
   for (const producer of [
     'oliphaunt-rust:package',
     'oliphaunt-query:package',
@@ -467,6 +485,8 @@ test('combined JavaScript SDK and WASIX N-API changes release only changed produ
     'node-direct',
     'wasix-napi',
     'wasix-napi-release-assets',
+    'wasix-release-regression',
+    'wasix-ts-package',
     'wasix-ts-sdk-package',
   ]);
   assert.deepEqual(result.releaseProducts, ['oliphaunt-js', 'oliphaunt-wasix-napi']);
@@ -540,6 +560,8 @@ test('WASIX N-API source selects only its real WASIX artifact inputs', () => {
     'liboliphaunt-wasix-runtime',
     'wasix-napi',
     'wasix-napi-release-assets',
+    'wasix-release-regression',
+    'wasix-ts-package',
     'wasix-ts-sdk-package',
   ]);
   assert.deepEqual(result.releaseProducts, ['oliphaunt-wasix-napi']);
@@ -886,4 +908,97 @@ test('mixed SDK and query releases retain the Linux native consumer alongside mo
       (row) => row.target === 'linux-x64-gnu',
     ),
   );
+});
+
+test('frozen iOS metadata only replaces the unchanged package input in affected runs', () => {
+  const old = process.env.OLIPHAUNT_REUSE_IOS_CARRIER;
+  try {
+    assert(
+      !Object.hasOwn(
+        affectedObservation(paths.sdksKotlinToolsStageReleaseArtifactsMts).tasks,
+        'liboliphaunt-native:finalize-runtime-ios-abi',
+      ),
+    );
+    assert(
+      Object.hasOwn(
+        affectedObservation(paths.runtimesLiboliphauntNativeSrcLiboliphauntProcessC).tasks,
+        'liboliphaunt-native:finalize-runtime-ios-abi',
+      ),
+    );
+    process.env.OLIPHAUNT_REUSE_IOS_CARRIER = 'true';
+    const roots = new Set(['integration-examples:react-native-android-build']);
+    const warm = requiredTasksForAffected(roots);
+    assert(!warm.has('liboliphaunt-native:finalize-runtime-ios-abi'));
+    assert(
+      requiredTasksForAffected(roots, undefined, false).has(
+        'liboliphaunt-native:finalize-runtime-ios-abi',
+      ),
+    );
+    roots.add('liboliphaunt-native:finalize-runtime-ios-abi');
+    assert(requiredTasksForAffected(roots).has('liboliphaunt-native:finalize-runtime-ios-abi'));
+    const release = planForReleaseProducts(['oliphaunt-react-native'], 'a'.repeat(40));
+    assert(release.jobs.includes('liboliphaunt-native-ios-abi'));
+    assert.equal(release.reuse_ios_carrier, false);
+  } finally {
+    if (old === undefined) delete process.env.OLIPHAUNT_REUSE_IOS_CARRIER;
+    else process.env.OLIPHAUNT_REUSE_IOS_CARRIER = old;
+  }
+});
+
+test('Android extension packaging selects matching dependency-complete Linux support', () => {
+  for (const target of ['android-arm64-v8a', 'android-x86_64']) {
+    const matrix = extensionArtifactsNativeMatrixForPlan(
+      new Set(['extension-artifacts-native']),
+      new Set([target]),
+      new Set([extensionProductForSqlName('earthdistance')]),
+      'all',
+    );
+    assert.deepEqual(
+      matrix.include.map((row) => row.target),
+      [target, 'linux-x64-gnu'],
+    );
+    const android = matrix.include.find((row) => row.target === target);
+    const linux = matrix.include.find((row) => row.target === 'linux-x64-gnu');
+    for (const product of android.extensions_csv.split(',')) {
+      assert(linux.extensions_csv.split(',').includes(product), product);
+    }
+    assert(linux.sql_names_csv.split(',').includes('cube'));
+  }
+});
+
+test('WASIX package README and compiler unit fixtures do not select runtime compilers', () => {
+  for (const file of [paths.wasixSdkReadme, paths.wasixDockerTest, paths.nativeExtensionFixture]) {
+    const observation = affectedObservation([file]);
+    const roots = new Set(triggeringTaskNames(observation.tasks));
+    const required = requiredTasksForAffected(roots);
+    assert(!required.has('liboliphaunt-wasix:compiler-output'), file);
+    assert(!required.has('extension-artifacts-native:build-target'), file);
+    assert(!required.has('liboliphaunt-wasix-postmaster:postgres-build'), file);
+  }
+  const jobs = planJobsForAffected(
+    new Set(triggeringTaskNames(affectedObservation([paths.wasixSdkReadme]).tasks)),
+  );
+  assert(jobs.has('wasix-ts-package'));
+  assert(!jobs.has('wasix-ts-sdk-package'));
+});
+
+test('SDK runtime test edits select their final hosted execution roots', () => {
+  for (const [file, job, target] of [
+    [paths.nativeRustRuntimeTests, 'native-consumers', 'oliphaunt-rust:test-integration'],
+    [paths.mobileBrokerRuntimeTests, 'native-consumers', 'oliphaunt-mobile-bindings:test-native'],
+    [paths.nativeSwiftRuntimeTests, 'native-consumers', 'oliphaunt-swift:test-native'],
+    [paths.nativeKotlinRuntimeTests, 'native-consumers', 'oliphaunt-kotlin:test-native-bindings'],
+    [
+      paths.wasixResourceRuntimeTests,
+      'wasix-release-regression',
+      'oliphaunt-wasix-rust:test-integration',
+    ],
+  ]) {
+    const selected = effects(file);
+    assert(selected.jobs.includes(job), `${file} must schedule ${job}`);
+    const roots = new Set(selected.directTasks);
+    const executable = requiredTasksForAffected(roots);
+    assert(executable.has(target), `${target} is missing from executable closure`);
+    assert(jobTargetsForJobs(new Set(selected.jobs), executable)[job].includes(target));
+  }
 });

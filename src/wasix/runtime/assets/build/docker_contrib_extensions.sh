@@ -41,7 +41,7 @@ elif [ "${FORCE_IMAGE_BUILD:-0}" = "1" ] || ! "$DOCKER" image inspect "$IMAGE" >
   "$DOCKER" build \
     -t "$IMAGE" \
     -f "$ROOT/docker/Dockerfile" \
-    "$ROOT/docker"
+    "$REPO_ROOT"
 else
   echo "reusing Docker image $IMAGE"
 fi

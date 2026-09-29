@@ -27,6 +27,11 @@ export async function loadHostBuildContract() {
     ...patchSeries.map((patch) => `src/wasix/browser-host/patches/${patch}`),
     buildScriptPath,
     provenanceScriptPath,
+    'tools/dev/curl-platform-flags.sh',
+    'tools/dev/acquisition.sh',
+    'src/third-party/tools/fetch-sources.sh',
+    'src/third-party/tools/source-fetch-core.mts',
+    'src/third-party/tools/source-archive.mts',
   ]);
   const digests = [];
   for (const input of inputs) {

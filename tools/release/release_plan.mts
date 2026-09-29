@@ -57,6 +57,9 @@ function printGithubOutput(plan) {
   console.log(
     `has_extension_artifacts=${String(extensionArtifactProducts.length > 0).toLowerCase()}`,
   );
+  console.log(
+    `requires_native_extension_lifecycle_evidence=${extensionArtifactProductsForReleaseProducts(products, { family: 'native', prefix: TOOL }).length > 0}`,
+  );
   console.log(`products_json=${JSON.stringify(products)}`);
   console.log(`extension_products_json=${JSON.stringify(extensionProducts)}`);
   console.log(

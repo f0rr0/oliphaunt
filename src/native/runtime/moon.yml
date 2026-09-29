@@ -54,6 +54,7 @@ fileGroups:
     - src/**/*
     - patches/**/*
     - postgres/**/*
+    - /tools/dev/acquisition.sh
     - /src/third-party/postgres/**/*
     - "!/src/third-party/postgres/**/*.test.*"
     - "!/src/third-party/postgres/testdata/**/*"

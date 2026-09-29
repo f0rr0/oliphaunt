@@ -297,10 +297,11 @@ export function validateSource(source) {
     if (
       !parsedUrl.pathname.endsWith('.tar.gz') &&
       !parsedUrl.pathname.endsWith('.tgz') &&
+      !parsedUrl.pathname.endsWith('.crate') &&
       !parsedUrl.pathname.endsWith('.zip')
     ) {
       throw new Error(
-        `archive source '${source.name}' URL must identify a .tar.gz, .tgz, or .zip file`,
+        `archive source '${source.name}' URL must identify a .tar.gz, .tgz, .crate, or .zip file`,
       );
     }
     if (source.stripPrefix === '.' && !parsedUrl.pathname.endsWith('.zip')) {

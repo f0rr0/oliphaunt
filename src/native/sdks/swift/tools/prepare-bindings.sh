@@ -2,7 +2,6 @@
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
-bash src/native/mobile-bindings/tools/generate.sh
 stage="$root/src/native/sdks/swift/.build/native-bindings"
 mkdir -p "$stage/swift" "$stage/ffi"
 cp target/mobile-bindings/generated/OliphauntNativeBindings.swift "$stage/swift/"

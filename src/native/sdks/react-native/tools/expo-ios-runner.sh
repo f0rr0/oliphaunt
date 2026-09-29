@@ -68,14 +68,7 @@ background_seconds="${OLIPHAUNT_EXPO_IOS_BACKGROUND_SECONDS:-3}"
 reuse_installed_app="${OLIPHAUNT_EXPO_IOS_REUSE_INSTALLED_APP:-0}"
 clean_simulator_install="${OLIPHAUNT_EXPO_IOS_CLEAN_INSTALL:-1}"
 e2e_only="${OLIPHAUNT_EXPO_IOS_E2E_ONLY:-0}"
-e2e_assertion_runner="${OLIPHAUNT_EXPO_IOS_E2E_ASSERTION_RUNNER:-${OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER:-log}}"
-case "$e2e_assertion_runner" in
-  auto | log | maestro) ;;
-  *)
-    echo "error: OLIPHAUNT_EXPO_IOS_E2E_ASSERTION_RUNNER must be auto, log, or maestro, got $e2e_assertion_runner" >&2
-    exit 1
-    ;;
-esac
+
 configuration="${OLIPHAUNT_EXPO_IOS_CONFIGURATION:-Debug}"
 sdk="${OLIPHAUNT_EXPO_IOS_SDK:-iphonesimulator}"
 destination="${OLIPHAUNT_EXPO_IOS_DESTINATION:-}"
@@ -86,7 +79,6 @@ derived_data="$scratch_root/DerivedData"
 workspace="$example_dir/ios/reactnativeoliphauntexpo.xcworkspace"
 xcode_scheme="reactnativeoliphauntexpo"
 build_artifact_dir="${OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR:-$root/target/mobile-build/react-native/ios}"
-maestro_flow="${OLIPHAUNT_EXPO_IOS_MAESTRO_FLOW:-$source_example_dir/maestro/installed-smoke.yaml}"
 expo_use_precompiled_modules="${OLIPHAUNT_EXPO_IOS_USE_PRECOMPILED_MODULES:-true}"
 use_ccache="${OLIPHAUNT_EXPO_IOS_USE_CCACHE:-1}"
 liboliphaunt_pod_mode="vendored-framework"

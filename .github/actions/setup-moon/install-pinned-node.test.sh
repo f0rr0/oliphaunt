@@ -4,6 +4,10 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-moon/install-pinned-node.sh"
 work="$(mktemp -d)"
+mkdir -p "$work/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$work/no-delay/sleep"
+chmod +x "$work/no-delay/sleep"
+export PATH="$work/no-delay:$PATH"
 trap 'rm -rf "$work"' EXIT
 
 mkdir -p "$work/payload/node-v22.22.3-linux-x64/bin" "$work/bin"
@@ -42,7 +46,7 @@ set -euo pipefail
 output=""
 last=""
 joined=" $* "
-for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry-all-errors" "--retry-connrefused" "--remove-on-error" "--max-filesize"; do
+for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry 0" "--remove-on-error" "--max-filesize"; do
   [[ "$joined" == *" $required "* ]] || {
     echo "missing hardened curl argument: $required" >&2
     exit 91

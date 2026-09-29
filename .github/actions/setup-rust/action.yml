@@ -18,6 +18,10 @@ inputs:
     description: Whether to enable the Cargo cache.
     required: false
     default: "true"
+  cache-workspaces:
+    description: Workspace and target-directory mappings for the Cargo cache.
+    required: false
+    default: ". -> target"
 
 runs:
   using: composite
@@ -27,5 +31,6 @@ runs:
       with:
         components: ${{ inputs.components }}
         cache: ${{ inputs.cache }}
+        cache-workspaces: ${{ inputs.cache-workspaces }}
         cache-save-if: ${{ inputs.cache-save-if }}
         tools: ${{ inputs.tools }}

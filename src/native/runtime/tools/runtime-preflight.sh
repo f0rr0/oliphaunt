@@ -67,23 +67,14 @@ oliphaunt_runtime_native_host_postgres() {
   printf '%s\n' "${OLIPHAUNT_POSTGRES:-$(oliphaunt_runtime_native_host_install_dir)/bin/postgres$suffix}"
 }
 
-oliphaunt_runtime_native_host_pg_config() {
-  case "$(uname -s)" in
-    MINGW* | MSYS* | CYGWIN*) suffix=.exe ;;
-    *) suffix= ;;
-  esac
-  printf '%s\n' "${OLIPHAUNT_PG_CONFIG:-$(oliphaunt_runtime_native_host_install_dir)/bin/pg_config$suffix}"
-}
-
 oliphaunt_runtime_native_host_export_defaults() {
   LIBOLIPHAUNT_PATH="$(oliphaunt_runtime_native_host_lib)"
   OLIPHAUNT_INSTALL_DIR="$(oliphaunt_runtime_native_host_install_dir)"
   OLIPHAUNT_INITDB="$(oliphaunt_runtime_native_host_initdb)"
   OLIPHAUNT_POSTGRES="$(oliphaunt_runtime_native_host_postgres)"
-  OLIPHAUNT_PG_CONFIG="$(oliphaunt_runtime_native_host_pg_config)"
   OLIPHAUNT_POSTGRES_TOOL_DIR="${OLIPHAUNT_POSTGRES_TOOL_DIR:-$OLIPHAUNT_INSTALL_DIR/bin}"
   export LIBOLIPHAUNT_PATH OLIPHAUNT_INSTALL_DIR OLIPHAUNT_INITDB
-  export OLIPHAUNT_POSTGRES OLIPHAUNT_PG_CONFIG OLIPHAUNT_POSTGRES_TOOL_DIR
+  export OLIPHAUNT_POSTGRES OLIPHAUNT_POSTGRES_TOOL_DIR
 }
 
 oliphaunt_runtime_native_host_require() {
@@ -95,8 +86,7 @@ oliphaunt_runtime_native_host_require() {
   [ -f "$LIBOLIPHAUNT_PATH" ] &&
     [ -d "$OLIPHAUNT_INSTALL_DIR" ] &&
     [ -x "$OLIPHAUNT_INITDB" ] &&
-    [ -x "$OLIPHAUNT_POSTGRES" ] &&
-    [ -x "$OLIPHAUNT_PG_CONFIG" ] && return 0
+    [ -x "$OLIPHAUNT_POSTGRES" ] && return 0
 
   cat >&2 <<MSG
 missing native Oliphaunt runtime artifacts:
@@ -104,7 +94,6 @@ missing native Oliphaunt runtime artifacts:
   OLIPHAUNT_INSTALL_DIR=$OLIPHAUNT_INSTALL_DIR
   OLIPHAUNT_INITDB=$OLIPHAUNT_INITDB
   OLIPHAUNT_POSTGRES=$OLIPHAUNT_POSTGRES
-  OLIPHAUNT_PG_CONFIG=$OLIPHAUNT_PG_CONFIG
 MSG
   return 1
 }
