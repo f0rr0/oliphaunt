@@ -24,16 +24,16 @@ Selection makes an extension available; it does not run your schema migrations. 
 
 | SDK | Packaging and selection |
 | --- | --- |
-| [Rust](/docs/sdk/rust/guide#select-extensions) | Native builder selection such as `Extension::VECTOR` |
-| [Swift](/docs/sdk/swift/guide#add-an-extension) | Generate/link a Swift extension product, register it, and select its SQL name |
-| [Kotlin](/docs/sdk/kotlin/guide#select-extensions) | Select in Gradle, rebuild, and repeat the SQL name in open configuration |
+| [Rust](/docs/sdk/rust/guide#select-extensions) | Native builder selection such as `oliphaunt_extension_vector::VECTOR` |
+| [Swift](/docs/sdk/swift/guide#add-an-extension) | Generate/link a Swift extension product and select its `.resource` |
+| [Kotlin](/docs/sdk/kotlin/guide#select-extensions) | Select in Gradle, rebuild, and select its `OliphauntExtension` value at open |
 | [React Native](/docs/sdk/react-native/guide#add-an-extension) | Install extension packages, configure the plugin, rebuild, and select at open |
-| [TypeScript](/docs/sdk/typescript/guide#select-extensions) | Install the native extension package and select its SQL name |
-| [WASIX Rust](/docs/sdk/wasix-rust/guide#select-extensions) | Enable its Cargo feature and select its typed value |
+| [TypeScript](/docs/sdk/typescript/guide#select-extensions) | Install/import the native extension descriptor and pass it at open |
+| [WASIX Rust](/docs/sdk/wasix-rust/guide#select-extensions) | Add the extension crate with its `wasix` feature and select its typed value |
 | [WASIX TypeScript](/docs/sdk/wasix-typescript/guide#select-extensions) | Install/import the `-wasix` descriptor package and pass the descriptor |
 | [C ABI](/docs/sdk/c-abi/guide#register-extensions) | Link/register static modules and provide matching resources |
 
-Use exact SQL extension names. Selection can bring required dependencies with it; it does not select unrelated extensions through aliases or bundles. A packaged desktop WASIX runtime may already contain its compiled catalog, so selecting fewer names does not necessarily shrink that native addon.
+Use exact SQL extension names. Selection can bring required dependencies with it; it does not select unrelated extensions through aliases or bundles.
 
 ## Match runtime compatibility
 

@@ -4,15 +4,9 @@ Embed PostgreSQL in an Android app with coroutine APIs. Android API 24+ is suppo
 
 ## Install
 
-Follow the [Android setup](https://oliphaunt.dev/docs/sdk/kotlin) to configure repositories and apply the matching `dev.oliphaunt.android` plugin. Add the SDK dependency to your app module:
+Follow the [Android setup](https://oliphaunt.dev/docs/sdk/kotlin#install) to configure repositories, apply the `dev.oliphaunt.android` plugin, and add the matching SDK dependency. Use the same version for the plugin and library.
 
-```kotlin
-dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.2.0")
-}
-```
-
-The [quickstart](https://oliphaunt.dev/docs/sdk/kotlin) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
+Set `seedProfile.set("standard")` in the app's `oliphaunt` Gradle block before building a new database.
 
 ## First query
 

@@ -11,7 +11,7 @@ Import `Oliphaunt` from `@oliphaunt/ts`. The package exports TypeScript declarat
 | --- | --- | --- |
 | `Oliphaunt.open(config?)` | `Promise<OliphauntDatabase>` | Opens a direct or broker query session |
 | `Oliphaunt.openServer(config?)` | `Promise<OliphauntServer>` | Starts a local PostgreSQL server |
-| `Oliphaunt.restore(destination, bytes, options?)` | `Promise<void>` | Restores a native archive into a new or empty directory |
+| `Oliphaunt.restore(storage, bytes, options?)` | `Promise<void>` | Restores a native archive into a new or empty directory |
 
 ## Open configuration
 
@@ -19,13 +19,16 @@ Import `Oliphaunt` from `@oliphaunt/ts`. The package exports TypeScript declarat
 | --- | --- | --- |
 | `storage` | `DatabaseStorage`; temporary directory | `{ kind: 'directory', path: string }` persists data |
 | `topology` | `'direct'` or `'broker'`; direct | Execution mode |
-| `extensions` | `readonly string[]`; empty | SQL extension names to make available |
+| `extensions` | `readonly NativeExtension[]`; empty | Imported extension descriptors |
+| `seed`, `icuData` | Optional `NativeResourceDirectory` | Initialization seed or ICU resources |
 | `startupGUCs` | `Record<string, string>` | PostgreSQL settings applied at startup |
 | `username`, `database` | Optional strings | Existing PostgreSQL identity; fresh roots use `postgres` |
 | `libraryPath`, `runtimeDirectory` | Optional strings | Advanced native resource overrides |
 | `brokerExecutable` | Optional string | Broker executable override |
 
-Server configuration replaces `topology`, `brokerExecutable`, and `libraryPath` with `serverExecutable` and `listen`. TCP listen accepts an optional port; Unix listen requires a socket directory and accepts a port.
+Restore accepts `{ kind: 'directory', path: string }`.
+
+Server configuration replaces `topology`, `brokerExecutable`, `libraryPath`, and `seed` with `serverExecutable` and `listen`. TCP listen accepts an optional port; Unix listen requires a socket directory and accepts a port.
 
 ## Query methods
 

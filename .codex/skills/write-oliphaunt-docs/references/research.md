@@ -49,3 +49,14 @@ These are different deliverables. The local skill teaches an agent how to change
 - Preserve important runtime and data-safety differences. Remove build-pipeline narration from developer pages.
 - Use real code examples and honest verification levels. Preserve meaningful checks while removing assertions tied only to the old wording or layout.
 - Reuse Fumadocs and its Radix-based components; review desktop/mobile screenshots and keyboard behavior after implementation.
+
+## Rebase review — 2026-09-29
+
+Revisited the requested examples against their current public docs:
+
+- [Turso TypeScript quickstart](https://docs.turso.tech/sdk/ts/quickstart): installation, connection, and a working SQL example precede optional synchronization. Adaptation: start with one complete query, then persistence and application recipes.
+- [PGlite getting started](https://pglite.dev/docs/): host-specific setup stays next to code; filesystems, workers, tools, and upgrade guidance have separate destinations. Adaptation: keep browser headers and mobile seeds mandatory in quickstarts, and put placement choices in guides.
+- [Supabase React quickstart](https://supabase.com/docs/guides/getting-started/quickstarts/reactjs): follows a framework-specific path from setup to a rendered application. Adaptation: say where code runs and link the next application task rather than explaining SDK implementation layers.
+- [Motion React docs](https://motion.dev/docs/react): short installation and import path, examples, then individual feature guides. Adaptation: compact introductions, task headings, and visible API navigation without decorative diagrams.
+
+These are structural observations, not borrowed prose or claims that Oliphaunt supports their features. The installed `better-writing` skill governs the edit. Current source APIs and centralized checkout versions stay paired; completed publication is recorded separately.

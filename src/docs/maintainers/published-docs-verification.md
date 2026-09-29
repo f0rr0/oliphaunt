@@ -1,5 +1,7 @@
 # Published-package documentation verification
 
+Historical results from September 8. For the rebased checkout, see [September 29 review](docs-rebase-audit.md).
+
 Checked on 2026-09-08 after the September releases, using fresh projects outside the workspace. No SDK source aliases or workspace dependencies were used in the executed consumer checks.
 
 ## Release and API alignment

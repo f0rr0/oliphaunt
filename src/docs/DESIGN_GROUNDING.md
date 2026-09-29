@@ -22,4 +22,4 @@ Keep interactions quiet and functional. Respect reduced motion. Maintain contras
 
 Inspect the actual production export at desktop and mobile widths, in light and dark modes. Include the start page, a quickstart, an API reference, and long reference tables. Exercise mobile navigation, search, tabs by keyboard, code copying, and Markdown exports.
 
-Keep screenshots and measurements in review artifacts. Use the [audit](../../docs/maintainers/docs-rewrite-audit.md) for results and limitations; do not turn public pages into implementation progress logs.
+Keep screenshots and measurements in review artifacts. Use the [audit](maintainers/docs-rebase-audit.md) for results and limitations; do not turn public pages into implementation progress logs.

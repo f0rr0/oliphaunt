@@ -13,29 +13,29 @@ The package supports Node.js 22.13 through 24.x. Bun and Deno use their native r
 <Tab value="npm">
 
 ```sh
-npm install @oliphaunt/ts@@VERSION(oliphaunt-js)@
+npm install @oliphaunt/ts@{{release:oliphaunt-js}}
 ```
 
 </Tab>
 <Tab value="Bun">
 
 ```sh
-bun add @oliphaunt/ts@@VERSION(oliphaunt-js)@
+bun add @oliphaunt/ts@{{release:oliphaunt-js}}
 ```
 
 </Tab>
 <Tab value="Deno">
 
-Import the npm package with `import { Oliphaunt } from 'npm:@oliphaunt/ts@@VERSION(oliphaunt-js)@';`. Enable local npm dependencies so Deno can load the native module:
+Import the npm package with `import { Oliphaunt } from 'npm:@oliphaunt/ts@{{release:oliphaunt-js}}';`. Enable local npm dependencies so Deno can load the native module:
 
 ```json title="deno.json"
 { "nodeModulesDir": "auto" }
 ```
 
-Run with the permissions needed to load native libraries and read/write database resources:
+Allow native libraries, database files, environment variables, and the `initdb` process used to create a database:
 
 ```sh
-deno run --allow-ffi --allow-env --allow-read --allow-write main.ts
+deno run --allow-ffi --allow-env --allow-read --allow-write --allow-run main.ts
 ```
 
 </Tab>
@@ -43,13 +43,9 @@ deno run --allow-ffi --allow-env --allow-read --allow-write main.ts
 
 The package supplies native runtime assets for supported desktop targets. Keep native files available when bundling your application.
 
-<Callout type="warn" title="Linux initialization issue in 0.2.0">
-The published native package currently fails to initialize a fresh database on Linux x64 under Node.js and Bun with a PostgreSQL data-directory permission error. The query example below reflects the API, but does not bypass this release defect. Use [WASIX TypeScript](/docs/sdk/wasix-typescript) if you need a verified Linux setup with the current releases.
-</Callout>
-
 ## Run your first query
 
-This example opens disposable storage, binds a parameter, reads the result, and closes the database. Run it in your application's JavaScript runtime.
+Save this example as `main.mjs` and run `node main.mjs` or `bun main.mjs`. For Deno, save it as `main.ts` and use the npm import and permissions above. It prints `42` and closes the database.
 
 <!-- oliphaunt-snippet: oliphaunt-js -->
 

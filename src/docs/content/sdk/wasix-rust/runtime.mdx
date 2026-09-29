@@ -7,22 +7,26 @@ The WASIX Rust SDK owns a WebAssembly host and one PostgreSQL backend. Choose it
 
 ## Thread ownership
 
-`Oliphaunt` retains a thread-affine Wasmer store. It is neither `Send` nor `Sync` and must stay on one OS thread, including close and drop.
+`Oliphaunt` is neither `Send` nor `Sync` and must stay on one OS thread, including close and drop.
 
 `AsyncOliphaunt` owns the runtime on a dedicated thread. Calls execute in admission order, and clones share one session. Async placement changes scheduling, not SQL concurrency.
 
 ## Persistent storage
 
-A persistent root contains the managed descriptor and PostgreSQL data. The host coordinates ownership with an advisory lock outside the root. Let the SDK manage these files; do not copy a live directory or delete locks to force a second owner.
+Only one live owner can open a persistent database. Let the SDK manage its files; do not copy a live directory or delete locks to force a second owner.
 
 Use the backup API for data movement. Physical restore requires matching runtime-family and format compatibility. Logical SQL is the transfer path across native/WASIX families or incompatible versions.
 
 ## Local PostgreSQL endpoint
 
-Use a server handle for a PostgreSQL client that needs a connection string:
+Add the optional server crate when a PostgreSQL client needs a connection string:
+
+```toml
+oliphaunt-pgwire-server = "{{release:oliphaunt-pgwire-server}}"
+```
 
 ```rust
-use oliphaunt_wasix::{DatabaseStorage, OliphauntServer};
+use oliphaunt_pgwire_server::{DatabaseStorage, OliphauntServer};
 
 let mut server = OliphauntServer::builder()
     .storage(DatabaseStorage::Directory("./data/server".into()))
@@ -44,7 +48,7 @@ An async transaction dropped before settlement queues best-effort rollback. This
 
 Raw callbacks receive PostgreSQL protocol chunks, not typed rows. Both placements require owned `Send + 'static` captures. Use a shared synchronized container when collecting mutable callback state.
 
-A callback can return `()` or a typed result. A callback-only failure allows reuse only after confirmed protocol recovery. An independent pump failure takes precedence and makes the session close-only. Do not re-enter the database from its callback.
+A callback can return `()` or a typed result. A callback-only failure allows reuse only after confirmed protocol recovery. An independent database failure takes precedence and makes the session close-only. Do not re-enter the database from its callback.
 
 ## Optional tools
 

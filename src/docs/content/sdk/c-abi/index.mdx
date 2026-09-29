@@ -9,7 +9,7 @@ The ABI returns PostgreSQL protocol bytes and owns native response buffers. Your
 
 ## Install and prepare storage
 
-Download the native library, `oliphaunt.h`, and runtime resources for your platform from the [native runtime release](https://github.com/f0rr0/oliphaunt/releases/tag/liboliphaunt-native-v@VERSION(liboliphaunt-native)@). Compile against the matching header and link the matching library. Preserve the release's runtime-resource layout.
+Download the native library, `oliphaunt.h`, and runtime resources for your platform from the [native runtime release](https://github.com/f0rr0/oliphaunt/releases/tag/liboliphaunt-native-v{{release:liboliphaunt-native}}). Compile against the matching header and link the matching library. Preserve the release's runtime-resource layout.
 
 `oliphaunt_init` opens the `pgdata` child of an **already-prepared managed root**. It does not initialize an empty directory. Prepare the root through a native SDK, close its owner, and then use the root from your C program. See [Prepare a managed root](/docs/sdk/c-abi/guide#prepare-a-managed-root).
 

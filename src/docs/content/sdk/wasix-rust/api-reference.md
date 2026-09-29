@@ -3,7 +3,7 @@ title: WASIX Rust API reference
 description: Database types, builders, queries, tools, errors, and ownership in oliphaunt-wasix.
 ---
 
-Import from `oliphaunt_wasix`. The crate exports synchronous and async database and server types.
+Import from `oliphaunt_wasix`. The crate exports synchronous and async database types. Local server types are in the optional `oliphaunt-pgwire-server` crate.
 
 ## Types and ownership
 
@@ -11,8 +11,8 @@ Import from `oliphaunt_wasix`. The crate exports synchronous and async database 
 | --- | --- |
 | `Oliphaunt` | Synchronous; neither `Send` nor `Sync`; stays on one OS thread |
 | `AsyncOliphaunt` | Cloneable `Send + Sync`; one shared owner thread and session |
-| `OliphauntServer` | Synchronous lifecycle for a single-client local endpoint |
-| `AsyncOliphauntServer` | Async lifecycle for the same endpoint model |
+| `oliphaunt_pgwire_server::OliphauntServer` | Synchronous lifecycle for a single-client local endpoint |
+| `oliphaunt_pgwire_server::AsyncOliphauntServer` | Async lifecycle for the same endpoint model |
 
 `Oliphaunt::open()` uses `DatabaseStorage::Memory`. `.builder().storage(DatabaseStorage::Directory(path)).open()` persists data. Builders also accept `startup_guc`, `startup_gucs`, `username`, `database`, and typed `extension` selections.
 

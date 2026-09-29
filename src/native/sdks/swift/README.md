@@ -4,13 +4,9 @@ Embed PostgreSQL in an iOS 17+ or macOS 14+ application using Swift 6 concurrenc
 
 ## Install
 
-Add the package in Xcode and link its `Oliphaunt` product, or add this dependency to `Package.swift`:
+Follow the [Swift quickstart](https://oliphaunt.dev/docs/sdk/swift#install) to add the package in Xcode and link `Oliphaunt`. Pin the version shown there in your app's package resolution.
 
-```swift
-.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "0.7.0")
-```
-
-The [quickstart](https://oliphaunt.dev/docs/sdk/swift) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
+For new iOS databases, also add the database-resources Swift package and link `OliphauntSeedNativeIOSStandard`. The quickstart includes this required setup.
 
 ## First query
 

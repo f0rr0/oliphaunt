@@ -25,7 +25,7 @@ After that process exits, pass `./data/example/pgdata` to the C example. The sur
 
 ## Serialize database operations
 
-One direct backend resides in the process. Serialize ordinary calls on the handle, including queries, backups, detach, and close. Use an owner thread or queue if your language's callers are concurrent. `oliphaunt_cancel` is the explicit cross-thread exception for interrupting an active operation.
+One direct backend resides in the process. Serialize ordinary calls on the handle, including queries, backups, detach, and close. Use an owner thread or queue if your language's callers are concurrent. `oliphaunt_cancel` can interrupt an active operation from another thread. Token-bound stream input may also come from another thread; follow the [streaming contract](/docs/sdk/c-abi/api-reference#streaming).
 
 Do not run PostgreSQL work on a UI thread. Keep request buffers and configuration strings alive for the duration of their native call. The high-level SDKs provide broker/server modes when process isolation or multiple sessions are needed.
 
@@ -47,7 +47,7 @@ For synchronous callers, `oliphaunt_copy_last_error` can copy the failing operat
 
 Return zero to continue. Returning nonzero stops further callback delivery and asks the runtime to recover the protocol boundary. `OLIPHAUNT_STREAM_CALLBACK_ABORTED` indicates the callback-stop outcome; a negative result signals a validation, transport, backend, or recovery failure.
 
-Do not query, back up, detach, close, or start another stream from the callback. Out-of-band cancellation is allowed. Reuse the database only when recovery is confirmed.
+Do not query, back up, detach, close, or start another stream from the callback. Out-of-band cancellation and input for the active stream token are allowed. Reuse the database only when recovery is confirmed.
 
 ## Back up and restore
 

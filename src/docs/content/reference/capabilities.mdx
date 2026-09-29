@@ -8,13 +8,13 @@ The SDKs share PostgreSQL semantics but differ in runtime integration. Use this 
 | Capability | Native SDKs | WASIX Rust | WASIX TypeScript |
 | --- | --- | --- | --- |
 | Default storage | Temporary directory | Memory filesystem | Memory filesystem |
-| Persistent storage | Managed directory; application-data names in React Native | Managed directory | IndexedDB/OPFS in browsers; directory on desktop |
+| Persistent storage | Directory or application-data name, depending on SDK and mode | Managed directory | IndexedDB/OPFS in browsers; directory on desktop |
 | Parameterized queries | Yes | Yes | Yes |
 | Callback transactions | Yes | Yes | Yes |
 | Raw response streaming | Yes | Yes | Yes |
 | Direct-query cancellation | Yes | No public API | No public API |
 | Physical backup and restore | Direct and broker handles | Yes | Yes; restore to persistent storage |
-| Broker process | Rust and desktop TypeScript | No | No |
+| Broker process | Rust, desktop TypeScript, iOS 26+, and Android | No | No |
 | Local PostgreSQL endpoint | Rust and desktop TypeScript | One connected client | Desktop `/server`, one connected client |
 | Independent client sessions | Native server only | No | No |
 | Logical dump and SQL import | Optional endpoint tools | Optional `tools` feature | Optional tools package |

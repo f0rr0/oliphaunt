@@ -30,19 +30,22 @@ Return `Ok` to commit or `Err` to roll back. Use the transaction handle for all 
 
 ## Select extensions
 
-Enable the extension's Cargo feature:
+Add the extension crate with its WASIX feature:
 
 ```toml
 [dependencies]
-oliphaunt-wasix = { version = "@VERSION(oliphaunt-wasix-rust)@", features = ["extension-pgtap"] }
+oliphaunt-wasix = "{{release:oliphaunt-wasix-rust}}"
+oliphaunt-extension-pgtap = { version = "{{release:oliphaunt-extension-pgtap}}", default-features = false, features = ["wasix"] }
 ```
 
-Select its typed value before opening, then enable it with SQL:
+Select it before opening, then enable it with SQL:
 
 ```rust
-use oliphaunt_wasix::{Extension, Oliphaunt};
+use oliphaunt_wasix::Oliphaunt;
 
-let mut db = Oliphaunt::builder().extension(Extension::PGTAP).open()?;
+let mut db = Oliphaunt::builder()
+    .extension(oliphaunt_extension_pgtap::PGTAP)
+    .open()?;
 db.execute("CREATE EXTENSION IF NOT EXISTS pgtap")?;
 ```
 
@@ -78,5 +81,5 @@ Close explicitly to observe shutdown errors. After a terminal failure, stop usin
 | --- | --- |
 | Cannot send the handle to another thread | Use `AsyncOliphaunt` or keep the synchronous handle on its original thread |
 | Directory is locked | Another process, Worker, or binding owns the root |
-| Extension constant is unavailable | Enable the corresponding Cargo feature |
+| Extension constant is unavailable | Add the extension crate with its `wasix` feature |
 | SQL dump fails to import through `execute` | Use the `psql` tool to handle COPY and psql commands |

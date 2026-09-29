@@ -10,7 +10,7 @@ description: Imports, storage descriptors, configuration, methods, and runtime-s
 | Import | Exports / purpose |
 | --- | --- |
 | Package root | `Oliphaunt.open`, `Oliphaunt.restore`, query types and helpers |
-| `/direct` | Explicit caller-thread placement |
+| `/direct` | Desktop-only caller-thread placement |
 | `/worker` | Worker placement with the same query contract |
 | `/server` | Desktop-only `openServer` |
 | `/storage/indexed-db`, `/storage/opfs` | Browser persistent providers |
@@ -27,6 +27,7 @@ description: Imports, storage descriptors, configuration, methods, and runtime-s
 | `startupGUCs` | `Record<string, string>`; no extra settings |
 | `username`, `database` | Optional strings; fresh roots use `postgres` |
 | `icu` | Optional imported `WasixIcuDescriptor` |
+| `seed` | Optional `WasixSeed`; initializes fresh storage |
 
 Extension descriptors come from `@oliphaunt/extension-*-wasix` packages. SQL-name strings are not accepted. Host placement is selected by import, not an `execution` configuration option.
 

@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const parseToml = Bun.TOML.parse;
 
-import { publishedProducts } from './published-products.mts';
+import { renderPublicPlatformCompatibilityTable } from '../../../tools/release/platform-compatibility-policy.mts';
+import { documentedProducts, publishedProducts } from './published-products.mts';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const docsRoot = path.resolve(scriptDir, '..');
@@ -119,7 +121,15 @@ function routeSourcePagePath(source, page) {
 
 function copyMarkdownPage(from, to, context) {
   const markdown = normalizeCodeFenceInfoStrings(
-    normalizeMdxComments(substituteVersions(readText(from), context)),
+    normalizeMdxComments(
+      substituteVersions(
+        readText(from).replace(
+          '<!-- oliphaunt-platforms -->',
+          renderPublicPlatformCompatibilityTable(),
+        ),
+        context,
+      ),
+    ),
   );
   const fallbackTitle = path.basename(from, path.extname(from));
   ensureDir(path.dirname(to));
@@ -225,14 +235,10 @@ function generateExtensionCatalog() {
       return `| ${escapeMarkdown(extension['sql-name'] ?? extension.id)} | ${escapeMarkdown(extension['display-name'] ?? extension.id)} | ${escapeMarkdown(extensionVersion(control['default-version']))} | ${escapeMarkdown(extensionFamily(extension['source-kind']))} | ${escapeMarkdown(extensionActivation(extension))} |`;
     });
   return `---
-title: Extension Catalog
+title: Extension catalog
 ---
 
-# Extension Catalog
-
-Use this table to find exact SQL extension names. SDK and app packaging
-selection uses the SQL extension name. Every listed extension is supported
-extensions only.
+Find the SQL name and activation method for an extension. Follow your [SDK setup](/docs/reference/extensions) to install and select it before opening a database. Versions here describe the upstream extension, not its Oliphaunt package.
 
 | SQL extension | Display name | Version | Family | Activation |
 | --- | --- | --- | --- | --- |
@@ -311,11 +317,11 @@ const routePresentation = {
     icon: 'Smartphone',
   },
   'oliphaunt-kotlin': {
-    description: 'Android SDK with coroutine-first APIs and exact native resource packaging.',
+    description: 'PostgreSQL for Android apps using coroutines.',
     icon: 'Smartphone',
   },
   'oliphaunt-react-native': {
-    description: 'New Architecture package with Expo config plugin, TurboModule, and JSI bytes.',
+    description: 'PostgreSQL for React Native and Expo apps.',
     icon: 'Layers',
   },
   'oliphaunt-js': {
@@ -413,7 +419,7 @@ function writeRouteMeta(route) {
     metadata.pages = metadata.pages.filter((page) => page !== 'index');
   }
   if (route.kind === 'public') {
-    metadata.root = true;
+    metadata.root = false;
     metadata.description ??= `${route.title} documentation`;
   }
   writeJson(path.join(routeRoot, 'meta.json'), metadata);
@@ -455,7 +461,7 @@ function writeFumadocsMeta(manifest) {
     title: 'SDKs',
     description: routePresentation.sdk.description,
     icon: routePresentation.sdk.icon,
-    root: true,
+    root: false,
     defaultOpen: routePresentation.sdk.defaultOpen,
     pagesIndex: 'index',
     pages: sdkRoutes.map((route) => route.route.replace(/^sdk\//u, '')),
@@ -482,34 +488,12 @@ function writeNavigationMetadata(manifest, routeRecords) {
   writeFumadocsMeta(manifest);
 }
 
-function stripFrontmatter(markdown) {
-  return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/u, '');
-}
-
-function writeLlmFiles(routeRecords) {
-  ensureDir(staticRoot);
-  const summary = [
-    '# Oliphaunt Docs',
-    '',
-    'Oliphaunt is embedded PostgreSQL for native, Rust WASIX, and WASIX TypeScript apps.',
-    '',
-    '## Public routes',
-    ...routeRecords.map((record) => `- ${record.title}: ${record.route}`),
-    '',
-  ].join('\n');
-  fs.writeFileSync(path.join(staticRoot, 'llms.txt'), summary);
-
-  const full = routeRecords
-    .map((record) => {
-      const markdown = stripFrontmatter(readText(record.file));
-      return `# ${record.title}\n\nRoute: ${record.route}\n\n${markdown}`;
-    })
-    .join('\n\n---\n\n');
-  fs.writeFileSync(path.join(staticRoot, 'llms-full.txt'), full);
-}
-
 function currentGitSha() {
-  return process.env.OLIPHAUNT_DOCS_GIT_SHA || 'unknown';
+  return (
+    process.env.OLIPHAUNT_DOCS_GIT_SHA ||
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim()
+  );
 }
 
 export async function generateDocs() {
@@ -522,7 +506,16 @@ export async function generateDocs() {
     path.join(generatedMetaRoot, 'published-products.json'),
     JSON.stringify(products, null, 2) + '\n',
   );
-  const context = products;
+  const context = await documentedProducts();
+  writeJson(path.join(staticRoot, 'docs-version.json'), {
+    sourceRevision: currentGitSha(),
+    dirty:
+      execFileSync('git', ['status', '--porcelain'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      }).trim().length > 0,
+    products: context,
+  });
   for (const route of manifest.routes ?? []) {
     copyRoutePages(route, context);
   }
@@ -531,12 +524,13 @@ export async function generateDocs() {
     path.join(siteDocsRoot, 'reference', 'extension-catalog.md'),
     generateExtensionCatalog(),
   );
-  const rows = Object.entries(products).map(([id, product]) =>
-    product ? `| ${id} | [${product.version}](${product.url}) |` : `| ${id} | Not yet published |`,
-  );
+  const rows = Object.entries(context).map(([id, product]) => {
+    const published = products[id];
+    return `| ${id} | ${product.version} | ${published ? `[${published.version}](${published.url})` : 'No completed release'} |`;
+  });
   fs.writeFileSync(
     path.join(siteDocsRoot, 'reference', 'version-matrix.md'),
-    '---\ntitle: Published products\n---\n\nThese guides describe the latest available products. Versions below come from completed public releases.\n\n| Product | Latest release |\n| --- | --- |\n' +
+    '---\ntitle: Versions\ndescription: Package versions used by these guides and links to completed releases.\n---\n\nInstall examples and API descriptions use the documented versions below. The last column links to completed public releases; it may lag the documented version.\n\n| Product | Documented version | Latest completed release |\n| --- | --- | --- |\n' +
       rows.join('\n') +
       '\n',
   );
@@ -556,7 +550,6 @@ export async function generateDocs() {
 
   writeMetadata(routeRecords);
   writeNavigationMetadata(manifest, routeRecords);
-  writeLlmFiles(routeRecords);
   fs.writeFileSync(
     path.join(generatedMetaRoot, 'build-metadata.json'),
     `${JSON.stringify(

@@ -13,6 +13,7 @@ Compile against the `oliphaunt.h` shipped with your native library. Use the head
 | `OliphauntConfig` | ABI version, prepared `pgdata`, resource paths, identity, flags, startup arguments |
 | `OliphauntResponse` | Owned `data` pointer and `len`; release with `oliphaunt_free_response` |
 | `OliphauntErrorCapture` | Caller-owned bounded message buffer and length |
+| `OliphauntRestoreStreamOptions` | Destination and read callback for streaming an archive |
 | `OliphauntRestoreOptions` | ABI version, managed-root destination, archive bytes and length |
 | `OliphauntStaticExtension` | Statically linked module descriptor |
 
@@ -30,6 +31,8 @@ Compile against the `oliphaunt.h` shipped with your native library. Use the head
 | `oliphaunt_exec_protocol_raw_stream` | Deliver response chunks through a callback |
 | `oliphaunt_backup` | Create an owned native physical archive |
 | `oliphaunt_restore` | Restore into new or empty managed storage |
+| `oliphaunt_backup_stream_with_error` | Write an archive through a callback |
+| `oliphaunt_restore_stream_with_error` | Read an archive through a callback |
 | `oliphaunt_free_response` | Release response ownership |
 
 Async FFI hosts should use the corresponding `_with_error` functions for open, queries, streaming, backup, restore, and detach. These preserve return codes and response ownership while filling an error capture before returning.
@@ -37,6 +40,10 @@ Async FFI hosts should use the corresponding `_with_error` functions for open, q
 ## Streaming
 
 `OliphauntStreamCallback` receives `(context, data, len)` and returns `int32_t`. Bytes are borrowed for the callback duration. Zero continues delivery; nonzero stops it and initiates protocol recovery. Ordinary same-handle operations are forbidden while streaming; cancellation is permitted.
+
+For incremental protocol input, capture `oliphaunt_protocol_stream_token(handle)` during an active stream and pass complete frontend frames to `oliphaunt_feed_protocol_stream`. A busy result accepts no bytes; retry after the backend consumes input. Stop feeding when the stream ends. The token is scoped to that stream, including across detach and reopen. See the header for frame and COPY sequencing rules.
+
+Archive read callbacks set `read_len` to zero at end of input. Archive read and write callbacks run synchronously and must not re-enter the database.
 
 ## Lifecycle
 

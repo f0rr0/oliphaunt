@@ -8,10 +8,10 @@ Use `@oliphaunt/react-native` with React Native's New Architecture on iOS or And
 ## Install and build
 
 ```sh
-npm install @oliphaunt/react-native@@VERSION(oliphaunt-react-native)@
+npm install @oliphaunt/react-native@{{release:oliphaunt-react-native}} @oliphaunt/seed-native-ios-datum64-standard@{{release:database-resources}}
 ```
 
-For an Expo app, add the config plugin:
+The seed package supplies the initial empty database for iOS; the plugin selects matching initialization resources on Android. For an Expo app, add the config plugin:
 
 ```json title="app.json"
 {

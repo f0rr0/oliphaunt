@@ -12,7 +12,7 @@ The [quickstart](https://oliphaunt.dev/docs/sdk/rust) covers prerequisites and t
 
 ## First query
 
-Before running, follow the [native runtime setup](https://oliphaunt.dev/docs/sdk/rust#configure-the-native-runtime). The crate alone does not configure the native library and cluster seeds.
+The crate includes its matching desktop runtime resources.
 
 ```rust
 use oliphaunt::Oliphaunt;

@@ -45,20 +45,24 @@ oliphaunt {
 }
 ```
 
-Rebuild the app, then request the same SQL name when opening:
+Rebuild the app, then select its typed value when opening:
 
 ```kotlin
 val db = Oliphaunt.open(
     context,
     OliphauntConfig(
         storage = DatabaseStorage.Directory(context.filesDir.resolve("main.oliphaunt")),
-        extensions = listOf("vector"),
+        extensions = listOf(OliphauntExtension.VECTOR),
     ),
 )
 db.execute("CREATE EXTENSION IF NOT EXISTS vector")
 ```
 
 The Gradle plugin packages selected native artifacts and required dependencies. Check the [extension catalog](/docs/reference/extension-catalog) for available names.
+
+## Choose process isolation
+
+The quickstart uses direct mode. For a separate database process, follow [mobile broker setup](/docs/learn/mobile-stability#broker-mode). Broker mode requires its own storage and restore path; use the recipes below for direct mode.
 
 ## Back up and restore
 

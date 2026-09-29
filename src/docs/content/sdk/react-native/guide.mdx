@@ -32,7 +32,7 @@ Returning commits; throwing rolls back. All callback queries must use `tx`. Do n
 Install the native extension package, then select it in the Expo plugin configuration before building:
 
 ```sh
-npm install @oliphaunt/extension-vector@@VERSION(oliphaunt-extension-vector)@
+npm install @oliphaunt/extension-vector@{{release:oliphaunt-extension-vector}}
 ```
 
 ```json
@@ -43,17 +43,23 @@ npm install @oliphaunt/extension-vector@@VERSION(oliphaunt-extension-vector)@
 }
 ```
 
-Rebuild the native app, then use the same SQL name when opening:
+Rebuild the native app, then import its descriptor when opening:
 
 ```ts
+import vector from '@oliphaunt/extension-vector';
+
 const db = await Oliphaunt.open({
   storage: { kind: 'applicationData', name: 'main' },
-  extensions: ['vector'],
+  extensions: [vector],
 });
 await db.execute('CREATE EXTENSION IF NOT EXISTS vector');
 ```
 
-The plugin packages selected extension resources and dependencies. Extension changes require a native rebuild; a JavaScript update alone cannot add them. Use the plugin's `icu: true` option only when the app needs PostgreSQL ICU collations.
+The plugin packages selected extension resources and dependencies. Extension changes require a native rebuild; a JavaScript update alone cannot add them. For ICU collations, replace the standard seed dependency with `@oliphaunt/seed-native-ios-datum64-icu` and install `@oliphaunt/icu`; use matching database-resource versions.
+
+## Choose process isolation
+
+The quickstart uses direct mode. For a separate database process, follow [mobile broker setup](/docs/learn/mobile-stability#broker-mode). Broker mode requires its own storage and restore path; use the recipes below for direct mode.
 
 ## Back up and restore
 

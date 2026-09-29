@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/oliphaunt.png" alt="Oliphaunt" width="240">
+  <img src="src/docs/assets/oliphaunt.png" alt="Oliphaunt" width="240">
 </p>
 
 # PostgreSQL inside your application
@@ -39,6 +39,6 @@ Select extensions before opening a database, then enable them with SQL such as `
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and the [maintainer index](docs/maintainers/README.md) for architecture, testing, and release procedures.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and the [maintainer index](src/docs/maintainers/README.md) for architecture, testing, and release procedures.
 
 Oliphaunt is licensed under [MIT](LICENSE).

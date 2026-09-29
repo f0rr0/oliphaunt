@@ -9,13 +9,13 @@ Oliphaunt runs PostgreSQL inside your application or a local process it owns. Yo
 
 | Storage | Use it for | What happens after close |
 | --- | --- | --- |
-| Native default: temporary directory | Tests, previews, disposable work | The SDK removes its temporary storage |
+| Native default: temporary directory | Tests, previews, disposable work | Disposable; do not rely on it surviving the process |
 | WASIX default: memory filesystem | Tests and disposable browser or host sessions | The data is discarded |
 | Persistent directory or browser provider | Application data | Reopen the same storage to use the data again |
 
 Choose persistent storage explicitly before saving user data. Native mobile apps normally use an app-private directory. WASIX browser apps choose IndexedDB or OPFS; desktop WASIX apps can use a directory.
 
-A native persistent database is a managed directory, not a single file. The root contains `.oliphaunt.json` and a `pgdata` directory. Let the SDK manage both. Do not edit the descriptor, delete WAL files, or point unrelated database instances at the same root.
+A native persistent database is a managed directory, not a single file. Let the SDK manage its contents. Do not delete database files or open the same root through another database instance.
 
 ## One handle, one session
 

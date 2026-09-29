@@ -12,7 +12,7 @@ Help a developer choose an SDK, run a query, and ship a working integration. Use
 - Read the affected pages completely, then follow the exported API through its implementation and focused tests. Existing prose is a claim to verify, not authority.
 - Use [source-map.md](references/source-map.md) to locate SDK contracts, generated inputs, and checks. Inspect the current files; the map is a starting point, not a frozen API specification.
 - Distinguish implemented behavior, released package availability, and future intent. Repository version metadata alone does not prove registry publication. Browse primary sources when documenting external installation requirements or current releases.
-- For a rewrite, inventory every authored page and generated route. Record each file's purpose, accuracy findings, source evidence, and disposition in a maintainer audit under `docs/maintainers/`. Preserve useful behavior details when removing noise. Keep historical design records outside the public navigation.
+- For a rewrite, inventory every authored page and generated route. Record each file's purpose, accuracy findings, source evidence, and disposition in a maintainer audit under `src/docs/maintainers/`. Preserve useful behavior details when removing noise. Keep historical design records outside the public navigation.
 - Resolve uncertain behavior before presenting it as fact. Put remaining uncertainty and unrun checks in the audit or handoff, never in public TODOs, speculative promises, or invented output.
 
 ## Organize around the developer's task
@@ -29,7 +29,8 @@ Use [research.md](references/research.md) when changing information architecture
 ## Write and build
 
 - Use direct sentences, sentence-case headings, descriptive links, and language-tagged code fences. Begin sections with the information needed to act. Remove marketing claims, repeated summaries, maintainer commands, release-pipeline details, and implementation vocabulary that does not affect an integration decision.
-- Use `@VERSION(product-id)@` for public install and release versions; generation resolves the existing release graph. Keep `docs-version.json` with archived site builds. Do not invent a shared SDK version or a historical site that is not hosted. See the [docs README](../../../src/docs/README.md) for the version workflow.
+- Use `{{release:product-id}}` for public install and release versions. Generation maps product IDs through `release-please-config.json` to `.release-please-manifest.json`, pairing examples with the checkout API. Keep completed GitHub releases separate; an older published package must never relabel a newer API example. Preserve the build's `docs-version.json` when archiving it. Do not invent a shared SDK version or hosted historical versions. See the [docs README](../../../src/docs/README.md).
+- Apply the `better-writing` skill for prose reviews: put the developer's action first, remove internal design explanations, and make prerequisites explicit before the first runnable example.
 - Make examples idiomatic for each language. Verify names, overloads, imports, ownership, async behavior, storage types, package coordinates, and failure handling separately for every SDK. Do not translate examples mechanically.
 - Explain prerequisites before commands. Distinguish a complete program from a fragment that uses an existing `db`. Show expected output only when supported by execution or an unambiguous deterministic expression.
 - Keep warnings next to actions that can lose data or block an integration. Do not hide mandatory steps in tabs or disclosures. Use tabs only for interchangeable choices, such as package managers.

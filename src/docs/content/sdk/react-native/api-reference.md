@@ -7,7 +7,7 @@ Import the default `Oliphaunt` export or the named export from `@oliphaunt/react
 
 ## Entry points and storage
 
-`Oliphaunt.open(config?)` returns `Promise<OliphauntDatabase>`. Configuration accepts `storage`, `startupGUCs`, `username`, `database`, and `extensions`.
+`Oliphaunt.open(config?)` returns `Promise<OliphauntDatabase>`. Configuration accepts `storage`, `startupGUCs`, `username`, `database`, `extensions` (typed `NativeExtension` descriptors), and `broker` (timeouts for a broker build).
 
 | Storage value | Lifetime |
 | --- | --- |
@@ -15,7 +15,7 @@ Import the default `Oliphaunt` export or the named export from `@oliphaunt/react
 | `{ kind: 'directory', path: string }` | Persistent explicit path |
 | `{ kind: 'applicationData', name: string }` | Persistent platform-resolved app-data path |
 
-`Oliphaunt.restore(destination, bytes)` accepts either persistent storage form and returns `Promise<void>`. The destination must be new or empty. Archive input accepts supported binary buffers and byte arrays.
+`Oliphaunt.restore(destination, bytes, options?)` accepts either persistent storage form and returns `Promise<void>`. The destination must be new or empty. Archive input accepts supported binary buffers and byte arrays.
 
 ## Query methods
 
@@ -42,4 +42,4 @@ Transactions expose typed query methods and `rollback()`. They do not expose raw
 
 `execProtocolRaw` buffers backend frames. `execProtocolRawStream` passes chunks to a synchronous callback returning `undefined`; promises and reentrant query calls are unsupported. Raw protocol requires a protocol-aware caller and is separate from typed row queries.
 
-The SDK runs through Swift on iOS and Kotlin on Android. It exposes direct embedding, not desktop broker or server APIs. See [native integration](/docs/sdk/react-native/architecture) for packaging and runtime behavior.
+The native build selects direct or broker mode. Broker mode accepts only `temporaryDirectory` or `applicationData` storage. `broker.startupTimeoutMs` and `broker.operationTimeoutMs` accept positive integer milliseconds. Broker failures expose `reason`, `execution`, and `requiresReopen`; an `unknown` execution outcome must not be retried blindly. There is no local server API. See [native integration](/docs/sdk/react-native/architecture) for packaging and runtime behavior.

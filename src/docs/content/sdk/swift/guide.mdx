@@ -40,6 +40,10 @@ try await db.transaction { tx in
 
 Returning commits and throwing rolls back. Use `tx` for every statement in the callback. Do not call the outer database or issue manual transaction-lifecycle commands. Use `tx.rollback()` for explicit rollback; savepoints are supported.
 
+## Choose process isolation
+
+The quickstart uses direct mode. For a separate database process, follow [mobile broker setup](/docs/learn/mobile-stability#broker-mode). Broker mode requires its own storage and restore path; use the recipes below for direct mode.
+
 ## Back up and restore
 
 Direct mode stays bound to one database root and configuration for the lifetime of the application process. Closing a handle does not let that process switch to another root. Prepare the restored data, then use it on the next launch.
@@ -65,31 +69,33 @@ Here `restoredURL` is an app-owned file URL for a new or empty directory. Restor
 
 ## Add an extension
 
-The base Swift package is extension-free. Requesting `extensions: ["vector"]` at open does not download or link the extension by itself.
+The base Swift package is extension-free. Add the generated product to your application before selecting it at open.
 
-1. Obtain the Swift extension generator from the Oliphaunt source package matching your Swift dependency.
-2. Download the matching `vector` Swift extension carrier JSON from its [release](https://github.com/f0rr0/oliphaunt/releases/tag/oliphaunt-extension-vector-v@VERSION(oliphaunt-extension-vector)@).
+1. Install [Bun](https://bun.sh/docs/installation), then obtain the Swift extension generator from the Oliphaunt source package matching your Swift dependency.
+2. Download the matching `vector` Swift extension carrier JSON from its [release](https://github.com/f0rr0/oliphaunt/releases/tag/oliphaunt-extension-vector-v{{release:oliphaunt-extension-vector}}).
 3. Generate a local Swift package with the command below, replacing the two input paths.
 
 ```sh
-node /path/to/oliphaunt/src/sdks/swift/tools/render-extension-products.mjs   --extension-carrier /path/to/oliphaunt-extension-vector-@VERSION(oliphaunt-extension-vector)@-swift-extension-carrier.json   --extensions vector   --output-dir ./OliphauntExtensions
+bun /path/to/oliphaunt/src/native/sdks/swift/tools/render-extension-products.mts \
+  --extension-carrier /path/to/oliphaunt-extension-vector-{{release:oliphaunt-extension-vector}}-swift-extension-carrier.json \
+  --extensions vector \
+  --output-dir ./OliphauntExtensions
 ```
 
-The output directory must not already exist. Add it to Xcode as a local package and link the generated `OliphauntExtensionVector` product to your app. Register the product before opening:
+The output directory must not already exist. Add it to Xcode as a local package and link the generated `OliphauntExtensionVector` product to your app. Select its resource when opening:
 
 ```swift
 import OliphauntExtensionVector
 
-try OliphauntExtensionVector.register()
 let db = try await OliphauntDatabase.open(
-    configuration: OliphauntConfiguration(extensions: ["vector"])
+    configuration: OliphauntConfiguration(extensions: [OliphauntExtensionVector.resource])
 )
 try await db.execute("CREATE EXTENSION IF NOT EXISTS vector")
 ```
 
 For multiple extensions, supply each required carrier with another `--extension-carrier` option and list the SQL names in `--extensions`. The generated package includes their required dependencies. Check the [catalog](/docs/reference/extension-catalog) before selecting an extension.
 
-Applications that need ICU collations also link the `OliphauntICU` SwiftPM product. This is a packaging choice; ordinary applications can use the base package.
+Applications that need ICU collations also link the `OliphauntICU` SwiftPM product. Choose the ICU seed when creating a new iOS database that uses ICU collations.
 
 ## Cancel and close
 

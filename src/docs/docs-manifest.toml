@@ -51,12 +51,6 @@ page_order = [
   "extension-catalog",
   "api-reference",
 ]
-sidebar_pages = [
-  "index",
-  "capabilities",
-  "extensions",
-  "performance",
-]
 
 [[routes]]
 id = "oliphaunt-rust"
@@ -74,10 +68,6 @@ page_order = [
   "index",
   "guide",
   "api-reference",
-]
-sidebar_pages = [
-  "index",
-  "guide",
 ]
 
 [[routes]]
@@ -97,10 +87,6 @@ page_order = [
   "guide",
   "api-reference",
 ]
-sidebar_pages = [
-  "index",
-  "guide",
-]
 
 [[routes]]
 id = "oliphaunt-kotlin"
@@ -118,10 +104,6 @@ page_order = [
   "index",
   "guide",
   "api-reference",
-]
-sidebar_pages = [
-  "index",
-  "guide",
 ]
 
 [[routes]]
@@ -142,11 +124,6 @@ page_order = [
   "architecture",
   "api-reference",
 ]
-sidebar_pages = [
-  "index",
-  "guide",
-  "architecture",
-]
 
 [[routes]]
 id = "oliphaunt-js"
@@ -165,15 +142,11 @@ page_order = [
   "guide",
   "api-reference",
 ]
-sidebar_pages = [
-  "index",
-  "guide",
-]
 
 [[routes]]
 id = "oliphaunt-wasix-rust"
 product_id = "oliphaunt-wasix-rust"
-title = "Rust WASIX SDK"
+title = "WASIX Rust SDK"
 kind = "sdk"
 route = "sdk/wasix-rust"
 source = "src/docs/content/sdk/wasix-rust"
@@ -188,12 +161,6 @@ page_order = [
   "runtime",
   "dump-restore",
   "api-reference",
-]
-sidebar_pages = [
-  "index",
-  "guide",
-  "runtime",
-  "dump-restore",
 ]
 
 [[routes]]
@@ -213,10 +180,6 @@ page_order = [
   "guide",
   "api-reference",
 ]
-sidebar_pages = [
-  "index",
-  "guide",
-]
 
 [[routes]]
 id = "liboliphaunt-native"
@@ -234,8 +197,4 @@ page_order = [
   "index",
   "guide",
   "api-reference",
-]
-sidebar_pages = [
-  "index",
-  "guide",
 ]

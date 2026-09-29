@@ -3,7 +3,7 @@ title: Choose a native runtime mode
 description: Choose direct embedding, process isolation, or a local server for your application.
 ---
 
-Native Rust and desktop TypeScript offer three runtime modes. Swift, Kotlin, and React Native use direct embedding. Choose a mode based on process isolation and the number of database sessions your application needs.
+Native Rust and desktop TypeScript offer three runtime modes. Swift, Kotlin, and React Native also offer mobile broker integration. Choose a mode based on process isolation and the number of database sessions your application needs.
 
 | Mode | Database runs in | Access | Choose it when |
 | --- | --- | --- | --- |
@@ -15,13 +15,13 @@ Native Rust and desktop TypeScript offer three runtime modes. Swift, Kotlin, and
 
 Direct mode is the default. The SDK manages a resident native backend in the application process. Keep one application-owned database handle and share it according to your language's concurrency rules.
 
-The first successful direct open binds the process to that root and configuration. Closing the handle releases the logical session; it does not unload PostgreSQL or let the process switch roots. Reopen the same root with compatible settings, or use broker/server mode for multiple roots. Mobile apps switch to restored data on a subsequent process launch.
+The first successful direct open binds the process to that root and configuration. Closing the handle releases the logical session; it does not unload PostgreSQL or let the process switch roots. Reopen the same root with compatible settings, or use broker/server mode for multiple roots. In direct mode, mobile apps switch to restored data on a subsequent process launch.
 
 In Rust, the synchronous handle blocks the calling thread. Use `AsyncOliphaunt` for async tasks. Swift, Kotlin, and JavaScript expose async APIs; those APIs serialize database work rather than creating a session per call.
 
 ## Broker
 
-Broker mode moves execution into a helper process while retaining the SDK query API. It is available in native Rust and desktop TypeScript.
+Broker mode moves execution into a helper process while retaining the SDK query API. It is available in native Rust and desktop TypeScript, and through platform-specific setup on iOS 26+ and Android. See [mobile broker setup](/docs/learn/mobile-stability#broker-mode).
 
 If the helper exits unexpectedly, the database handle becomes unusable. Close it and open a new handle on the same persistent directory. PostgreSQL recovers committed data from WAL. The SDK does not replay a failed operation, because its commit outcome may be unknown.
 

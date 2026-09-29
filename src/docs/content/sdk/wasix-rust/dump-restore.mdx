@@ -9,7 +9,7 @@ Use a physical backup for compatible WASIX restores. Use a logical SQL dump for 
 
 ```toml
 [dependencies]
-oliphaunt-wasix = { version = "@VERSION(oliphaunt-wasix-rust)@", features = ["tools"] }
+oliphaunt-wasix = { version = "{{release:oliphaunt-wasix-rust}}", features = ["tools"] }
 ```
 
 ## Export and import SQL
@@ -51,7 +51,7 @@ The SDK manages connection and output settings. Do not override host, port, user
 Install the CLI with the tools feature:
 
 ```sh
-cargo install oliphaunt-wasix --version @VERSION(oliphaunt-wasix-rust)@ --features tools
+cargo install oliphaunt-wasix --version {{release:oliphaunt-wasix-rust}} --features tools
 oliphaunt-wasix-dump --directory ./data/notes > notes.sql
 ```
 

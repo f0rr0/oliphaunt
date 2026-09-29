@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,9 +9,9 @@ const repoRoot = path.resolve(docsRoot, '../..');
 const generatedRoot = path.join(repoRoot, 'target/docs');
 const scratch = fs.mkdtempSync(path.join(generatedRoot, 'snippet-check-'));
 const sdks = [
-  ['typescript', 'src/sdks/js', '@oliphaunt/ts'],
-  ['react-native', 'src/sdks/react-native', '@oliphaunt/react-native'],
-  ['wasix-typescript', 'src/bindings/wasix-ts', '@oliphaunt/wasix-ts'],
+  ['typescript', 'src/native/sdks/ts', '@oliphaunt/ts'],
+  ['react-native', 'src/native/sdks/react-native', '@oliphaunt/react-native'],
+  ['wasix-typescript', 'src/wasix/sdks/ts', '@oliphaunt/wasix-ts'],
 ];
 
 try {
@@ -43,12 +43,12 @@ try {
             'WebWorker',
           ],
           typeRoots: [path.join(sdkRoot, 'node_modules/@types')],
-          types: ['node'],
+          types: ['node', 'bun'],
           paths: {
             [packageName]: [path.join(sdkRoot, 'src/index.ts')],
-            '@oliphaunt/js-core/*': [path.join(repoRoot, 'src/shared/js-core/src/*.ts')],
+            '@oliphaunt/ts-query/*': [path.join(repoRoot, 'src/query/ts/src/*.ts')],
             '@oliphaunt/liboliphaunt-wasix': [
-              path.join(repoRoot, 'src/bindings/wasix-ts/src/runtime-carrier-shim.d.ts'),
+              path.join(repoRoot, 'src/wasix/sdks/ts/src/runtime-carrier-shim.d.ts'),
             ],
           },
         },

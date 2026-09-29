@@ -3,7 +3,7 @@ title: Measure performance
 description: Measure startup, query latency, memory, and installed size for your own application.
 ---
 
-Measure Oliphaunt with your schema, selected extensions, and target device. This page describes a measurement method; it does not publish comparative benchmark results.
+Measure Oliphaunt with your schema, selected extensions, and target device.
 
 ## Separate the costs
 
@@ -34,7 +34,7 @@ Repeat measurements and report the median and a tail percentile alongside the sa
 
 ## Investigate slow SQL
 
-Use PostgreSQL's query planner with representative data:
+For an existing `notes(id, body)` table, use PostgreSQL's query planner with representative data:
 
 ```sql
 EXPLAIN (ANALYZE, BUFFERS)

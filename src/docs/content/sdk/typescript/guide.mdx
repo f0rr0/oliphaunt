@@ -42,14 +42,16 @@ Returning commits; throwing rolls back. The callback's return value becomes the 
 
 ## Select extensions
 
-Install the native extension package and select its SQL name when opening:
+Install the native extension package and import its descriptor:
 
 ```sh
-npm install @oliphaunt/extension-vector@@VERSION(oliphaunt-extension-vector)@
+npm install @oliphaunt/extension-vector@{{release:oliphaunt-extension-vector}}
 ```
 
 ```ts
-const db = await Oliphaunt.open({ extensions: ['vector'] });
+import vector from '@oliphaunt/extension-vector';
+
+const db = await Oliphaunt.open({ extensions: [vector] });
 await db.execute('CREATE EXTENSION IF NOT EXISTS vector');
 ```
 
@@ -62,7 +64,10 @@ The extension must match the native runtime and target platform. See [Extensions
 ```ts
 const archive = await db.backup();
 await db.close();
-await Oliphaunt.restore('./app-data/restored.oliphaunt', archive);
+await Oliphaunt.restore(
+  { kind: 'directory', path: './app-data/restored.oliphaunt' },
+  archive,
+);
 
 const restored = await Oliphaunt.open({
   topology: 'broker',

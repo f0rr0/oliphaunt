@@ -17,12 +17,16 @@ Only `context` is required for `open`. Resource overrides are optional `File` va
 | `OliphauntConfig` field | Type / default |
 | --- | --- |
 | `storage` | `DatabaseStorage.TemporaryDirectory` |
-| Persistent storage | `DatabaseStorage.Directory(File)` |
+| Persistent storage | `DatabaseStorage.Directory(File)` or `DatabaseStorage.ApplicationData(name)` |
 | `startupGucs` | `List<PostgresStartupGuc>`; empty |
 | `username`, `database` | Nullable strings; fresh roots use `postgres` |
-| `extensions` | `List<String>`; empty |
+| `extensions` | `List<OliphauntExtension>`; empty |
 
 The spelling is `startupGucs` in Kotlin. `PostgresStartupGuc` carries a setting name and value.
+
+## Broker mode
+
+`OliphauntBroker.open(context, config, options)` returns the same database interface from a separate process. Use application-data names for persistent broker storage. See [mobile broker setup](/docs/learn/mobile-stability#broker-mode) for platform requirements, file-based restore, deadlines, and failure handling.
 
 ## Query extensions
 

@@ -12,14 +12,18 @@ Import `Oliphaunt`. `OliphauntDatabase` is an actor exposing `async throws` data
 | Configuration field | Type / default |
 | --- | --- |
 | `storage` | `OliphauntDatabaseStorage`; `.temporaryDirectory` |
-| Persistent storage | `.directory(URL)` using a file URL |
+| Persistent storage | `.directory(URL)` using a file URL, or `.applicationData(name:)` |
 | `startupGUCs` | `[OliphauntStartupGUC]`; empty |
 | `username`, `database` | Optional strings; fresh roots use `postgres` |
-| `extensions` | `[String]`; empty, exact SQL extension names |
+| `extensions` | `[OliphauntExtension]`; empty, typed extension selections |
 
 Construct a startup setting with `OliphauntStartupGUC("name", "value")`. Identity fields select an existing role and database.
 
 `OliphauntDatabase.restore(destination:bytes:)` accepts a destination `URL` and archive `Data`. It restores into new or empty persistent storage.
+
+## Broker mode
+
+`OliphauntBroker.open(configuration:options:)` returns the same database interface from a separate process. Use application-data names for persistent broker storage. See [mobile broker setup](/docs/learn/mobile-stability#broker-mode) for platform requirements, file-based restore, deadlines, and failure handling.
 
 ## Queries
 

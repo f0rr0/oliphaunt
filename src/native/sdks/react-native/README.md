@@ -5,7 +5,7 @@ Embed PostgreSQL in an iOS or Android app using React Native's New Architecture.
 ## Install
 
 ```sh
-npm install @oliphaunt/react-native
+npm install @oliphaunt/react-native @oliphaunt/seed-native-ios-datum64-standard
 ```
 
 For Expo, add `"@oliphaunt/react-native"` to `expo.plugins` in `app.json`, then build with `npx expo run:ios` or `npx expo run:android`. Expo Go does not include this native module. For bare projects, follow the [native integration guide](https://oliphaunt.dev/docs/sdk/react-native/architecture).

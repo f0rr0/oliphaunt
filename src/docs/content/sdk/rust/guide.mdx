@@ -73,19 +73,23 @@ The server lifecycle handle does not run SQL itself. Use `AsyncOliphauntServer` 
 
 ## Select extensions
 
-Select native extensions on the builder, then enable them with SQL:
+Add the extension crate to `Cargo.toml`:
+
+```toml
+oliphaunt-extension-vector = "{{release:oliphaunt-extension-vector}}"
+```
+
+Select it before opening, then enable it with SQL:
 
 ```rust
-use oliphaunt::Extension;
-
 let mut db = Oliphaunt::builder()
     .direct()
-    .extension(Extension::VECTOR)
+    .extension(oliphaunt_extension_vector::VECTOR)
     .open()?;
 db.execute("CREATE EXTENSION IF NOT EXISTS vector")?;
 ```
 
-Native selection uses the builder rather than WASIX Cargo extension features. Ship the selected extension resources for your target. See [Extensions](/docs/reference/extensions).
+Use the same selection when reopening a database that depends on the extension. See [Extensions](/docs/reference/extensions).
 
 ## Back up and restore
 

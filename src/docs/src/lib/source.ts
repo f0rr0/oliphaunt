@@ -32,7 +32,9 @@ export function getPageMarkdownUrl(page: (typeof source)['$inferPage']) {
 export async function getLLMText(page: (typeof source)['$inferPage']) {
   const processed = (await page.data.getText('processed')).replaceAll(
     '<SdkChooser />',
-    sdkSurfaces.map((sdk) => `- [${sdk.title}](${docsRoute}/sdk/${sdk.id}): ${sdk.target}`).join('\n'),
+    sdkSurfaces
+      .map((sdk) => `- [${sdk.title}](${docsRoute}/sdk/${sdk.id}): ${sdk.target}`)
+      .join('\n'),
   );
 
   return `# ${page.data.title} (${page.url})

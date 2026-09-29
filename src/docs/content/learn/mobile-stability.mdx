@@ -19,6 +19,77 @@ Direct mode binds the process to one root and configuration. Closing the databas
 
 Run schema setup before screens depend on it. Use parameterized queries, keep transactions short, and keep network requests and user interaction outside transaction callbacks.
 
+## Broker mode
+
+Choose broker mode when the database should run in a separate process. It keeps the same query and transaction API. Android supports it on API 24+; iOS requires iOS 26+, Xcode 26+, and an embedded, signed extension. The quickstarts use direct mode by default.
+
+Broker storage accepts an application-data name or temporary storage. Arbitrary directory paths are not supported. Keep one mobile broker handle open at a time; close it before opening or restoring another database.
+
+### Swift
+
+Add the `OliphauntBroker` product to your app and set up the worker using the [iOS broker target templates](https://github.com/f0rr0/oliphaunt/tree/main/src/native/sdks/swift/Templates/OliphauntBroker). Follow all target, embedding, and signing steps. Link the initialization seed and selected extension resources to the worker target.
+
+```swift
+import OliphauntBroker
+
+@available(iOS 26, *)
+func openDatabase() async throws -> OliphauntDatabase {
+    try await OliphauntBroker.open(
+        configuration: .init(storage: .applicationData(name: "main")),
+        options: .init(startupTimeout: .seconds(30), operationTimeout: .seconds(10))
+    )
+}
+```
+
+For backup, use `try await db.backup(to: archiveURL)` with a new app-owned file URL. After closing the handle, restore with `OliphauntBroker.restore(storage: .applicationData(name: "restored"), from: archiveURL)`. Reopen through `OliphauntBroker.open` with the same required extensions.
+
+### Kotlin
+
+The Android SDK includes the broker service. In your existing `Application.onCreate`, return after `super.onCreate()` when `OliphauntBroker.isWorkerProcess(this)` is true. This avoids initializing UI frameworks and app services in the database process.
+
+```kotlin
+val db = OliphauntBroker.open(
+    context.applicationContext,
+    OliphauntConfig(storage = DatabaseStorage.ApplicationData("main")),
+    OliphauntBrokerOptions(operationTimeoutMillis = 10_000),
+)
+```
+
+Import `dev.oliphaunt.*` and call this from a coroutine. Use the quickstart's Gradle seed selection for a new database. `db.backup(archiveFile)` writes a new backup file. After close, call `OliphauntBroker.restore(context, DatabaseStorage.ApplicationData("restored"), archiveFile)`, then reopen through the broker.
+
+### React Native
+
+Select the mode in the Expo plugin and rebuild the native app. For iOS, set your app's bundle identifier and deployment target:
+
+```json title="app.json"
+{
+  "expo": {
+    "ios": {
+      "bundleIdentifier": "com.example.notes",
+      "deploymentTarget": "26.0"
+    },
+    "plugins": [["@oliphaunt/react-native", { "topology": "broker" }]]
+  }
+}
+```
+
+The plugin configures the iOS worker target and Android worker initialization. Keep the seed dependency from the quickstart. Sign the app and worker with your development team, then run `npx expo run:ios` or `npx expo run:android`.
+
+```ts
+const db = await Oliphaunt.open({
+  storage: { kind: 'applicationData', name: 'main' },
+  broker: { startupTimeoutMs: 30_000, operationTimeoutMs: 10_000 },
+});
+```
+
+Use the usual `backup`, `restore`, and query methods. Do not pass `topology` to `open`; the native build selects it. Omitting `operationTimeoutMs` leaves operations without an SDK deadline.
+
+### Recover from a broker failure
+
+Inspect `requiresReopen` on the broker error. When true, close the handle and reopen persistent storage explicitly. Check `execution`: `notStarted` means the request did not run; `unknown` means it may have changed data. Check your application state before retrying an unknown write. A deadline does not prove that a transaction rolled back.
+
+Direct and broker databases have separate storage locations. To migrate, back up through the original mode, close it, and restore into a fresh destination through the new mode. Do not switch modes and assume the same name opens the same files.
+
 ## Handle suspension and termination
 
 Finish important writes while the app has execution time. An operating system can terminate a background app without waiting for a close callback. Persist throughout the session and use explicit close for orderly teardown.

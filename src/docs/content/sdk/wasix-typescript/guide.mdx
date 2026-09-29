@@ -33,10 +33,10 @@ Only one live owner may use a persistent root or browser storage name. Close the
 | Import | Browser | Desktop host |
 | --- | --- | --- |
 | `@oliphaunt/wasix-ts` | Executes in the importing realm | Dedicated Rust owner keeps the event loop responsive |
-| `@oliphaunt/wasix-ts/direct` | Caller-realm placement | May block the calling JavaScript thread |
+| `@oliphaunt/wasix-ts/direct` | Unavailable | May block the calling JavaScript thread |
 | `@oliphaunt/wasix-ts/worker` | Package-owned Worker | Package-owned JavaScript Worker |
 
-All return the same promise-based query API. An async signature alone does not mean that execution is off the calling thread. Use `/worker` in a browser UI that must remain responsive.
+The available placements return the same promise-based query API. An async signature alone does not mean that execution is off the calling thread. Use `/worker` in a browser UI that must remain responsive.
 
 OPFS uses synchronous file access where the browser provides it in a Dedicated Worker. In a Window or a host without those handles, the adapter uses its portable persistence path automatically.
 
@@ -60,7 +60,7 @@ Persistent operations publish their changes before their promises settle. A tran
 Install a WASIX extension package and pass its descriptor, not a SQL-name string:
 
 ```sh
-npm install @oliphaunt/extension-pgtap-wasix@@VERSION(oliphaunt-extension-pgtap)@
+npm install @oliphaunt/extension-pgtap-wasix@{{release:oliphaunt-extension-pgtap}}
 ```
 
 ```ts
@@ -70,7 +70,7 @@ const db = await Oliphaunt.open({ extensions: [pgtap] });
 await db.execute('CREATE EXTENSION IF NOT EXISTS pgtap');
 ```
 
-Use the same selection when reopening extension-bearing data. The SDK does not run application migrations or `CREATE EXTENSION` automatically. Browser imports control downloaded extension resources; desktop runtime packages may already contain the compiled catalog while still validating your selection.
+Use the same selection when reopening extension-bearing data. The SDK does not run application migrations or `CREATE EXTENSION` automatically. Include the selected extension packages when deploying your app.
 
 ## Back up and restore
 
@@ -89,7 +89,7 @@ This fragment uses the Node.js `directory` adapter imported above. In a browser,
 Install the optional tools package:
 
 ```sh
-npm install @oliphaunt/wasix-tools
+npm install @oliphaunt/wasix-tools@{{release:postgres-tools-wasix}}
 ```
 
 ```ts

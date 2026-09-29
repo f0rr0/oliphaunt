@@ -1,15 +1,15 @@
 ---
 title: Native integration
-description: Understand React Native packaging and the Swift/Android runtime boundary.
+description: Configure native builds, runtime resources, and process isolation for a React Native app.
 ---
 
 The React Native package uses Swift on iOS and Kotlin on Android. It supplies TypeScript APIs over the same native PostgreSQL runtime used by those platform SDKs.
 
-## What runs where
+## Choose a runtime mode
 
-Database and filesystem work execute on the platform SDK's native owner queue. JavaScript receives promises and typed query results. Binary protocol and backup bytes cross JSI as buffers; this is not a synchronous SQL interface on the JavaScript thread.
+Direct mode is the default. Use one application-owned handle and share it through a service. For process isolation, select broker mode when configuring the native build; follow [mobile broker setup](/docs/learn/mobile-stability#broker-mode).
 
-One mobile direct database can be pending, active, or closing at a time. Keep it in application state and share it through a service. Closing or invalidating the native module retires that owner; it does not add desktop broker or server modes.
+Both modes run database work away from JavaScript and return promises. They provide one PostgreSQL session, not a connection pool.
 
 ## Expo integration
 
@@ -21,18 +21,20 @@ For an existing Expo native project, rerun prebuild when the plugin configuratio
 
 Use the package's same platform integration when maintaining native projects without Expo prebuild. Match versions to the installed React Native package rather than mixing platform SDK releases.
 
-On Android, add `mavenCentral()` to plugin and dependency repositories and apply the `dev.oliphaunt.android` plugin to the app module using version `@VERSION(oliphaunt-kotlin)@`. The React Native package supplies its Kotlin dependency. Configure selected extensions through the Gradle integration and rebuild.
+On Android, add `mavenCentral()` to plugin and dependency repositories and apply the `dev.oliphaunt.android` plugin to the app module using version `{{release:oliphaunt-kotlin}}`. The React Native package supplies its Kotlin dependency. Set `seedProfile.set("standard")` in the app's `oliphaunt` block for a new database. Configure selected extensions there and rebuild.
 
-On iOS, set deployment target 17.0 or later. The npm package includes local `COliphaunt` and `Oliphaunt` podspecs plus a staging tool. Before running CocoaPods, stage the app payload using the package's exported integration helper. Save this script in your app root and run it with Node:
+The manual steps below configure direct mode. On iOS, set deployment target 17.0 or later and install the standard seed dependency shown in the quickstart. The npm package includes local `COliphaunt` and `Oliphaunt` podspecs plus a staging tool. Before running CocoaPods, stage the app payload using the package's exported integration helper. Save this script in your app root and run it with Node:
 
-```js title="prepare-oliphaunt.cjs"
-const fs = require('node:fs');
-const path = require('node:path');
+```js title="prepare-oliphaunt.mjs"
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const packageRoot = path.dirname(require.resolve('@oliphaunt/react-native/package.json'));
 const plugin = require(path.join(packageRoot, 'app.plugin.js'));
-const options = plugin.normalizeOptions({ extensions: [] });
+const options = plugin.normalizeOptions({ seedProfile: 'standard', extensions: [] });
 const iosRoot = path.resolve('ios');
-plugin.stageIosAppPayload(process.cwd(), iosRoot, options);
+await plugin.stageIosAppPayload(process.cwd(), iosRoot, options);
 const podfile = path.join(iosRoot, 'Podfile');
 fs.writeFileSync(
   podfile,
@@ -47,10 +49,10 @@ The Podfile must already call `use_native_modules!`. The helper adds the local p
 Install the native extension packages your app uses before plugin or manual setup. For example:
 
 ```sh
-npm install @oliphaunt/extension-vector@@VERSION(oliphaunt-extension-vector)@
+npm install @oliphaunt/extension-vector@{{release:oliphaunt-extension-vector}}
 ```
 
-Pass the selected names to the plugin or native preparation configuration, and repeat the names in `Oliphaunt.open({ extensions: [...] })`. Selection at runtime verifies the installed resources; it cannot add missing native code. See the [extension recipe](/docs/sdk/react-native/guide#add-an-extension).
+The Expo plugin discovers installed extension packages. You can narrow the packaged selection with its `extensions` filter. Pass imported extension descriptors to `Oliphaunt.open({ extensions: [...] })`. Selection at runtime verifies the installed resources; it cannot add missing native code. See the [extension recipe](/docs/sdk/react-native/guide#add-an-extension).
 
 ## Lifecycle
 

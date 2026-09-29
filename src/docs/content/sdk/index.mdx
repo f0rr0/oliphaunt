@@ -9,7 +9,7 @@ Choose an SDK by where your application runs. Every quickstart shows how to inst
 
 ## Native or WASIX?
 
-Native SDKs run the native PostgreSQL runtime. Use them for mobile apps and desktop applications that can ship native libraries. Rust and desktop TypeScript also support a separate database process and a local PostgreSQL server.
+Native SDKs run the native PostgreSQL runtime. Use them for mobile apps and desktop applications that can ship native libraries. Use broker mode to isolate database execution. Rust and desktop TypeScript also provide a local PostgreSQL server for drivers and ORMs.
 
 WASIX SDKs run PostgreSQL compiled to WebAssembly. Use WASIX TypeScript in browsers, or either WASIX binding when you want that runtime in a desktop host. Select WASIX explicitly; the native packages do not switch to it automatically.
 

@@ -12,15 +12,23 @@ Ensure `mavenCentral()` is available in both plugin and dependency repositories 
 ```kotlin title="app/build.gradle.kts"
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "@VERSION(oliphaunt-kotlin)@"
+    id("dev.oliphaunt.android") version "{{release:oliphaunt-kotlin}}"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:@VERSION(oliphaunt-kotlin)@")
+    implementation("dev.oliphaunt:oliphaunt-android:{{release:oliphaunt-kotlin}}")
 }
 ```
 
-The plugin packages the native runtime resources needed by the app. Build and run a native Android application after changing this configuration.
+Select the initialization resources for new Android databases:
+
+```kotlin title="app/build.gradle.kts"
+oliphaunt {
+    seedProfile.set("standard")
+}
+```
+
+Use `"icu"` instead if your database needs ICU collations. The plugin packages the selected seed and runtime resources. Build and run a native Android application after changing this configuration.
 
 ## Run your first query
 
