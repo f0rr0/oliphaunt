@@ -1,5 +1,5 @@
-import { strict as assert } from 'node:assert';
 import { describe, test } from 'bun:test';
+import { strict as assert } from 'node:assert';
 
 import {
   groupTargets,
@@ -71,7 +71,8 @@ describe('Moon task capabilities', () => {
       groups.map(({ target_count }) => target_count),
       [1, 1, 1, 4, 4, 1, 2, 1],
     );
-    assert.equal(groups[3].label, 'Source 4');
+    assert.equal(groups[3].label, 'Plain (0 + 1 + 2 + 3)');
+    assert.equal(groups[6].label, 'Rust');
     assert.equal(groups.filter(({ requires_rust }) => requires_rust).length, 1);
     assert.equal(groups.filter(({ requires_android_sdk }) => requires_android_sdk).length, 1);
     assert.equal(groups.filter(({ requires_apple }) => requires_apple).length, 1);
@@ -82,6 +83,24 @@ describe('Moon task capabilities', () => {
       JSON.parse(targets_json).include.map(({ target }) => target),
     );
     assert.deepEqual(selected.sort(), [...taskMap.keys()].sort());
+  });
+
+  test('names grouped components and distinguishes their task batches without setup labels', () => {
+    const taskMap = tasks(
+      { target: 'liboliphaunt-native:test' },
+      { target: 'liboliphaunt-wasix:test' },
+      { target: 'oliphaunt-kotlin:format-check', tags: ['requires-android-sdk'] },
+      { target: 'oliphaunt-kotlin:lint', tags: ['requires-android-sdk', 'requires-rust'] },
+    );
+    const targets = [...taskMap.values()].map((task) => matrixTarget(task, 'deep', taskMap));
+    const labels = (rows) => groupTargets(rows).map(({ label }) => label);
+    assert.deepEqual(labels(targets), [
+      'Native Runtime + WASIX Runtime',
+      'Kotlin SDK (Format Check)',
+      'Kotlin SDK (Lint)',
+    ]);
+    assert.deepEqual(labels([...targets].reverse()), labels(targets));
+    assert.equal(new Set(labels(targets)).size, labels(targets).length);
   });
 
   test('rejects duplicate targets and invalid shard limits', () => {

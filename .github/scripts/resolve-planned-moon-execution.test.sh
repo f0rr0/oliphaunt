@@ -87,6 +87,8 @@ touch "$1.done"
 SH
 (
   cd "$scratch/parallel"
+  # Moon tasks inherit their parent's root; this is a separate fixture workspace.
+  export MOON_WORKSPACE_ROOT="$PWD"
   git init -q
   git -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m fixture
   export OLIPHAUNT_CI_JOB_TARGETS_JSON='{"parallel":["fixture:joined"]}'
