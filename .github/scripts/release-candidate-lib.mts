@@ -314,11 +314,14 @@ export function assertCandidateBindingShape(candidate) {
         'duplicate or invalid producer',
       );
       targets.add(receipt.target);
+      positiveInteger(candidate.runAttempt, 'candidate runAttempt');
+      positiveInteger(receipt.producer?.runAttempt, 'producer receipt runAttempt');
+      // Failed-job reruns retain successful producers from earlier attempts.
       assert(
         receipt.producer?.sha === candidate.sha &&
           receipt.producer?.runId === candidate.runId &&
-          receipt.producer?.runAttempt === candidate.runAttempt,
-        'producer receipt is not from the qualification run and attempt',
+          receipt.producer.runAttempt <= candidate.runAttempt,
+        'producer receipt must match the qualification SHA/run and not exceed its attempt',
       );
       assert(
         Number.isSafeInteger(receipt.artifact?.id) &&

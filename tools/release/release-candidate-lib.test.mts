@@ -75,9 +75,27 @@ test('selected-product evidence binds scope and candidate SHA and rejects uncove
         producers: [{ ...receipt, taskHash: undefined, hashes: [] }],
       }),
     ).toThrow(/producer hash chain is inconsistent/);
-    expect(() => assertCandidateBindingShape({ ...recorded, runAttempt: 3 })).toThrow(
-      /qualification run and attempt/,
-    );
+    expect(() => assertCandidateBindingShape({ ...recorded, runAttempt: 3 })).not.toThrow();
+    for (const producer of [
+      { ...receipt.producer, sha: 'b'.repeat(40) },
+      { ...receipt.producer, runId: '78' },
+      { ...receipt.producer, runAttempt: 3 },
+    ]) {
+      expect(() =>
+        assertCandidateBindingShape({ ...recorded, producers: [{ ...receipt, producer }] }),
+      ).toThrow(/qualification SHA\/run/);
+    }
+    for (const runAttempt of [undefined, null, '1', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => assertCandidateBindingShape({ ...recorded, runAttempt })).toThrow(
+        /candidate runAttempt/,
+      );
+      expect(() =>
+        assertCandidateBindingShape({
+          ...recorded,
+          producers: [{ ...receipt, producer: { ...receipt.producer, runAttempt } }],
+        }),
+      ).toThrow(/producer receipt runAttempt/);
+    }
     receipt.hashes[0].dependencies = { 'query:build': 'passthrough' };
     expect(() => assertCandidateBindingShape(recorded)).toThrow(/dependency hash is incomplete/);
   } finally {
