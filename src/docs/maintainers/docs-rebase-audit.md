@@ -72,6 +72,7 @@ Every file below was read completely and compared with its current API or route 
 - The docs README explains authoring, centralized versions, generated platform requirements and static snapshots. Main's Bun toolchain and release-refresh mechanism remain in place.
 - Removed the duplicate generator that overwrote Next's Markdown exports. Expanded SDK links and resolved versions now survive publication.
 - Complete TypeScript quickstarts are source-type-checked during the production build as well as the explicit docs check.
+- Ported the prior branch's docs-only release-selection fix to main's renamed release planner. Markdown changes no longer imply an SDK release through directory ownership; declared changelogs and explicitly mapped release inputs still do. The regression test fails before the fix and passes afterward, including mixed documentation/source changes.
 
 ## Verification
 
