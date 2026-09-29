@@ -1,5 +1,21 @@
 # PR #202 refresh onto September 27 main
 
+## September 29 rebase — replacement PR #218
+
+Rebased onto remote main `32ce7b29510b74333e799601b69a71fd28122e80`.
+Preserved main's ABI 12, release versions, bounded stream queue and streaming
+archive support. The protocol conflict keeps both main's COPY callback-abort
+termination and this PR's deadline checks; the task conflict keeps both test
+sets. The queue-only fixture now supplies the new timeout hook and asserts it
+is never called without an armed deadline. Resource notes reflect main's hard
+queue cap and separate buffered/streaming archive APIs.
+
+The earlier runtime evidence below belongs to the September 27 source, not a
+freshly built September 29 consumer. Rebase checks do not waive the Windows
+recovery blocker or the outstanding platform/runtime qualification.
+
+## September 27 implementation and evidence
+
 Base: `df2b112e866f8ea76d320d7b3e172cf7be764177`. Source of the earlier
 correctness work: `41c74d85dd0114935ae751807049ea6c6acf4756`.
 This is a selective port, not a restoration of the earlier repository layout.
