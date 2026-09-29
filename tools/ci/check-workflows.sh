@@ -32,6 +32,7 @@ run tools/dev/bun.sh tools/ci/workflow-security.mts
 run bash .github/scripts/check-ci-gate.test.sh
 run bash tools/dev/bun.sh test ./.github/scripts/resolve-mobile-e2e.test.mts
 run bash .github/scripts/run-moon-targets.test.sh
+run bash .github/scripts/freeze-apple-carriers.test.sh
 graph_file="$(mktemp)"
 observations="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-ci-observations.XXXXXX")"
 trap 'rm -f "$graph_file"; rm -rf "$observations"' EXIT
