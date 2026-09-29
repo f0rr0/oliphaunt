@@ -15,8 +15,13 @@ successfully. Mode 3 buffers the finite frontend request and streams ordinary
 non-COPY output. COPY must keep mode 2's duplex behavior; ordinary responses do
 not need to become duplex merely to avoid complete-output buffering.
 
-Buffered output has an inclusive 64 MiB limit. Overflow fails closed without
-publishing a prefix and makes the session terminal; callers must reopen it.
+Buffered output grows on demand, up to the signed-i32 bridge length (2 GiB minus
+one byte) or available memory. There is no application-specific 64 MiB quota.
+Materializing results necessarily retains the complete response; use streaming
+when it should not remain in memory. Output reset reuses guest buffer capacity
+for later queries; it does not return that capacity to the allocator.
+Arithmetic/allocation failures still fail
+closed without publishing an incomplete response; callers must reopen it.
 The bound applies to mode 0
 and mode 2 before its transition. Buffered bytes remain guest-owned until the
 host validates the size, copies them into host-owned storage, and resets output

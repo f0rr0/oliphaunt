@@ -468,7 +468,16 @@ impl PostgresMod {
 
     #[cfg_attr(not(feature = "extensions"), allow(dead_code))]
     pub(crate) fn shutdown_backend(&mut self) -> Result<()> {
-        self.ensure_not_terminal()?;
+        if self.terminal_failure.is_some() {
+            // No guest is running: entry is synchronous and this runtime denies
+            // additional guest threads/processes. Retire host-owned descriptors
+            // without re-entering the failed guest or running its TLS/atexit
+            // destructors. Dropping this instance then permits crash recovery
+            // in a fresh instance; it does not confirm the failed write's outcome.
+            // Use WasiEnv, not WasiFunctionEnv::on_exit (which can call guest code).
+            self.env.data(&self.store).blocking_on_exit(Some(1.into()));
+            return Ok(());
+        }
         self.lifecycle
             .set_active
             .call(&mut self.store, 0)
@@ -1017,9 +1026,11 @@ fn ensure_guest_phase_live(terminal_failure: Option<&str>) -> Result<()> {
 
 fn finish_guest_phase<T>(result: Result<T>, phase: &str, poison: impl FnOnce(String)) -> Result<T> {
     result.map_err(|error| {
-        let failure = format!("WASIX guest phase {phase} failed: {error:#}");
-        poison(failure.clone());
-        error.context(format!("{failure}; the backend is closed"))
+        poison(format!("WASIX guest phase {phase} failed: {error:#}"));
+        // Keep the cause in the error chain, not duplicated inside its context.
+        error.context(format!(
+            "WASIX guest phase {phase} failed; the backend is closed"
+        ))
     })
 }
 
@@ -2449,15 +2460,13 @@ mod tests {
             BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES
         );
 
-        let oversized = checked_buffered_protocol_output_len(
-            i32::try_from(BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES + 1).unwrap(),
-        )
-        .unwrap_err();
-        assert!(
-            oversized
-                .to_string()
-                .contains("exceeding the inclusive 67108864-byte host limit")
+        // Ordinary responses above the old 64 MiB quota are valid. Lengths
+        // beyond the signed bridge range arrive as negative i32 values.
+        assert_eq!(
+            checked_buffered_protocol_output_len(80 * 1024 * 1024).unwrap(),
+            80 * 1024 * 1024
         );
+        assert!(checked_buffered_protocol_output_len(i32::MIN).is_err());
 
         let negative = checked_buffered_protocol_output_len(-1).unwrap_err();
         assert!(negative.to_string().contains("invalid length -1"));
@@ -2613,6 +2622,12 @@ mod tests {
             )
             .unwrap_err();
             assert!(error.to_string().contains("the backend is closed"));
+            assert_eq!(
+                format!("{error:#}")
+                    .matches("injected trap or invalid result")
+                    .count(),
+                1
+            );
             assert!(terminal.as_deref().unwrap().contains(phase));
             // Both cleanup restores and future dispatch use this admission gate.
             for _ in 0..2 {

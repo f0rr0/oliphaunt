@@ -18,20 +18,20 @@ Malformed outcomes and every other _start failure poison generically.
 
 Keep buffered-input streaming (mode 3) distinct from full duplex (mode 2),
 require an empty guest output buffer after streamed execution, and validate
-every flush status before output extraction. Bound defensive buffered-output
-copies to 64 MiB and make callback failure sticky so a guest retry cannot call
-JavaScript again after the first callback exception. Treat a poisoned callback
-state lock as an equally sticky terminal failure without panicking. Preserve
-that causal callback failure ahead of the derived guest flush failure so the
-public error retains the JavaScript callback diagnostic.
+every flush status before output extraction. Keep buffered-output copies within
+the signed-i32 bridge range and make callback failure sticky so a guest retry
+cannot call JavaScript again after the first callback exception. Treat a
+poisoned callback state lock as an equally sticky terminal failure without
+panicking. Preserve that causal callback failure ahead of the derived guest
+flush failure so the public error retains the JavaScript callback diagnostic.
 
-At the exported buffered-exchange boundary, disclose the fixed output limit as
-neutral contract context on every error while retaining the original cause.
+Keep the causal error at the exported boundary; do not label unrelated failures
+as an output-size problem. The signed bridge length is the only output ceiling.
 ---
 
 --- a/src/postgres_direct.rs
 +++ b/src/postgres_direct.rs
-@@ -20,11 +20,20 @@
+@@ -20,11 +20,19 @@
  use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOptions};
  
  const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
@@ -42,7 +42,6 @@ neutral contract context on every error while retaining the original cause.
  const PROTOCOL_BUFFERED: i32 = 0;
  const PROTOCOL_HYBRID: i32 = 2;
 +const PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT: i32 = 3;
-+const PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES: i32 = 64 * 1024 * 1024;
 +const PROCESS_STARTUP_OK: i32 = 0;
 +const PROCESS_STARTUP_ERROR: i32 = -1;
 +const STARTUP_OUTCOME_VERSION: u32 = 1;
@@ -52,7 +51,7 @@ neutral contract context on every error while retaining the original cause.
  
  thread_local! {
      static PROTOCOL_CALLBACK: RefCell<Option<Function>> = const { RefCell::new(None) };
-@@ -167,40 +176,105 @@
+@@ -167,40 +175,105 @@
      }
  }
  
@@ -170,7 +169,7 @@ neutral contract context on every error while retaining the original cause.
          let callback = PROTOCOL_CALLBACK
              .with(|active| active.borrow().clone())
              .ok_or_else(|| {
-@@ -209,10 +283,12 @@
+@@ -209,10 +282,12 @@
          for input in input.chunks(PROTOCOL_CHUNK_BYTES) {
              let chunk = Uint8Array::from(input);
              if let Err(error) = callback.call1(&JsValue::UNDEFINED, &chunk) {
@@ -187,7 +186,7 @@ neutral contract context on every error while retaining the original cause.
              }
          }
          Ok(())
-@@ -426,6 +502,34 @@
+@@ -426,6 +501,34 @@
      InputEnded,
  }
  
@@ -222,7 +221,7 @@ neutral contract context on every error while retaining the original cause.
  impl MainLoopOutcome {
      fn from_i32(value: i32) -> Option<Self> {
          match value {
-@@ -509,19 +613,20 @@
+@@ -509,19 +612,20 @@
      set_protocol_transport: TypedFunction<i32, i32>,
      set_active: TypedFunction<i32, i32>,
      prepare_trusted_embedded_session: TypedFunction<(), i32>,
@@ -245,7 +244,7 @@ neutral contract context on every error while retaining the original cause.
  }
  
  #[wasm_bindgen]
-@@ -530,26 +635,39 @@
+@@ -530,26 +634,39 @@
      #[wasm_bindgen(js_name = startup)]
      pub fn startup(&mut self, packet: Uint8Array) -> Result<Uint8Array, Error> {
          match self.startup_inner(&packet) {
@@ -268,9 +267,8 @@ neutral contract context on every error while retaining the original cause.
      #[wasm_bindgen(js_name = execProtocolRaw)]
      pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
 -        if let Err(error) = self.ensure_open() {
--            return Err(Error::from(self.stderr.attach(error)));
 +        if let Err(error) = self.ensure_protocol_started() {
-+            return Err(self.buffered_protocol_error(error));
+             return Err(Error::from(self.stderr.attach(error)));
          }
 -        if let Err(error) = self
 -            .set_protocol_transport
@@ -292,12 +290,11 @@ neutral contract context on every error while retaining the original cause.
 +        });
 +        match result {
              Ok(output) => Ok(output),
--            Err(error) => Err(Error::from(self.stderr.attach(error))),
-+            Err(error) => Err(self.buffered_protocol_error(error)),
+             Err(error) => Err(Error::from(self.stderr.attach(error))),
          }
      }
  
-@@ -560,7 +678,13 @@
+@@ -560,7 +677,13 @@
          input: Uint8Array,
          on_chunk: Function,
 -    ) -> Result<(), Error> {
@@ -314,7 +311,7 @@ neutral contract context on every error while retaining the original cause.
 +            Ok(()) => Ok(0),
              Err(error) => Err(Error::from(self.stderr.attach(error))),
          }
-@@ -574,7 +698,13 @@
+@@ -574,7 +697,13 @@
          on_read: Function,
          on_chunk: Function,
      ) -> Result<(), Error> {
@@ -329,20 +326,7 @@ neutral contract context on every error while retaining the original cause.
              Ok(()) => Ok(()),
              Err(error) => Err(Error::from(self.stderr.attach(error))),
          }
-@@ -590,17 +720,33 @@
- }
- 
- impl OliphauntDirectInstance {
-+    fn buffered_protocol_error(&self, error: anyhow::Error) -> Error {
-+        let error = error.context(format!(
-+            "buffered protocol exchange contract: buffered protocol output has a {PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES}-byte limit"
-+        ));
-+        Error::from(self.stderr.attach(error))
-+    }
-+
-     fn exec_protocol_duplex_inner(
-         &mut self,
-         payload: &Uint8Array,
+@@ -596,11 +725,20 @@
          on_read: Function,
          on_chunk: Function,
      ) -> anyhow::Result<()> {
@@ -366,7 +350,7 @@ neutral contract context on every error while retaining the original cause.
      }
  
      fn exec_protocol_stream_inner(
-@@ -608,53 +754,107 @@
+@@ -608,53 +746,107 @@
          payload: &Uint8Array,
          on_chunk: Function,
      ) -> anyhow::Result<()> {
@@ -498,7 +482,7 @@ neutral contract context on every error while retaining the original cause.
          self.reset_io()?;
          self.push_input_js(packet)?;
  
-@@ -667,17 +867,28 @@
+@@ -667,17 +859,28 @@
              .process_startup
              .call(&mut self.store, port, 1, 1)
              .context("ProcessStartupPacket")?;
@@ -533,7 +517,7 @@ neutral contract context on every error while retaining the original cause.
      }
  
      fn exec_protocol_raw_inner(
-@@ -685,7 +896,10 @@
+@@ -685,7 +888,10 @@
          payload: &Uint8Array,
          streaming: bool,
      ) -> anyhow::Result<Uint8Array> {
@@ -545,7 +529,7 @@ neutral contract context on every error while retaining the original cause.
          ensure!(
              self.protocol_started,
              "Oliphaunt direct startup has not completed"
-@@ -727,21 +941,48 @@
+@@ -727,21 +933,48 @@
      }
  
      fn close_inner(&mut self) -> anyhow::Result<()> {
@@ -606,7 +590,7 @@ neutral contract context on every error while retaining the original cause.
      }
      async fn instantiate(
          module: WebAssembly::Module,
-@@ -802,6 +1043,8 @@
+@@ -802,6 +1035,8 @@
              &instance,
              "oliphaunt_wasix_prepare_trusted_embedded_session",
          )?;
@@ -615,7 +599,7 @@ neutral contract context on every error while retaining the original cause.
          let wasi_start = typed_export(&mut store, &instance, "_start")?;
          let start_oliphaunt = typed_export(&mut store, &instance, "oliphaunt_wasix_start")?;
          let run_atexit_funcs =
-@@ -838,6 +1081,7 @@
+@@ -838,6 +1073,7 @@
              set_protocol_transport,
              set_active,
              prepare_trusted_embedded_session,
@@ -623,7 +607,7 @@ neutral contract context on every error while retaining the original cause.
              wasi_start,
              start_oliphaunt,
              run_atexit_funcs,
-@@ -850,38 +1094,79 @@
+@@ -850,38 +1086,79 @@
              send_ready,
              backend_started: false,
              protocol_started: false,
@@ -720,7 +704,7 @@ neutral contract context on every error while retaining the original cause.
      }
  
      fn call_main_loop(&mut self) -> anyhow::Result<MainLoopOutcome> {
-@@ -897,38 +1182,35 @@
+@@ -897,38 +1174,35 @@
      }
  
      fn send_ready_after_main_loop(&mut self) -> anyhow::Result<()> {
@@ -756,7 +740,7 @@ neutral contract context on every error while retaining the original cause.
 +            .context("oliphaunt_wasix_pq_flush trapped after a typed main-loop outcome")?;
 +        ensure!(
 +            status == 0,
-+            "protocol output flush returned {status} after a typed main-loop outcome; buffered protocol output has a {PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES}-byte limit"
++            "protocol output flush returned {status} after a typed main-loop outcome"
 +        );
 +        Ok(())
      }
@@ -779,7 +763,7 @@ neutral contract context on every error while retaining the original cause.
          let prepare_status = self
              .prepare_trusted_embedded_session
              .call(&mut self.store)
-@@ -937,16 +1219,107 @@
+@@ -937,16 +1211,107 @@
              prepare_status == 0,
              "oliphaunt_wasix_prepare_trusted_embedded_session rejected after PostgreSQL startup began"
          );
@@ -889,18 +873,7 @@ neutral contract context on every error while retaining the original cause.
      }
  
      fn reset_io(&mut self) -> anyhow::Result<()> {
-@@ -993,6 +1366,10 @@
-             .call(&mut self.store)
-             .context("oliphaunt_wasix_output_len")?;
-         ensure!(len >= 0, "negative direct protocol output length");
-+        ensure!(
-+            len <= PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES,
-+            "direct protocol output length {len} exceeds the {PROTOCOL_BUFFERED_OUTPUT_LIMIT_BYTES}-byte limit"
-+        );
-         if len == 0 {
-             return Ok(Uint8Array::new_with_length(0));
-         }
-@@ -1002,7 +1379,9 @@
+@@ -1002,7 +1367,9 @@
              .context("oliphaunt_wasix_output_data")?;
          ensure!(ptr > 0, "oliphaunt_wasix_output_data returned null");
          let output = oliphaunt_copy_from_guest(&self.guest_memory, ptr as u32, len as u32)
@@ -911,7 +884,7 @@ neutral contract context on every error while retaining the original cause.
          ensure!(
              self.output_reset
                  .call(&mut self.store)
-@@ -1010,7 +1389,7 @@
+@@ -1010,7 +1377,7 @@
                  == 0,
              "oliphaunt_wasix_output_reset after read failed"
          );
@@ -920,7 +893,7 @@ neutral contract context on every error while retaining the original cause.
      }
  
      fn protocol_input_remaining(&mut self) -> anyhow::Result<i32> {
-@@ -1022,26 +1401,21 @@
+@@ -1022,26 +1389,21 @@
          if available > 0 {
              return Ok(available);
          }
@@ -954,7 +927,7 @@ neutral contract context on every error while retaining the original cause.
          );
          let _ = js_sys::Reflect::set(
              &js_error,
-@@ -1052,6 +1426,88 @@
+@@ -1052,6 +1414,88 @@
      }
  }
  

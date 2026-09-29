@@ -18,10 +18,10 @@
 #endif
 
 #define DEFAULT_STARTUP_TIMEOUT_MS 60000
-/* Backpressure watermark, not preallocation or a total-response limit. One
- * oversized chunk may enter an empty queue so the producer can make progress. */
+/* Hard queue bound, not preallocation or a total-response limit. Producers
+ * split larger writes and wait for space as the consumer drains the queue. */
 #define DEFAULT_STREAM_QUEUE_MAX_BYTES (4 * 1024 * 1024)
-/* First buffered response allocation; grows on demand, unlike the watermark. */
+/* First buffered response allocation; grows on demand, unlike the queue bound. */
 #define INITIAL_BUFFERED_OUTPUT_BYTES (8 * 1024)
 
 extern void RequestTrustedEmbeddedTimeoutCheck(void);

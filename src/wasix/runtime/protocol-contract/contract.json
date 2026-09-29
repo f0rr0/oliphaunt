@@ -64,7 +64,8 @@
     }
   ],
   "bufferedOutput": {
-    "limitBytes": 67108864,
+    "limitBytes": 2147483647,
+    "limitReason": "signed-i32-host-bridge-length-not-an-application-response-quota",
     "boundary": "inclusive",
     "appliesTo": ["buffered-mode", "hybrid-mode-before-transition"],
     "overflow": "efbig-fail-closed-without-partial-publication",

@@ -24,6 +24,95 @@ fn synthetic_sdk_error() -> oliphaunt_wasix::Error {
 }
 
 #[test]
+fn terminal_raw_exchange_reports_closed_without_hiding_cleanup() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let storage = DatabaseStorage::Directory(workspace.path().join("terminal"));
+    let mut database = Oliphaunt::builder().storage(storage.clone()).open()?;
+    database.execute("CREATE TABLE kept(value int)")?;
+    database.execute("INSERT INTO kept VALUES (1)")?;
+    database.exec_protocol_raw(oliphaunt_query::simple_query(
+        "BEGIN; INSERT INTO kept VALUES (2)",
+    )?)?;
+    // A frontend Terminate ends the backend; there is no response to collect.
+    database
+        .exec_protocol_raw([b'X', 0, 0, 0, 4])
+        .expect_err("terminated backend");
+    assert!(database.is_closed());
+    assert_eq!(
+        database.query("SELECT 1").unwrap_err().kind(),
+        oliphaunt_wasix::ErrorKind::Lifecycle
+    );
+    // Discard the failed guest and release the root lock without re-entering it.
+    database.close()?;
+    database.close()?;
+    let mut reopened = Oliphaunt::builder().storage(storage).open()?;
+    assert_eq!(
+        reopened
+            .query("SELECT sum(value)::text AS value FROM kept")?
+            .get_text(0, "value")?,
+        Some("1")
+    );
+    reopened.close()?;
+    Ok(())
+}
+
+#[test]
+fn buffered_query_above_64_mib_keeps_session_usable() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    for storage in [
+        DatabaseStorage::Memory,
+        DatabaseStorage::Directory(workspace.path().join("large")),
+    ] {
+        let mut database = Oliphaunt::builder().storage(storage).open()?;
+        // Many ordinary rows: callers should not need a transport flag just
+        // because their complete result exceeds an internal buffer budget.
+        let result =
+            database.query("SELECT repeat('x', 8192) AS payload FROM generate_series(1, 10240)")?;
+        assert_eq!(result.rows().len(), 10240);
+        for row in [0, 10239] {
+            assert_eq!(result.get_text(row, "payload")?.unwrap().len(), 8192);
+        }
+        drop(result);
+        assert_eq!(
+            database.query("SELECT 42 AS value")?.get_text(0, "value")?,
+            Some("42")
+        );
+        database.close()?;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn terminal_async_exchange_can_close_and_reopen_the_same_directory() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let storage = DatabaseStorage::Directory(workspace.path().join("terminal-async"));
+    let database = AsyncOliphaunt::builder()
+        .storage(storage.clone())
+        .open()
+        .await?;
+    database
+        .exec_protocol_raw([b'X', 0, 0, 0, 4])
+        .await
+        .expect_err("terminated backend");
+    assert_eq!(
+        database.query("SELECT 1").await.unwrap_err().kind(),
+        oliphaunt_wasix::ErrorKind::Lifecycle
+    );
+    database.close().await?;
+    assert!(database.is_closed());
+    let reopened = AsyncOliphaunt::builder().storage(storage).open().await?;
+    assert_eq!(
+        reopened
+            .query("SELECT 42 AS value")
+            .await?
+            .get_text(0, "value")?,
+        Some("42")
+    );
+    reopened.close().await?;
+    Ok(())
+}
+
+#[test]
 fn configured_startup_identity_survives_reset_role() -> Result<()> {
     let workspace = tempfile::TempDir::new()?;
     let storage = DatabaseStorage::Directory(workspace.path().join("identity"));

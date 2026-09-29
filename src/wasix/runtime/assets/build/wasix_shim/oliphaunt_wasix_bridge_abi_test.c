@@ -733,6 +733,8 @@ check_buffered_protocol_output_limit(void)
 {
 	const size_t limit =
 		(size_t) OLIPHAUNT_WASIX_BUFFERED_PROTOCOL_OUTPUT_LIMIT;
+	/* Prove ordinary large responses without allocating the whole i32 range. */
+	const size_t response_size = 80U * 1024U * 1024U;
 	unsigned char chunk[4096];
 	size_t written = 0;
 
@@ -768,27 +770,28 @@ check_buffered_protocol_output_limit(void)
 	CHECK(oliphaunt_wasix_output_reset() == 0);
 	CHECK(oliphaunt_wasix_output_status() == 0);
 
-	while (written < limit)
+	CHECK(response_size < limit);
+	while (written < response_size)
 	{
-		size_t remaining = limit - written;
+		size_t remaining = response_size - written;
 		size_t count = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
 		CHECK(oliphaunt_wasix_send(1, chunk, count, 0) == (ssize_t) count);
 		written += count;
 	}
-	CHECK(oliphaunt_wasix_output_len() == limit);
+	CHECK(oliphaunt_wasix_output_len() == response_size);
 	const unsigned char *output = oliphaunt_wasix_output_data();
 	CHECK(output != NULL);
 	CHECK(output[0] == 'x');
-	CHECK(output[limit - 1] == 'x');
+	CHECK(output[response_size - 1] == 'x');
 
 	errno = 0;
-	CHECK(oliphaunt_wasix_send(1, "y", 1, 0) == -1);
+	CHECK(oliphaunt_wasix_send(1, "y", limit - response_size + 1, 0) == -1);
 	CHECK(errno == EFBIG);
 	CHECK(oliphaunt_wasix_output_status() == EFBIG);
-	CHECK(oliphaunt_wasix_output_len() == limit);
+	CHECK(oliphaunt_wasix_output_len() == response_size);
 	CHECK(oliphaunt_wasix_output_data() == output);
 	CHECK(output[0] == 'x');
-	CHECK(output[limit - 1] == 'x');
+	CHECK(output[response_size - 1] == 'x');
 
 	/* Sticky failure is terminal across modes; a reset restores true mode-3 streaming. */
 	CHECK(oliphaunt_wasix_set_protocol_transport(
@@ -796,7 +799,7 @@ check_buffered_protocol_output_limit(void)
 		  OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
 	CHECK(check_send_rejected_without_stdout("z", 1, EFBIG) == 0);
 	CHECK(oliphaunt_wasix_output_status() == EFBIG);
-	CHECK(oliphaunt_wasix_output_len() == limit);
+	CHECK(oliphaunt_wasix_output_len() == response_size);
 	CHECK(oliphaunt_wasix_output_reset() == 0);
 	CHECK(oliphaunt_wasix_output_status() == 0);
 	CHECK(check_send_reaches_stdout("z", 1, "z", 1) == 0);

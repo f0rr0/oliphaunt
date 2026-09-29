@@ -566,12 +566,12 @@ impl Oliphaunt {
         Sql::database(self, sql)
     }
 
-    /// Whether this database is permanently retired after a close attempt.
+    /// Whether this database can no longer accept work.
     ///
-    /// This becomes `true` when shutdown begins, even when cleanup reports an
-    /// error.
+    /// This becomes `true` after a close attempt or a terminal runtime failure.
+    /// After a failure, still call [`Self::close`] to release storage ownership.
     pub fn is_closed(&self) -> bool {
-        self.closed
+        self.closed || self.transaction_outcome_unknown || self.backup_mode_exit_unconfirmed
     }
 
     /// Execute a PostgreSQL command. Row-producing SQL must use [`Self::query`].
@@ -1490,9 +1490,10 @@ impl Oliphaunt {
     /// Validation before shutdown, such as an active callback transaction,
     /// leaves the database open and may be retried. Once shutdown begins, the
     /// database is permanently retired; repeated calls replay the same success
-    /// or failure. Successful teardown releases the backend and storage root;
-    /// failed teardown retains that ownership until process exit rather than
-    /// attempting an unproven second destructive cleanup.
+    /// or failure. A previously failed guest is discarded without running more
+    /// guest code, releasing the storage root for recovery on reopen. This does
+    /// not establish whether an interrupted write committed. A failure during
+    /// teardown itself retains ownership instead of retrying destructive cleanup.
     pub fn close(&mut self) -> crate::Result<()> {
         self.close_inner()
     }
@@ -1545,10 +1546,14 @@ impl Oliphaunt {
             return Err(crate::error::lifecycle("Oliphaunt is closed"));
         }
         if self.transaction_outcome_unknown {
-            bail!("Oliphaunt PostgreSQL session state is unknown; close and reopen it");
+            return Err(crate::error::lifecycle(
+                "Oliphaunt PostgreSQL session state is unknown; close and reopen it",
+            ));
         }
         if self.backup_mode_exit_unconfirmed {
-            bail!("Oliphaunt backup-mode exit is unconfirmed; close and reopen it");
+            return Err(crate::error::lifecycle(
+                "Oliphaunt backup-mode exit is unconfirmed; close and reopen it",
+            ));
         }
         Ok(())
     }

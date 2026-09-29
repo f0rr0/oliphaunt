@@ -295,10 +295,11 @@ async function expectOwnedRawProtocolResponse(database: OliphauntDatabase): Prom
     simpleQuery("SELECT repeat('a', 10240) AS retained_payload"),
   );
   const snapshot = retained.slice();
+  // Many ordinary rows must not hit an application-specific 64 MiB quota.
   const large = await database.execProtocolRaw(
-    simpleQuery("SELECT repeat('z', 1048576) AS large_payload"),
+    simpleQuery("SELECT repeat('z', 8192) AS large_payload FROM generate_series(1, 10240)"),
   );
-  if (large.byteLength < 1048576) {
+  if (large.byteLength < 80 * 1024 * 1024) {
     throw new Error(
       `browser worker returned a truncated large PGWire response: ${large.byteLength}`,
     );
@@ -309,6 +310,7 @@ async function expectOwnedRawProtocolResponse(database: OliphauntDatabase): Prom
   ) {
     throw new Error('browser worker response changed after the guest reused its output memory');
   }
+  await expectAnswer(database);
 }
 
 async function expectClockConsistency(database: OliphauntDatabase): Promise<void> {
