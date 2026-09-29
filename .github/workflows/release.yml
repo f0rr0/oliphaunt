@@ -634,6 +634,7 @@ jobs:
       - name: Freeze canonical Apple extension carrier input
         if: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).has_release_changes == 'true' && inputs.approval_run_id == '' && (contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') || contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-react-native')) }}
         env:
+          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
           includes_swift: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') }}
           includes_react_native: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-react-native') }}
         run: |
@@ -641,7 +642,15 @@ jobs:
           react_native_source_carrier=target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json
           extension_manifest_args=()
           extension_carrier_args=()
+          product_roots="$(tools/dev/bun.sh tools/release/query.mts \
+            ci-products \
+            --family extension-artifacts \
+            --carrier-family native \
+            --products-json "$PRODUCTS_JSON" \
+            --field artifact-root \
+            --format lines)"
           while IFS= read -r product_root; do
+            [[ -n "$product_root" ]] || continue
             product="$(basename "$product_root")"
             manifest="$product_root/extension-artifacts.json"
             if [[ ! -f "$manifest" ]]; then
@@ -658,13 +667,7 @@ jobs:
               exit 1
             fi
             extension_carrier_args+=(--extension-carrier "${product_carriers[0]}")
-          done < <(tools/dev/bun.sh tools/release/query.mts \
-            ci-products \
-            --family extension-artifacts \
-            --carrier-family native \
-            --products-json "$PRODUCTS_JSON" \
-            --field artifact-root \
-            --format lines)
+          done <<< "$product_roots"
           rm -rf target/release/ios-carriers target/release-work/ios-carriers
           if [[ "$includes_swift" == true && "$includes_react_native" == true ]] && ! cmp -s "$swift_source_carrier" "$react_native_source_carrier"; then
             echo 'Swift and React Native source carriers disagree for the same release plan.' >&2
@@ -674,12 +677,17 @@ jobs:
 
           if [[ "$includes_react_native" == true ]]; then
             mkdir -p target/release/ios-carriers
-            public_args=(
-              --base-carrier "$react_native_source_carrier"
-              "${extension_manifest_args[@]}"
-              --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
-            )
-            tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts "${public_args[@]}"
+            public_carrier=target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
+            if (( ${#extension_manifest_args[@]} == 0 )); then
+              cp "$react_native_source_carrier" "$public_carrier"
+            else
+              public_args=(
+                --base-carrier "$react_native_source_carrier"
+                "${extension_manifest_args[@]}"
+                --output "$public_carrier"
+              )
+              tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts "${public_args[@]}"
+            fi
           fi
 
           if [[ "$includes_swift" == true && ${#extension_manifest_args[@]} -gt 0 ]]; then
