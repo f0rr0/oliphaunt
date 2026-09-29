@@ -6,6 +6,10 @@
   --font-sans: var(--font-oliphaunt-sans);
   --font-mono: var(--font-oliphaunt-mono);
   --font-serif: var(--font-oliphaunt-serif);
+  --text-doc-title: 2.5rem;
+  --text-doc-title--line-height: 1.1;
+  --text-doc-heading: 1.125rem;
+  --text-doc-heading--line-height: 1.333333;
   --radius-sm: 2px;
   --radius-md: 4px;
   --radius-lg: 4px;
@@ -76,28 +80,40 @@ button {
 #nd-sidebar {
   background: var(--color-fd-background);
 }
+#nd-docs-layout {
+  --fd-layout-width: 78rem;
+}
 #nd-sidebar a,
 #nd-sidebar button {
   border-radius: var(--radius-sm);
 }
+#nd-sidebar a {
+  line-height: 24px;
+}
 #nd-sidebar a[data-active="true"] {
   font-weight: 500;
+}
+#nd-sidebar :has(> [data-theme-toggle]) {
+  align-self: flex-start;
+}
+#nd-sidebar [data-theme-toggle] {
+  border-inline-start: 0;
+}
+#toc-title {
+  gap: 8px;
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  line-height: 16px;
 }
 .oliphaunt-wordmark {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-family: var(--font-serif), Georgia, serif;
-  font-size: 24px;
-  font-weight: 400;
-  line-height: 1;
-}
-.oliphaunt-wordmark__mark {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  color: var(--color-fd-foreground);
+  gap: 12px;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: -0.04em;
 }
 .oliphaunt-mark {
   width: 24px;
@@ -105,7 +121,7 @@ button {
 }
 
 .oliphaunt-doc-header {
-  margin-bottom: 8px;
+  margin-bottom: 32px;
 }
 .oliphaunt-doc-header__path ol {
   display: flex;
@@ -114,8 +130,9 @@ button {
   padding: 0;
   margin: 0;
   list-style: none;
-  font-size: 13px;
-  line-height: 1.5;
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  line-height: 16px;
   color: var(--color-fd-muted-foreground);
 }
 .oliphaunt-doc-header__path li + li::before {
@@ -125,44 +142,61 @@ button {
 }
 .oliphaunt-title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
+  gap: 32px;
+}
+.oliphaunt-engraving {
+  width: 192px;
+  height: 160px;
+  object-fit: contain;
+  object-position: top;
+  flex-shrink: 0;
+  pointer-events: none;
 }
 .oliphaunt-doc-title {
   margin: 0;
   font-family: var(--font-serif), Georgia, serif;
-  font-size: 2rem;
+  font-size: var(--text-doc-title);
   font-weight: 400;
-  line-height: 1.1;
+  line-height: var(--text-doc-title--line-height);
   letter-spacing: 0;
   text-wrap: balance;
 }
 .oliphaunt-doc-description {
   margin: 16px 0 0;
-  max-width: 65ch;
+  max-width: 60ch;
   font-size: 16px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--color-fd-muted-foreground);
   text-wrap: pretty;
 }
 .oliphaunt-doc-body {
   font-size: 16px;
-  line-height: 1.6;
+  line-height: 1.5;
   overflow-wrap: break-word;
 }
 .oliphaunt-doc-body h2 {
-  margin-top: 48px;
-  font-family: var(--font-serif), Georgia, serif;
-  font-size: 1.375rem;
-  font-weight: 400;
-  line-height: 1.2;
+  margin-block: 48px 16px;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: var(--text-doc-heading);
+  font-weight: 500;
+  line-height: var(--text-doc-heading--line-height);
 }
 .oliphaunt-doc-body h3 {
-  margin-top: 32px;
+  margin-block: 32px 16px;
   font-size: 1rem;
   font-weight: 500;
   line-height: 1.5;
+}
+.oliphaunt-doc-body > :where(p, ul, ol, figure) {
+  margin-block: 16px;
+}
+.oliphaunt-doc-body > :first-child {
+  margin-top: 0;
+}
+.oliphaunt-doc-body > :last-child {
+  margin-bottom: 0;
 }
 .oliphaunt-doc-body :where(h2, h3) {
   letter-spacing: 0;
@@ -183,7 +217,7 @@ button {
 }
 .oliphaunt-doc-body pre {
   font-size: 13px;
-  line-height: 1.75;
+  line-height: 1.846154;
 }
 .oliphaunt-doc-body figure {
   border-radius: var(--radius-md);
@@ -207,6 +241,16 @@ button {
   min-height: 40px;
   font-weight: 400;
 }
+.sdk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  column-gap: 32px;
+  margin-block: 16px 32px;
+}
+.sdk-link {
+  min-height: 80px;
+  padding-block: 16px calc(16px - 1px);
+}
 
 @media (hover: hover) {
   .sdk-link:hover {
@@ -216,12 +260,19 @@ button {
     text-decoration: underline;
   }
 }
-@media (max-width: 40rem) {
-  .oliphaunt-title-row {
-    gap: 16px;
+@media (min-width: 48rem) {
+  #nd-docs-layout {
+    --fd-sidebar-width: 16rem;
   }
-  .oliphaunt-title-row > svg {
-    width: 80px;
+}
+@media (min-width: 80rem) {
+  #nd-docs-layout {
+    --fd-toc-width: 14rem;
+  }
+}
+@media (max-width: 40rem) {
+  .oliphaunt-engraving {
+    display: none;
   }
   input {
     font-size: 16px;
