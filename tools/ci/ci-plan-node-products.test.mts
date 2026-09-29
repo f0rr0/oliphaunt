@@ -122,6 +122,22 @@ function effects(paths) {
   };
 }
 
+test('environment input changes retain their producer and runtime qualification', () => {
+  const roots = new Set(
+    triggeringTaskNames({
+      'liboliphaunt-wasix:compiler-output': { env: ['ASSET_PROFILE'], other: false },
+      'liboliphaunt-wasix:runtime-portable': {
+        upstream: ['liboliphaunt-wasix:compiler-output'],
+        other: false,
+      },
+    }),
+  );
+  assert.deepEqual([...roots], ['liboliphaunt-wasix:compiler-output']);
+  const required = requiredTasksForAffected(roots);
+  assert(required.has('liboliphaunt-wasix:runtime-portable'));
+  assert(planJobsForAffected(roots).has('wasix-release-regression'));
+});
+
 test('shared Windows DLL policy changes select native and WASIX packaging consumers', () => {
   const result = effects(paths.windowsVcRuntimePolicy);
   for (const target of [

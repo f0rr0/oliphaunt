@@ -71,7 +71,6 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   ACTIONLINT_VERSION: 1.7.12
-  ASSET_PROFILE: release
   WASMER_LLVM_VERSION: "22.1"
   WASMER_LLVM_LINUX_X64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz
   WASMER_LLVM_LINUX_X64_SHA256: 5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906
@@ -2083,6 +2082,8 @@ jobs:
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    env:
+      ASSET_PROFILE: release
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd

@@ -28,6 +28,19 @@ const tasks = new Map(
 );
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('workflow-wide environment does not force product builds during planning', () => {
+    for (const task of tasks.values()) {
+      for (const input of task.inputs ?? []) {
+        if (typeof input !== 'string' || !input.startsWith('$')) continue;
+        assert(
+          !Object.hasOwn(workflow.env ?? {}, input.slice(1)),
+          `${input} affects ${task.target}; scope it to the consuming build job`,
+        );
+      }
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('jobs without a Moon cache have no cacheable local task subtree', () => {
     for (const [id, job] of Object.entries(workflow.jobs)) {
       if (
