@@ -89,10 +89,12 @@ SH
   cd "$scratch/parallel"
   # Moon tasks inherit their parent's root; this is a separate fixture workspace.
   export MOON_WORKSPACE_ROOT="$PWD"
-  git init -q
+  git init -q --initial-branch=main
   git -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m fixture
   export OLIPHAUNT_CI_JOB_TARGETS_JSON='{"parallel":["fixture:joined"]}'
   export OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON='["fixture:downloaded"]'
-  MOON_CONCURRENCY=2 bash .github/scripts/run-planned-moon-job.sh parallel
+  # Exercise CI's base-ref lookup locally as well as on GitHub.
+  CI=true GITHUB_ACTIONS=true GITHUB_REF=refs/pull/1/merge GITHUB_BASE_REF=main \
+    MOON_CONCURRENCY=2 bash .github/scripts/run-planned-moon-job.sh parallel
   test -f joined.done
 )
