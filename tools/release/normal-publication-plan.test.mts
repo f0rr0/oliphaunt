@@ -47,6 +47,29 @@ function realSelection(changedFile) {
 }
 
 describe('normal publication plan', () => {
+  test('SDK documentation does not select releases while source and explicit inputs do', () => {
+    const graph = loadGraph('normal-publication-plan.test');
+    const files = [
+      'src/native/sdks/rust/README.md',
+      'src/native/sdks/ts/README.md',
+      'src/native/sdks/swift/README.md',
+      'src/native/sdks/kotlin/README.md',
+      'src/native/sdks/react-native/README.md',
+      'src/wasix/sdks/ts/README.md',
+      'src/wasix/sdks/rust/README.md',
+      'src/native/sdks/rust/docs/guide.mdx',
+    ];
+    expect(buildPlan(graph, files).releaseProducts).toEqual([]);
+    expect(buildPlan(graph, [...files, 'src/native/sdks/rust/src/lib.rs']).releaseProducts).toEqual(
+      ['oliphaunt-rust'],
+    );
+    const explicit = {
+      ...graph,
+      shared_release_sources: [{ files: [files[0]], products: ['oliphaunt-rust'] }],
+    };
+    expect(buildPlan(explicit, files).releaseProducts).toEqual(['oliphaunt-rust']);
+  });
+
   test('executes exact frozen carriers in lock-derived dependency order', () => {
     const value = lock([
       carrier({ id: 'cargo:runtime', product: 'runtime', publishOrder: 0 }),

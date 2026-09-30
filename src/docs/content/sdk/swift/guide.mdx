@@ -1,209 +1,116 @@
 ---
-title: Build With Swift
-description: Add Oliphaunt to iOS or macOS with Swift concurrency, app-container storage, exact extensions, backup, and app-owned lifecycle actions.
+title: Swift guide
+description: Query data, manage transactions, select extensions, and restore backups in Apple apps.
 ---
 
-# Build With Swift
+These recipes use an open `db` from the [Swift quickstart](/docs/sdk/swift). Import `Oliphaunt` and call database methods from an async context.
 
-Use the Swift SDK in iOS and macOS apps. It wraps the native runtime behind
-Swift async APIs and keeps database work off the main actor.
-
-<Callout type="info" title="Apple apps start with Swift APIs">
-React Native on Apple platforms delegates runtime behavior through this SDK, but
-Swift and SwiftUI apps use `OliphauntDatabase` directly.
-</Callout>
-
-<SdkGuideSummary id="swift" />
-
-<Steps>
-<Step>
-
-### Install
-
-Add the Swift package in Xcode or `Package.swift`. The package includes the
-Swift API plus the platform runtime artifacts required for the selected target.
+## Query application data
 
 ```swift
-dependencies: [
-    .package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "{{release:oliphaunt-swift}}")
-]
+try await db.execute("""
+CREATE TABLE IF NOT EXISTS notes (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    body text NOT NULL
+)
+""")
+let inserted = try await db.query(
+    "INSERT INTO notes (body) VALUES ($1) RETURNING id",
+    parameters: [.string("First note")]
+)
+let id: Int64? = try inserted.rows[0].value(named: "id")
 ```
 
-Persistent storage lives under your app container. App users install your app; the
-SDK package carries the runtime files it needs.
+Parameters bind values without SQL interpolation. Decode a result using a Swift type compatible with its PostgreSQL column type. SQL null becomes an optional value.
 
-</Step>
-<Step>
+## Run a transaction
 
-### Open and query
+```swift
+try await db.transaction { tx in
+    try await tx.execute(
+        "INSERT INTO notes (body) VALUES ($1)",
+        parameters: [.string("First")]
+    )
+    try await tx.execute(
+        "INSERT INTO notes (body) VALUES ($1)",
+        parameters: [.string("Second")]
+    )
+}
+```
 
-This example selects the generated vector resource product described in the Swift SDK README.
+Returning commits and throwing rolls back. Use `tx` for every statement in the callback. Do not call the outer database or issue manual transaction-lifecycle commands. Use `tx.rollback()` for explicit rollback; savepoints are supported.
 
-Open an `OliphauntDatabase` with a persistent file URL, run SQL with async calls, and
-close when the app no longer needs the handle.
+## Choose process isolation
+
+The quickstart uses direct mode. For a separate database process, follow [mobile broker setup](/docs/learn/mobile-stability#broker-mode). Broker mode requires its own storage and restore path; use the recipes below for direct mode.
+
+## Back up and restore
+
+Direct mode stays bound to one database root and configuration for the lifetime of the application process. Closing a handle does not let that process switch to another root. Prepare the restored data, then use it on the next launch.
+
+Use archive bytes for export, not a live directory copy:
+
+```swift
+let archive = try await db.backup()
+try await db.close()
+try await OliphauntDatabase.restore(destination: restoredURL, bytes: archive)
+```
+
+On a subsequent application launch, open the restored destination:
+
+```swift
+let restored = try await OliphauntDatabase.open(
+    configuration: OliphauntConfiguration(storage: .directory(restoredURL))
+)
+try await restored.close()
+```
+
+Here `restoredURL` is an app-owned file URL for a new or empty directory. Restore rejects nonempty destinations. Reapply the original database's required extension selection when reopening. Physical backups require a compatible native runtime.
+
+## Add an extension
+
+The base Swift package is extension-free. Add the generated product to your application before selecting it at open.
+
+1. Install [Bun](https://bun.sh/docs/installation), then obtain the Swift extension generator from the Oliphaunt source package matching your Swift dependency.
+2. Download the matching `vector` Swift extension carrier JSON from its [release](https://github.com/f0rr0/oliphaunt/releases/tag/oliphaunt-extension-vector-v{{release:oliphaunt-extension-vector}}).
+3. Generate a local Swift package with the command below, replacing the two input paths.
+
+```sh
+bun /path/to/oliphaunt/src/native/sdks/swift/tools/render-extension-products.mts \
+  --extension-carrier /path/to/oliphaunt-extension-vector-{{release:oliphaunt-extension-vector}}-swift-extension-carrier.json \
+  --extensions vector \
+  --output-dir ./OliphauntExtensions
+```
+
+The output directory must not already exist. Add it to Xcode as a local package and link the generated `OliphauntExtensionVector` product to your app. Select its resource when opening:
 
 ```swift
 import OliphauntExtensionVector
 
-let appSupport = FileManager.default.urls(
-    for: .applicationSupportDirectory,
-    in: .userDomainMask
-)[0]
-
-let database = try await OliphauntDatabase.open(
-    configuration: OliphauntConfiguration(
-        storage: .directory(appSupport.appending(path: "main.oliphaunt")),
-        extensions: [OliphauntExtensionVector.resource]
-    )
+let db = try await OliphauntDatabase.open(
+    configuration: OliphauntConfiguration(extensions: [OliphauntExtensionVector.resource])
 )
-
-let rows = try await database.query("SELECT 1::text AS value")
-let value: String? = try rows.rows[0].value(named: "value")
-
-try await database.close()
+try await db.execute("CREATE EXTENSION IF NOT EXISTS vector")
 ```
 
-Keep one database handle in app state and share it through your app's dependency
-model. The handle owns a serialized session boundary.
+For multiple extensions, supply each required carrier with another `--extension-carrier` option and list the SQL names in `--extensions`. The generated package includes their required dependencies. Check the [catalog](/docs/reference/extension-catalog) before selecting an extension.
 
-</Step>
-<Step>
+Applications that need ICU collations also link the `OliphauntICU` SwiftPM product. Choose the ICU seed when creating a new iOS database that uses ICU collations.
 
-### Create app data
+## Cancel and close
 
-Use async SQL helpers for application data. A SwiftUI model or app service can
-own the database handle and expose app-specific methods:
+Cancelling a Swift task alone does not interrupt PostgreSQL. Use `try await db.cancel()` to request interruption, then await and handle the database operation's outcome.
 
-```swift
-try await database.execute("""
-CREATE TABLE IF NOT EXISTS notes (
-    id bigserial PRIMARY KEY,
-    title text NOT NULL,
-    body text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-)
-""")
+Close explicitly with `try await db.close()`. Close rejects new work and drains earlier accepted work. A shutdown failure leaves the handle terminal. Keep UI updates on the main actor and let the SDK run database work on its owner queue.
 
-try await database.query(
-    "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
-    parameters: [
-        .string("First note"),
-        .string("Stored by embedded PostgreSQL")
-    ]
-)
-
-let notes = try await database.query(
-    "SELECT id, title FROM notes ORDER BY id DESC LIMIT 20"
-)
-let firstTitle: String? = try notes.rows[0].value(named: "title")
-```
-
-Keep UI updates on the main actor, but keep database work behind the SDK's async
-database actor.
-
-</Step>
-<Step>
-
-### Configure
-
-Configure storage, selected exact extensions, startup identity, and PostgreSQL
-startup GUCs through the Swift configuration API. Storage defaults to
-`.temporaryDirectory`; choose `.directory(url)` for persistence. Advanced
-resource overrides allow app-owned resources. Released versions retain their
-packaged defaults; the development resource selection is described below.
-
-</Step>
-<Step>
-
-### Choose a mode
-
-Native direct is the Apple runtime. It uses one resident backend per app process
-and one physical session.
-
-</Step>
-<Step>
-
-### Handle lifecycle
-
-Swift exposes lifecycle as `async throws`. A dedicated serial owner queue runs
-storage preparation, open, SQL/protocol work, backup, and close away from the
-main actor. Ordinary work, transaction controls, and close share FIFO admission.
-A transaction or close is an atomic cutoff: calls admitted earlier drain before
-it, and incompatible later calls fail. `cancel()` uses a separate control queue
-so it can interrupt the active owner call. It remains available while close
-drains earlier admissions and stops when native teardown starts. Raw-stream
-callbacks are synchronous backpressure boundaries: same-handle database and
-transaction work is rejected from their scope, except for out-of-band
-`cancel()`. A callback failure is returned only after confirmed protocol
-recovery and leaves the session reusable. A raw buffered or streaming
-transport/recovery failure poisons the database. Task cancellation alone does not
-interrupt PostgreSQL; use `cancel()` and `close()` explicitly when app lifecycle
-policy requires them. Run `execute("CHECKPOINT")` only when an explicit
-PostgreSQL checkpoint is needed.
-
-Inside `transaction {}`, use the transaction's typed `query`, `execute`, `exec`,
-and `describe` methods. Return to commit or call `rollback()` to settle the outer
-transaction; do not issue outer-lifecycle SQL such as `BEGIN`/`START TRANSACTION`,
-`COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND [NO] CHAIN`), or
-`PREPARE TRANSACTION`. Nested `SAVEPOINT`, `RELEASE
-SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` SQL is supported. PostgreSQL exposes
-`ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command tag and
-transactional ready status, so the SDK rejects `ROLLBACK`/`ABORT ... AND CHAIN`
-before dispatch and still validates every actual protocol boundary. Raw
-protocol APIs stay on the database for callers that explicitly own transaction
-lifecycle.
-
-After automatic rollback succeeds, Swift rethrows the original callback error.
-If the callback catches a poisoning database or rollback error and returns, the
-transaction still fails with that stored original error.
-If rollback also fails, `OliphauntTransactionRollbackError.callbackError` and
-`.rollbackError` preserve both outcomes. If the callback throws a different
-error after an earlier independent database or protocol failure poisoned or
-expired transaction ownership, `OliphauntTransactionDatabaseError.callbackError`
-and `.databaseError` preserve both and the database is close-only. An ordinary
-PostgreSQL statement error that remains safely rollbackable is not automatically
-wrapped in either composite error.
-
-</Step>
-<Step>
-
-### Select extensions
-
-Select exact SQL extension names in app configuration. The app bundle contains
-selected extension artifacts plus required dependencies. `CREATE EXTENSION`
-succeeds when the selected runtime resources contain that extension for the
-Apple target.
-
-</Step>
-<Step>
-
-### Back up and restore
-
-Use `backup()` and static `restore(destination:bytes:)` with app-owned file
-URLs. Restore accepts a new or existing-empty destination and rejects nonempty
-data without mutation.
-
-</Step>
-</Steps>
-
-<SdkGuideProof id="swift" />
+A transaction callback error is rethrown after successful rollback. If rollback or independent database recovery also fails, the SDK exposes both causes; see [errors](/docs/sdk/swift/api-reference#errors).
 
 ## Troubleshooting
 
-Most Apple failures come from invalid file URLs, missing runtime resources, storage
-locks, runtime errors, or extension selection mismatches. PostgreSQL
-errors preserve SQLSTATE where the backend returns it.
-
-## Development resource packaging
-
-These resource-package changes are unreleased. The published installation
-versions above do not include this new package arrangement; use a coordinated
-checkout for this section.
-
-Select `OliphauntSeedNativeIOSStandard` or `OliphauntSeedNativeIOSICU` from the
-independent database-resources Swift source package for a new iOS database. The
-ICU product depends on `OliphauntICU`; an existing ICU database still needs that
-data even when the seed is omitted. The SDK discovers the selected bundles.
-The resource archive can be added as a local Swift package; no separate remote
-Swift repository URL has been published. Device qualification of the new seed
-carriers remains pending.
+| Symptom | Check |
+| --- | --- |
+| Invalid storage URL | Use an app-owned file URL, not a remote URL |
+| Missing extension | Link and register its generated Swift product before open |
+| Missing runtime resources | The app target links `Oliphaunt` and includes its resolved framework |
+| Root already in use | Keep one owner and close it before reopening |
+| Background writes are interrupted | Keep transactions short and follow [mobile lifecycle guidance](/docs/learn/mobile-stability) |

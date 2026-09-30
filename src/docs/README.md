@@ -7,17 +7,25 @@ Authored SDK API maps remain ordinary guides.
 From this directory after installing the root Bun workspace:
 
 - `bun run dev`: prepare content and start Next.js.
-- `bun run check`: check internal links and TypeScript.
+- `bun run check`: check internal links, site TypeScript, and TypeScript quickstart snippets.
 - `bun run test`: exercise published-release selection and refresh-request handling.
-- `bun run build`: resolve fresh completed releases and export the site.
+- `bun run build`: resolve versions, type-check TypeScript quickstarts, and export the site.
 - `bun run smoke`: check exported routes and text endpoints.
 
-Published versions come from GitHub's completed, non-prerelease product releases,
-never the Release Please candidate manifest. Unreleased resource and package
-separation examples carry an explicit development label; remove that label only
-after the corresponding products are publicly available. Kotlin's plugin and library use
-the same product version. SDK packages own their compatible runtime dependencies;
-guides do not independently select a newer runtime.
+## Versions and example accuracy
+
+These guides target the current checkout, per the documentation rewrite's scope.
+`{{release:product-id}}` resolves the owning path in `release-please-config.json`
+to `.release-please-manifest.json`. Updating a product version therefore updates
+all its public install examples without editing individual pages. Generated
+`docs-version.json` records the resolved map and source revision; set
+`OLIPHAUNT_DOCS_GIT_SHA` for a local archived build (Vercel uses its commit SHA).
+Keep this record with an archived static export. No historical picker is hosted.
+
+The version table separately lists completed stable GitHub releases. Never label
+current-checkout examples with an older published version. A source build does
+not prove registry availability; release qualification verifies the documented
+package set before publication. SDK dependencies select compatible runtimes.
 
 Each preparation resolves GitHub metadata anew and fails on network errors.
 For an explicit offline build set `OLIPHAUNT_DOCS_RELEASES_FILE` to a previously
@@ -65,5 +73,18 @@ External prerequisites still required:
   the hook's job ID. Vercel's Git integration owns guide deployment status;
   verify its production promotion and ordering in the project dashboard.
 
-Task 23a remains partial until those prerequisites and deployment verification
-are complete. See [Vercel's deploy-hook contract](https://vercel.com/docs/deploy-hooks).
+Verify those prerequisites before relying on automatic release refresh. See [Vercel's deploy-hook contract](https://vercel.com/docs/deploy-hooks).
+
+## Authoring and review
+
+Use [write-oliphaunt-docs](../../.codex/skills/write-oliphaunt-docs/SKILL.md) and
+`better-writing`. The public path is SDK choice → installation → first query →
+persistence → application recipes → API lookup. Keep maintainer procedures and
+validation limitations under `maintainers/`. Review every edited example against
+its own SDK, including defaults, extension descriptors, resource prerequisites,
+and restore destinations.
+
+The sidebar follows `docs-manifest.toml`. The platform table is generated from
+release compatibility policy, and the extension catalog from generated extension
+metadata. Next/Fumadocs exports Markdown and search from the same pages as HTML;
+do not overwrite those text exports with a second static generator.

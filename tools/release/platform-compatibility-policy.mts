@@ -123,8 +123,7 @@ export const PUBLIC_PLATFORM_COMPATIBILITY_BLOCK = Object.freeze({
 
 /**
  * Render the consumer-facing compatibility table from the same contract used
- * to inspect release binaries. The public release reference keeps this block
- * byte-for-byte synchronized in platform-compatibility-policy.test.mts.
+ * to inspect release binaries. The docs generator renders this table from the same values.
  */
 export function renderPublicPlatformCompatibilityTable() {
   const linuxX64 = PLATFORM_COMPATIBILITY_POLICY['linux-x64-gnu'].elf.maximumRequiredVersions;
@@ -142,12 +141,12 @@ export function renderPublicPlatformCompatibilityTable() {
   const directMacos = PLATFORM_COMPATIBILITY_POLICY['macos-arm64'].apple.platforms.macos;
   const xcframework = PLATFORM_COMPATIBILITY_POLICY['ios-xcframework'].apple.platforms;
   return [
-    '| Published carrier | Enforced consumer compatibility contract |',
+    '| Platform | Requirements |',
     '| --- | --- |',
-    `| Linux x64/arm64 GNU | Required symbol versions do not exceed \`GLIBC_${displayVersion(linuxX64.GLIBC)}\` or \`GLIBCXX_${displayVersion(linuxX64.GLIBCXX)}\`. |`,
-    `| Direct macOS arm64 runtime | Minimum deployment target is macOS ${displayVersion(directMacos.maximumMinimumOs)}. |`,
-    `| Android \`arm64-v8a\` and \`x86_64\` | Minimum Android API level is ${androidArm64}; Android binaries must not require GLIBC/GLIBCXX symbol families. |`,
+    `| Linux x64/arm64 GNU | Provides binaries requiring at most \`GLIBC_${displayVersion(linuxX64.GLIBC)}\` or \`GLIBCXX_${displayVersion(linuxX64.GLIBCXX)}\`. |`,
+    `| Direct macOS arm64 runtime | Requires macOS ${displayVersion(directMacos.maximumMinimumOs)}. |`,
+    `| Android \`arm64-v8a\` and \`x86_64\` | Minimum Android API level is ${androidArm64}. |`,
     `| Apple XCFramework | Contains macOS arm64, iOS device arm64, and iOS Simulator arm64 slices; minimum targets are macOS ${displayVersion(xcframework.macos.maximumMinimumOs)}, iOS ${displayVersion(xcframework.ios.maximumMinimumOs)}, and iOS Simulator ${displayVersion(xcframework.iosSimulator.maximumMinimumOs)}. |`,
-    '| Windows x64 MSVC | Requires the x64 PE/COFF contract and the declared app-local Visual C++ runtime profile; Windows ARM64 is not published. |',
+    '| Windows x64 MSVC | Ships with its required Visual C++ runtime libraries. Windows ARM64 is unavailable. |',
   ].join('\n');
 }

@@ -11,7 +11,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt Docs"
-  description: "Latest public guides and completed product releases."
+  description: "Developer guides, SDK references, and release versions."
   owner: "oliphaunt"
 
 tasks:
@@ -26,6 +26,8 @@ tasks:
       - "**/*"
       - "/src/extensions/generated/extensions.catalog.json"
       - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/tools/release/platform-compatibility-policy.mts"
       - "/bun.lock"
     options:
       cache: false
@@ -46,6 +48,8 @@ tasks:
       - "**/*"
       - "/src/extensions/generated/extensions.catalog.json"
       - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/tools/release/platform-compatibility-policy.mts"
       - "/bun.lock"
     outputs:
       - "/target/docs/build/**/*"
@@ -65,3 +69,4 @@ tasks:
       - "tools/smoke-built-site.mts"
     options:
       cache: false
+      mutex: "docs-generated-files"

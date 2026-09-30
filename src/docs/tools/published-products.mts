@@ -41,7 +41,7 @@ export async function publishedProducts(routes) {
   const ids = Object.values(releaseConfig.packages).map((product) => product.component);
   // Offline builds must explicitly select a previously resolved input or fixture.
   const input = process.env.OLIPHAUNT_DOCS_RELEASES_FILE;
-  let releases = input ? JSON.parse(await fs.readFile(input, 'utf8')) : [];
+  const releases = input ? JSON.parse(await fs.readFile(input, 'utf8')) : [];
   if (!input) {
     for (let page = 1; ; page++) {
       const response = await fetch(
@@ -73,4 +73,26 @@ export async function publishedProducts(routes) {
     ...ids,
     ...routes.flatMap((route) => (route.product_id ? [route.product_id] : [])),
   ]);
+}
+
+// Keep examples paired with the APIs in this source revision. Publication is
+// resolved separately, so a completed older release cannot relabel newer code.
+export function selectDocumentedProducts(config, versions) {
+  return Object.fromEntries(
+    Object.entries(config.packages).map(([directory, product]) => {
+      const version = versions[directory];
+      if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) {
+        throw new Error(`Missing documented version for ${product.component}`);
+      }
+      return [product.component, { version }];
+    }),
+  );
+}
+
+export async function documentedProducts() {
+  const [config, versions] = await Promise.all([
+    fs.readFile(new URL('../../../release-please-config.json', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../../../.release-please-manifest.json', import.meta.url), 'utf8'),
+  ]);
+  return selectDocumentedProducts(JSON.parse(config), JSON.parse(versions));
 }

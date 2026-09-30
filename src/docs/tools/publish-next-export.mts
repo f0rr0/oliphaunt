@@ -21,10 +21,10 @@ if (!fs.existsSync(nextExportRoot)) {
 
 fs.rmSync(buildRoot, { force: true, recursive: true });
 fs.mkdirSync(path.dirname(buildRoot), { recursive: true });
-fs.cpSync(nextExportRoot, buildRoot, { force: true, recursive: true });
-
 if (fs.existsSync(generatedStaticRoot)) {
-  fs.cpSync(generatedStaticRoot, buildRoot, { force: true, recursive: true });
+  fs.cpSync(generatedStaticRoot, nextExportRoot, { force: true, recursive: true });
 }
+
+fs.cpSync(nextExportRoot, buildRoot, { force: true, recursive: true });
 
 console.log(`published docs static export to ${path.relative(repoRoot, buildRoot)}`);

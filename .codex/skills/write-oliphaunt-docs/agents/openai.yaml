@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write Oliphaunt docs"
+  short_description: "Source-grounded SDK docs and visual review"
+  default_prompt: "Use $write-oliphaunt-docs to improve Oliphaunt developer docs, verify examples against the SDKs, and review the rendered site."

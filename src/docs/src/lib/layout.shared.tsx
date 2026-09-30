@@ -10,22 +10,6 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
-        text: 'Get started',
-        url: '/docs/start',
-      },
-      {
-        text: 'SDKs',
-        url: '/docs/sdk',
-      },
-      {
-        text: 'Learn',
-        url: '/docs/learn',
-      },
-      {
-        text: 'Reference',
-        url: '/docs/reference',
-      },
-      {
         text: 'GitHub',
         url: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
         external: true,

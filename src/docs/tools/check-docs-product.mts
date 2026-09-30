@@ -5,8 +5,8 @@ import path from 'node:path';
 import { generateDocs } from './generate-content.mts';
 
 const result = await generateDocs();
-const { manifest, routeRecords, paths } = result;
-const { repoRoot, siteDocsRoot, staticRoot, generatedMetaRoot } = paths;
+const { routeRecords, paths } = result;
+const { repoRoot } = paths;
 
 function fail(message) {
   console.error(message);

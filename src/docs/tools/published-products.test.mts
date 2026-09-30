@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { selectProducts } from './published-products.mts';
+import { selectDocumentedProducts, selectProducts } from './published-products.mts';
 
-test('installation versions use completed stable releases of the requested product', () => {
+test('published versions use completed stable releases of the requested product', () => {
   const release = (tag_name: string, extra = {}) => ({
     tag_name,
     published_at: '2026-09-11T00:00:00Z',
@@ -24,4 +24,15 @@ test('installation versions use completed stable releases of the requested produ
   );
   expect(products['oliphaunt-kotlin']?.version).toBe('0.10.0');
   expect(products['oliphaunt-swift']).toBeNull();
+});
+
+test('documented versions stay paired with checkout APIs independently of publication', () => {
+  const config = {
+    packages: { 'sdk/rust': { component: 'rust' }, 'sdk/swift': { component: 'swift' } },
+  };
+  expect(selectDocumentedProducts(config, { 'sdk/rust': '0.3.0', 'sdk/swift': '0.8.0' })).toEqual({
+    rust: { version: '0.3.0' },
+    swift: { version: '0.8.0' },
+  });
+  expect(() => selectDocumentedProducts(config, { 'sdk/rust': '0.3.0' })).toThrow(/swift/);
 });
