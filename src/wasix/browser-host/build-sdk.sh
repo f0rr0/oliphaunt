@@ -30,8 +30,9 @@ toml_value() {
 wasmer_js_version="$(toml_value wasmer-js version)"
 wasmer_wasix_version="$(toml_value wasmer-wasix version)"
 wasmer_version="$(toml_value wasmer version)"
+virtual_fs_version="$(toml_value virtual-fs version)"
 
-for value in "$wasmer_js_version" "$wasmer_wasix_version" "$wasmer_version"; do
+for value in "$wasmer_js_version" "$wasmer_wasix_version" "$wasmer_version" "$virtual_fs_version"; do
   if [[ -z "$value" ]]; then
     echo "wasix-ts host build: malformed $source_manifest" >&2
     exit 1
@@ -81,6 +82,7 @@ trap cleanup EXIT
 wasmer_js_dir="$build_root/wasmer-js"
 wasmer_wasix_dir="$build_root/wasmer-wasix-$wasmer_wasix_version"
 wasmer_dir="$build_root/wasmer-$wasmer_version"
+virtual_fs_dir="$build_root/virtual-fs-$virtual_fs_version"
 
 # Use the same bounded transports, exact pins and safe extraction as the other
 # producers. Only temporary source trees are patched; verified archives persist.
@@ -88,7 +90,7 @@ source "$repo_root/src/third-party/tools/fetch-sources.sh"
 bun - "$source_manifest" "$build_root" <<'JS'
 import {readFileSync, writeFileSync} from 'node:fs';
 const pins = Bun.TOML.parse(readFileSync(process.argv[2], 'utf8'));
-for (const name of ['wasmer-js', 'wasmer-wasix', 'wasmer']) {
+for (const name of ['wasmer-js', 'wasmer-wasix', 'wasmer', 'virtual-fs']) {
   const pin = pins[name];
   const source = name === 'wasmer-js'
     ? {name, kind:'git', url:pin.url, branch:'oliphaunt-pinned', commit:pin.commit}
@@ -98,7 +100,7 @@ for (const name of ['wasmer-js', 'wasmer-wasix', 'wasmer']) {
 }
 JS
 oliphaunt_acquisition_start 'browser host sources' 1800
-for source_name in wasmer-js wasmer-wasix wasmer; do
+for source_name in wasmer-js wasmer-wasix wasmer virtual-fs; do
   fetch_source "$build_root/$source_name.json" "$build_root" "$target_parent/archives" fetch
 done
 actual_wasmer_js_version="$(bun "$repo_root/tools/dev/node-info.mts" package-version "$wasmer_js_dir/package.json")"
@@ -119,6 +121,9 @@ while IFS= read -r patch_name; do
       ;;
     ????-wasmer-*.patch)
       patch_dir="$wasmer_dir"
+      ;;
+    ????-virtual-fs-*.patch)
+      patch_dir="$virtual_fs_dir"
       ;;
     *)
       echo "wasix-ts host build: patch target is not declared by its canonical name: $patch_name" >&2

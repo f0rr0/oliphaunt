@@ -222,6 +222,12 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
 
         const rawTransfers = step.env?.OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON;
         if (rawTransfers === undefined) continue;
+        const checkout = steps.find((candidate) => candidate.uses?.startsWith('actions/checkout@'));
+        assert.equal(
+          checkout?.with?.['fetch-depth'],
+          0,
+          `${workflowJob} needs the base ref for Moon execution`,
+        );
         const plannedJob =
           run.match(/run-planned-moon-job[.]sh ([a-z0-9-]+)/u)?.[1] ??
           (run.includes('collect-wasix-evidence.sh') ? 'wasix-release-regression' : undefined);
