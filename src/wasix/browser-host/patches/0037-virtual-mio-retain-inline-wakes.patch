@@ -1,0 +1,88 @@
+diff --git a/src/waker.rs b/src/waker.rs
+--- a/src/waker.rs
++++ b/src/waker.rs
+@@ -1,31 +1,29 @@
+ #![allow(dead_code, unused)]
+ use std::{
+-    sync::{Arc, Condvar, Mutex},
++    sync::{atomic::{AtomicBool, Ordering}, Arc},
++    thread::{self, Thread},
+     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+ };
+ 
+ use futures::Future;
+ 
+ pub struct InlineWaker {
+-    lock: Mutex<()>,
+-    condvar: Condvar,
++    thread: Thread,
++    notified: AtomicBool,
+ }
+ impl InlineWaker {
+     pub fn new() -> Arc<Self> {
+         Arc::new(Self {
+-            lock: Mutex::new(()),
+-            condvar: Condvar::new(),
++            thread: thread::current(),
++            notified: AtomicBool::new(false),
+         })
+     }
+ 
+     fn wake_now(&self) {
+-        // Note: This guard should be there to prevent race conditions however in the
+-        // browser it causes a lock up - some strange browser issue. What I suspect
+-        // is that the Condvar::wait call is not releasing the mutex lock
+-        #[cfg(not(feature = "js"))]
+-        let _guard = self.lock.lock().unwrap();
+-
+-        self.condvar.notify_all();
++        // Retain a wake delivered during poll, before the worker parks.
++        // No synchronous mutex may block the browser thread delivering a wake.
++        self.notified.store(true, Ordering::Release);
++        self.thread.unpark();
+     }
+ 
+     pub fn as_waker(self: &Arc<Self>) -> Waker {
+@@ -43,10 +41,11 @@
+         // We loop waiting for the waker to be woken, then we poll again
+         let mut task = Box::pin(task);
+         loop {
+-            let lock = inline_waker.lock.lock().unwrap();
+             match task.as_mut().poll(&mut cx) {
+                 Poll::Pending => {
+-                    inline_waker.condvar.wait(lock).ok();
++                    while !inline_waker.notified.swap(false, Ordering::Acquire) {
++                        thread::park();
++                    }
+                 }
+                 Poll::Ready(ret) => {
+                     return ret;
+@@ -75,3 +74,28 @@
+         |s| drop(Arc::from_raw(s as *const InlineWaker)), // decrease refcount
+     )
+ };
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::{future::poll_fn, sync::mpsc, time::Duration};
++
++    #[test]
++    fn wake_during_poll_is_retained_until_the_next_poll() {
++        let (tx, rx) = mpsc::channel();
++        thread::spawn(move || {
++            let mut polled = false;
++            InlineWaker::block_on(poll_fn(|cx| {
++                if polled {
++                    Poll::Ready(())
++                } else {
++                    polled = true;
++                    cx.waker().wake_by_ref();
++                    Poll::Pending
++                }
++            }));
++            tx.send(()).unwrap();
++        });
++        rx.recv_timeout(Duration::from_secs(2)).unwrap();
++    }
++}

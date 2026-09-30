@@ -8,7 +8,7 @@ const repositoryRoot = resolve(hostDirectory, '../../..');
 const sourceManifestPath = 'src/wasix/browser-host/source.toml';
 const buildScriptPath = 'src/wasix/browser-host/build-sdk.sh';
 const provenanceScriptPath = 'src/wasix/browser-host/build-provenance.mts';
-const safePatchName = /^\d{4}-(?:wasmer-(?:(?:js|wasix)-)?|virtual-fs-)[a-z0-9-]+\.patch$/u;
+const safePatchName = /^\d{4}-(?:wasmer-(?:(?:js|wasix)-)?|virtual-(?:fs|mio)-)[a-z0-9-]+\.patch$/u;
 
 export async function loadHostBuildContract() {
   const source = await readFile(resolve(repositoryRoot, sourceManifestPath), 'utf8');
