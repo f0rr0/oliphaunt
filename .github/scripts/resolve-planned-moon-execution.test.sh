@@ -57,6 +57,8 @@ cp .github/scripts/{run-planned-moon-job.sh,run-moon-targets.sh,resolve-planned-
 cat > "$scratch/parallel/.moon/workspace.yml" <<'YAML'
 projects:
   fixture: .
+vcs:
+  defaultBranch: main
 YAML
 cat > "$scratch/parallel/moon.yml" <<'YAML'
 id: fixture
@@ -87,10 +89,15 @@ touch "$1.done"
 SH
 (
   cd "$scratch/parallel"
+  git init -q --initial-branch=fixture
+  git add .
+  git -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m fixture
+  git clone -q --depth 1 "file://$PWD" "$scratch/shallow"
+  cd "$scratch/shallow"
+  # Planned execution needs only the candidate, with no main ref or history.
   # Moon tasks inherit their parent's root; this is a separate fixture workspace.
   export MOON_WORKSPACE_ROOT="$PWD"
-  git init -q --initial-branch=main
-  git -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m fixture
+  test "$(git rev-parse --is-shallow-repository)" = true
   export OLIPHAUNT_CI_JOB_TARGETS_JSON='{"parallel":["fixture:joined"]}'
   export OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON='["fixture:downloaded"]'
   # Exercise CI's base-ref lookup locally as well as on GitHub.

@@ -36,7 +36,7 @@ trap 'rm -rf "$OLIPHAUNT_EXTENSION_EVIDENCE_DIR"' EXIT
 .github/scripts/run-planned-moon-job.sh wasix-release-regression
 bash src/extensions/tools/check-extension-model.sh \
   --record-wasix-evidence-run "$run_id" \
-  --observed-at "$observed_at"
-bash src/extensions/tools/check-extension-model.sh --check --require-current-evidence
+  --observed-at "$observed_at" \
+  --require-current-evidence
 
 echo "recorded immutable WASIX extension evidence run: $run_id"

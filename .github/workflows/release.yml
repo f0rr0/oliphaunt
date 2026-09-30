@@ -360,7 +360,7 @@ jobs:
             "$RELEASE_HEAD_SHA" \
             target/release-candidate/wasix-evidence \
             --run-id "$CI_RUN_ID" \
-            --job "E2E / WASIX Release Regression" \
+            --job "E2E / WASIX Extension Lifecycle" \
             --artifact wasix-release-regression-evidence
       - name: Download required exact-SHA native evidence
         if: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).has_release_changes == 'true' && inputs.approval_run_id == '' && fromJSON(needs.plan-candidate.outputs.release_plan).requires_native_extension_lifecycle_evidence == 'true' }}

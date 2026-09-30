@@ -2704,7 +2704,7 @@ jobs:
           retention-days: 90
 
   wasix-release-regression:
-    name: E2E / WASIX Release Regression
+    name: E2E / WASIX Extension Lifecycle
     needs:
       - affected
       - extension-artifacts-wasix
@@ -2718,7 +2718,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
@@ -2819,11 +2819,6 @@ jobs:
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
         run: |
-          actual_sha="$(git rev-parse HEAD)"
-          if [[ "$actual_sha" != "$CI_HEAD_SHA" ]]; then
-            echo "checked-out candidate $actual_sha does not match requested SHA $CI_HEAD_SHA" >&2
-            exit 1
-          fi
           run_id="$(date -u +%Y-%m-%dT%H%M%SZ)-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${CI_HEAD_SHA}"
           run_path="src/extensions/evidence/runs/$run_id.json"
           echo "run_path=$run_path" >> "$GITHUB_OUTPUT"

@@ -74,7 +74,7 @@ runs:
         node --version
         bun --version
         # This shell probe needs no source comparison or fetched base branch.
-        .github/scripts/run-moon-targets.sh --base HEAD --head HEAD ci-workflows:verify-bash
+        .github/scripts/run-moon-targets.sh ci-workflows:verify-bash
 
     - name: Save verified tool archives
       if: ${{ steps.restore_verified_moon_toolchain.outputs.cache-hit != 'true' }}
