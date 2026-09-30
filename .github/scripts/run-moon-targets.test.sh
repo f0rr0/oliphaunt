@@ -5,7 +5,7 @@ trap 'rm -rf "$fixture"' EXIT
 export MOON_BIN="$fixture/moon" MOON_CALLS="$fixture/calls"
 cat >"$MOON_BIN" <<'MOON'
 #!/usr/bin/env bash
-if [[ -v MOON_BASE || -v MOON_HEAD ]]; then
+if [[ -n "${MOON_BASE+x}${MOON_HEAD+x}" ]]; then
   echo 'explicit task execution inherited affectedness revisions' >&2
   exit 8
 fi
