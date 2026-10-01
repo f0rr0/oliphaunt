@@ -8,6 +8,7 @@ export const paths = {
   mobileBrokerRuntimeTests: 'src/native/sdks/rust/tests/mobile_broker.rs',
   wasixResourceRuntimeTests: 'src/wasix/sdks/rust/tests/resources.rs',
   wasixSdkReadme: 'src/wasix/sdks/ts/README.md',
+  wasixRustReadme: 'src/wasix/sdks/rust/README.md',
   wasixDockerTest: 'src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh',
   nativeExtensionFixture: 'src/extensions/artifacts/native/tools/create-artifact.test.mts',
   windowsVcRuntimePolicy: 'tools/packaging/windows-vc-runtime-policy.json',

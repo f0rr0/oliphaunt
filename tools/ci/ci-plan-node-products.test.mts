@@ -983,7 +983,12 @@ test('Android extension packaging selects matching dependency-complete Linux sup
 });
 
 test('WASIX package README and compiler unit fixtures do not select runtime compilers', () => {
-  for (const file of [paths.wasixSdkReadme, paths.wasixDockerTest, paths.nativeExtensionFixture]) {
+  for (const file of [
+    paths.wasixSdkReadme,
+    paths.wasixRustReadme,
+    paths.wasixDockerTest,
+    paths.nativeExtensionFixture,
+  ]) {
     const observation = affectedObservation([file]);
     const roots = new Set(triggeringTaskNames(observation.tasks));
     const required = requiredTasksForAffected(roots);
@@ -996,6 +1001,9 @@ test('WASIX package README and compiler unit fixtures do not select runtime comp
   );
   assert(jobs.has('wasix-ts-package'));
   assert(!jobs.has('wasix-ts-sdk-package'));
+  const rust = effects(paths.wasixRustReadme);
+  assert(rust.directTasks.includes('oliphaunt-wasix-rust:test'));
+  assert.deepEqual(rust.releaseProducts, []);
 });
 
 test('SDK runtime test edits select their final hosted execution roots', () => {

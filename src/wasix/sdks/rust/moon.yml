@@ -133,6 +133,7 @@ tasks:
       # Cargo releases its build lock before rustdoc consumes the compiled libraries.
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/unit"
     inputs:
+      - "README.md"
       - "@group(cargo-workspace)"
       - "@group(rust-test-config)"
       - project: "shared-test-fixtures"
