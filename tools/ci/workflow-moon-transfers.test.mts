@@ -13,7 +13,10 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { resolveExecution } from '../../.github/scripts/resolve-planned-moon-execution.mts';
+import {
+  executionBatches,
+  resolveExecution,
+} from '../../.github/scripts/resolve-planned-moon-execution.mts';
 import { CI_JOB_TARGETS } from './ci_plan.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -173,7 +176,7 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
-  test('WASIX consumers build query once before running against transferred SDK artifacts', () => {
+  test('WASIX consumers prepare shared inputs before running against transferred SDK artifacts', () => {
     const step = workflow.jobs['wasix-ts-sdk-package'].steps.find(
       (step) => step.name === 'Test WASIX TypeScript consumers',
     );
@@ -185,7 +188,22 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
     // SDK transfers cut off their upstream query build, so every independently
     // selectable consumer must retain its own edge to the shared producer.
     for (const target of CI_JOB_TARGETS['wasix-ts-sdk-package']) {
-      assert(dependencies(target).includes('oliphaunt-query-ts:build'), target);
+      for (const dependency of [
+        'oliphaunt-query-ts:build',
+        'extension-artifacts-wasix:compiler-output',
+      ])
+        assert(dependencies(target).includes(dependency), `${target} requires ${dependency}`);
+    }
+    const batches = executionBatches(execution.targets, tasks);
+    const seeds = batches.findIndex((batch) => batch.includes('database-resources:package-wasix'));
+    assert(seeds >= 0, 'seed packages must be prepared locally from transferred seed outputs');
+    for (const target of ['oliphaunt-wasix-ts:test-browser', 'postgres-tools-wasix:test-browser']) {
+      for (const dependency of [
+        'database-resources:package-wasix',
+        'database-resources:package-icu',
+      ])
+        assert(dependencies(target).includes(dependency), `${target} requires ${dependency}`);
+      assert(batches.findIndex((batch) => batch.includes(target)) > seeds, target);
     }
     assert.deepEqual(execution.localDependencies, ['oliphaunt-query-ts:build']);
     for (const target of [...execution.localDependencies, ...execution.targets]) {
