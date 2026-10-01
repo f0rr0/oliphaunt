@@ -7,6 +7,12 @@ Use the same relocatable wasm linker shape as the released WASIX lane when
 assembling the backend core archive.  Leave the final dynamic-main link to the
 product build helper so its generated side-module export closure stays the one
 authoritative policy instead of wasixcc's unconditional export-all default.
+
+This partial link lowers the backend's ThinLTO bitcode, so enable Wasm EH and
+SJLJ here as well as at the final link.  Otherwise the backend's inlined
+sigsetjmp sites retain an unsupported setjmp import.  Limit inlining during
+this link to avoid multiplying SJLJ catch-state spills across large functions;
+keep the normal frontend and final-link optimization settings.
 ---
  src/backend/Makefile | 17 ++++++++++++-----
  1 file changed, 12 insertions(+), 5 deletions(-)
@@ -35,7 +41,7 @@ index 9292f77031..89c356d090 100644
 +	rm -f $(top_builddir)/libpgmain.a $(LIBPG) $(top_builddir)/libpgcore.o $(LIBPGCORE)
 +	$(AR) rcs $(top_builddir)/libpgmain.a $(PGMAIN)
 +	$(AR) rcs $(LIBPG) $(PGBACKEND)
-+	$(WASM_LD) --relocatable -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
++	$(WASM_LD) --relocatable -mllvm -inline-threshold=0 -mllvm --wasm-enable-eh -mllvm --wasm-enable-sjlj -mllvm --wasm-use-legacy-eh=false -mllvm --exception-model=wasm -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
 +	$(AR) rcs $(LIBPGCORE) $(top_builddir)/libpgcore.o
 
  postgres: oliphaunt
