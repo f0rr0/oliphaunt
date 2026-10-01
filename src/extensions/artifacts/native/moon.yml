@@ -91,7 +91,7 @@ tasks:
       - /tools/packaging/check-linux-consumer-baseline.sh
       - /src/third-party/tools/source-fetch-core.mts
       - /src/extensions/tools/extension-upstream-licenses.mts
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - /src/extensions/tools/extension-artifact-archive-policy.mts
       - /src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
       - /src/native/runtime/tools/native-runtime-payload-policy.json

@@ -283,6 +283,7 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
+          cache-partition: ${{ matrix.cache_partition }}
           install-workspace: ${{ matrix.requires_workspace && 'true' || 'false' }}
 
       - name: Set up Rust
@@ -435,6 +436,7 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
+          cache-partition: ${{ matrix.cache_partition }}
           install-workspace: ${{ matrix.requires_workspace && 'true' || 'false' }}
 
       - name: Set up Rust
@@ -595,6 +597,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: ${{ matrix.target }}
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -782,6 +786,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: ${{ matrix.target }}
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -873,6 +879,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: ${{ matrix.target }}
 
       - name: Set up Apple
         uses: ./.github/actions/setup-apple
@@ -1295,6 +1303,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: ${{ matrix.target }}
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -1679,11 +1689,6 @@ jobs:
 
   js-sdk-package:
     name: Packages / JavaScript SDK + ICU
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      producer_receipt: ${{ steps.query_producer_receipt.outputs.receipt }}
     needs:
       - affected
       - checks
@@ -1743,26 +1748,12 @@ jobs:
           if-no-files-found: error
 
       - name: Upload shared TypeScript query package
-        id: query_package_artifact
         if: ${{ contains(fromJson(needs.affected.outputs.job_targets)['js-sdk-package'], 'oliphaunt-query-ts:package') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-query-ts-sdk-package-artifacts
           path: target/sdk-artifacts/oliphaunt-query-ts
           if-no-files-found: error
-
-      - name: Record TypeScript query producer evidence
-        id: query_producer_receipt
-        if: ${{ steps.query_package_artifact.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PRODUCER_ARTIFACT_ID: ${{ steps.query_package_artifact.outputs.artifact-id }}
-          PRODUCER_ARTIFACT_DIGEST: ${{ steps.query_package_artifact.outputs.artifact-digest }}
-        run: |
-          PRODUCER_MOON_VERSION="$(moon --version)"
-          export PRODUCER_MOON_VERSION
-          bun .github/scripts/moon-producer-receipt.mts oliphaunt-query-ts:package oliphaunt-query-ts-sdk-package-artifacts src/query/ts
 
   native-consumers:
     name: Tests / Native Consumers
@@ -2445,6 +2436,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: ${{ matrix.target_id }}
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -2582,6 +2575,7 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
+          cache-partition: shard-${{ matrix.shard }}
           install-workspace: "false"
 
       - name: Set up Deno for packed native tools smoke
@@ -2879,6 +2873,7 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
+          cache-partition: ${{ matrix.target }}
           install-workspace: "true"
 
       - name: Set up Android
@@ -3496,7 +3491,6 @@ jobs:
           WASIX_RELEASE_REGRESSION_REQUIRED: ${{ needs.affected.outputs.wasix_release_regression_required }}
           WASIX_EVIDENCE_ROOT: target/qualification/wasix-release-regression-evidence
           NATIVE_EVIDENCE_ROOT: target/qualification/native-extension-lifecycle-evidence
-          PRODUCER_RECEIPTS_JSON: ${{ format('[{0}]', needs.js-sdk-package.outputs.producer_receipt || '') }}
         run: bash .github/scripts/release-candidate.sh write
 
       - name: Upload exact-SHA qualification record

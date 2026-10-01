@@ -103,6 +103,24 @@ describe('Moon task capabilities', () => {
     assert.equal(new Set(labels(targets)).size, labels(targets).length);
   });
 
+  test('keeps cache partitions stable across unrelated groups and separates batch writers', () => {
+    const taskMap = tasks(
+      { target: 'a:check' },
+      { target: 'rust:first', tags: ['requires-rust'] },
+      { target: 'rust:second', tags: ['requires-rust'] },
+    );
+    const targets = [...taskMap.values()].map((task) => matrixTarget(task, 'deep', taskMap));
+    const rustOnly = groupTargets(targets.slice(1), { maxTargets: 1 });
+    const withUnrelated = groupTargets(targets, { maxTargets: 1 }).filter(
+      ({ requires_rust }) => requires_rust,
+    );
+    assert.deepEqual(
+      withUnrelated.map(({ cache_partition }) => cache_partition),
+      rustOnly.map(({ cache_partition }) => cache_partition),
+    );
+    assert.equal(new Set(withUnrelated.map(({ cache_partition }) => cache_partition)).size, 2);
+  });
+
   test('rejects duplicate targets and invalid shard limits', () => {
     const row = {
       target: 'repo:check',

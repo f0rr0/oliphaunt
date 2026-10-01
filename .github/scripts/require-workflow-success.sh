@@ -427,6 +427,8 @@ while true; do
       fi
       if [[ "$status" -eq 75 ]]; then
         echo "transient GitHub read budget exhausted while inspecting $workflow run $run_id; the waiter remains active"
+        # An unread candidate is unknown, so absence cannot authorize a dispatch.
+        inventory_ready=false
         continue
       fi
       echo "$workflow run $run_id does not satisfy the required job/artifact gate"

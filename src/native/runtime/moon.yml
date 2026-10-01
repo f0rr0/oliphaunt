@@ -349,7 +349,7 @@ tasks:
       - /tools/packaging/release-notices.mts
       - /tools/packaging/strip-native-binaries.sh
       - /tools/packaging/platform-binary-contract.mts
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
     outputs:
       - /target/liboliphaunt/desktop-release-assets/**/*
     options:
@@ -609,7 +609,7 @@ tasks:
       - project: extensions
         group: sdk-metadata
       - /src/native/runtime/moon.yml
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - /src/native/runtime/tools/check-release-assets.mts
       - /src/native/runtime/tools/package-liboliphaunt-aggregate-assets.sh
       - "@group(release-target-contract)"

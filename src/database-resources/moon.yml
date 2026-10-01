@@ -77,7 +77,7 @@ tasks:
     tags: ["release", "artifact-package", "ci-js-sdk-package"]
     deps: ["database-resources:build-icu-data"]
     command: "bash src/database-resources/icu/tools/package.sh"
-    inputs: ["icu/**/*", "tools/**/*", "contracts/**/*", "!**/*.test.*", "VERSION", "/tools/packaging/**/*.mts", "!/tools/packaging/**/*.test.*"]
+    inputs: ["icu/**/*", "tools/**/*", "contracts/**/*", "!**/*.test.*", "VERSION", "@group(packaging-source)"]
     outputs: ["/target/database-resources/release-assets/*icu-data.tar.gz", "/target/database-resources/cargo-artifacts/**/*", "/target/release/npm-packages/oliphaunt-icu/*.tgz", "/target/release/maven-manifests/database-resources.tsv", "/target/release/maven-staging/database-resources/**/*"]
     options:
       runFromWorkspaceRoot: true

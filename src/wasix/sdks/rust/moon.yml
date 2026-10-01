@@ -206,7 +206,7 @@ tasks:
       - "@group(cargo-workspace)"
       - "@group(release-archive-contract)"
       - "@group(release-target-contract)"
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - "/tools/packaging/cargo-source-package.mts"
       - "/tools/packaging/package-cargo-source.sh"
       - "/tools/packaging/check-cargo-package-tests.sh"
@@ -240,6 +240,6 @@ tasks:
       bash tools/packaging/check-cargo-package-tests.sh --crate "target/sdk-artifacts/oliphaunt-wasix-rust/oliphaunt-wasix-$version.crate" --no-default-features --features extensions,tools,icu --dependency-crate "target/sdk-artifacts/oliphaunt-query/oliphaunt-query-$query_version.crate" --path-dependencies-from src/wasix/sdks/rust/Cargo.toml
     env:
       CARGO_TARGET_DIR: "target"
-    inputs: ["@group(code)", "@group(cargo-workspace)", "/tools/packaging/*.{mts,sh}"]
+    inputs: ["@group(code)", "@group(cargo-workspace)", "@group(packaging-source)"]
     options:
       runFromWorkspaceRoot: true

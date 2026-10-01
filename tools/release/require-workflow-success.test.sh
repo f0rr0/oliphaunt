@@ -63,6 +63,20 @@ for mode in reuse active absent failed advanced ambiguous race uncovered; do
     *) [[ ! -e "$case_root/dispatch.json" ]] ;;
   esac
 done
+for endpoint in jobs artifacts; do
+  prepare "qualification-transient-$endpoint"
+  bun tools/release/require-workflow-success.test.mts prepare "$case_root" reuse
+  invoke "qualification-transient-$endpoint" CI "$sha" 10 --job Qualified --artifact oliphaunt-release-candidate --plan-qualification '["oliphaunt-js"]'
+  expect_status 0
+  rg -q 'qualification_request_required=false' "$case_root/output"
+  rg -q 'run_id=77' "$case_root/output"
+  [[ "$(cat "$case_root/state.inspection")" -ge 2 && ! -e "$case_root/dispatch.json" ]]
+  prepare "qualification-unavailable-$endpoint"
+  bun tools/release/require-workflow-success.test.mts prepare "$case_root" reuse
+  invoke "qualification-unavailable-$endpoint" CI "$sha" 0 --job Qualified --artifact oliphaunt-release-candidate --plan-qualification '["oliphaunt-js"]'
+  expect_status 1
+  [[ ! -s "$case_root/output" && ! -e "$case_root/dispatch.json" ]]
+done
 prepare transient
 invoke transient "${standard[@]}"
 expect_status 0

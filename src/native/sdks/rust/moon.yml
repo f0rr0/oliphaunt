@@ -209,7 +209,7 @@ tasks:
       - "@group(cargo-workspace)"
       - "@group(release-archive-contract)"
       - "@group(release-target-contract)"
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - "/tools/packaging/cargo-source-package.mts"
       - "/tools/packaging/package-cargo-source.sh"
       - "/tools/packaging/check-cargo-package-tests.sh"

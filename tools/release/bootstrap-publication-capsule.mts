@@ -157,31 +157,6 @@ function readMetadataFile(file, context) {
   return bytes;
 }
 
-function hashRegularFile(file, context, expectedSize = undefined) {
-  const { descriptor, stat } = openRegularNoFollow(file, context);
-  try {
-    if (expectedSize !== undefined && stat.size !== expectedSize) {
-      throw error(`${context} size ${stat.size} does not match the frozen size ${expectedSize}`);
-    }
-    const hash = createHash('sha256');
-    const buffer = Buffer.allocUnsafe(COPY_BUFFER_SIZE);
-    let position = 0;
-    for (;;) {
-      const count = readSync(descriptor, buffer, 0, buffer.length, position);
-      if (count === 0) break;
-      hash.update(buffer.subarray(0, count));
-      position += count;
-    }
-    const finalStat = fstatSync(descriptor);
-    if (position !== stat.size || finalStat.size !== stat.size) {
-      throw error(`${context} changed while it was hashed`);
-    }
-    return { size: stat.size, sha256: hash.digest('hex') };
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
 function sameStrings(left, right) {
   return stableJson(left.slice().sort(compareText)) === stableJson(right.slice().sort(compareText));
 }
@@ -234,16 +209,6 @@ function expectedManifest(
     publicationLock: lockFile,
     files: lockedPublicationFiles(lock, { products: selectedProducts, workspaceRoot }),
   };
-}
-
-function verifyCandidateFiles(manifest, workspaceRoot) {
-  for (const artifact of manifest.files) {
-    const file = workspaceFile(workspaceRoot, artifact.path, 'frozen candidate file path');
-    const observed = hashRegularFile(file, artifact.path, artifact.size);
-    if (observed.sha256 !== artifact.sha256) {
-      throw error(`${artifact.path} bytes do not match the approved publication lock`);
-    }
-  }
 }
 
 function tarHeader(relative, size) {
@@ -338,7 +303,6 @@ function capsuleEntries(
     approvalRunId,
     qualificationRunId,
   );
-  verifyCandidateFiles(manifest, workspaceRoot);
   const manifestBytes = Buffer.from(canonicalJson(manifest));
   const entries = [
     {

@@ -62,7 +62,7 @@ function validateChanges(source, controller, mode, diff) {
     (file) =>
       !CONTROL_FILES.has(file) &&
       !/^tools\/release\/[^/]+[.]test[.](?:mts|sh)$/u.test(file) &&
-      !/^docs\/maintainers\/release(?:-setup)?[.]md$/u.test(file),
+      !/^src\/docs\/maintainers\/release(?:-setup)?[.]md$/u.test(file),
   );
   if (rejected.length)
     throw new Error(

@@ -370,7 +370,7 @@ function mavenManifestArtifacts(file) {
   }));
 }
 
-function directoryEnvelope(directory) {
+function directoryEnvelope(directory, fileEnvelopes = undefined) {
   const files = walkFiles(directory, { ignoreBuildDirectories: true });
   const hash = createHash('sha256');
   let size = 0;
@@ -380,6 +380,11 @@ function directoryEnvelope(directory) {
     hash.update(`${relative}\0${bytes.length}\0`);
     hash.update(bytes);
     size += bytes.length;
+    fileEnvelopes?.push({
+      path: file,
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
   }
   return { path: rel(directory), sha256: hash.digest('hex'), size };
 }
@@ -2817,20 +2822,19 @@ export function lockedPublicationFiles(lock, { products, workspaceRoot = ROOT } 
         `${context} frozen artifact must be a regular file or directory: ${artifact.path}`,
       );
     }
+    const concrete = [];
     const observed = metadata.isFile()
       ? { sha256: sha256File(value), size: metadata.size }
-      : directoryEnvelope(value);
+      : directoryEnvelope(value, concrete);
+    if (metadata.isFile()) concrete.push({ path: value, ...observed });
     if (observed.sha256 !== artifact.sha256 || observed.size !== artifact.size) {
       throw error(
         `${context} frozen artifact bytes do not match the publication lock: ${artifact.path}`,
       );
     }
-    const concrete = metadata.isFile()
-      ? [value]
-      : walkFiles(value, { ignoreBuildDirectories: true });
-    for (const file of concrete) {
+    for (const { path: file, ...digest } of concrete) {
       const filePath = path.relative(workspaceRoot, file).split(path.sep).join('/');
-      const envelope = { path: filePath, size: statSync(file).size, sha256: sha256File(file) };
+      const envelope = { path: filePath, size: digest.size, sha256: digest.sha256 };
       const prior = files.get(filePath);
       if (prior !== undefined && stableJson(prior) !== stableJson(envelope)) {
         throw error(`overlapping frozen artifacts disagree for ${filePath}`);

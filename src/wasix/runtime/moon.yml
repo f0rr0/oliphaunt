@@ -274,9 +274,12 @@ tasks:
       - tools/package-release-assets.mts
       - tools/wasix-cargo-artifact-contract.mts
       - tools/wasix-aot-manifest.mts
-      - /tools/packaging/**/*.mts
+      - "@group(packaging-source)"
       - /src/database-resources/contracts/*.mts
-      - /tools/release/**/*.mts
+      - /tools/release/platform-compatibility-policy.mts
+      - /tools/release/release-artifact-targets.mts
+      - /tools/release/release-graph.mts
+      - /tools/release/release-history.mts
       - assets/build/postgres/patches/**/*
       - postgres/**/*
       - /src/third-party/postgres/**/*

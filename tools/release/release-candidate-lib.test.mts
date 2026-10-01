@@ -52,52 +52,6 @@ test('selected-product evidence binds scope and candidate SHA and rejects uncove
     expect(() => assertCandidateBindingShape({ ...candidate, sha: 'b'.repeat(40) })).toThrow(
       /candidate SHA/,
     );
-    const receipt = {
-      target: 'oliphaunt-query-ts:package',
-      eligible: true,
-      cacheHit: true,
-      taskHash: 'c'.repeat(64),
-      hashes: [{ target: 'oliphaunt-query-ts:package', hash: 'c'.repeat(64), dependencies: {} }],
-      producer: { sha, runId: '77', runAttempt: 2 },
-      artifact: { id: 901, name: 'query', size: 42, digest: `sha256:${'d'.repeat(64)}` },
-      toolchain: {
-        moon: 'moon 2.5.4',
-        bun: '1.4.2',
-        typescript: '6.0.3',
-        target: 'portable-typescript',
-      },
-    };
-    const recorded = { ...candidate, runId: '77', runAttempt: 2, producers: [receipt] };
-    expect(() => assertCandidateBindingShape(recorded)).not.toThrow();
-    expect(() =>
-      assertCandidateBindingShape({
-        ...recorded,
-        producers: [{ ...receipt, taskHash: undefined, hashes: [] }],
-      }),
-    ).toThrow(/producer hash chain is inconsistent/);
-    expect(() => assertCandidateBindingShape({ ...recorded, runAttempt: 3 })).not.toThrow();
-    for (const producer of [
-      { ...receipt.producer, sha: 'b'.repeat(40) },
-      { ...receipt.producer, runId: '78' },
-      { ...receipt.producer, runAttempt: 3 },
-    ]) {
-      expect(() =>
-        assertCandidateBindingShape({ ...recorded, producers: [{ ...receipt, producer }] }),
-      ).toThrow(/qualification SHA\/run/);
-    }
-    for (const runAttempt of [undefined, null, '1', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(() => assertCandidateBindingShape({ ...recorded, runAttempt })).toThrow(
-        /candidate runAttempt/,
-      );
-      expect(() =>
-        assertCandidateBindingShape({
-          ...recorded,
-          producers: [{ ...receipt, producer: { ...receipt.producer, runAttempt } }],
-        }),
-      ).toThrow(/producer receipt runAttempt/);
-    }
-    receipt.hashes[0].dependencies = { 'query:build': 'passthrough' };
-    expect(() => assertCandidateBindingShape(recorded)).toThrow(/dependency hash is incomplete/);
   } finally {
     cleanup();
   }

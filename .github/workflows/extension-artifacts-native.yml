@@ -50,6 +50,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: extensions-${{ matrix.target }}
 
       - name: Set up Apple
         if: ${{ runner.os == 'macOS' }}
