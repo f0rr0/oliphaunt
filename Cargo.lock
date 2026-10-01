@@ -2559,6 +2559,7 @@ name = "oliphaunt-pgwire-server"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "futures-util",
  "oliphaunt-query",
  "oliphaunt-wasix",
  "serde_json",

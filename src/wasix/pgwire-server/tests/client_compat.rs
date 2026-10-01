@@ -1,6 +1,7 @@
 #![cfg(feature = "wasix")]
 
 use anyhow::{Context, Result};
+use futures_util::TryStreamExt;
 use oliphaunt_pgwire_server::AsyncOliphauntServer;
 use sqlx::{Connection, Row};
 use tokio_postgres::NoTls;
@@ -37,6 +38,50 @@ async fn tokio_postgres_parameters_and_error_recovery_work() -> Result<()> {
     let (first_close, second_close) = tokio::join!(server.close(), server_clone.close());
     first_close?;
     second_close?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires prepared WASIX runtime"]
+async fn tokio_postgres_recovers_from_plpgsql_error_after_copy() -> Result<()> {
+    let server = AsyncOliphauntServer::builder().start().await?;
+    let (client, connection) = tokio_postgres::connect(server.connection_string(), NoTls).await?;
+    let connection = tokio::spawn(connection);
+    client
+        .batch_execute(
+            "CREATE TABLE items(id integer PRIMARY KEY); \
+             INSERT INTO items VALUES (1), (2); \
+             CREATE FUNCTION fail() RETURNS integer LANGUAGE plpgsql AS $$ \
+             BEGIN INSERT INTO items VALUES (3); RAISE EXCEPTION 'expected'; END $$",
+        )
+        .await?;
+
+    for _ in 0..3 {
+        let copied = client
+            .copy_out("COPY (SELECT id FROM items ORDER BY id) TO STDOUT")
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?;
+        assert_eq!(copied.concat(), b"1\n2\n");
+
+        let error = client
+            .query_one("SELECT fail()", &[])
+            .await
+            .expect_err("PL/pgSQL error after COPY must preserve the connection");
+        assert_eq!(error.code().map(|code| code.code()), Some("P0001"));
+        assert_eq!(
+            client
+                .query_one("SELECT count(*)::int4 FROM items", &[])
+                .await?
+                .get::<_, i32>(0),
+            2,
+            "the failed statement must roll back its insert"
+        );
+    }
+
+    drop(client);
+    connection.await??;
+    server.close().await?;
     Ok(())
 }
 
