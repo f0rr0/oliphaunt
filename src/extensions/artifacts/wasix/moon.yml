@@ -47,7 +47,7 @@ tasks:
         group: "version"
       - "tools/package-release-assets.mts"
       - "tools/package-release-assets.sh"
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - project: "extension-runtime-contract"
         group: "contract"
     outputs:

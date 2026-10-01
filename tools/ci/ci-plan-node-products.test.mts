@@ -30,6 +30,36 @@ const NATIVE_TS_CONSUMER_JOBS = [
   'node-direct',
 ];
 
+test('every released product and resource combination keeps its exact scope and required platform matrices', () => {
+  const products = Object.keys(GRAPH.products).sort();
+  const selections = [
+    ...products.map((product) => [product]),
+    ...products
+      .filter((product) => product !== 'database-resources')
+      .map((product) => ['database-resources', product]),
+    products,
+  ];
+  for (const selection of selections) {
+    const plan = planForReleaseProducts(selection, 'a'.repeat(40));
+    assert.deepEqual(plan.qualification_products, [...selection].sort());
+    assert.equal(plan.qualification_head_sha, 'a'.repeat(40));
+    assert.equal(plan.qualification_mode, 'selected-products');
+    for (const [job, matrix] of [
+      ['liboliphaunt-native-desktop', plan.liboliphaunt_native_desktop_runtime_matrix],
+      ['liboliphaunt-native-android', plan.liboliphaunt_native_android_runtime_matrix],
+      ['liboliphaunt-native-ios', plan.liboliphaunt_native_ios_runtime_matrix],
+      ['liboliphaunt-wasix-aot', plan.liboliphaunt_wasix_aot_runtime_matrix],
+      ['wasix-postmaster', plan.liboliphaunt_wasix_postmaster_runtime_matrix],
+    ]) {
+      assert.equal(matrix.include.length > 0, plan.jobs.includes(job), `${selection}: ${job}`);
+    }
+  }
+  assert.deepEqual(
+    planForReleaseProducts(products, 'a'.repeat(40)),
+    planForReleaseProducts([...products].reverse(), 'a'.repeat(40)),
+  );
+});
+
 test('SDK-only release reuses a complete published dependency inventory, while missing or selected dependencies retain producers', () => {
   const inventory = Object.entries(publishedConsumerDependencies()).map(([name, version]) => ({
     name,
@@ -121,6 +151,36 @@ function effects(paths) {
     tasks,
   };
 }
+
+test('shared packaging tests and release controllers run checks without scheduling product builds', () => {
+  for (const file of [
+    paths.sharedPackagingTest,
+    paths.sharedPackagingShellTest,
+    paths.releaseControllerTest,
+    paths.releaseControllerSource,
+  ]) {
+    const result = effects(file);
+    assert.deepEqual(result.jobs, ['affected'], file);
+    assert.deepEqual(result.releaseProducts, [], file);
+    assert(
+      result.directTasks.some(
+        (target) => target === 'artifact-packaging:test' || target === 'release-tools:test',
+      ),
+    );
+  }
+  const source = effects(paths.sharedPackagingSource);
+  for (const target of [
+    'liboliphaunt-native:package-runtime-desktop-target',
+    'liboliphaunt-wasix:release-assets',
+    'extension-artifacts-native:build-target',
+    'oliphaunt-rust:package',
+    'oliphaunt-wasix-rust:package',
+    'postgres-tools-native:package-assets',
+    'postgres-tools-wasix:package-portable',
+  ]) {
+    assert(source.directTasks.includes(target), `production helper must affect ${target}`);
+  }
+});
 
 test('environment input changes retain their producer and runtime qualification', () => {
   const roots = new Set(

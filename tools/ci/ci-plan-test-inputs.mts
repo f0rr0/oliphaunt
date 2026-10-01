@@ -1,5 +1,10 @@
 // Sample changes exercised by CI planning tests; never used for production affectedness.
 export const paths = {
+  sharedPackagingTest: 'tools/packaging/materialize-release-symlinks.test.mts',
+  sharedPackagingShellTest: 'tools/packaging/strip-native-binaries.test.sh',
+  sharedPackagingSource: 'tools/packaging/materialize-release-symlinks.mts',
+  releaseControllerTest: 'tools/release/release-candidate-lib.test.mts',
+  releaseControllerSource: 'tools/release/publication-lock.mts',
   postmasterReadme: 'src/wasix/postmaster/README.md',
   nativeRustRuntimeTests: 'src/native/sdks/rust/tests/native_sql_regression.rs',
   nativeSwiftRuntimeTests: 'src/native/sdks/swift/Tests/OliphauntTests/NativeRuntimeTests.swift',

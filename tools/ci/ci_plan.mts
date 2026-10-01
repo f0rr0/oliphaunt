@@ -50,12 +50,6 @@ const NATIVE_RUNTIME_JOBS = new Set([
   'liboliphaunt-native-desktop',
   'liboliphaunt-native-ios',
 ]);
-const NATIVE_RUNTIME_TASKS = new Set([
-  'liboliphaunt-native:package-runtime-desktop-target',
-  'liboliphaunt-native:package-runtime-android-arm64-v8a',
-  'liboliphaunt-native:package-runtime-android-x86_64',
-  'liboliphaunt-native:package-runtime-ios-xcframework',
-]);
 export const WASM_RUNTIME_JOBS = new Set([
   'liboliphaunt-wasix-runtime',
   'liboliphaunt-wasix-aot',
@@ -338,7 +332,7 @@ export function nativeTargetSubsetForJobs(jobs, tasks) {
   if (jobs.has('liboliphaunt-native-release-assets')) {
     return null;
   }
-  if (intersects(tasks, NATIVE_RUNTIME_TASKS)) {
+  if ([...NATIVE_RUNTIME_JOBS].some((job) => intersects(tasks, new Set(CI_JOB_TARGETS[job])))) {
     return null;
   }
 

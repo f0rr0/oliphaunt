@@ -22,6 +22,10 @@ fileGroups:
     - "/src/third-party/postgres/COPYRIGHT"
     - "/src/third-party/icu/LICENSE"
     - "/src/third-party/openssl/LICENSE.txt"
+  packaging-source:
+    - "/tools/packaging/*.{mjs,mts,sh}"
+    - "!/tools/packaging/*.test.{mjs,mts,sh}"
+    - "!/tools/packaging/test.sh"
   release-archive-contract:
     - "/tools/packaging/windows-vc-runtime-policy.json"
     - "/tools/packaging/release-directory-safety.mts"

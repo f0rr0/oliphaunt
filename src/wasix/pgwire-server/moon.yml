@@ -64,7 +64,7 @@ tasks:
   package:
     command: "bash src/wasix/pgwire-server/tools/package.sh"
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
-    inputs: ["**/*", "@group(legal-files)", "/Cargo.toml", "/Cargo.lock", "/tools/packaging/*.{mts,sh}"]
+    inputs: ["**/*", "@group(legal-files)", "/Cargo.toml", "/Cargo.lock", "@group(packaging-source)"]
     outputs: ["/target/sdk-artifacts/oliphaunt-pgwire-server/**/*"]
     options:
       runFromWorkspaceRoot: true
@@ -77,6 +77,6 @@ tasks:
       sdk_version="$(bun tools/release/product-version.mts version oliphaunt-wasix-rust)"
       query_version="$(bun tools/release/product-version.mts version oliphaunt-query)"
       bash tools/packaging/check-cargo-package-tests.sh --crate "target/sdk-artifacts/oliphaunt-pgwire-server/oliphaunt-pgwire-server-$version.crate" --dependency-crate "target/sdk-artifacts/oliphaunt-wasix-rust/oliphaunt-wasix-$sdk_version.crate" --dependency-crate "target/sdk-artifacts/oliphaunt-query/oliphaunt-query-$query_version.crate" --path-dependencies-from src/wasix/sdks/rust/Cargo.toml
-    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock", "/tools/packaging/*.{mts,sh}"]
+    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock", "@group(packaging-source)"]
     options:
       runFromWorkspaceRoot: true

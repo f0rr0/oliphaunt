@@ -63,7 +63,7 @@ tasks:
       - "tools/package-assets.sh"
       - "/src/native/runtime/tools/runtime-preflight.sh"
       - "/src/native/runtime/tools/native-runtime-payload*"
-      - "/tools/packaging/*.{mts,sh}"
+      - "@group(packaging-source)"
       - "@group(legal-files)"
     outputs: ["/target/postgres-tools/native/release-assets/**/*"]
     options:

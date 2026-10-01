@@ -53,7 +53,7 @@ tasks:
       - /tools/dev/bun.sh
       - /src/third-party/tools/source-fetch-core.mts
       - /src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - /tools/packaging/cargo-source-package.mts
       - /src/extensions/artifacts/packages/tools/check-carriers.mts
       - /src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts
@@ -107,7 +107,7 @@ tasks:
       - /tools/dev/bun.sh
       - /src/third-party/tools/source-fetch-core.mts
       - /src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - /tools/packaging/cargo-source-package.mts
       - /src/extensions/artifacts/packages/tools/check-carriers.mts
       - /src/extensions/artifacts/packages/tools/extension-runtime-asset-contract.mts

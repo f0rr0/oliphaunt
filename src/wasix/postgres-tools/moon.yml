@@ -43,7 +43,7 @@ tasks:
     command: "bash tools/ci/with-projects.sh src/wasix/postgres-tools/tools/package-assets.mts --target portable"
     deps: ["compiler-output"]
     tags: ["artifact", "ci-liboliphaunt-wasix-runtime"]
-    inputs: ["VERSION", "tools/package-assets.mts", "/tools/packaging/**/*", "/src/wasix/runtime/tools/{check-release-assets.mts,package-release-assets.mts,wasix-aot-manifest.mts,wasix-cargo-artifact-contract.mts}"]
+    inputs: ["VERSION", "tools/package-assets.mts", "@group(packaging-source)", "/tools/packaging/windows-vc-runtime-policy.json", "/src/wasix/runtime/tools/{check-release-assets.mts,package-release-assets.mts,wasix-aot-manifest.mts,wasix-cargo-artifact-contract.mts}"]
     outputs: ["/target/postgres-tools/wasix/release-assets/*-portable.tar.gz"]
     options:
       runInCI: true
@@ -52,7 +52,7 @@ tasks:
     command: "bash tools/ci/with-projects.sh src/wasix/postgres-tools/tools/package-assets.mts --target aot"
     deps: ["build-aot"]
     tags: ["artifact", "ci-liboliphaunt-wasix-aot"]
-    inputs: ["VERSION", "tools/package-assets.mts", "/tools/packaging/**/*", "/src/wasix/runtime/tools/{check-release-assets.mts,package-release-assets.mts,wasix-aot-manifest.mts,wasix-cargo-artifact-contract.mts}", "$AOT_TARGET"]
+    inputs: ["VERSION", "tools/package-assets.mts", "@group(packaging-source)", "/tools/packaging/windows-vc-runtime-policy.json", "/src/wasix/runtime/tools/{check-release-assets.mts,package-release-assets.mts,wasix-aot-manifest.mts,wasix-cargo-artifact-contract.mts}", "$AOT_TARGET"]
     outputs: ["/target/postgres-tools/wasix/release-assets/*-aot-*.tar.gz"]
     options:
       runInCI: true

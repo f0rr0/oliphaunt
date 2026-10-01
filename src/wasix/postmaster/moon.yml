@@ -363,7 +363,7 @@ tasks:
       - /rust-toolchain.toml
       - "@group(production)"
       - /src/wasix/postmaster/sources/*.toml
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
     outputs:
       - /target/oliphaunt-wasix-postmaster/carriers/**/*
     options:
@@ -400,7 +400,7 @@ tasks:
       - "@group(production)"
       - /target/oliphaunt-wasix-postmaster/package-docs/README.md
       - /src/wasix/postmaster/sources/*.toml
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - /target/oliphaunt-wasix-postmaster/carriers/**/*
     outputs:
       - /target/oliphaunt-wasix-postmaster/release-assets/**/*
@@ -454,7 +454,7 @@ tasks:
     inputs:
       - "@group(production)"
       - /src/wasix/postmaster/sources/*.toml
-      - "/tools/packaging/*.{mjs,mts}"
+      - "@group(packaging-source)"
       - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3.current
       - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3.generations/[0-9a-f]*/**/*
       - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*
