@@ -2,6 +2,10 @@ name: broker-runtime
 on:
   workflow_call:
     inputs:
+      cache-save-if:
+        description: Resolved cache-save policy from the calling CI workflow.
+        required: true
+        type: boolean
       matrix:
         required: true
         type: string
@@ -14,7 +18,6 @@ env:
   OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ inputs.job-targets }}
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  HEAVY_CACHE_SAVE_IF: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 defaults:
   run:
     shell: bash
@@ -39,6 +42,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ inputs.cache-save-if }}
 
       - name: Set up MSVC
         if: ${{ runner.os == 'Windows' }}

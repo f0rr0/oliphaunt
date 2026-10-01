@@ -58,19 +58,10 @@ case "$build_type" in
 esac
 build_only="${OLIPHAUNT_EXPO_ANDROID_BUILD_ONLY:-0}"
 e2e_only="${OLIPHAUNT_EXPO_ANDROID_E2E_ONLY:-0}"
-e2e_assertion_runner="${OLIPHAUNT_EXPO_ANDROID_E2E_ASSERTION_RUNNER:-${OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER:-log}}"
-case "$e2e_assertion_runner" in
-  auto|log|maestro)
-    ;;
-  *)
-    echo "error: OLIPHAUNT_EXPO_ANDROID_E2E_ASSERTION_RUNNER must be auto, log, or maestro, got $e2e_assertion_runner" >&2
-    exit 1
-    ;;
-esac
+
 build_type_capitalized="$(printf '%s' "$build_type" | awk '{ print toupper(substr($0, 1, 1)) substr($0, 2) }')"
 apk="${OLIPHAUNT_EXPO_ANDROID_APK:-$example_dir/android/app/build/outputs/apk/$build_type/app-$build_type.apk}"
 build_artifact_dir="${OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR:-$root/target/mobile-build/react-native/android}"
-maestro_flow="${OLIPHAUNT_EXPO_ANDROID_MAESTRO_FLOW:-$source_example_dir/maestro/installed-smoke.yaml}"
 app_id="${OLIPHAUNT_EXPO_ANDROID_APP_ID:-dev.oliphaunt.reactnative.example}"
 scheme="${OLIPHAUNT_EXPO_ANDROID_SCHEME:-reactnativeoliphauntexpo}"
 dev_client_scheme="${OLIPHAUNT_EXPO_ANDROID_DEV_CLIENT_SCHEME:-exp+react-native-oliphaunt-expo}"
@@ -700,7 +691,12 @@ start_metro_if_needed() {
   fail "Expo Metro did not start on port $metro_port"
 }
 
-trap cleanup EXIT
+android_log_pid=""
+cleanup_android_runner() {
+  stop_mobile_log_capture "$android_log_pid"
+  cleanup
+}
+trap cleanup_android_runner EXIT
 
 write_android_package_metrics() {
   local apk_bytes="$1"
@@ -742,7 +738,7 @@ write_android_build_artifact_report() {
 }
 
 main() {
-  if ! { is_truthy "$e2e_only" && [ "$build_type" = "release" ] && [ "$e2e_assertion_runner" = "maestro" ]; }; then
+  if ! is_truthy "$e2e_only"; then
     need_cmd rg
   fi
   if [ "$build_type" = "debug" ]; then
@@ -771,6 +767,17 @@ main() {
   prepare_expo_example_workspace
   pack_react_native_sdk_if_needed
   ensure_android_project
+  # Expo's useExpoVersionCatalog reads the installed React Native version catalog.
+  local expo_ndk
+  expo_ndk="$(bun - "$example_dir" <<'JS'
+import {readFileSync} from 'node:fs';
+import {dirname, join} from 'node:path';
+const rn = require.resolve('react-native/package.json', {paths:[process.argv[2]]});
+console.log(Bun.TOML.parse(readFileSync(join(dirname(rn), 'gradle/libs.versions.toml'), 'utf8')).versions.ndkVersion ?? '');
+JS
+)"
+  [ -n "$expo_ndk" ] || fail "React Native's version catalog must declare ndkVersion"
+  bash "$root/tools/dev/setup-android-sdk.sh" --sdk-root "$ANDROID_HOME" --expo-ndk-version "$expo_ndk"
   local runtime_resources jni_libs source_so static_registry_source
   source_so="$(find_android_liboliphaunt_so)"
   static_registry_source="$(mobile_static_registry_source_for_library "$source_so")"

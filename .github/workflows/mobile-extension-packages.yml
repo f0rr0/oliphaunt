@@ -2,6 +2,10 @@ name: Mobile extension packages
 on:
   workflow_call:
     inputs:
+      cache-save-if:
+        description: Resolved cache-save policy from the calling CI workflow.
+        required: true
+        type: boolean
       family:
         type: string
         required: true
@@ -23,7 +27,7 @@ defaults:
     shell: bash
 jobs:
   package:
-    name: Builds / Mobile Extension Packages
+    name: Packages / Mobile Extensions
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -39,6 +43,8 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ inputs.cache-save-if }}
 
       - name: Download native exact-extension artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

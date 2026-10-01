@@ -1,141 +1,123 @@
 #!/usr/bin/env bash
 set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+source "$root/src/native/sdks/react-native/tools/expo-runner-common.sh"
+scratch="$(mktemp -d)"
+capture_pid=""
+trap 'stop_mobile_log_capture "$capture_pid"; rm -rf "$scratch"' EXIT
+success_tag=OLIPHAUNT_EXPO_SMOKE_PASS
+failure_tag=OLIPHAUNT_EXPO_SMOKE_FAIL
+timeout_seconds=0
+mobile_app_is_alive() { [ "$app_alive" = true ]; }
+sleep 60 &
+capture_pid=$!
+app_alive=true
+for scenario in pass fail crash missing dead-capture dead-app; do
+  printf '%s valid-receipt\n' "$success_tag" >"$scratch/log"
+  expected=0
+  pid="$capture_pid"
+  app_alive=true
+  case "$scenario" in
+    fail) printf '%s explicit-failure\n' "$failure_tag" >>"$scratch/log"; expected=2 ;;
+    crash) printf 'FATAL EXCEPTION\n' >>"$scratch/log"; expected=2 ;;
+    missing) : >"$scratch/log"; expected=1 ;;
+    dead-capture) pid=99999999; expected=3 ;;
+    dead-app) app_alive=false; expected=4 ;;
+  esac
+  status=0
+  wait_for_mobile_receipt "$scratch/log" "$pid" >"$scratch/out" 2>"$scratch/err" || status=$?
+  [ "$status" = "$expected" ] || { echo "$scenario: expected $expected, got $status" >&2; exit 1; }
+done
+# A fast terminal receipt remains readable while the current capture is alive.
+timeout_seconds=5
+app_alive=true
+: >"$scratch/log"
+(sleep 0.1; printf '%s valid-receipt\n' "$success_tag" >>"$scratch/log") &
+writer=$!
+wait_for_mobile_receipt "$scratch/log" "$capture_pid" >"$scratch/out"
+wait "$writer"
+grep -Fq "$success_tag" "$scratch/out"
+stop_mobile_log_capture "$capture_pid"
+if kill -0 "$capture_pid" 2>/dev/null; then exit 1; fi
+capture_pid=""
+echo 'Mobile receipts: failure precedence, crash, missing receipt, capture/app death and cleanup passed'
 
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "must run inside the Oliphaunt git checkout" >&2
-  exit 1
-}
-. "$root/src/native/sdks/react-native/tools/expo-runner-android-device.sh"
 
-test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-android-maestro-test.XXXXXX")"
-trap 'rm -rf "$test_root"' EXIT
-
-scratch_root="$test_root/scratch"
-maestro_flow="$test_root/installed-smoke.yaml"
-app_id="dev.oliphaunt.test"
-timeout_seconds=600
-failure_tag="OLIPHAUNT_EXPO_SMOKE_FAIL"
-fake_maestro="$test_root/maestro"
-fake_adb="$test_root/adb"
-export FAKE_MAESTRO_STARTED="$test_root/maestro-started"
-export FAKE_MAESTRO_TERMINATED="$test_root/maestro-terminated"
-export FAKE_MAESTRO_PID="$test_root/maestro-pid"
-export FAKE_MAESTRO_MODE=slow
-export FAKE_ADB_FAILURE_FILE="$test_root/adb-failure"
-
-mkdir -p "$scratch_root"
-printf 'appId: dev.oliphaunt.test\n---\n- assertVisible: smoke\n' >"$maestro_flow"
-
-cat >"$fake_maestro" <<'SH'
-#!/usr/bin/env sh
-printf '%s\n' "$$" >"$FAKE_MAESTRO_PID"
-printf 'started\n' >"$FAKE_MAESTRO_STARTED"
-case "$FAKE_MAESTRO_MODE" in
-  success)
-    printf 'simulated Maestro success\n'
-    exit 0
+# Exercise the installed-app entry point: logcat clearing must discard an old
+# PASS, and only this app's receipt emitted after this launch can succeed.
+source "$root/src/native/sdks/react-native/tools/expo-runner-android-device.sh"
+mkdir -p "$scratch/sdk/platform-tools" "$scratch/app"
+cat > "$scratch/sdk/platform-tools/adb" <<'ADB'
+#!/usr/bin/env bash
+set -eu
+case "$*" in
+  devices) printf 'List of devices attached\nfixture\tdevice\n' ;;
+  'install -r '*|'shell am force-stop '*|'shell pm clear '*|'shell pidof '*) ;;
+  'shell pm list packages -U --user current dev.oliphaunt.fixture')
+    printf 'package:dev.oliphaunt.fixture.other uid:10099\r\n'
+    case "$ADB_SCENARIO" in
+      missing-uid) ;;
+      invalid-uid) printf 'package:dev.oliphaunt.fixture uid:invalid\r\n' ;;
+      *) printf 'package:dev.oliphaunt.fixture uid:10042\r\n' ;;
+    esac
     ;;
-  error)
-    printf 'simulated Maestro failure\n' >&2
-    exit 7
-    ;;
-  slow)
-    trap 'printf "terminated\n" >"$FAKE_MAESTRO_TERMINATED"; exit 143' TERM INT
-    count=0
-    while [ "$count" -lt 50 ]; do
-      sleep 0.1
-      count=$((count + 1))
+  'logcat -c') : > "$ADB_RECEIPT" ;;
+  'logcat -v '*)
+    trap 'exit 0' TERM
+    uid_filter=""
+    for arg in "$@"; do
+      case "$arg" in --uid=*) uid_filter="${arg#--uid=}" ;; esac
     done
-    exit 0
+    while [ ! -s "$ADB_RECEIPT" ]; do sleep 0.05; done
+    awk -v uid="$uid_filter" 'uid == "" || $1 == uid {sub(/^[0-9]+ /, ""); print}' "$ADB_RECEIPT"
+    while :; do sleep 0.05; done
     ;;
-  *)
-    exit 64
+  'shell am start -W '*)
+    case "$ADB_SCENARIO" in
+      stale) ;;
+      unrelated-pass) printf '10099 %s\n' "$ADB_CURRENT_RECEIPT" > "$ADB_RECEIPT" ;;
+      *)
+        {
+          case "$ADB_SCENARIO" in
+            unrelated-crash) printf '10099 FATAL EXCEPTION: main\n' ;;
+            app-crash) printf '10042 FATAL EXCEPTION: main\n' ;;
+          esac
+          printf '10042 %s\n' "$ADB_CURRENT_RECEIPT"
+        } > "$ADB_RECEIPT"
+        ;;
+    esac
     ;;
+  *) echo "unexpected adb invocation: $*" >&2; exit 9 ;;
 esac
-SH
-chmod +x "$fake_maestro"
-
-cat >"$fake_adb" <<'SH'
-#!/usr/bin/env sh
-if [ "$*" = "logcat -d -v raw ReactNativeJS:I *:S" ] &&
-  [ -f "$FAKE_MAESTRO_STARTED" ] && [ -s "$FAKE_ADB_FAILURE_FILE" ]; then
-  cat "$FAKE_ADB_FAILURE_FILE"
-fi
-SH
-chmod +x "$fake_adb"
-
-maestro_binary() {
-  printf '%s\n' "$fake_maestro"
-}
-
-fail_test() {
-  echo "expo-runner-android-device.test.sh: $*" >&2
-  exit 1
-}
-
-reset_fixture() {
-  rm -rf "$scratch_root/reports"
-  rm -f \
-    "$FAKE_MAESTRO_STARTED" \
-    "$FAKE_MAESTRO_TERMINATED" \
-    "$FAKE_MAESTRO_PID" \
-    "$FAKE_ADB_FAILURE_FILE"
-}
-
-reset_fixture
-printf '%s\n' "07-18 12:00:03.244 I ReactNativeJS: $failure_tag {\"error\":\"fixture\"}" \
-  >"$FAKE_ADB_FAILURE_FILE"
-start_seconds=$SECONDS
-set +e
-run_maestro_installed_smoke emulator-5554 "$fake_adb" \
-  >"$test_root/fail-fast.stdout" 2>"$test_root/fail-fast.stderr"
-status=$?
-set -e
-[ "$status" -eq 2 ] || fail_test "authoritative failure returned $status instead of 2"
-# Loaded CI hosts can delay the one-second receipt poll and shell process
-# reaping even after TERM is delivered. The assertions below independently
-# prove that Maestro received TERM and is no longer running.
-[ $((SECONDS - start_seconds)) -lt 10 ] || fail_test "authoritative failure did not terminate Maestro promptly"
-[ -f "$FAKE_MAESTRO_TERMINATED" ] || fail_test "authoritative failure did not terminate Maestro"
-maestro_pid="$(cat "$FAKE_MAESTRO_PID")"
-if kill -0 "$maestro_pid" 2>/dev/null; then
-  fail_test "terminated Maestro process $maestro_pid is still running"
-fi
-grep -Fq "$failure_tag" "$scratch_root/reports/maestro-authoritative-failure.txt" ||
-  fail_test "authoritative failure report omitted the app receipt"
-grep -Fq "$failure_tag" "$test_root/fail-fast.stderr" ||
-  fail_test "authoritative failure was not printed to stderr"
-
-reset_fixture
-export FAKE_MAESTRO_MODE=success
-run_maestro_installed_smoke emulator-5554 "$fake_adb" \
-  >"$test_root/success.stdout" 2>"$test_root/success.stderr" ||
-  fail_test "successful Maestro run was rejected"
-grep -Fq "simulated Maestro success" "$scratch_root/reports/maestro.log" ||
-  fail_test "successful Maestro output was not preserved"
-
-reset_fixture
-export FAKE_MAESTRO_MODE=error
-set +e
-run_maestro_installed_smoke emulator-5554 "$fake_adb" \
-  >"$test_root/error.stdout" 2>"$test_root/error.stderr"
-status=$?
-set -e
-[ "$status" -eq 1 ] || fail_test "failed Maestro run returned $status instead of 1"
-grep -Fq "simulated Maestro failure" "$scratch_root/reports/maestro.log" ||
-  fail_test "failed Maestro output was not preserved"
-
-# Exercise the final logcat read after an immediate Maestro exit. This closes
-# the race between the UI assertion ending and the authoritative app receipt.
-reset_fixture
-export FAKE_MAESTRO_MODE=success
-printf '%s\n' "07-18 12:00:03.244 I ReactNativeJS: $failure_tag {\"error\":\"race\"}" \
-  >"$FAKE_ADB_FAILURE_FILE"
-set +e
-run_maestro_installed_smoke emulator-5554 "$fake_adb" \
-  >"$test_root/race.stdout" 2>"$test_root/race.stderr"
-status=$?
-set -e
-[ "$status" -eq 2 ] || fail_test "final authoritative failure read returned $status instead of 2"
-
-echo "Android Maestro fail-fast tests passed"
+ADB
+chmod +x "$scratch/sdk/platform-tools/adb"
+export ADB_RECEIPT="$scratch/adb-receipt"
+export ADB_CURRENT_RECEIPT="$success_tag current-launch"
+ANDROID_HOME="$scratch/sdk"
+app_id=dev.oliphaunt.fixture
+apk="$scratch/app.apk"
+build_type=release
+runner=smoke
+lifecycle_smoke=0
+scratch_root="$scratch/app"
+timeout_seconds=3
+wake_android_device() { :; }
+android_runner_url() { printf 'fixture://smoke'; }
+write_android_process_metrics() { :; }
+write_android_e2e_diagnostics() { :; }
+write_runner_report() { [ "$1" = "$ADB_CURRENT_RECEIPT" ]; }
+for scenario in pass unrelated-crash app-crash stale unrelated-pass missing-uid invalid-uid; do
+  printf '10042 %s stale-launch\n' "$success_tag" > "$ADB_RECEIPT"
+  export ADB_SCENARIO="$scenario"
+  status=0
+  (
+    android_log_pid=""
+    trap 'stop_mobile_log_capture "$android_log_pid"' EXIT
+    install_and_launch
+  ) > "$scratch/$scenario-launch.log" 2>&1 || status=$?
+  case "$scenario" in
+    pass|unrelated-crash) [ "$status" = 0 ] ;;
+    *) [ "$status" != 0 ] ;;
+  esac || { cat "$scratch/$scenario-launch.log" >&2; echo "unexpected $scenario status: $status" >&2; exit 1; }
+done
+echo 'Android installed-app capture scopes receipts and crashes to the current app and launch'

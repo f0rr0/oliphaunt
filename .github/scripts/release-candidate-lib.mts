@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { verifyReceipts } from '../../src/extensions/tests/native/tools/verify-native-extension-lifecycle-receipts.mts';
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -150,6 +151,17 @@ export function affectedPlanBinding(planPath, wasixReleaseRegressionRequired) {
     projects,
     extensionPackageProducts,
     wasixReleaseRegressionRequired,
+    ...(jobs.includes('native-extension-lifecycle')
+      ? {
+          nativeExtensionLifecycle: {
+            extensions: sortedUniqueStrings(
+              plan.native_extension_lifecycle_sql_names,
+              'native lifecycle extensions',
+            ),
+            shardCount: plan.native_extension_lifecycle_shard_count,
+          },
+        }
+      : {}),
     ...(qualification === undefined ? {} : { qualification }),
   };
 }
@@ -300,6 +312,41 @@ export function wasixEvidenceBinding(
   };
 }
 
+export function nativeEvidenceBinding(
+  evidenceRoot,
+  { repository, runId, runAttempt, sha, tree, selection },
+) {
+  const root = path.resolve(evidenceRoot);
+  const file = 'output/aggregate-receipt.json';
+  const { bytes, value: evidence } = strictJson(path.join(root, file), 'native lifecycle evidence');
+  same(evidence.github?.repository, repository, 'native evidence GitHub repository');
+  same(evidence.github?.workflow, 'CI', 'native evidence GitHub workflow');
+  same(evidence.github?.job, 'native-extension-lifecycle-aggregate', 'native evidence GitHub job');
+  same(evidence.github?.runId, Number(runId), 'native evidence GitHub runId');
+  positiveInteger(evidence.github?.runAttempt, 'native evidence GitHub runAttempt');
+  assert(
+    evidence.github.runAttempt <= runAttempt,
+    'native evidence attempt is newer than candidate',
+  );
+  const verified = verifyReceipts({
+    receipts: path.join(root, 'input'),
+    'candidate-sha': sha,
+    'candidate-tree': tree,
+    'expected-extensions-csv': selection.extensions.join(','),
+    'expected-shard-count': String(selection.shardCount),
+    repository,
+    'run-id': String(runId),
+    'run-attempt': String(evidence.github.runAttempt),
+  });
+  assertBindingMatches(evidence, verified, 'native aggregate receipt');
+  return {
+    artifact: 'native-extension-lifecycle-evidence',
+    file,
+    digest: sha256(bytes),
+    github: evidence.github,
+  };
+}
+
 export function assertCandidateBindingShape(candidate) {
   assert(
     candidate?.schemaVersion === 2,
@@ -437,9 +484,47 @@ export function assertCandidateBindingShape(candidate) {
     requirements.wasixReleaseRegression === candidate.affectedPlan.wasixReleaseRegressionRequired,
     'release candidate WASIX evidence requirement is inconsistent with affected plan',
   );
-  const expectedArtifacts = requirements.wasixReleaseRegression
-    ? ['wasix-release-regression-evidence']
-    : [];
+  const nativeRequired = jobs.includes('native-extension-lifecycle');
+  assert(
+    (requirements.nativeExtensionLifecycle ?? false) === nativeRequired,
+    'release candidate native evidence requirement is inconsistent with selected jobs',
+  );
+  if (nativeRequired) {
+    const selection = candidate.affectedPlan.nativeExtensionLifecycle;
+    assert(
+      selection &&
+        sortedUniqueStrings(selection.extensions, 'native lifecycle extensions').length > 0,
+      'release candidate native lifecycle selection is missing',
+    );
+    assert(
+      Number.isSafeInteger(selection.shardCount) &&
+        selection.shardCount > 0 &&
+        selection.shardCount <= selection.extensions.length,
+      'release candidate native lifecycle shard count is invalid',
+    );
+    const evidence = candidate.evidence?.nativeExtensionLifecycle;
+    assert(
+      /^sha256:[0-9a-f]{64}$/.test(evidence?.digest),
+      'release candidate native evidence digest is missing or invalid',
+    );
+    same(evidence.github?.repository, candidate.repository, 'native evidence repository');
+    same(evidence.github?.runId, Number(candidate.runId), 'native evidence runId');
+    positiveInteger(evidence.github?.runAttempt, 'native evidence runAttempt');
+    assert(
+      evidence.github.runAttempt <= candidate.runAttempt,
+      'native evidence attempt is newer than candidate',
+    );
+  } else {
+    assert(
+      candidate.evidence?.nativeExtensionLifecycle == null &&
+        candidate.affectedPlan.nativeExtensionLifecycle == null,
+      'release candidate carries native evidence that its plan did not require',
+    );
+  }
+  const expectedArtifacts = [
+    ...(nativeRequired ? ['native-extension-lifecycle-evidence'] : []),
+    ...(requirements.wasixReleaseRegression ? ['wasix-release-regression-evidence'] : []),
+  ];
   assert(
     JSON.stringify(requirements.artifacts) === JSON.stringify(expectedArtifacts),
     'release candidate evidence artifact requirements are inconsistent',

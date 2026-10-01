@@ -7,6 +7,7 @@ trap 'rm -rf "$scratch"' EXIT
 test_data="$tools/source-fetch-core.test.mts"
 archive_tool="$tools/source-archive.mts"
 export FETCH_TEST_GIT="$(command -v git)"
+export FETCH_TEST_DATE="$(command -v date)"
 export FETCH_TEST_SLEEP="$(command -v sleep)"
 base_path="$PATH"
 for scope in icu native-runtime wasix-runtime wasix-postmaster-runtime production-all; do
@@ -22,7 +23,7 @@ done
 bash "$root_dir/tools/dev/bun.sh" test "$test_data"
 mkdir "$scratch/fixtures" "$scratch/bin"
 bun "$test_data" prepare "$scratch/fixtures"
-for name in git curl sleep; do
+for name in git curl sleep date; do
   cp "$tools/source-fetch-transport.test.sh" "$scratch/bin/$name"
   chmod +x "$scratch/bin/$name"
 done
@@ -110,7 +111,7 @@ fail_command 'archive sha256: expected' fetch "$root" "$fixtures/valid.json"
 : > "$root/requests"
 export FETCH_TEST_ARCHIVE="$fixtures/valid.tar.gz"
 RUNNER_OS=Windows fetch "$root" "$fixtures/valid.json"
-printf '%s\n' 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz' 'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz' > "$scratch/expected"
+printf '%s\n' 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz' 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz' 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz' 'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz' > "$scratch/expected"
 cmp "$scratch/expected" "$root/requests"
 cmp "$cache" "$fixtures/valid.tar.gz"
 cmp "$scratch/trusted" "$checkout/file.txt"
@@ -138,6 +139,10 @@ FETCH_TEST_FAULT=gnu FETCH_TEST_ARCHIVE="$fixtures/updated.tar.gz" \
 : > "$root/requests"
 FETCH_TEST_FAULT=gnu FETCH_TEST_ARCHIVE="$fixtures/valid.tar.gz" fetch "$root" "$root/pin.json"
 printf '%s\n' 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz' \
+  'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz' \
+  'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz' \
+  'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz' \
+  'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz' \
   'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz' \
   'https://mirror.example.invalid/libiconv.tar.gz' > "$scratch/expected"
 cmp "$scratch/expected" "$root/requests"
@@ -255,3 +260,35 @@ ln -s "$root/upstream/.git" "$checkout/.git"
 bun "$test_data" git-pin "$root" "$commit"
 fail_command 'unsupported non-directory \.git metadata' fetch "$root" "$root/pin.json"
 echo 'Source fetch: verified archives, fallback/retries, exact Git pins, LF repair, symlink containment and local-edit preservation passed'
+
+# Retries and mirrors share the pin's deadline; expiry preserves existing data
+# and releases the checkout lock, including when a transport returns failure.
+root="$scratch/archive-deadline"
+mkdir -p "$root/archives"
+printf '1000000\n' > "$root/clock"
+cache="$root/archives/libiconv-$sha.tar.gz"
+printf 'prior cache' > "$cache"
+FETCH_TEST_EXPIRE=1 FETCH_TEST_CLOCK="$root/clock" fail_command 'deadline' fetch "$root" "$fixtures/valid.json"
+[[ "$(wc -l < "$root/requests")" -eq 1 ]]
+[[ "$(cat "$cache")" == 'prior cache' ]]
+[[ -z "$(ls -A "$root/checkouts")" ]]
+root="$scratch/git-deadline"
+init_repo "$root/upstream" 'new bytes' upstream
+commit="$(git -C "$root/upstream" rev-parse HEAD)"
+bun "$test_data" git-pin "$root" "$commit"
+init_repo "$root/checkouts/source" prior
+prior="$(git -C "$root/checkouts/source" rev-parse HEAD)"
+printf '1000000\n' > "$root/clock"
+FETCH_TEST_EXPIRE=1 FETCH_TEST_CLOCK="$root/clock" fail_command 'deadline' fetch "$root" "$root/pin.json"
+[[ "$(wc -l < "$root/requests")" -eq 1 ]]
+[[ "$(git -C "$root/checkouts/source" rev-parse HEAD)" == "$prior" ]]
+[[ "$(ls -A "$root/checkouts")" == source ]]
+echo 'Source acquisition expiry preserves prior data, stops retries and releases locks'
+
+# A waiting caller must neither replenish its budget nor remove another owner's lock.
+root="$scratch/lock-deadline"
+mkdir -p "$root/checkouts/libiconv.lock"
+printf '1000000\n' > "$root/clock"
+FETCH_TEST_EXPIRE=1 FETCH_TEST_CLOCK="$root/clock" fail_command 'deadline' fetch "$root" "$fixtures/valid.json"
+[[ ! -s "$root/requests" ]]
+[[ "$(ls -A "$root/checkouts")" == libiconv.lock ]]

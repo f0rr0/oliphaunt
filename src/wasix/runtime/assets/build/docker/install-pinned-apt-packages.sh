@@ -2,6 +2,10 @@
 set -eu
 
 export LC_ALL=C
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+acquisition_helper="$script_dir/acquisition.sh"
+[ -f "$acquisition_helper" ] || acquisition_helper="$script_dir/../../../../../../tools/dev/acquisition.sh"
+. "$acquisition_helper"
 
 fail() {
 	echo "install-pinned-apt-packages: $*" >&2
@@ -52,7 +56,6 @@ for package in "$@"; do
 done
 
 apt_get="${OLIPHAUNT_APT_GET:-apt-get}"
-sleep_command="${OLIPHAUNT_SLEEP:-sleep}"
 sources_file="${OLIPHAUNT_APT_SOURCES_FILE:-/etc/apt/sources.list.d/ubuntu.sources}"
 lists_dir="${OLIPHAUNT_APT_LISTS_DIR:-/var/lib/apt/lists}"
 ca_bundle="${OLIPHAUNT_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
@@ -78,7 +81,7 @@ for required_path in "$sources_file" "$lists_dir" "$ca_bundle"; do
 done
 [ "$lists_dir" != "/" ] || fail "refusing to use / as the APT lists directory"
 command -v "$apt_get" >/dev/null 2>&1 || fail "missing APT command: $apt_get"
-command -v "$sleep_command" >/dev/null 2>&1 || fail "missing sleep command: $sleep_command"
+oliphaunt_acquisition_start 'WASIX builder APT update/install' 900
 
 mkdir -p "$(dirname "$sources_file")"
 cat >"$sources_file" <<SOURCES
@@ -96,7 +99,7 @@ reset_lists() {
 }
 
 apt_update() {
-	"$apt_get" \
+	oliphaunt_acquisition_run 300 "$apt_get" \
 		-o Dir::Etc::sourcelist="$sources_file" \
 		-o Dir::Etc::sourceparts=- \
 		-o Dir::State::lists="$lists_dir" \
@@ -110,7 +113,7 @@ apt_update() {
 }
 
 apt_install() {
-	"$apt_get" \
+	oliphaunt_acquisition_run 900 "$apt_get" \
 		-o Dir::Etc::sourcelist="$sources_file" \
 		-o Dir::Etc::sourceparts=- \
 		-o Dir::State::lists="$lists_dir" \
@@ -136,7 +139,7 @@ install_transaction() {
 		fi
 		delay=$((retry_delay * attempt))
 		echo "install-pinned-apt-packages: retrying $label transaction after attempt $attempt/$max_attempts" >&2
-		"$sleep_command" "$delay"
+		oliphaunt_acquisition_sleep "$delay" || exit $?
 		attempt=$((attempt + 1))
 	done
 	fail "$label transaction failed after $max_attempts attempts"

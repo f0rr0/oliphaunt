@@ -113,13 +113,32 @@ tasks:
     options:
       cache: true
   test-native-bindings:
-    tags: ["integration", "requires-android-sdk", "requires-rust"]
-    command: "bash tools/test-native-bindings.sh"
+    tags: ["ci-native-consumers", "platform-linux-x64-gnu", "integration", "requires-android-sdk", "requires-rust"]
+    command: "bash src/native/sdks/tests/with-runtime.sh bash src/native/sdks/kotlin/tools/test-native-bindings.sh -x :oliphaunt:generateNativeBindings"
     deps:
-      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "liboliphaunt-native:package-runtime-desktop-target"
       - "oliphaunt-mobile-bindings:generate"
       - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
+    env:
+      OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../../target"
+    inputs:
+      - "oliphaunt/src/**/*"
+      - "oliphaunt/build.gradle.kts"
+      - "gradle/**/*"
+      - "*.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "tools/test-native-bindings.sh"
+      - "/src/native/sdks/tests/with-runtime.sh"
+      - "/src/native/runtime/tools/runtime-preflight.sh"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "cluster-seed-contract"
+        group: "contract"
+      - project: "extensions"
+        group: "sdk-metadata"
     options:
+      runFromWorkspaceRoot: true
       cache: false
   package-maven:
     tags: ["package", "requires-android-sdk", "requires-rust"]

@@ -26,6 +26,7 @@ tasks:
       - project: "shared-test-fixtures"
         group: "fixtures"
       - "tools/**/*.mts"
+      - "/.github/scripts/{release-candidate-lib,write-release-candidate,verify-release-candidate}.mts"
       - "/tools/release/**/*.mts"
       - "/src/extensions/artifacts/native/tools/**/*.mts"
       - "/src/extensions/artifacts/packages/tools/**/*.mts"

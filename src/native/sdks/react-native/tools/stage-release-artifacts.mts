@@ -11,13 +11,15 @@ export function stageArtifacts(artifactRoot, workRoot) {
   const releasePackageDir = path.join(workRoot, 'package');
   requireDir(releasePackageDir);
   const assetDir = process.env.OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR;
-  if (!assetDir) {
+  const baseCarrierManifest = process.env.OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER || undefined;
+  if (!assetDir && !baseCarrierManifest) {
     fail(
       'oliphaunt-react-native package artifacts require OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR',
     );
   }
   const carrier = buildIosCarrierManifest({
     baseAssetDir: assetDir,
+    baseCarrierManifest,
     extensionManifests: [],
   });
   writeFileSync(

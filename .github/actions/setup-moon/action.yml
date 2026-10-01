@@ -2,6 +2,10 @@ name: Set up Moon
 description: Install verified Node.js, Moon, and Bun binaries and optionally hydrate JavaScript workspace dependencies.
 
 inputs:
+  task-cache:
+    description: Restore/save Moon task outputs; disable for planning and uncached finalizers.
+    required: false
+    default: "true"
   install-workspace:
     description: Install Bun workspace dependencies for JavaScript-family tasks.
     required: false
@@ -17,7 +21,7 @@ runs:
         path: |
           ${{ runner.temp }}/oliphaunt-moon-toolchain
           ${{ runner.temp }}/oliphaunt-pinned-tools
-        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-node-bun/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/dev/moon-cli.toml', 'tools/dev/moon-plugins.toml', 'tools/dev/proto.toml', 'tools/dev/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'tools/packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-node-bun/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/dev/moon-cli.toml', 'tools/dev/moon-plugins.toml', 'tools/dev/proto.toml', 'tools/dev/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'tools/packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh', 'tools/dev/acquisition.sh') }}
 
     - name: Set up exact Node.js and Bun
       uses: ./.github/actions/setup-node-bun
@@ -70,7 +74,7 @@ runs:
         node --version
         bun --version
         # This shell probe needs no source comparison or fetched base branch.
-        .github/scripts/run-moon-targets.sh --base HEAD --head HEAD ci-workflows:verify-bash
+        .github/scripts/run-moon-targets.sh ci-workflows:verify-bash
 
     - name: Save verified tool archives
       if: ${{ steps.restore_verified_moon_toolchain.outputs.cache-hit != 'true' }}
@@ -80,7 +84,7 @@ runs:
         path: |
           ${{ runner.temp }}/oliphaunt-moon-toolchain
           ${{ runner.temp }}/oliphaunt-pinned-tools
-        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-node-bun/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/dev/moon-cli.toml', 'tools/dev/moon-plugins.toml', 'tools/dev/proto.toml', 'tools/dev/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'tools/packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh') }}
+        key: verified-moon-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.moon/toolchains.yml', '.github/actions/setup-moon/action.yml', '.github/actions/setup-node-bun/action.yml', '.github/actions/setup-moon/install-pinned-toolchain.sh', '.github/actions/setup-moon/toolchain-archive.mts', 'tools/dev/moon-cli.toml', 'tools/dev/moon-plugins.toml', 'tools/dev/proto.toml', 'tools/dev/bun.toml', 'tools/dev/install-pinned-js-runtime.sh', 'tools/dev/extract-pinned-zip.sh', 'tools/packaging/portable-archive.mts', 'tools/dev/extract-pinned-binary.sh', 'tools/dev/curl-platform-flags.sh', 'tools/dev/acquisition.sh') }}
 
     - name: Install workspace dependencies
       if: ${{ inputs.install-workspace == 'true' }}
@@ -88,6 +92,7 @@ runs:
       run: bun install --frozen-lockfile
 
     - name: Restore Moon task outputs
+      if: ${{ inputs.task-cache == 'true' }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         # casOutputsCache uses these directories; hashes/ is diagnostic metadata.

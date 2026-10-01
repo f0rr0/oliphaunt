@@ -94,26 +94,30 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   test-integration:
-    tags: ["regression", "runtime"]
+    tags: ["ci-native-consumers", "platform-linux-x64-gnu", "regression", "runtime", "requires-rust"]
     script: |
       set -e
-      . src/native/runtime/tools/runtime-preflight.sh
-      oliphaunt_runtime_native_host_require basic
-      cargo test -p oliphaunt --locked --test native_smoke --test native_sql_regression -- --test-threads=1
+      bash src/native/sdks/tests/with-runtime.sh --tools --broker cargo nextest run -p oliphaunt --locked --test native_smoke --test native_sql_regression --no-tests=fail --test-threads=1
     env:
       CARGO_TARGET_DIR: "target"
     deps:
       - target: "~:cargo-sources"
         cacheStrategy: hash
-      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "liboliphaunt-native:package-runtime-desktop-target"
+      - "postgres-tools-native:package-assets"
+      - "oliphaunt-broker:build-release-assets"
     inputs:
+      - "/src/native/sdks/tests/with-runtime.sh"
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
         group: "fixtures"
-      - "@group(code)"
+      - "@group(sources)"
+      - "tests/native_smoke.rs"
+      - "tests/native_sql_regression.rs"
+      - "tests/support/**/*"
       - "/src/native/runtime/tools/runtime-preflight.sh"
     options:
-      cache: local
+      cache: false
       runFromWorkspaceRoot: true
   test-extensions:
     tags: ["regression", "runtime", "extensions"]
@@ -273,8 +277,13 @@ tasks:
 
   packaging-unit:
     tags: ["quality", "unit", "requires-rust"]
-    command: "bash src/native/sdks/rust/tools/prepare-rust-release-source.test.sh"
+    script: |
+      set -e
+      bash src/native/sdks/rust/tools/prepare-rust-release-source.test.sh
+      bash src/native/sdks/tests/with-runtime.test.sh
     inputs:
+      - "/src/native/sdks/tests/with-runtime*.sh"
+      - "/src/native/runtime/tools/runtime-preflight.sh"
       - "**/*"
       - "/src/query/rust/src/lib.rs"
       - "/src/native/rust-bindings/**/*"

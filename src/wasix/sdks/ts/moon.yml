@@ -78,7 +78,7 @@ tasks:
       - package
       - release
       - artifact-package
-      - ci-wasix-ts-sdk-package
+      - ci-wasix-ts-package
     script: bun run --cwd src/wasix/sdks/ts package
     deps:
       - wasix-browser-host:build
@@ -155,9 +155,13 @@ tasks:
       - consumer
       - ci-wasix-ts-sdk-package
     deps:
+      - oliphaunt-query-ts:build
       - extension-artifacts-wasix:compiler-output
       - liboliphaunt-wasix:runtime-portable
-      - oliphaunt-wasix-ts:package
+      - target: oliphaunt-wasix-ts:package
+        cacheStrategy: ignored
+      - oliphaunt-wasix-ts:build
+      - wasix-browser-host:build
       - oliphaunt-wasix-napi:build-release-assets
     inputs:
       &inputs
@@ -166,7 +170,7 @@ tasks:
       - /src/examples/wasix/browser/**/*
       - project: shared-test-fixtures
         group: fixtures
-      - "**/*"
+      - "@group(code)"
       - /tools/dev/bun.sh
       - /tools/dev/deno.sh
       - /src/wasix/runtime/tools/wasix-*.mts
@@ -182,11 +186,15 @@ tasks:
       - browser
       - ci-wasix-ts-sdk-package
     deps:
+      - oliphaunt-query-ts:build
       - extension-artifacts-wasix:compiler-output
       - database-resources:package-wasix
       - database-resources:package-icu
       - liboliphaunt-wasix:runtime-portable
-      - oliphaunt-wasix-ts:package
+      - target: oliphaunt-wasix-ts:package
+        cacheStrategy: ignored
+      - oliphaunt-wasix-ts:build
+      - wasix-browser-host:build
     inputs:
       *inputs
     options:

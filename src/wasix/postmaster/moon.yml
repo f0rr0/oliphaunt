@@ -38,6 +38,11 @@ owners:
     "**/*":
       - "@oliphaunt/wasix"
 fileGroups:
+  production:
+    - "**/*"
+    - "!**/*.md"
+    - "!**/*.test.*"
+    - "!testdata/**/*"
   guest-sealing:
     - bin/apply-wasix-core-overlay.sh
     - "bin/seal-wasix-{core-exports,linear-memory}.sh"
@@ -93,6 +98,7 @@ tasks:
     inputs:
       - "/tools/dev/bun.sh"
       - "**/*"
+      - "!**/*.md"
       - /tools/packaging/strict-json.mts
     options:
       cache: true
@@ -145,7 +151,9 @@ tasks:
       - liboliphaunt-wasix-postmaster:prepare-runtime
     inputs:
       - "@group(cargo-workspace)"
+      - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
+      - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
       - /src/wasix/runtime/assets/build/docker_wasix_env.sh
       - "@group(runtime-source)"
       - /src/wasix/postmaster/lib/common.sh
@@ -173,7 +181,9 @@ tasks:
       - liboliphaunt-wasix-postmaster:prepare-runtime
     inputs:
       - "@group(cargo-workspace)"
+      - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
+      - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
       - /src/wasix/runtime/assets/build/docker_wasix_env.sh
       - "@group(runtime-source)"
       - wasmer/tests.sh
@@ -191,7 +201,9 @@ tasks:
       - liboliphaunt-wasix-postmaster:prepare-postgres
       - liboliphaunt-wasix-postmaster:runtime-build
     inputs:
+      - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
+      - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
       - /src/wasix/runtime/assets/build/docker_wasix_env.sh
       - /src/wasix/postmaster/bin/build-wasix-core.sh
       - /src/wasix/postmaster/lib/common.sh
@@ -211,7 +223,9 @@ tasks:
     inputs:
       - "@group(guest-sealing)"
       - /src/third-party/postgres/source.toml
+      - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
+      - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
       - /src/wasix/runtime/assets/build/docker_wasix_env.sh
       - /src/third-party/postgres/**/*
       - "!/src/third-party/postgres/**/*.test.*"
@@ -237,7 +251,9 @@ tasks:
     deps:
       - liboliphaunt-wasix-postmaster:runtime-build
     inputs:
+      - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
+      - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
       - /src/wasix/runtime/assets/build/docker_wasix_env.sh
       - "@group(runtime-source)"
       - /src/wasix/postmaster/lib/common.sh
@@ -276,6 +292,8 @@ tasks:
     deps:
       - liboliphaunt-wasix-postmaster:runtime-capabilities
       - liboliphaunt-wasix-postmaster:postgres-build
+    inputs:
+      - "@group(production)"
     options:
       cache: false
       internal: true
@@ -290,6 +308,8 @@ tasks:
     command: bash src/wasix/postmaster/bin/stress-wasix-initdb.sh --iterations 20
     deps:
       - liboliphaunt-wasix-postmaster:regression
+    inputs:
+      - "@group(production)"
     options:
       cache: false
       internal: true
@@ -303,6 +323,8 @@ tasks:
     command: bash src/wasix/postmaster/bin/smoke-wasix-concurrent-connections.sh
     deps:
       - liboliphaunt-wasix-postmaster:initdb-smoke
+    inputs:
+      - "@group(production)"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -317,7 +339,9 @@ tasks:
     deps:
       - liboliphaunt-wasix-postmaster:smoke
     inputs:
+      - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
+      - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
       - /src/wasix/runtime/assets/build/docker_wasix_env.sh
       - /src/wasix/postmaster/bin/run-wasix-regress-subset.sh
       - /src/wasix/postmaster/bin/wasix-make.sh
@@ -337,7 +361,7 @@ tasks:
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
-      - "**/*"
+      - "@group(production)"
       - /src/wasix/postmaster/sources/*.toml
       - "/tools/packaging/*.{mjs,mts}"
     outputs:
@@ -347,6 +371,17 @@ tasks:
       internal: true
       runFromWorkspaceRoot: true
       runInCI: true
+  package-docs:
+    tags: ["quality", "static"]
+    script: |
+      set -eu
+      mkdir -p target/oliphaunt-wasix-postmaster/package-docs
+      cp src/wasix/postmaster/README.md target/oliphaunt-wasix-postmaster/package-docs/README.md
+    inputs: ["README.md"]
+    outputs: ["/target/oliphaunt-wasix-postmaster/package-docs/README.md"]
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   release-assets:
     tags:
       - release
@@ -356,9 +391,14 @@ tasks:
     command: bash src/wasix/postmaster/bin/package-release-assets.sh
     deps:
       - liboliphaunt-wasix-postmaster:carrier
+      # Documentation has its own cheap producer. A release always assembles it,
+      # but prose changes alone do not requalify unchanged runtime binaries.
+      - target: liboliphaunt-wasix-postmaster:package-docs
+        cacheStrategy: ignored
     inputs:
       - "@group(legal-files)"
-      - "**/*"
+      - "@group(production)"
+      - /target/oliphaunt-wasix-postmaster/package-docs/README.md
       - /src/wasix/postmaster/sources/*.toml
       - "/tools/packaging/*.{mjs,mts}"
       - /target/oliphaunt-wasix-postmaster/carriers/**/*
@@ -378,6 +418,8 @@ tasks:
     deps:
       - liboliphaunt-wasix-postmaster:carrier
       - liboliphaunt-wasix-postmaster:initdb-stress
+    inputs:
+      - "@group(production)"
     options:
       cache: false
       internal: true
@@ -394,7 +436,7 @@ tasks:
       - liboliphaunt-wasix-postmaster:carrier
       - liboliphaunt-wasix-postmaster:backend-wave-stress
     inputs:
-      - "**/*"
+      - "@group(production)"
       - /target/oliphaunt-wasix-postmaster/carriers/**/*
     options:
       cache: false
@@ -410,7 +452,7 @@ tasks:
       - liboliphaunt-wasix-postmaster:postgres-build
       - liboliphaunt-wasix-postmaster:runtime-capabilities
     inputs:
-      - "**/*"
+      - "@group(production)"
       - /src/wasix/postmaster/sources/*.toml
       - "/tools/packaging/*.{mjs,mts}"
       - /target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3.current

@@ -174,15 +174,14 @@ portable_file_mode() {
 }
 builder_recipe_inputs=(
   docker/Dockerfile
+  docker/Dockerfile.dockerignore
   docker/isrg-root-x1.pem
   docker/install-pinned-apt-packages.sh
   docker/install-pinned-wasixcc.sh
   docker/pinned-wasixcc-assets.tsv
 )
 
-# The Dockerfile is itself the fifth recipe input. Every other recipe input
-# must be a direct COPY source, and the Dockerfile must not consume an input
-# that is absent from the recipe identity.
+# Dockerfile, context policy and every COPY source enter the recipe identity.
 dockerfile_copy_sources="$(
   awk '
     toupper($1) != "COPY" { next }
@@ -205,11 +204,14 @@ dockerfile_copy_sources="$(
   exit 1
 }
 expected_builder_context_inputs="$(
-  printf '%s\n' "${builder_recipe_inputs[@]#docker/}" | LC_ALL=C sort
+  {
+    printf 'src/wasix/runtime/assets/build/%s\n' "${builder_recipe_inputs[@]}"
+    printf 'tools/dev/acquisition.sh\n'
+  } | LC_ALL=C sort
 )"
 actual_builder_context_inputs="$(
   {
-    printf 'Dockerfile\n'
+    printf 'src/wasix/runtime/assets/build/docker/%s\n' Dockerfile Dockerfile.dockerignore
     printf '%s\n' "$dockerfile_copy_sources"
   } | LC_ALL=C sort
 )"
@@ -220,6 +222,15 @@ actual_builder_context_inputs="$(
   exit 1
 }
 
+original_repo_root="$REPO_ROOT"
+builder_repo="$test_root/builder-repo"
+mkdir -p "$builder_repo/tools/dev"
+cp "$REPO_ROOT/tools/dev/acquisition.sh" "$builder_repo/tools/dev/acquisition.sh"
+REPO_ROOT="$builder_repo"
+[ "$(fresh_wasix_builder_recipe_sha256)" = "$live_builder_recipe" ]
+printf '\n# acquisition drift probe\n' >> "$builder_repo/tools/dev/acquisition.sh"
+[ "$(fresh_wasix_builder_recipe_sha256)" != "$live_builder_recipe" ]
+REPO_ROOT="$original_repo_root"
 builder_fixture="$test_root/builder-fixture"
 mkdir -p "$builder_fixture"
 cp -a "$original_toolchain_root/." "$builder_fixture/"
@@ -624,7 +635,7 @@ run_fake_docker_case() {
 
   if [ "$expected_build_count" -eq 1 ]; then
     expected_build="$(printf 'build\t--label\t%s=%s\t-f\t%s/Dockerfile\t-t\t%s\t%s' \
-      "$label" "$live_builder_recipe" "$context" "$image" "$context")"
+      "$label" "$live_builder_recipe" "$context" "$image" "$REPO_ROOT")"
     actual_build="$(awk -F '\t' '$1 == "build"' "$log")"
     [ "$actual_build" = "$expected_build" ] || {
       printf 'fake Docker case %s used unexpected build arguments\n' "$name" >&2
@@ -634,6 +645,8 @@ run_fake_docker_case() {
   fi
 }
 
+# An external recipe must not build with COPY inputs from a different tree.
+WASIX_TOOLCHAIN_ROOT="$builder_fixture" run_fake_docker_case external-context error expected 2 0
 run_fake_docker_case matching-label expected expected 0 0
 run_fake_docker_case absent-image error expected 0 1
 run_fake_docker_case missing-label empty expected 0 1

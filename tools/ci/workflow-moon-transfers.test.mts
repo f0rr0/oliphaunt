@@ -13,8 +13,8 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { CI_JOB_TARGETS } from './ci_plan.mts';
 import { resolveExecution } from '../../.github/scripts/resolve-planned-moon-execution.mts';
+import { CI_JOB_TARGETS } from './ci_plan.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const workflow = Bun.YAML.parse(readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
@@ -26,6 +26,64 @@ const tasks = new Map(
     task,
   ]),
 );
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('workflow-wide environment does not force product builds during planning', () => {
+    for (const task of tasks.values()) {
+      for (const input of task.inputs ?? []) {
+        if (typeof input !== 'string' || !input.startsWith('$')) continue;
+        assert(
+          !Object.hasOwn(workflow.env ?? {}, input.slice(1)),
+          `${input} affects ${task.target}; scope it to the consuming build job`,
+        );
+      }
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('jobs without a Moon cache have no cacheable local task subtree', () => {
+    for (const [id, job] of Object.entries(workflow.jobs)) {
+      if (
+        !job.steps?.some(
+          (step) =>
+            step.uses === './.github/actions/setup-moon' && step.with?.['task-cache'] === 'false',
+        )
+      )
+        continue;
+      const roots = CI_JOB_TARGETS[id] ?? [];
+      if (!roots.length) {
+        assert(
+          !job.steps.some((step) =>
+            /run-(?:planned-moon-job|moon-targets)[.]sh/u.test(step.run ?? ''),
+          ),
+          `${id} executes unclassified Moon work`,
+        );
+        continue;
+      }
+      const transferred = [
+        ...new Set(
+          job.steps.flatMap((step) =>
+            JSON.parse(step.env?.OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON ?? '[]'),
+          ),
+        ),
+      ];
+      const execution = resolveExecution(roots, transferred, tasks);
+      assert.deepEqual(
+        execution.localDependencies,
+        [],
+        `${id} has local work that could reuse the cache`,
+      );
+      // The adapter always executes paths consuming transferred artifacts with
+      // MOON_CACHE=off; only localDependencies use normal Moon caching.
+      assert.ok(execution.transferred.length > 0, `${id} runs without an artifact boundary`);
+    }
+    const action = Bun.YAML.parse(
+      readFileSync(path.join(ROOT, '.github/actions/setup-moon/action.yml'), 'utf8'),
+    );
+    assert.equal(action.inputs['task-cache'].default, 'true');
+    const cache = action.runs.steps.find((step) => step.uses?.startsWith('actions/cache@'));
+    assert.equal(cache.if, `\${{ inputs.task-cache == 'true' }}`);
+  });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('artifact production waits for source check and test results without a dependency cycle', () => {
@@ -102,6 +160,34 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
     assert.deepEqual(execution.targets, ['extension-packages:package']);
   });
 
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('WASIX consumers build query once before running against transferred SDK artifacts', () => {
+    const step = workflow.jobs['wasix-ts-sdk-package'].steps.find(
+      (step) => step.name === 'Test WASIX TypeScript consumers',
+    );
+    const execution = resolveExecution(
+      CI_JOB_TARGETS['wasix-ts-sdk-package'],
+      JSON.parse(step.env.OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON),
+      tasks,
+    );
+    // SDK transfers cut off their upstream query build, so every independently
+    // selectable consumer must retain its own edge to the shared producer.
+    for (const target of CI_JOB_TARGETS['wasix-ts-sdk-package']) {
+      assert(dependencies(target).includes('oliphaunt-query-ts:build'), target);
+    }
+    assert.deepEqual(execution.localDependencies, ['oliphaunt-query-ts:build']);
+    for (const target of [...execution.localDependencies, ...execution.targets]) {
+      assert(
+        ![
+          'wasix-browser-host:build',
+          'oliphaunt-wasix-ts:build',
+          'oliphaunt-wasix-ts:package',
+        ].includes(target),
+        target,
+      );
+    }
+  });
+
 function dependencies(target) {
   const task = tasks.get(target);
   assert.ok(task, `workflow root ${target} must exist in Moon`);
@@ -119,7 +205,13 @@ function dependencies(target) {
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('downloaded Moon dependencies are explicit reachable handoffs', () => {
-    for (const [workflowJob, job] of Object.entries(workflow.jobs)) {
+    const host = Bun.YAML.parse(
+      readFileSync(path.join(ROOT, '.github/workflows/wasix-host.yml'), 'utf8'),
+    );
+    for (const [workflowJob, job] of Object.entries({
+      ...workflow.jobs,
+      'wasix-host': { ...host.jobs.build, needs: ['liboliphaunt-wasix-runtime'] },
+    })) {
       const steps = job.steps ?? [];
       for (const [index, step] of steps.entries()) {
         const run = String(step.run ?? '');
@@ -130,7 +222,9 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
 
         const rawTransfers = step.env?.OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON;
         if (rawTransfers === undefined) continue;
-        const plannedJob = run.match(/run-planned-moon-job[.]sh ([a-z0-9-]+)/u)?.[1];
+        const plannedJob =
+          run.match(/run-planned-moon-job[.]sh ([a-z0-9-]+)/u)?.[1] ??
+          (run.includes('collect-wasix-evidence.sh') ? 'wasix-release-regression' : undefined);
         assert.ok(plannedJob, `${workflowJob} transferred handoff must use the planned-job runner`);
         const transfers = JSON.parse(rawTransfers);
         assert.ok(Array.isArray(transfers) && transfers.length > 0);
@@ -175,6 +269,59 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         assert.ok(
           needs.some((need) => need && need !== 'affected'),
           `${workflowJob} has no producer job`,
+        );
+      }
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('SDK runtime suites execute in artifact-consuming jobs without rebuilding their producers', () => {
+    for (const [job, roots, forbidden] of [
+      [
+        'native-consumers',
+        [
+          'oliphaunt-rust:test-integration',
+          'oliphaunt-mobile-bindings:test-native',
+          'oliphaunt-swift:test-native',
+          'oliphaunt-kotlin:test-native-bindings',
+        ],
+        [
+          'liboliphaunt-native:build-runtime-desktop-target',
+          'oliphaunt-broker:build-release-assets',
+        ],
+      ],
+      [
+        'wasix-release-regression',
+        ['oliphaunt-wasix-rust:test-integration'],
+        [
+          'liboliphaunt-wasix:compiler-output',
+          'liboliphaunt-wasix:runtime-aot',
+          'database-resources:build-icu-data',
+        ],
+      ],
+    ]) {
+      const step = workflow.jobs[job].steps.find(
+        (step) => step.env?.OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON,
+      );
+      const available = JSON.parse(step.env.OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON);
+      for (const root of roots) {
+        assert(CI_JOB_TARGETS[job].includes(root), `${root} has no executable hosted owner`);
+        const reachable = new Set(dependencies(root));
+        for (const dependency of reachable)
+          for (const parent of dependencies(dependency)) reachable.add(parent);
+        const execution = resolveExecution(
+          [root],
+          available.filter((target) => reachable.has(target)),
+          tasks,
+        );
+        assert(execution.targets.includes(root));
+        const executed = [...execution.targets, ...execution.localDependencies];
+        for (const target of forbidden)
+          assert(!executed.includes(target), `${root} rebuilds ${target}`);
+        assert.equal(
+          tasks.get(root).options.cache,
+          false,
+          `${root} must execute against this run's artifacts`,
         );
       }
     }

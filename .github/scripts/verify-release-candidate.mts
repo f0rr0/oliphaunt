@@ -1,15 +1,20 @@
 #!/usr/bin/env bun
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
+import {
+  extensionArtifactProductsForReleaseProducts,
+  extensionSqlNamesForProducts,
+} from '../../tools/release/release-artifact-targets.mts';
 
 import {
   affectedPlanBinding,
   assertBindingMatches,
   assertCandidateBindingShape,
+  assertQualificationProductCoverage,
   candidateQualificationMode,
   FULL_PAYLOAD_QUALIFICATION_MODE,
+  nativeEvidenceBinding,
   PRODUCT_QUALIFICATION_MODE,
-  assertQualificationProductCoverage,
   wasixEvidenceBinding,
 } from './release-candidate-lib.mts';
 
@@ -36,6 +41,8 @@ function parseArgs(argv) {
         '--plan',
         '--qualification-mode',
         '--products-json',
+        '--native-evidence-required',
+        '--native-evidence-root',
         '--wasix-evidence-required',
         '--wasix-evidence-root',
       ].includes(name)
@@ -52,7 +59,8 @@ function parseArgs(argv) {
     fail(
       'usage: verify-release-candidate.mts <candidate-json> --plan <ci-plan.json> ' +
         '--wasix-evidence-required true|false [--qualification-mode full-payload] ' +
-        '[--wasix-evidence-root <directory>]',
+        '[--wasix-evidence-root <directory>] [--native-evidence-required true|false] ' +
+        '[--native-evidence-root <directory>]',
     );
   }
   const required = values.get('wasix-evidence-required');
@@ -62,6 +70,11 @@ function parseArgs(argv) {
   if (required === 'true' && !values.has('wasix-evidence-root')) {
     fail('--wasix-evidence-root is required when WASIX evidence is required');
   }
+  const nativeRequired = values.get('native-evidence-required') ?? 'false';
+  if (!['true', 'false'].includes(nativeRequired))
+    fail('--native-evidence-required must be true or false');
+  if (nativeRequired === 'true' && !values.has('native-evidence-root'))
+    fail('--native-evidence-root is required when native evidence is required');
   const qualificationMode = values.get('qualification-mode') ?? FULL_PAYLOAD_QUALIFICATION_MODE;
   if (
     ![FULL_PAYLOAD_QUALIFICATION_MODE, PRODUCT_QUALIFICATION_MODE, 'release'].includes(
@@ -79,6 +92,8 @@ function parseArgs(argv) {
     candidatePath,
     planPath: values.get('plan'),
     wasixEvidenceRequired: required === 'true',
+    nativeEvidenceRequired: nativeRequired === 'true',
+    nativeEvidenceRoot: values.get('native-evidence-root'),
     wasixEvidenceRoot: values.get('wasix-evidence-root'),
     qualificationMode,
     products,
@@ -189,6 +204,38 @@ if (args.wasixEvidenceRequired) {
       candidate.evidence.wasixReleaseRegression,
       evidence,
       'release candidate WASIX evidence',
+    );
+  } catch (error) {
+    fail(error.message);
+  }
+}
+
+if (args.nativeEvidenceRequired && !candidate.evidenceRequirements.nativeExtensionLifecycle)
+  fail(
+    'selected release products require native evidence, but the qualified CI plan did not require it',
+  );
+if (args.nativeEvidenceRequired) {
+  try {
+    if (args.products) {
+      const requiredExtensions = extensionSqlNamesForProducts(
+        extensionArtifactProductsForReleaseProducts(args.products, { family: 'native' }),
+      );
+      for (const extension of requiredExtensions) {
+        if (!expectedPlan.nativeExtensionLifecycle.extensions.includes(extension))
+          fail(`native evidence is missing published extension ${extension}`);
+      }
+    }
+    assertBindingMatches(
+      candidate.evidence.nativeExtensionLifecycle,
+      nativeEvidenceBinding(args.nativeEvidenceRoot, {
+        repository: expected.repository,
+        runId: expected.runId,
+        runAttempt: candidate.runAttempt,
+        sha: expected.sha,
+        tree: expectedTree,
+        selection: expectedPlan.nativeExtensionLifecycle,
+      }),
+      'release candidate native evidence',
     );
   } catch (error) {
     fail(error.message);

@@ -11,6 +11,6 @@ tasks:
   test:
     tags: ["quality", "unit"]
     command: "bash tools/ci/start-android-emulator-ci.test.sh"
-    inputs: ["start-android-emulator-ci.sh", "start-android-emulator-ci.test.sh"]
+    inputs: ["start-android-emulator-ci.sh", "start-android-emulator-ci.test.sh", "/tools/dev/acquisition.sh"]
     options:
       runFromWorkspaceRoot: true

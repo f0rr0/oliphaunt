@@ -87,20 +87,18 @@ tasks:
         group: sources
       - /src/native/runtime/sources/*.toml
       - /src/extensions/artifacts/native/tools/**/*
+      - "!/src/extensions/artifacts/native/tools/**/*.test.*"
       - /tools/packaging/check-linux-consumer-baseline.sh
       - /src/third-party/tools/source-fetch-core.mts
       - /src/extensions/tools/extension-upstream-licenses.mts
-      - /tools/packaging/linux-abi-baseline.test.sh
       - "/tools/packaging/*.{mjs,mts}"
       - /src/extensions/tools/extension-artifact-archive-policy.mts
       - /src/extensions/artifacts/native/tools/native-extension-asset-index-contract.mts
       - /src/native/runtime/tools/native-runtime-payload-policy.json
       - /tools/packaging/windows-vc-runtime-policy.json
       - /tools/release/platform-compatibility-policy.mts
-      - /tools/release/platform-compatibility-policy.test.mts
       - /tools/packaging/platform-binary-contract.mts
       - /tools/packaging/strip-native-binaries.sh
-      - /tools/packaging/platform-binary-contract.test.mts
       - /tools/packaging/release-notices.mts
       - /tools/packaging/release-directory-safety.mts
       - /tools/packaging/windows-vc-runtime-closure.mts

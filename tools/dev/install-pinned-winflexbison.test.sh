@@ -5,6 +5,10 @@ root="$(git rev-parse --show-toplevel)"
 installer="$root/tools/dev/install-pinned-winflexbison.sh"
 extractor="$root/tools/dev/extract-pinned-zip.sh"
 tmp="$(mktemp -d)"
+mkdir -p "$tmp/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/no-delay/sleep"
+chmod +x "$tmp/no-delay/sleep"
+export PATH="$tmp/no-delay:$PATH"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir -p "$tmp/fixtures" "$tmp/config" "$tmp/bin"
 
@@ -70,7 +74,7 @@ payload="$(run_installer)"
 [ -x "$payload/win_flex.exe" ]
 [ -x "$payload/win_bison.exe" ]
 [ -f "$payload/data/README.md" ]
-grep -Fxq -- "--retry-all-errors" "$tmp/curl-args.log"
+grep -Fxq -- "--retry" "$tmp/curl-args.log"
 grep -Fxq -- "=https" "$tmp/curl-args.log"
 
 # A complete verified cache is network-independent.

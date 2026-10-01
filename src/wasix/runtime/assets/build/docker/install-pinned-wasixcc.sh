@@ -2,6 +2,10 @@
 set -euo pipefail
 
 export LC_ALL=C
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+acquisition_helper="$script_dir/acquisition.sh"
+[ -f "$acquisition_helper" ] || acquisition_helper="$script_dir/../../../../../../tools/dev/acquisition.sh"
+. "$acquisition_helper"
 
 fail() {
   echo "install-pinned-wasixcc: $*" >&2
@@ -71,6 +75,7 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+oliphaunt_acquisition_start 'WASIX compiler assets' 1800
 
 validate_archive_members() {
   local archive="$1"
@@ -258,17 +263,12 @@ while IFS=$'\t' read -r kind asset_name expected_bytes expected_sha256 url extra
   partial="$download_root/$asset_name.partial"
   archive="$download_root/$asset_name"
   rm -f "$partial" "$archive"
-  curl \
+  oliphaunt_acquisition_curl 900 9 5 curl \
     --fail \
     --location \
     --silent \
     --show-error \
-    --retry 8 \
-    --retry-all-errors \
-    --retry-delay 5 \
-    --retry-max-time 900 \
     --connect-timeout 20 \
-    --max-time 900 \
     --speed-limit 1024 \
     --speed-time 120 \
     --max-filesize "$expected_bytes" \

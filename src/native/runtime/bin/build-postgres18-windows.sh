@@ -5,6 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/common.sh"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
 cd "$repo_root"
+source tools/dev/acquisition.sh
 source src/third-party/postgres/fetch-source.sh
 source src/native/runtime/tools/liboliphaunt-extension-guard.sh
 

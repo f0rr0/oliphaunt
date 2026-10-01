@@ -99,12 +99,9 @@ tasks:
       - "integration-examples:react-native-android-build"
     inputs:
       - "native/react-native-expo/src/**/*"
-      - "native/react-native-expo/maestro/**/*"
       - "native/react-native-expo/package.json"
       - project: "oliphaunt-react-native"
         group: "code"
-      - "/tools/dev/maestro.toml"
-      - "/tools/dev/setup-maestro.sh"
       - "/target/mobile-build/react-native/android/**/*"
     options:
       cache: false
@@ -163,12 +160,9 @@ tasks:
       - "integration-examples:react-native-ios-build"
     inputs:
       - "native/react-native-expo/src/**/*"
-      - "native/react-native-expo/maestro/**/*"
       - "native/react-native-expo/package.json"
       - project: "oliphaunt-react-native"
         group: "code"
-      - "/tools/dev/maestro.toml"
-      - "/tools/dev/setup-maestro.sh"
       - "/target/mobile-build/react-native/ios/**/*"
     options:
       cache: false

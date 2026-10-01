@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}" in
+  date)
+    if [[ -n ${FETCH_TEST_CLOCK:-} ]]; then cat "$FETCH_TEST_CLOCK"; else exec "$FETCH_TEST_DATE" "$@"; fi
+    ;;
   sleep)
     printf '%s\n' "$1" >> "$FETCH_TEST_ROOT/sleeps"
     if [[ "$1" == 0.1 ]]; then
       touch "$FETCH_TEST_ROOT/lock-waiting"
+      if [[ ${FETCH_TEST_EXPIRE:-} == 1 ]]; then printf "9999999\n" > "$FETCH_TEST_CLOCK"; exit 0; fi
       exec "$FETCH_TEST_SLEEP" "$1"
     fi
     ;;
@@ -14,6 +18,7 @@ case "${0##*/}" in
       count=${#args[@]}
       url=${args[$((count-2))]}
       printf '%s\n' "$url" >> "$FETCH_TEST_ROOT/requests"
+      if [[ ${FETCH_TEST_EXPIRE:-} == 1 ]]; then printf "9999999\n" > "$FETCH_TEST_CLOCK"; exit 28; fi
       if [[ ${FETCH_TEST_FAULT:-} == all || (${FETCH_TEST_FAULT:-} == primary && "$url" != https://mirror.example.invalid/source.git) ]]; then
         echo "transport fault: $url" >&2; exit 1
       fi
@@ -27,7 +32,7 @@ case "${0##*/}" in
   curl)
     [[ "$1" == --disable ]]
     case " $* " in *' --insecure '*|*' -k '*) exit 90 ;; esac
-    for required in '--proto =https' '--proto-redir =https' '--max-filesize 1073741824' '--max-time 600' '--tlsv1.2' '--retry 2'; do
+    for required in '--proto =https' '--proto-redir =https' '--max-filesize 1073741824' '--retry 0' '--tlsv1.2'; do
       [[ " $* " == *" $required "* ]] || exit 91
     done
     if [[ ${RUNNER_OS:-} == Windows ]]; then [[ " $* " == *' --ssl-revoke-best-effort '* ]]; fi
@@ -37,6 +42,7 @@ case "${0##*/}" in
       shift
     done
     printf '%s\n' "$url" >> "$FETCH_TEST_ROOT/requests"
+    if [[ ${FETCH_TEST_EXPIRE:-} == 1 ]]; then printf "9999999\n" > "$FETCH_TEST_CLOCK"; exit 28; fi
     if [[ ${FETCH_TEST_BARRIER:-} == 1 ]]; then
       touch "$FETCH_TEST_ROOT/downloading"
       while [[ ! -e "$FETCH_TEST_ROOT/release-download" ]]; do "$FETCH_TEST_SLEEP" 0.1; done

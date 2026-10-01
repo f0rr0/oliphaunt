@@ -3,6 +3,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
+source "$REPO_ROOT/tools/dev/acquisition.sh"
 source "$REPO_ROOT/src/third-party/postgres/fetch-source.sh"
 
 print_path=0

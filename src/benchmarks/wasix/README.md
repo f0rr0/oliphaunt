@@ -16,7 +16,7 @@ and `sdk-worker` ownership values, so Promise shape is not mistaken for
 main-thread safety.
 
 ```sh
-bun run --cwd src/wasix/sdks/ts package:build
+moon run oliphaunt-wasix-ts:package
 bash src/wasix/sdks/ts/tools/integration/smoke-browser.sh --benchmark
 # or: moon run perf-tools:wasix-browser-measure
 ```
@@ -43,7 +43,7 @@ the built SDK tree, every harness source, and the installed PGlite closure.
 For a harness smoke check without a full sample set, run:
 
 ```sh
-bun run --cwd src/wasix/sdks/ts package:build
+moon run oliphaunt-wasix-ts:package
 bash src/wasix/sdks/ts/tools/integration/smoke-browser.sh --benchmark --quick
 ```
 

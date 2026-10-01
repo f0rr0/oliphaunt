@@ -58,8 +58,11 @@ need_cmd avdmanager
 need_cmd adb
 ensure_kvm_access
 
-yes | sdkmanager --licenses >/dev/null || true
-sdkmanager --install "emulator" "$image"
+# Package acquisition and emulator boot have separate budgets.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../dev" && pwd)/acquisition.sh"
+oliphaunt_acquisition_start 'Android emulator packages' 1800
+yes | oliphaunt_acquisition_run 60 sdkmanager --licenses >/dev/null || true
+oliphaunt_acquisition_run 1800 sdkmanager --install "emulator" "$image"
 need_cmd emulator
 
 mkdir -p "$ANDROID_AVD_HOME"

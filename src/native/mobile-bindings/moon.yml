@@ -22,14 +22,12 @@ tasks:
     options:
       runFromWorkspaceRoot: true
   test-native:
-    tags: ["integration", "runtime", "requires-rust"]
+    tags: ["ci-native-consumers", "platform-linux-x64-gnu", "integration", "runtime", "requires-rust"]
     script: |
       set -e
-      . src/native/runtime/tools/runtime-preflight.sh
-      oliphaunt_runtime_native_host_require basic
-      cargo test -p oliphaunt --no-default-features --features mobile-bindings --test mobile_broker --locked -- --nocapture
-    deps: ["liboliphaunt-native:build-runtime-desktop-target", "~:cargo-sources"]
-    inputs: ["@group(cargo-workspace)", "src/**/*", "/src/native/sdks/rust/src/**/*", "/src/native/sdks/rust/tests/mobile_broker.rs", "/src/native/broker/src/**/*"]
+      bash src/native/sdks/tests/with-runtime.sh cargo nextest run -p oliphaunt --no-default-features --features mobile-bindings --test mobile_broker --locked --no-tests=fail --test-threads=1
+    deps: ["liboliphaunt-native:package-runtime-desktop-target", "~:cargo-sources"]
+    inputs: ["/src/native/sdks/tests/with-runtime.sh", "/src/native/runtime/tools/runtime-preflight.sh", "@group(cargo-workspace)", "src/**/*", "/src/native/sdks/rust/src/**/*", "/src/native/sdks/rust/tests/mobile_broker.rs", "/src/native/broker/src/**/*"]
     options:
       runFromWorkspaceRoot: true
       cache: false

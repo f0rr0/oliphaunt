@@ -873,11 +873,14 @@ fresh_require_canonical_directory() {
 }
 
 fresh_wasix_builder_recipe_sha256() {
+  local identity_path
   local file_sha256
   local identity_mode
   local path
   local recipe_paths=(
+    "$REPO_ROOT/tools/dev/acquisition.sh"
     "$WASIX_TOOLCHAIN_ROOT/docker/Dockerfile"
+    "$WASIX_TOOLCHAIN_ROOT/docker/Dockerfile.dockerignore"
     "$WASIX_TOOLCHAIN_ROOT/docker/isrg-root-x1.pem"
     "$WASIX_TOOLCHAIN_ROOT/docker/install-pinned-apt-packages.sh"
     "$WASIX_TOOLCHAIN_ROOT/docker/install-pinned-wasixcc.sh"
@@ -903,7 +906,11 @@ fresh_wasix_builder_recipe_sha256() {
       else
         identity_mode=data
       fi
-      printf '%s\0%s\0%s\0' "${path#"$WASIX_TOOLCHAIN_ROOT"/}" "$file_sha256" "$identity_mode"
+      case "$path" in
+        "$WASIX_TOOLCHAIN_ROOT"/*) identity_path="src/wasix/runtime/assets/build/${path#"$WASIX_TOOLCHAIN_ROOT"/}" ;;
+        *) identity_path="${path#"$REPO_ROOT"/}" ;;
+      esac
+      printf '%s\0%s\0%s\0' "$identity_path" "$file_sha256" "$identity_mode"
     done
   } | fresh_sha256_stream
 }
@@ -1705,11 +1712,15 @@ fresh_ensure_docker_image() {
   if [ "$actual_recipe" = "$expected_recipe" ]; then
     return
   fi
+  [ "$WASIX_TOOLCHAIN_ROOT" = "$REPO_ROOT/src/wasix/runtime/assets/build" ] || {
+    echo 'WASIX builder context requires WASIX_TOOLCHAIN_ROOT under REPO_ROOT; set both for another checkout' >&2
+    return 2
+  }
   "$docker_bin" build \
     --label "$label=$expected_recipe" \
     -f "$context/Dockerfile" \
     -t "$image" \
-    "$context" || return
+    "$REPO_ROOT" || return
   actual_recipe="$("$docker_bin" image inspect \
     --format "{{ index .Config.Labels \"$label\" }}" "$image" 2>/dev/null || true)"
   [ "$actual_recipe" = "$expected_recipe" ] || {

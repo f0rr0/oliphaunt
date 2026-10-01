@@ -44,6 +44,9 @@ if [ "$operation" = update ]; then
   update="$(( $(cat "$update_file" 2>/dev/null || echo 0) + 1 ))"
   printf '%s\n' "$update" >"$update_file"
   case "${OLIPHAUNT_FAKE_APT_MODE:-success}" in
+    expired-update)
+      printf '9999999\n' > "$OLIPHAUNT_FAKE_APT_CLOCK"
+      ;;
     transient-update)
       [ "$update" -gt 1 ] || exit 100
       ;;
@@ -69,6 +72,12 @@ printf 'sleep=%s\n' "$*" >>"${OLIPHAUNT_FAKE_APT_LOG:?}"
 SLEEP
 chmod 0755 "$fake_bin/sleep"
 
+cat >"$fake_bin/date" <<'DATE'
+#!/usr/bin/env bash
+cat "$OLIPHAUNT_FAKE_APT_CLOCK"
+DATE
+chmod +x "$fake_bin/date"
+
 run_case() {
 	local name="$1"
 	local mode="$2"
@@ -76,18 +85,19 @@ run_case() {
 	local case_root="$work_root/$name"
 	mkdir -p "$case_root"
 	: >"$case_root/apt.log"
+	printf '1000000\n' > "$case_root/clock"
 	if [ "$seed_ca" = true ]; then
 		mkdir -p "$case_root/certs"
 		printf '%s\n' fixture-pinned-snapshot-root >"$case_root/certs/ca-certificates.crt"
 	fi
 	PATH="$fake_bin:$PATH" \
 		OLIPHAUNT_APT_GET="$fake_bin/apt-get" \
-		OLIPHAUNT_SLEEP="$fake_bin/sleep" \
 		OLIPHAUNT_APT_SOURCES_FILE="$case_root/ubuntu.sources" \
 		OLIPHAUNT_APT_LISTS_DIR="$case_root/lists" \
 		OLIPHAUNT_CA_BUNDLE="$case_root/certs/ca-certificates.crt" \
 		OLIPHAUNT_APT_MAX_ATTEMPTS=3 \
 		OLIPHAUNT_APT_RETRY_DELAY_SECONDS=1 \
+		OLIPHAUNT_FAKE_APT_CLOCK="$case_root/clock" \
 		OLIPHAUNT_FAKE_APT_MODE="$mode" \
 		OLIPHAUNT_FAKE_APT_STATE="$case_root/state" \
 		OLIPHAUNT_FAKE_APT_LOG="$case_root/apt.log" \
@@ -156,6 +166,11 @@ if grep -q 'operation=install' "$permanent_log"; then
 fi
 [ "$(grep -c '^sleep=' "$permanent_log")" -eq 2 ] || fail "permanent update failure slept an unexpected number of times"
 
+# A successful update cannot reset the budget before install or the next retry.
+expect_failure deadline expired-update "deadline"
+[ "$(cat "$work_root/deadline/state/calls")" = 1 ] || fail "deadline admitted another APT command"
+[ ! -e "$work_root/deadline/state/installs" ] || fail "expired update reached installation"
+
 expect_failure missing-ca success "pinned snapshot TLS root is missing" false
 missing_ca_root="$work_root/missing-ca"
 [ ! -s "$missing_ca_root/apt.log" ] || fail "missing TLS root reached APT"
@@ -171,7 +186,6 @@ fi
 set +e
 invalid_output="$(
 	OLIPHAUNT_APT_GET="$fake_bin/apt-get" \
-		OLIPHAUNT_SLEEP="$fake_bin/sleep" \
 		"$installer" --snapshot latest -- bash 2>&1
 )"
 invalid_status=$?

@@ -211,11 +211,36 @@ export function verifyReceipts(options) {
       `aggregate extension coverage drift: expected=${expected.join(',')}; actual=${actual.join(',')}`,
     );
   }
+  let github;
+  if (
+    options.repository !== undefined ||
+    options['run-id'] !== undefined ||
+    options['run-attempt'] !== undefined
+  ) {
+    const runId = Number(options['run-id']);
+    const runAttempt = Number(options['run-attempt']);
+    if (
+      !/^[^/]+\/[^/]+$/.test(options.repository ?? '') ||
+      !Number.isSafeInteger(runId) ||
+      runId < 1 ||
+      !Number.isSafeInteger(runAttempt) ||
+      runAttempt < 1
+    )
+      fail('GitHub provenance requires repository, positive run ID and attempt');
+    github = {
+      repository: options.repository,
+      workflow: 'CI',
+      runId,
+      runAttempt,
+      job: 'native-extension-lifecycle-aggregate',
+    };
+  }
   const aggregateCore = {
     schema: 'oliphaunt-native-extension-lifecycle-aggregate-v1',
     candidateSha: options['candidate-sha'],
     candidateTree: options['candidate-tree'],
     target: 'linux-x64-gnu',
+    ...(github ? { github } : {}),
     shardCount: expectedShardCount,
     extensionCount: expected.length,
     extensions: expected,
@@ -231,8 +256,11 @@ export function verifyReceipts(options) {
       .sort((left, right) => left.shardIndex - right.shardIndex),
   };
   const aggregate = { ...aggregateCore, aggregateSha256: sha256(JSON.stringify(aggregateCore)) };
-  writeFileSync(options.output, `${JSON.stringify(aggregate, null, 2)}\n`);
-  console.log(`native extension lifecycle aggregate verified: ${options.output}`);
+  if (options.output) {
+    writeFileSync(options.output, `${JSON.stringify(aggregate, null, 2)}\n`);
+    console.log(`native extension lifecycle aggregate verified: ${options.output}`);
+  }
+  return aggregate;
 }
 
 if (import.meta.main) {

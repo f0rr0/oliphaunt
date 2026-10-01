@@ -2,6 +2,8 @@
 command_line_tools_build = "14742923"
 command_line_tools_revision = "20.0"
 ndk = "27.0.12077973"
+# React Native / Expo app toolchain; native runtime artifacts retain their own NDK.
+expo_ndk = "27.1.12297006"
 cmake = "3.22.1"
 compile_sdk = "36"
 build_tools = "36.0.0"

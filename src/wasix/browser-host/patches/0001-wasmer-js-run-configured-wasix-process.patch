@@ -11,7 +11,7 @@ index b21b6eb..4a26370 100644
 
  [package.metadata.wasm-pack.profile.release.wasm-bindgen]
  debug-js-glue = false
-@@ -135,9 +135,11 @@ demangle-name-section = false
+@@ -135,9 +135,13 @@ demangle-name-section = false
  dwarf-debug-info = false
 
  [package.metadata.wasm-pack.profile.release]
@@ -21,6 +21,8 @@ index b21b6eb..4a26370 100644
  [patch.crates-io]
 +wasmer = { path = "../wasmer-6.1.0" }
 +wasmer-wasix = { path = "../wasmer-wasix-0.601.0" }
++virtual-fs = { path = "../virtual-fs-0.601.0" }
++virtual-mio = { path = "../virtual-mio-0.601.0" }
  #webc = {git = "https://github.com/wasmerio/pirita", branch = "in-memory-manifest"}
  #virtual-net = { git = "https://github.com/wasmerio/wasmer", branch = "master" }
  #virtual-fs = { git = "https://github.com/wasmerio/wasmer", branch = "master" }

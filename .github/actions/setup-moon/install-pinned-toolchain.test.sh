@@ -5,6 +5,10 @@ root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-moon/install-pinned-toolchain.sh"
 extractor="$root/.github/actions/setup-moon/toolchain-archive.mts"
 tmp="$(mktemp -d)"
+mkdir -p "$tmp/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/no-delay/sleep"
+chmod +x "$tmp/no-delay/sleep"
+export PATH="$tmp/no-delay:$PATH"
 trap 'rm -rf "$tmp"' EXIT
 
 fail() {
@@ -27,6 +31,7 @@ mkdir -p \
   "$fixture/content" \
   "$fixture/blobs"
 cp "$root/tools/dev/curl-platform-flags.sh" "$fixture/tools/dev/curl-platform-flags.sh"
+cp "$root/tools/dev/acquisition.sh" "$fixture/tools/dev/acquisition.sh"
 
 moon_version="9.8.7"
 proto_version="7.6.5"
@@ -201,7 +206,7 @@ final="$(bash "$installer")"
 [ "$(find "$final/plugins" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" = "4" ] || fail "wrong plugin count"
 [ "$(wc -l <"$FAKE_CURL_LOG" | tr -d '[:space:]')" = "13" ] || fail "unexpected first-install request count"
 while IFS= read -r call; do
-  for flag in --ssl-revoke-best-effort --tlsv1.2 --retry-all-errors --retry-connrefused --max-filesize --max-time --speed-limit; do
+  for flag in --ssl-revoke-best-effort --tlsv1.2 --retry --max-filesize --max-time --speed-limit; do
     [[ "$call" == *"$flag"* ]] || fail "curl request omitted $flag"
   done
 done <"$FAKE_CURL_LOG"

@@ -1,5 +1,15 @@
 // Sample changes exercised by CI planning tests; never used for production affectedness.
 export const paths = {
+  postmasterReadme: 'src/wasix/postmaster/README.md',
+  nativeRustRuntimeTests: 'src/native/sdks/rust/tests/native_sql_regression.rs',
+  nativeSwiftRuntimeTests: 'src/native/sdks/swift/Tests/OliphauntTests/NativeRuntimeTests.swift',
+  nativeKotlinRuntimeTests:
+    'src/native/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/NativeBindingsTest.kt',
+  mobileBrokerRuntimeTests: 'src/native/sdks/rust/tests/mobile_broker.rs',
+  wasixResourceRuntimeTests: 'src/wasix/sdks/rust/tests/resources.rs',
+  wasixSdkReadme: 'src/wasix/sdks/ts/README.md',
+  wasixDockerTest: 'src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh',
+  nativeExtensionFixture: 'src/extensions/artifacts/native/tools/create-artifact.test.mts',
   windowsVcRuntimePolicy: 'tools/packaging/windows-vc-runtime-policy.json',
   wasixRuntimeCarrierSource: 'src/wasix/runtime/crates/assets/src/lib.rs',
   wasixToolsCarrierSource: 'src/wasix/postgres-tools/crates/tools/src/lib.rs',
@@ -77,7 +87,6 @@ export const paths = {
   runtimesLiboliphauntWasixPostmasterWasmerBinVerifyPostmasterConcurrencyContractTestMts:
     'src/wasix/postmaster/wasmer/bin/verify-postmaster-concurrency-contract.test.mts',
   srcSourcesThirdPartyNativeREADMEMd: 'src/sources/third-party/native/README.md',
-  toolsDevMaestroToml: 'tools/dev/maestro.toml',
   postgresToolsWasixCratesToolsSrcLibRs: 'src/wasix/postgres-tools/crates/tools/src/lib.rs',
   runtimesLiboliphauntWasixToolsXtaskSrcMainRs: 'src/wasix/runtime/tools/xtask/src/main.rs',
   runtimesLiboliphauntWasixAssetsBuildDockerInstallPinnedWasixccSh:

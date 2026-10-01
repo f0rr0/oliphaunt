@@ -4,6 +4,7 @@ source_tools=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source_core="$source_tools/source-fetch-core.mts"
 # shellcheck source=tools/dev/curl-platform-flags.sh
 source "$source_tools/../../../tools/dev/curl-platform-flags.sh"
+source "$source_tools/../../../tools/dev/acquisition.sh"
 
 source_git() {
   local seconds=$1 directory=$2 status=0
@@ -11,7 +12,7 @@ source_git() {
   # Bound both streams, including diagnostics, without holding them in memory.
   # pipefail rejects a producer killed by SIGPIPE; the byte count also catches
   # a producer that completed its last write before head closed the pipe.
-  "$source_timeout" --kill-after=5 "$seconds" git -C "$directory" \
+  oliphaunt_acquisition_run "$seconds" git -C "$directory" \
     -c core.fsmonitor=false -c submodule.recurse=false \
     -c core.autocrlf=false -c core.eol=lf "$@" \
     2> >(head -c 16777217 > "$source_stage/git-error") |
@@ -31,7 +32,7 @@ source_snapshot() {
   if [[ -d "$checkout" && ! -L "$checkout" && -d "$checkout/.git" && ! -L "$checkout/.git" ]]; then
     source_git 60 "$checkout" rev-parse --show-toplevel > "$snapshot/worktree"
     source_git 60 "$checkout" rev-parse --absolute-git-dir > "$snapshot/git-directory"
-    bun "$source_core" git-identity "$pin" "$checkout" "$snapshot"
+    oliphaunt_acquisition_run 900 bun "$source_core" git-identity "$pin" "$checkout" "$snapshot"
     source_git 60 "$checkout" status --porcelain=v1 --untracked-files=all > "$snapshot/status"
     # Missing pin fields make a clean checkout stale; repository errors above
     # remain fatal. The data validator compares the complete snapshot.
@@ -46,15 +47,16 @@ source_snapshot() {
 fetch_source() (
   set -euo pipefail
   local pin=$1 checkout_root=$2 archive_root=$3 mode=$4
-  local name kind url mirror branch commit archive_name canonical checkout readiness fetched
-  local source_lock='' lock_deadline
+  local name kind url mirror branch commit archive_name canonical checkout readiness fetched status
+  local source_lock=''
+  oliphaunt_acquisition_start "source $(basename "$pin")" 900
   mkdir -p "$checkout_root" "$archive_root"
   source_stage=$(mktemp -d "$checkout_root/.source-stage-XXXXXX")
   trap 'rm -rf "$source_stage"; if [[ -n "$source_lock" ]]; then rmdir "$source_lock"; fi' EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  bun "$source_core" fields "$pin" > "$source_stage/fields"
+  oliphaunt_acquisition_run 900 bun "$source_core" fields "$pin" > "$source_stage/fields"
   { IFS= read -r -d '' name; IFS= read -r -d '' kind; IFS= read -r -d '' url
     IFS= read -r -d '' mirror; IFS= read -r -d '' branch; IFS= read -r -d '' commit
     IFS= read -r -d '' archive_name; IFS= read -r -d '' canonical
@@ -62,11 +64,8 @@ fetch_source() (
   checkout="$checkout_root/$name"
   # Scopes overlap (notably ICU data). Serialize inspection through promotion,
   # so a waiter reuses the complete checkout instead of replacing it concurrently.
-  lock_deadline=$((SECONDS + 3600))
   until mkdir "$checkout.lock" 2>/dev/null; do
-    if (( SECONDS >= lock_deadline )); then
-      echo "timed out waiting for source checkout lock: $checkout.lock" >&2; exit 1
-    fi
+    oliphaunt_acquisition_remaining 900 >/dev/null || exit $?
     sleep 0.1
   done
   source_lock="$checkout.lock"
@@ -77,11 +76,8 @@ fetch_source() (
   : > "$source_stage/empty.gitconfig"
   export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$source_stage/empty.gitconfig"
   export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never
-  source_timeout=$(command -v timeout || command -v gtimeout) || {
-    echo 'source fetching requires GNU timeout (brew install coreutils on macOS)' >&2; exit 1;
-  }
   source_snapshot "$checkout" "$source_stage/durable"
-  readiness=$(bun "$source_core" inspect "$pin" "$checkout" "$source_stage/durable")
+  readiness=$(oliphaunt_acquisition_run 900 bun "$source_core" inspect "$pin" "$checkout" "$source_stage/durable")
   if [[ "$readiness" == ready ]]; then exit 0; fi
   if [[ "$mode" == verify ]]; then echo "source checkout $checkout is missing or stale" >&2; exit 1; fi
 
@@ -98,10 +94,14 @@ fetch_source() (
       if source_git 300 "$candidate" \
         -c protocol.allow=never -c protocol.https.allow=always -c credential.helper= \
         -c http.followRedirects=false -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=120 \
-        fetch --no-tags --depth=1 "$transport" "$commit"; then success=true; break; fi
+        fetch --no-tags --depth=1 "$transport" "$commit"; then success=true; break
+      else
+        status=$?
+        case "$status" in 126|127|129|130|137|143) exit "$status" ;; esac
+      fi
       echo "fetch $name from $transport failed on attempt $attempt/5" >&2
       if (( attempt < 5 && attempt % ${#transports[@]} == 0 )); then
-        sleep "$((attempt * 5 / ${#transports[@]}))"
+        oliphaunt_acquisition_sleep "$((attempt * 5 / ${#transports[@]}))" || exit $?
       fi
     done
     "$success" || exit 1
@@ -111,10 +111,10 @@ fetch_source() (
     fi
     source_git 60 "$candidate" checkout --quiet -B "$branch" "$commit"
     source_snapshot "$candidate" "$source_stage/candidate"
-    bun "$source_core" git-candidate "$pin" "$candidate" "$source_stage/candidate"
+    oliphaunt_acquisition_run 900 bun "$source_core" git-candidate "$pin" "$candidate" "$source_stage/candidate"
   else
     local archive="$archive_root/$archive_name" download="$source_stage/$archive_name"
-    if [[ "$(bun "$source_core" archive-valid "$pin" "$archive")" != valid ]]; then
+    if [[ "$(oliphaunt_acquisition_run 900 bun "$source_core" archive-valid "$pin" "$archive")" != valid ]]; then
       local urls=() endpoint success=false
       if [[ -n "$canonical" ]]; then urls+=("$canonical"); fi
       urls+=("$url")
@@ -122,26 +122,31 @@ fetch_source() (
       local tls_flag
       tls_flag=$(oliphaunt_curl_platform_tls_flag)
       for endpoint in "${urls[@]}"; do
-        if "$source_timeout" --kill-after=5 620 curl --disable --fail --location --silent --show-error \
-          --retry 2 --retry-all-errors --retry-connrefused --retry-delay 5 --retry-max-time 600 \
-          --connect-timeout 20 --max-time 600 --speed-limit 1024 --speed-time 120 \
+        if oliphaunt_acquisition_curl 300 3 5 curl --fail --location --silent --show-error \
+          --connect-timeout 20 --speed-limit 1024 --speed-time 120 \
           --max-filesize 1073741824 --max-redirs 5 --proto-default https \
           --proto '=https' --proto-redir '=https' --tlsv1.2 ${tls_flag:+"$tls_flag"} \
-          --remove-on-error --url "$endpoint" --output "$download"; then success=true; break; fi
+          --remove-on-error --url "$endpoint" --output "$download"; then success=true; break
+        else
+          status=$?
+          case "$status" in 126|127|129|130|137|143) exit "$status" ;; esac
+        fi
         echo "download $name from $endpoint failed" >&2
         rm -f "$download"
       done
       "$success" || exit 1
       # An invalid candidate never replaces even a corrupt existing cache.
-      [[ "$(bun "$source_core" archive-valid "$pin" "$download")" == valid ]] || exit 1
+      [[ "$(oliphaunt_acquisition_run 900 bun "$source_core" archive-valid "$pin" "$download")" == valid ]] || exit 1
+      oliphaunt_acquisition_remaining 900 >/dev/null || exit $?
       bun "$source_core" promote "$download" "$archive"
     fi
-    bun "$source_core" unpack "$pin" "$archive" "$candidate"
+    oliphaunt_acquisition_run 900 bun "$source_core" unpack "$pin" "$archive" "$candidate"
   fi
   # Reinspect immediately before replacing an existing checkout, including a
   # source that changed kind. The promotion helper restores a prior tree on error.
   source_snapshot "$checkout" "$source_stage/durable"
-  bun "$source_core" inspect "$pin" "$checkout" "$source_stage/durable" > /dev/null
+  oliphaunt_acquisition_run 900 bun "$source_core" inspect "$pin" "$checkout" "$source_stage/durable" > /dev/null
+  oliphaunt_acquisition_remaining 900 >/dev/null || exit $?
   bun "$source_core" promote "$candidate" "$checkout"
 )
 
@@ -153,6 +158,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   bun "$source_tools/fetch-sources.mts" plan "$source_work" "$@"
   mode=$(cat "$source_work/mode")
   if [[ "$mode" != skip ]]; then
+    oliphaunt_acquisition_start 'source scope' 1800
     while IFS= read -r -d '' pin; do
       fetch_source "$pin" "$PWD/target/oliphaunt-sources/checkouts" "$PWD/target/oliphaunt-sources/archives" "$mode"
       # Bash 3.2 does not propagate a failed subshell function through this loop.

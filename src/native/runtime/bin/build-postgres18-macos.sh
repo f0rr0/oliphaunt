@@ -7,6 +7,7 @@ script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 . "$script_dir/../../../third-party/icu/tools/build.sh"
 . "$script_dir/postgis-dependency-cache.sh"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+. "$repo_root/tools/dev/acquisition.sh"
 . "$repo_root/src/third-party/postgres/fetch-source.sh"
 macos_deployment_target="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 case "$macos_deployment_target" in

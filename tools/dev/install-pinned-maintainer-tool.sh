@@ -272,6 +272,8 @@ if cache_valid_release; then
   exit 0
 fi
 
+. "$(dirname "${BASH_SOURCE[0]}")/acquisition.sh"
+oliphaunt_acquisition_start "$tool bootstrap" 180
 curl_command="${OLIPHAUNT_MAINTAINER_TOOLS_CURL:-curl}"
 command -v "$curl_command" >/dev/null 2>&1 || { echo "missing required download command: $curl_command" >&2; exit 1; }
 command -v mktemp >/dev/null 2>&1 || { echo "missing required command: mktemp" >&2; exit 1; }
@@ -282,17 +284,12 @@ archive="$temporary_root/archive.partial"
 extract_root="$temporary_root/extracted"
 mkdir -p "$extract_root"
 set +e
-"$curl_command" \
+oliphaunt_acquisition_curl 180 5 2 "$curl_command" \
   --fail \
   --location \
   --silent \
   --show-error \
-  --retry 4 \
-  --retry-all-errors \
-  --retry-delay 2 \
-  --retry-max-time 120 \
   --connect-timeout 20 \
-  --max-time 180 \
   --max-filesize "$max_archive_bytes" \
   --proto '=https' \
   --proto-redir '=https' \

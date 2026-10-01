@@ -7,6 +7,11 @@
 // targets are CI execution details, not source projects.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { qualificationRequestKey } from '../../.github/scripts/release-candidate-lib.mts';
+import {
+  publishedConsumerInventory,
+  validPublishedConsumerInventory,
+} from '../../src/native/sdks/ts/tools/published-consumer.mts';
 import {
   brokerRuntimeMatrix,
   extensionArtifactsNativeMatrix,
@@ -29,13 +34,8 @@ import {
   extensionSqlNames,
   extensionSqlNamesForProducts,
 } from '../release/release-artifact-targets.mts';
-import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
 import { loadProducts, moonProjectsById } from '../release/release-graph.mts';
-import { qualificationRequestKey } from '../../.github/scripts/release-candidate-lib.mts';
-import {
-  publishedConsumerInventory,
-  validPublishedConsumerInventory,
-} from '../../src/native/sdks/ts/tools/published-consumer.mts';
+import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const PREFIX = 'ci_plan.mts';
@@ -166,7 +166,9 @@ const RELEASE_ONLY_TARGETS = new Set(
     .map((task) => task.target),
 );
 export const BUILDER_JOBS = new Set(
-  Object.keys(CI_JOB_TARGETS).filter((job) => job !== NATIVE_EXTENSION_LIFECYCLE_JOB),
+  Object.keys(CI_JOB_TARGETS).filter(
+    (job) => ![NATIVE_EXTENSION_LIFECYCLE_JOB, 'wasix-release-regression'].includes(job),
+  ),
 );
 const JOBS_BY_TARGET = (() => {
   const jobs = new Map();
@@ -179,6 +181,7 @@ const DEPENDENTS_BY_TARGET = (() => {
   const dependents = new Map();
   for (const task of TASKS_BY_TARGET.values()) {
     for (const dependency of task.deps ?? []) {
+      if (dependency.cacheStrategy === 'ignored') continue;
       const target = typeof dependency === 'string' ? dependency : dependency.target;
       if (typeof target === 'string') {
         dependents.set(target, [...(dependents.get(target) ?? []), task.target]);
@@ -272,18 +275,29 @@ export function addRequiredJobs(jobs) {
   return jobs;
 }
 
-export function planJobsForAffected(tasks, excludedTargets = RELEASE_ONLY_TARGETS) {
+export function planJobsForAffected(
+  tasks,
+  excludedTargets = RELEASE_ONLY_TARGETS,
+  reuseIosCarrier = process.env.OLIPHAUNT_REUSE_IOS_CARRIER === 'true',
+) {
   const jobs = new Set(ALWAYS_JOBS);
-  const directlySelectedJobs = jobsForTargets(requiredTasksForAffected(tasks, excludedTargets), {
-    allowedJobs: ALL_BUILDER_JOBS,
-  });
+  const directlySelectedJobs = jobsForTargets(
+    requiredTasksForAffected(tasks, excludedTargets, reuseIosCarrier),
+    {
+      allowedJobs: ALL_BUILDER_JOBS,
+    },
+  );
   for (const job of directlySelectedJobs) {
     jobs.add(job);
   }
   return jobs;
 }
 
-export function requiredTasksForAffected(tasks, excludedTargets = RELEASE_ONLY_TARGETS) {
+export function requiredTasksForAffected(
+  tasks,
+  excludedTargets = RELEASE_ONLY_TARGETS,
+  reuseIosCarrier = process.env.OLIPHAUNT_REUSE_IOS_CARRIER === 'true',
+) {
   const selected = new Set(
     [...downstreamTaskClosure(tasks, excludedTargets)].filter((target) =>
       JOBS_BY_TARGET.has(target),
@@ -294,16 +308,18 @@ export function requiredTasksForAffected(tasks, excludedTargets = RELEASE_ONLY_T
     const target = pending.pop();
     const task = TASKS_BY_TARGET.get(target);
     if (!task) fail(`affected Moon selection references missing target ${target}`);
-    const dependencies = taskDependencyTargets(task);
-    // Selecting the portable WASIX job also requires full same-run lifecycle
-    // evidence. Include every producer downloaded by wasix-release-regression.
+    const dependencies = taskDependencyTargets(task).filter(
+      (dependency) =>
+        !(
+          reuseIosCarrier &&
+          target === 'oliphaunt-react-native:package' &&
+          dependency === 'liboliphaunt-native:finalize-runtime-ios-abi'
+        ),
+    );
+    // Every planned portable runtime requires fresh lifecycle qualification.
+    // Its owner task declares the producer closure; do not repeat it here.
     if (task.tags?.includes('ci-liboliphaunt-wasix-runtime')) {
-      dependencies.push(
-        'liboliphaunt-wasix:runtime-aot',
-        'extension-artifacts-wasix:build-target',
-        'extension-artifacts-wasix:build-aot',
-        'postgres-tools-wasix:build-aot',
-      );
+      dependencies.push(...CI_JOB_TARGETS['wasix-release-regression']);
     }
     for (const dependency of dependencies) {
       if (!selected.has(dependency)) {
@@ -514,7 +530,7 @@ export function planForReleaseProducts(
     excludedTargets.delete('oliphaunt-js:test-consumer-published');
     roots.add('oliphaunt-js:test-consumer-published');
   }
-  const tasks = requiredTasksForAffected(roots, excludedTargets);
+  const tasks = requiredTasksForAffected(roots, excludedTargets, false);
   for (const target of downstreamTaskClosure(roots, excludedTargets)) {
     const task = TASKS_BY_TARGET.get(target);
     if (
@@ -533,7 +549,7 @@ export function planForReleaseProducts(
       }
     }
   }
-  const jobs = planJobsForAffected(roots, excludedTargets);
+  const jobs = planJobsForAffected(roots, excludedTargets, false);
   const selectedExtensionProducts = selectedExtensionProductsForPlan(projects, roots, jobs);
   const plan = renderPlanWithSelection({
     jobs,
@@ -700,8 +716,8 @@ export function planForFullRun({
       new Set(['liboliphaunt-wasix-runtime', 'liboliphaunt-wasix-aot']),
     );
     if (wasmTarget === 'linux-x64-gnu') {
-      // The workflow selects release regression for the Linux host target.
-      focusedJobs.add('extension-artifacts-wasix');
+      focusedJobs.add('wasix-release-regression');
+      addRequiredJobs(focusedJobs);
     }
     return {
       jobs: focusedJobs,
@@ -716,7 +732,7 @@ export function planForFullRun({
     BASE_JOBS,
     BUILDER_JOBS,
     WASM_RUNTIME_JOBS,
-    new Set([NATIVE_EXTENSION_LIFECYCLE_JOB]),
+    new Set([NATIVE_EXTENSION_LIFECYCLE_JOB, 'wasix-release-regression']),
   );
   addRequiredJobs(jobs);
   return {
@@ -791,9 +807,8 @@ export function extensionArtifactsNativeMatrixForPlan(
     jobs.has('extension-packages') ? undefined : (selectedTargets ?? undefined),
     selectedExtensionProducts ?? undefined,
   );
-  if (!jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
-    return matrix;
-  }
+  const android = matrix.include.some((row) => row.target.startsWith('android-'));
+  if (!jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB) && !android) return matrix;
 
   const exactProducts = new Set(exactExtensionProducts());
   const requiredTargets = new Set(['linux-x64-gnu']);
@@ -897,6 +912,11 @@ export function renderPlanWithSelection({
     jobs: sorted(jobs),
     builder_jobs: sorted(new Set([...jobs].filter((job) => BUILDER_JOBS.has(job)))),
     e2e_jobs: mobileE2eJobsForPlan(jobs),
+    reuse_ios_carrier:
+      qualificationMode === AFFECTED_QUALIFICATION_MODE &&
+      process.env.OLIPHAUNT_REUSE_IOS_CARRIER === 'true' &&
+      jobs.has('react-native-sdk-package') &&
+      !jobs.has('liboliphaunt-native-ios-abi'),
     job_targets: jobTargetsForJobs(
       jobs,
       qualificationMode === PRODUCT_QUALIFICATION_MODE
@@ -997,12 +1017,13 @@ export function renderPlanWithSelection({
     ['extension_artifacts_native_matrix', ['linux', 'android', 'ios', 'other']],
     ['liboliphaunt_native_desktop_runtime_matrix', ['linux', 'other']],
     ['broker_runtime_matrix', ['linux', 'other']],
+    ['liboliphaunt_wasix_aot_runtime_matrix', ['linux', 'other']],
   ]) {
     for (const group of groups) {
       plan[`${matrix}_${group}`] = {
         include: plan[matrix].include.filter((row) => {
           const family =
-            row.target === 'linux-x64-gnu'
+            (row.target_id ?? row.target) === 'linux-x64-gnu'
               ? 'linux'
               : groups.includes('android') && row.target.startsWith('android-')
                 ? 'android'
@@ -1014,6 +1035,8 @@ export function renderPlanWithSelection({
       };
     }
   }
+
+  plan.wasix_napi_targets = plan.wasix_napi_runtime_matrix.include.map((row) => row.target);
 
   for (const family of ['android', 'ios']) {
     plan[`mobile_extension_package_native_targets_${family}_csv`] =

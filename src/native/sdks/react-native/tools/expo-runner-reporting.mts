@@ -175,27 +175,6 @@ switch (command) {
     );
     break;
   }
-  case 'maestro-report': {
-    const report = {
-      runner: 'maestro',
-      platform: process.env.OLIPHAUNT_MAESTRO_PLATFORM,
-      appId: process.env.OLIPHAUNT_MAESTRO_APP_ID,
-      flow: process.env.OLIPHAUNT_MAESTRO_FLOW,
-      passedAt: new Date().toISOString(),
-    };
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    break;
-  }
-  case 'maestro-pass': {
-    const report = {
-      runner: 'maestro',
-      platform: process.env.OLIPHAUNT_MAESTRO_PLATFORM,
-      appId: process.env.OLIPHAUNT_MAESTRO_APP_ID,
-      flow: process.env.OLIPHAUNT_MAESTRO_FLOW,
-    };
-    process.stdout.write(`OLIPHAUNT_EXPO_MAESTRO_PASS ${JSON.stringify(report)}\n`);
-    break;
-  }
   case 'package-sizes': {
     const [report, artifactSizeKey, artifactBytes, rnPackageBytes] = args;
     const payload = {

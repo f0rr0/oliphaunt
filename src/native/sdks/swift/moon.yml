@@ -106,20 +106,20 @@ tasks:
       - "@group(code)"
       - "/src/native/runtime/include/oliphaunt.h"
   test-native:
-    tags: ["runtime", "smoke", "requires-swift"]
+    tags: ["runtime", "smoke", "requires-swift", "ci-native-consumers", "platform-linux-x64-gnu"]
     script: |
-      set -e
-      . src/native/runtime/tools/runtime-preflight.sh
-      oliphaunt_runtime_native_host_require basic
-      env OLIPHAUNT_SWIFT_REQUIRE_NATIVE=1 \
-        LIBOLIPHAUNT_PATH="$(oliphaunt_runtime_native_host_lib)" \
-        OLIPHAUNT_INSTALL_DIR="$(oliphaunt_runtime_native_host_install_dir)" \
-        swift test --package-path src/native/sdks/swift --filter NativeRuntimeTests
+      set -euo pipefail
+      log="$(mktemp)"
+      trap 'rm -f "$log"' EXIT
+      bash src/native/sdks/tests/with-runtime.sh env OLIPHAUNT_SWIFT_REQUIRE_NATIVE=1 \
+        swift test --package-path src/native/sdks/swift --filter NativeRuntimeTests 2>&1 | tee "$log"
+      grep -Eq 'Test run with [1-9][0-9]* tests? .*passed' "$log"
     deps:
       - "oliphaunt-swift:prepare-bindings"
       - {target: "oliphaunt-mobile-bindings:cargo-sources", cacheStrategy: hash}
-      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "liboliphaunt-native:package-runtime-desktop-target"
     inputs:
+      - "/src/native/sdks/tests/with-runtime.sh"
       - project: "shared-test-fixtures"
         group: "fixtures"
       - project: "cluster-seed-contract"
@@ -127,12 +127,15 @@ tasks:
       - "/src/native/runtime/include/oliphaunt.h"
       - project: "liboliphaunt-native"
         group: "runtime"
-      - "@group(code)"
+      - "Sources/**/*"
+      - "Tests/**/*"
+      - "Package.swift"
+      - ".swift-version"
       - "!/src/native/sdks/swift/.build"
       - "!/src/native/sdks/swift/.build/**"
       - "/src/native/runtime/tools/runtime-preflight.sh"
     options:
-      cache: local
+      cache: false
       runFromWorkspaceRoot: true
   package-source:
     tags: ["package"]

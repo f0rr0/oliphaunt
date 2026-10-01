@@ -89,7 +89,7 @@ cp -p "$project_root/bin/run-release-carrier.sh" \
 chmod 0555 "$package_root/bin/oliphaunt-wasix-postmaster"
 cp -p "$repo_root/LICENSE" "$package_root/LICENSE"
 cp -p "$repo_root/THIRD_PARTY_NOTICES.md" "$package_root/THIRD_PARTY_NOTICES.md"
-cp -p "$project_root/README.md" "$package_root/README.md"
+cp -p "$repo_root/target/oliphaunt-wasix-postmaster/package-docs/README.md" "$package_root/README.md"
 
 bun "$repo_root/tools/packaging/archive-directory.mts" \
   --keep-parent "$package_root" "$asset_dir/$asset_name"

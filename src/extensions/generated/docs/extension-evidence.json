@@ -16,7 +16,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -28,7 +29,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "amcheck"
     },
@@ -48,7 +50,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -60,7 +63,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "auto_explain"
     },
@@ -80,7 +84,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -92,7 +97,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "bloom"
     },
@@ -112,7 +118,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -124,7 +131,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "btree_gin"
     },
@@ -144,7 +152,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -156,7 +165,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "btree_gist"
     },
@@ -176,7 +186,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -188,7 +199,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "citext"
     },
@@ -208,7 +220,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -220,7 +233,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "cube"
     },
@@ -240,7 +254,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -252,7 +267,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "dict_int"
     },
@@ -272,7 +288,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -284,7 +301,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "dict_xsyn"
     },
@@ -304,7 +322,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -316,7 +335,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "earthdistance"
     },
@@ -336,7 +356,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -348,7 +369,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "file_fdw"
     },
@@ -368,7 +390,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -380,7 +403,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "fuzzystrmatch"
     },
@@ -400,7 +424,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -412,7 +437,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "hstore"
     },
@@ -432,7 +458,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -444,7 +471,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "intarray"
     },
@@ -464,7 +492,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -476,7 +505,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "isn"
     },
@@ -496,7 +526,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -508,7 +539,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "lo"
     },
@@ -528,7 +560,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -540,7 +573,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "ltree"
     },
@@ -560,7 +594,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -572,7 +607,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pageinspect"
     },
@@ -592,7 +628,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -604,7 +641,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_buffercache"
     },
@@ -624,7 +662,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -636,7 +675,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_freespacemap"
     },
@@ -656,7 +696,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -668,7 +709,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_hashids"
     },
@@ -688,7 +730,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -700,7 +743,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_ivm"
     },
@@ -720,7 +764,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -732,7 +777,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_surgery"
     },
@@ -752,7 +798,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -764,7 +811,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_textsearch"
     },
@@ -784,7 +832,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -796,7 +845,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_trgm"
     },
@@ -816,7 +866,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -828,7 +879,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_uuidv7"
     },
@@ -848,7 +900,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -860,7 +913,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_visibility"
     },
@@ -880,7 +934,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -892,7 +947,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pg_walinspect"
     },
@@ -912,7 +968,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -924,7 +981,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pgcrypto"
     },
@@ -944,7 +1002,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -956,7 +1015,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "pgtap"
     },
@@ -976,7 +1036,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -988,7 +1049,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "postgis"
     },
@@ -1008,7 +1070,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1020,7 +1083,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "seg"
     },
@@ -1040,7 +1104,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1052,7 +1117,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "tablefunc"
     },
@@ -1072,7 +1138,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1084,7 +1151,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "tcn"
     },
@@ -1104,7 +1172,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1116,7 +1185,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "tsm_system_rows"
     },
@@ -1136,7 +1206,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1148,7 +1219,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "tsm_system_time"
     },
@@ -1168,7 +1240,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1180,7 +1253,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "unaccent"
     },
@@ -1200,7 +1274,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1212,7 +1287,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "uuid-ossp"
     },
@@ -1232,7 +1308,8 @@
             "direct",
             "server",
             "restart",
-            "backup-restore"
+            "backup-restore",
+            "materialization"
           ]
         }
       ],
@@ -1244,7 +1321,8 @@
         "direct",
         "server",
         "restart",
-        "backup-restore"
+        "backup-restore",
+        "materialization"
       ],
       "sql-name": "vector"
     }

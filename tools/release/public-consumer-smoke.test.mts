@@ -100,7 +100,7 @@ if (fixtureMode === 'prepare-npm') {
     JSON.stringify({
       lock: frozen,
       plan: publicConsumerPlan(frozen, ['sdk'], graph(products)),
-      deadlineMilliseconds: Date.now() + (scenario === 'timeout' ? 2000 : 30000),
+      deadlineMilliseconds: scenario === 'expired' ? 0 : Date.now() + 60000,
     }),
   );
   process.exit(0);

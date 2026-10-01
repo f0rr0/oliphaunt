@@ -1,0 +1,109 @@
+diff --git a/src/pipe.rs b/src/pipe.rs
+--- a/src/pipe.rs
++++ b/src/pipe.rs
+@@ -46,6 +46,23 @@
+ }
+ 
+ impl PipeRx {
++    fn poll_receiver<'a>(
++        rx: &'a Mutex<PipeReceiver>,
++        cx: &mut Context<'_>,
++    ) -> Poll<MutexGuard<'a, PipeReceiver>> {
++        match rx.try_lock() {
++            Ok(guard) => Poll::Ready(guard),
++            Err(std::sync::TryLockError::WouldBlock) => {
++                // A writer can briefly hold this lock while notifying its interest
++                // handler. Polling must not block the browser's main thread. The
++                // synchronous lock has no waker registration, so poll again.
++                cx.waker().wake_by_ref();
++                Poll::Pending
++            }
++            Err(error) => panic!("{error}"),
++        }
++    }
++
+     // Tries to read from the internal buffer if data is available.
+     fn try_read_from_buffer(
+         rx: &mut MutexGuard<'_, PipeReceiver>,
+@@ -108,7 +125,7 @@
+             )));
+         };
+ 
+-        let mut rx = rx.lock().unwrap();
++        let mut rx = std::task::ready!(Self::poll_receiver(rx, cx));
+         loop {
+             {
+                 if let Some(inner_buf) = rx.buffer.as_mut() {
+@@ -460,7 +477,7 @@
+             )));
+         };
+ 
+-        let mut rx = rx.lock().unwrap();
++        let mut rx = std::task::ready!(Self::poll_receiver(rx, cx));
+         loop {
+             if Self::try_read_from_buffer(&mut rx, buf.remaining(), |read_buf| {
+                 buf.put_slice(read_buf);
+@@ -601,3 +618,63 @@
+ /// Shared version of BidiPipe for situations where you need
+ /// to emulate the old behaviour of `Pipe` (both send and recv on one channel).
+ pub type WasiBidirectionalSharedPipePair = ArcFile<DuplexPipe>;
++
++#[cfg(test)]
++mod contention_tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    use std::task::{Wake, Waker};
++
++    #[derive(Default)]
++    struct WakeCount(AtomicUsize);
++
++    impl Wake for WakeCount {
++        fn wake(self: Arc<Self>) {
++            self.0.fetch_add(1, Ordering::SeqCst);
++        }
++    }
++
++    #[test]
++    fn contended_pipe_reads_yield_and_preserve_data() {
++        let (mut tx, mut rx) = Pipe::new().split();
++        std::io::Write::write_all(&mut tx, b"abc").unwrap();
++        let shared = rx.rx.as_ref().unwrap().clone();
++        let wake_count = Arc::new(WakeCount::default());
++        let waker = Waker::from(wake_count.clone());
++        let mut cx = Context::from_waker(&waker);
++        let mut bytes = [0; 2];
++        let mut buf = tokio::io::ReadBuf::new(&mut bytes);
++
++        // Deterministic contention: neither poll method may wait for this guard.
++        let guard = shared.lock().unwrap();
++        assert!(Pin::new(&mut rx).poll_read_ready(&mut cx).is_pending());
++        assert!(Pin::new(&mut rx).poll_read(&mut cx, &mut buf).is_pending());
++        assert_eq!(wake_count.0.load(Ordering::SeqCst), 2);
++        assert!(buf.filled().is_empty());
++        drop(guard);
++
++        assert!(matches!(
++            Pin::new(&mut rx).poll_read_ready(&mut cx),
++            Poll::Ready(Ok(3))
++        ));
++        assert!(matches!(
++            Pin::new(&mut rx).poll_read(&mut cx, &mut buf),
++            Poll::Ready(Ok(()))
++        ));
++        assert_eq!(buf.filled(), b"ab");
++        buf.clear();
++        assert!(matches!(
++            Pin::new(&mut rx).poll_read(&mut cx, &mut buf),
++            Poll::Ready(Ok(()))
++        ));
++        assert_eq!(buf.filled(), b"c");
++        buf.clear();
++        assert!(Pin::new(&mut rx).poll_read(&mut cx, &mut buf).is_pending());
++        tx.close();
++        assert!(matches!(
++            Pin::new(&mut rx).poll_read(&mut cx, &mut buf),
++            Poll::Ready(Ok(()))
++        ));
++        assert!(buf.filled().is_empty());
++    }
++}

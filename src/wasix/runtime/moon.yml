@@ -109,6 +109,7 @@ tasks:
       - unit
     script: "set -e\nbash src/wasix/runtime/tools/check-shim-abi.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh\n"
     inputs:
+      - /tools/dev/acquisition.sh
       - assets/build/docker/**/*
       - assets/build/wasix_shim/**/*
       - tools/check-shim-abi.sh
@@ -134,6 +135,23 @@ tasks:
     deps:
       - source-inputs:source-fetch-wasix-runtime
     inputs:
+      - "$ASSET_PROFILE"
+      - "$IMAGE"
+      - "$OLIPHAUNT_WASM_SOURCE_LANE"
+      - "$CONTAINER_ROOT"
+      - "$CONTAINER_GENERATED_ROOT"
+      - "$OLIPHAUNT_WASM_WASIX_COPT"
+      - "$OLIPHAUNT_WASM_WASIX_LOPT"
+      - "$OLIPHAUNT_WASM_WASIX_CONFIGURE_WASM_OPT"
+      - "$OLIPHAUNT_WASM_WASIX_BUILD_WASM_OPT"
+      - "$OLIPHAUNT_WASM_WASM_OPT_FLAGS"
+      - "$OLIPHAUNT_WASM_WASM_OPT_SUPPRESS_DEFAULT"
+      - "$OLIPHAUNT_WASM_WASM_OPT_PRESERVE_UNOPTIMIZED"
+      - "$OLIPHAUNT_WASM_WASIX_COMPILER_FLAGS"
+      - "$OLIPHAUNT_WASM_WASIX_LINKER_FLAGS"
+      - "$OLIPHAUNT_WASM_PG18_DISABLE_SPINLOCKS"
+      - "$CONTAINER_BUILD_DIR"
+      - "$CONTAINER_PGSRC"
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
       - /src/wasix/sdks/rust/THIRD_PARTY_NOTICES.md
@@ -149,7 +167,9 @@ tasks:
         group: build
       - project: extension-runtime-contract
         group: contract
+      - /tools/dev/acquisition.sh
       - assets/build/**/*
+      - "!assets/build/**/*.test.*"
       - postgres/**/*
       - /src/third-party/postgres/**/*
       - "!/src/third-party/postgres/**/*.test.*"

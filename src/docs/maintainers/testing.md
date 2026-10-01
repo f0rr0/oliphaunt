@@ -27,11 +27,12 @@ validation.
 - PR: Moon-affected `check` and `test` tasks, release intent, and the selected
   package, artifact, and E2E jobs. Measured `coverage` is an explicit
   local/manual lane; it is not part of the `Required` PR gate.
-- Main: affected checks, builds, runtime tests, and selected E2E. This does not
-  currently emit a `Qualified` release record.
-- Full manual: the complete selected source/runtime/package/E2E graph. Only
-  an exhaustive dispatch with all target selectors produces the exact-SHA
-  `Qualified` release record. Coverage and benchmarks remain optional.
+- Main: affected checks, builds, runtime tests, and selected E2E. A release
+  version change selects its product qualification closure and can emit an
+  exact-SHA `Qualified` record.
+- Manual: the selected product or full source/runtime/package/E2E graph. All
+  platform selectors must remain `all` for publishable qualification on main.
+  Coverage and benchmarks remain optional.
 - Release: package-native dry-runs, artifact manifests, checksums,
   attestations, registry checks, exact-extension evidence, binary
   compatibility-floor inspection, and selected artifact behavior evidence.
@@ -119,6 +120,83 @@ Reusable benchmark datasets, benchmark plans, and published reports belong in
 `src/benchmarks/`. Executable benchmark harnesses belong in `src/benchmarks/perf/` unless
 the harness is intentionally part of a product's public developer API.
 
+## Acquisition deadlines
+
+Repository-owned downloads use `tools/dev/acquisition.sh`. Start one budget at
+an acquisition's entry point, before lock waits or transport, and reuse it for
+all retries, mirrors and dependent requests. Nested operations can shorten the
+budget but cannot restart it. Compilation and test execution have their own
+budgets; do not wrap an entire build in an acquisition timeout.
+
+```sh
+. "$repo_root/tools/dev/acquisition.sh"
+oliphaunt_acquisition_start 'example sources' 900
+# Per-endpoint cap, attempts, retry delay, curl command, existing secure arguments.
+oliphaunt_acquisition_curl 300 3 5 curl --fail --location \
+  --proto '=https' --proto-redir '=https' --tlsv1.2 --output "$partial" "$url"
+# For Git, package managers and source validation processes:
+oliphaunt_acquisition_run 300 git fetch --depth=1 "$url" "$commit"
+```
+
+The caller owns URL/pin validation, TLS policy, archive limits, checksums,
+validation and atomic promotion. Downloads must target a staging file with
+`--output`, never append retry responses to stdout. Pass curl's connection,
+size and low-speed limits normally, but let the helper own `--retry` and
+`--max-time`. Its single attempts each receive the remaining time. Curl's
+[`--retry-max-time`](https://curl.se/docs/manpage.html#--retry-max-time) alone
+allows its final attempt to run past the retry timer.
+
+| Acquisition | Default total | Maximum per endpoint/command |
+| --- | --- | --- |
+| Source scope / individual source pin | 30 / 15 min | Git fetch and archive endpoint: 5 min |
+| PostgreSQL source archive, both origins | 3 min | 90 sec per origin |
+| WASIX builder APT update + install + retries | 15 min | Update: 5 min; install: remaining budget |
+| WASIX compiler asset set | 30 min | 15 min per asset |
+| Android SDK setup / emulator packages (separate operations) | 30 min each | Command-line-tools origin: 4 min; SDK packages: remaining budget |
+| Moon + Proto + plugins | 15 min | 5 min per asset or registry request |
+| Bun/Deno; Node; npm publisher | 5 min each | Bun/Deno origin: 2 min; others: remaining budget |
+| Wasmer LLVM | 30 min | Remaining budget |
+| Maintainer binary; winflexbison | 3 min each | Remaining budget |
+| Swift signing keys | 2 min | Remaining budget |
+
+`OLIPHAUNT_ACQUISITION_TIMEOUT_SECONDS` overrides an operation's total (integer
+1–7200); it never raises an endpoint cap or replenishes an enclosing operation.
+Defaults allow cold installation while bounding repeated failures. The APT
+budget is deliberately above observed normal cold transactions (roughly a
+minute), below the observed 40-minute failure tail. Tune with hosted timings,
+not another retry layer. Separate scripts/actions have separate transactions;
+this is not a workflow-wide download allowance.
+
+Shell and curl suffice for bootstrap downloads. Git, APT and SDK-manager
+processes require GNU `timeout` (`coreutils`, `brew install coreutils` on macOS).
+The shared helper verifies GNU identity, preferring `gtimeout` and falling back
+to `/usr/bin/timeout` when Windows System32 shadows Git Bash's executable.
+Android setup checks the timer before treating an SDK installation as invalid;
+the macOS setup action provisions Coreutils when missing.
+Commands receive TERM on expiry and KILL five seconds later if needed, including
+children in their process group. Expiry reports the acquisition label and a
+nonzero status (124 on expiry, or 137 after a forced kill; owners may add their
+own failure status).
+Interrupted curl attempts are not retried or mirrored. Existing traps clean staging and preserve prior
+installations; short atomic promotion and rollback finish outside the timed
+child. Source validation/extraction also consumes the source budget. Other
+installers' local validation and promotion are not independently hard-timed.
+The portable shared clock uses epoch seconds; per-process timers bound active
+work. Runner clock corrections can shift subsequent remaining-time calculations.
+
+The helper's test owns clock arithmetic and process termination; source and
+installer fault tests own preservation, retry/failover and validation. Moon
+inputs and WASIX recipe identity include the helper. Build the WASIX Dockerfile
+from the repository root; its adjacent `Dockerfile.dockerignore` limits context
+to the recipe and helper. To build from another checkout, set `REPO_ROOT` and
+`WASIX_TOOLCHAIN_ROOT` together so the recipe and COPY inputs refer to that tree.
+
+Upstream actions and general dependency resolution (Cargo, npm, Homebrew,
+Chocolatey, pip and host build-tool setup) retain their existing job/setup
+budgets. This helper does not replace package-manager retry or installation
+semantics. A deadline stops a bad acquisition promptly; it does not turn a
+failed transfer into successful qualification.
+
 ## Moon Tasks
 
 Moon task names are intentionally narrow:
@@ -148,6 +226,25 @@ runtime evidence. React Native installed-app smokes delegate runtime
 materialization to the Expo platform scripts and hard-fail there if native
 artifacts cannot be built or located.
 
+The Linux native consumer job also owns these uncached SDK runtime suites:
+
+- `oliphaunt-rust:test-integration`: native smoke and SQL behavior.
+- `oliphaunt-mobile-bindings:test-native`: shared broker streaming and lifecycle.
+- `oliphaunt-swift:test-native`: Swift native runtime behavior.
+- `oliphaunt-kotlin:test-native-bindings`: Kotlin native binding behavior.
+
+They consume the same-run packaged runtime, with tools and broker archives when
+needed. The shared `src/native/sdks/tests/with-runtime.sh` stages each invocation
+in an isolated temporary directory; Moon retains the producers for local runs
+and the hosted transfer runner substitutes downloaded artifacts. Swift/Kotlin
+share one generated binding dependency. These suites require executed tests and
+valid runtime inputs; zero tests or unavailable artifacts cannot pass as proof.
+
+`oliphaunt-wasix-rust:test-integration` runs the standard and ICU seed resource
+tests in the existing WASIX regression job, consuming its portable runtime/AOT
+and same-run database resource artifacts. This host coverage supplements the
+installed mobile apps and per-platform package checks.
+
 React Native installed-app smoke is split by platform:
 
 ```sh
@@ -159,37 +256,21 @@ PR jobs run RN static, unit, Codegen, JSI, config-plugin, and package checks.
 Affected PR, main, and explicit manual lanes run the installed Android/iOS app
 smokes selected by the CI plan.
 
-Installed-app E2E runner choice is closed, not a recurring research task.
-Decision (2026-06-08): Oliphaunt uses the pinned open-source Maestro CLI
-through GitHub-hosted emulator/simulator jobs. This is not an open research loop.
-Reopen that decision only when a written implementation proposal names an
-installed-app E2E requirement that the pinned open-source Maestro CLI cannot
-satisfy. Do not keep re-checking Maestro, Detox, Appium, EAS, Firebase Test
-Lab, BrowserStack, Sauce, AWS Device Farm, or other hosted-device services while
-implementing this plan. Routine maintenance verifies the pinned installer, flow
-files, app artifacts, runner behavior, and CI logs for the selected Maestro
-lanes; it does not revisit provider selection.
-
-`tools/dev/setup-maestro.sh` installs only the exact versioned release asset and
-SHA-256 recorded in `tools/dev/maestro.toml`; that manifest is the
-single release pin. It does not execute the vendor's network installer. Version
-upgrades change the reviewed manifest metadata and must keep the staged
-archive/layout/version and atomic-promotion regression tests green; incomplete
-or inconsistent metadata fails before any download.
+Installed-app SDK smoke runs the real app on a hosted emulator or simulator.
+The app performs the SQL, extension, and resource assertions itself. CI and
+manual replay share `.github/actions/run-mobile-e2e`; both require a validated
+structured receipt from continuous logs captured for that launch. Explicit
+failure, app death, dead capture, and a missing receipt fail within the smoke
+budget. Lifecycle and crash-recovery drills retain their separate assertions.
 
 The native Node addon uses the Rust Node-API adapter. It no longer downloads
 Node C headers or a separate Windows import library through a custom fallback.
-
-Prior provider research is historical context, not a standing checklist. Maestro
-pin upgrades are dependency maintenance; they do not reopen the runner decision
-unless they expose a concrete installed-app E2E requirement this path cannot
-meet.
 
 The default installed-app path must remain free and public-checkout
 reproducible. Paid hosted-device providers, SaaS-only runners, and required
 private runner infrastructure are not part of the default proof path. When
 mobile E2E breaks, inspect the selected implementation first: app artifact shape,
-simulator/emulator setup, Maestro flow files, logs, and CI runner assumptions.
+simulator/emulator setup, exact-launch logs, receipts, and CI runner assumptions.
 Debug the chosen implementation first. Do not restart provider research unless
 the failure proves a concrete requirement this model cannot satisfy.
 

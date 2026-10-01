@@ -3,6 +3,10 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 repo="$PWD"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-maintainer-tools-XXXXXX")
+mkdir -p "$scratch/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$scratch/no-delay/sleep"
+chmod +x "$scratch/no-delay/sleep"
+export PATH="$scratch/no-delay:$PATH"
 trap 'rm -rf "$scratch"' EXIT
 FAKE_REAL_MV="$(command -v mv)"
 export FAKE_REAL_MV

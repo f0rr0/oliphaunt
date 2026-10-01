@@ -1,0 +1,12 @@
+**
+!tools
+!tools/dev
+!tools/dev/acquisition.sh
+!src
+!src/wasix
+!src/wasix/runtime
+!src/wasix/runtime/assets
+!src/wasix/runtime/assets/build
+!src/wasix/runtime/assets/build/docker
+!src/wasix/runtime/assets/build/docker/*
+**/*.test.*

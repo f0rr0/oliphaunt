@@ -2,90 +2,6 @@
 # Shared Android device, logcat, lifecycle, and installed-app helpers for the
 # Expo Android runner. This file is sourced by expo-android-runner.sh.
 
-should_use_maestro_e2e() {
-  [ "$runner" = "smoke" ] || return 1
-  case "$e2e_assertion_runner" in
-    maestro)
-      maestro_binary >/dev/null || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
-      return 0
-      ;;
-    auto)
-      maestro_binary >/dev/null
-      return
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-run_maestro_installed_smoke() {
-  local device_id="$1"
-  local adb="${2:-$ANDROID_HOME/platform-tools/adb}"
-  local reports_dir="$scratch_root/reports"
-  [ -f "$maestro_flow" ] || fail "missing Maestro installed-app smoke flow: $maestro_flow"
-  local maestro
-  maestro="$(maestro_binary)" || fail "missing required command: maestro; run tools/dev/setup-maestro.sh"
-  mkdir -p "$reports_dir"
-  echo "==> $maestro --device $device_id test $maestro_flow"
-  MAESTRO_CLI_NO_ANALYTICS=true \
-    MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true \
-    "$maestro" --device "$device_id" test \
-      -e APP_ID="$app_id" \
-      -e SMOKE_TIMEOUT_MS="$((timeout_seconds * 1000))" \
-      "$maestro_flow" \
-      >"$reports_dir/maestro.log" 2>&1 &
-  local maestro_pid=$!
-  local failure_receipt=""
-  while kill -0 "$maestro_pid" 2>/dev/null; do
-    failure_receipt="$(latest_android_failure_receipt "$adb")"
-    [ -z "$failure_receipt" ] || break
-    sleep 1
-  done
-  if [ -z "$failure_receipt" ]; then
-    # Close the race where the app emits its authoritative failure receipt as
-    # Maestro exits after observing the failed UI state.
-    failure_receipt="$(latest_android_failure_receipt "$adb")"
-  fi
-  if [ -n "$failure_receipt" ]; then
-    {
-      printf '%s\n' "$failure_receipt"
-      printf 'maestroPid=%s\n' "$maestro_pid"
-    } >"$reports_dir/maestro-authoritative-failure.txt"
-    terminate_maestro_process "$maestro_pid"
-    wait "$maestro_pid" 2>/dev/null || true
-    printf '%s\n' "$failure_receipt" >&2
-    tail -160 "$reports_dir/maestro.log" >&2 || true
-    return 2
-  fi
-  local maestro_status=0
-  wait "$maestro_pid" || maestro_status=$?
-  if [ "$maestro_status" -ne 0 ]; then
-    tail -160 "$reports_dir/maestro.log" >&2 || true
-    return 1
-  fi
-  tail -80 "$reports_dir/maestro.log" >&2 || true
-}
-
-latest_android_failure_receipt() {
-  local adb="$1"
-  "$adb" logcat -d -v raw ReactNativeJS:I '*:S' 2>/dev/null |
-    grep -F "$failure_tag" |
-    tail -1 || true
-}
-
-terminate_maestro_process() {
-  local maestro_pid="$1"
-  kill -0 "$maestro_pid" 2>/dev/null || return 0
-  # The checksum-pinned Maestro launcher ends with `exec "$JAVACMD" "$@"`,
-  # so this PID is the JVM rather than a shell wrapper that could orphan it.
-  kill -TERM "$maestro_pid" 2>/dev/null || true
-  # Maestro normally exits immediately on TERM. The KILL fallback prevents a
-  # wedged launcher from defeating the authoritative app-side fail-fast path.
-  sleep 0.2
-  kill -KILL "$maestro_pid" 2>/dev/null || true
-}
-
 latest_metro_tag() {
   local offset="$1"
   local tag="$2"
@@ -329,37 +245,35 @@ install_and_launch() {
   local url
   url="$(android_runner_url "$runner")"
   local shell_url="'$url'"
-  run "$adb" shell am start -a android.intent.action.VIEW -d "$shell_url" "$app_id"
+  local android_log_file="$scratch_root/logs/$runner-logcat.log"
+  local app_uid
+  app_uid="$("$adb" shell pm list packages -U --user current "$app_id" |
+    awk -v package="package:$app_id" '$1 == package {sub(/^uid:/, "", $2); sub(/\r$/, "", $2); print $2}')"
+  [[ "$app_uid" =~ ^[0-9]+$ ]] || fail "failed to resolve Android app UID for $app_id"
+  mkdir -p "$scratch_root/logs"
+  # The installed UID scopes every app process before launch, including early crashes.
+  "$adb" logcat -v raw --uid="$app_uid" ReactNativeJS:I AndroidRuntime:E '*:S' >"$android_log_file" 2>&1 &
+  android_log_pid=$!
+  run "$adb" shell am start -W -a android.intent.action.VIEW -d "$shell_url" "$app_id"
   if [ "$build_type" = "debug" ]; then
     dismiss_expo_dev_menu_onboarding "$adb"
   fi
 
   local logs pass
-  if should_use_maestro_e2e; then
-    [ "$lifecycle_smoke" != "1" ] ||
-      fail "Maestro mobile E2E does not drive lifecycle transitions; use mobile-drill or set OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE=0"
-    local maestro_status=0
-    run_maestro_installed_smoke "$device_id" "$adb" || maestro_status=$?
-    if [ "$maestro_status" -ne 0 ]; then
-      if [ "$maestro_status" -eq 2 ]; then
-        write_android_e2e_diagnostics "$adb" "authoritative-smoke-failure"
-        fail "Expo Android installed app emitted $failure_tag while Maestro was running"
-      fi
-      write_android_e2e_diagnostics "$adb" "maestro-failure"
-      fail "Expo Android installed-app Maestro smoke failed"
+  if [ "$runner" = smoke ] && [ "$lifecycle_smoke" != 1 ]; then
+    local receipt_status=0
+    mobile_app_is_alive() { "$adb" shell pidof "$app_id" >/dev/null 2>&1; }
+    pass="$(wait_for_mobile_receipt "$android_log_file" "$android_log_pid")" || receipt_status=$?
+    kill -0 "$android_log_pid" 2>/dev/null || receipt_status=3
+    stop_mobile_log_capture "$android_log_pid"
+    android_log_pid=""
+    mobile_log_has_failure "$android_log_file" && receipt_status=2
+    mobile_app_is_alive || receipt_status=4
+    if [ "$receipt_status" != 0 ]; then
+      write_android_e2e_diagnostics "$adb" receipt-failure
+      fail "Android smoke receipt failed (status $receipt_status: timeout=1, failure=2, capture=3, app=4)"
     fi
-    logs="$("$adb" logcat -d)"
-    pass="$(latest_metro_tag "$metro_offset" "$success_tag")"
-    if [ -z "$pass" ]; then
-      pass="$(printf '%s\n' "$logs" | grep -F "$success_tag" | tail -1 || true)"
-    fi
-    if [ -n "$pass" ]; then
-      printf '\n%s\n' "$pass"
-      write_runner_report "$pass"
-    else
-      write_android_e2e_diagnostics "$adb" "missing-authoritative-pass-receipt"
-      fail "Expo Android installed-app smoke UI passed without an authoritative OLIPHAUNT_EXPO_SMOKE_PASS receipt"
-    fi
+    write_runner_report "$pass" || fail "invalid Android smoke receipt"
     write_android_process_metrics "$adb"
     return
   fi

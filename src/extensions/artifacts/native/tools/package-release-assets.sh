@@ -702,9 +702,11 @@ package_ios_target() {
 
 package_android_target() {
   local source_runtime runtime mobile_extensions android_root android_static_target
-  build_mobile_host_extension_runtime
   mobile_extensions="$(mobile_module_extensions_csv)"
-  build_mobile_static_artifacts "$mobile_extensions"
+  if [ "${OLIPHAUNT_EXTENSION_PHASE:-all}" != android-package ]; then
+    build_mobile_host_extension_runtime
+    build_mobile_static_artifacts "$mobile_extensions"
+  fi
   source_runtime="$(host_extension_runtime_root)"
   require_dir "$source_runtime" "mobile host extension runtime"
   runtime="$(prepare_extension_release_runtime "$source_runtime")"
@@ -720,7 +722,9 @@ package_android_target() {
       ;;
     *) fail "Android target packager called for $target_id" ;;
   esac
-  tools/dev/bun.sh tools/packaging/platform-binary-contract.mts --target "$target_id" --root "$android_root/out"
+  if [ -n "$mobile_extensions" ]; then
+    tools/dev/bun.sh tools/packaging/platform-binary-contract.mts --target "$target_id" --root "$android_root/out"
+  fi
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact android_archive static_prefix
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue
@@ -753,10 +757,22 @@ package_android_target() {
   done < <(catalog_rows)
 }
 
-fetch_extension_source_assets
+phase="${OLIPHAUNT_EXTENSION_PHASE:-all}"
+case "$phase:$target_id" in
+  all:*) fetch_extension_source_assets ;;
+  android-static:android-*) fetch_extension_source_assets ;;
+  android-package:android-*) ;;
+  *) fail "invalid extension phase $phase for $target_id" ;;
+esac
 echo "==> Reading exact extension catalog"
 bun "$packager" list-catalog >"$catalog_file"
 write_indexes
+if [ "$phase" = android-static ]; then
+  # SQL-only selections still transfer an empty, valid native output directory.
+  mkdir -p "$mobile_extension_work_root/$target_id/${target_id%-v8a}/out"
+  build_mobile_static_artifacts "$(mobile_module_extensions_csv)"
+  exit 0
+fi
 
 case "$target_id" in
   macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc)

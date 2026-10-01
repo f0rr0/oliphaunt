@@ -20,6 +20,10 @@ sha256_file() {
 }
 
 work_root="$(mktemp -d)"
+mkdir -p "$work_root/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$work_root/no-delay/sleep"
+chmod +x "$work_root/no-delay/sleep"
+export PATH="$work_root/no-delay:$PATH"
 cleanup() {
   rm -rf "$work_root"
 }
@@ -223,12 +227,9 @@ grep -F "$success_final/bin" "$success_runner/github-path" >/dev/null || fail "G
 for flag in \
   '--location' \
   '--fail' \
-  '--retry 4' \
-  '--retry-all-errors' \
-  '--retry-delay 10' \
-  '--retry-max-time 3600' \
+  '--retry 0' \
   '--connect-timeout 30' \
-  '--max-time 1800' \
+  '--max-time' \
   "--max-filesize $valid_bytes" \
   '--proto =https' \
   '--proto-redir =https' \

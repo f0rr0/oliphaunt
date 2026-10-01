@@ -28,6 +28,7 @@ require zizmor
 run actionlint -ignore 'unexpected key "queue" for "concurrency" section'
 run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .github/workflows .github/actions
 run bash tools/dev/bun.sh test ./tools/ci/workflow-security.test.mts
+run bash tools/dev/bun.sh test ./tools/ci/workflow-caches.test.mts
 run tools/dev/bun.sh tools/ci/workflow-security.mts
 run bash .github/scripts/check-ci-gate.test.sh
 run bash tools/dev/bun.sh test ./.github/scripts/resolve-mobile-e2e.test.mts
@@ -42,6 +43,7 @@ export OLIPHAUNT_CI_TEST_OBSERVATIONS="$observations"
 run bash tools/dev/bun.sh test ./.github/scripts/moon-task-capabilities.test.mts
 run bash .github/scripts/write-affected-moon-target-matrices.test.sh
 run bash .github/scripts/resolve-planned-moon-execution.test.sh
+run bash tools/ci/capture-ci-test-observations.test.sh
 run bash tools/ci/with-projects.sh --exec bash tools/ci/capture-ci-test-observations.sh "$observations"
 run bash tools/ci/ci-release-scope.test.sh
 run bash tools/ci/with-projects.sh test \

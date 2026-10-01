@@ -13,7 +13,7 @@ input, for example `["oliphaunt-js"]`. Leave all platform selectors at `all`.
 Moon selects those owners' tasks, downstream compatibility checks and required
 producer dependencies. An empty product array retains the exhaustive audit.
 Publication accepts this record only for covered products at the exact candidate
-SHA; it still verifies the immutable artifacts and any required WASIX evidence.
+SHA; it still verifies the immutable artifacts and required native/WASIX evidence.
 Generated release PRs and their main merge automatically select the products
 whose Release Please manifest versions advance. Exact main pushes and eligible
 main dispatches can produce publishable qualification; PR checks use the same
@@ -23,6 +23,21 @@ equals the candidate SHA. Failed causal runs require recovery; ambiguous
 dispatches are not automatically repeated. Cross-commit producer reuse remains
 an explicit acceptance item rather than permission to substitute arbitrary
 older artifacts.
+
+`Qualified` binds every planned native extension lifecycle aggregate and WASIX
+regression proof to the candidate's source SHA/tree and CI repository/run. A
+successful earlier attempt of that same run can supply proof when only failed
+jobs are rerun; a different run or newer attempt cannot. Both aggregate proof
+artifacts retain 90 days. The native artifact includes its complete shard
+receipts, so it does not depend on the shorter-lived diagnostic shard uploads.
+
+Publishing native extension carriers, including runtime-owned contrib, requires
+the native proof. Release revalidates the aggregate and every shard, checks the
+published SQL extension set, and compares the evidence digest with the candidate
+record. SDK-only publications continue to qualify their consumers against their
+declared payload versions. WASIX publications retain the existing product-derived
+regression requirement. Missing, changed, wrong-run or incomplete required proof
+blocks publication; an overall successful CI result does not replace it.
 
 ## Model
 

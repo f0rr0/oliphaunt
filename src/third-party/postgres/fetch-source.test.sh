@@ -2,6 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/../../../tools/dev/acquisition.sh"
 . "$script_dir/fetch-source.sh"
 
 fail() {
@@ -32,12 +33,9 @@ assert_transport_flags() {
   for expected in \
     '--location' \
     '--fail' \
-    '--retry 4' \
-    '--retry-all-errors' \
-    '--retry-delay 3' \
-    '--retry-max-time 90' \
+    '--retry 0' \
     '--connect-timeout 20' \
-    '--max-time 60' \
+    '--max-time' \
     '--max-filesize 67108864' \
     '--proto =https' \
     '--proto-redir =https' \
@@ -59,6 +57,8 @@ fake_bin="$work_root/fake-bin"
 mkdir -p "$fake_bin"
 cp "$script_dir/testdata/curl" "$fake_bin/curl"
 chmod 0755 "$fake_bin/curl"
+printf '#!/bin/sh\nexit 0\n' > "$fake_bin/sleep"
+chmod +x "$fake_bin/sleep"
 fake_path="$fake_bin:$PATH"
 primary_url="https://primary.invalid/postgresql-18.4.tar.bz2"
 fallback_url="https://fossies.org/linux/misc/postgresql-18.4.tar.bz2"
@@ -86,7 +86,7 @@ OLIPHAUNT_FETCH_TEST_FINAL="$fallback_destination" \
 PATH="$fake_path" \
   oliphaunt_fetch_postgresql_source_archive "$fallback_destination" 18.4 "$fixture_sha" "$primary_url"
 assert_verified_file "$fallback_destination" "$fixture_sha"
-[[ "$(wc -l < "$fallback_log" | tr -d ' ')" == 2 ]] || fail "transport did not try exactly the primary and fallback URLs"
+[[ "$(wc -l < "$fallback_log" | tr -d ' ')" == 6 ]] || fail "transport did not try five primary attempts then the fallback URL"
 grep -F -- "$primary_url" "$fallback_log" >/dev/null || fail "primary URL was not attempted"
 grep -F -- "$fallback_url" "$fallback_log" >/dev/null || fail "fallback URL was not attempted"
 assert_transport_flags "$fallback_log"
@@ -115,7 +115,7 @@ if OLIPHAUNT_FETCH_TEST_LOG="$failed_log" \
   fail "all-failed transport unexpectedly succeeded"
 fi
 [[ ! -e "$failed_destination" ]] || fail "failed transport promoted an unverified final destination"
-[[ "$(wc -l < "$failed_log" | tr -d ' ')" == 2 ]] || fail "failed transport exceeded or skipped the two bounded URL attempts"
+[[ "$(wc -l < "$failed_log" | tr -d ' ')" == 10 ]] || fail "failed transport exceeded or skipped the bounded URL attempts"
 assert_no_partials "$work_root/failed"
 
 interrupted_destination="$work_root/interrupted/postgresql-18.4.tar.bz2"

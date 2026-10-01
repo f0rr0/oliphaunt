@@ -1,0 +1,183 @@
+name: WASIX host
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        required: true
+        type: string
+      job-targets:
+        required: true
+        type: string
+      napi-targets:
+        required: true
+        type: string
+      llvm-version:
+        required: true
+        type: string
+      cache-save-if:
+        required: true
+        type: boolean
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  WASMER_LLVM_VERSION: ${{ inputs.llvm-version }}
+  OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ inputs.job-targets }}
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: WASIX host (${{ matrix.target_id }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ inputs.cache-save-if }}
+
+      - name: Set up MSVC
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-msvc
+
+      - name: Download portable WASIX build outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-runtime-portable
+          path: .
+
+      - name: Download portable WASIX tools compiler outputs
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:build-aot') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: postgres-tools-wasix-compiler-output
+          path: target/postgres-tools/wasix/assets
+
+      - name: Download portable WASIX extension compiler outputs
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'extension-artifacts-wasix:build-aot') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: extensions-wasix-compiler-output
+          path: target/extensions/wasix/assets
+
+      - name: Install Wasmer LLVM 22.1 for AOT generation
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          cache-save-if: ${{ inputs.cache-save-if }}
+          url: ${{ matrix.llvm_url }}
+          sha256: ${{ matrix.llvm_sha256 }}
+          bytes: ${{ matrix.llvm_bytes }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+
+      - name: Build, validate, and smoke target AOT artifacts
+        env:
+          AOT_TARGET: ${{ matrix.target }}
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "postgres-tools-wasix:compiler-output", "extension-artifacts-wasix:compiler-output"]'
+        run: .github/scripts/run-planned-moon-job.sh liboliphaunt-wasix-aot
+
+      - name: Upload target PostgreSQL WASIX tools
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:package-aot') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: postgres-tools-wasix-release-assets-${{ matrix.target_id }}
+          path: target/postgres-tools/wasix/release-assets/*-aot-${{ matrix.target_id }}.tar.gz
+          if-no-files-found: error
+
+      - name: Stage target AOT artifact envelope
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'liboliphaunt-wasix:runtime-aot') }}
+        env:
+          AOT_TARGET: ${{ matrix.target }}
+        run: |
+          target="${AOT_TARGET:?AOT_TARGET is required}"
+          source="target/oliphaunt-wasix/aot/$target"
+          if [ ! -d "$source" ]; then
+            echo "missing AOT output directory: $source" >&2
+            exit 1
+          fi
+          upload="target/oliphaunt-wasix/aot-upload"
+          rm -rf "$upload"
+          mkdir -p "$upload/files"
+          cp -R "$source/." "$upload/files/"
+          printf '%s\n' "$target" >"$upload/target-triple.txt"
+
+      - name: Upload target artifacts
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'liboliphaunt-wasix:runtime-aot') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-runtime-aot-${{ matrix.target_id }}
+          path: |
+            target/oliphaunt-wasix/aot-upload/**
+          if-no-files-found: error
+
+      - name: Upload target WASIX tools compiler outputs
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:build-aot') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: postgres-tools-wasix-aot-${{ matrix.target_id }}
+          path: target/postgres-tools/wasix/aot
+          if-no-files-found: error
+
+      - name: Upload target extension AOT artifacts
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'extension-artifacts-wasix:build-aot') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-extension-aot-${{ matrix.target_id }}
+          path: target/extensions/wasix/aot-artifacts
+          if-no-files-found: error
+
+      - name: Download same-run WASIX exact-extension outputs
+        if: ${{ contains(fromJson(inputs.napi-targets), matrix.target_id) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: liboliphaunt-wasix-extension-artifacts-*
+          path: target/extensions/wasix/release-assets
+          merge-multiple: true
+
+      - name: Set up macOS smoke timeout
+        if: ${{ contains(fromJson(inputs.napi-targets), matrix.target_id) && runner.os == 'macOS' }}
+        shell: bash
+        run: brew list coreutils >/dev/null 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
+
+      - name: Build WASIX Node-API release assets
+        if: ${{ contains(fromJson(inputs.napi-targets), matrix.target_id) }}
+        shell: bash
+        env:
+          OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1"
+          OLIPHAUNT_ICU_DATA_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu
+          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+          OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
+          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+          OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "liboliphaunt-wasix:runtime-aot"]'
+        run: .github/scripts/run-planned-moon-job.sh wasix-napi
+
+      - name: Upload WASIX Node-API release assets
+        if: ${{ contains(fromJson(inputs.napi-targets), matrix.target_id) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-napi-release-assets-${{ matrix.target_id }}
+          path: target/oliphaunt-wasix-napi/release-assets
+          if-no-files-found: error
+
+      - name: Upload WASIX Node-API optional npm package
+        if: ${{ contains(fromJson(inputs.napi-targets), matrix.target_id) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-napi-npm-package-${{ matrix.target_id }}
+          path: target/oliphaunt-wasix-napi/npm-packages/*.tgz
+          if-no-files-found: error

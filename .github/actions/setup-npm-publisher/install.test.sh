@@ -5,6 +5,10 @@ root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-npm-publisher/install.sh"
 extractor="$root/.github/actions/setup-moon/toolchain-archive.mts"
 work="$(mktemp -d)"
+mkdir -p "$work/no-delay"
+printf '#!/bin/sh\nexit 0\n' > "$work/no-delay/sleep"
+chmod +x "$work/no-delay/sleep"
+export PATH="$work/no-delay:$PATH"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/payload/package/bin" "$work/bin" "$work/blockers"
 bash "$root/tools/dev/bun.sh" build "$root/.github/actions/setup-npm-publisher/testdata/package-manager-fixture.mts" \
@@ -62,7 +66,7 @@ cat >"$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 joined=" $* "
-for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry-all-errors" "--retry-connrefused" "--remove-on-error" "--max-filesize" "--ssl-revoke-best-effort"; do
+for required in "--fail" "--location" "--proto =https" "--proto-redir =https" "--tlsv1.2" "--retry 0" "--remove-on-error" "--max-filesize" "--ssl-revoke-best-effort"; do
   [[ "$joined" == *" $required "* ]] || exit 91
 done
 output=""

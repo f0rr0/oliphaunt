@@ -7,6 +7,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/postgis-dependency-cache.sh"
 
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+. "$repo_root/tools/dev/acquisition.sh"
 . "$repo_root/src/third-party/postgres/fetch-source.sh"
 pg_version="18.4"
 pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"

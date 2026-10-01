@@ -21,7 +21,11 @@ export function triggeringTaskNames(value = {}) {
   return Object.entries(value)
     .filter(([, detail]) => {
       if (detail === null || Array.isArray(detail) || typeof detail !== 'object') return false;
-      return detail.other === true || (Array.isArray(detail.files) && detail.files.length > 0);
+      return (
+        detail.other === true ||
+        (Array.isArray(detail.files) && detail.files.length > 0) ||
+        (Array.isArray(detail.env) && detail.env.length > 0)
+      );
     })
     .map(([task]) => task)
     .sort();

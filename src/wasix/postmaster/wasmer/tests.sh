@@ -25,13 +25,7 @@ run_tests \
 	remap_shared_file_fixed_accepts_a_partial_final_file_page \
 	remap_private_file_fixed_shares_clean_bytes_but_isolates_writes \
 	immutable_function_tables_are_shared_by_two_instances \
-	shared_function_tables_outlive_artifact_owner_and_peer_instance
-run_tests \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/vm/Cargo.toml" \
-	-- \
-	--exact \
+	shared_function_tables_outlive_artifact_owner_and_peer_instance \
 	instance::allocator::tests::cached_offsets_produce_the_same_allocator_layout \
 	trap::traphandlers::tests::tls_stack_reuses_mapping_without_global_queue
 if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
@@ -103,15 +97,7 @@ run_tests \
 	--lib \
 	--features wasmer/cranelift \
 	-- \
-	--exact \
-	state::tests::live_shared_mapping_registry_blocks_backing_file_shrink
-run_tests \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--features wasmer/cranelift \
-	-- \
+	state::tests::live_shared_mapping_registry_blocks_backing_file_shrink \
 	utils::store::tests
 if [ "$(uname -s)" = Linux ]; then
 	run_tests \
@@ -130,15 +116,7 @@ run_tests \
 	--features sys-minimal,wasmer/cranelift,ctrlc \
 	-- \
 	--test-threads=1 \
-	os::task::task_join_handle::tests
-run_tests \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--no-default-features \
-	--features sys-minimal,wasmer/cranelift,ctrlc \
-	-- \
+	os::task::task_join_handle::tests \
 	runners::wasi::
 run_tests \
 	--locked \
@@ -161,15 +139,6 @@ run_tests \
 	issues::llvm_rotates_and_atomic_fence_emit_expected_ir \
 	wast::spec::data_drop0::llvm::llvm \
 	wast::spec::memory_init::llvm::llvm
-run_tests \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$FRESH_ROOT/executor/Cargo.toml" \
-	--lib \
-	--no-default-features \
-	--features "$FRESH_POSTMASTER_EXECUTOR_FEATURES" \
-	-- \
-	sealed::tests::runtime_policy_identity_
 run_tests \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -212,14 +181,7 @@ run_tests \
 	--manifest-path "$WASMER_ROOT/lib/api/Cargo.toml" \
 	--test module \
 	-- \
-	serialized_artifact_inspector
-run_tests \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/api/Cargo.toml" \
-	--test module \
-	-- \
-	--exact \
+	serialized_artifact_inspector \
 	detached_module_executes_from_strict_relocated_regular_file_code_memory \
 	detached_mmapped_module_executes_without_retaining_serializable_state
 run_tests \

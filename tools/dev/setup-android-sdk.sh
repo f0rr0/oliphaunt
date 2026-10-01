@@ -22,6 +22,9 @@ Options:
   --ndk-version <version>    Must match the authoritative toolchain manifest.
   --cmake-version <version>  Must match the authoritative toolchain manifest.
   --compile-sdk <api-level>  Must match the authoritative toolchain manifest.
+  --native-tools <boolean>  Install NDK and CMake (default true).
+  --expo                    Also install the manifest-pinned Expo app NDK.
+  --expo-ndk-version <pin>   Assert the generated app uses the pinned Expo NDK.
   -h, --help                 Show this help.
 
 The command-line-tools URLs and SHA-256 checksums are intentionally not
@@ -32,6 +35,8 @@ EOF
 root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
   fail "must run inside the Oliphaunt git checkout"
 cd "$root"
+. "$root/tools/dev/acquisition.sh"
+oliphaunt_acquisition_start "Android SDK setup" 1800
 
 manifest="${OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST:-$root/tools/dev/android-sdk.toml}"
 extractor="${OLIPHAUNT_ANDROID_ZIP_EXTRACTOR:-$root/tools/dev/extract-pinned-zip.sh}"
@@ -78,6 +83,9 @@ sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
 ndk_version="$pinned_ndk"
 cmake_version="$pinned_cmake"
 compile_sdk="$pinned_compile_sdk"
+native_tools=true
+expo=false
+expo_ndk_input=""
 sdkmanager_install_attempts="${ANDROID_SDKMANAGER_INSTALL_ATTEMPTS:-4}"
 sdkmanager_retry_delay="${ANDROID_SDKMANAGER_RETRY_DELAY:-5}"
 
@@ -103,6 +111,18 @@ while [ "$#" -gt 0 ]; do
       compile_sdk="$2"
       shift 2
       ;;
+    --native-tools)
+      [ "$#" -ge 2 ] || fail "--native-tools requires a value"
+      native_tools="$2"
+      shift 2
+      ;;
+    --expo) expo=true; shift ;;
+    --expo-ndk-version)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--expo-ndk-version requires a value"
+      expo=true
+      expo_ndk_input="$2"
+      shift 2
+      ;;
     -h | --help)
       usage
       exit 0
@@ -112,6 +132,16 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+case "$native_tools" in true|false) ;; *) fail "--native-tools must be true or false" ;; esac
+[ "$expo" = false ] || [ "$native_tools" = true ] || fail "--expo requires native tools"
+expo_ndk=""
+if [ "$expo" = true ]; then
+  expo_ndk="$(manifest_package expo_ndk)"
+  [ -z "$expo_ndk_input" ] || [ "$expo_ndk_input" = "$expo_ndk" ] ||
+    fail "Expo app NDK $expo_ndk_input differs from manifest pin $expo_ndk; update the pin before building"
+  case "$expo_ndk" in ''|.*|*.|*..*|*[!0-9.]*) fail "invalid Expo NDK pin" ;; esac
+fi
 
 [ -n "$sdk_root" ] || fail "Android SDK root is empty"
 case "$sdk_root" in /|.|..) fail "unsafe Android SDK root: $sdk_root" ;; esac
@@ -165,6 +195,7 @@ case "$cmdline_entry_count" in
   *[!0-9]*|'') fail "$manifest $section.entry_count must be numeric" ;;
 esac
 
+oliphaunt_acquisition_timeout >/dev/null
 require java
 require mktemp
 command -v "$curl_bin" >/dev/null 2>&1 || fail "missing required command: $curl_bin"
@@ -201,7 +232,7 @@ sdkmanager_version() {
   local binary="$1"
   local output
   [ -f "$binary" ] && [ ! -L "$binary" ] && [ -x "$binary" ] || return 1
-  output="$("$binary" --sdk_root="$sdk_root" --version 2>/dev/null)" || return 1
+  output="$(oliphaunt_acquisition_run 30 "$binary" --sdk_root="$sdk_root" --version 2>/dev/null)" || return 1
   printf '%s\n' "$output" | awk '
     {
       sub(/\r$/, "")
@@ -267,11 +298,10 @@ install_cmdline_tools() {
   for candidate_url in "$cmdline_url" "$cmdline_mirror_url"; do
     rm -f "$archive"
     echo "Downloading pinned Android command-line tools: $candidate_url"
-    if "$curl_bin" \
+    if oliphaunt_acquisition_curl 240 6 2 "$curl_bin" \
       --fail --location --silent --show-error \
       --proto '=https' --proto-redir '=https' \
-      --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
-      --connect-timeout 20 --max-time 300 --max-filesize 220000000 \
+      --connect-timeout 20 --max-filesize 220000000 \
       --remove-on-error --output "$archive" "$candidate_url"; then
       actual="$(sha256_file "$archive")"
       if [ "$actual" = "$cmdline_sha256" ]; then
@@ -279,6 +309,9 @@ install_cmdline_tools() {
         break
       fi
       echo "Android command-line-tools checksum mismatch from $candidate_url; trying the next pinned origin" >&2
+    else
+      status=$?
+      case "$status" in 126|127|129|130|137|143) exit "$status" ;; esac
     fi
   done
   [ "$downloaded" = "1" ] ||
@@ -382,9 +415,10 @@ cmake_valid() {
 }
 
 ndk_valid() {
-  local directory="$sdk_root/ndk/$pinned_ndk"
+  local version="${1:-$pinned_ndk}"
+  local directory="$sdk_root/ndk/$version"
   local clang count=0
-  package_revision_valid "$directory" "$pinned_ndk" || return 1
+  package_revision_valid "$directory" "$version" || return 1
   for clang in "$directory"/toolchains/llvm/prebuilt/*/bin/clang; do
     [ -e "$clang" ] || continue
     usable_executable "$clang" || return 1
@@ -393,12 +427,15 @@ ndk_valid() {
   [ "$count" -eq 1 ]
 }
 
+
 sdk_packages_valid() {
   platform_tools_valid &&
     platform_valid &&
-    build_tools_valid &&
-    cmake_valid &&
-    ndk_valid
+    build_tools_valid || return 1
+  if [ "$native_tools" = true ]; then
+    cmake_valid && ndk_valid || return 1
+    [ "$expo" = false ] || ndk_valid "$expo_ndk" || return 1
+  fi
 }
 
 cleanup_invalid_sdk_packages() {
@@ -407,28 +444,33 @@ cleanup_invalid_sdk_packages() {
   platform_valid || rm -rf "$sdk_root/platforms/android-$pinned_compile_sdk"
   build_tools_valid ||
     rm -rf "$sdk_root/build-tools/$pinned_build_tools"
-  cmake_valid ||
-    rm -rf "$sdk_root/cmake/$pinned_cmake"
-  ndk_valid ||
-    rm -rf "$sdk_root/ndk/$pinned_ndk"
+  if [ "$native_tools" = true ]; then
+    cmake_valid || rm -rf "$sdk_root/cmake/$pinned_cmake"
+    ndk_valid || rm -rf "$sdk_root/ndk/$pinned_ndk"
+    if [ "$expo" = true ]; then
+      ndk_valid "$expo_ndk" || rm -rf "$sdk_root/ndk/$expo_ndk"
+    fi
+  fi
 }
 
 install_sdk_packages() {
   local attempt=1
+  local packages=(platform-tools "platforms;android-$pinned_compile_sdk" "build-tools;$pinned_build_tools")
+  if [ "$native_tools" = true ]; then
+    packages+=("cmake;$pinned_cmake" "ndk;$pinned_ndk")
+    [ "$expo" = false ] || packages+=("ndk;$expo_ndk")
+  fi
   while [ "$attempt" -le "$sdkmanager_install_attempts" ]; do
     cleanup_invalid_sdk_packages
     echo "Installing exact Android SDK package identities (attempt $attempt/$sdkmanager_install_attempts)"
-    if "$sdkmanager_bin" --sdk_root="$sdk_root" --install \
-      "platform-tools" \
-      "platforms;android-$pinned_compile_sdk" \
-      "build-tools;$pinned_build_tools" \
-      "cmake;$pinned_cmake" \
-      "ndk;$pinned_ndk" && sdk_packages_valid; then
+    if oliphaunt_acquisition_run 1800 "$sdkmanager_bin" --sdk_root="$sdk_root" --install \
+      "${packages[@]}" && sdk_packages_valid; then
       return 0
     fi
+    cleanup_invalid_sdk_packages
     if [ "$attempt" -lt "$sdkmanager_install_attempts" ]; then
       echo "Android SDK package install or validation failed; repairing before retry" >&2
-      sleep "$sdkmanager_retry_delay"
+      oliphaunt_acquisition_sleep "$sdkmanager_retry_delay" || exit $?
     fi
     attempt=$((attempt + 1))
   done
@@ -437,10 +479,15 @@ install_sdk_packages() {
 
 if ! sdk_packages_valid; then
   echo "Accepting Android SDK licenses"
-  yes | "$sdkmanager_bin" --sdk_root="$sdk_root" --licenses >/dev/null || true
+  yes | oliphaunt_acquisition_run 1800 "$sdkmanager_bin" --sdk_root="$sdk_root" --licenses >/dev/null || true
   install_sdk_packages
 fi
 sdk_packages_valid || fail "Android SDK package cache is invalid after repair"
 
 echo "ANDROID_HOME=$sdk_root"
-echo "ANDROID_NDK_HOME=$sdk_root/ndk/$pinned_ndk"
+if [ "$native_tools" = true ]; then
+  echo "ANDROID_NDK_HOME=$sdk_root/ndk/$pinned_ndk"
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    echo "ANDROID_NDK_HOME=$sdk_root/ndk/$pinned_ndk" >> "$GITHUB_ENV"
+  fi
+fi

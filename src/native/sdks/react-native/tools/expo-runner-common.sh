@@ -71,16 +71,38 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-maestro_binary() {
-  if command -v maestro >/dev/null 2>&1; then
-    command -v maestro
-    return
-  fi
-  if [ -x "$HOME/.maestro/bin/maestro" ]; then
-    printf '%s\n' "$HOME/.maestro/bin/maestro"
-    return
-  fi
-  return 1
+# The app owns SDK assertions. Read only the continuous capture started for this
+# launch, and reject failures/dead processes before accepting its receipt.
+mobile_log_has_failure() {
+  grep -Eq "$failure_tag|Fatal error|FATAL EXCEPTION|terminating with uncaught exception" "$1"
+}
+
+wait_for_mobile_receipt() {
+  local log_file="$1" capture_pid="$2"
+  local deadline=$((SECONDS + timeout_seconds)) logs pass
+  while :; do
+    logs="$(cat "$log_file")" || return 3
+    if mobile_log_has_failure "$log_file"; then tail -20 "$log_file" >&2; return 2; fi
+    kill -0 "$capture_pid" 2>/dev/null || return 3
+    mobile_app_is_alive || return 4
+    pass="$(printf '%s\n' "$logs" | grep -F "$success_tag" | tail -1 || true)"
+    if [ -n "$pass" ]; then printf '%s\n' "$pass"; return 0; fi
+    [ "$SECONDS" -lt "$deadline" ] || return 1
+    sleep 1
+  done
+}
+
+stop_mobile_log_capture() {
+  local pid="${1:-}"
+  [ -n "$pid" ] || return 0
+  kill -TERM "$pid" 2>/dev/null || true
+  local attempts=20
+  while kill -0 "$pid" 2>/dev/null && [ "$attempts" -gt 0 ]; do
+    sleep 0.1
+    attempts=$((attempts - 1))
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
 }
 
 stat_mtime() {

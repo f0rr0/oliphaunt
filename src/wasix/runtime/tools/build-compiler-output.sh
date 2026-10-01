@@ -34,7 +34,24 @@ export OLIPHAUNT_WASM_BUILD_PROFILE="$asset_profile"
 bash src/third-party/tools/fetch-sources.sh wasix-runtime --verify-only
 bash src/wasix/runtime/assets/build/prepare_postgres_source.sh >/dev/null
 build=src/wasix/runtime/assets/build
-if [ "${OLIPHAUNT_SKIP_BUILD:-0}" != "1" ]; then
+# Moon owns the complete source/toolchain input hash. Keep the absolute-path
+# Make tree in the existing compilation cache, and verify its recorded bytes
+# before bypassing compilation. Raw script calls keep normal incremental builds.
+compiler_tree=target/oliphaunt-wasix/wasix-build/work/docker-oliphaunt
+receipt=target/oliphaunt-wasix/wasix-build/build/compiler-input-hash
+checksums=target/oliphaunt-wasix/wasix-build/build/compiler-output-sha256
+reuse=0
+if [ "${MOON_TARGET:-}" = liboliphaunt-wasix:compiler-output ] &&
+  [[ "${MOON_TASK_HASH:-}" =~ ^[0-9a-f]{64}$ ]] &&
+  [ "${FORCE_RECONFIGURE:-0}" != 1 ] && [ "${FORCE_IMAGE_BUILD:-0}" != 1 ] &&
+  [ -s "$receipt" ] && [ -s "$checksums" ] &&
+  [ "$(cat "$receipt")" = "$MOON_TASK_HASH" ] &&
+  sha256sum --check --status "$checksums"; then
+  reuse=1
+  echo 'Reusing verified WASIX compiler output for the current Moon input hash'
+fi
+if [ "${OLIPHAUNT_SKIP_BUILD:-0}" != "1" ] && [ "$reuse" = 0 ]; then
+  rm -f "$receipt" "$checksums"
   for script in docker_oliphaunt docker_runtime_support docker_initdb; do
     bash "$build/$script.sh"
   done
@@ -42,3 +59,11 @@ fi
 awk -v profile="$asset_profile" '$0 == "profile=" profile {found=1} END {exit !found}' \
   target/oliphaunt-wasix/wasix-build/work/docker-oliphaunt/.oliphaunt-wasix-build-profile
 cargo run -p xtask -- assets stage-runtime
+
+if [ "${MOON_TARGET:-}" = liboliphaunt-wasix:compiler-output ] &&
+  [[ "${MOON_TASK_HASH:-}" =~ ^[0-9a-f]{64}$ ]] && [ "$reuse" = 0 ] &&
+  [ "${OLIPHAUNT_SKIP_BUILD:-0}" != 1 ]; then
+  mkdir -p "$(dirname "$receipt")"
+  find "$compiler_tree" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$checksums"
+  printf '%s\n' "$MOON_TASK_HASH" > "$receipt"
+fi

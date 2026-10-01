@@ -12,6 +12,10 @@ fail() {
 }
 
 work_root="$(mktemp -d)"
+mkdir -p "$work_root/no-delay"
+printf '#!/bin/sh\n[ "$1" = 5 ] && exit 0\nexec "%s" "$@"\n' "$(command -v sleep)" > "$work_root/no-delay/sleep"
+chmod +x "$work_root/no-delay/sleep"
+export PATH="$work_root/no-delay:$PATH"
 trap 'rm -rf "$work_root"' EXIT
 fixtures="$work_root/fixtures"
 fake_bin="$work_root/fake-bin"
@@ -249,10 +253,9 @@ expected_success_compiler_version="$(printf '%s\n' \
 (cd "$success_root" && sha256sum --check --strict .oliphaunt-toolchain-assets.sha256 >/dev/null) ||
   fail "installed identity manifest does not verify"
 for required_flag in \
-  '--retry 8' \
-  '--retry-all-errors' \
+  '--retry 0' \
   '--connect-timeout 20' \
-  '--max-time 900' \
+  '--max-time' \
   '--proto =https' \
   '--proto-redir =https' \
   '--remove-on-error'; do

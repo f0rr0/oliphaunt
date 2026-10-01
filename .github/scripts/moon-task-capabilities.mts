@@ -28,6 +28,14 @@ const DISPLAY_WORDS = Object.freeze({
 });
 const DISPLAY_PARTS = Object.freeze({
   'extension-artifacts-native': 'Native Extension Artifacts',
+  'liboliphaunt-native': 'Native Runtime',
+  'liboliphaunt-wasix': 'WASIX Runtime',
+  'oliphaunt-rust': 'Rust SDK',
+  'oliphaunt-kotlin': 'Kotlin SDK',
+  'oliphaunt-swift': 'Swift SDK',
+  'oliphaunt-react-native': 'React Native SDK',
+  'oliphaunt-wasix-rust': 'WASIX Rust SDK',
+  'oliphaunt-wasix-ts': 'WASIX TypeScript SDK',
 });
 
 export const MAX_TARGETS_PER_JOB = 4;
@@ -135,8 +143,11 @@ function compareTargets(left, right) {
 
 function groupRow(targets) {
   const first = targets[0];
+  const projects = [...new Set(targets.map(({ target }) => target.split(':')[0]))];
   return {
-    label: targets.map(({ label }) => label).join(' + '),
+    label: projects
+      .map((project) => taskLabel(project).replace(/^(?:Oliphaunt|liboliphaunt) /u, ''))
+      .join(' + '),
     target_count: targets.length,
     requires_rust: first.requires_rust,
     requires_maintainer_tools: first.requires_maintainer_tools,
@@ -183,5 +194,12 @@ export function groupTargets(targets, { maxTargets = MAX_TARGETS_PER_JOB } = {})
       groups.push(targetsWithSameSetup.slice(index, index + maxTargets));
     }
   }
-  return groups.map(groupRow);
+  const rows = groups.map(groupRow);
+  return rows.map((row, index) => {
+    if (rows.filter(({ label }) => label === row.label).length === 1) return row;
+    // A component may have separate setup profiles or span multiple batches.
+    // Name the distinguishing tasks instead of assigning an opaque shard number.
+    const tasks = [...new Set(groups[index].map(({ target }) => taskLabel(target.split(':')[1])))];
+    return { ...row, label: `${row.label} (${tasks.join(' + ')})` };
+  });
 }

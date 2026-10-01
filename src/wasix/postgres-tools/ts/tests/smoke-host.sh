@@ -14,7 +14,6 @@ esac
 deadline="$(command -v gtimeout || command -v timeout)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-bun run --cwd "$root/src/query/ts" build
 bun pm --cwd "$root/src/query/ts" pack --filename "$scratch/query.tgz" --quiet
 bun "$root/src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts" "$scratch" --pgtap --tools
 cd "$scratch/consumer"

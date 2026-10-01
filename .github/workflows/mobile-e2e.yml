@@ -88,22 +88,8 @@ jobs:
           ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
 
-      - name: Set up Node and Bun
-        id: setup_android_e2e_node
-        uses: ./.github/actions/setup-node-bun
-
-      - name: Reclaim Android emulator disk
-        id: reclaim_android_emulator_disk
-        run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
-
-      - name: Set up Android
-        id: setup_android_e2e
-        uses: ./.github/actions/setup-android
-        with:
-          gradle-cache: "false"
-
-      - name: Set up Maestro
-        uses: ./.github/actions/setup-maestro
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
 
       - name: Download Android app artifact
         id: download_android_app
@@ -122,41 +108,11 @@ jobs:
             --artifact react-native-mobile-android-app-android-x86_64
           find target/mobile-build/react-native/android -maxdepth 2 -type f -print
 
-      - name: Provision runner KVM access
-        run: |
-          test -c /dev/kvm
-          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-            sudo chmod a+rw /dev/kvm
-          fi
-
-      - name: Start Android emulator
-        id: start_android_emulator
-        env:
-          OLIPHAUNT_ANDROID_EMULATOR_API: "35"
-          OLIPHAUNT_ANDROID_EMULATOR_DISK_HEADROOM_MB: "2048"
-          OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB: "6144"
-        run: tools/ci/start-android-emulator-ci.sh
-
-      - name: Run Android installed-app E2E
-        id: android_app_e2e
-        env:
-          CI_HEAD_SHA: ${{ needs.resolve.outputs.sha }}
-          OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/android
-          OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
-          OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
-          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-        run: bash src/native/sdks/react-native/tools/mobile-e2e.sh android
-
-      - name: Upload Android E2E reports
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - name: Test installed app
+        uses: ./.github/actions/run-mobile-e2e
         with:
-          name: react-native-mobile-android-e2e-reports
-          path: |
-            target/mobile/react-native/android-e2e/reports
-            target/mobile/react-native/android-e2e/logs
-            ${{ runner.temp }}/oliphaunt-android-emulator.log
-          if-no-files-found: ignore
+          platform: android
+          source-sha: ${{ needs.resolve.outputs.sha }}
 
   ios:
     name: ios-installed-app
@@ -173,14 +129,8 @@ jobs:
           ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
 
-      - name: Set up Node and Bun
-        uses: ./.github/actions/setup-node-bun
-
-      - name: Set up Apple
-        uses: ./.github/actions/setup-apple
-
-      - name: Set up Maestro
-        uses: ./.github/actions/setup-maestro
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
 
       - name: Download iOS app artifact
         id: download_ios_app
@@ -198,37 +148,11 @@ jobs:
             --job Builds \
             --artifact react-native-mobile-ios-app
 
-      - name: Verify and extract iOS app artifact
-        id: verify_ios_app_transport
-        run: |
-          rm -rf target/mobile-build/react-native/ios
-          bash src/native/sdks/react-native/tools/ios-app-transport.sh verify-extract \
-            --transport-dir target/mobile-build/react-native/ios-transport \
-            --output-dir target/mobile-build/react-native/ios
-          find target/mobile-build/react-native/ios -maxdepth 2 -print
-
-      - name: Run iOS installed-app E2E
-        id: ios_app_e2e
-        env:
-          CI_HEAD_SHA: ${{ needs.resolve.outputs.sha }}
-          OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/ios
-          OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
-          OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
-          OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
-          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
-          MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-        run: bash src/native/sdks/react-native/tools/mobile-e2e.sh ios
-
-      - name: Upload iOS E2E reports
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - name: Test installed app
+        uses: ./.github/actions/run-mobile-e2e
         with:
-          name: react-native-mobile-ios-e2e-reports
-          path: |
-            target/mobile/react-native/ios-e2e/reports
-            target/mobile/react-native/ios-e2e/logs
-            target/mobile/react-native/ios-e2e/*.log
-          if-no-files-found: ignore
+          platform: ios
+          source-sha: ${{ needs.resolve.outputs.sha }}
 
   required:
     name: E2E
