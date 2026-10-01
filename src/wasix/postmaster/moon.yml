@@ -150,7 +150,7 @@ tasks:
     deps:
       - liboliphaunt-wasix-postmaster:prepare-runtime
     inputs:
-      - "@group(cargo-workspace)"
+      - /rust-toolchain.toml
       - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
       - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
@@ -180,7 +180,7 @@ tasks:
     deps:
       - liboliphaunt-wasix-postmaster:prepare-runtime
     inputs:
-      - "@group(cargo-workspace)"
+      - /rust-toolchain.toml
       - /tools/dev/acquisition.sh
       - /src/wasix/runtime/assets/build/docker/**/*
       - "!/src/wasix/runtime/assets/build/docker/**/*.test.*"
@@ -360,7 +360,7 @@ tasks:
       - liboliphaunt-wasix-postmaster:runtime-capabilities
     inputs:
       - "@group(legal-files)"
-      - "@group(cargo-workspace)"
+      - /rust-toolchain.toml
       - "@group(production)"
       - /src/wasix/postmaster/sources/*.toml
       - "/tools/packaging/*.{mjs,mts}"

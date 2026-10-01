@@ -2,6 +2,10 @@ name: Set up Moon
 description: Install verified Node.js, Moon, and Bun binaries and optionally hydrate JavaScript workspace dependencies.
 
 inputs:
+  cache-partition:
+    description: Stable task group or target; matrix jobs must keep independent cache writers.
+    required: false
+    default: "default"
   task-cache:
     description: Restore/save Moon task outputs; disable for planning and uncached finalizers.
     required: false
@@ -99,9 +103,9 @@ runs:
         path: |
           .moon/cache/blobs
           .moon/cache/manifests
-        key: moon-task-cache-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/toolchains.yml') }}-${{ github.sha }}
+        key: moon-task-cache-v3-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ inputs.cache-partition }}-${{ hashFiles('.prototools', '.moon/toolchains.yml') }}-${{ github.sha }}
         restore-keys: |
-          moon-task-cache-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/toolchains.yml') }}-
+          moon-task-cache-v3-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ inputs.cache-partition }}-${{ hashFiles('.prototools', '.moon/toolchains.yml') }}-
 
     - name: Hydrate Moon plugins
       shell: bash

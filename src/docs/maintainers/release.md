@@ -558,12 +558,8 @@ bundle, and promotion reserves the same 10-second content-write pacer before
 transport, allowing at most 361 writes in any rolling hour and seven in any
 rolling minute. Asset-backed products execute in bounded waves of at most five
 uploader processes; products with an exact empty asset set are proven by the
-pre-mutation and final receipts without consuming an uploader lane. A new
-runner starts a conservative
-rolling-hour cooldown at the beginning of the normal publish job; read-only
-qualification and artifact preparation overlap that window. The first actual
-write still waits for the window to mature, and every reservation is persisted
-before its request. Every core REST attempt, including retries and the API call
+pre-mutation and final receipts without consuming an uploader lane. Every core
+REST attempt, including retries and the API call
 inside each attestation action, is also reserved in a durable run-identity-bound
 journal before transport; attempt 901 inside one rolling hour is refused.
 Both journals remain bound to the repository, root run, source, and manifest

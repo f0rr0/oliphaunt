@@ -27,6 +27,11 @@ mkdir -p .github/scripts
 printf 'newer publisher' > .github/scripts/download-completed-bootstrap.mts
 newer="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$newer"
+mkdir -p src/docs/maintainers
+printf 'release guidance' > src/docs/maintainers/release.md
+printf 'setup guidance' > src/docs/maintainers/release-setup.md
+documentation="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$documentation"
 bash "$owner/publication-controller.sh" --changes-only "$source" "$controller"
 reject 'checkout|HEAD' "$source" "$controller"
 for file in product src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts Cargo.lock .github/workflows/ci.yml tools/release/moon.yml; do

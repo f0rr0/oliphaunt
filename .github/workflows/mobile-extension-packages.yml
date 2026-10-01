@@ -40,6 +40,8 @@ jobs:
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: ${{ inputs.family }}
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust

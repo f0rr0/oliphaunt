@@ -55,6 +55,13 @@ globalThis.fetch = async (input, options) => {
     const match = endpoint.match(/actions\/runs\/(77|88)(?:\/(jobs|artifacts))?(?:\?.*)?$/);
     if (match) {
       const id = Number(match[1]);
+      if (mode.endsWith(`-${match[2]}`) && /qualification-(?:transient|unavailable)-/.test(mode)) {
+        const state = `${process.env.FAKE_STATE}.inspection`;
+        const count = fs.existsSync(state) ? Number(fs.readFileSync(state, 'utf8')) : 0;
+        fs.writeFileSync(state, String(count + 1));
+        if (count === 0 || mode.startsWith('qualification-unavailable-'))
+          return new Response('unavailable', { status: 504 });
+      }
       if (match[2] === 'jobs')
         return Response.json({
           jobs: [

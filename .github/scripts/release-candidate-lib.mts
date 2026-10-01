@@ -352,65 +352,6 @@ export function assertCandidateBindingShape(candidate) {
     candidate?.schemaVersion === 2,
     `release candidate schemaVersion must be 2, got ${candidate?.schemaVersion}`,
   );
-  if (candidate.producers !== undefined) {
-    assert(Array.isArray(candidate.producers), 'candidate producers must be a list');
-    const targets = new Set();
-    for (const receipt of candidate.producers) {
-      assert(
-        typeof receipt.target === 'string' && !targets.has(receipt.target),
-        'duplicate or invalid producer',
-      );
-      targets.add(receipt.target);
-      positiveInteger(candidate.runAttempt, 'candidate runAttempt');
-      positiveInteger(receipt.producer?.runAttempt, 'producer receipt runAttempt');
-      // Failed-job reruns retain successful producers from earlier attempts.
-      assert(
-        receipt.producer?.sha === candidate.sha &&
-          receipt.producer?.runId === candidate.runId &&
-          receipt.producer.runAttempt <= candidate.runAttempt,
-        'producer receipt must match the qualification SHA/run and not exceed its attempt',
-      );
-      assert(
-        Number.isSafeInteger(receipt.artifact?.id) &&
-          receipt.artifact.id > 0 &&
-          Number.isSafeInteger(receipt.artifact.size) &&
-          receipt.artifact.size > 0 &&
-          /^sha256:[0-9a-f]{64}$/.test(receipt.artifact.digest),
-        'producer artifact identity is invalid',
-      );
-      assert(
-        receipt.toolchain?.moon &&
-          receipt.toolchain?.bun &&
-          receipt.toolchain?.typescript &&
-          receipt.toolchain.target === 'portable-typescript',
-        'producer toolchain identity is incomplete',
-      );
-      assert(typeof receipt.eligible === 'boolean', 'producer eligibility is missing');
-      if (!receipt.eligible) {
-        assert(
-          typeof receipt.reason === 'string' && receipt.reason.length > 0,
-          'ineligible producer requires a reason',
-        );
-        continue;
-      }
-      assert(
-        typeof receipt.cacheHit === 'boolean' && Array.isArray(receipt.hashes),
-        'producer execution evidence is missing',
-      );
-      const hashes = new Map(receipt.hashes.map((entry) => [entry.target, entry.hash]));
-      assert(
-        /^[0-9a-f]{64}$/.test(receipt.taskHash ?? '') &&
-          hashes.size === receipt.hashes.length &&
-          hashes.get(receipt.target) === receipt.taskHash,
-        'producer hash chain is inconsistent',
-      );
-      for (const entry of receipt.hashes) {
-        assert(/^[0-9a-f]{64}$/.test(entry.hash), 'producer hash is invalid');
-        for (const [dependency, hash] of Object.entries(entry.dependencies))
-          assert(hashes.get(dependency) === hash, 'producer dependency hash is incomplete');
-      }
-    }
-  }
   assert(
     candidate.affectedPlan !== null && typeof candidate.affectedPlan === 'object',
     'release candidate affectedPlan is missing',

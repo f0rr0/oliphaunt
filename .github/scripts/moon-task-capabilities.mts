@@ -189,12 +189,14 @@ export function groupTargets(targets, { maxTargets = MAX_TARGETS_PER_JOB } = {})
     byCapabilities.set(key, [...(byCapabilities.get(key) ?? []), target]);
   }
   const groups = [];
-  for (const targetsWithSameSetup of [...byCapabilities.values()]) {
+  const rows = [];
+  for (const [key, targetsWithSameSetup] of byCapabilities) {
     for (let index = 0; index < targetsWithSameSetup.length; index += maxTargets) {
-      groups.push(targetsWithSameSetup.slice(index, index + maxTargets));
+      const batch = targetsWithSameSetup.slice(index, index + maxTargets);
+      groups.push(batch);
+      rows.push({ ...groupRow(batch), cache_partition: `${key}-${index / maxTargets}` });
     }
   }
-  const rows = groups.map(groupRow);
   return rows.map((row, index) => {
     if (rows.filter(({ label }) => label === row.label).length === 1) return row;
     // A component may have separate setup profiles or span multiple batches.

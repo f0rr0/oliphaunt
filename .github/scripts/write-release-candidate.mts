@@ -110,7 +110,6 @@ const candidate = {
   ref: requiredEnv('GITHUB_REF'),
   sha: checkedOutSha,
   tree,
-  producers: JSON.parse(process.env.PRODUCER_RECEIPTS_JSON || '[]'),
   affectedPlan,
   evidenceRequirements: {
     wasixReleaseRegression: wasixRequired,
