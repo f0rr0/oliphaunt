@@ -149,8 +149,9 @@ materialize_worktree() {
 			exit 2
 		fi
 	else
-		mkdir -p "$(dirname "$root")"
-		git clone --quiet --no-hardlinks "$source_root" "$root"
+		# Cargo cache restoration may create target/ before the source worktree.
+		git init --quiet "$root"
+		git -C "$root" fetch --quiet --update-shallow "$source_root" "$ref"
 		git -C "$root" checkout --quiet --detach "$ref"
 	fi
 }
@@ -169,17 +170,7 @@ materialize_gitlink() {
 		exit 1
 	}
 
-	if [ -d "$checkout/.git" ]; then
-		if [ "$FORCE" -eq 1 ]; then
-			git -C "$checkout" reset --hard "$expected_ref" >/dev/null
-			git -C "$checkout" clean -fd >/dev/null
-		fi
-	else
-		rmdir "$checkout" 2>/dev/null || true
-		mkdir -p "$(dirname "$checkout")"
-		git clone --quiet --no-hardlinks "$source_root" "$checkout"
-		git -C "$checkout" checkout --quiet --detach "$expected_ref"
-	fi
+	materialize_worktree "$label" "$source_root" "$checkout" "$expected_ref"
 	[ "$(git -C "$checkout" rev-parse HEAD)" = "$expected_ref" ] || {
 		printf 'generated Wasmer %s checkout has the wrong revision\n' "$label" >&2
 		exit 1
