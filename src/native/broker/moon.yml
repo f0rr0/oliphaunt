@@ -122,7 +122,8 @@ tasks:
       CARGO_TARGET_DIR: "target"
     inputs:
       - "@group(cargo-workspace)"
-      - "@group(code)"
+      - "{src,tests}/**/*"
+      - "{Cargo.toml,README.md}"
     options:
       cache: true
       runFromWorkspaceRoot: true

@@ -66,13 +66,13 @@ tasks:
   test-consumer:
     tags: ["integration", "consumer", "ci-wasix-ts-sdk-package"]
     command: "bash tools/ci/with-projects.sh --exec bash src/wasix/postgres-tools/ts/tests/consumer.sh"
-    deps: ["oliphaunt-query-ts:build", "oliphaunt-wasix-tools-ts:package", {target: "oliphaunt-wasix-ts:package", cacheStrategy: ignored}, "oliphaunt-wasix-ts:build", "wasix-browser-host:build", "oliphaunt-wasix-napi:build-release-assets", "postgres-tools-wasix:package-portable", "postgres-tools-wasix:package-aot"]
+    deps: ["oliphaunt-query-ts:build", "extension-artifacts-wasix:compiler-output", "oliphaunt-wasix-tools-ts:package", {target: "oliphaunt-wasix-ts:package", cacheStrategy: ignored}, "oliphaunt-wasix-ts:build", "wasix-browser-host:build", "oliphaunt-wasix-napi:build-release-assets", "postgres-tools-wasix:package-portable", "postgres-tools-wasix:package-aot"]
     inputs: ["ts/tests/**/*", "/src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts", "/src/wasix/sdks/ts/tools/pgwire-client.mts", "/src/test-fixtures/postgres/**/*", "tools/*.mts"]
     options: {cache: false, runFromWorkspaceRoot: true}
   test-browser:
     tags: ["integration", "browser", "ci-wasix-ts-sdk-package"]
     command: "bash tools/ci/with-projects.sh --exec bash src/wasix/sdks/ts/tools/integration/smoke-browser.sh --package-only --tools"
-    deps: ["oliphaunt-query-ts:build", "oliphaunt-wasix-tools-ts:package", {target: "oliphaunt-wasix-ts:package", cacheStrategy: ignored}, "oliphaunt-wasix-ts:build", "wasix-browser-host:build", "postgres-tools-wasix:package-portable"]
+    deps: ["oliphaunt-query-ts:build", "extension-artifacts-wasix:compiler-output", "database-resources:package-wasix", "database-resources:package-icu", "oliphaunt-wasix-tools-ts:package", {target: "oliphaunt-wasix-ts:package", cacheStrategy: ignored}, "oliphaunt-wasix-ts:build", "wasix-browser-host:build", "postgres-tools-wasix:package-portable"]
     inputs: ["ts/tests/**/*", "/src/wasix/sdks/ts/tools/integration/{packed-node-fixture.mts,smoke-browser.*}", "/src/test-fixtures/postgres/**/*", "tools/*.mts"]
     options: {cache: false, runFromWorkspaceRoot: true}
   format-check:

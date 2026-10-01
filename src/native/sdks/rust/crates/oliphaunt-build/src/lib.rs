@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Cargo artifact integration for SDKs and custom deployments.
 //!
 //! The SDK uses `embed_resolved_artifacts()` internally. Ordinary applications

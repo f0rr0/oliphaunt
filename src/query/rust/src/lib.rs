@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 // Runtime-neutral PostgreSQL query protocol core shared by the Rust SDKs.
 //
 // This module deliberately has no dependencies outside `std`. It owns the

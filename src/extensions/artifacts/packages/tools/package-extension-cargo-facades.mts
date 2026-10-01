@@ -231,7 +231,8 @@ The default \`native\` feature selects the matching native artifact leaf.${
   );
   writeFileSync(
     path.join(sourceDir, 'src/lib.rs'),
-    `#![deny(unsafe_op_in_unsafe_fn)]
+    `#![doc = include_str!("../README.md")]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 ${unsupportedNativeGuard}
 

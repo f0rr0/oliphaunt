@@ -45,7 +45,7 @@ tasks:
         cacheStrategy: hash
     command: "cargo test --locked"
     tags: ["quality", "unit", "requires-rust"]
-    inputs: ["@group(sources)", "/Cargo.toml", "/Cargo.lock"]
+    inputs: ["@group(sources)", "README.md", "/Cargo.toml", "/Cargo.lock"]
   test-integration:
     command: "cargo test --locked -- --ignored --test-threads=1"
     tags: ["runtime", "integration", "requires-rust", "ci-liboliphaunt-wasix-aot"]

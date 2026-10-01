@@ -351,7 +351,8 @@ Applications do not depend on this crate directly.
   );
   writeFileSync(
     path.join(crateDir, 'src/lib.rs'),
-    `pub const RELEASE_TARGET: &str = "${targetId}";
+    `#![doc = include_str!("../README.md")]
+pub const RELEASE_TARGET: &str = "${targetId}";
 pub const PART_INDEX: usize = ${index};
 pub const PAYLOAD_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/payload");
 `,
@@ -444,7 +445,8 @@ matching Cargo targets.
   );
   writeFileSync(
     path.join(crateDir, 'src/lib.rs'),
-    `pub const PRODUCT: &str = "${artifactProduct}";
+    `#![doc = include_str!("../README.md")]
+pub const PRODUCT: &str = "${artifactProduct}";
 pub const KIND: &str = "${artifactKind}";
 pub const RELEASE_TARGET: &str = "${target.target}";
 pub const CARGO_TARGET: &str = "${target.triple}";

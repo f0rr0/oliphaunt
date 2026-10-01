@@ -12,7 +12,7 @@ The [quickstart](https://oliphaunt.dev/docs/sdk/wasix-rust) covers prerequisites
 
 ## First query
 
-```rust
+```rust,no_run
 use oliphaunt_wasix::Oliphaunt;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -182,7 +182,7 @@ export function packageSeedCarriers(argv = [], { assetDir, outputDir, sourceDir 
     mkdirSync(path.join(stage, 'src'));
     writeFileSync(
       path.join(stage, 'src/lib.rs'),
-      `#![deny(unsafe_code)]\npub fn seed_archive() -> &'static [u8] { include_bytes!("../seed.tar.zst") }\npub fn seed_manifest() -> &'static str { include_str!("../manifest.json") }\n${identity.profile === 'icu' ? 'pub use oliphaunt_icu as icu;\n' : ''}`,
+      `#![doc = include_str!("../README.md")]\n#![deny(unsafe_code)]\npub fn seed_archive() -> &'static [u8] { include_bytes!("../seed.tar.zst") }\npub fn seed_manifest() -> &'static str { include_str!("../manifest.json") }\n${identity.profile === 'icu' ? 'pub use oliphaunt_icu as icu;\n' : ''}`,
     );
     writeFileSync(
       path.join(stage, 'Cargo.toml'),

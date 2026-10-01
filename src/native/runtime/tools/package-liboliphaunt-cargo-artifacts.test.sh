@@ -17,6 +17,12 @@ bash tools/dev/bun.sh test ./src/native/runtime/tools/package-liboliphaunt-cargo
 CARGO_HOME="$root/installed-consumer/cargo-home" \
   CARGO_TARGET_DIR="$root/installed-consumer/target" \
   cargo check --offline --manifest-path "$root/installed-consumer/Cargo.toml"
+CARGO_HOME="$root/installed-consumer/cargo-home" \
+  CARGO_TARGET_DIR="$root/installed-consumer/target" \
+  cargo doc --offline --no-deps --manifest-path "$root/installed-consumer/Cargo.toml" \
+    -p liboliphaunt-native-linux-x64-gnu -p oliphaunt-tools
+grep -q 'Cargo artifact crate for' "$root/installed-consumer/target/doc/liboliphaunt_native_linux_x64_gnu/index.html"
+grep -q 'Optional endpoint-oriented runner' "$root/installed-consumer/target/doc/oliphaunt_tools/index.html"
 if rustc --crate-name oliphaunt_tools --crate-type lib --edition 2024 \
   --emit metadata -o "$root/unsupported.rmeta" "$root/forced-unsupported-tools.rs" \
   > "$root/unsupported.log" 2>&1; then

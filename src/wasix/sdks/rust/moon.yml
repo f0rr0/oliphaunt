@@ -137,7 +137,8 @@ tasks:
       - "@group(rust-test-config)"
       - project: "shared-test-fixtures"
         group: "fixtures"
-      - "@group(code)"
+      - "{src,tests,tools}/**/*"
+      - "{Cargo.toml,build.rs,README.md}"
       - project: "liboliphaunt-wasix"
         group: "crates"
     options:

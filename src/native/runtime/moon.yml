@@ -630,6 +630,8 @@ tasks:
       - requires-rust
     command: "bash src/native/runtime/tools/test-packaging.sh"
     inputs:
+      - /src/native/postgres-tools/crates/tools/**/*
+      - /src/native/postgres-tools/tools/package-cargo-artifacts.mts
       - /tools/packaging/windows-vc-runtime-policy.json
       - /src/extensions/tools/extension-upstream-licenses.mts
       - /src/extensions/contracts/*.mts

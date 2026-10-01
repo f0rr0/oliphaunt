@@ -244,12 +244,12 @@ test('native lifecycle supervisor changes select its exact hosted proof', () => 
   );
 });
 
-test('shipped Postmaster documentation has a cheap producer without losing release ownership', () => {
+test('shipped Postmaster documentation has a cheap producer without requesting a release', () => {
   const effects = directEffects(paths.postmasterReadme);
   assert(effects.directTasks.includes('liboliphaunt-wasix-postmaster:package-docs'));
   assert(!effects.jobs.includes('wasix-postmaster'));
   const release = buildPlan(loadGraph(), normalizeFiles([paths.postmasterReadme]));
-  assert(release.releaseProducts.includes('liboliphaunt-wasix-postmaster'));
+  assert.deepEqual(release.releaseProducts, []);
   const closure = taskGraph(taskRoots.liboliphauntWasixPostmasterReleaseAssets);
   assert(closure.some(({ target }) => target === 'liboliphaunt-wasix-postmaster:package-docs'));
 });
