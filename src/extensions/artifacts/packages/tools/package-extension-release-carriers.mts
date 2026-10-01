@@ -2193,7 +2193,8 @@ Applications do not depend on this crate directly.
   );
   writeFileSync(
     path.join(crateDir, 'src/lib.rs'),
-    `pub const PRODUCT: &str = "${product}";
+    `#![doc = include_str!("../README.md")]
+pub const PRODUCT: &str = "${product}";
 pub const KIND: &str = "extension-part";
 pub const MEMBERS: &[&str] = &[${members.map((member) => JSON.stringify(member)).join(', ')}];
 pub const RELEASE_TARGET: &str = "${target}";
@@ -2784,7 +2785,8 @@ sha2 = "0.10"
   );
   writeFileSync(
     path.join(crateDir, 'src/lib.rs'),
-    `pub const PRODUCT: &str = "${product}";
+    `#![doc = include_str!("../README.md")]
+pub const PRODUCT: &str = "${product}";
 pub const KIND: &str = "extension";
 pub const MEMBERS: &[&str] = &[${members.map((member) => JSON.stringify(member)).join(', ')}];
 pub const RELEASE_TARGET: &str = "${target}";

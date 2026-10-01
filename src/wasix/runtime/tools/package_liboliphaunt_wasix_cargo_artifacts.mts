@@ -732,6 +732,7 @@ function writeExtensionPayloadPartSources({
     writeFileSync(
       path.join(part.sourceDir, 'src/lib.rs'),
       [
+        '#![doc = include_str!("../README.md")]',
         '#![deny(unsafe_code)]',
         `pub const PRODUCT: &str = ${JSON.stringify(product)};`,
         `pub const TARGET: &str = ${JSON.stringify(target)};`,
@@ -1279,6 +1280,7 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
   writeFileSync(
     path.join(crateDir, 'src/lib.rs'),
     [
+      '#![doc = include_str!("../README.md")]',
       '#![deny(unsafe_code)]',
       '',
       `pub const SQL_NAMES: &[&str] = &[${spec.members.map((member) => JSON.stringify(member.sqlName)).join(', ')}];`,
@@ -1437,6 +1439,7 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
   writeFileSync(
     path.join(crateDir, 'src/lib.rs'),
     [
+      '#![doc = include_str!("../README.md")]',
       '#![deny(unsafe_code)]',
       '',
       `pub const SQL_NAMES: &[&str] = &[${spec.members.map((member) => JSON.stringify(member.sqlName)).join(', ')}];`,

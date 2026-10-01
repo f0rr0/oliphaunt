@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #![deny(unsafe_op_in_unsafe_fn)]
 //! Shared native liboliphaunt execution and resource ownership.
 mod build_resources;

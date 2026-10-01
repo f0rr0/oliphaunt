@@ -5,7 +5,8 @@ bundle Oliphaunt runtime artifacts.
 
 Applications add it as a build dependency and call it from `build.rs`:
 
-```rust
+```rust,no_run
+# #[allow(clippy::needless_doctest_main)] // build.rs requires a main function.
 fn main() {
     oliphaunt_build::configure();
 }

@@ -1188,6 +1188,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload shared Rust query package
+        if: ${{ contains(join(fromJson(needs.affected.outputs.job_targets)['rust-sdk-package'], ','), 'oliphaunt-query:') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-query-sdk-package-artifacts
@@ -1195,6 +1196,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload native Rust bindings package
+        if: ${{ contains(join(fromJson(needs.affected.outputs.job_targets)['rust-sdk-package'], ','), 'liboliphaunt-native-bindings:') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: liboliphaunt-native-bindings-sdk-package-artifacts
@@ -1202,6 +1204,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload broker source package
+        if: ${{ contains(join(fromJson(needs.affected.outputs.job_targets)['rust-sdk-package'], ','), 'oliphaunt-broker:') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-broker-sdk-package-artifacts

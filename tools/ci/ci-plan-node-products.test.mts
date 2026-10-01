@@ -1006,6 +1006,18 @@ test('WASIX package README and compiler unit fixtures do not select runtime comp
   assert.deepEqual(rust.releaseProducts, []);
 });
 
+test('native Rust README selects its source tests without compiling runtime artifacts', () => {
+  const result = effects(paths.nativeRustReadme);
+  assert(result.directTasks.includes('oliphaunt-rust:test'));
+  assert.deepEqual(result.releaseProducts, []);
+  for (const target of [
+    'liboliphaunt-native:build-runtime-desktop-target',
+    'extension-artifacts-native:build-target',
+    'liboliphaunt-wasix:compiler-output',
+  ])
+    assert(!result.tasks.includes(target), target);
+});
+
 test('SDK runtime test edits select their final hosted execution roots', () => {
   for (const [file, job, target] of [
     [paths.nativeRustRuntimeTests, 'native-consumers', 'oliphaunt-rust:test-integration'],

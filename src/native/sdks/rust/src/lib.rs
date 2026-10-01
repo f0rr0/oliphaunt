@@ -1,9 +1,6 @@
+#![doc = include_str!("../README.md")]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![forbid(missing_docs)]
-//! Native-first Rust SDK surface for embedded Oliphaunt.
-//!
-//! This crate is deliberately native-only. It does not expose a WASIX engine
-//! and it does not depend on the current `oliphaunt-wasix` runtime layout.
 
 #[cfg(feature = "desktop")]
 mod broker;

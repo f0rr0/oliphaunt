@@ -14,7 +14,7 @@ The [quickstart](https://oliphaunt.dev/docs/sdk/rust) covers prerequisites and t
 
 The crate includes its matching desktop runtime resources.
 
-```rust
+```rust,no_run
 use oliphaunt::Oliphaunt;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

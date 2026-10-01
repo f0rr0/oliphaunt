@@ -28,6 +28,18 @@ const tasks = new Map(
 );
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('Rust source uploads follow their selected package producers', () => {
+    for (const step of workflow.jobs['rust-sdk-package'].steps) {
+      if (!step.with?.path?.startsWith('target/sdk-artifacts/')) continue;
+      const product = step.with.path.split('/').at(-1);
+      assert.equal(
+        step.if,
+        `\${{ contains(join(fromJson(needs.affected.outputs.job_targets)['rust-sdk-package'], ','), '${product}:') }}`,
+      );
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('workflow-wide environment does not force product builds during planning', () => {
     for (const task of tasks.values()) {
       for (const input of task.inputs ?? []) {

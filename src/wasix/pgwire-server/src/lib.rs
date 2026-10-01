@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! PostgreSQL wire server with a separately selectable WASIX backend.
 
 /// Runtime-independent PostgreSQL connection framing.

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 pub const PRODUCT: &str = "oliphaunt-broker";
 pub const KIND: &str = "broker-helper";
 pub const RELEASE_TARGET: &str = "linux-x64-gnu";

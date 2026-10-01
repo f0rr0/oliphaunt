@@ -51,7 +51,7 @@ tasks:
         cacheStrategy: hash
     tags: ["quality", "unit", "requires-rust"]
     command: "cargo test --locked"
-    inputs: ["@group(code)", "testdata/**/*", "/Cargo.lock", "/Cargo.toml"]
+    inputs: ["@group(code)", "README.md", "testdata/**/*", "/Cargo.lock", "/Cargo.toml"]
   package:
     tags: ["release", "artifact-package", "ci-rust-sdk-package"]
     script: |
