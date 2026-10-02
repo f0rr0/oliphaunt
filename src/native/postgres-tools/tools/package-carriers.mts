@@ -2,6 +2,7 @@
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { emitJavaScript } from '../../../../tools/packaging/emit-javascript.mts';
+import { finalizeHelperAssets } from '../../../../tools/packaging/finalize-helper-assets.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
@@ -197,6 +198,9 @@ export async function nativeToolsCargoArtifactPackages(
 }
 export async function packageNativeToolsCarriers() {
   const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
+  await finalizeHelperAssets(LIBOLIPHAUNT_NATIVE_PRODUCT, LIBOLIPHAUNT_NATIVE_TOOLS_KIND, [], {
+    assetDir: path.join(ROOT, 'target/postgres-tools/native/release-assets'),
+  });
   await nativeToolsCargoArtifactPackages(version);
   return liboliphauntToolsNpmTarballs(version);
 }

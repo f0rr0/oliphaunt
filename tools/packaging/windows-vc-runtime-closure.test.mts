@@ -1,17 +1,27 @@
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
+import { archiveDirectory } from './archive-directory.mts';
+import { stageWindowsVcRuntimeMembers } from './release-carrier.mts';
 
 import {
-  WINDOWS_VC_RUNTIME_DLLS,
-  WINDOWS_VC_RUNTIME_PROFILES,
-  WINDOWS_VC_RUNTIME_RECEIPT,
   inspectPortableExecutable,
   resolveInitializedVcRuntimeDirectory,
   stageWindowsVcRuntime,
   verifyWindowsVcRuntimeClosure,
+  WINDOWS_VC_RUNTIME_DLLS,
+  WINDOWS_VC_RUNTIME_PROFILES,
+  WINDOWS_VC_RUNTIME_RECEIPT,
 } from './windows-vc-runtime-closure.mts';
 
 function pe({ machine = 0x8664, imports = [], delayImports = [] } = {}) {
@@ -181,7 +191,7 @@ describe('Windows VC runtime dependency closure', () => {
       );
       assert.match(
         readFileSync(path.join(first, WINDOWS_VC_RUNTIME_RECEIPT), 'utf8'),
-        /^[0-9a-f]{64}  vcruntime140\.dll\n$/u,
+        /^[0-9a-f]{64} {2}vcruntime140\.dll\n$/u,
       );
       assert.equal(
         WINDOWS_VC_RUNTIME_DLLS.filter((name) => name !== 'vcruntime140.dll').some((name) =>
@@ -250,6 +260,47 @@ describe('Windows VC runtime dependency closure', () => {
       assert.deepEqual(
         readFileSync(path.join(destination, WINDOWS_VC_RUNTIME_DLLS[0])),
         readFileSync(path.join(source, WINDOWS_VC_RUNTIME_DLLS[0])),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('canonicalizes an identical DLL copied under its PE import spelling', async () => {
+    const { root, redist, source } = fixture();
+    try {
+      const bin = path.join(root, 'carrier/runtime/bin');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(path.join(bin, 'psql.exe'), pe({ imports: ['VCRUNTIME140.dll'] }));
+      const bytes = readFileSync(path.join(source, 'vcruntime140.dll'));
+      writeFileSync(path.join(bin, 'VCRUNTIME140.dll'), bytes);
+      stageWindowsVcRuntime({
+        root: path.join(root, 'carrier'),
+        redistRoot: redist,
+        destinations: [bin],
+      });
+      assert.deepEqual(readdirSync(bin).sort(), [
+        'psql.exe',
+        'vcruntime140.dll',
+        WINDOWS_VC_RUNTIME_RECEIPT,
+      ]);
+      assert.deepEqual(readFileSync(path.join(bin, 'vcruntime140.dll')), bytes);
+
+      const archive = path.join(root, 'tools.zip');
+      const extracted = path.join(root, 'npm');
+      await archiveDirectory(path.join(root, 'carrier'), archive);
+      assert.deepEqual(
+        stageWindowsVcRuntimeMembers(archive, extracted, 'windows-x64-msvc', 'runtime/bin'),
+        [`runtime/bin/${WINDOWS_VC_RUNTIME_RECEIPT}`, 'runtime/bin/vcruntime140.dll'],
+      );
+      assert.deepEqual(readFileSync(path.join(extracted, 'runtime/bin/vcruntime140.dll')), bytes);
+
+      // Checking directory entries must also catch this on case-insensitive Windows hosts.
+      renameSync(path.join(bin, 'vcruntime140.dll'), path.join(bin, 'VCRUNTIME140.dll'));
+      assert.throws(
+        () =>
+          verifyWindowsVcRuntimeClosure({ root: path.join(root, 'carrier'), searchRoots: [bin] }),
+        /must use canonical filename vcruntime140\.dll/u,
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

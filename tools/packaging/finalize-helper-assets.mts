@@ -1,10 +1,10 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+  allArtifactTargets,
   artifactTargets,
   compareText,
   currentProductVersionSync,
-  expectedAssets,
 } from '../release/release-artifact-targets.mts';
 import { writeChecksumManifest } from './write-checksum-manifest.mts';
 
@@ -51,7 +51,10 @@ export async function finalizeHelperAssets(product, kind, argv, { assetDir, npmP
   }
   assetDir = path.resolve(assetDir);
   const version = currentProductVersionSync(product);
-  const expected = expectedAssets(product, kind, version, 'finalize-helper-assets');
+  const expected = allArtifactTargets(
+    { product, surface: 'github-release' },
+    'finalize-helper-assets',
+  ).map((target) => target.asset.replaceAll('{version}', version));
   const actual = exactRegularDirectoryFilenames(assetDir, `${product} aggregate asset directory`);
   const payloads = expected.filter((name) => !name.endsWith('.sha256'));
   const checksums = expected.filter((name) => name.endsWith('.sha256'));
@@ -80,10 +83,7 @@ export async function finalizeHelperAssets(product, kind, argv, { assetDir, npmP
     assetDir,
     '--output',
     `${product}-${version}-release-assets.sha256`,
-    '--pattern',
-    `${product}-*.tar.gz`,
-    '--pattern',
-    `${product}-*.zip`,
+    ...payloads.flatMap((name) => ['--pattern', name]),
   ]);
   assertExactFilenames(
     exactRegularDirectoryFilenames(assetDir, `${product} aggregate asset directory`),
