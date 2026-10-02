@@ -881,7 +881,7 @@ jobs:
       - prepare-candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    if: ${{ needs.prepare-candidate.outputs.bootstrap_required == 'true' }}
+    if: ${{ !cancelled() && needs.prepare-candidate.result == 'success' && needs.prepare-candidate.outputs.bootstrap_required == 'true' }}
     environment: release-bootstrap
     permissions:
       actions: read

@@ -14,6 +14,7 @@ const CONTROL_FILES = new Set([
   '.github/scripts/download-completed-bootstrap.sh',
   'tools/release/publication-controller.mts',
   'tools/release/publication-controller.sh',
+  'tools/release/qualified-release-replay.sh',
   'tools/release/release-bot.json',
   'tools/release/publish_swiftpm_source_tag.mts',
   'tools/release/publish-swiftpm-source-tag.sh',

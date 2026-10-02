@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Match macOS Bash's locale-sensitive ranges, including when run with newer Bash.
+export LC_ALL=en_US.UTF-8
 verifier="$(git rev-parse --show-toplevel)/tools/release/qualified-release-replay.sh"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
+verify() {
+  "$BASH" -c 'shopt -u globasciiranges 2>/dev/null || :; source "$@"' -- "$verifier" "$@"
+}
 prepare() {
   mkdir "$scratch/$1"
   cd "$scratch/$1"
@@ -16,11 +21,11 @@ prepare() {
 }
 reject() {
   local message="$1"; shift
-  if bash "$verifier" "$@" > "$scratch/result" 2>&1; then echo 'Unqualified source accepted' >&2; exit 1; fi
+  if verify "$@" > "$scratch/result" 2>&1; then echo 'Unqualified source accepted' >&2; exit 1; fi
   rg -i -q "$message" "$scratch/result"
 }
 prepare clean
-bash "$verifier" HEAD "$sha"
+verify HEAD "$sha"
 reject 'head mismatch' HEAD 0000000000000000000000000000000000000000
 reject 'exact 40-character' HEAD abc
 for mode in tracked staged untracked newline; do
