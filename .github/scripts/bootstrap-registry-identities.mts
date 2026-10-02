@@ -150,27 +150,9 @@ try {
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
-if (credentialNeedsOnly) {
-  const needsCargo = cargoInventory.missingNames.length > 0;
-  const needsNpm = npmInventory.missingNames.length > 0;
-  if (process.env.GITHUB_OUTPUT?.trim()) {
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `needs_cargo_token=${needsCargo}\nneeds_npm_token=${needsNpm}\n`,
-    );
-  }
-  console.log(
-    `approved candidate requires bootstrap credentials for: ${
-      [needsCargo ? 'Cargo' : '', needsNpm ? 'npm' : ''].filter(Boolean).join(', ') || 'none'
-    }`,
-  );
-  process.exit(0);
-}
-
 // Validate a restored immutable chain before using its receipts. Inventory is
 // authoritative for current public visibility; a receipt whose exact version
-// disappeared is a hard pre-mutation failure. Existing names lacking the
-// locked exact version remain normal trusted-publication work.
+// disappeared is a hard pre-mutation failure.
 let checkpoint;
 let reconciliation;
 let startingCompletedIds;
@@ -186,8 +168,29 @@ try {
     npmInventory,
     checkpoint,
   });
-  scopedPlan = resolveBootstrapScope(plan, reconciliation, checkpoint);
+  scopedPlan =
+    credentialNeedsOnly && checkpoint === null && reconciliation.missingCarriers.length === 0
+      ? []
+      : resolveBootstrapScope(plan, reconciliation, checkpoint);
   scopedIds = new Set(scopedPlan.map(({ id }) => id));
+  const publicIds = new Set(reconciliation.publicCarrierIds);
+  const unpublished = scopedPlan.filter(({ id }) => !publicIds.has(id));
+  const needsCargo = unpublished.some(({ ecosystem }) => ecosystem === 'cargo');
+  const needsNpm = unpublished.some(({ ecosystem }) => ecosystem === 'npm');
+  if (credentialNeedsOnly) {
+    if (process.env.GITHUB_OUTPUT?.trim()) {
+      appendFileSync(
+        process.env.GITHUB_OUTPUT,
+        `needs_cargo_token=${needsCargo}\nneeds_npm_token=${needsNpm}\n`,
+      );
+    }
+    console.log(
+      `approved candidate requires bootstrap credentials for: ${
+        [needsCargo ? 'Cargo' : '', needsNpm ? 'npm' : ''].filter(Boolean).join(', ') || 'none'
+      }`,
+    );
+    process.exit(0);
+  }
 
   capacityAssessment = assessCratesIoBootstrapCapacity({
     inventory: cargoInventory,
@@ -208,16 +211,12 @@ try {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
   }
 
-  const missing = reconciliation.missingCarriers.filter(({ id }) => scopedIds.has(id));
-  if (
-    missing.some(({ ecosystem }) => ecosystem === 'cargo') &&
-    !process.env.CARGO_REGISTRY_TOKEN?.trim()
-  ) {
+  if (needsCargo && !process.env.CARGO_REGISTRY_TOKEN?.trim()) {
     throw new Error(
-      'CRATES_IO_BOOTSTRAP_TOKEN is required because the approved candidate contains absent Cargo names',
+      'CRATES_IO_BOOTSTRAP_TOKEN is required for unpublished Cargo versions in the bootstrap scope',
     );
   }
-  if (missing.some(({ ecosystem }) => ecosystem === 'npm')) {
+  if (needsNpm) {
     const npmrc = process.env.NPM_CONFIG_USERCONFIG?.trim();
     let npmrcBody = '';
     try {
@@ -225,7 +224,7 @@ try {
     } catch {}
     if (!/^\/\/registry[.]npmjs[.]org\/:_authToken=[^\r\n]+\r?\n?$/u.test(npmrcBody)) {
       throw new Error(
-        'NPM_BOOTSTRAP_TOKEN is required because the approved candidate contains absent npm names',
+        'NPM_BOOTSTRAP_TOKEN is required for unpublished npm versions in the bootstrap scope',
       );
     }
   }

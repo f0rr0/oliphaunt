@@ -32,7 +32,7 @@ Create these environments:
 | --- | --- | --- | --- |
 | `release-pr` | Create/update the generated release PR | `RELEASE_PR_TOKEN` | main only |
 | `release-dry-run` | Exact-SHA artifact assembly and dry-run | none | main only |
-| `release-bootstrap` | Creation of npm/crates identities that do not exist yet | Release tag App credentials plus only the short-lived, registry-scoped `CRATES_IO_BOOTSTRAP_TOKEN` and/or `NPM_BOOTSTRAP_TOKEN` required by the approved lock | `main` only; independent approval when available |
+| `release-bootstrap` | First npm/crates publication and required unpublished dependency versions | Release tag App credentials plus only the short-lived, registry-scoped `CRATES_IO_BOOTSTRAP_TOKEN` and/or `NPM_BOOTSTRAP_TOKEN` required by the approved lock | `main` only; independent approval when available |
 | `release-publish` | Normal trusted publication | Release tag App credentials, Maven Central credentials and signing key | `main` only; independent approval when available |
 
 Use a GitHub App or narrowly scoped bot token for `RELEASE_PR_TOKEN`; PRs created by the default workflow token do not trigger the normal PR workflow. Keep bootstrap tokens out of repository secrets and out of `release-publish`. The approved-candidate inventory determines which of the two bootstrap tokens is required; do not provision a Cargo token for an npm-only bootstrap or vice versa. Delete/revoke each token immediately after trusted publishers are configured.
@@ -214,13 +214,13 @@ release.
 
 ## Registry ownership
 
-The publication catalog defines stable carrier topology; the frozen publication lock is the exhaustive candidate identity inventory, including generated payload parts. Generate/query them rather than maintaining a package list in this document. The first bootstrap inventory freezes a carrier-level ledger scope containing only wholly absent package names. Existing names without the locked exact version remain outside that scope for normal trusted publication. A resumed run accepts a scoped identity only when its locked first version is already public with lock-matching bytes (a recovery skip) or its name remains wholly absent (a first-version mutation). Any other state inside the immutable scope is a hard blocker. The workflow invokes bootstrap publishers only for scoped names that remain absent; a conflicting public identity is never a reason to rename an artifact silently.
+The publication catalog defines stable carrier topology; the frozen publication lock is the exhaustive candidate identity inventory, including generated payload parts. Generate/query them rather than maintaining a package list in this document. The first bootstrap inventory freezes a carrier-level ledger scope containing wholly absent package names and their required unpublished dependencies, including locked versions of existing names. Unrelated existing names remain outside that scope for normal trusted publication. Reruns preserve that scope, verify already-public versions against the frozen bytes, and publish the remaining scoped versions in dependency order. A conflicting public identity is never a reason to rename an artifact silently.
 
 ### crates.io
 
 1. Create the maintainer account/team.
 2. Inventory the exact first-release lock. Crates.io's documented per-user new-name limit is a burst of 5 followed by one new crate every 10 minutes. Do not copy a carrier count from this document: the publication catalog is the stable identity model, while oversized payloads add generated `*-part-NNN` carriers only when the candidate artifacts and publication lock are assembled. For `C` missing Cargo names, the untouched-default rate-limit floor is `max(0, C - 5) * 10 minutes`. Crates.io support may grant exceptional capacity, but no API exposes that account state, so the workflow never treats an operator-entered number as proof. A valid `429 Retry-After` response and the next read-only registry inventory are authoritative.
-3. Dispatch `publish`; its conditional protected bootstrap job creates only missing first versions using the candidate prepared in the same run. The slim bootstrap job verifies and atomically installs those exact bytes; it does not rebuild them. Before initializing its ledger or sending any npm/Cargo mutation, the workflow queries crates.io read-only and reports exact selected/existing/missing counts and the official-default duration floor. It admits only a dependency-closed batch that fits the bounded job window. Independent Cargo and npm mutations overlap; each registry remains strictly sequential, and dependencies within the absent-name scope remain barriers. An optional npm dependency on an existing package name stays on the normal trusted-publication graph; any other unavailable locked dependency stops bootstrap.
+3. Dispatch `publish`; its conditional protected bootstrap job creates missing first versions and publishes their required dependencies using the candidate prepared in the same run. The slim bootstrap job verifies and atomically installs those exact bytes; it does not rebuild them. Before initializing its ledger or sending any npm/Cargo mutation, the workflow queries crates.io read-only and reports exact selected/existing/missing counts and the official-default duration floor. It admits only a dependency-closed batch that fits the bounded job window. Independent Cargo and npm mutations overlap; each registry remains strictly sequential, and required dependencies remain barriers. Only new Cargo names consume new-name tokens; existing-name dependency versions still count toward publication work. An optional npm dependency on an existing package name stays on the normal trusted-publication graph.
 
    When the exact lock cannot finish in one six-hour hosted job, the job drains
    in-flight uploads, reconciles successful mutations, uploads its
@@ -232,16 +232,16 @@ The publication catalog defines stable carrier topology; the frozen publication 
    retry response, or checkpoint failure remains a hard failure.
 
    Bootstrap's protected `release-bootstrap` environment may increase, but
-   never decrease, four calibrated admission variables: 30 seconds per missing
-   Cargo name (`REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER`), 30 seconds per
-   missing npm name (`REGISTRY_BOOTSTRAP_NPM_SECONDS_PER_CARRIER`), 6 seconds
+   never decrease, four calibrated admission variables: 30 seconds per unpublished
+   Cargo version (`REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER`), 30 seconds per
+   unpublished npm version (`REGISTRY_BOOTSTRAP_NPM_SECONDS_PER_CARRIER`), 6 seconds
    per already-public version reconciled at fixed concurrency eight
    (`REGISTRY_BOOTSTRAP_RECONCILIATION_SECONDS_PER_CARRIER`), and a 600-second
    non-publication reserve (`REGISTRY_BOOTSTRAP_RESERVE_SECONDS`). Leave them
    unset to use these defaults. Increase a value only from measured registry or
    runner evidence; the parser rejects smaller values so an operator cannot
    make a workload appear to fit by weakening the admission model. For `C`
-   missing Cargo names and `N` missing npm names, the basic aggregate
+   unpublished scoped Cargo versions and `N` unpublished scoped npm versions, the basic aggregate
    estimate is `30*C + 30*N` seconds and the independent-lane lower bound is
    `max(30*C, 30*N)` seconds before reserve and dependency barriers. These
    formulas are explanatory, not admission evidence: the gate recomputes the
@@ -259,7 +259,7 @@ The publication catalog defines stable carrier topology; the frozen publication 
    successful operation. An exact-lock rerun inventories and byte-proves public
    partial mutations, including an ambiguous upload accepted before failure,
    without blindly repeating that immutable upload.
-4. Give the revocable scoped API token the `publish-new` and `trusted-publishing` endpoint scopes and only the `oliphaunt*` and `liboliphaunt*` crate scopes. After bootstrap seals, expose that same bootstrap token to the local process as `CRATES_IO_TRUST_CONFIG_TOKEN`, then run the lock-derived read-only audit and explicit apply below. The crates.io API is queried per exact crate; any wrong or additional configuration blocks the whole apply before it creates another one.
+4. Give the revocable scoped API token the `publish-new`, `publish-update`, and `trusted-publishing` endpoint scopes and only the `oliphaunt*` and `liboliphaunt*` crate scopes. `publish-update` is required for the locked dependency versions of existing crates included in bootstrap. After bootstrap seals, expose that same bootstrap token to the local process as `CRATES_IO_TRUST_CONFIG_TOKEN`, then run the lock-derived read-only audit and explicit apply below. The crates.io API is queried per exact crate; any wrong or additional configuration blocks the whole apply before it creates another one.
 
    ```sh
    lock=target/release/publication-lock.json
@@ -309,8 +309,8 @@ publish before their aggregator, and are not independent release products.
 ### npm
 
 1. Create/claim the `@oliphaunt` scope and require public access/provenance in package metadata.
-2. Bootstrap only identities whose settings page cannot exist before a first
-   publish. Immediately before that run, create `NPM_BOOTSTRAP_TOKEN` as a
+2. Bootstrap missing identities and their required unpublished dependency
+   versions. Immediately before that run, create `NPM_BOOTSTRAP_TOKEN` as a
    short-lived **granular access token** owned by an actor whose npm account has
    2FA enabled and write access to `@oliphaunt`. Its package/scopes permission
    must be **Read and write**, its selected scope must explicitly include

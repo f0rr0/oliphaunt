@@ -185,6 +185,14 @@ export function reconcileBootstrapRegistryState({
 }
 
 export function resolveBootstrapScope(plan, reconciliation, checkpoint = null) {
+  const publicIds = new Set(reconciliation.publicCarrierIds);
+  const existingIds = new Set(reconciliation.existingNameCarriers.map(({ id }) => id));
+  const optionalNpmDependency = (carrier, dependency) =>
+    carrier.ecosystem === 'npm' &&
+    carrier.packageDependencies?.some(
+      (row) =>
+        dependency === `npm:${row.name}` && row.ecosystem === 'npm' && row.scope === 'optional',
+    );
   const scopeIds =
     checkpoint?.publications.map(({ id }) => id) ??
     reconciliation.missingCarriers.map(({ id }) => id);
@@ -194,15 +202,20 @@ export function resolveBootstrapScope(plan, reconciliation, checkpoint = null) {
     );
   }
   const scope = new Set(scopeIds);
+  if (checkpoint === null) {
+    const byId = new Map(plan.map((carrier) => [carrier.id, carrier]));
+    // Set iteration visits added dependencies, including their prerequisites.
+    for (const id of scope) {
+      const carrier = byId.get(id);
+      for (const dependency of carrier.dependencies) {
+        if (existingIds.has(dependency) && !optionalNpmDependency(carrier, dependency))
+          scope.add(dependency);
+      }
+    }
+  }
   const scopedPlan = plan.filter(({ id }) => scope.has(id));
   if (scopedPlan.length !== scope.size) {
     throw error('bootstrap ledger scope contains a carrier outside the exact canonical plan');
-  }
-  const scopeConflicts = reconciliation.existingNameCarriers.filter(({ id }) => scope.has(id));
-  if (scopeConflicts.length > 0) {
-    throw error(
-      `bootstrap-scoped package names now exist without the locked exact version: ${scopeConflicts.map(({ id }) => id).join(', ')}`,
-    );
   }
   const outsideMissing = reconciliation.missingCarriers.filter(({ id }) => !scope.has(id));
   if (outsideMissing.length > 0) {
@@ -210,8 +223,6 @@ export function resolveBootstrapScope(plan, reconciliation, checkpoint = null) {
       `registry names disappeared outside the immutable bootstrap scope: ${outsideMissing.map(({ id }) => id).join(', ')}`,
     );
   }
-  const publicIds = new Set(reconciliation.publicCarrierIds);
-  const existingIds = new Set(reconciliation.existingNameCarriers.map(({ id }) => id));
   return scopedPlan.map((carrier) => ({
     ...carrier,
     dependencies: carrier.dependencies.filter((dependency) => {
@@ -222,15 +233,7 @@ export function resolveBootstrapScope(plan, reconciliation, checkpoint = null) {
           `${carrier.id} depends on an unknown carrier outside the bootstrap scope: ${dependency}`,
         );
       }
-      const [ecosystem, ...nameParts] = dependency.split(':');
-      const name = nameParts.join(':');
-      const optionalNpmDependency =
-        carrier.ecosystem === 'npm' &&
-        ecosystem === 'npm' &&
-        carrier.packageDependencies?.some(
-          (row) => row.ecosystem === 'npm' && row.name === name && row.scope === 'optional',
-        );
-      if (!optionalNpmDependency) {
+      if (!optionalNpmDependency(carrier, dependency)) {
         throw error(
           `${carrier.id} cannot bootstrap before existing-name dependency ${dependency} reaches its locked version`,
         );

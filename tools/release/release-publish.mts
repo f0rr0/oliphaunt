@@ -475,18 +475,13 @@ async function boundedRegistrySleep(milliseconds, context) {
 async function exactCargoVersionPublished(
   crateName,
   version,
-  { allowMissingIdentity = false, identityCreationOnly = false } = {},
+  { allowMissingIdentity = false } = {},
 ) {
   const inventory = await inspectCratesIoVersionState({
     plan: [{ ecosystem: 'cargo', name: crateName, version }],
     deadlineEpochSeconds: registryMutationDeadlineSeconds(),
   });
   if (inventory.publishedIdentities.length === 1) return true;
-  if (identityCreationOnly && inventory.pendingVersions.length > 0) {
-    throw new Error(
-      `identity bootstrap cannot publish ${crateName} ${version}: Cargo name ${crateName} already exists while the locked exact version is absent`,
-    );
-  }
   if (inventory.missingNames.length > 0) {
     if (allowMissingIdentity) return false;
     throw new Error(
@@ -503,7 +498,6 @@ async function cargoPublishLockedCrateExact(
   {
     alreadyPublished = undefined,
     allowMissingIdentity = false,
-    identityCreationOnly = false,
     token = process.env.CARGO_REGISTRY_TOKEN,
     tokenDeadlineEpochMs = undefined,
   } = {},
@@ -519,7 +513,6 @@ async function cargoPublishLockedCrateExact(
     alreadyPublished ??
     (await exactCargoVersionPublished(crateName, version, {
       allowMissingIdentity,
-      identityCreationOnly,
     }));
   if (present) {
     const receipt = await verifyLockedCarrierIntegrity(
@@ -547,13 +540,9 @@ async function cargoPublishLockedCrateExact(
         token,
         deadlineEpochMs,
       }),
-    // identityCreationOnly protects the pre-mutation TOCTOU check above. Once
-    // crates.io has received the immutable upload, the name can legitimately
-    // precede its exact version in registry views while indexing converges.
     exactVersionPublished: () =>
       exactCargoVersionPublished(crateName, version, {
         allowMissingIdentity,
-        identityCreationOnly: false,
       }),
     waitBeforeNextProbe: () =>
       boundedRegistrySleep(
@@ -899,7 +888,6 @@ async function bootstrapPhase() {
       operation,
       await cargoPublishLockedCrateExact(carrier.name, carrier.version, undefined, {
         allowMissingIdentity: true,
-        identityCreationOnly: true,
       }),
     );
     return;
@@ -913,7 +901,6 @@ async function bootstrapPhase() {
       version: carrier.version,
       tarball: locked.file,
       deadlineEpochSeconds: registryMutationDeadlineSeconds(),
-      identityCreationOnly: true,
     });
     if (prepared.skipped)
       registryOperationResult(

@@ -12,6 +12,7 @@ const CONTROL_FILES = new Set([
   '.github/scripts/download-bootstrap-ledger.mts',
   '.github/scripts/download-completed-bootstrap.mts',
   '.github/scripts/download-completed-bootstrap.sh',
+  '.github/scripts/bootstrap-registry-identities.mts',
   'tools/release/publication-controller.mts',
   'tools/release/publication-controller.sh',
   'tools/release/qualified-release-replay.sh',
@@ -22,7 +23,10 @@ const CONTROL_FILES = new Set([
   'tools/release/fixtures/github-release-controls/desired-solo.json',
   'tools/release/fixtures/github-release-controls/desired-team.json',
   'tools/release/crates-io-bootstrap-capacity.mts',
+  'tools/release/bootstrap-registry-reconciliation.mts',
+  'tools/release/release-publish.mts',
   'tools/release/frozen-cargo-publish.mts',
+  'tools/release/frozen-npm-publish.mts',
   'tools/release/verify_github_release_attestations.mts',
   'tools/release/verify-github-release-attestations.sh',
 ]);

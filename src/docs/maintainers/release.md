@@ -264,10 +264,10 @@ normal CI qualification gate still requires a successful complete workflow.
 Preparation is read-only and uses the existing `release-dry-run` environment.
 It checks visible public releases; the publishing job repeats that preflight
 with its content-write token so hidden drafts are checked before mutation.
-The conditional bootstrap job uses `release-bootstrap` credentials only for
-wholly absent names, preserves its resumable ledger, and hands its immutable
-ledger artifact ID to publication. Provision only the registry tokens required
-by missing names. After the initial release, configure trusted publishers for
+The conditional bootstrap job uses `release-bootstrap` credentials for
+wholly absent names and their required unpublished dependencies, preserves its
+resumable ledger, and hands its immutable ledger artifact ID to publication.
+Provision only the registry tokens required by that scope. After the initial release, configure trusted publishers for
 those names and revoke bootstrap tokens before the next release.
 
 Credential-bearing jobs directly select `release-pr`, `release-bootstrap`,
@@ -373,7 +373,7 @@ If a publication-only code fix makes that run unusable, retain its ledger and
 first verify every recorded public package against the approved lock. Then a
 fresh `publish` dispatch at the corrected current `main`, with the same source
 SHA and candidate run, inventories registry state and starts a new scope for
-only the still-absent names. Already-public versions are excluded from that new
+the still-absent names and their required unpublished dependencies. Already-public versions are excluded from that new
 scope and remain subject to normal publication integrity verification. Use the
 new run for subsequent checkpoint retries. Normal publish discovers its completed
 ledger by the approved lock. Never edit or transplant the old checkpoint chain.
@@ -453,7 +453,10 @@ selected products, and complete expected registry envelope before the first
 write. The slim bootstrap job consumes the preparation job's complete
 manifest-bound publication candidate; it neither reconstructs packages nor repeats
 the macOS build ceremony. Bootstrap preserves the lock's Cargo/npm dependency
-edges and executes one sequential lane per registry, overlapping only
+edges and includes the required unpublished versions of existing package names
+before creating their new dependents. Unrelated existing names and optional npm
+dependencies on existing names stay on normal trusted publication. Bootstrap
+executes one sequential lane per registry, overlapping only
 independent operations. Its one serialized checkpoint writer receives newly
 completed carrier IDs in canonical lock order and appends content-addressed,
 hash-chained checkpoints containing normalized registry byte receipts. A lane

@@ -1002,11 +1002,11 @@ jobs:
           NEEDS_NPM_TOKEN: ${{ steps.bootstrap_credential_needs.outputs.needs_npm_token }}
         run: |
           if [[ "$NEEDS_CARGO_TOKEN" == true && -z "$CRATES_IO_BOOTSTRAP_TOKEN" ]]; then
-            echo 'approved candidate contains absent Cargo names but CRATES_IO_BOOTSTRAP_TOKEN is unavailable' >&2
+            echo 'bootstrap scope requires Cargo publication but CRATES_IO_BOOTSTRAP_TOKEN is unavailable' >&2
             exit 1
           fi
           if [[ "$NEEDS_NPM_TOKEN" == true && -z "$NPM_BOOTSTRAP_TOKEN" ]]; then
-            echo 'approved candidate contains absent npm names but NPM_BOOTSTRAP_TOKEN is unavailable' >&2
+            echo 'bootstrap scope requires npm publication but NPM_BOOTSTRAP_TOKEN is unavailable' >&2
             exit 1
           fi
       - name: Create bootstrap transport tag token
