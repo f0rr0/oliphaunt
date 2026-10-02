@@ -12,7 +12,7 @@ trap 'rm -f "$scratch"' EXIT
 git ls-files -v -z > "$scratch"
 while IFS= read -r -d '' entry; do
   case "${entry:0:1}" in
-    S|[a-z]) fail "qualified release replay rejects index suppression flags (assume-unchanged or skip-worktree): ${entry:2}" ;;
+    S|[[:lower:]]) fail "qualified release replay rejects index suppression flags (assume-unchanged or skip-worktree): ${entry:2}" ;;
   esac
 done < "$scratch"
 git status --porcelain=v1 -z --untracked-files=all > "$scratch"

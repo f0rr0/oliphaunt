@@ -27,6 +27,9 @@ mkdir -p .github/scripts
 printf 'newer publisher' > .github/scripts/download-completed-bootstrap.mts
 newer="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$newer"
+printf 'fixed checkout validation' > tools/release/qualified-release-replay.sh
+checkout_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$checkout_fix"
 mkdir -p src/docs/maintainers
 printf 'release guidance' > src/docs/maintainers/release.md
 printf 'setup guidance' > src/docs/maintainers/release-setup.md
