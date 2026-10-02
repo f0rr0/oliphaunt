@@ -294,9 +294,7 @@ export async function inspectNpmExactVersion({
     nowImpl,
   });
   if (!exact.found) {
-    // A version-level 404 is ambiguous: bootstrap is allowed to create only a
-    // completely absent package name, never a later version of an existing
-    // package. Resolve the package-name state with a normal JSON registry GET.
+    // A version-level 404 does not distinguish a new name from a new version.
     const packageState = await inspectNpmPackageName({
       packageName: name,
       registry: canonicalRegistry,
@@ -444,7 +442,6 @@ export async function prepareFrozenNpmPublication({
   version,
   tarball,
   deadlineEpochSeconds,
-  identityCreationOnly = false,
   ...options
 }) {
   const registry = canonicalNpmRegistry(
@@ -459,14 +456,6 @@ export async function prepareFrozenNpmPublication({
     deadlineEpochSeconds,
     ...options,
   });
-  if (identityCreationOnly && !state.published && state.nameExists)
-    throw error(
-      'identity bootstrap cannot publish ' +
-        packageName +
-        '@' +
-        version +
-        ': package name already exists while the locked exact version is absent',
-    );
   const timeout = state.published
     ? 0
     : Math.min(

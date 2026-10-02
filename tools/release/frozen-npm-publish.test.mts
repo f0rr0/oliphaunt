@@ -117,19 +117,18 @@ describe('frozen npm registry publication', () => {
     });
     expect(existing.skipped).toBe(true);
     expect(existing.timeout).toBe(0);
-    await expect(
-      prepareFrozenNpmPublication({
-        ...options,
-        identityCreationOnly: true,
-        fetchImpl: async (url) =>
-          url.endsWith('/1.2.3')
-            ? new Response('', { status: 404 })
-            : Response.json({ name: options.packageName }),
-      }),
-    ).rejects.toThrow('package name already exists');
+    const prerequisite = await prepareFrozenNpmPublication({
+      ...options,
+      fetchImpl: async (url) =>
+        url.endsWith('/1.2.3')
+          ? new Response('', { status: 404 })
+          : Response.json({ name: options.packageName }),
+    });
+    expect(prerequisite.skipped).toBe(false);
+    expect(prerequisite.timeout).toBe(120000);
+    expect(prerequisite.expectedIntegrity).toBe(frozenNpmIntegrity(file));
     const admitted = await prepareFrozenNpmPublication({
       ...options,
-      identityCreationOnly: true,
       fetchImpl: async () => new Response('', { status: 404 }),
     });
     expect(admitted.skipped).toBe(false);

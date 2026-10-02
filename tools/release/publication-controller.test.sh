@@ -30,6 +30,11 @@ bash "$owner/publication-controller.sh" "$source" "$newer"
 printf 'fixed checkout validation' > tools/release/qualified-release-replay.sh
 checkout_fix="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$checkout_fix"
+for file in .github/scripts/bootstrap-registry-identities.mts tools/release/bootstrap-registry-reconciliation.mts tools/release/release-publish.mts tools/release/frozen-npm-publish.mts; do
+  printf 'fixed bootstrap dependencies' > "$file"
+done
+bootstrap_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$bootstrap_fix"
 mkdir -p src/docs/maintainers
 printf 'release guidance' > src/docs/maintainers/release.md
 printf 'setup guidance' > src/docs/maintainers/release-setup.md

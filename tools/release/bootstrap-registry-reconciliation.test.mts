@@ -5,6 +5,7 @@ import {
   resolveBootstrapScope,
 } from './bootstrap-registry-reconciliation.mts';
 import { assessCratesIoBootstrapCapacity } from './crates-io-bootstrap-capacity.mts';
+import { bootstrapPublicationSchedule } from './bootstrap-publication-plan.mts';
 
 function carrier(ecosystem, index) {
   const name = ecosystem === 'cargo' ? `crate-${index}` : `@oliphaunt/pkg-${index}`;
@@ -152,7 +153,7 @@ describe('bootstrap registry reconciliation', () => {
     });
 
     expect(resolveBootstrapScope(plan, reconciliation).map(({ id }) => id)).toEqual([missing.id]);
-    expect(() =>
+    expect(
       resolveBootstrapScope(
         plan,
         {
@@ -161,8 +162,8 @@ describe('bootstrap registry reconciliation', () => {
           missingCarriers: [],
         },
         { publications: [missing] },
-      ),
-    ).toThrow(/bootstrap-scoped package names now exist/u);
+      ).map(({ id }) => id),
+    ).toEqual([missing.id]);
   });
 
   test('allows only optional npm dependencies to wait on normal existing-name publication', () => {
@@ -186,7 +187,7 @@ describe('bootstrap registry reconciliation', () => {
     };
 
     expect(resolveBootstrapScope([existing, missing], reconciliation)[0].dependencies).toEqual([]);
-    expect(() =>
+    expect(
       resolveBootstrapScope(
         [
           existing,
@@ -196,7 +197,68 @@ describe('bootstrap registry reconciliation', () => {
           },
         ],
         reconciliation,
-      ),
+      ).map(({ id }) => id),
+    ).toEqual([existing.id, missing.id]);
+  });
+
+  test('publishes required existing-name dependencies transitively without charging new-name tokens', () => {
+    const plan = [0, 1, 2, 3]
+      .map((index) => carrier('cargo', index))
+      .concat([4, 5].map((index) => carrier('npm', index)));
+    plan[1].dependencies = [plan[0].id];
+    plan[3].dependencies = [plan[1].id];
+    plan[4].dependencies = [plan[0].id];
+    plan[5].dependencies = [plan[4].id];
+    const cargoInventory = {
+      selectedIdentities: plan.slice(0, 4).map(identity),
+      publishedIdentities: [identity(plan[2])],
+      pendingVersions: plan.slice(0, 2).map(identity),
+      missingNames: [plan[3].name],
+    };
+    const npmInventory = {
+      selectedIdentities: plan.slice(4).map(identity),
+      publishedIdentities: [],
+      pendingVersions: [identity(plan[4])],
+      missingNames: [plan[5].name],
+    };
+    const reconciliation = reconcileBootstrapRegistryState({
+      plan,
+      cargoInventory,
+      npmInventory,
+    });
+    const scoped = resolveBootstrapScope(plan, reconciliation);
+    expect(scoped.map(({ id }) => id)).toEqual([0, 1, 3, 4, 5].map((index) => plan[index].id));
+    const assessment = assessCratesIoBootstrapCapacity({
+      inventory: cargoInventory,
+      npmInventory,
+      bootstrapPlan: scoped,
+      nowEpochSeconds: 1000,
+      deadlineEpochSeconds: 1900,
+    });
+    expect(assessment.initialCargoTokens).toBe(0);
+    expect(assessment.cargoPrerequisiteCount).toBe(2);
+    expect(assessment.npmPrerequisiteCount).toBe(1);
+    expect(assessment.plannedPublicationSeconds).toBe(150);
+    // Existing versions run with an empty new-name bucket; their new Cargo
+    // dependent waits for a token while the npm lane makes progress.
+    expect(assessment.admittedCarrierIds).toEqual([0, 1, 4, 5].map((index) => plan[index].id));
+    expect(assessment.remainingMutationCount).toBe(1);
+    expect(assessment.plannedPublicationCriticalPathSeconds).toBe(90);
+    expect(bootstrapPublicationSchedule(scoped, [])).toEqual([[], [0], [1], [0], [3]]);
+    const checkpoint = { publications: scoped, receipts: [] };
+    cargoInventory.publishedIdentities.push(...cargoInventory.pendingVersions);
+    cargoInventory.pendingVersions = [];
+    const resumed = reconcileBootstrapRegistryState({
+      plan,
+      cargoInventory,
+      npmInventory,
+      checkpoint,
+    });
+    expect(resolveBootstrapScope(plan, resumed, checkpoint).map(({ id }) => id)).toEqual(
+      scoped.map(({ id }) => id),
+    );
+    expect(() =>
+      resolveBootstrapScope(plan, reconciliation, { publications: [plan[3], plan[5]] }),
     ).toThrow(/cannot bootstrap before existing-name dependency/u);
   });
 

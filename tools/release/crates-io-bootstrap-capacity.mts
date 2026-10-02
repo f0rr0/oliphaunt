@@ -606,9 +606,6 @@ function bootstrapPublicationSchedule({
       continue;
     }
     if (!selected.has(carrier.id)) continue;
-    if (state !== 'missing') {
-      throw error(`selected bootstrap carrier ${carrier.id} is not a brand-new identity`);
-    }
     let startSeconds = 0;
     for (const dependency of carrier.dependencies) {
       const finish = finishById.get(dependency);
@@ -622,7 +619,7 @@ function bootstrapPublicationSchedule({
     const prior = priorByEcosystem.get(carrier.ecosystem);
     if (prior !== undefined) startSeconds = Math.max(startSeconds, finishById.get(prior));
     if (carrier.ecosystem === 'cargo') {
-      startSeconds = consumeTokenAtOrAfter(tokenState, startSeconds);
+      if (state === 'missing') startSeconds = consumeTokenAtOrAfter(tokenState, startSeconds);
       selectedCargoCount += 1;
     } else {
       selectedNpmCount += 1;
@@ -668,7 +665,7 @@ function selectBootstrapPublicationBatch({
   const selected = new Set();
   for (const carrier of bootstrapPlan) {
     const state = states.get(carrier.ecosystem).get(carrier.name).state;
-    if (state !== 'missing') continue;
+    if (state === 'published') continue;
     const dependencyClosed = carrier.dependencies.every((dependency) => {
       const dependencyCarrier = carrierById.get(dependency);
       const dependencyState = states
@@ -756,14 +753,23 @@ export function assessCratesIoBootstrapCapacity({
   const publishedCargoCount = versionInventory
     ? inventory.publishedIdentities.length
     : existingCount;
-  const cargoConflictCount = versionInventory ? inventory.pendingVersions.length : 0;
-  const pendingCargoCount = missingCount;
+  const scopedIds = new Set(bootstrapPlan?.map(({ id }) => id) ?? []);
+  const cargoPrerequisiteCount = versionInventory
+    ? inventory.pendingVersions.filter(({ name }) => scopedIds.has(`cargo:${name}`)).length
+    : 0;
+  const cargoConflictCount = versionInventory
+    ? inventory.pendingVersions.length - cargoPrerequisiteCount
+    : 0;
+  const pendingCargoCount = missingCount + cargoPrerequisiteCount;
   const selectedNpmCount = npmInventory.selectedIdentities.length;
   const publishedNpmCount = npmInventory.publishedIdentities.length;
-  const npmConflictCount = npmInventory.pendingVersions.length;
+  const npmPrerequisiteCount = npmInventory.pendingVersions.filter(({ name }) =>
+    scopedIds.has(`npm:${name}`),
+  ).length;
+  const npmConflictCount = npmInventory.pendingVersions.length - npmPrerequisiteCount;
   const missingNpmCount = npmInventory.missingNames.length;
-  const pendingNpmCount = missingNpmCount;
-  if (publishedNpmCount + npmConflictCount + missingNpmCount !== selectedNpmCount) {
+  const pendingNpmCount = missingNpmCount + npmPrerequisiteCount;
+  if (publishedNpmCount + npmConflictCount + pendingNpmCount !== selectedNpmCount) {
     throw error('npm exact-version inventory does not partition every selected identity');
   }
   if (
@@ -785,7 +791,7 @@ export function assessCratesIoBootstrapCapacity({
   const plannedReconciliationSeconds = reconciliationCount * parsedReconciliationSeconds;
   const initialCargoTokens = publishedCargoCount === 0 ? CRATES_IO_DEFAULT_NEW_CRATE_BURST : 0;
   const defaultTokenBucket = cratesIoTokenBucketSchedule({
-    publicationCount: pendingCargoCount,
+    publicationCount: missingCount,
     burst: CRATES_IO_DEFAULT_NEW_CRATE_BURST,
     refillSeconds: CRATES_IO_NEW_CRATE_REFILL_SECONDS,
     workSeconds: parsedCargoSeconds,
@@ -861,10 +867,12 @@ export function assessCratesIoBootstrapCapacity({
     existingCount,
     publishedCargoCount,
     cargoConflictCount,
+    cargoPrerequisiteCount,
     pendingCargoCount,
     selectedNpmCount,
     publishedNpmCount,
     npmConflictCount,
+    npmPrerequisiteCount,
     missingNpmCount,
     pendingNpmCount,
     missingCount,
@@ -986,13 +994,13 @@ export function cratesIoCapacitySummary(assessment) {
     `- Brand-new names still missing: ${assessment.missingCount}`,
     `- Cargo versions already public: ${assessment.publishedCargoCount}`,
     `- Existing Cargo names left for normal trusted publication: ${assessment.cargoConflictCount}`,
-    `- Brand-new Cargo names still requiring their first version: ${assessment.pendingCargoCount}`,
+    `- Cargo versions requiring bootstrap publication: ${assessment.pendingCargoCount} (${assessment.cargoPrerequisiteCount} existing-name prerequisites)`,
     `- Exact-lock npm versions selected: ${assessment.selectedNpmCount}`,
     `- npm versions already public: ${assessment.publishedNpmCount}`,
     `- Existing npm names left for normal trusted publication: ${assessment.npmConflictCount}`,
-    `- Brand-new npm names still requiring their first version: ${assessment.pendingNpmCount}`,
+    `- npm versions requiring bootstrap publication: ${assessment.pendingNpmCount} (${assessment.npmPrerequisiteCount} existing-name prerequisites)`,
     `- Conservatively available Cargo tokens at invocation start: ${assessment.initialCargoTokens}`,
-    `- Official token-bucket time for every pending Cargo identity: ${durationText(assessment.tokenBucketPublicationSeconds)} (${durationText(assessment.tokenBucketWaitSeconds)} waiting, with publication work overlapping refill)`,
+    `- Official token-bucket time for all remaining new Cargo names: ${durationText(assessment.tokenBucketPublicationSeconds)} (${durationText(assessment.tokenBucketWaitSeconds)} waiting, with publication work overlapping refill)`,
     `- Aggregate carrier publication work: ${durationText(assessment.plannedPublicationSeconds)} (${assessment.cargoSecondsPerCarrier}s/Cargo + ${assessment.npmSecondsPerCarrier}s/npm)`,
     `- Cargo/npm lane + dependency-DAG critical path: ${durationText(assessment.plannedPublicationCriticalPathSeconds)}`,
     `- Planned public-version reconciliation time: ${durationText(assessment.plannedReconciliationSeconds)} (${assessment.reconciliationSecondsPerCarrier}s across ${assessment.reconciliationCount} carriers)`,
