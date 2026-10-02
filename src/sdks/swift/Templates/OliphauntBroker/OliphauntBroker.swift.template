@@ -1,0 +1,18 @@
+import ExtensionFoundation
+import OliphauntBrokerExtension
+
+@main
+struct DatabaseExtension: AppExtension {
+    @AppExtensionPoint.Bind
+    var extensionPoint: AppExtensionPoint {
+        AppExtensionPoint.Identifier(host: "__HOST_BUNDLE_IDENTIFIER__", name: "OliphauntBroker")
+    }
+
+    var configuration: ConnectionHandler {
+        ConnectionHandler { request in
+            request.accept { session in
+                OliphauntBrokerExtensionPeer(session: session)
+            }
+        }
+    }
+}
