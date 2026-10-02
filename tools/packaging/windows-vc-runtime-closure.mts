@@ -4,13 +4,12 @@ import {
   closeSync,
   constants,
   copyFileSync,
-  existsSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -320,10 +319,15 @@ function sha256(file) {
 function copyAtomic(source, destination) {
   mkdirSync(path.dirname(destination), { recursive: true });
   const sourceDigest = sha256(source);
-  if (existsSync(destination)) {
-    if (!isRegularFile(destination)) {
-      throw failure(`${destination} already exists and is not a regular file`);
+  const name = path.basename(destination);
+  const actual = entriesByLowercase(path.dirname(destination)).get(name);
+  if (actual !== undefined) {
+    const existing = path.join(path.dirname(destination), actual);
+    if (!isRegularFile(existing)) {
+      throw failure(`${existing} already exists and is not a regular file`);
     }
+    // Windows resolves either spelling, but Linux release assembly uses the receipt's exact names.
+    if (actual !== name) renameSync(existing, destination);
     if (sha256(destination) === sourceDigest) return;
   }
   const temporary = path.join(
@@ -452,7 +456,7 @@ export function parseWindowsVcRuntimeReceipt(input, label = WINDOWS_VC_RUNTIME_R
   const values = new Map();
   for (const [index, raw] of text.split(/\r?\n/u).entries()) {
     if (!raw) continue;
-    const match = /^([0-9a-f]{64})  ([a-z0-9_]+\.dll)$/u.exec(raw);
+    const match = /^([0-9a-f]{64}) {2}([a-z0-9_]+\.dll)$/u.exec(raw);
     if (!match) throw failure(`${label} has malformed line ${index + 1}`);
     const [, digest, name] = match;
     if (!WINDOWS_VC_RUNTIME_DLLS.includes(name) || values.has(name)) {
@@ -476,7 +480,11 @@ function parseReceipt(directory) {
     );
   }
   const values = parseWindowsVcRuntimeReceipt(readFileSync(receipt), receipt);
+  const names = entriesByLowercase(directory);
   for (const [name, digest] of values) {
+    if (names.has(name) && names.get(name) !== name) {
+      throw failure(`${directory}/${names.get(name)} must use canonical filename ${name}`);
+    }
     const file = path.join(directory, name);
     if (!isRegularFile(file) || sha256(file) !== digest) {
       throw failure(`${receipt} does not match regular ${file}`);

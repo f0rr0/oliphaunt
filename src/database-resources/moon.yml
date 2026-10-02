@@ -56,7 +56,7 @@ tasks:
     deps: ["database-resources:build-native-android-standard", "database-resources:build-native-android-icu", "database-resources:package-icu"]
     command: "bash src/database-resources/seeds/package.sh native android-datum64"
     inputs: ["seeds/**/*", "VERSION"]
-    outputs: ["/target/database-resources/seed-carriers/npm/*android-datum64*/*.tgz", "/target/database-resources/seed-carriers/cargo/*android-datum64*.crate", "/target/database-resources/release-assets/*android-datum64*-maven.tar.gz", "/target/release/maven-staging/database-resources-seeds/**/*"]
+    outputs: ["/target/database-resources/seed-carriers/npm/*android-datum64*/*.tgz", "/target/database-resources/seed-carriers/cargo/*android-datum64*.crate", "/target/database-resources/mobile-carriers/*android-datum64*-maven.tar.gz", "/target/release/maven-staging/database-resources-seeds/**/*"]
     options:
       runFromWorkspaceRoot: true
   package-ios:

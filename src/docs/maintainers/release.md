@@ -327,6 +327,22 @@ assembles release packages; the retired dry-run wrapper did not assemble them
 either. Use the selected products' package and artifact/consumer test tasks for
 local package rehearsal.
 
+For a release packaging failure, download the failed candidate's inputs from its
+exact CI run into an isolated checkout and run the same assembly entrypoint:
+
+```sh
+bash tools/release/package-release-carriers.sh --products-json '["postgres-tools-native"]'
+```
+
+Use the failed release's complete product selection when checking for subsequent
+failures. Then run `tools/release/publication-lock.mts candidate` with that selection
+and the artifact roots used by Release's "Freeze exhaustive publication lock" step. This
+checks the complete GitHub and registry inventory, including missing and extra
+carriers, without publishing or rebuilding product binaries. Rehearse packaging
+fixes this way before expensive qualification; diagnostic outputs are not
+publication evidence. A changed packager still requires qualification of the new
+candidate.
+
 Candidate preparation verifies its exact-SHA qualification record once and
 performs registry preflight once. Immediately before assembly,
 `qualified-release-replay.sh` still rejects source modifications, suppressed

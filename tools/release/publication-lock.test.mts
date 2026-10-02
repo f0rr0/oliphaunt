@@ -1006,10 +1006,14 @@ describe('publication artifact discovery and freezing', () => {
     ).toThrow(/artifact identity cargo:undeclared-publication-carrier is not declared/u);
   });
 
-  test('freezes exact GitHub assets and rejects tampering, missing assets, and extras', () => {
+  test.each([
+    'oliphaunt-broker',
+    'postgres-tools-native',
+    'postgres-tools-wasix',
+  ])('freezes exact %s GitHub assets and rejects tampering, missing assets, and extras', (id) => {
     const root = temporaryDirectory();
     const product = loadPublicationCatalog('publication-lock.test', {
-      products: ['oliphaunt-broker'],
+      products: [id],
     }).products[0];
     const { checksum, directory, rows } = githubReleaseFixture(root, product);
     const artifacts = discoverProductArtifacts([root], [product]);

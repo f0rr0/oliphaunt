@@ -499,6 +499,17 @@ export function repositoryInventory() {
 
 export function validateRepository() {
   const inventory = repositoryInventory();
+  for (const product of new Set(
+    inventory.targets
+      .filter((row) => row.surfaces.includes('github-release'))
+      .map((row) => row.product),
+  )) {
+    invariant(
+      inventory.targets.filter((row) => row.product === product && row.kind === 'checksums')
+        .length === 1,
+      `${product} must declare exactly one GitHub checksum asset`,
+    );
+  }
   validateExtensionCoverage(inventory.targets, inventory.products, inventory.extensions);
   validateMatrixCoverage(inventory.targets, inventory.extensions, inventory.matrices);
   validateCarrierCoverage({

@@ -432,17 +432,21 @@ function liboliphauntNativeRows(prefix) {
       surfaces: ['github-release', 'maven', 'react-native-android'],
       _source_file: 'Moon release metadata',
     },
-    {
-      id: `${product}.checksums`,
-      product,
-      kind: 'checksums',
-      target: 'portable',
-      asset: 'liboliphaunt-{version}-release-assets.sha256',
-      surfaces: ['github-release'],
-      _source_file: 'Moon release metadata',
-    },
+    githubChecksumRow(product, 'liboliphaunt-{version}-release-assets.sha256'),
   );
   return rows;
+}
+
+function githubChecksumRow(product, asset = `${product}-{version}-release-assets.sha256`) {
+  return {
+    id: `${product}.checksums`,
+    product,
+    kind: 'checksums',
+    target: 'portable',
+    asset,
+    surfaces: ['github-release'],
+    _source_file: 'Moon release metadata',
+  };
 }
 
 function postgresToolsNativeRows(prefix) {
@@ -475,13 +479,14 @@ function postgresToolsNativeRows(prefix) {
       _source_file: 'Moon release metadata',
     });
   }
+  rows.push(githubChecksumRow(product));
   return rows;
 }
 
 function postgresToolsWasixRows(prefix) {
   const product = 'postgres-tools-wasix';
   const targets = productTargets(product, PRODUCT_PRESETS[product], WASIX_TARGETS, prefix);
-  return targets.map((target) => {
+  const rows = targets.map((target) => {
     const portable = target === 'portable';
     const platform = DESKTOP_TARGETS[target];
     return {
@@ -506,6 +511,8 @@ function postgresToolsWasixRows(prefix) {
       _source_file: 'Moon release metadata',
     };
   });
+  rows.push(githubChecksumRow(product));
+  return rows;
 }
 
 function liboliphauntWasixRows(prefix) {
@@ -542,15 +549,7 @@ function liboliphauntWasixRows(prefix) {
       _source_file: 'Moon release metadata',
     });
   }
-  rows.push({
-    id: `${product}.checksums`,
-    product,
-    kind: 'checksums',
-    target: 'portable',
-    asset: 'liboliphaunt-wasix-{version}-release-assets.sha256',
-    surfaces: ['github-release'],
-    _source_file: 'Moon release metadata',
-  });
+  rows.push(githubChecksumRow(product, 'liboliphaunt-wasix-{version}-release-assets.sha256'));
   return rows;
 }
 
@@ -582,14 +581,8 @@ function liboliphauntWasixPostmasterRows(prefix) {
     });
   }
   rows.push({
-    id: `${product}.checksums`,
-    product,
-    kind: 'checksums',
-    target: 'portable',
-    asset: `${product}-{version}-release-assets.sha256`,
-    surfaces: ['github-release'],
+    ...githubChecksumRow(product),
     extension_artifacts: false,
-    _source_file: 'Moon release metadata',
   });
   return rows;
 }
@@ -624,13 +617,8 @@ function brokerRows(prefix) {
     });
   }
   rows.push({
-    id: `${product}.checksums`,
-    product,
-    kind: 'checksums',
-    target: 'portable',
-    asset: 'oliphaunt-broker-{version}-release-assets.sha256',
+    ...githubChecksumRow(product),
     surfaces: ['github-release', 'rust-broker', 'typescript-broker'],
-    _source_file: 'Moon release metadata',
   });
   return rows;
 }
@@ -663,15 +651,7 @@ function nodeDirectRows(prefix) {
       _source_file: 'Moon release metadata',
     });
   }
-  rows.push({
-    id: `${product}.checksums`,
-    product,
-    kind: 'checksums',
-    target: 'portable',
-    asset: 'oliphaunt-node-direct-{version}-release-assets.sha256',
-    surfaces: ['github-release'],
-    _source_file: 'Moon release metadata',
-  });
+  rows.push(githubChecksumRow(product));
   return rows;
 }
 
@@ -709,14 +689,8 @@ function wasixNapiRows(prefix) {
     });
   }
   rows.push({
-    id: `${product}.checksums`,
-    product,
-    kind: 'checksums',
-    target: 'portable',
-    asset: 'oliphaunt-wasix-napi-{version}-release-assets.sha256',
-    surfaces: ['github-release'],
+    ...githubChecksumRow(product),
     extension_artifacts: false,
-    _source_file: 'Moon release metadata',
   });
   return rows;
 }
@@ -756,15 +730,7 @@ function databaseResourceRows() {
       });
     }
   }
-  rows.push({
-    id: 'database-resources.checksums',
-    product: 'database-resources',
-    kind: 'checksums',
-    target: 'portable',
-    asset: 'database-resources-{version}-release-assets.sha256',
-    surfaces: ['github-release'],
-    _source_file: 'Moon release metadata',
-  });
+  rows.push(githubChecksumRow('database-resources'));
   return rows;
 }
 
@@ -781,12 +747,7 @@ export function rawArtifactTargetRows(prefix = 'release-artifact-targets.mts') {
       _source_file: 'src/native/sdks/swift/tools/build-bindings-xcframework.sh',
     },
     {
-      id: 'oliphaunt-swift.checksums',
-      product: 'oliphaunt-swift',
-      kind: 'checksums',
-      target: 'portable',
-      asset: 'oliphaunt-swift-{version}-release-assets.sha256',
-      surfaces: ['github-release'],
+      ...githubChecksumRow('oliphaunt-swift'),
       _source_file: 'src/native/sdks/swift/tools/build-bindings-xcframework.sh',
     },
     ...databaseResourceRows(),

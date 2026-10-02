@@ -49,21 +49,26 @@ describe('native helper aggregate release assets', () => {
   });
 });
 
-test('aggregate finalization hashes the complete payload set and rejects extra files before rewriting it', async () => {
+test.each([
+  ['oliphaunt-broker', 'broker-helper'],
+  ['postgres-tools-native', 'native-tools'],
+  ['postgres-tools-wasix', 'wasix-tools'],
+])('aggregate finalization hashes every %s payload and rejects extras before rewriting it', async (product, kind) => {
   const { createHash } = await import('node:crypto');
   const { readFileSync } = await import('node:fs');
-  const { currentProductVersionSync, expectedAssets } = await import(
+  const { allArtifactTargets, currentProductVersionSync } = await import(
     '../release/release-artifact-targets.mts'
   );
   const { finalizeHelperAssets } = await import('./finalize-helper-assets.mts');
   const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-helper-finalize-'));
   scratch.push(root);
-  const product = 'oliphaunt-broker';
   const version = currentProductVersionSync(product);
-  const assets = expectedAssets(product, 'broker-helper', version, 'aggregate-test');
+  const assets = allArtifactTargets({ product, surface: 'github-release' }).map((row) =>
+    row.asset.replaceAll('{version}', version),
+  );
   const checksum = assets.find((name) => name.endsWith('.sha256'));
   for (const name of assets) writeFileSync(path.join(root, name), name);
-  const args = await finalizeHelperAssets(product, 'broker-helper', ['--aggregate'], {
+  const args = await finalizeHelperAssets(product, kind, ['--aggregate'], {
     assetDir: root,
   });
   expect(args).toEqual(['--asset-dir', root]);
@@ -73,7 +78,7 @@ test('aggregate finalization hashes the complete payload set and rejects extra f
   }
   writeFileSync(path.join(root, 'unexpected.tar.gz'), 'unexpected');
   await expect(
-    finalizeHelperAssets(product, 'broker-helper', ['--aggregate'], { assetDir: root }),
+    finalizeHelperAssets(product, kind, ['--aggregate'], { assetDir: root }),
   ).rejects.toThrow(/must be exact/);
   expect(readFileSync(path.join(root, checksum), 'utf8')).toBe(manifest);
 });

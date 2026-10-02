@@ -149,7 +149,7 @@ export async function packageMobileSeedCarriers({
           `.target(name: "${name}", dependencies: [${profile === 'icu' ? '"OliphauntICU"' : ''}], resources: [.copy("${resource}")])`,
         );
       } else {
-        const output = path.join(assets, `${stem}-maven.tar.gz`);
+        const output = path.join(work, `${stem}-maven.tar.gz`);
         writeFileSync(output, gzipSync(await createDeterministicTar(stage), { level: 9 }));
         rows.push(
           [
