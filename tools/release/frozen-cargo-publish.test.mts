@@ -213,7 +213,10 @@ describe('frozen Cargo registry publication', () => {
     ).rejects.toThrow('identity is not authorized');
   });
 
-  test('waits through the ten-minute crates.io refill and replays only exact frozen bytes', async () => {
+  test.each([
+    { 'Retry-After': 'Wed, 21 Oct 2015 07:37:00 GMT' },
+    {},
+  ])('waits through the ten-minute crates.io refill and replays only exact frozen bytes', async (headers) => {
     const cratePath = cargoFixture();
     const requests = [];
     const sleeps = [];
@@ -232,13 +235,7 @@ describe('frozen Cargo registry publication', () => {
       fetchImpl: async (_url, init) => {
         requests.push(Buffer.from(init.body));
         if (requests.length === 1) {
-          return Response.json(
-            { errors: [{ detail: 'new-crate bucket empty' }] },
-            {
-              status: 429,
-              headers: { 'Retry-After': 'Wed, 21 Oct 2015 07:37:00 GMT' },
-            },
-          );
+          return new Response('', { status: 429, headers });
         }
         return Response.json({ warnings: {} });
       },
@@ -250,8 +247,8 @@ describe('frozen Cargo registry publication', () => {
     expect(result.warnings).toEqual({ invalid_categories: [], invalid_badges: [], other: [] });
   });
 
-  test('does not guess a rate-limit delay or wait beyond the mutation deadline', async () => {
-    const request = (headers = {}) =>
+  test('rejects malformed Retry-After and keeps every retry within the mutation deadline', async () => {
+    const request = (headers = { 'Retry-After': 'not-a-delay' }) =>
       publishFrozenCargoCrate({
         cratePath: cargoFixture(),
         expectedName: 'fixture-crate',
@@ -267,6 +264,10 @@ describe('frozen Cargo registry publication', () => {
       });
 
     await expect(request()).rejects.toThrow('without a valid Retry-After');
+    await expect(request({})).rejects.toMatchObject({
+      reason: 'rate-limit',
+      notBeforeEpochSeconds: 1_602,
+    });
     let deferred;
     try {
       await request({ 'Retry-After': '600' });
@@ -300,7 +301,10 @@ describe('frozen Cargo registry publication', () => {
     expect(deadline).toMatchObject({ reason: 'deadline', notBeforeEpochSeconds: 1_001 });
   });
 
-  test('turns exhausted valid 429s into a bounded continuation without weakening malformed responses', async () => {
+  test.each([
+    [{ 'Retry-After': '10' }, 1_012],
+    [{}, 1_602],
+  ])('turns exhausted 429s into a bounded deferral without weakening malformed responses', async (headers, notBeforeEpochSeconds) => {
     let exhausted;
     try {
       await publishFrozenCargoCrate({
@@ -312,10 +316,7 @@ describe('frozen Cargo registry publication', () => {
         deadlineEpochMs: 2_000_000,
         maxRateLimitRetries: 0,
         fetchImpl: async () =>
-          Response.json(
-            { errors: [{ detail: 'limited' }] },
-            { status: 429, headers: { 'Retry-After': '10' } },
-          ),
+          Response.json({ errors: [{ detail: 'limited' }] }, { status: 429, headers }),
       });
     } catch (cause) {
       exhausted = cause;
@@ -323,7 +324,7 @@ describe('frozen Cargo registry publication', () => {
     expect(isRegistryPublicationDeferredError(exhausted)).toBe(true);
     expect(exhausted).toMatchObject({
       reason: 'rate-limit',
-      notBeforeEpochSeconds: 1_012,
+      notBeforeEpochSeconds,
     });
 
     await expect(
@@ -335,7 +336,11 @@ describe('frozen Cargo registry publication', () => {
         nowImpl: () => 1_000_000,
         deadlineEpochMs: 2_000_000,
         maxRateLimitRetries: 0,
-        fetchImpl: async () => Response.json({ errors: [{ detail: 'limited' }] }, { status: 429 }),
+        fetchImpl: async () =>
+          Response.json(
+            { errors: [{ detail: 'limited' }] },
+            { status: 429, headers: { 'Retry-After': 'not-a-delay' } },
+          ),
       }),
     ).rejects.toThrow('without a valid Retry-After');
   });

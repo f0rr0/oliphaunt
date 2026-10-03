@@ -41,7 +41,7 @@ export async function uploadCargoOnceAndReconcileExactVersion({
   } catch (cause) {
     // Typed deferrals are emitted only before an upload can become ambiguous:
     // either the bounded deadline was already exhausted or crates.io returned
-    // an explicit 429 with a valid Retry-After. Preserve that control signal
+    // an explicit 429. Preserve that control signal
     // so the caller can checkpoint and continue instead of turning it into a
     // terminal mutation failure. Every other exception remains ambiguous and
     // must be reconciled without replaying the upload.
