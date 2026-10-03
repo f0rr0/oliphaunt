@@ -18,6 +18,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
 import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
+import { appendBootstrapCheckpoint } from './bootstrap-ledger.mts';
 import {
   PUBLICATION_CANDIDATE_LOCK_PATH as BOOTSTRAP_CAPSULE_LOCK_PATH,
   PUBLICATION_CANDIDATE_MANIFEST_PATH as BOOTSTRAP_CAPSULE_MANIFEST_PATH,
@@ -239,9 +240,31 @@ function writeTar(destination, records) {
   writeFileSync(destination, Buffer.concat([...records, Buffer.alloc(1024)]));
 }
 
-if (process.argv[2] === 'prepare') {
+if (['prepare', 'prepare-recovery'].includes(process.argv[2])) {
   const value = fixture();
   writeFileSync(path.join(value.root, 'fixture.json'), JSON.stringify(value));
+  const recovery = process.argv[2] === 'prepare-recovery';
+  const registryVersions = {};
+  if (recovery) {
+    appendBootstrapCheckpoint(path.join(value.root, 'ledger'), value.lock, PRODUCTS, []);
+    for (const carrier of value.lock.carriers) {
+      const artifact = carrier.artifacts[0];
+      const url =
+        carrier.ecosystem === 'cargo'
+          ? `https://crates.io/api/v1/crates/${encodeURIComponent(carrier.name)}/${carrier.version}`
+          : `https://registry.npmjs.org/${encodeURIComponent(carrier.name)}/${carrier.version}`;
+      registryVersions[url] =
+        carrier.ecosystem === 'cargo'
+          ? { version: { checksum: artifact.sha256 } }
+          : {
+              dist: {
+                integrity: `sha512-${createHash('sha512')
+                  .update(readFileSync(path.resolve(ROOT, artifact.path)))
+                  .digest('base64')}`,
+              },
+            };
+    }
+  }
   writeFileSync(
     path.join(value.root, 'registry-fixture.mts'),
     `
@@ -249,6 +272,9 @@ globalThis.fetch = async (input, options = {}) => {
   if (options.method && options.method !== 'GET') throw new Error('unexpected registry mutation');
   const url = new URL(String(input));
   if (!['crates.io', 'registry.npmjs.org'].includes(url.hostname)) throw new Error('unexpected registry');
+  const versions = ${JSON.stringify(registryVersions)};
+  if (versions[url.href]) return Response.json(versions[url.href]);
+  if (${recovery}) return Response.json({});
   return new Response('{}', {status: url.hostname === 'crates.io' && url.pathname.startsWith('/api/v1/crates/oliphaunt-build/') ? 200 : 404});
 };
 `,
@@ -265,6 +291,15 @@ if (process.argv[2] === 'verify') {
   assert.equal(result.decision, 'deferred');
   assert.equal(result.newlyCompletedIds.length, 0);
   assert.equal(result.remainingIds.length, 2);
+  process.exit(0);
+}
+if (process.argv[2] === 'verify-recovery') {
+  const result = JSON.parse(readFileSync(path.join(process.argv[3], 'execution.json'), 'utf8'));
+  assert.equal(result.decision, 'complete');
+  assert.equal(result.completedIds.length, 3);
+  assert.deepEqual(result.newlyCompletedIds, []);
+  assert.deepEqual(result.admittedIds, []);
+  assert.deepEqual(result.remainingIds, []);
   process.exit(0);
 }
 

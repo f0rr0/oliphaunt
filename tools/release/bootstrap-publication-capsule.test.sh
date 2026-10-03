@@ -24,3 +24,12 @@ export CARGO_REGISTRY_TOKEN=fixture-not-a-credential NPM_CONFIG_USERCONFIG="$scr
 export OLIPHAUNT_BOOTSTRAP_EXECUTION_RESULT="$scratch/execution.json"
 bash .github/scripts/bootstrap-registry-identities.sh
 bun tools/release/bootstrap-publication-capsule.test.mts verify "$scratch"
+
+# Recover accepted versions that became public before their receipts were saved.
+recovery=$(bun tools/release/bootstrap-publication-capsule.test.mts prepare-recovery)
+trap 'rm -rf "$scratch" "$recovery"' EXIT
+export BUN_OPTIONS="--preload $recovery/registry-fixture.mts"
+export PUBLICATION_LOCK_PATH="$recovery/publication-lock.json" BOOTSTRAP_LEDGER_PATH="$recovery/ledger"
+export OLIPHAUNT_BOOTSTRAP_EXECUTION_RESULT="$recovery/execution.json"
+bash .github/scripts/bootstrap-registry-identities.sh
+bun tools/release/bootstrap-publication-capsule.test.mts verify-recovery "$recovery"
