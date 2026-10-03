@@ -11,8 +11,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readSelectedRemoteTagMap } from '../../.github/scripts/manage-release-drafts.mts';
 import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from '../../src/native/sdks/kotlin/tools/kotlin-maven-staging.mts';
-import { compareText, currentProductVersionSync } from './release-artifact-targets.mts';
-import { loadProducts, releaseOrder } from './release-graph.mts';
 import { loadBootstrapLedger } from './bootstrap-ledger.mts';
 import { uploadCargoOnceAndReconcileExactVersion } from './cargo-upload-reconciliation.mts';
 import { queryRegistryPackages } from './check_registry_publication.mts';
@@ -60,7 +58,9 @@ import {
   REGISTRY_PUBLICATION_DEFERRAL_EXIT_CODE,
   requirePreMutationRegistryWindow,
 } from './registry-publication-deferral.mts';
+import { compareText, currentProductVersionSync } from './release-artifact-targets.mts';
 import { ROOT, uniqueValueFlag } from './release-cli-utils.mts';
+import { loadProducts, releaseOrder } from './release-graph.mts';
 import { frozenUploadPlan, uploadFrozenReleaseAssets } from './upload_github_release_assets.mts';
 
 const TOOL = 'release-publish.mts';
@@ -71,6 +71,7 @@ function usage() {
   console.log(`usage: tools/release/release-publish.mts publish [publish args] [--publication-lock FILE]
 
 Runs protected publication. Read-only registry preflight uses bash tools/release/release-check-registries.sh.
+Use --step github-release-assets --check to verify the frozen upload plan without publication.
 
 Every real publish requires an exact-SHA frozen publication lock. Repeatable
 identity bootstrap for newly generated Cargo/npm identities uses:
@@ -106,7 +107,6 @@ function removeValueFlag(args, name) {
     if (value === name) {
       index += 1;
     } else if (value.startsWith(`${name}=`)) {
-      continue;
     } else {
       output.push(value);
     }
@@ -313,14 +313,13 @@ function requireFrozenProductArtifacts(product, roots) {
   }
 }
 
-async function publishSelectedGithubReleaseAssetSets(products, headRef) {
+async function publishSelectedGithubReleaseAssetSets(products, headRef, { check = false } = {}) {
   const selected = [...new Set(products)].sort(compareText);
   if (selected.length === 0 || selected.length !== products.length) {
     fail(
       'concurrent GitHub release asset publication requires a non-empty unique product selection',
     );
   }
-  await verifyReleaseTags(selected, headRef);
   const repo = process.env.GITHUB_REPOSITORY?.trim() ?? '';
   const rows = new Map();
   const uploadPlans = new Map();
@@ -350,10 +349,12 @@ async function publishSelectedGithubReleaseAssetSets(products, headRef) {
     fail(cause instanceof Error ? cause.message : String(cause));
   }
   console.log(
-    `Publishing ${plan.assetCount} exact frozen GitHub release assets for ${plan.productCount} ` +
+    `${check ? 'Validated' : 'Publishing'} ${plan.assetCount} exact frozen GitHub release assets for ${plan.productCount} ` +
       `asset-backed products in ${plan.waves.length} bounded concurrent wave(s); ` +
       `${selected.length - plan.productCount} exact empty product asset sets are receipt-proven.`,
   );
+  if (check) return;
+  await verifyReleaseTags(selected, headRef);
   const coordinationRoot = mkdtempSync(path.join(tmpdir(), 'oliphaunt-github-release-asset-wave-'));
   const abortPath = path.join(coordinationRoot, 'abort.json');
   const reportPath =
@@ -946,6 +947,7 @@ if (
     await publishSelectedGithubReleaseAssetSets(
       releaseOrderedProducts(requested),
       flagValue(argv.slice(1), '--head-ref') ?? 'HEAD',
+      { check: argv.slice(1).includes('--check') },
     );
     process.exit(0);
   }

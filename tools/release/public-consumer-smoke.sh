@@ -101,9 +101,9 @@ pids=()
 cleanup() {
   status=$?
   trap - EXIT
-  for pid in "${pids[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+  for pid in ${pids[@]+"${pids[@]}"}; do kill -TERM -- "-$pid" 2>/dev/null || true; done
   if [ "${#pids[@]}" -gt 0 ]; then sleep 2; fi
-  for pid in "${pids[@]}"; do kill -KILL -- "-$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
+  for pid in ${pids[@]+"${pids[@]}"}; do kill -KILL -- "-$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
   if [ "$status" != 0 ]; then
     for log in "$scratch"/*.log; do [ ! -f "$log" ] || tail -c 16384 "$log" >&2; done
   fi
@@ -127,7 +127,7 @@ while [ "${#pids[@]}" -gt 0 ]; do
   for pid in "${pids[@]}"; do
     if kill -0 "$pid" 2>/dev/null; then active+=("$pid"); else wait "$pid"; fi
   done
-  pids=("${active[@]}")
+  pids=(${active[@]+"${active[@]}"})
   [ "${#pids[@]}" = 0 ] || sleep 0.2
 done
 bash tools/dev/bun.sh "$tool" --report "$scratch"

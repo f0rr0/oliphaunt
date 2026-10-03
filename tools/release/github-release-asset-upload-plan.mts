@@ -1,10 +1,10 @@
+import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from './github-content-write-pacer.mts';
 import {
   DEFAULT_GITHUB_RELEASE_ASSET_UPLOAD_TIMEOUT_MS,
-  githubReleaseAssetUploadWindowMs,
   GITHUB_RELEASE_ASSET_UPLOAD_SNAPSHOT_RESERVE_MS,
+  githubReleaseAssetUploadWindowMs,
   MAX_GITHUB_RELEASE_ASSET_UPLOAD_WINDOW_MS,
 } from './upload_github_release_assets.mts';
-import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from './github-content-write-pacer.mts';
 
 // The durable content-write pacer allocates future request slots while holding
 // its filesystem lock only for short state transitions. Keep uploader
@@ -13,7 +13,7 @@ import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from './github-content-write-pacer.m
 export const MAX_CONCURRENT_GITHUB_RELEASE_ASSET_PRODUCTS = 5;
 export const GITHUB_RELEASE_ASSET_WAVE_OVERHEAD_MS = 60_000;
 export const GITHUB_RELEASE_ASSET_SELECTION_VERIFY_MS = 60_000;
-export const MAX_GITHUB_RELEASE_ASSET_HANDOFF_WINDOW_MS = 95 * 60_000;
+export const MAX_GITHUB_RELEASE_ASSET_HANDOFF_WINDOW_MS = 120 * 60_000;
 // These are the protected workflow's hard per-step bounds between the final
 // read-only admission and the authoritative registry mutation gate. Policy
 // checks keep the YAML values equal to these constants.
