@@ -7,8 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  githubOutputForAttestationSubjectShards,
-  lockedAttestationSubjectShards,
+  githubOutputForAttestationSubjects,
   lockedAttestationSubjects,
 } from './locked-attestation-subjects.mts';
 import { compareText, ROOT } from './release-graph.mts';
@@ -17,34 +16,28 @@ function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-test('the workflow uses exact full-selection subjects for every attestation batch', async () => {
+test('the workflow attests the complete selected release with one provenance bundle', async () => {
   const workflow = Bun.YAML.parse(
     await readFile(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
   );
   const steps = workflow.jobs.publish.steps;
-  const resolver = steps.find((step) => step.id === 'release_attestation_subjects');
+  const resolver = steps.find((step) => step.id === 'release_provenance_subjects');
   assert.match(resolver.env.PRODUCTS_JSON, /release_plan\)\.products_json/);
   assert.match(resolver.run, /--products-json "\$PRODUCTS_JSON"/);
   const actions = steps.filter((step) => step.uses?.startsWith('actions/attest-build-provenance@'));
-  assert.equal(actions.length, 2);
-  for (const [index, action] of actions.entries()) {
-    assert.equal(
-      action.with['subject-path'],
-      '${{ steps.release_attestation_subjects.outputs.paths_' + (index + 1) + ' }}',
-    );
-    assert.equal(
-      action.if,
-      '${{ steps.release_attestation_subjects.outputs.nonempty_' + (index + 1) + " == 'true' }}",
-    );
-  }
-  const receipt = steps.find((step) => step.id === 'freeze_github_evidence');
+  assert.equal(actions.length, 1);
   assert.equal(
-    receipt.env.RELEASE_ATTESTATION_BUNDLE_1,
-    '${{ steps.attest_release_1.outputs.bundle-path }}',
+    actions[0].with['subject-path'],
+    '${{ steps.release_provenance_subjects.outputs.subject_paths }}',
   );
   assert.equal(
-    receipt.env.RELEASE_ATTESTATION_BUNDLE_2,
-    '${{ steps.attest_release_2.outputs.bundle-path }}',
+    actions[0].if,
+    "${{ steps.release_provenance_subjects.outputs.has_subjects == 'true' }}",
+  );
+  const receipt = steps.find((step) => step.id === 'freeze_github_evidence');
+  assert.equal(
+    receipt.env.RELEASE_PROVENANCE_BUNDLE,
+    '${{ steps.release_provenance.outputs.bundle-path }}',
   );
 });
 
@@ -112,69 +105,28 @@ test('a single external-extension selection excludes every downloaded unselected
   }
 });
 
-test('two deterministic balanced shards form the exact disjoint selected subject union', async () => {
-  const { lock, root } = await fixture({
-    'extension-pgvector': 5,
-    'extension-postgis': 4,
-    'extension-unselected': 3,
-  });
-  try {
-    const products = ['extension-postgis', 'extension-pgvector'];
-    const exact = lockedAttestationSubjects(lock, products);
-    const shards = lockedAttestationSubjectShards(lock, products);
-
-    assert.deepEqual(lockedAttestationSubjectShards(lock, products), shards);
-    assert.equal(shards.length, 2);
-    assert.ok(shards.every((shard) => shard.length <= 1_024));
-    assert.ok(Math.abs(shards[0].length - shards[1].length) <= 1);
-    assert.deepEqual(shards.flat().sort(compareText), exact);
-    assert.equal(new Set(shards.flat()).size, exact.length);
-    assert.ok(shards[0].every((subject) => !new Set(shards[1]).has(subject)));
-    assert.ok(shards.flat().every((subject) => !subject.includes('/extension-unselected/')));
-
-    assert.throws(
-      () => lockedAttestationSubjectShards(lock, products, { maxSubjectsPerShard: 4 }),
-      /exceed 2 attestation shards at the 4-subject per-bundle limit/u,
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('a one-subject partial release skips the empty shard through explicit count and nonempty outputs', async () => {
-  const { lock, root } = await fixture({ 'extension-single': 1 });
-  try {
-    const exact = lockedAttestationSubjects(lock, ['extension-single']);
-    const shards = lockedAttestationSubjectShards(lock, ['extension-single']);
-    assert.deepEqual(shards, [exact, []]);
-
-    const output = githubOutputForAttestationSubjectShards(shards);
-    assert.match(output, /^total_count=1$/mu);
-    assert.match(output, /^count_1=1$/mu);
-    assert.match(output, /^nonempty_1=true$/mu);
-    assert.match(output, /^count_2=0$/mu);
-    assert.match(output, /^nonempty_2=false$/mu);
-    assert.equal(output.split(exact[0]).length - 1, 1);
-    assert.throws(
-      () => githubOutputForAttestationSubjectShards([[exact[0]], [exact[0]]]),
-      /unique safe paths/u,
-    );
-    const delimiterCollision = githubOutputForAttestationSubjectShards([
-      ['OLIPHAUNT_RELEASE_ATTESTATION_SUBJECTS_1'],
-      [],
-    ]);
-    assert.match(delimiterCollision, /^paths_1<<OLIPHAUNT_RELEASE_ATTESTATION_SUBJECTS_1_END$/mu);
-    assert.throws(
-      () =>
-        githubOutputForAttestationSubjectShards([
-          Array.from({ length: 1_025 }, (_, index) => `subject-${index}`),
-          [],
-        ]),
-      /1024-subject per-bundle limit/u,
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+test('GitHub outputs describe the subject set and skip an empty release', () => {
+  const subjects = ['target/first.bin', 'target/second.bin'];
+  const output = githubOutputForAttestationSubjects(subjects);
+  assert.match(output, /^subject_count=2$/mu);
+  assert.match(output, /^has_subjects=true$/mu);
+  for (const subject of subjects) assert.equal(output.split(subject).length - 1, 1);
+  assert.match(githubOutputForAttestationSubjects([]), /^has_subjects=false$/mu);
+  assert.throws(
+    () => githubOutputForAttestationSubjects([subjects[0], subjects[0]]),
+    /unique safe paths/u,
+  );
+  assert.match(
+    githubOutputForAttestationSubjects(['OLIPHAUNT_RELEASE_PROVENANCE_SUBJECTS']),
+    /^subject_paths<<OLIPHAUNT_RELEASE_PROVENANCE_SUBJECTS_END$/mu,
+  );
+  assert.throws(
+    () =>
+      githubOutputForAttestationSubjects(
+        Array.from({ length: 1025 }, (_, index) => `subject-${index}`),
+      ),
+    /1024-subject attestation limit/u,
+  );
 });
 
 test('mixed products cover every frozen GitHub asset and skip products with empty asset sets', async () => {
@@ -188,13 +140,13 @@ test('mixed products cover every frozen GitHub asset and skip products with empt
   const { lock, root } = await fixture(counts);
   try {
     const products = Object.keys(counts);
-    const shards = lockedAttestationSubjectShards(lock, products);
+    const subjects = lockedAttestationSubjects(lock, products);
     assert.deepEqual(
-      shards.flat().sort(compareText),
+      subjects.sort(compareText),
       lock.productArtifacts.map((a) => a.path).sort(compareText),
     );
-    assert.deepEqual(lockedAttestationSubjectShards(lock, ['oliphaunt-rust']), [[], []]);
-    assert.match(githubOutputForAttestationSubjectShards([[], []]), /^total_count=0$/mu);
+    assert.deepEqual(lockedAttestationSubjects(lock, ['oliphaunt-rust']), []);
+    assert.match(githubOutputForAttestationSubjects([]), /^subject_count=0$/mu);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

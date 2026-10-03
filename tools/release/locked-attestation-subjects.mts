@@ -11,7 +11,6 @@ import {
 import { compareText, ROOT } from './release-graph.mts';
 
 const ATTESTED_ROLES = Object.freeze(['github-release-asset', 'github-release-metadata']);
-export const RELEASE_ATTESTATION_SHARD_COUNT = 2;
 export const MAX_ATTESTATION_SUBJECTS_PER_BUNDLE = 1_024;
 
 function error(message) {
@@ -82,99 +81,32 @@ export function lockedAttestationSubjects(lock, products) {
   return subjects;
 }
 
-/**
- * Partition the exact subject union into stable, count-balanced action inputs.
- *
- * GitHub's attestation action accepts at most 1,024 subjects per invocation.
- * Round-robin assignment over the sorted exact-lock paths keeps the two bundle
- * sizes within one subject of each other without weakening selection or byte
- * verification. Empty trailing shards are intentional for very small partial
- * releases and are exposed to the workflow through explicit nonempty flags.
- */
-export function lockedAttestationSubjectShards(
-  lock,
-  products,
-  {
-    maxSubjectsPerShard = MAX_ATTESTATION_SUBJECTS_PER_BUNDLE,
-    shardCount = RELEASE_ATTESTATION_SHARD_COUNT,
-  } = {},
-) {
-  if (!Number.isSafeInteger(shardCount) || shardCount <= 0) {
-    throw error('attestation shard count must be a positive safe integer');
-  }
-  if (!Number.isSafeInteger(maxSubjectsPerShard) || maxSubjectsPerShard <= 0) {
-    throw error('maximum subjects per attestation shard must be a positive safe integer');
-  }
-  const capacity = shardCount * maxSubjectsPerShard;
-  if (!Number.isSafeInteger(capacity)) {
-    throw error('attestation shard capacity exceeds the safe integer range');
-  }
-
-  const subjects = lockedAttestationSubjects(lock, products);
-  if (subjects.length > capacity) {
-    throw error(
-      `${subjects.length} selected subjects exceed ${shardCount} attestation shards ` +
-        `at the ${maxSubjectsPerShard}-subject per-bundle limit`,
-    );
-  }
-  const shards = Array.from({ length: shardCount }, () => []);
-  for (const [index, subject] of subjects.entries()) {
-    shards[index % shardCount].push(subject);
-  }
-  if (shards.some((shard) => shard.length > maxSubjectsPerShard)) {
-    throw error(`an attestation shard exceeds the ${maxSubjectsPerShard}-subject per-bundle limit`);
-  }
-
-  const flattened = shards.flat();
+export function githubOutputForAttestationSubjects(subjects) {
   if (
-    flattened.length !== subjects.length ||
-    new Set(flattened).size !== subjects.length ||
-    [...flattened].sort(compareText).some((subject, index) => subject !== subjects[index])
-  ) {
-    throw error('attestation shards do not form the exact disjoint selected subject union');
-  }
-  return shards;
-}
-
-export function githubOutputForAttestationSubjectShards(shards) {
-  if (
-    !Array.isArray(shards) ||
-    shards.length !== RELEASE_ATTESTATION_SHARD_COUNT ||
-    shards.some((shard) => !Array.isArray(shard))
-  ) {
-    throw error(`GitHub output requires exactly ${RELEASE_ATTESTATION_SHARD_COUNT} subject shards`);
-  }
-  if (shards.some((shard) => shard.length > MAX_ATTESTATION_SUBJECTS_PER_BUNDLE)) {
-    throw error(
-      `GitHub output shard exceeds the ${MAX_ATTESTATION_SUBJECTS_PER_BUNDLE}-subject per-bundle limit`,
-    );
-  }
-  const flattened = shards.flat();
-  if (
-    flattened.some(
+    !Array.isArray(subjects) ||
+    subjects.some(
       (subject) =>
         typeof subject !== 'string' || subject.length === 0 || /[\r\n\u0000]/u.test(subject),
     ) ||
-    new Set(flattened).size !== flattened.length
+    new Set(subjects).size !== subjects.length
   ) {
-    throw error('GitHub output subject shards must contain unique safe paths');
+    throw error('GitHub output subjects must contain unique safe paths');
   }
-
-  const lines = [`total_count=${flattened.length}`];
-  const subjects = new Set(flattened);
-  for (const [index, shard] of shards.entries()) {
-    const number = index + 1;
-    let delimiter = `OLIPHAUNT_RELEASE_ATTESTATION_SUBJECTS_${number}`;
-    while (subjects.has(delimiter)) delimiter += '_END';
-    lines.push(
-      `count_${number}=${shard.length}`,
-      `nonempty_${number}=${shard.length > 0 ? 'true' : 'false'}`,
-      `paths_${number}<<${delimiter}`,
-      ...shard,
-      delimiter,
+  if (subjects.length > MAX_ATTESTATION_SUBJECTS_PER_BUNDLE) {
+    throw error(
+      `selected release exceeds the ${MAX_ATTESTATION_SUBJECTS_PER_BUNDLE}-subject attestation limit`,
     );
   }
-  return `${lines.join('\n')}\n`;
+  let delimiter = 'OLIPHAUNT_RELEASE_PROVENANCE_SUBJECTS';
+  while (subjects.includes(delimiter)) delimiter += '_END';
+  return [
+    `subject_count=${subjects.length}`,
+    `has_subjects=${subjects.length > 0 ? 'true' : 'false'}`,
+    `subject_paths<<${delimiter}`,
+    ...subjects,
+    delimiter,
+    '',
+  ].join('\n');
 }
 
 function parseArgs(argv) {
@@ -215,8 +147,8 @@ if (import.meta.main) {
     const args = parseArgs(Bun.argv.slice(2));
     const lock = loadPublicationLock(args.lockFile);
     if (args.githubOutput !== undefined) {
-      const shards = lockedAttestationSubjectShards(lock, args.products);
-      appendFileSync(args.githubOutput, githubOutputForAttestationSubjectShards(shards), {
+      const subjects = lockedAttestationSubjects(lock, args.products);
+      appendFileSync(args.githubOutput, githubOutputForAttestationSubjects(subjects), {
         encoding: 'utf8',
       });
     } else {

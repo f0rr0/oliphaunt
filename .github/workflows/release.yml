@@ -1445,8 +1445,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/release-publish.mts publish --step github-release-assets --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
-      - name: Resolve exact selected release attestation subjects
-        id: release_attestation_subjects
+      - name: Resolve frozen release provenance subjects
+        id: release_provenance_subjects
         env:
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
@@ -1454,30 +1454,18 @@ jobs:
             --publication-lock "$PUBLICATION_LOCK_PATH" \
             --products-json "$PRODUCTS_JSON" \
             --github-output "$GITHUB_OUTPUT"
-      - name: Reserve release provenance write (batch 1)
-        if: ${{ steps.release_attestation_subjects.outputs.nonempty_1 == 'true' }}
+      - name: Reserve release provenance write
+        if: ${{ steps.release_provenance_subjects.outputs.has_subjects == 'true' }}
         run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "release provenance batch 1"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "release provenance batch 1 API attempt"
-      - name: Attest selected release assets (batch 1)
-        id: attest_release_1
-        if: ${{ steps.release_attestation_subjects.outputs.nonempty_1 == 'true' }}
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "release asset provenance"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "release asset provenance API attempt"
+      - name: Attest frozen release assets
+        id: release_provenance
+        if: ${{ steps.release_provenance_subjects.outputs.has_subjects == 'true' }}
         timeout-minutes: 5
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
-          subject-path: ${{ steps.release_attestation_subjects.outputs.paths_1 }}
-      - name: Reserve release provenance write (batch 2)
-        if: ${{ steps.release_attestation_subjects.outputs.nonempty_2 == 'true' }}
-        run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "release provenance batch 2"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "release provenance batch 2 API attempt"
-      - name: Attest selected release assets (batch 2)
-        id: attest_release_2
-        if: ${{ steps.release_attestation_subjects.outputs.nonempty_2 == 'true' }}
-        timeout-minutes: 5
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
-        with:
-          subject-path: ${{ steps.release_attestation_subjects.outputs.paths_2 }}
+          subject-path: ${{ steps.release_provenance_subjects.outputs.subject_paths }}
       - name: Create fresh SwiftPM tag token
         id: swift_tag_token
         if: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') }}
@@ -1497,22 +1485,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
-          RELEASE_ATTESTATION_BUNDLE_1: ${{ steps.attest_release_1.outputs.bundle-path }}
-          RELEASE_ATTESTATION_BUNDLE_2: ${{ steps.attest_release_2.outputs.bundle-path }}
+          RELEASE_PROVENANCE_BUNDLE: ${{ steps.release_provenance.outputs.bundle-path }}
         run: |
-          bundle_args=()
-          for bundle in "$RELEASE_ATTESTATION_BUNDLE_1" "$RELEASE_ATTESTATION_BUNDLE_2"
-          do
-            if [[ -n "$bundle" ]]; then
-              bundle_args+=(--attestation-bundle "$bundle")
-            fi
-          done
+          provenance_args=()
+          if [[ -n "$RELEASE_PROVENANCE_BUNDLE" ]]; then
+            provenance_args+=(--attestation-bundle "$RELEASE_PROVENANCE_BUNDLE")
+          fi
           bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA" bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/release/verify-github-release-attestations.sh pre-mutation \
             --publication-lock "$PUBLICATION_LOCK_PATH" \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
             --output target/release/github-release-attestation-receipt.json \
-            ${bundle_args[@]+"${bundle_args[@]}"}
+            ${provenance_args[@]+"${provenance_args[@]}"}
       - name: Open registry publication window
         id: registry_publication_window
         run: |
