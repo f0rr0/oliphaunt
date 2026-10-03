@@ -129,11 +129,16 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
       assert(dependencies.has('checks'), `${id} can start before source checks`);
       assert(dependencies.has('tests'), `${id} can start before source tests`);
       const direct = [job.needs ?? []].flat();
-      if (direct.includes('checks') && direct.includes('tests') && direct.length === 3)
+      if (direct.includes('checks') && direct.includes('tests') && direct.length === 3) {
+        // Optional source matrices may be skipped while their aggregate succeeds.
+        // Explicit status functions bypass GitHub's implicit transitive success().
         assert(
-          !/always\(|!cancelled\(/u.test(job.if ?? ''),
+          job.if?.startsWith(
+            "${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && ",
+          ),
           `${id} must require successful source gates`,
         );
+      }
     }
   });
 

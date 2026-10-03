@@ -14,7 +14,7 @@ while IFS=$'\t' read -r crate payload variable external; do
     --manifest-path "$crate/Cargo.toml" --example probe
   if [[ "$payload" == artifacts ]]; then
     cp "$crate/$payload/manifest.json" "$crate/current-profile.json"
-    bun -e 'const p = process.argv[1]; const m = await Bun.file(p).json(); m.engine = "llvm-opta"; await Bun.write(p, JSON.stringify(m));' "$crate/$payload/manifest.json"
+    bun -e 'const p = process.argv[1]; const m = await Bun.file(p).json(); m.engine += "-incompatible"; await Bun.write(p, JSON.stringify(m));' "$crate/$payload/manifest.json"
     if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
       --manifest-path "$crate/Cargo.toml" --lib > "$scratch/stale-profile.log" 2>&1; then
       echo "Published carrier accepted stale AOT codegen profile: $crate" >&2
