@@ -27,6 +27,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Default storage is a memory filesystem and is discarded on close. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
+SQL `statement_timeout` is not a reliable execution deadline for CPU-bound WASIX queries. Timing out a caller's future does not stop guest work.
+
+The host-selected username is the real PostgreSQL session principal: LOGIN/CONNECT restrictions, role defaults and login triggers apply. `RESET ROLE` and `DISCARD ALL` do not restore the bootstrap superuser. The host authenticates the caller; initialize new storage as `postgres` before selecting an existing application role.
+
 ## Build your integration
 
 - [Guide](https://oliphaunt.dev/docs/sdk/wasix-rust/guide): parameters, transactions, extensions, backups, and shutdown.

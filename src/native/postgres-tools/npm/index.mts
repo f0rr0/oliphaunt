@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { createCapturedOutput, captureOutput, finishCapture } from './output-capture.mjs';
 
 const require = createRequire(import.meta.url);
 // PostgreSQL 18 getopt_long optstrings. A value-taking option owns the rest
@@ -267,53 +268,63 @@ async function runTool(tool, args, stdin) {
       rejectOnce(new PostgresToolError(tool, `could not start ${tool}`, { cause }));
       return;
     }
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on('data', (chunk) => stdout.push(chunk));
-    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    const captured = createCapturedOutput();
+    child.stdout.on('data', (chunk) => captureOutput(captured, 'stdout', chunk));
+    child.stderr.on('data', (chunk) => captureOutput(captured, 'stderr', chunk));
     child.once('error', (cause) => {
       rejectOnce(new PostgresToolError(tool, `could not run ${tool}`, { cause }));
     });
     child.once('close', (exitCode, signal) => {
       if (settled) return;
       settled = true;
-      const stdoutBytes = Buffer.concat(stdout);
-      const stderrBytes = Buffer.concat(stderr);
-      if (exitCode !== 0 || signal !== null) {
-        const stdoutText = decodeDiagnostics(stdoutBytes);
-        const stderrText = decodeDiagnostics(stderrBytes);
-        reject(
-          new PostgresToolError(
-            tool,
-            `${tool} ${signal === null ? `exited with status ${exitCode}` : `was terminated by ${signal}`}${stderrText.trim().length === 0 ? '' : `: ${stderrText.trim()}`}`,
-            { exitCode, signal, stdout: stdoutText, stderr: stderrText },
-          ),
-        );
-        return;
-      }
-      if (stdinFailure !== undefined) {
-        reject(
-          new PostgresToolError(tool, `could not write to ${tool}`, {
-            exitCode,
-            signal,
-            stdout: decodeDiagnostics(stdoutBytes),
-            stderr: decodeDiagnostics(stderrBytes),
-            cause: stdinFailure,
-          }),
-        );
-        return;
-      }
       try {
-        resolve(new TextDecoder('utf-8', { fatal: true }).decode(stdoutBytes));
+        const { stdout: stdoutBytes, stderr: stderrBytes } = finishCapture(captured);
+        if (exitCode !== 0 || signal !== null) {
+          const stdoutText = decodeDiagnostics(stdoutBytes);
+          const stderrText = decodeDiagnostics(stderrBytes);
+          reject(
+            new PostgresToolError(
+              tool,
+              `${tool} ${signal === null ? `exited with status ${exitCode}` : `was terminated by ${signal}`}${stderrText.trim().length === 0 ? '' : `: ${stderrText.trim()}`}`,
+              { exitCode, signal, stdout: stdoutText, stderr: stderrText },
+            ),
+          );
+          return;
+        }
+        if (stdinFailure !== undefined) {
+          reject(
+            new PostgresToolError(tool, `could not write to ${tool}`, {
+              exitCode,
+              signal,
+              stdout: decodeDiagnostics(stdoutBytes),
+              stderr: decodeDiagnostics(stderrBytes),
+              cause: stdinFailure,
+            }),
+          );
+          return;
+        }
+        try {
+          resolve(new TextDecoder('utf-8', { fatal: true }).decode(stdoutBytes));
+        } catch (cause) {
+          const stdoutText = decodeDiagnostics(stdoutBytes);
+          const stderrText = decodeDiagnostics(stderrBytes);
+          reject(
+            new PostgresToolError(tool, `${tool} produced non-UTF-8 output`, {
+              exitCode,
+              signal,
+              stdout: stdoutText,
+              stderr: stderrText,
+              cause,
+            }),
+          );
+        }
       } catch (cause) {
-        const stdoutText = decodeDiagnostics(stdoutBytes);
-        const stderrText = decodeDiagnostics(stderrBytes);
+        // Buffer concatenation and JS string conversion have their own host
+        // size limits. Reject the invocation, not the event-loop callback.
         reject(
-          new PostgresToolError(tool, `${tool} produced non-UTF-8 output`, {
+          new PostgresToolError(tool, `${tool} output capture failed`, {
             exitCode,
             signal,
-            stdout: stdoutText,
-            stderr: stderrText,
             cause,
           }),
         );

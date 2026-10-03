@@ -6,18 +6,30 @@ Subject: [PATCH] liboliphaunt: use portable embedded socketpair
 The embedded backend routes protocol bytes through host-owned I/O callbacks,
 but PostgreSQL's backend libpq initialization still requires a real socket for
 address discovery, socket option setup, connection polling, and fixed wait-set
-positions.  Unix builds can satisfy that with socketpair(); Windows has no
+positions. Unix builds can satisfy that with socketpair(); Windows has no
 socketpair(), so create an equivalent loopback pair with bind/listen/connect/
 accept.
 
 This keeps the regular PostgreSQL socket path intact and keeps embedded
-transport host-owned without adding Windows-specific logic outside PostgreSQL.
+transport host-owned without spreading Windows-specific logic outside the
+entrypoint. Initialize Winsock before PostgreSQL initialization and preload
+libraries, report its native error codes, and balance the owned WSA reference
+only after the admitted owner frees pq_init's session wait set and closes both
+dummy sockets. The lifecycle remains the single cleanup authority after
+non-local exits; a rejected concurrent contender cannot clear the admitted
+backend's PostgreSQL-global wait set. pqcomm's exit callback intentionally
+invalidates its Port descriptor without closing the underlying socket because
+an ordinary backend is about to exit.
+
+The remaining standalone latch/wait-support and Windows signal resources are
+process-lifetime PostgreSQL state, not socket-pair ownership; they require the
+separate embedded lifecycle teardown design documented by the audit.
 ---
- src/backend/tcop/postgres.c | 76 +++++++++++++++++++++++++++++++++----
- 1 file changed, 69 insertions(+), 7 deletions(-)
+ src/backend/tcop/postgres.c | 128 ++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 119 insertions(+), 9 deletions(-)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 402b66b..5511268 100644
+index 86c4a89..89b516f 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
 @@ -26,7 +26,9 @@
@@ -30,27 +42,43 @@ index 402b66b..5511268 100644
  #include <setjmp.h>
  #endif
  #include <sys/time.h>
-@@ -4250,6 +4252,66 @@ oliphaunt_embedded_set_runtime_paths(const char *argv0)
+@@ -78,6 +80,9 @@
+ #include "storage/proc.h"
+ #include "storage/procsignal.h"
+ #include "storage/sinval.h"
++#ifdef OLIPHAUNT_EMBEDDED
++#include "storage/waiteventset.h"
++#endif
+ #include "tcop/backend_startup.h"
+ #include "tcop/fastpath.h"
+ #include "tcop/pquery.h"
+@@ -4219,10 +4224,12 @@ typedef struct OliphauntEmbeddedLifecycle
+ 	sigjmp_buf proc_exit_env;
+ 	int			proc_exit_code;
+ 	int			rc;
+-	int			socket_pair[2];
++	pgsocket	socket_pair[2];
+ 	char		original_cwd[MAXPGPATH];
+ #ifndef WIN32
+ 	int			original_cwd_fd;
++#else
++	bool		winsock_started;
+ #endif
+ 	bool		cwd_restore_required;
+ 	bool		proc_exit_handler_armed;
+@@ -4300,6 +4307,64 @@ oliphaunt_embedded_set_runtime_paths(const char *argv0)
  	return true;
  }
-
+ 
 +static int
 +oliphaunt_embedded_create_socketpair(pgsocket sockets[2])
 +{
 +#ifdef WIN32
-+	static bool wsa_started = false;
-+	WSADATA		wsaData;
 +	pgsocket	listener = PGINVALID_SOCKET;
 +	struct sockaddr_in addr;
 +	socklen_t	addrlen = sizeof(addr);
 +	int			rc = -1;
-+
-+	if (!wsa_started)
-+	{
-+		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-+			return -1;
-+		wsa_started = true;
-+	}
++	int			error = 0;
 +
 +	listener = socket(AF_INET, SOCK_STREAM, 0);
 +	if (listener == PGINVALID_SOCKET)
@@ -78,6 +106,8 @@ index 402b66b..5511268 100644
 +	rc = 0;
 +
 +cleanup:
++	if (rc != 0)
++		error = WSAGetLastError();
 +	if (listener != PGINVALID_SOCKET)
 +		closesocket(listener);
 +	if (rc != 0)
@@ -87,49 +117,114 @@ index 402b66b..5511268 100644
 +		if (sockets[1] != PGINVALID_SOCKET)
 +			closesocket(sockets[1]);
 +		sockets[0] = sockets[1] = PGINVALID_SOCKET;
++		if (error == 0)
++			error = WSASYSCALLFAILURE;
 +	}
-+	return rc;
++	return rc == 0 ? 0 : error;
 +#else
-+	return socketpair(AF_UNIX, SOCK_STREAM, 0, sockets);
++	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0)
++		return 0;
++	return errno != 0 ? errno : EIO;
 +#endif
 +}
 +
  /*
   * oliphaunt_embedded_main
   *
-@@ -4266,7 +4328,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
- 					 OliphauntEmbeddedIO *io)
- {
- 	const char *switch_dbname = NULL;
--	int			socket_pair[2] = {-1, -1};
-+	pgsocket	socket_pair[2] = {PGINVALID_SOCKET, PGINVALID_SOCKET};
- 	ClientSocket client_sock;
+@@ -4320,6 +4385,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	struct sockaddr_in *addr;
- 	OliphauntEmbeddedProcExitGuard exit_guard;
-@@ -4328,9 +4390,9 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	OliphauntEmbeddedLifecycle *lifecycle;
+ 	int			result;
++	int			socket_error;
+ 
+ 	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
+ 		username == NULL || io == NULL)
+@@ -4328,8 +4394,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	lifecycle = calloc(1, sizeof(*lifecycle));
+ 	if (lifecycle == NULL)
+ 		return -1;
+-	lifecycle->socket_pair[0] = -1;
+-	lifecycle->socket_pair[1] = -1;
++	lifecycle->socket_pair[0] = PGINVALID_SOCKET;
++	lifecycle->socket_pair[1] = PGINVALID_SOCKET;
+ #ifndef WIN32
+ 	lifecycle->original_cwd_fd = -1;
+ #endif
+@@ -4375,6 +4441,19 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	if (TopMemoryContext == NULL)
+ 		MemoryContextInit();
+ 	(void) set_stack_base();
++#ifdef WIN32
++	{
++		WSADATA		wsa_data;
++		int			wsa_error;
++
++		wsa_error = WSAStartup(MAKEWORD(2, 2), &wsa_data);
++		if (wsa_error != 0)
++			ereport(FATAL,
++					(errmsg("could not initialize Winsock: error code %d",
++							wsa_error)));
++		lifecycle->winsock_started = true;
++	}
++#endif
+ 	if (!oliphaunt_embedded_set_runtime_paths(argv[0]))
+ 		set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("postgres"));
+ 
+@@ -4410,9 +4489,19 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	PgStartTime = GetCurrentTimestamp();
  	InitProcess();
-
--	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_pair) != 0)
-+	if (oliphaunt_embedded_create_socketpair(socket_pair) != 0)
+ 
+-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, lifecycle->socket_pair) != 0)
++	socket_error = oliphaunt_embedded_create_socketpair(lifecycle->socket_pair);
++	if (socket_error != 0)
++	{
++#ifdef WIN32
++		ereport(FATAL,
++				(errmsg("could not create embedded liboliphaunt socket pair: error code %d",
++						socket_error)));
++#else
++		errno = socket_error;
  		ereport(FATAL,
 -				(errmsg("could not create embedded liboliphaunt socketpair: %m")));
 +				(errmsg("could not create embedded liboliphaunt socket pair: %m")));
-
++#endif
++	}
+ 
  	memset(&client_sock, 0, sizeof(client_sock));
- 	client_sock.sock = socket_pair[0];
-@@ -4367,10 +4429,10 @@ embedded_cleanup:
- 	if (have_original_cwd && chdir(original_cwd) != 0)
- 		rc = rc == 0 ? -1 : rc;
-
--	if (socket_pair[1] >= 0)
--		close(socket_pair[1]);
--	if (socket_pair[0] >= 0 && MyProcPort == NULL)
--		close(socket_pair[0]);
-+	if (socket_pair[1] != PGINVALID_SOCKET)
-+		closesocket(socket_pair[1]);
-+	if (socket_pair[0] != PGINVALID_SOCKET && MyProcPort == NULL)
-+		closesocket(socket_pair[0]);
-
- 	if (rc == 0 && exit_guard.code != 0)
- 		rc = exit_guard.code;
+ 	client_sock.sock = lifecycle->socket_pair[0];
+@@ -4464,10 +4553,31 @@ embedded_cleanup:
+ 		lifecycle->rc = lifecycle->rc == 0 ? -1 : lifecycle->rc;
+ #endif
+ 
+-	if (lifecycle->socket_pair[1] >= 0)
+-		close(lifecycle->socket_pair[1]);
+-	if (lifecycle->socket_pair[0] >= 0)
+-		close(lifecycle->socket_pair[0]);
++	/* pq_init owns a session wait set that process exit normally reclaims. */
++	if (lifecycle->entrypoint_admitted && FeBeWaitSet != NULL)
++	{
++		FreeWaitEventSet(FeBeWaitSet);
++		FeBeWaitSet = NULL;
++	}
++
++	if (lifecycle->socket_pair[1] != PGINVALID_SOCKET)
++	{
++		closesocket(lifecycle->socket_pair[1]);
++		lifecycle->socket_pair[1] = PGINVALID_SOCKET;
++	}
++	if (lifecycle->socket_pair[0] != PGINVALID_SOCKET)
++	{
++		closesocket(lifecycle->socket_pair[0]);
++		lifecycle->socket_pair[0] = PGINVALID_SOCKET;
++	}
++#ifdef WIN32
++	if (lifecycle->winsock_started)
++	{
++		if (WSACleanup() == SOCKET_ERROR && lifecycle->rc == 0)
++			lifecycle->rc = -1;
++		lifecycle->winsock_started = false;
++	}
++#endif
+ 
+ 	result = lifecycle->rc;
+ 	free(lifecycle);

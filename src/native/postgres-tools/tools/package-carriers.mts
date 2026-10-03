@@ -108,7 +108,7 @@ function stageLiboliphauntToolsNpmFacade(version) {
     path.join(LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_ROOT, 'index.mts'),
     path.join(stage, 'index.js'),
   );
-  for (const descriptor of ['index.d.ts']) {
+  for (const descriptor of ['index.d.ts', 'output-capture.mjs']) {
     copyFileSync(
       path.join(LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_ROOT, descriptor),
       path.join(stage, descriptor),
@@ -164,6 +164,7 @@ export function liboliphauntToolsNpmTarballs(
     requiredMembers: [
       'package/index.js',
       'package/index.d.ts',
+      'package/output-capture.mjs',
       ...releaseNoticeRows({ profile: 'source-sdk' }).map((row) => `package/${row.member}`),
     ],
   });

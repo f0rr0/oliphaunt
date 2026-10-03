@@ -103,11 +103,13 @@ printf 'liboliphaunt host target: %s\nliboliphaunt work root: %s\n' "$target" "$
 
 msvc_env_file=''
 cluster_root=''
+process_root=''
 remove_icu=0
 smoke_failure_root=''
 cleanup() {
   [ -z "$msvc_env_file" ] || rm -f "$msvc_env_file"
   [ -z "$cluster_root" ] || rm -rf "$cluster_root"
+  [ -z "$process_root" ] || rm -rf "$process_root"
   [ "$remove_icu" = 0 ] || rm -rf "$install_dir/share/icu"
   [ -z "$smoke_failure_root" ] || printf 'native smoke root: %s\n' "$smoke_failure_root" >&2
   return 0
@@ -207,6 +209,22 @@ require_file "$archive_fixture"
 for _attempt in 1 2; do
   "$bin_dir/liboliphaunt_smoke$exe_suffix" "$(native_path "$smoke_root/pgdata")" "$(native_path "$install_dir")" "$(native_path "$archive_fixture")"
 done
+# Process-global signal and cwd probes require Linux and run in separate
+# processes because terminal Direct close consumes that process's backend.
+if [ "$platform" = linux ]; then
+  module_dir="${OLIPHAUNT_EMBEDDED_MODULE_DIR:-$library_dir/modules}"
+  compile smoke liboliphaunt_signal_boundary
+  compile smoke liboliphaunt_cwd_boundary
+  process_root="$(mktemp -d "$work_root/process-boundary.XXXXXX")"
+  mkdir "$process_root/database"
+  cp -R "$smoke_root/pgdata" "$process_root/database/pgdata"
+  bun src/native/runtime/tools/native-smoke-data.mts managed-root "$process_root/database"
+  "$bin_dir/liboliphaunt_signal_boundary" "$process_root/database/pgdata" "$install_dir" "$module_dir"
+  for mode in direct startup-fatal early-startup-fatal; do
+    probe_cwd="$(mktemp -d "$process_root/cwd.XXXXXX")"
+    (cd "$probe_cwd" && "$bin_dir/liboliphaunt_cwd_boundary" "$mode" "$process_root/database/pgdata" "$install_dir" "$module_dir")
+  done
+fi
 smoke_failure_root=''
 [ -n "$root_arg" ] || rm -rf "$smoke_root"
 [ "$cluster_seeds" = 1 ] || exit 0
@@ -243,5 +261,12 @@ for _attempt in 1 2; do
   ICU_DATA=/ambient/unverified-icu OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY=1 \
     "$bin_dir/liboliphaunt_cluster_seed_smoke$exe_suffix" "$(native_path "$cluster_root/standard-icu-import/pgdata")" "$(native_path "$install_dir")" \
     "SELECT pg_import_system_collations('pg_catalog'); SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_collation WHERE collname LIKE '%-x-icu') THEN 'OLIPHAUNT_ICU_IMPORT_OK' ELSE 'OLIPHAUNT_ICU_IMPORT_MISSING' END" OLIPHAUNT_ICU_IMPORT_OK
+done
+for fsync in on off; do
+  durability_args=()
+  [ "$fsync" != on ] || durability_args=(fsync=on)
+  ICU_DATA=/ambient/unverified-icu OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY=1 \
+    "$bin_dir/liboliphaunt_cluster_seed_smoke$exe_suffix" "$(native_path "$cluster_root/standard-icu-import/pgdata")" "$(native_path "$install_dir")" \
+    "SELECT 'native-fsync-' || current_setting('fsync')" "native-fsync-$fsync" ${durability_args[@]+"${durability_args[@]}"}
 done
 printf 'native standard and ICU cluster seeds passed open, catalog, close, and reopen qualification\n' >&2

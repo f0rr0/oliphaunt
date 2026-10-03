@@ -58,11 +58,11 @@ function copyTree(source, destination) {
   });
 }
 
-export function postgresSourceFingerprint() {
+export function postgresSourceFingerprint(root = ROOT) {
   const { postgresql } = Bun.TOML.parse(
-    readFileSync(path.join(ROOT, 'src/third-party/postgres/source.toml'), 'utf8'),
+    readFileSync(path.join(root, 'src/third-party/postgres/source.toml'), 'utf8'),
   );
-  const patches = ROOT;
+  const patches = root;
   const series = 'src/wasix/runtime/postgres/series';
   const names = readFileSync(path.join(patches, series), 'utf8')
     .split(/\r?\n/)
@@ -80,7 +80,10 @@ export function postgresSourceFingerprint() {
       ),
     'invalid PostgreSQL patch series',
   );
-  const hashes = [series, ...names]
+  const inputs = readFileSync(path.join(root, 'src/wasix/runtime/postgres/source-inputs'), 'utf8')
+    .split(/\r?\n/)
+    .filter((line) => line && !line.startsWith('#'));
+  const hashes = [...inputs, ...names]
     .map(
       (name) =>
         sha256(readFileSync(path.join(patches, name), 'utf8').replaceAll('\r\n', '\n')) + '\n',
