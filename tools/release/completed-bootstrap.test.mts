@@ -47,10 +47,10 @@ const run = {
   head_sha: '3'.repeat(40),
 };
 
-test('completed bootstrap discovery requires canonical successful main workflow origin', () => {
-  assert.equal(isCompletedMainRelease(run, repo), true);
+test('completed bootstrap discovery requires canonical completed main workflow origin', () => {
+  for (const conclusion of ['success', 'failure', 'cancelled'])
+    assert.equal(isCompletedMainRelease({ ...run, conclusion }, repo), true);
   for (const change of [
-    { conclusion: 'failure' },
     { status: 'in_progress' },
     { event: 'pull_request' },
     { head_branch: 'other' },
@@ -63,7 +63,7 @@ test('completed bootstrap discovery requires canonical successful main workflow 
     assert.equal(isCompletedMainRelease({ ...run, ...change }, repo), false);
 });
 
-test('new publisher reuses a completed older bootstrap, rejecting incomplete, corrupt, and wrong evidence', async () => {
+test('new publisher recovers successful bootstrap from failed release, rejecting failed bootstrap and wrong evidence', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'completed-bootstrap-'));
   const destination = path.join(root, 'ledger');
   let mode = 'complete';
@@ -76,7 +76,24 @@ test('new publisher reuses a completed older bootstrap, rejecting incomplete, co
     size_in_bytes: 42,
   };
   const dependencies = {
-    list: (endpoint) => (endpoint.includes('/artifacts') ? [artifact] : [run]),
+    list: (endpoint) => {
+      if (endpoint.includes('/artifacts')) return [artifact];
+      if (endpoint.includes('/jobs'))
+        return [
+          {
+            name: 'Bootstrap registry identities',
+            conclusion:
+              endpoint.includes(`/runs/${run.id + 1}/`) || mode === 'failed-bootstrap'
+                ? 'failure'
+                : 'success',
+          },
+        ];
+      assert.match(endpoint, /status=completed/u);
+      return [
+        { ...run, id: run.id + 1, conclusion: 'failure' },
+        { ...run, conclusion: 'failure' },
+      ];
+    },
     download: (observed, envelope, directory) => {
       assert.equal(observed.id, run.id);
       assert.equal(envelope.id, artifact.id);
@@ -116,7 +133,7 @@ test('new publisher reuses a completed older bootstrap, rejecting incomplete, co
     },
   };
   async function restore() {
-    const stage = path.join(root, 'stage');
+    const stage = path.join(root, 'scratch', 'ledger');
     try {
       const selected = await discoverCompletedBootstrap({ repo, lock, stage }, dependencies);
       return installCompletedBootstrap({
@@ -144,6 +161,7 @@ test('new publisher reuses a completed older bootstrap, rejecting incomplete, co
     }).checkpointDigest;
     for (const [value, pattern] of [
       ['incomplete', /incomplete/u],
+      ['failed-bootstrap', /no completed main bootstrap/u],
       ['corrupt', /digest mismatch/u],
       ['wrong-lock', /no completed main bootstrap/u],
       ['wrong-source', /not bound/u],

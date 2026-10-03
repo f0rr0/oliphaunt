@@ -2,7 +2,12 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promoteDirectory, removeTemporaryPath } from '../../tools/packaging/atomic-directory.mts';
+import {
+  copyDirectoryTree,
+  createSiblingStage,
+  promoteDirectory,
+  removeTemporaryPath,
+} from '../../tools/packaging/atomic-directory.mts';
 import { loadBootstrapLedger } from '../../tools/release/bootstrap-ledger.mts';
 import { requestGithubPages } from '../../tools/release/github-read.mts';
 import { assertPublicationChanges } from '../../tools/release/publication-controller.mts';
@@ -16,7 +21,6 @@ export function isCompletedMainRelease(run, repo) {
     Number.isSafeInteger(run?.id) &&
     run.id > 0 &&
     run.status === 'completed' &&
-    run.conclusion === 'success' &&
     run.event === 'workflow_dispatch' &&
     run.head_branch === 'main' &&
     run.path === '.github/workflows/release.yml' &&
@@ -43,16 +47,7 @@ export async function discoverCompletedBootstrap(
   { repo, lock, stage },
   {
     list = requestGithubPages,
-    download = async (run, artifact, stage) => {
-      const jobs = await requestGithubPages(
-        `repos/${repo}/actions/runs/${run.id}/jobs?filter=latest`,
-        { itemsField: 'jobs' },
-      );
-      const gates = jobs.filter((job) => job.name === 'Bootstrap registry identities');
-      if (gates.length !== 1 || gates[0].conclusion !== 'success')
-        throw new Error(
-          `completed bootstrap run ${run.id} requires exactly one successful bootstrap job`,
-        );
+    download = async (_run, artifact, stage) => {
       const downloaded = await downloadBootstrapArtifact(repo, artifact, stage);
       try {
         promoteDirectory(downloaded, stage);
@@ -66,7 +61,7 @@ export async function discoverCompletedBootstrap(
     throw new Error('completed bootstrap must come from the canonical repository');
   const runs = (
     await list(
-      `repos/${repo}/actions/workflows/release.yml/runs?event=workflow_dispatch&status=success&branch=main`,
+      `repos/${repo}/actions/workflows/release.yml/runs?event=workflow_dispatch&status=completed&branch=main`,
       {
         itemsField: 'workflow_runs',
         label: 'completed main Release runs',
@@ -87,6 +82,12 @@ export async function discoverCompletedBootstrap(
       throw new Error(`run ${run.id} repeats the completed bootstrap artifact`);
     if (artifacts[0].workflow_run?.id !== undefined && artifacts[0].workflow_run.id !== run.id)
       throw new Error(`bootstrap artifact does not belong to run ${run.id}`);
+    // Bootstrap can finish successfully before a later publication job fails.
+    const jobs = await list(`repos/${repo}/actions/runs/${run.id}/jobs?filter=latest`, {
+      itemsField: 'jobs',
+    });
+    const gates = jobs.filter((job) => job.name === 'Bootstrap registry identities');
+    if (gates.length !== 1 || gates[0].conclusion !== 'success') continue;
     mkdirSync(stage, { recursive: true });
     let selected = false;
     try {
@@ -117,7 +118,13 @@ export function installCompletedBootstrap({
     lock.products.map(({ id }) => id),
     { requireComplete: true },
   );
-  promoteDirectory(stage, destination);
+  const ready = createSiblingStage(destination, 'restore');
+  try {
+    copyDirectoryTree(stage, ready);
+    promoteDirectory(ready, destination);
+  } finally {
+    removeTemporaryPath(ready);
+  }
   return run.id;
 }
 
