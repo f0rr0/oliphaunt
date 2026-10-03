@@ -269,7 +269,7 @@ for _attempt in 1 2; do
 done
 for fsync in on off; do
   durability_args=()
-  [ "$fsync" != on ] || durability_args=(fsync=on)
+  [ "$fsync" != off ] || durability_args=(fsync=off)
   ICU_DATA=/ambient/unverified-icu OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY=1 \
     "$bin_dir/liboliphaunt_cluster_seed_smoke$exe_suffix" "$(native_path "$cluster_root/standard-icu-import/pgdata")" "$(native_path "$install_dir")" \
     "SELECT 'native-fsync-' || current_setting('fsync')" "native-fsync-$fsync" ${durability_args[@]+"${durability_args[@]}"}
