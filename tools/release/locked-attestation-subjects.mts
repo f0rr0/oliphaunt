@@ -8,10 +8,10 @@ import {
   loadPublicationLock,
   lockedProductArtifactPaths,
 } from './publication-lock.mts';
-import { ROOT, compareText } from './release-graph.mts';
+import { compareText, ROOT } from './release-graph.mts';
 
 const ATTESTED_ROLES = Object.freeze(['github-release-asset', 'github-release-metadata']);
-export const EXTENSION_ATTESTATION_SHARD_COUNT = 2;
+export const RELEASE_ATTESTATION_SHARD_COUNT = 2;
 export const MAX_ATTESTATION_SUBJECTS_PER_BUNDLE = 1_024;
 
 function error(message) {
@@ -54,9 +54,6 @@ export function lockedAttestationSubjects(lock, products) {
     const productSubjects = ATTESTED_ROLES.flatMap((role) =>
       lockedProductArtifactPaths(lock, product, { role }),
     );
-    if (productSubjects.length === 0) {
-      throw error(`${product} has no frozen GitHub release asset or metadata subjects`);
-    }
     for (const subject of productSubjects) {
       if (subject.type !== 'file') {
         throw error(`${product}:${subject.artifact.id} attestation subject must be a regular file`);
@@ -99,7 +96,7 @@ export function lockedAttestationSubjectShards(
   products,
   {
     maxSubjectsPerShard = MAX_ATTESTATION_SUBJECTS_PER_BUNDLE,
-    shardCount = EXTENSION_ATTESTATION_SHARD_COUNT,
+    shardCount = RELEASE_ATTESTATION_SHARD_COUNT,
   } = {},
 ) {
   if (!Number.isSafeInteger(shardCount) || shardCount <= 0) {
@@ -142,12 +139,10 @@ export function lockedAttestationSubjectShards(
 export function githubOutputForAttestationSubjectShards(shards) {
   if (
     !Array.isArray(shards) ||
-    shards.length !== EXTENSION_ATTESTATION_SHARD_COUNT ||
+    shards.length !== RELEASE_ATTESTATION_SHARD_COUNT ||
     shards.some((shard) => !Array.isArray(shard))
   ) {
-    throw error(
-      `GitHub output requires exactly ${EXTENSION_ATTESTATION_SHARD_COUNT} subject shards`,
-    );
+    throw error(`GitHub output requires exactly ${RELEASE_ATTESTATION_SHARD_COUNT} subject shards`);
   }
   if (shards.some((shard) => shard.length > MAX_ATTESTATION_SUBJECTS_PER_BUNDLE)) {
     throw error(
@@ -169,7 +164,7 @@ export function githubOutputForAttestationSubjectShards(shards) {
   const subjects = new Set(flattened);
   for (const [index, shard] of shards.entries()) {
     const number = index + 1;
-    let delimiter = `OLIPHAUNT_EXTENSION_ATTESTATION_SUBJECTS_${number}`;
+    let delimiter = `OLIPHAUNT_RELEASE_ATTESTATION_SUBJECTS_${number}`;
     while (subjects.has(delimiter)) delimiter += '_END';
     lines.push(
       `count_${number}=${shard.length}`,

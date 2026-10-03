@@ -1,21 +1,52 @@
 #!/usr/bin/env bun
 
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import assert from 'node:assert/strict';
 
 import {
   githubOutputForAttestationSubjectShards,
-  lockedAttestationSubjects,
   lockedAttestationSubjectShards,
+  lockedAttestationSubjects,
 } from './locked-attestation-subjects.mts';
-import { ROOT, compareText } from './release-graph.mts';
+import { compareText, ROOT } from './release-graph.mts';
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
+
+test('the workflow uses exact full-selection subjects for every attestation batch', async () => {
+  const workflow = Bun.YAML.parse(
+    await readFile(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
+  );
+  const steps = workflow.jobs.publish.steps;
+  const resolver = steps.find((step) => step.id === 'release_attestation_subjects');
+  assert.match(resolver.env.PRODUCTS_JSON, /release_plan\)\.products_json/);
+  assert.match(resolver.run, /--products-json "\$PRODUCTS_JSON"/);
+  const actions = steps.filter((step) => step.uses?.startsWith('actions/attest-build-provenance@'));
+  assert.equal(actions.length, 2);
+  for (const [index, action] of actions.entries()) {
+    assert.equal(
+      action.with['subject-path'],
+      '${{ steps.release_attestation_subjects.outputs.paths_' + (index + 1) + ' }}',
+    );
+    assert.equal(
+      action.if,
+      '${{ steps.release_attestation_subjects.outputs.nonempty_' + (index + 1) + " == 'true' }}",
+    );
+  }
+  const receipt = steps.find((step) => step.id === 'freeze_github_evidence');
+  assert.equal(
+    receipt.env.RELEASE_ATTESTATION_BUNDLE_1,
+    '${{ steps.attest_release_1.outputs.bundle-path }}',
+  );
+  assert.equal(
+    receipt.env.RELEASE_ATTESTATION_BUNDLE_2,
+    '${{ steps.attest_release_2.outputs.bundle-path }}',
+  );
+});
 
 async function fixture(productCounts) {
   const root = path.join(
@@ -129,10 +160,10 @@ test('a one-subject partial release skips the empty shard through explicit count
       /unique safe paths/u,
     );
     const delimiterCollision = githubOutputForAttestationSubjectShards([
-      ['OLIPHAUNT_EXTENSION_ATTESTATION_SUBJECTS_1'],
+      ['OLIPHAUNT_RELEASE_ATTESTATION_SUBJECTS_1'],
       [],
     ]);
-    assert.match(delimiterCollision, /^paths_1<<OLIPHAUNT_EXTENSION_ATTESTATION_SUBJECTS_1_END$/mu);
+    assert.match(delimiterCollision, /^paths_1<<OLIPHAUNT_RELEASE_ATTESTATION_SUBJECTS_1_END$/mu);
     assert.throws(
       () =>
         githubOutputForAttestationSubjectShards([
@@ -141,6 +172,29 @@ test('a one-subject partial release skips the empty shard through explicit count
         ]),
       /1024-subject per-bundle limit/u,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('mixed products cover every frozen GitHub asset and skip products with empty asset sets', async () => {
+  const counts = {
+    'database-resources': 3,
+    'postgres-tools-native': 2,
+    'postgres-tools-wasix': 2,
+    'oliphaunt-swift': 1,
+    'oliphaunt-rust': 0,
+  };
+  const { lock, root } = await fixture(counts);
+  try {
+    const products = Object.keys(counts);
+    const shards = lockedAttestationSubjectShards(lock, products);
+    assert.deepEqual(
+      shards.flat().sort(compareText),
+      lock.productArtifacts.map((a) => a.path).sort(compareText),
+    );
+    assert.deepEqual(lockedAttestationSubjectShards(lock, ['oliphaunt-rust']), [[], []]);
+    assert.match(githubOutputForAttestationSubjectShards([[], []]), /^total_count=0$/mu);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

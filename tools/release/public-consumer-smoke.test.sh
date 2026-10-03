@@ -61,3 +61,43 @@ status=0
 state="$(ps -o stat= -p "$pid")" || status=$?
 [[ "$status" == 1 || "$state" == Z* || -z "$state" ]]
 echo 'Public consumers: clean Cargo context, npm resolution, no retry on failure and descendant timeout passed'
+
+# Exercise the coordinator too: --surface alone never drains its PID arrays.
+coordinator="$scratch/coordinator"
+mkdir -p "$coordinator/tools/release" "$coordinator/tools/dev" "$coordinator/bin"
+cp tools/release/public-consumer-smoke.sh "$coordinator/tools/release/"
+export PUBLIC_PROBE_COORDINATOR="$coordinator" PUBLIC_PROBE_BASH="$BASH"
+cat > "$coordinator/tools/dev/bun.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$2" in
+  --prepare)
+    [[ "${4:-}" != --help ]] || exit 0
+    printf '{"deadlineMilliseconds":%s,"plan":{"surfaces":[{"ecosystem":"cargo"},{"ecosystem":"npm"},{"ecosystem":"maven"}]}}\n' "$(( ($(date +%s) + 60) * 1000 ))" > "$3/context.json" ;;
+  --report)
+    for surface in cargo npm maven github; do [[ -f "$PUBLIC_PROBE_COORDINATOR/$surface" ]]; done
+    touch "$PUBLIC_PROBE_COORDINATOR/report" ;;
+  *) exit 99 ;;
+esac
+SH
+cat > "$coordinator/bin/bash" <<'SH'
+#!/bin/bash
+set -euo pipefail
+if [[ "$1" == "$PUBLIC_PROBE_COORDINATOR/tools/release/public-consumer-smoke.sh" && "${2:-}" == --surface ]]; then
+  [[ "${FAIL_PUBLIC_PROBE:-}" != "$4" ]] || exit 7
+  sleep 0.1
+  touch "$PUBLIC_PROBE_COORDINATOR/$4"
+  exit 0
+fi
+exec "$PUBLIC_PROBE_BASH" "$@"
+SH
+chmod +x "$coordinator/bin/bash"
+unset FAIL_PUBLIC_PROBE HANG_PUBLIC_PROBE
+PATH="$coordinator/bin:$PATH" "$PUBLIC_PROBE_BASH" "$coordinator/tools/release/public-consumer-smoke.sh" --help
+PATH="$coordinator/bin:$PATH" "$PUBLIC_PROBE_BASH" "$coordinator/tools/release/public-consumer-smoke.sh"
+[[ -f "$coordinator/report" ]]
+rm "$coordinator/report"
+status=0
+FAIL_PUBLIC_PROBE=npm PATH="$coordinator/bin:$PATH" "$PUBLIC_PROBE_BASH" "$coordinator/tools/release/public-consumer-smoke.sh" || status=$?
+[[ "$status" == 7 && ! -f "$coordinator/report" ]]
+echo 'Public consumer coordinator: help, all probes drained, report after success, and failed probe blocks report passed'

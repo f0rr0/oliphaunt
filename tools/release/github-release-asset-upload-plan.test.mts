@@ -1,18 +1,36 @@
 import { describe, expect, test } from 'bun:test';
-
+import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from './github-content-write-pacer.mts';
 import {
   concurrentGithubReleaseAssetUploadPlan,
   GITHUB_RELEASE_ASSET_SELECTION_VERIFY_MS,
   GITHUB_RELEASE_ASSET_WAVE_OVERHEAD_MS,
   githubReleaseAssetUploadWaveWindowMs,
+  MAX_GITHUB_RELEASE_ASSET_HANDOFF_WINDOW_MS,
 } from './github-release-asset-upload-plan.mts';
-import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from './github-content-write-pacer.mts';
 import {
   DEFAULT_GITHUB_RELEASE_ASSET_UPLOAD_TIMEOUT_MS,
   GITHUB_RELEASE_ASSET_UPLOAD_SNAPSHOT_RESERVE_MS,
 } from './upload_github_release_assets.mts';
 
 describe('bounded concurrent GitHub release asset upload plan', () => {
+  test('admits the complete frozen 27-product release within the workflow upload window', () => {
+    // Counts from the approved candidate: 17 asset-backed and 10 empty products.
+    const counts = [
+      31, 22, 19, 13, 13, 13, 13, 13, 12, 10, 6, 5, 5, 5, 5, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    const selection = new Map(counts.map((count, index) => [`product-${index}`, count]));
+    const plan = concurrentGithubReleaseAssetUploadPlan(selection);
+    expect(plan.assetCount).toBe(191);
+    expect(plan.productCount).toBe(17);
+    expect(plan.waves.length).toBe(4);
+    expect(plan.totalWindowMs).toBeLessThanOrEqual(MAX_GITHUB_RELEASE_ASSET_HANDOFF_WINDOW_MS);
+    expect(() =>
+      concurrentGithubReleaseAssetUploadPlan(selection, {
+        maxHandoffWindowMs: 95 * 60_000,
+      }),
+    ).toThrow(/exceeding/u);
+  });
+
   test('uses global pacing plus the longest sequential transport lane', () => {
     const rows = [
       { product: 'large', assetCount: 8 },
