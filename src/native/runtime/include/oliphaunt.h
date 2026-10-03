@@ -85,7 +85,7 @@ typedef struct OliphauntConfig {
     uint64_t flags;
     /*
      * Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected.
-     * Embedded startup defaults fsync to off; use fsync=on for crash safety.
+     * PostgreSQL fsync defaults to on; explicit fsync=off sacrifices crash safety.
      */
     const char *const *startup_args;
     size_t startup_arg_count;
