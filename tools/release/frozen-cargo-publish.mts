@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
+import { CRATES_IO_NEW_CRATE_REFILL_SECONDS } from './crates-io-bootstrap-capacity.mts';
 import { retryAfterSeconds } from './registry-http-retry.mts';
 import { RegistryPublicationDeferredError } from './registry-publication-deferral.mts';
 
@@ -423,12 +424,12 @@ export async function publishFrozenCargoCrate({
       );
     }
 
-    // crates.io checks its leaky bucket before storing a rejected upload and
-    // returns the next permitted time in Retry-After. That explicit 429 is the
-    // only failed mutation response that is safe to replay automatically. All
-    // transport and other HTTP failures remain ambiguous and return to the
-    // caller for an immutable-version registry check.
-    const retryAfter = retryAfterSeconds(response.headers, now);
+    // Only an explicit 429 proves rejection before storage. Retry-After is
+    // optional (RFC 6585); when absent, wait the documented new-crate refill.
+    // Transport and other HTTP failures still require immutable reconciliation.
+    const retryAfter = response.headers.has('retry-after')
+      ? retryAfterSeconds(response.headers, now)
+      : CRATES_IO_NEW_CRATE_REFILL_SECONDS;
     if (retryAfter === null || !Number.isFinite(retryAfter)) {
       throw error(
         `registry rate limited ${identity} without a valid Retry-After header${detail ? `: ${detail}` : ''}`,
@@ -439,14 +440,14 @@ export async function publishFrozenCargoCrate({
       throw new RegistryPublicationDeferredError({
         reason: 'rate-limit',
         notBeforeEpochSeconds: Math.ceil((now + delayMs) / 1000),
-        context: `crates.io rejected ${identity} ${rateLimitAttempt + 1} times with valid Retry-After headers`,
+        context: `crates.io rejected ${identity} ${rateLimitAttempt + 1} times with HTTP 429`,
       });
     }
     if (deadlineEpochMs === undefined && retryAfter > MAX_RATE_LIMIT_WAIT_SECONDS) {
       throw new RegistryPublicationDeferredError({
         reason: 'rate-limit',
         notBeforeEpochSeconds: Math.ceil((now + delayMs) / 1000),
-        context: `crates.io rejected ${identity} with a valid Retry-After beyond the bounded in-process wait`,
+        context: `crates.io rejected ${identity} with a retry delay beyond the bounded in-process wait`,
       });
     }
     if (deadlineEpochMs !== undefined && now + delayMs + DEADLINE_RESERVE_MS >= deadlineEpochMs) {

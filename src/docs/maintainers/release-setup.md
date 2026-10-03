@@ -282,10 +282,12 @@ The publication catalog defines stable carrier topology; the frozen publication 
    and revoke fresh OIDC-exchanged tokens for at most 20 Cargo carriers and 20
    minutes per batch.
 
-Crates.io returns `429` with an HTTP-date `Retry-After` when a publish bucket is
-empty. The frozen publisher retries only that explicit non-mutating rejection,
+Crates.io normally returns `429` with an HTTP-date `Retry-After` when a publish
+bucket is empty. The frozen publisher retries only that explicit rejection,
 using the exact same locked bytes and only while the bounded mutation deadline
-can accommodate the server delay. Ambiguous transport and other server errors
+can accommodate the delay. When the header is absent, it waits the documented
+ten-minute new-crate refill; a malformed header still stops publication.
+Ambiguous transport and other server errors
 are never blindly replayed: registry state is checked, matching bytes resume,
 and the maintainer uses GitHub's rerun on the original Release run.
 
@@ -324,6 +326,10 @@ publish before their aggregator, and are not independent release products.
    by a different account. Organization permissions do not grant package
    publishing access. Confirm the package/scopes grant before retrying; do not
    discover it through a sacrificial package mutation.
+   Also verify the token's account with `npm whoami` and check write access with
+   `npm access list collaborators @oliphaunt/icu --json`. The personal
+   `@oliphaunt` scope belongs to npm user `oliphaunt`; a token created as
+   `f0rr0` cannot publish there without the corresponding package permissions.
 3. For this operator-side configuration step, use npm CLI 11.15.0 or newer and
    an npm authentication method supported by `npm trust`; the account must have
    2FA and every package must already exist. The release workflow separately
