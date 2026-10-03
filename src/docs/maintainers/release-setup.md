@@ -313,14 +313,17 @@ publish before their aggregator, and are not independent release products.
    versions. Immediately before that run, create `NPM_BOOTSTRAP_TOKEN` as a
    short-lived **granular access token** owned by an actor whose npm account has
    2FA enabled and write access to `@oliphaunt`. Its package/scopes permission
-   must be **Read and write**, its selected scope must explicitly include
+   must be **Read and write (publish and stage)**, its selected scope must explicitly include
    `@oliphaunt`, and **Bypass two-factor authentication** must be enabled.
    Limit its lifetime to the bootstrap window, store it only in the
    `release-bootstrap` environment, and revoke it as soon as the identity chain
    seals. An ordinary token, a read-only token, an organization-only grant, or
    a granular token without 2FA bypass may authenticate successfully but will
-   fail the noninteractive first publish with `EOTP`; do not discover that
-   distinction through a sacrificial package mutation.
+   fail the noninteractive first publish. `EOTP` indicates a missing 2FA bypass;
+   a publish `E404` can indicate missing package write access or a token owned
+   by a different account. Organization permissions do not grant package
+   publishing access. Confirm the package/scopes grant before retrying; do not
+   discover it through a sacrificial package mutation.
 3. For this operator-side configuration step, use npm CLI 11.15.0 or newer and
    an npm authentication method supported by `npm trust`; the account must have
    2FA and every package must already exist. The release workflow separately

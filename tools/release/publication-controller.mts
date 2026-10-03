@@ -26,6 +26,7 @@ const CONTROL_FILES = new Set([
   'tools/release/bootstrap-registry-reconciliation.mts',
   'tools/release/release-publish.mts',
   'tools/release/frozen-cargo-publish.mts',
+  'tools/release/cargo-upload-reconciliation.mts',
   'tools/release/frozen-npm-publish.mts',
   'tools/release/verify_github_release_attestations.mts',
   'tools/release/verify-github-release-attestations.sh',
