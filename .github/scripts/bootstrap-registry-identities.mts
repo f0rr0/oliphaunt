@@ -155,13 +155,11 @@ try {
 // disappeared is a hard pre-mutation failure.
 let checkpoint;
 let reconciliation;
-let startingCompletedIds;
 let scopedPlan;
 let scopedIds;
 let capacityAssessment;
 try {
   checkpoint = loadBootstrapLedger(bootstrapLedger, lock, products, { allowEmpty: true });
-  startingCompletedIds = new Set(checkpoint?.receipts.map(({ id }) => id) ?? []);
   reconciliation = reconcileBootstrapRegistryState({
     plan,
     cargoInventory,
@@ -278,7 +276,8 @@ if (args[0] === '--prepare') {
     admittedPlan,
     scopedPlan,
     capacityAssessment,
-    startingCompletedIds: [...startingCompletedIds],
+    // Recovered public receipts precede this invocation's admitted mutations.
+    startingCompletedIds: checkpoint.receipts.map(({ id }) => id),
     publicCarrierIds: reconciliation.publicCarrierIds,
     dependencies: bootstrapPublicationSchedule(admittedPlan, reconciliation.publicCarrierIds),
   };
