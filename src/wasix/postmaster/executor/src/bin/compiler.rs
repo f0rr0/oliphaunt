@@ -108,10 +108,10 @@ fn parse() -> Result<Option<Options>> {
 
 fn product_compiler() -> LLVM {
     let mut compiler = LLVM::new();
-    // Retain main's policy; strict shared-memory compilation is a separate change.
+    // Postmaster shares guest memory across concurrently running threads.
     compiler
         .opt_level(LLVMOptLevel::Aggressive)
-        .non_volatile_memops(true)
+        .non_volatile_memops(false)
         .readonly_funcref_table(true);
     compiler
 }
@@ -213,11 +213,11 @@ fn verify_aot(module_path: PathBuf, artifact_path: PathBuf) -> Result<()> {
 }
 
 #[test]
-fn product_compiler_uses_main_memory_identity() {
-    let relaxed_id = Box::new(product_compiler()).compiler().deterministic_id();
-    let mut strict = product_compiler();
-    strict.non_volatile_memops(false);
-    let strict_id = Box::new(strict).compiler().deterministic_id();
+fn product_compiler_uses_strict_memory_identity() {
+    let strict_id = Box::new(product_compiler()).compiler().deterministic_id();
+    let mut relaxed = product_compiler();
+    relaxed.non_volatile_memops(true);
+    let relaxed_id = Box::new(relaxed).compiler().deterministic_id();
     assert!(strict_id.contains("-nv0-"));
     assert!(relaxed_id.contains("-nv1-"));
     assert_ne!(strict_id, relaxed_id);

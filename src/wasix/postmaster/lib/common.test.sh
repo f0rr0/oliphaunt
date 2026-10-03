@@ -817,7 +817,7 @@ write_postmaster_executor_receipt
 default_cache_dir="$(fresh_wasmer_cache_dir "$FRESH_UPSTREAM_WASMER_BIN")"
 default_cache_bucket="$(fresh_wasmer_compiler_cache_bucket llvm aggressive 21)"
 [ -n "$default_cache_dir" ]
-[ "$default_cache_bucket" = llvm-opta-v21 ]
+[ "$default_cache_bucket" = llvm-opta-ro_ftable-v21 ]
 
 mv "$WASMER_BUILD_RECEIPT" "$test_root/receipt.saved"
 expect_failure fresh_require_patched_wasmer "$FRESH_UPSTREAM_WASMER_BIN"
