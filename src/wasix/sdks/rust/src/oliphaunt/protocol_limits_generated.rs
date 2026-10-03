@@ -4,3 +4,7 @@
 pub(crate) const BUFFERED_PROTOCOL_OUTPUT_LIMIT_BYTES: usize = 2147483647;
 // Maximum callback slice; independent of socket read and COPY frame sizes.
 pub(crate) const PROTOCOL_CALLBACK_CHUNK_BYTES: usize = 65536;
+pub(crate) const PROTOCOL_BUFFERED: i32 = 0;
+pub(crate) const PROTOCOL_STREAM: i32 = 1;
+pub(crate) const PROTOCOL_HYBRID: i32 = 2;
+pub(crate) const PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT: i32 = 3;

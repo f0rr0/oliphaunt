@@ -110,6 +110,7 @@ tasks:
     script: |
       set -e
       node src/wasix/runtime/protocol-contract/generate.mjs --check
+      node --test src/wasix/runtime/protocol-contract/generate.test.mjs
       bash src/wasix/runtime/tools/check-shim-abi.sh
       bash src/wasix/runtime/assets/build/profile_flags.test.sh
       bash src/wasix/runtime/assets/build/verify_wasix_sjlj_artifact.test.sh
@@ -125,6 +126,7 @@ tasks:
       - protocol-contract/**/*
       - /src/wasix/sdks/ts/src/protocol-limits.generated.ts
       - /src/wasix/sdks/rust/src/oliphaunt/protocol_limits_generated.rs
+      - /src/wasix/browser-host/protocol-contract.generated.rs
       - assets/build/profile_flags*
       - assets/build/verify_wasix_sjlj_artifact*
       - /src/third-party/postgres/apply-series*

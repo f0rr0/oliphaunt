@@ -1,10 +1,10 @@
 From: Sid Jain <sid_26@outlook.com>
 Date: Mon, 7 Sep 2026 00:00:00 +0000
-Subject: [PATCH] wasmer-js: stream direct protocol and bound tool capture
+Subject: [PATCH] wasmer-js: stream direct protocol and capture tool output
 
-Add bounded protocol callbacks, direct tool execution and aggregate bounded
+Add bounded protocol callbacks, direct tool execution and complete in-memory
 stdout/stderr capture. The transport follows the shared guest contract and
-preserves owned callback bytes; capture overflow fails instead of returning a
+preserves owned callback bytes; capture failure fails instead of returning a
 partial successful result. These are coupled downstream protocol/tool adapters,
 not a claim that the bundled patch is ready for upstream as one change.
 
@@ -12,15 +12,16 @@ diff --git a/src/lib.rs b/src/lib.rs
 index 6803f8e..d8bee81 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -18,6 +18,7 @@ mod run;
+@@ -18,6 +18,8 @@ mod run;
  mod runtime;
  mod streams;
  mod tasks;
++mod protocol_contract;
 +mod tool_direct;
  mod utils;
  mod wasmer;
  mod ws;
-@@ -33,6 +34,9 @@ pub use crate::{
+@@ -33,6 +35,9 @@ pub use crate::{
      postgres_direct::{instantiate_oliphaunt_direct, OliphauntDirectInstance},
      registry::RegistryConfig,
      run::run_wasix,
@@ -187,13 +188,12 @@ index 2e090d3..3c38b13 100644
  use wasmer::{Instance as WasmerInstance, Store, TypedFunction, Value, WasmTypeList};
  use wasmer_wasix::{
      oliphaunt_direct_memory, Runtime as _, WasiEnvBuilder, WasiError, WasiFunctionEnv,
-@@ -21,6 +22,276 @@ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOp
+@@ -21,6 +22,275 @@ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOp
  const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
  const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
  const STDERR_LIMIT_BYTES: usize = 16 * 1024;
-+const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
-+const PROTOCOL_BUFFERED: i32 = 0;
-+const PROTOCOL_HYBRID: i32 = 2;
++use crate::protocol_contract::{PROTOCOL_CALLBACK_CHUNK_BYTES as PROTOCOL_CHUNK_BYTES,
++    PROTOCOL_BUFFERED, PROTOCOL_HYBRID};
 +
 +thread_local! {
 +    static PROTOCOL_CALLBACK: RefCell<Option<Function>> = const { RefCell::new(None) };
@@ -464,7 +464,7 @@ index 2e090d3..3c38b13 100644
  
  #[derive(Clone, Debug, Default)]
  struct BoundedStderr {
-@@ -203,9 +474,18 @@ pub async fn instantiate_oliphaunt_direct(
+@@ -203,9 +473,18 @@ pub async fn instantiate_oliphaunt_direct(
      options: RunOptions,
  ) -> Result<OliphauntDirectInstance, Error> {
      let stderr = BoundedStderr::default();
@@ -486,7 +486,7 @@ index 2e090d3..3c38b13 100644
  }
  
  #[wasm_bindgen]
-@@ -215,6 +495,8 @@ pub struct OliphauntDirectInstance {
+@@ -215,6 +494,8 @@ pub struct OliphauntDirectInstance {
      store: Store,
      _instance: WasmerInstance,
      _env: WasiFunctionEnv,
@@ -495,7 +495,7 @@ index 2e090d3..3c38b13 100644
      stderr: BoundedStderr,
      guest_memory: JsValue,
      input_reset: TypedFunction<(), i32>,
-@@ -224,6 +506,7 @@ pub struct OliphauntDirectInstance {
+@@ -224,6 +505,7 @@ pub struct OliphauntDirectInstance {
      output_reset: TypedFunction<(), i32>,
      output_len: TypedFunction<(), i32>,
      output_data: TypedFunction<(), i32>,
@@ -503,7 +503,7 @@ index 2e090d3..3c38b13 100644
      set_active: TypedFunction<i32, i32>,
      wasi_start: TypedFunction<(), ()>,
      start_oliphaunt: TypedFunction<(), ()>,
-@@ -254,12 +537,48 @@ impl OliphauntDirectInstance {
+@@ -254,12 +536,48 @@ impl OliphauntDirectInstance {
      /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
      #[wasm_bindgen(js_name = execProtocolRaw)]
      pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
@@ -553,7 +553,7 @@ index 2e090d3..3c38b13 100644
      /// Shut down the embedded lifecycle. This does not consume the JS object.
      pub fn close(&mut self) -> Result<(), Error> {
          match self.close_inner() {
-@@ -270,6 +589,64 @@ impl OliphauntDirectInstance {
+@@ -270,6 +588,64 @@ impl OliphauntDirectInstance {
  }
  
  impl OliphauntDirectInstance {
@@ -618,7 +618,7 @@ index 2e090d3..3c38b13 100644
      fn startup_inner(&mut self, packet: &Uint8Array) -> anyhow::Result<Uint8Array> {
          self.ensure_open()?;
          ensure!(
-@@ -302,7 +679,11 @@ impl OliphauntDirectInstance {
+@@ -302,7 +678,11 @@ impl OliphauntDirectInstance {
          self.take_output_js()
      }
  
@@ -631,7 +631,7 @@ index 2e090d3..3c38b13 100644
          self.ensure_open()?;
          ensure!(
              self.protocol_started,
-@@ -317,6 +698,7 @@ impl OliphauntDirectInstance {
+@@ -317,6 +697,7 @@ impl OliphauntDirectInstance {
          let payload_len = payload.length() as usize;
          let max_attempts = (payload_len / 5).saturating_add(2).max(1);
          let mut attempts = 0usize;
@@ -639,7 +639,7 @@ index 2e090d3..3c38b13 100644
          while self.protocol_input_remaining()? > 0 {
              attempts += 1;
              ensure!(
-@@ -325,6 +707,10 @@ impl OliphauntDirectInstance {
+@@ -325,6 +706,10 @@ impl OliphauntDirectInstance {
              );
              match self.call_main_loop()? {
                  MainLoopOutcome::Processed | MainLoopOutcome::Recovered => {}
@@ -650,7 +650,7 @@ index 2e090d3..3c38b13 100644
                  MainLoopOutcome::InputEnded => {
                      return Err(self.terminal_main_loop_outcome(
                          "PostgresMainLoopOnce reported input end while dispatching buffered protocol input",
-@@ -332,8 +718,10 @@ impl OliphauntDirectInstance {
+@@ -332,8 +717,10 @@ impl OliphauntDirectInstance {
                  }
              }
          }
@@ -663,7 +663,7 @@ index 2e090d3..3c38b13 100644
          self.take_output_js()
      }
  
-@@ -358,6 +746,8 @@ impl OliphauntDirectInstance {
+@@ -358,6 +745,8 @@ impl OliphauntDirectInstance {
          module: WebAssembly::Module,
          module_bytes: Uint8Array,
          options: RunOptions,
@@ -672,7 +672,7 @@ index 2e090d3..3c38b13 100644
          stderr: BoundedStderr,
      ) -> Result<Self, Error> {
          // Direct execution intentionally has no configurable networking or
-@@ -369,7 +759,12 @@ impl OliphauntDirectInstance {
+@@ -369,7 +758,12 @@ impl OliphauntDirectInstance {
              .as_string()
              .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
          let mut builder = WasiEnvBuilder::new(program_name).runtime(runtime.clone());
@@ -686,7 +686,7 @@ index 2e090d3..3c38b13 100644
  
          let module = wasmer::Module::from((module, module_bytes.to_vec()));
          let mut store = Store::new(runtime.engine());
-@@ -395,6 +790,11 @@ impl OliphauntDirectInstance {
+@@ -395,6 +789,11 @@ impl OliphauntDirectInstance {
          let output_reset = typed_export(&mut store, &instance, "oliphaunt_wasix_output_reset")?;
          let output_len = typed_export(&mut store, &instance, "oliphaunt_wasix_output_len")?;
          let output_data = typed_export(&mut store, &instance, "oliphaunt_wasix_output_data")?;
@@ -698,7 +698,7 @@ index 2e090d3..3c38b13 100644
          let set_active = typed_export(&mut store, &instance, "oliphaunt_wasix_set_active")?;
          let wasi_start = typed_export(&mut store, &instance, "_start")?;
          let start_oliphaunt = typed_export(&mut store, &instance, "oliphaunt_wasix_start")?;
-@@ -418,6 +818,8 @@ impl OliphauntDirectInstance {
+@@ -418,6 +817,8 @@ impl OliphauntDirectInstance {
              store,
              _instance: instance,
              _env: env,
@@ -707,7 +707,7 @@ index 2e090d3..3c38b13 100644
              stderr,
              guest_memory,
              input_reset,
-@@ -427,6 +829,7 @@ impl OliphauntDirectInstance {
+@@ -427,6 +828,7 @@ impl OliphauntDirectInstance {
              output_reset,
              output_len,
              output_data,
@@ -720,7 +720,7 @@ new file mode 100644
 index 0000000..fc92239
 --- /dev/null
 +++ b/src/tool_direct.rs
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,588 @@
 +use std::{
 +    cell::RefCell,
 +    error::Error as StdError,
@@ -748,8 +748,7 @@ index 0000000..fc92239
 +};
 +
 +const DEFAULT_PROGRAM_NAME: &str = "wasm";
-+const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
-+const TOOL_OUTPUT_LIMIT_BYTES: usize = 67108864;
++use crate::protocol_contract::PROTOCOL_CALLBACK_CHUNK_BYTES as PROTOCOL_CHUNK_BYTES;
 +
 +#[wasm_bindgen]
 +extern "C" {
@@ -1009,7 +1008,6 @@ index 0000000..fc92239
 +
 +#[derive(Clone, Copy, Debug)]
 +enum CaptureFailure {
-+    LimitExceeded(CaptureStream),
 +    AllocationFailed(CaptureStream),
 +    LockPoisoned,
 +}
@@ -1017,7 +1015,6 @@ index 0000000..fc92239
 +impl CaptureFailure {
 +    fn io_error(self) -> io::Error {
 +        let kind = match self {
-+            Self::LimitExceeded(_) => io::ErrorKind::FileTooLarge,
 +            Self::AllocationFailed(_) => io::ErrorKind::OutOfMemory,
 +            Self::LockPoisoned => io::ErrorKind::Other,
 +        };
@@ -1028,10 +1025,6 @@ index 0000000..fc92239
 +impl fmt::Display for CaptureFailure {
 +    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
 +        match self {
-+            Self::LimitExceeded(stream) => write!(
-+                formatter,
-+                "Oliphaunt WASIX tool {stream} exceeded the {TOOL_OUTPUT_LIMIT_BYTES}-byte aggregate stdout/stderr capture limit"
-+            ),
 +            Self::AllocationFailed(stream) => {
 +                write!(formatter, "Oliphaunt WASIX tool {stream} capture allocation failed")
 +            }
@@ -1048,7 +1041,6 @@ index 0000000..fc92239
 +struct CaptureState {
 +    stdout: Vec<u8>,
 +    stderr: Vec<u8>,
-+    total_bytes: usize,
 +    failure: Option<CaptureFailure>,
 +}
 +
@@ -1068,9 +1060,8 @@ index 0000000..fc92239
 +    }
 +
 +    fn discard_output(&mut self) {
-+        self.stdout.clear();
-+        self.stderr.clear();
-+        self.total_bytes = 0;
++        self.stdout = Vec::new();
++        self.stderr = Vec::new();
 +    }
 +
 +    fn fail(&mut self, failure: CaptureFailure) -> io::Error {
@@ -1089,22 +1080,15 @@ index 0000000..fc92239
 +        if let Some(failure) = self.failure {
 +            return Err(failure.io_error());
 +        }
-+        let Some(total_bytes) = self.total_bytes.checked_add(input.len()) else {
-+            return Err(self.fail(CaptureFailure::LimitExceeded(stream)));
-+        };
-+        if total_bytes > TOOL_OUTPUT_LIMIT_BYTES {
-+            return Err(self.fail(CaptureFailure::LimitExceeded(stream)));
-+        }
 +        if self.output_mut(stream).try_reserve(input.len()).is_err() {
 +            return Err(self.fail(CaptureFailure::AllocationFailed(stream)));
 +        }
 +        self.output_mut(stream).extend_from_slice(input);
-+        self.total_bytes = total_bytes;
 +        Ok(input.len())
 +    }
 +}
 +
-+/// One exact, aggregate-bounded stdout/stderr capture for a fresh tool process.
++/// Complete in-memory stdout/stderr capture for a fresh tool process.
 +/// The handle refuses to publish either stream after any capture failure.
 +#[derive(Clone, Debug)]
 +struct CaptureFile {

@@ -9,7 +9,6 @@ const sourceManifestPath = 'src/wasix/browser-host/source.toml';
 const buildScriptPath = 'src/wasix/browser-host/build-sdk.sh';
 const provenanceScriptPath = 'src/wasix/browser-host/build-provenance.mts';
 const protocolTransportContractPath = 'src/wasix/runtime/protocol-contract/contract.json';
-const toolOutputContractPath = 'src/native/postgres-tools/output-contract/contract.json';
 const safePatchName = /^\d{4}-(?:wasmer-(?:(?:js|wasix)-)?|virtual-(?:fs|mio)-)[a-z0-9-]+\.patch$/u;
 
 export async function loadHostBuildContract() {
@@ -19,10 +18,6 @@ export async function loadHostBuildContract() {
   );
   const protocolTransportContract = JSON.parse(protocolTransportContractBytes.toString('utf8'));
   validateProtocolTransportContract(protocolTransportContract);
-  const toolOutputContract = JSON.parse(
-    await readFile(resolve(repositoryRoot, toolOutputContractPath), 'utf8'),
-  );
-  validateToolOutputContract(toolOutputContract);
   const patchSeries = tomlStringArray(source, 'patches', 'series');
   if (patchSeries.length === 0 || new Set(patchSeries).size !== patchSeries.length) {
     throw new Error('WASIX host patch series must be non-empty and unique');
@@ -44,7 +39,7 @@ export async function loadHostBuildContract() {
     'src/third-party/tools/source-fetch-core.mts',
     'src/third-party/tools/source-archive.mts',
     protocolTransportContractPath,
-    toolOutputContractPath,
+    'src/wasix/browser-host/protocol-contract.generated.rs',
   ]);
   const digests = [];
   for (const input of inputs) {
@@ -71,14 +66,6 @@ export async function loadHostBuildContract() {
       bufferedOutputLimitBytes: protocolTransportContract.bufferedOutput.limitBytes,
       callbackChunkMaxBytes: protocolTransportContract.streamedOutput.callbackChunkMaxBytes,
       flushWasmResult: protocolTransportContract.flush.wasmResult,
-    },
-    toolOutputCapture: {
-      schema: toolOutputContract.schema,
-      limitBytes: toolOutputContract.capturedOutputLimitBytes,
-      scope: toolOutputContract.scope,
-      belowLimit: toolOutputContract.belowLimit,
-      overflow: toolOutputContract.overflow,
-      streamingEscapeHatch: toolOutputContract.streamingEscapeHatch,
     },
     randomDevice: 'virtual-fs-checked-getrandom',
     optimization: {
@@ -112,20 +99,6 @@ function validateProtocolTransportContract(contract) {
     throw new Error(
       `invalid PostgreSQL protocol transport contract: ${protocolTransportContractPath}`,
     );
-  }
-}
-
-function validateToolOutputContract(contract) {
-  if (
-    contract?.schema !== 'oliphaunt-postgres-tool-output-contract-v1' ||
-    !Number.isSafeInteger(contract.capturedOutputLimitBytes) ||
-    contract.capturedOutputLimitBytes <= 0 ||
-    contract.scope !== 'stdout-and-stderr-aggregate-per-process' ||
-    contract.belowLimit !== 'preserve-exact-bytes' ||
-    contract.overflow !== 'fail-closed-without-returning-partial-output' ||
-    contract.streamingEscapeHatch !== 'required-for-larger-valid-output'
-  ) {
-    throw new Error(`invalid PostgreSQL tool output contract: ${toolOutputContractPath}`);
   }
 }
 
@@ -190,13 +163,9 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
     console.log(contract.provenance.inputsSha256);
   } else if (process.argv[2] === '--patch-series') {
     console.log(contract.patchSeries.join('\n'));
-  } else if (process.argv[2] === '--tool-output-limit-bytes') {
-    console.log(contract.provenance.toolOutputCapture.limitBytes);
   } else if (process.argv[2] === '--json') {
     console.log(JSON.stringify(contract.provenance, null, 2));
   } else {
-    throw new Error(
-      'usage: build-provenance.mts --inputs-sha256|--patch-series|--tool-output-limit-bytes|--json',
-    );
+    throw new Error('usage: build-provenance.mts --inputs-sha256|--patch-series|--json');
   }
 }

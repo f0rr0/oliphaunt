@@ -50,8 +50,16 @@ already-active duplex stream. The stream-active export reports full-duplex mode
 This is a downstream correctness and maintainability contract, not a claim that
 the branded ABI should be upstreamed unchanged.
 
-`contract.json` is the only hand-edited numeric/signature source. Run
+`contract.json` supplies the shared numeric constants. Run
 `node src/wasix/runtime/protocol-contract/generate.mjs` after a
 contract change. The checked-in generated C header is consumed by the bridge
-and its native ABI test; Rust and TypeScript consume generated constants.
-Build provenance reads the JSON directly.
+and its native ABI test; Rust, TypeScript and the browser Wasmer host consume
+generated constants. Function signatures remain in the C declarations and typed
+host bindings; the JSON is not a separate signature-validation framework.
+Build provenance hashes the browser's generated module along with its sources.
+
+PostgreSQL source preparation, Rust validation and release packaging read the
+ordered `../postgres/source-inputs` list, then the patches in `../postgres/series`.
+Each input is hashed with CRLF normalized to LF. The version, upstream archive
+checksum and hash of those newline-separated hashes identify the prepared source.
+Adding an injected header requires updating this list, not three implementations.

@@ -24,7 +24,10 @@ tasks:
       - "/tools/dev/acquisition.sh"
       - "/src/third-party/tools/{fetch-sources.sh,source-fetch-core.mts,source-archive.mts}"
       - "/src/wasix/runtime/protocol-contract/contract.json"
-      - "/src/native/postgres-tools/output-contract/contract.json"
+      - "/src/wasix/runtime/protocol-contract/generate.mjs"
+      - "/src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h"
+      - "/src/wasix/sdks/rust/src/oliphaunt/protocol_limits_generated.rs"
+      - "/src/wasix/sdks/ts/src/protocol-limits.generated.ts"
       - "@group(cargo-workspace)"
     outputs:
       - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"

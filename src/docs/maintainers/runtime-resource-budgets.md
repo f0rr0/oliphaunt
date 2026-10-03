@@ -54,7 +54,7 @@ limits, some are compatibility requirements, and some are tuning candidates.
 | Our 64 KiB batches, 4 MiB stream queue cap, 256 KiB channels, initial growing containers and compaction thresholds | **Oliphaunt transport/allocation tuning.** Trade calls/copies against memory and waiting. | A server also buffers I/O, but does not have these SDK bridge constants. Their exact values need workload evidence. |
 | 64/256 work admission counts | **Oliphaunt overload control.** Bounds waiting work, not backend parallelism. | Client pools/server connection admission are analogous, but not the same queues or units. |
 | OPFS bridge sizes, 32 spares, 16 parallel file operations, one cached runtime | **Oliphaunt browser/startup tuning.** Reuse and batching can reduce setup work. | No OPFS or compiled-Wasm module cache in a normal native server. |
-| 64 MiB collected tool output and 128 MiB frontend/broker limits | **Oliphaunt safety/API policy.** Rejects oversized retained data. SQL results have no separate 64 MiB quota. | PostgreSQL has its own message/allocation rules; these particular caps are ours, not SQL limits to attribute to PostgreSQL. |
+| 128 MiB frontend/broker limits | **Oliphaunt safety/API policy.** Rejects oversized retained data on these paths. SQL results and collected tool output have no separate 64 MiB quota. | PostgreSQL has its own message/allocation rules; this cap is ours, not a SQL limit to attribute to PostgreSQL. |
 | Diagnostic tails, startup/error text and archive/metadata ceilings | **Oliphaunt diagnostics/input protection.** | Similar needs exist elsewhere; our exact limits are not PostgreSQL query-performance settings. |
 | Native backend 8 MiB thread stack, guest 8 MiB C stack, initial 128 MiB linear memory, Postmaster profile sizes | **Embedding/platform capacity choices.** Required resources with chosen budgets, not automatic speedups. | Native PostgreSQL also needs stack/heap space, but not these Wasm allocations or SDK thread defaults. |
 | Wasmer execution stack and reserved-address layout | **Engine-owned mechanism**, with engine/product policy deciding capacity. | An ordinary native server uses its process/OS stack; it has no Wasmer coroutine stack. |
@@ -85,7 +85,8 @@ TypeScript paths abbreviated as `wasix-ts/...` are under `src/wasix/sdks/ts/src/
 | Same file, `INITIAL_BUFFERED_OUTPUT_BYTES` | 8 KiB | First native buffered-output allocation, grown geometrically as needed. Native lengths are host-sized, unlike the WASIX signed-i32 bridge. |
 | `src/native/runtime/src/liboliphaunt_archive_tar.c::ARCHIVE_FILE_READ_CHUNK_BYTES` | 64 KiB | Stack scratch space for reading backup files. The buffered backup API accumulates the archive; the streaming API sends it to a callback without retaining the complete archive. |
 
-The protocol contract is the shared numeric/ABI authority. Use its existing
+The protocol contract supplies shared numeric constants. Signatures live in
+C declarations and typed host bindings. Use the existing
 generator and compiled transport tests for a contract change; do not create a
 second configuration file or import repository JSON at package runtime. Local
 read buffers stay owned by their readers. The matching Rust/TS frontend limit
@@ -114,7 +115,7 @@ PostgreSQL configuration, not transport tunables.
 | `src/native/sdks/rust/src/pgwire.rs` | 64 KiB read buffer; 8 KiB initial response vector | Socket delivery box and growing result container, respectively. Neither limits the total result to that size. |
 | `src/native/sdks/rust/src/ipc.rs` and `src/native/sdks/ts/src/runtime/broker-frames.ts` | 128 MiB frame limit | Rejects a single oversized broker message; independent of the similarly sized PostgreSQL frontend-frame limit. |
 | `wasix-rust/tools.rs::DIRECT_TOOL_SOCKET_BUFFER` | 256 KiB | Waiting space in the in-process tool socket. Larger capacity can absorb bursts, not speed up SQL itself. |
-| `src/native/postgres-tools/output-contract/contract.json::capturedOutputLimitBytes`; Rust native tools, WASIX tools and JS consumers | 64 MiB, stdout + stderr together per process | Limit for collected tool output. It is not the SQL buffered-output contract. Larger valid output needs the streaming path. |
+| Rust native/WASIX tools and JS tool collectors | Complete output in memory; no application byte quota | Available memory and host Vec/Buffer/string-size limits apply. Fallible capture failures discard partial stdout and stderr. Native pipes continue draining. Rust collectors grow amortized and release buffers on failure. These APIs do not yet offer a streaming sink; use an external tool for file/stream output. |
 | `src/native/postgres-tools/crates/tools/src/lib.rs`, captured pipe reader | 32 KiB | Tool-output read batch; total capture is governed by the separate contract above. |
 | Native `liboliphaunt_archive_tar.c::buffer_reserve` | 4 KiB initially, doubles | Backup archive starting container. The full archive still grows in memory; larger initial capacity does not solve large-backup memory use. |
 | `wasix-ts/protocol/pgwire-connection.ts`, chunk-list compaction | 1,024 consumed chunks and at least half the list consumed | Removes old list entries in batches. More frequent removal frees references sooner but spends more time moving list entries. Not a byte limit. |

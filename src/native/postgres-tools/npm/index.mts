@@ -1,10 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { createCapturedOutput, captureOutput, finishCapture } from './output-capture.mjs';
 
 const require = createRequire(import.meta.url);
-// Keep this in sync with src/native/postgres-tools/output-contract/contract.json.
-const CAPTURED_OUTPUT_LIMIT_BYTES = 67_108_864;
 // PostgreSQL 18 getopt_long optstrings. A value-taking option owns the rest
 // of its token, so a managed-looking character inside that value stays data.
 const PG_DUMP_SHORT_OPTIONS = 'abBcCd:e:E:f:F:h:j:n:N:Op:RsS:t:T:U:vwWxXZ:';
@@ -278,52 +277,54 @@ async function runTool(tool, args, stdin) {
     child.once('close', (exitCode, signal) => {
       if (settled) return;
       settled = true;
-      if (captured.overflowed) {
-        reject(
-          new PostgresToolError(tool, outputLimitMessage(tool), {
-            exitCode,
-            signal,
-          }),
-        );
-        return;
-      }
-      const stdoutBytes = concatenateCapture(captured.stdout, captured.stdoutBytes);
-      const stderrBytes = concatenateCapture(captured.stderr, captured.stderrBytes);
-      if (exitCode !== 0 || signal !== null) {
-        const stdoutText = decodeDiagnostics(stdoutBytes);
-        const stderrText = decodeDiagnostics(stderrBytes);
-        reject(
-          new PostgresToolError(
-            tool,
-            `${tool} ${signal === null ? `exited with status ${exitCode}` : `was terminated by ${signal}`}${stderrText.trim().length === 0 ? '' : `: ${stderrText.trim()}`}`,
-            { exitCode, signal, stdout: stdoutText, stderr: stderrText },
-          ),
-        );
-        return;
-      }
-      if (stdinFailure !== undefined) {
-        reject(
-          new PostgresToolError(tool, `could not write to ${tool}`, {
-            exitCode,
-            signal,
-            stdout: decodeDiagnostics(stdoutBytes),
-            stderr: decodeDiagnostics(stderrBytes),
-            cause: stdinFailure,
-          }),
-        );
-        return;
-      }
       try {
-        resolve(new TextDecoder('utf-8', { fatal: true }).decode(stdoutBytes));
+        const { stdout: stdoutBytes, stderr: stderrBytes } = finishCapture(captured);
+        if (exitCode !== 0 || signal !== null) {
+          const stdoutText = decodeDiagnostics(stdoutBytes);
+          const stderrText = decodeDiagnostics(stderrBytes);
+          reject(
+            new PostgresToolError(
+              tool,
+              `${tool} ${signal === null ? `exited with status ${exitCode}` : `was terminated by ${signal}`}${stderrText.trim().length === 0 ? '' : `: ${stderrText.trim()}`}`,
+              { exitCode, signal, stdout: stdoutText, stderr: stderrText },
+            ),
+          );
+          return;
+        }
+        if (stdinFailure !== undefined) {
+          reject(
+            new PostgresToolError(tool, `could not write to ${tool}`, {
+              exitCode,
+              signal,
+              stdout: decodeDiagnostics(stdoutBytes),
+              stderr: decodeDiagnostics(stderrBytes),
+              cause: stdinFailure,
+            }),
+          );
+          return;
+        }
+        try {
+          resolve(new TextDecoder('utf-8', { fatal: true }).decode(stdoutBytes));
+        } catch (cause) {
+          const stdoutText = decodeDiagnostics(stdoutBytes);
+          const stderrText = decodeDiagnostics(stderrBytes);
+          reject(
+            new PostgresToolError(tool, `${tool} produced non-UTF-8 output`, {
+              exitCode,
+              signal,
+              stdout: stdoutText,
+              stderr: stderrText,
+              cause,
+            }),
+          );
+        }
       } catch (cause) {
-        const stdoutText = decodeDiagnostics(stdoutBytes);
-        const stderrText = decodeDiagnostics(stderrBytes);
+        // Buffer concatenation and JS string conversion have their own host
+        // size limits. Reject the invocation, not the event-loop callback.
         reject(
-          new PostgresToolError(tool, `${tool} produced non-UTF-8 output`, {
+          new PostgresToolError(tool, `${tool} output capture failed`, {
             exitCode,
             signal,
-            stdout: stdoutText,
-            stderr: stderrText,
             cause,
           }),
         );
@@ -335,46 +336,6 @@ async function runTool(tool, args, stdin) {
     if (stdin === undefined) child.stdin.end();
     else child.stdin.end(stdin, 'utf8');
   });
-}
-
-function createCapturedOutput() {
-  return {
-    stdout: [],
-    stderr: [],
-    stdoutBytes: 0,
-    stderrBytes: 0,
-    retainedBytes: 0,
-    overflowed: false,
-  };
-}
-
-function captureOutput(captured, channel, chunk) {
-  if (captured.overflowed) return;
-  const nextSize = captured.retainedBytes + chunk.byteLength;
-  if (nextSize > CAPTURED_OUTPUT_LIMIT_BYTES) {
-    // Do not expose an arbitrary prefix as if it were complete output. The
-    // stream listeners stay installed so both child pipes continue draining.
-    captured.overflowed = true;
-    captured.stdout.length = 0;
-    captured.stderr.length = 0;
-    captured.stdoutBytes = 0;
-    captured.stderrBytes = 0;
-    captured.retainedBytes = 0;
-    return;
-  }
-  captured[channel].push(chunk);
-  captured[`${channel}Bytes`] += chunk.byteLength;
-  captured.retainedBytes = nextSize;
-}
-
-function concatenateCapture(chunks, byteLength) {
-  if (chunks.length === 0) return Buffer.alloc(0);
-  if (chunks.length === 1) return chunks[0];
-  return Buffer.concat(chunks, byteLength);
-}
-
-function outputLimitMessage(tool) {
-  return `${tool} combined stdout and stderr exceeded the ${CAPTURED_OUTPUT_LIMIT_BYTES}-byte capture limit; larger valid output requires a streaming or sink API, which is not currently available`;
 }
 
 function resolveRuntime() {

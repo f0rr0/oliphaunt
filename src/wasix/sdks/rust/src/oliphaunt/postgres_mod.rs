@@ -197,20 +197,24 @@ impl MainLoopOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
 enum ProtocolTransportMode {
-    Buffered = 0,
-    Stream = 1,
-    Hybrid = 2,
-    BufferedInputStreamedOutput = 3,
+    Buffered = super::protocol_limits_generated::PROTOCOL_BUFFERED,
+    Stream = super::protocol_limits_generated::PROTOCOL_STREAM,
+    Hybrid = super::protocol_limits_generated::PROTOCOL_HYBRID,
+    BufferedInputStreamedOutput =
+        super::protocol_limits_generated::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT,
 }
 
 impl ProtocolTransportMode {
     fn from_i32(value: i32) -> Result<Self> {
         match value {
-            0 => Ok(Self::Buffered),
-            1 => Ok(Self::Stream),
-            2 => Ok(Self::Hybrid),
-            3 => Ok(Self::BufferedInputStreamedOutput),
+            super::protocol_limits_generated::PROTOCOL_BUFFERED => Ok(Self::Buffered),
+            super::protocol_limits_generated::PROTOCOL_STREAM => Ok(Self::Stream),
+            super::protocol_limits_generated::PROTOCOL_HYBRID => Ok(Self::Hybrid),
+            super::protocol_limits_generated::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT => {
+                Ok(Self::BufferedInputStreamedOutput)
+            }
             other => anyhow::bail!("invalid WASIX protocol transport mode {other}"),
         }
     }

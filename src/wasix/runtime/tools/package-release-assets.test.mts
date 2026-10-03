@@ -34,12 +34,18 @@ test('PostgreSQL source identity includes the generated protocol header and norm
   write('fixture.patch', 'patch\n');
   const header =
     'src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h';
+  const inputs = 'src/wasix/runtime/postgres/source-inputs';
+  write(inputs, `# ordered inputs\nsrc/wasix/runtime/postgres/series\n${header}\n`);
   write(header, '#define LIMIT 1\n');
   const original = postgresSourceFingerprint(root);
   write(header, '#define LIMIT 2\n');
   assert.notEqual(postgresSourceFingerprint(root), original);
   write(header, '#define LIMIT 1\r\n');
+  write(inputs, `# ordered inputs\r\nsrc/wasix/runtime/postgres/series\r\n${header}\r\n`);
   assert.equal(postgresSourceFingerprint(root), original);
+  write('extra.h', 'extra\n');
+  write(inputs, `src/wasix/runtime/postgres/series\n${header}\nextra.h\n`);
+  assert.notEqual(postgresSourceFingerprint(root), original);
 });
 
 test('release staging excludes independent tools and extensions, and rejects stale or unsafe inputs', (t) => {

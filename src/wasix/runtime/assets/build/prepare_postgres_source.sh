@@ -79,9 +79,13 @@ fi
 
 series_hash="$(
   {
-    sha256_text_lf "$PATCH_SERIES"
-    sha256_text_lf "$CONTRACT_HEADER"
-    while IFS= read -r patch_name; do
+    while IFS= read -r input || [[ -n "$input" ]]; do
+      input="${input%$'\r'}"
+      [[ -z "$input" || "$input" =~ ^# ]] && continue
+      sha256_text_lf "$REPO_ROOT/$input"
+    done < "$REPO_ROOT/src/wasix/runtime/postgres/source-inputs"
+    while IFS= read -r patch_name || [[ -n "$patch_name" ]]; do
+      patch_name="${patch_name%$'\r'}"
       [[ -z "$patch_name" || "$patch_name" =~ ^# ]] && continue
       sha256_text_lf "$PATCH_DIR/$patch_name"
     done < "$PATCH_SERIES"

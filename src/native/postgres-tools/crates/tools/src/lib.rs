@@ -20,14 +20,10 @@ pub const PRODUCT: &str = "oliphaunt-tools";
 /// Artifact kind relayed by this facade crate.
 pub const KIND: &str = "native-tools";
 
-// Keep this in sync with src/native/postgres-tools/output-contract/contract.json.
-const CAPTURED_OUTPUT_LIMIT_BYTES: usize = 67_108_864;
-
 /// Options for the in-memory, plain-text `pg_dump` convenience API.
 ///
-/// Standard output and standard error share an inclusive 64 MiB aggregate
-/// capture limit per process. Exceeding it fails without returning partial
-/// output. A streaming or sink API is not currently available.
+/// Complete stdout and stderr are retained in memory. Available memory and
+/// host string sizes bound the output; a streaming API is not yet available.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PgDumpOptions {
     args: Vec<String>,
@@ -54,9 +50,8 @@ impl PgDumpOptions {
 
 /// Options for an in-memory, non-interactive `psql` invocation.
 ///
-/// Standard output and standard error share an inclusive 64 MiB aggregate
-/// capture limit per process. Exceeding it fails without returning partial
-/// output. A streaming or sink API is not currently available.
+/// Complete stdout and stderr are retained in memory. Available memory and
+/// host string sizes bound the output; a streaming API is not yet available.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PsqlOptions {
     args: Vec<String>,
@@ -109,12 +104,12 @@ pub struct PostgresToolError {
     pub exit_code: Option<i32>,
     /// UTF-8 standard output captured before failure.
     ///
-    /// This is empty after output-capture overflow so no partial prefix is
+    /// This is empty after output-capture failure so no partial prefix is
     /// exposed.
     pub stdout: String,
     /// UTF-8 standard error captured before failure.
     ///
-    /// This is empty after output-capture overflow so no partial prefix is
+    /// This is empty after output-capture failure so no partial prefix is
     /// exposed.
     pub stderr: String,
     source: Option<std::io::Error>,
@@ -124,12 +119,7 @@ pub struct PostgresToolError {
 impl fmt::Display for PostgresToolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(failure) = self.output_capture_failure {
-            return match failure {
-                OutputCaptureFailure::LimitExceeded => {
-                    write!(formatter, "{} {failure}", self.tool)
-                }
-                _ => write!(formatter, "{} output capture failed: {failure}", self.tool),
-            };
+            return write!(formatter, "{} output capture failed: {failure}", self.tool);
         }
         if let Some(source) = &self.source {
             return write!(formatter, "could not run {}: {source}", self.tool);
@@ -159,10 +149,8 @@ impl StdError for PostgresToolError {
 
 /// Run packaged `pg_dump` against a PostgreSQL connection string.
 ///
-/// Returns unchanged PostgreSQL UTF-8 output through the inclusive 64 MiB
-/// combined stdout/stderr capture limit. Exceeding the limit returns
-/// [`PostgresToolError`] without partial output. Streaming larger dumps is not
-/// currently supported.
+/// Returns complete PostgreSQL UTF-8 output in memory. Capture failures return
+/// [`PostgresToolError`] without partial output. Streaming is not yet supported.
 pub fn pg_dump(
     connection_string: &str,
     options: PgDumpOptions,
@@ -183,10 +171,8 @@ pub fn pg_dump(
 
 /// Run packaged non-interactive `psql` against a PostgreSQL connection string.
 ///
-/// Returns unchanged PostgreSQL UTF-8 output through the inclusive 64 MiB
-/// combined stdout/stderr capture limit. Exceeding the limit returns
-/// [`PostgresToolError`] without partial output. Streaming larger results is
-/// not currently supported.
+/// Returns complete PostgreSQL UTF-8 output in memory. Capture failures return
+/// [`PostgresToolError`] without partial output. Streaming is not yet supported.
 pub fn psql(connection_string: &str, options: PsqlOptions) -> Result<String, PostgresToolError> {
     validate_connection_string("psql", connection_string)?;
     validate_psql_arguments(&options.args)
@@ -262,7 +248,7 @@ fn run_tool(
         source: Some(source),
         output_capture_failure: None,
     })?;
-    let captured = Arc::new(Mutex::new(CapturedOutput::new(CAPTURED_OUTPUT_LIMIT_BYTES)));
+    let captured = Arc::new(Mutex::new(CapturedOutput::default()));
     let stdout_reader = spawn_output_reader(
         child
             .stdout
@@ -367,7 +353,6 @@ enum OutputChannel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutputCaptureFailure {
-    LimitExceeded,
     AllocationFailed,
     LockPoisoned,
 }
@@ -375,14 +360,9 @@ enum OutputCaptureFailure {
 impl fmt::Display for OutputCaptureFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LimitExceeded => write!(
-                formatter,
-                "combined stdout and stderr exceeded the {CAPTURED_OUTPUT_LIMIT_BYTES}-byte capture limit; larger valid output requires a streaming or sink API, which is not currently available"
-            ),
-            Self::AllocationFailed => write!(
-                formatter,
-                "could not reserve memory for stdout and stderr within the {CAPTURED_OUTPUT_LIMIT_BYTES}-byte capture limit"
-            ),
+            Self::AllocationFailed => {
+                formatter.write_str("could not reserve memory for tool output")
+            }
             Self::LockPoisoned => {
                 formatter.write_str("stdout and stderr capture lock was poisoned")
             }
@@ -390,53 +370,32 @@ impl fmt::Display for OutputCaptureFailure {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct CapturedOutput {
-    limit: usize,
-    retained_bytes: usize,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     failure: Option<OutputCaptureFailure>,
 }
 
 impl CapturedOutput {
-    fn new(limit: usize) -> Self {
-        Self {
-            limit,
-            retained_bytes: 0,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            failure: None,
-        }
-    }
-
     fn retain(&mut self, channel: OutputChannel, bytes: &[u8]) {
         if self.failure.is_some() {
-            return;
-        }
-        let Some(next_size) = self.retained_bytes.checked_add(bytes.len()) else {
-            self.fail(OutputCaptureFailure::LimitExceeded);
-            return;
-        };
-        if next_size > self.limit {
-            self.fail(OutputCaptureFailure::LimitExceeded);
             return;
         }
         let destination = match channel {
             OutputChannel::Stdout => &mut self.stdout,
             OutputChannel::Stderr => &mut self.stderr,
         };
-        if destination.try_reserve_exact(bytes.len()).is_err() {
+        // Vec checks length overflow and grows amortized across successive reads.
+        if destination.try_reserve(bytes.len()).is_err() {
             self.fail(OutputCaptureFailure::AllocationFailed);
             return;
         }
         destination.extend_from_slice(bytes);
-        self.retained_bytes = next_size;
     }
 
     fn fail(&mut self, failure: OutputCaptureFailure) {
         self.failure.get_or_insert(failure);
-        self.retained_bytes = 0;
         self.stdout = Vec::new();
         self.stderr = Vec::new();
     }
@@ -498,8 +457,7 @@ fn take_captured_output(captured: &Mutex<CapturedOutput>) -> CapturedOutput {
             captured
         }
     };
-    let limit = captured.limit;
-    std::mem::replace(&mut *captured, CapturedOutput::new(limit))
+    std::mem::take(&mut *captured)
 }
 
 fn io_failure(
@@ -640,34 +598,52 @@ mod tests {
     }
 
     #[test]
-    fn captured_output_preserves_both_streams_at_the_aggregate_limit() {
-        let mut captured = CapturedOutput::new(7);
+    fn captured_output_preserves_both_streams() {
+        let mut captured = CapturedOutput::default();
         captured.retain(OutputChannel::Stdout, b"out");
         captured.retain(OutputChannel::Stderr, b"err!");
 
         assert_eq!(captured.failure, None);
-        assert_eq!(captured.retained_bytes, 7);
         assert_eq!(captured.stdout, b"out");
         assert_eq!(captured.stderr, b"err!");
     }
 
     #[test]
-    fn captured_output_discards_everything_after_aggregate_overflow() {
-        let mut captured = CapturedOutput::new(5);
-        captured.retain(OutputChannel::Stdout, b"abc");
-        captured.retain(OutputChannel::Stderr, b"def");
-        captured.retain(OutputChannel::Stdout, b"later output");
-
-        assert_eq!(captured.failure, Some(OutputCaptureFailure::LimitExceeded));
-        assert_eq!(captured.retained_bytes, 0);
-        assert!(captured.stdout.is_empty());
-        assert!(captured.stderr.is_empty());
+    fn captured_output_accepts_more_than_64_mib() {
+        let mut captured = CapturedOutput::default();
+        let chunk = vec![b'x'; 1024 * 1024];
+        for _ in 0..65 {
+            captured.retain(OutputChannel::Stdout, &chunk);
+        }
+        captured.retain(OutputChannel::Stderr, b"diagnostic");
+        assert_eq!(captured.failure, None);
+        assert_eq!(captured.stdout.len(), 65 * chunk.len());
+        assert!(captured.stdout.iter().all(|&byte| byte == b'x'));
+        assert_eq!(captured.stderr, b"diagnostic");
     }
 
     #[test]
-    fn output_reader_continues_draining_after_capture_overflow() {
+    fn captured_output_discards_everything_after_failure() {
+        let mut captured = CapturedOutput::default();
+        captured.retain(OutputChannel::Stdout, b"abc");
+        captured.retain(OutputChannel::Stderr, b"def");
+        captured.fail(OutputCaptureFailure::AllocationFailed);
+        captured.retain(OutputChannel::Stdout, b"later output");
+
+        assert_eq!(
+            captured.failure,
+            Some(OutputCaptureFailure::AllocationFailed)
+        );
+        assert_eq!(captured.stdout.capacity(), 0);
+        assert_eq!(captured.stderr.capacity(), 0);
+    }
+
+    #[test]
+    fn output_reader_continues_draining_after_capture_failure() {
         let bytes = vec![b'x'; 32 * 1024 + 17];
-        let captured = Mutex::new(CapturedOutput::new(1));
+        let mut failed = CapturedOutput::default();
+        failed.fail(OutputCaptureFailure::AllocationFailed);
+        let captured = Mutex::new(failed);
 
         let observed = drain_output(Cursor::new(&bytes), &captured, OutputChannel::Stdout)
             .expect("reader should drain all input");
@@ -676,7 +652,10 @@ mod tests {
             .expect("capture lock should remain usable");
 
         assert_eq!(observed, bytes.len());
-        assert_eq!(captured.failure, Some(OutputCaptureFailure::LimitExceeded));
+        assert_eq!(
+            captured.failure,
+            Some(OutputCaptureFailure::AllocationFailed)
+        );
         assert!(captured.stdout.is_empty());
         assert!(captured.stderr.is_empty());
     }
@@ -693,7 +672,7 @@ mod tests {
                 Ok(0)
             }
         }
-        let captured = Mutex::new(CapturedOutput::new(1));
+        let captured = Mutex::new(CapturedOutput::default());
         assert_eq!(
             drain_output(InterruptedOnce(false), &captured, OutputChannel::Stdout).unwrap(),
             0
@@ -702,19 +681,19 @@ mod tests {
     }
 
     #[test]
-    fn output_limit_error_is_stable_and_contains_no_partial_output() {
+    fn output_capture_error_contains_no_partial_output() {
         let error = PostgresToolError {
             tool: "pg_dump",
             exit_code: Some(0),
             stdout: String::new(),
             stderr: String::new(),
             source: None,
-            output_capture_failure: Some(OutputCaptureFailure::LimitExceeded),
+            output_capture_failure: Some(OutputCaptureFailure::AllocationFailed),
         };
 
         assert_eq!(
             error.to_string(),
-            "pg_dump combined stdout and stderr exceeded the 67108864-byte capture limit; larger valid output requires a streaming or sink API, which is not currently available"
+            "pg_dump output capture failed: could not reserve memory for tool output"
         );
         assert!(error.stdout.is_empty());
         assert!(error.stderr.is_empty());
@@ -722,7 +701,7 @@ mod tests {
 
     #[test]
     fn poisoned_capture_is_fail_closed_and_does_not_stop_draining() {
-        let captured = Arc::new(Mutex::new(CapturedOutput::new(32)));
+        let captured = Arc::new(Mutex::new(CapturedOutput::default()));
         let poison_target = Arc::clone(&captured);
         let _ = std::thread::spawn(move || {
             let _guard = poison_target.lock().unwrap();

@@ -31,17 +31,16 @@ as an output-size problem. The signed bridge length is the only output ceiling.
 
 --- a/src/postgres_direct.rs
 +++ b/src/postgres_direct.rs
-@@ -20,11 +20,19 @@
+@@ -20,10 +20,18 @@
  use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOptions};
  
  const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
 +const OLIPHAUNT_EXIT_STARTUP_REJECTED: i32 = 98;
  const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
  const STDERR_LIMIT_BYTES: usize = 16 * 1024;
- const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
- const PROTOCOL_BUFFERED: i32 = 0;
- const PROTOCOL_HYBRID: i32 = 2;
-+const PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT: i32 = 3;
+ use crate::protocol_contract::{PROTOCOL_CALLBACK_CHUNK_BYTES as PROTOCOL_CHUNK_BYTES,
+     PROTOCOL_BUFFERED, PROTOCOL_HYBRID};
++use crate::protocol_contract::PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT;
 +const PROCESS_STARTUP_OK: i32 = 0;
 +const PROCESS_STARTUP_ERROR: i32 = -1;
 +const STARTUP_OUTCOME_VERSION: u32 = 1;

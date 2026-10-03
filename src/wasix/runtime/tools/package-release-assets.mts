@@ -80,11 +80,10 @@ export function postgresSourceFingerprint(root = ROOT) {
       ),
     'invalid PostgreSQL patch series',
   );
-  const hashes = [
-    series,
-    'src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h',
-    ...names,
-  ]
+  const inputs = readFileSync(path.join(root, 'src/wasix/runtime/postgres/source-inputs'), 'utf8')
+    .split(/\r?\n/)
+    .filter((line) => line && !line.startsWith('#'));
+  const hashes = [...inputs, ...names]
     .map(
       (name) =>
         sha256(readFileSync(path.join(patches, name), 'utf8').replaceAll('\r\n', '\n')) + '\n',
