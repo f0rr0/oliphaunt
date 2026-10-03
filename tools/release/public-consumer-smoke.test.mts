@@ -176,6 +176,88 @@ test('derives every registry surface and graph-root entry from the exact selecte
   ]);
 });
 
+test('probes public entry roles independently across registries even when they are dependencies', () => {
+  const products = [product('alpha', ['crates-io', 'maven-central', 'npm'])];
+  const carriers = ['cargo', 'maven', 'npm'].flatMap((ecosystem, index) => {
+    const rows = ['resource', 'facade', 'plugin', 'tool-facade'].map((role, offset) => ({
+      ...carrier(`${ecosystem}:entry-${offset}`, 'alpha', index * 5 + offset),
+      role,
+    }));
+    return [
+      ...rows,
+      carrier(
+        `${ecosystem}:root`,
+        'alpha',
+        index * 5 + 4,
+        rows.map(({ id }) => id),
+      ),
+    ];
+  });
+  const plan = publicConsumerPlan(lock(products, carriers), ['alpha'], graph(products));
+  for (const surface of plan.surfaces)
+    assert.deepEqual(surface.entryCarrierIds, surface.carrierIds);
+});
+
+test('Cargo entries respect transitive opt-ins while combined resolution stays exhaustive', () => {
+  const products = [product('alpha', ['crates-io'])];
+  const frozen = lock(products, [
+    carrier('cargo:opt-in-payload', 'alpha', 0),
+    { ...carrier('cargo:runtime', 'alpha', 1, ['cargo:opt-in-payload']), role: 'facade' },
+    { ...carrier('cargo:extension', 'alpha', 2, ['cargo:runtime']), role: 'facade' },
+  ]);
+  const plan = publicConsumerPlan(frozen, ['alpha'], graph(products));
+  const surface = plan.surfaces[0];
+  assert.deepEqual(surface.entryCarrierIds, ['cargo:extension', 'cargo:runtime']);
+  const observed = {
+    surface: 'cargo',
+    mode: 'anonymous-public-independent-entry-all-feature-resolution-no-compile',
+    carrierIds: surface.carrierIds,
+    dependencyScopes: surface.dependencyScopes,
+    entryCarrierIds: surface.entryCarrierIds,
+    plannedEntryClosures: surface.entryClosures,
+    entries: [
+      {
+        entryCarrierId: 'cargo:extension',
+        resolvedCarrierIds: ['cargo:extension', 'cargo:runtime'],
+      },
+      {
+        entryCarrierId: 'cargo:runtime',
+        resolvedCarrierIds: ['cargo:opt-in-payload', 'cargo:runtime'],
+      },
+    ],
+    resolved: surface.carrierIds.map((id) => ({ id, version: '1.2.3' })),
+    receiptCoveredWithoutPayloadFetchCarrierIds: surface.carrierIds,
+  };
+  const evidence = () =>
+    publicConsumerEvidence({
+      lock: frozen,
+      plan,
+      registryReceiptSha256: 'e'.repeat(64),
+      githubReceiptDigest: 'f'.repeat(64),
+      surfaces: [
+        observed,
+        {
+          surface: 'github',
+          mode: 'anonymous-public-exact-tag-resolution',
+          productTags: plan.github.productTags,
+          swift: null,
+        },
+      ],
+    });
+  validatePublicConsumerEvidence(evidence(), frozen, plan);
+  observed.entries[1].resolvedCarrierIds.push('cargo:extension');
+  assert.throws(
+    () => validatePublicConsumerEvidence(evidence(), frozen, plan),
+    /outside its frozen dependency closure/u,
+  );
+  observed.entries[1].resolvedCarrierIds = ['cargo:runtime'];
+  observed.resolved = observed.resolved.filter(({ id }) => id !== 'cargo:opt-in-payload');
+  assert.throws(
+    () => validatePublicConsumerEvidence(evidence(), frozen, plan),
+    /exhaustive frozen carrier set/u,
+  );
+});
+
 test('supports source-only selections and records the exact Swift source tag separately', () => {
   const products = [
     product('oliphaunt-swift', ['github-release', 'swift-package-source-tag'], '0.6.0'),

@@ -199,13 +199,10 @@ registry bytes. Ordinarily it also owns the publishing workflow. A narrowly
 permitted publication-only controller fix may publish those same frozen bytes;
 its workflow SHA is recorded separately and requires successful CI Required.
 
-The `macos-26` publication runner is ARM64, but its current runner-image
-contract exposes the installed Java 17 path as `JAVA_HOME_17_arm64` (including
-that lowercase suffix). Release setup uses that exact variable first, permits
-`JAVA_HOME_17_X64` only as an Intel-image fallback, and fails before release
-work unless the selected path contains an executable `bin/java`. Do not invent
-the variable name from the architecture or rely on the image's moving default
-Java version for Maven or Gradle publication.
+Publication runs on `ubuntu-24.04`, using its installed GNU timeout, Swift and
+default Java 17. The Swift public probe evaluates the tagged manifest without
+building Apple targets or fetching draft binary assets, so it also runs on
+Linux. Apple builds and runtime tests remain in platform qualification.
 
 For a normal publication, the publish workflow downloads artifacts by that run
 id and SHA, verifies their attestations/qualification record, assembles the
@@ -505,15 +502,20 @@ whether an operation remains.
 The post-publication consumer gate is an anonymous public-endpoint probe.
 It derives its products, ecosystem lanes, dependency roots, full carrier
 closure, versions, Maven coordinates, and Git tags from the same frozen lock.
-In parallel clean temporary homes/caches it resolves each Cargo consumer root
+In parallel clean temporary homes/caches it resolves each Cargo consumer entry
 in an independent scratch manifest without compiling payloads, installs each
 npm dependency root in an independent project, resolves each Maven entry in an
 isolated Gradle configuration without an Android build, and anonymously fetches
-every product tag. Each lane requires
-the resolver's platform-independent lock graphs to cover every carrier in the
-corresponding frozen dependency closure; a missing carrier cannot be silently
-relabelled as receipt-only. It never invents one all-platform consumer graph.
-Evidence separately identifies npm carriers not installed on the macOS host
+every product tag. Facades, plugins, resources and tool facades are independent
+entries even when another package depends on them; remaining dependency roots
+are also probed. Each lane requires the combined resolver lock graphs to cover
+every frozen carrier; a missing carrier cannot be silently relabelled as
+receipt-only. Cargo enables each entry's public features and respects the
+features that entry requests from its dependencies, so an individual Cargo
+resolution may omit transitive opt-ins exercised by another entry. npm and Maven
+entries require their complete frozen dependency closures. It never invents one
+all-platform consumer graph.
+Evidence separately identifies npm carriers not installed on the publication host
 and Cargo payloads intentionally not fetched/compiled; immutable receipts
 prove those bytes. When Swift is
 selected it also fetches the unscoped source tag,
@@ -530,7 +532,7 @@ command or exact-version, source, closure, tag, or receipt mismatch stops the
 gate; there is no second retry loop that discards and repeats entire installs. The gate emits one deterministic immutable evidence file bound to
 the registry receipt hash, GitHub receipt digest, lock digest, source SHA/tree,
 and selected products; that file is uploaded before draft promotion. The
-publish job runs on macOS, so npm's `installedCarrierIds` proves only the host
+publish job runs on Linux, so npm's `installedCarrierIds` proves only the host
 subset actually installed there. The exact lock/receipt set and same-SHA CI,
 not this host probe, prove the complete supported OS/ABI matrix.
 

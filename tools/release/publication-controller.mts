@@ -32,6 +32,7 @@ const CONTROL_FILES = new Set([
   'tools/release/trusted-publisher-config.mts',
   'tools/release/github-release-asset-upload-plan.mts',
   'tools/release/public-consumer-smoke.sh',
+  'tools/release/public-consumer-smoke.mts',
   'tools/release/locked-attestation-subjects.mts',
   'tools/release/frozen-cargo-publish.mts',
   'tools/release/cargo-upload-reconciliation.mts',
