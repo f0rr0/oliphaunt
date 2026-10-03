@@ -19,13 +19,5 @@ Patch 0022 keeps cancellation, timers, wakeups, signal masks and COPY deadlines
 inside the embedding boundary. Its narrower changes supersede the former
 0021 wake-epoll-self-pipe patch; they are not an optional performance switch.
 
-The native bridge no longer injects `-F`. PostgreSQL's default `fsync=on` is
-preserved unless the caller explicitly chooses otherwise. This can increase
-directory-write latency; reopening a database is not crash-durability proof.
 Startup/cleanup, configured identity and host working-directory restoration
 must be checked through the real C ABI, not inferred from patch formatting.
-
-The [September consolidation record](PATCH_CONSOLIDATION_20260907.md) preserves
-the prior results and unresolved platform limitations. Its checks and timings
-do not qualify the current refreshed tree. The shared collation patch now comes
-from `src/third-party/postgres/patches/common/`; keep main's shared source layout.

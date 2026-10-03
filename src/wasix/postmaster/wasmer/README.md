@@ -27,13 +27,9 @@ hashes. Runtime selection never falls back to a stock or `PATH` Wasmer.
 
 The ordered `series` files, not directory globs, select patches. Their digest
 includes the manifest, member names and contents; editing or reordering a patch
-invalidates receipts. Wasmer patches 0001–0008 decompose the inherited main
-bundle without changing its source hunks. The product executor stays in
-`../executor`, as on main, rather than being copied into the Wasmer fork.
-The compiler and verifier retain main's nonvolatile-memory policy. Disabling
-that optimization for strict shared-memory semantics is a separate follow-up,
-not part of the source-equivalent split. That policy change requires matching
-compiler and carrier identities; artifacts must never be relabelled.
+invalidates receipts. The product executor lives in `../executor`.
+The compiler and verifier use the nonvolatile-memory profile. Compiler policy
+changes require rebuilt carriers with matching identities.
 
 The libc series separates mapping, file, socket, process, exception and resource
 contracts. Its `sigsetjmp` fix evaluates the buffer expression once in the live

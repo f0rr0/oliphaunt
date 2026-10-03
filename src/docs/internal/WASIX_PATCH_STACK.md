@@ -29,16 +29,9 @@ identify Native or Wasmer patches. The selected series is authoritative.
 | 0031 | Removing activity reporting discarded behavior without adequate justification. |
 | 0035, 0036 | Scalar synchronization replacements lacked complete observer-exclusivity proof and an isolated performance win. |
 
-The [experiment disposition](../../wasix/runtime/assets/build/postgres/experiment-patch-disposition.toml)
-colocates individual motivations and reopening criteria with the build inputs.
-The [September consolidation record](PATCH_CONSOLIDATION_20260907.md) preserves
-historical evidence and its limitations, not current-main performance results.
 Correctness removals and unearned optimizations are different decisions; neither
 should be reversed merely to improve a compound benchmark score.
 
 Guest recovery, startup identity and output contracts must be updated together
 with the Rust and browser hosts. Patch 0044 establishes the host-selected catalog
 principal before startup policy runs; a later `SET ROLE` is not equivalent.
-The shared collation-discovery patch comes from `src/third-party/postgres/patches/common/`,
-not the retired product-local 0033 copy. Do not restore the old source-tree layout
-or generated review-table gate when updating this maintained ledger.

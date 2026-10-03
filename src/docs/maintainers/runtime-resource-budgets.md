@@ -1,13 +1,9 @@
 # Runtime resource budgets
 
-Status: implementation inventory. Values and PGlite observations audited on
-2026-09-08; runtime owner paths refreshed on 2026-09-27. Owner: runtime maintainers.
-This is not a fresh performance or dependency-version qualification.
-
 Equal byte counts do not imply equal purposes. A stack allocation, an I/O batch,
 a queue watermark, and a protocol rejection limit must have separate owners.
-The constants below describe existing behavior; this inventory does not change
-sizes or establish that they are optimal. MiB and KiB mean powers of 1024.
+This guide describes the owning constants and their trade-offs, not optimal
+values for every workload. MiB and KiB mean powers of 1024.
 
 ## Read this first: what a size means
 
@@ -29,28 +25,17 @@ sizes or establish that they are optimal. MiB and KiB mean powers of 1024.
 
 These are explanations of the mechanisms, not measured speedup claims.
 
-## Audit scope and ownership
+## Scope and ownership
 
-The second pass on 2026-09-08 checked first-party native C, Rust and TS runtimes
-and SDKs, shared contracts, browser-host patches, Postmaster patches/profiles,
-and source/package/release tooling. Searches covered named limits, literal
-allocations, powers of two, underscored decimal values, queue counts and linker
-settings. It found omissions in the first version: SQL cache/WAL settings,
-request queues, OPFS staging, tool sockets/output, archive limits, backend
-stderr, hash buffers and Postmaster memory accounting.
-
-This is the inventory of resource-size decisions found in that audit, not a
-claim to list every numeric literal in PostgreSQL, Wasmer or the repository.
-Unmodified dependency internals, test/benchmark-only workloads, timeouts, bit
-flags, port numbers, checksums and binary field offsets are not tuning choices
-covered here. Important fixed-format sizes are classified below. Experimental
-8 MiB execution stacks are not production defaults.
+This guide covers first-party runtime, SDK, transport and build resource limits.
+It does not duplicate dependency internals or describe test workloads, timeouts,
+ports and binary field offsets as tuning choices.
 
 Central documentation does not mean one global constant: equal numbers with
 different purposes stay separately owned. The shared protocol contract generates
 the embedded bridge C and SDK Rust/TS values. Browser-host patch literals are
-still separately pinned and checked by `src/wasix/browser-host/build-sdk.sh`;
-the earlier generator change did **not** remove those copies. SQL startup
+still separately pinned and checked by `src/wasix/browser-host/build-sdk.sh`.
+SQL startup
 defaults and broker-frame limits also still have multiple language owners.
 Change and check every consumer together until those contracts are unified.
 
@@ -89,7 +74,7 @@ TypeScript paths abbreviated as `wasix-ts/...` are under `src/wasix/sdks/ts/src/
 
 | Owner | Size | Meaning and allocation behavior |
 | --- | --- | --- |
-| `src/wasix/runtime/protocol-contract/contract.json`, `bufferedOutput.limitBytes` | 2 GiB minus 1 byte | Maximum length representable by the signed-i32 host bridge, not an application quota or reservation. Grows on demand; available memory may run out earlier. The former 64 MiB quota broke valid large queries and was removed. Allocation/overflow failures still retire the session without publishing an incomplete buffered response. |
+| `src/wasix/runtime/protocol-contract/contract.json`, `bufferedOutput.limitBytes` | 2 GiB minus 1 byte | Maximum length representable by the signed-i32 host bridge, not an application quota or reservation. Grows on demand; available memory may run out earlier. Allocation/overflow failures retire the session without publishing an incomplete buffered response. |
 | Same contract, `streamedOutput.callbackChunkMaxBytes`; generated Rust `protocol_limits_generated.rs::PROTOCOL_CALLBACK_CHUNK_BYTES`; TS `core/database.ts::WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES` | 64 KiB | Maximum bytes per host callback, not per result or COPY operation. Rust lends a slice for the synchronous call; JavaScript delivers an owned copy. |
 | `src/wasix/pgwire-server/src/proxy.rs::PROXY_READ_BUFFER_BYTES` | 64 KiB | Local stack scratch space per socket-serving call. A PostgreSQL message can span many reads. |
 | `wasix-rust/client.rs::DIRECT_TOOL_READ_BUFFER_BYTES` | 64 KiB | Separate local stack scratch space for the direct-tool socket. It is not owned by the callback ABI merely because its size matches. |
@@ -194,7 +179,7 @@ to prove the exact compiler provenance of the published npm binary.
 | Topic | Oliphaunt | PGlite counterpart | What the comparison means |
 | --- | --- | --- | --- |
 | Guest C/shadow stack | 8 MiB link setting | 8 MiB in pinned backend link recipe [P1] | Same kind of stack and same selected size. Neither measures the host engine's execution stack. |
-| Initial guest memory | 128 MiB link setting | 128 MiB default, caller `initialMemory` option [P2] | Comparable starting capacity, not a database-size limit. Our probe already grew to 197,722,112 bytes after startup. |
+| Initial guest memory | 128 MiB link setting | 128 MiB default, caller `initialMemory` option [P2] | Comparable starting capacity, not a database-size limit. Memory can grow after startup. |
 | Maximum guest memory | Product/engine-specific; Postmaster's 256 MiB profile is not the embedded default | 32,768 Wasm pages = 2 GiB in JS constructor [P2] | Do not compare a different Oliphaunt product's cap as if both ran under it. Native PostgreSQL has no equivalent one-piece Wasm ceiling. |
 | Native execution stack | Wasmer's separate 1 MiB default in the retained Rust runtime; Postmaster selects its own size | JS engine controls native Wasm execution; no corresponding numeric capacity selected in inspected PGlite SDK | No valid "1 MiB versus 8 MiB" comparison: the latter is PGlite's *other* stack. |
 | Growing result storage | Guest/native bridge output starts at 8 KiB | JS receive container starts at 1 MiB; grows, and resets to default on a later raw call [P3] | Similar job at different layers. Smaller starts save space for small work; larger starts avoid some growth. Both may also collect decoded rows. |
@@ -253,58 +238,11 @@ extension, third-party proxy or future release.
 | Wasmer execution stack | Separate engine-owned allocation | AOT/native call frames use this stack. PostgreSQL's shadow-stack depth check alone cannot establish that enough native stack remains. |
 | PostgreSQL `max_stack_depth` | SQL-configurable guard | Recursion safety threshold, not an allocation and not a transport budget. Raising it does not allocate either stack. |
 
-The retained JSON reproduction exposed the distinction: Wasmer's 1 MiB
-execution stack exhausted before PostgreSQL's guest shadow-stack guard could
-recover safely. An 8 MiB execution-stack diagnostic passed the 100 kB SQL guard
-case, but that is not proof for the ordinary 2 MiB guard or arbitrary queries.
-It is **not** a selected production fix. A robust solution needs a trustworthy
-remaining-native-stack check or another proven bound. Sampling a local address
-inside a host import is insufficient: that import runs on the parent stack,
-not the guest's execution stack. No new stack environment flag is introduced
-by this inventory.
-
-### Required stack-safety integration
-
-The intended fix adds a second guard; it does not replace PostgreSQL's existing
-linear-stack check or convert an engine overflow into a recoverable SQL error:
-
-1. A fixed trusted engine operation measures remaining native guest-stack
-   capacity without moving the query onto the host stack. Ordinary callbacks
-   keep their host-stack isolation and need no budget snapshots.
-   Exclude guard pages and exception reserves;
-   cap accounting to the configured budget even when a larger pooled stack is
-   reused. Nested calls, normal return, traps, and panics must restore the
-   previous measurement context.
-2. A small host import exposes that measurement to the guest. PostgreSQL's
-   `stack_is_too_deep()` checks both its current C-stack depth and the native
-   recovery reserve. The host returns normally; PostgreSQL raises SQLSTATE
-   `54001` inside its live guest exception boundary.
-3. Reserve enough space for the import boundary, work between checks, error
-   reporting, and nested error cleanup. PostgreSQL's existing 512 KiB platform
-   stack slop is a reference, **not** proof that the same reserve is sufficient
-   for AOT frames. Select the engine capacity per engine, not by changing
-   Wasmer's process-global default from an SDK.
-4. An unavailable measurement must not silently mean unlimited space on a
-   runtime claiming this guard. Browser engines need a separately supported
-   contract; a Node/V8 stack setting is not a Wasmer setting. Code that bypasses
-   PostgreSQL's checks can still hit a terminal engine trap, which must close
-   the affected session rather than masquerade as success.
-
-Historical 2026-09-08 result: the hardened candidate passed 62 VM tests in both debug and optimized
-builds, focused PostgreSQL recovery checks in memory/directory, and 144 benchmark
-children. The [review packet](../internal/stack-safety-20260908/README.md) contains
-the VM/API, PostgreSQL and Rust registration patches, regression probes and
-performance caveats. It is **not consumed by production dependencies or patch
-series**. Reserve qualification, the supported engine dependency and browser/
-Windows contracts remain outstanding. No production guard or larger execution
-stack is claimed by the constants cleanup.
-
-Admission checks must include low (100 kB) and default (2 MiB) SQL limits,
-repeated errors followed by valid queries, nested PL/pgSQL/savepoint cleanup,
-memory and directory storage, direct and TCP paths, and COPY/disconnect/reconnect.
-Check small-query overhead as well as deep-query correctness: a host import at
-every recursion checkpoint is not free. Keep actual engine-overflow tests in
-isolated processes and require bounded connection teardown rather than hanging.
+Wasmer's native execution stack can exhaust before PostgreSQL's guest C-stack
+guard detects excessive recursion. Increasing `max_stack_depth` does not fix
+this: it relaxes PostgreSQL's guard without allocating more engine stack.
+There is no production remaining-native-stack guard in the embedded runtime;
+an engine overflow is terminal, not a recoverable SQL error.
 
 The backend/initdb link sizes are included in the build-profile signature so
 an incremental producer cannot silently reuse the old memory layout after a
@@ -352,8 +290,8 @@ Do not apply these numbers to the embedded Rust/TS defaults above.
 
 ## Archives, installation and startup verification
 
-These sizes were missing from the original inventory. They mostly affect
-opening, backup/restore, downloading or building—not steady-state SQL execution.
+These sizes mostly affect opening, backup/restore, downloading or building—not
+steady-state SQL execution.
 An archive ceiling allows or rejects an archive; it does not allocate that much
 memory in advance. A ceiling checked **after** decompression does not bound
 peak decompression memory: TS `archive.ts::decompressIfNeeded` currently calls
@@ -381,39 +319,6 @@ that limit as a streaming decompression memory guarantee.
 | Postmaster `lib/durable_publication.py` | 16 MiB comparison; 256 MiB publication; 1 MiB copy batches | Safe publication of carrier metadata/files, not a cap on PGDATA. |
 | Postmaster `lib/sealed_export_chain.py` and `linear_memory_transaction.py` | 512 MiB uninventoried input; 16 MiB small metadata; 1 MiB read/copy batches | Build/provenance validation envelopes. |
 | Postmaster Wasmer patch `0008-postmaster-executor-and-build-closure.patch` | 4 MiB linear-memory receipt; 16 MiB export proof; 1 MiB manifest; 4 KiB proof line; 128 KiB hashes | Carrier admission/proof limits and verification batch, not runtime SQL buffers. |
-
-### Historical build/install envelope inventory (not SQL tuning)
-
-The following September 8 inventory is retained for traceability. Main has
-subsequently reorganized source acquisition, packaging and release tooling;
-some helpers were replaced. These are historical selections, not promises
-about current helper filenames or limits. Inspect the active role-specific
-owner before changing a build/install budget.
-
-Under `tools/`, the additional choices are:
-
-- `dev/capture-command-output.mjs`: 64 MiB default command-output limit.
-  Callers use 4/16/32/64/128 MiB bounds according to the command. Examples:
-  `release/github-release-mutations.mjs` (4 MiB), public-consumer smoke
-  (16 MiB), carrier packagers (32 MiB), `release/github-read.mjs` (128 MiB).
-- Registry/publication metadata: 64 KiB responses in frozen Cargo/trusted
-  publishing; 256 KiB trusted-publisher responses/help; 8 MiB registry/npm
-  metadata; 1 MiB Maven responses, public keys and Swift checksum manifests;
-  64 MiB registry evidence/receipts; 8 MiB public-consumer evidence. Owners are
-  the corresponding `tools/release/` scripts, not the SQL transport contract.
-- `release/bootstrap-publication-capsule.mjs`: 1 MiB copies, 64 MiB metadata.
-- `release/extract-node-headers.mjs`: 64 MiB archive, 256 MiB expanded,
-  32 MiB file. `release/ios-carrier-manifest.mjs`: 2 GiB archive.
-- Cargo artifact packagers: 10 MiB local package ceiling.
-  `release/frozen-maven-publish.mjs`: 1,000,000,000-byte bundle ceiling
-  (decimal bytes, not 1 GiB). These are repository checks, not a promise that
-  a remote registry's policy will never change.
-- `xtask/src/wasix/runtime/tools/xtask/src/asset_checks.rs`: 8 GiB expanded-asset envelope.
-
-These limits protect the development/release machine from excessive input or
-output. Raising them can increase build-time memory/disk exposure. Their only
-connection to ordinary query latency is indirect competition for machine
-resources if builds and queries run on the same host.
 
 ## Fixed formats, platform bounds, and unbounded growth
 

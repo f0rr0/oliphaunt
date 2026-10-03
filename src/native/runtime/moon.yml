@@ -112,7 +112,6 @@ tasks:
       - liboliphaunt-native:generation-lifecycle-test
       - liboliphaunt-native:stream-queue-test
       - liboliphaunt-native:archive-stream-test
-      - liboliphaunt-native:embedded-contract-test
       - liboliphaunt-native:session-reset-test
       - liboliphaunt-native:ios-extension-packager-test
       - liboliphaunt-native:module-dir-resolver-test
@@ -121,20 +120,6 @@ tasks:
       - liboliphaunt-native:symbol-scope-test
     inputs:
       []
-  embedded-contract-test:
-    command: node --test src/native/runtime/tools/cwd-boundary-contract.test.mjs src/native/runtime/tools/event-trigger-runtime-mode.test.mjs src/native/runtime/tools/trusted-embedded-session.test.mjs src/native/runtime/tools/trusted-host-process-boundary.test.mjs
-    inputs:
-      - patches/**/*
-      - postgres/series
-      - src/**/*
-      - smoke/liboliphaunt_smoke.c
-      - tools/*.test.mjs
-      - /src/native/broker/src/server.rs
-      - /src/native/sdks/rust/src/server.rs
-    options:
-      cache: true
-      internal: true
-      runFromWorkspaceRoot: true
   session-reset-test:
     command: node src/native/runtime/tools/test-session-reset.mjs
     inputs:

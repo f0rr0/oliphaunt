@@ -90,11 +90,8 @@ if its path is renamed; startup still changes the process-wide working
 directory temporarily. Use broker/server isolation when other host threads
 must be insulated from that or from the documented PGDATA environment change.
 
-The source-only contract checks and optimized session-reset regression run
-through `moon run liboliphaunt-native:embedded-contract-test` and
-`moon run liboliphaunt-native:session-reset-test`. The Linux C probes in `smoke/`
-exercise configured identities, process signals/timers, COPY backpressure, and
-working-directory failure boundaries against an actual rebuilt library.
+The C smoke tests exercise configured identities, process signals/timers, COPY
+backpressure, and working-directory failure boundaries against the built library.
 
 Hosts serialize ordinary non-cancel calls on one logical C handle;
 `oliphaunt_cancel` is the cross-thread exception. Streaming callbacks borrow
@@ -116,11 +113,8 @@ need different PostgreSQL settings do not need a new C ABI; they pass validated
 `-c name=value` startup arguments through `OliphauntConfig.startup_args`. Later
 arguments win, so SDKs and benchmark harnesses can apply concrete PostgreSQL
 GUC overrides above the stable C boundary without inventing tuning profiles.
-Direct startup retains main's `-F` (`fsync=off`) default. Persistent storage
+Direct startup defaults to `-F` (`fsync=off`). Persistent storage
 alone does not provide crash safety: pass `-c fsync=on` when it is required.
-Changing that default is a separate durability-policy change, not part of patch
-consolidation. Successful functional reopen tests alone are not crash-durability
-proof.
 
 SDKs must hydrate PGDATA from a packaged cluster seed before calling
 `oliphaunt_init`; the C boundary never runs `initdb` or initializes an empty
