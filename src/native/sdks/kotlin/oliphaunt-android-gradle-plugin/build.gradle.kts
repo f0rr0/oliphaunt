@@ -43,6 +43,9 @@ tasks.processResources {
     from(file("../../../runtime/include/oliphaunt.h")) {
         into("dev/oliphaunt/android")
     }
+    from(file("../../../runtime/bin/android-cxx-runtime.map")) {
+        into("dev/oliphaunt/android")
+    }
     from(file("../../../../extensions/contracts/extension-artifact-archive-policy.properties")) {
         into("dev/oliphaunt/android")
     }

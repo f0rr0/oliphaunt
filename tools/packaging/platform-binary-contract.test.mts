@@ -142,6 +142,47 @@ function elf({
   return buffer;
 }
 
+function androidElfWithCppRuntime({
+  needed = 'libc.so',
+  symbol = 'oliphaunt_init',
+  defined = true,
+} = {}) {
+  const original = elf({ androidApi: 24 });
+  const strings = Buffer.from(`\0${needed}\0${symbol}\0`);
+  const dataOffset = align(original.length, 8);
+  const sectionOffset = align(dataOffset + strings.length + 32 + 24, 8);
+  const buffer = Buffer.alloc(sectionOffset + 5 * 64);
+  original.copy(buffer);
+  const originalSectionOffset = Number(original.readBigUInt64LE(40));
+  original.copy(buffer, sectionOffset, originalSectionOffset, originalSectionOffset + 128);
+  buffer.writeBigUInt64LE(BigInt(sectionOffset), 40);
+  buffer.writeUInt16LE(5, 60);
+  strings.copy(buffer, dataOffset);
+  const stringSection = sectionOffset + 2 * 64;
+  buffer.writeUInt32LE(3, stringSection + 4);
+  buffer.writeBigUInt64LE(BigInt(dataOffset), stringSection + 24);
+  buffer.writeBigUInt64LE(BigInt(strings.length), stringSection + 32);
+  const dynamicOffset = dataOffset + strings.length;
+  buffer.writeBigInt64LE(1n, dynamicOffset);
+  buffer.writeBigUInt64LE(1n, dynamicOffset + 8);
+  const symbolOffset = dynamicOffset + 32;
+  buffer.writeUInt32LE(needed.length + 2, symbolOffset);
+  buffer[symbolOffset + 4] = 0x12;
+  buffer.writeUInt16LE(defined ? 1 : 0, symbolOffset + 6);
+  for (const [index, type, offset, size, entrySize] of [
+    [3, 6, dynamicOffset, 32, 16],
+    [4, 11, symbolOffset, 24, 24],
+  ]) {
+    const section = sectionOffset + index * 64;
+    buffer.writeUInt32LE(type, section + 4);
+    buffer.writeBigUInt64LE(BigInt(offset), section + 24);
+    buffer.writeBigUInt64LE(BigInt(size), section + 32);
+    buffer.writeUInt32LE(2, section + 40);
+    buffer.writeBigUInt64LE(BigInt(entrySize), section + 56);
+  }
+  return buffer;
+}
+
 function align(value, alignment) {
   return Math.ceil(value / alignment) * alignment;
 }
@@ -758,4 +799,57 @@ describe('staged-tree discovery', () => {
       /redirect.*symbolic link/u,
     );
   });
+});
+
+describe('Android private C++ runtime contract', () => {
+  for (const [target, machine] of [
+    ['android-x86_64', 62],
+    ['android-arm64-v8a', 183],
+  ]) {
+    const inspect = (options = {}) => {
+      const binary = androidElfWithCppRuntime(options);
+      binary.writeUInt16LE(machine, 18);
+      return inspectPlatformBinaryBuffer(binary, { target });
+    };
+    test(`${target} preserves C exports and system dependencies`, () => {
+      expect(() => inspect()).not.toThrow();
+      expect(() => inspect({ symbol: '__cxa_throw', defined: false })).not.toThrow();
+    });
+    test(`${target} rejects an app-owned shared C++ dependency`, () => {
+      expect(() => inspect({ needed: 'libc++_shared.so' })).toThrow(/C\+\+ runtime statically/u);
+    });
+    test(`${target} rejects C++ exports that can interpose on other app libraries`, () => {
+      for (const symbol of [
+        '_ZNSt6__ndk16vectorIiEE',
+        '__cxa_throw',
+        '__gxx_personality_v0',
+        '_Unwind_Resume',
+        '__dynamic_cast',
+      ]) {
+        expect(() => inspect({ symbol })).toThrow(/exposes private C\+\+ symbol/u);
+      }
+    });
+  }
+});
+
+test('Android C++ inspection rejects malformed dynamic metadata', () => {
+  const target = 'android-x86_64';
+  for (const fault of ['link', 'entry-size', 'string-offset', 'string-termination']) {
+    const binary = androidElfWithCppRuntime();
+    const sectionOffset = Number(binary.readBigUInt64LE(40));
+    const dynamicSection = sectionOffset + 3 * 64;
+    if (fault === 'link') binary.writeUInt32LE(10, dynamicSection + 40);
+    if (fault === 'entry-size') binary.writeBigUInt64LE(0n, dynamicSection + 56);
+    if (fault === 'string-offset') {
+      const dynamicOffset = Number(binary.readBigUInt64LE(dynamicSection + 24));
+      binary.writeBigUInt64LE(10000n, dynamicOffset + 8);
+    }
+    if (fault === 'string-termination') {
+      const stringSection = sectionOffset + 2 * 64;
+      const stringOffset = Number(binary.readBigUInt64LE(stringSection + 24));
+      const stringSize = Number(binary.readBigUInt64LE(stringSection + 32));
+      binary.fill(0x78, stringOffset, stringOffset + stringSize);
+    }
+    expect(() => inspectPlatformBinaryBuffer(binary, { target })).toThrow(/ELF/u);
+  }
 });
