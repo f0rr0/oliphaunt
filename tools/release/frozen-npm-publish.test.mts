@@ -214,4 +214,46 @@ describe('frozen npm registry publication', () => {
       expect(isRegistryPublicationDeferredError(cause)).toBe(true);
     }
   });
+
+  test('post-upload reconciliation allows minutes of npm processing under the shared deadline', async () => {
+    const file = tarball();
+    let now = 1_000_000;
+    const prepared = await prepareFrozenNpmPublication({
+      packageName: '@oliphaunt/fixture',
+      version: '1.2.3',
+      tarball: file,
+      deadlineEpochSeconds: 2_000,
+      nowImpl: () => now,
+      fetchImpl: async () => new Response('', { status: 404 }),
+    });
+    const options = {
+      nowImpl: () => now,
+      sleepImpl: async (milliseconds) => {
+        now += milliseconds;
+      },
+      fetchImpl: async () =>
+        now >= 1_420_000
+          ? publishedResponse(prepared.expectedIntegrity)
+          : new Response('', { status: 404 }),
+    };
+
+    const reconciled = await reconcileFrozenNpmPublication(prepared, options);
+    expect(reconciled.published).toBe(true);
+    expect(now).toBe(1_420_000);
+
+    now = 1_000_000;
+    await expect(
+      reconcileFrozenNpmPublication({ ...prepared, deadlineEpochSeconds: 1_050 }, options),
+    ).rejects.toThrow('shared registry mutation deadline');
+    expect(now).toBe(1_040_000);
+
+    now = 1_000_000;
+    await expect(
+      reconcileFrozenNpmPublication(prepared, {
+        ...options,
+        fetchImpl: async () => new Response('', { status: 404 }),
+      }),
+    ).rejects.toThrow('did not become visible');
+    expect(now).toBe(1_900_000);
+  });
 });
