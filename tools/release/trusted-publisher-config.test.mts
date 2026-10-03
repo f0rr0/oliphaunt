@@ -163,7 +163,7 @@ test('rejects unknown or duplicate product selection', () => {
   );
 });
 
-test('classifies only the exact npm publish permission and caller identity as trusted', () => {
+test('requires npm direct publication and exact caller identity, accepting implicit staging', () => {
   assert.deepEqual(classifyNpmTrustConfigs([]), { state: 'missing' });
   assert.deepEqual(classifyNpmTrustConfigs([exactNpm()]), { state: 'exact' });
   assert.equal(classifyNpmTrustConfigs([{ ...exactNpm(), file: 'wrong.yml' }]).state, 'conflict');
@@ -173,6 +173,16 @@ test('classifies only the exact npm publish permission and caller identity as tr
         ...exactNpm(),
         permissions: ['createPackage', 'createStagedPackage'],
       },
+    ]).state,
+    'exact',
+  );
+  assert.equal(
+    classifyNpmTrustConfigs([{ ...exactNpm(), permissions: ['createStagedPackage'] }]).state,
+    'conflict',
+  );
+  assert.equal(
+    classifyNpmTrustConfigs([
+      { ...exactNpm(), permissions: ['createPackage', 'createStagedPackage', 'updatePackage'] },
     ]).state,
     'conflict',
   );

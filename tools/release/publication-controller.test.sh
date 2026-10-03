@@ -30,7 +30,7 @@ bash "$owner/publication-controller.sh" "$source" "$newer"
 printf 'fixed checkout validation' > tools/release/qualified-release-replay.sh
 checkout_fix="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$checkout_fix"
-for file in .github/scripts/bootstrap-registry-identities.mts tools/release/bootstrap-registry-reconciliation.mts tools/release/release-publish.mts tools/release/frozen-npm-publish.mts tools/release/cargo-upload-reconciliation.mts tools/release/github-release-asset-upload-plan.mts tools/release/public-consumer-smoke.sh tools/release/locked-attestation-subjects.mts; do
+for file in .github/scripts/bootstrap-registry-identities.mts .github/scripts/bootstrap-registry-identities.sh tools/release/bootstrap-registry-reconciliation.mts tools/release/release-publish.mts tools/release/publish-registries.sh tools/release/publish-frozen-npm.sh tools/release/trusted-publisher-config.sh tools/release/trusted-publisher-config.mts tools/release/frozen-npm-publish.mts tools/release/cargo-upload-reconciliation.mts tools/release/github-release-asset-upload-plan.mts tools/release/public-consumer-smoke.sh tools/release/locked-attestation-subjects.mts; do
   printf 'fixed bootstrap dependencies' > "$file"
 done
 bootstrap_fix="$(commit)"

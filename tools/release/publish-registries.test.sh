@@ -6,6 +6,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/tools/release" "$scratch/tools/dev" "$scratch/bin"
 cp tools/release/publish-registries.sh "$scratch/tools/release/"
+cp tools/release/publish-frozen-npm.sh "$scratch/tools/release/"
 printf '#!/usr/bin/env bash\nshift\nexec "$@"\n' > "$scratch/tools/release/with-source.sh"
 bun tools/release/publish-registries.test.mts prepare "$scratch"
 cat > "$scratch/tools/dev/bun.sh" <<'SH'
@@ -25,7 +26,7 @@ case "$phase" in
     fi ;;
   registry-npm-before)
     event "npm-before-$index"
-    jq -n '{tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000}' > "$state/npm-$index.json" ;;
+    jq -n '{packageName:"@fixture/runtime",version:"1.0.0",tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000}' > "$state/npm-$index.json" ;;
   registry-npm-after) event "npm-reconciled-$index"; echo '[]' > "$state/operation-$index.json" ;;
   registry-maven)
     [[ -f "$state/operation-1.json" ]]
@@ -42,18 +43,23 @@ cat > "$scratch/bin/npm" <<'SH'
 [[ "$*" == 'publish frozen.tgz --access public --provenance --registry https://registry.npmjs.org' ]] || exit 21
 [[ "$NPM_CONFIG_FETCH_RETRIES" == 0 ]] || exit 22
 echo npm-push >> "$REGISTRY_FIXTURE_LOG"
+if [[ -n "$REGISTRY_FIXTURE_AUTH_ERROR" ]]; then
+  echo "npm error code $REGISTRY_FIXTURE_AUTH_ERROR" >&2
+fi
 exit 7
 SH
 chmod +x "$scratch/bin/npm"
 deadline="$(command -v gtimeout || command -v timeout)"
-for scenario in success failure; do
+for scenario in success failure auth-ENEEDAUTH auth-E401 auth-E403 auth-EOTP; do
   fail=false
   [[ "$scenario" != failure ]] || fail=true
+  auth_error=''
+  [[ "$scenario" != auth-* ]] || auth_error="${scenario#auth-}"
   status=0
-  PATH="$scratch/bin:$PATH" REGISTRY_FIXTURE_ROOT="$scratch" REGISTRY_FIXTURE_LOG="$scratch/events-$scenario" REGISTRY_FIXTURE_FAIL="$fail" \
+  PATH="$scratch/bin:$PATH" REGISTRY_FIXTURE_ROOT="$scratch" REGISTRY_FIXTURE_LOG="$scratch/events-$scenario" REGISTRY_FIXTURE_FAIL="$fail" REGISTRY_FIXTURE_AUTH_ERROR="$auth_error" \
     "$deadline" 10 bash "$scratch/tools/release/publish-registries.sh" --products-json '["fixture"]' > "$scratch/result" 2>&1 || status=$?
   if [[ "$scenario" == success ]]; then [[ "$status" == 0 ]] || { cat "$scratch/result" >&2; exit 1; };
   else [[ "$status" != 0 && "$status" != 124 ]]; fi
   bun "$source_root/tools/release/publish-registries.test.mts" assert "$scratch" "$scenario"
 done
-echo 'Registry lanes: dependency ordering, one npm attempt, reconciliation and peer draining passed'
+echo 'Registry lanes: dependency ordering, one npm attempt, reconciliation, authorization rejection and peer draining passed'

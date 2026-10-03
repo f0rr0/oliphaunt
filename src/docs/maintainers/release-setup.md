@@ -126,6 +126,9 @@ emits, not what a registry operator entered. Audit the table after bootstrap.
 The crates.io exchange then proves its matching configuration before normal
 registry mutation; npm has no non-publishing trusted-auth probe, so its package
 settings must be checked directly.
+npm now permits `npm stage publish` for every trusted publisher. The audit
+accepts that implicit permission while requiring direct `npm publish` and
+rejecting extra permissions such as dist-tag management.
 
 Use the exact publication lock to manage that external state; never maintain a
 second handwritten package list. This command validates the lock against the
@@ -336,6 +339,8 @@ publish before their aggregator, and are not independent release products.
    installs and verifies its exact `NPM_VERSION` through
    `setup-npm-publisher`; do not substitute the operator's ambient CLI for that
    workflow pin.
+   Use `npm login --auth-type=web` for the operator session; bootstrap tokens
+   with bypass 2FA cannot manage trusted publishers.
    The setup helper retains npm's documented two-second spacing and divides the
    exact lock into deterministic batches of 25, leaving room inside each
    five-minute 2FA skip window for pre-audit, creation, and post-audit. For each
@@ -358,8 +363,9 @@ publish before their aggregator, and are not independent release products.
    window is needed. The first audit exits `1` for missing configurations; its
    JSON is still the required pre-mutation inventory. Every exact package receives repository
    `f0rr0/oliphaunt`, workflow `release.yml`, environment
-   `release-publish`, and only `npm publish`; staged publishing is never
-   authorized. After all batches, rerun `--audit` for every batch and retain
+   `release-publish`, and direct `npm publish` permission. npm's implicit
+   staging permission is accepted; extra permissions such as dist-tag management
+   are rejected. After all batches, rerun `--audit` for every batch and retain
    the zero-missing, zero-conflict reports.
 
    Run every npm `--audit` and `--apply` command directly in an interactive
