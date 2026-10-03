@@ -54,6 +54,7 @@ import {
   AOT_PACKAGES,
   AOT_TARGET_CFGS,
   AOT_TARGET_TRIPLES,
+  assertCoreRuntimeAotArtifacts,
   CORE_RUNTIME_ARCHIVE_FILES,
   expectedExtensionAotTargets,
   FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES,
@@ -424,6 +425,7 @@ export function validateAotPayload(root, expectedTarget) {
   const manifestPath = path.join(root, 'manifest.json');
   const manifest = readJson(manifestPath);
   validateCanonicalAotManifest(manifest, manifestPath, expectedTarget);
+  assertCoreRuntimeAotArtifacts(manifest, rel(manifestPath));
   let artifactRows;
   try {
     artifactRows = assertWasixAotArtifactPayloads(manifest, {
