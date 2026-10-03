@@ -362,7 +362,7 @@ export function verify(
       'postgres-version': pgVersion,
       'target-triple': wasmer.rustc_host,
       'host-abi': wasmer.host_abi,
-      engine: 'llvm-opta-ro_ftable',
+      engine: 'llvm-opta',
       'cpu-policy': 'generic-baseline',
       'cpu-features': [],
       'wasmer-version': wasmerVersion,

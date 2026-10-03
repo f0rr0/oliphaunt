@@ -18,11 +18,11 @@ use crate::value_after;
 
 // Wasmer 7.2.1's deterministic_id omits these codegen choices. Keep our
 // artifact identity explicit; never label strict and nonvolatile code alike.
-pub(crate) const AOT_ENGINE_PROFILE: &str = "llvm-opta-ro_ftable";
+pub(crate) const AOT_ENGINE_PROFILE: &str = "llvm-opta";
 
 pub(crate) fn check_aot_codegen_environment() -> Result<()> {
     for (name, expected) in [
-        ("OLIPHAUNT_WASM_AOT_NON_VOLATILE_MEMOPS", false),
+        ("OLIPHAUNT_WASM_AOT_NON_VOLATILE_MEMOPS", true),
         ("OLIPHAUNT_WASM_AOT_READONLY_FUNCREF_TABLE", true),
     ] {
         match std::env::var(name) {
@@ -141,8 +141,9 @@ fn llvm_aot_engine() -> wasmer::Engine {
     if env_flag("OLIPHAUNT_WASM_WASMER_PERFMAP") {
         llvm.enable_perfmap();
     }
-    // Preserve Wasmer's spec-compliant memory operations. Nonvolatile memops
-    // are not safe merely because a PostgreSQL instance has one backend.
+    // Retain main's codegen policy here; strict memory semantics are a separate
+    // correctness/performance change, not part of patch consolidation.
+    llvm.enable_non_volatile_memops();
     llvm.enable_readonly_funcref_table();
     EngineBuilder::new(llvm)
         .set_target(Some(portable_aot_target()))
@@ -183,7 +184,7 @@ fn print_aot_engine_config(engine: &wasmer::Engine) {
     );
     println!("wasmer-feature-exceptions: enabled");
     println!("wasmer-llvm-target-cpu: generic");
-    println!("wasmer-llvm-non-volatile-memops: disabled");
+    println!("wasmer-llvm-non-volatile-memops: enabled");
     println!("wasmer-llvm-readonly-funcref-table: enabled");
 }
 
@@ -221,8 +222,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fixed_codegen_profile_rejects_unsafe_and_ambiguous_overrides() {
-        assert_ne!(AOT_ENGINE_PROFILE, "llvm-opta");
+    fn fixed_codegen_profile_rejects_conflicting_and_ambiguous_overrides() {
+        assert_eq!(AOT_ENGINE_PROFILE, "llvm-opta");
         for expected in [false, true] {
             validate_profile_override("test", None, expected).unwrap();
             validate_profile_override("test", Some(if expected { "1" } else { "0" }), expected)
