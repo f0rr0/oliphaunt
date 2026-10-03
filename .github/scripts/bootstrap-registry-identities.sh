@@ -33,16 +33,11 @@ checkpoint() {
   return "$status"
 }
 publish_carrier() {
-  local index="$1" ecosystem="$2" admission tarball registry seconds
+  local index="$1" ecosystem="$2"
   if [[ "$ecosystem" == cargo ]]; then publisher bootstrap-cargo "$index"; return; fi
   publisher bootstrap-npm-before "$index" || return
   [[ ! -f "$state/operation-$index.json" && ! -f "$state/abort" ]] || return 0
-  admission="$state/npm-$index.json"
-  tarball="$(jq -r .tarball "$admission")" || return
-  registry="$(jq -r .registry "$admission")" || return
-  seconds="$(jq -r '.timeout / 1000 | floor' "$admission")" || return
-  NPM_CONFIG_FETCH_RETRIES=0 "$transport_timeout" --kill-after=5s "${seconds}s" \
-    npm publish "$tarball" --access public --provenance --registry "$registry" || true
+  bash tools/release/publish-frozen-npm.sh "$state/npm-$index.json" "$transport_timeout" || return
   publisher bootstrap-npm-after "$index"
 }
 lane() (

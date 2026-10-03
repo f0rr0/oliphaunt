@@ -20,15 +20,19 @@ if [ "$1" = --version ]; then echo 11.15.0; exit; fi
 [ "$1" = trust ]
 printf '%s %s %s\n' "$2" "$3" "$NPM_CONFIG_FETCH_RETRIES" >> "$TEST_EVENTS"
 if [ "$2" = list ]; then
-  [ "$#" = 6 ] && [ "$4" = --json ] && [ "$5" = --registry ] && [ "$6" = https://registry.npmjs.org/ ]
   [ "$NPM_CONFIG_FETCH_RETRIES" = 3 ]
-  if [ -t 1 ]; then [ -t 0 ]; echo 'discard this authentication display'; exit; fi
+  if [ -t 1 ]; then
+    [ -t 0 ]
+    [ "$#" = 5 ] && [ "$4" = --registry ] && [ "$5" = https://registry.npmjs.org/ ]
+    echo 'discard this authentication display'; exit
+  fi
+  [ "$#" = 6 ] && [ "$4" = --json ] && [ "$5" = --registry ] && [ "$6" = https://registry.npmjs.org/ ]
   if [ "$TEST_SCENARIO" = conflict ]; then echo "$TEST_CONFLICT"; exit; fi
   if [ -f "$TEST_STATE" ]; then echo "$TEST_EXACT"; else echo '[]'; fi
 elif [ "$2" = github ]; then
   [ -t 0 ] && [ -t 1 ]
   [ "$NPM_CONFIG_FETCH_RETRIES" = 0 ]
-  [ "$*" = 'trust github @oliphaunt/example --file release.yml --repo f0rr0/oliphaunt --env release-publish --allow-publish --yes --json --registry https://registry.npmjs.org/' ]
+  [ "$*" = 'trust github @oliphaunt/example --file release.yml --repo f0rr0/oliphaunt --env release-publish --allow-publish --yes --registry https://registry.npmjs.org/' ]
   if [ "$TEST_SCENARIO" != missing ]; then touch "$TEST_STATE"; fi
   exit 7
 else exit 91; fi

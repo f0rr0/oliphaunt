@@ -39,7 +39,8 @@ npm_names=()
 while IFS= read -r name; do npm_names+=("$name"); done < <(jq -r '.selection.identities[].name' "$scratch/context.json")
 # npm's authentication dialog requires both stdin and stdout to remain TTYs.
 warmup() {
-  NPM_CONFIG_FETCH_RETRIES=3 "$deadline" --foreground --kill-after=5s 300s npm trust list "$1" --json --registry https://registry.npmjs.org/
+  # npm buffers JSON output, including the browser 2FA link, until completion.
+  NPM_CONFIG_FETCH_RETRIES=3 "$deadline" --foreground --kill-after=5s 300s npm trust list "$1" --registry https://registry.npmjs.org/
   sleep 2
 }
 list() {
@@ -71,7 +72,7 @@ if jq -e '.apply' "$scratch/context.json" >/dev/null && jq -e '.conflicts | leng
   while IFS= read -r index; do
     name="${npm_names[$index]}"
     status=0
-    NPM_CONFIG_FETCH_RETRIES=0 "$deadline" --foreground --kill-after=5s 300s npm trust github "$name" --file release.yml --repo f0rr0/oliphaunt --env release-publish --allow-publish --yes --json --registry https://registry.npmjs.org/ || status=$?
+    NPM_CONFIG_FETCH_RETRIES=0 "$deadline" --foreground --kill-after=5s 300s npm trust github "$name" --file release.yml --repo f0rr0/oliphaunt --env release-publish --allow-publish --yes --registry https://registry.npmjs.org/ || status=$?
     sleep 2
     list "$name" "$scratch/reconcile-$index"
     bash tools/dev/bun.sh "$tool" --npm-reconcile "$scratch" "$index"

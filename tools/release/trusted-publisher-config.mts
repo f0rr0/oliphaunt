@@ -157,6 +157,13 @@ function relevantCratesConfig(config) {
 }
 
 function exactNpmConfig(config) {
+  const actual = relevantNpmConfig(config);
+  // npm always permits staging; direct publishing must still be granted, and
+  // unrelated permissions such as dist-tag management remain a conflict.
+  if (actual.permissions !== null)
+    actual.permissions = actual.permissions.filter(
+      (permission) => permission !== 'createStagedPackage',
+    );
   const expected = {
     type: 'github',
     repository: EXPECTED_TRUSTED_PUBLISHER.repository,
@@ -164,7 +171,7 @@ function exactNpmConfig(config) {
     environment: EXPECTED_TRUSTED_PUBLISHER.environment,
     permissions: [...EXPECTED_TRUSTED_PUBLISHER.npmPermissions],
   };
-  return stableJson(relevantNpmConfig(config)) === stableJson(expected);
+  return stableJson(actual) === stableJson(expected);
 }
 
 function exactCratesConfig(config, name) {
@@ -185,7 +192,7 @@ export function classifyNpmTrustConfigs(configs) {
   if (configs.length === 1 && exactNpmConfig(configs[0])) return { state: 'exact' };
   return {
     state: 'conflict',
-    reason: `expected exactly one publish-only GitHub configuration; observed ${JSON.stringify(configs.map(relevantNpmConfig))}`,
+    reason: `expected exactly one GitHub configuration allowing direct publication; observed ${JSON.stringify(configs.map(relevantNpmConfig))}`,
   };
 }
 

@@ -50,15 +50,8 @@ lane() (
         native registry-npm-before "$index"
         [[ ! -f "$state/abort" ]] || exit 1
         [[ ! -f "$state/operation-$index.json" ]] || continue
-        admission="$state/npm-$index.json"
-        tarball="$(jq -r .tarball "$admission")"
-        registry="$(jq -r .registry "$admission")"
-        seconds="$(jq -r '.timeout / 1000 | floor' "$admission")"
-        status=0
-        NPM_CONFIG_FETCH_RETRIES=0 "$transport_timeout" --kill-after=5s "${seconds}s" \
-          npm publish "$tarball" --access public --provenance --registry "$registry" || status=$?
+        bash tools/release/publish-frozen-npm.sh "$state/npm-$index.json" "$transport_timeout"
         native registry-npm-after "$index"
-        if [[ "$status" != 0 ]]; then echo "npm operation $index reconciled after exit $status"; fi
       fi
     done
   fi

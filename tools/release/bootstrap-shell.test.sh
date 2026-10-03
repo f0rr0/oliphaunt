@@ -6,6 +6,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/.github/scripts" "$scratch/tools/dev" "$scratch/tools/release" "$scratch/bin"
 cp .github/scripts/bootstrap-registry-identities.sh "$scratch/.github/scripts/"
+cp tools/release/publish-frozen-npm.sh "$scratch/tools/release/"
 printf '#!/usr/bin/env bash\nshift\nexec "$@"\n' > "$scratch/tools/release/with-source.sh"
 bun tools/release/bootstrap-shell.test.mts prepare "$scratch"
 cat > "$scratch/tools/dev/bun.sh" <<'SH'
@@ -43,7 +44,10 @@ case "$phase" in
       until [[ -f "$state/cargo-start" ]]; do sleep 0.01; done
       event npm-deferred; exit 75
     fi
-    jq -n '{tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000}' > "$state/npm-$index.json" ;;
+    if [[ "$BOOT_FIXTURE_MODE" == authorization-failure ]]; then
+      until [[ -f "$state/cargo-start" ]]; do sleep 0.01; done
+    fi
+    jq -n '{packageName:"@fixture/runtime",version:"1.0.0",tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000}' > "$state/npm-$index.json" ;;
   bootstrap-npm-after)
     if [[ "$index" == 1 ]]; then
       until [[ -f "$state/cargo-start" ]]; do sleep 0.01; done
@@ -57,11 +61,12 @@ cat > "$scratch/bin/npm" <<'SH'
 #!/usr/bin/env bash
 [[ "$*" == 'publish frozen.tgz --access public --provenance --registry https://registry.npmjs.org' && "$NPM_CONFIG_FETCH_RETRIES" == 0 ]] || exit 22
 echo npm-publish >> "$BOOT_FIXTURE_LOG"
+[[ "$BOOT_FIXTURE_MODE" != authorization-failure ]] || echo 'npm error code E403' >&2
 exit 7
 SH
 chmod +x "$scratch/bin/npm"
 deadline="$(command -v gtimeout || command -v timeout)"
-for scenario in success mutation-failure deferral checkpoint-failure; do
+for scenario in success mutation-failure authorization-failure deferral checkpoint-failure; do
   status=0
   PATH="$scratch/bin:$PATH" BOOT_FIXTURE_ROOT="$scratch" BOOT_FIXTURE_LOG="$scratch/$scenario.log" BOOT_FIXTURE_MODE="$scenario" \
     RELEASE_HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa PUBLICATION_LOCK_PATH=lock.json BOOTSTRAP_LEDGER_PATH=ledger \

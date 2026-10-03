@@ -24,6 +24,13 @@ if (mode === 'prepare') {
     .trim()
     .split('\n');
   assert(events.indexOf('cargo-0') < events.indexOf('npm-before-1'));
+  if (scenario.startsWith('auth-')) {
+    assert.deepEqual(events, ['cargo-0', 'npm-before-1', 'npm-push']);
+    const output = readFileSync(path.join(root, 'result'), 'utf8');
+    assert(output.includes(`npm error code ${scenario.slice('auth-'.length)}`));
+    assert(output.includes('npm publication authorization failed for @fixture/runtime@1.0.0'));
+    process.exit(0);
+  }
   assert(events.indexOf('npm-reconciled-1') < events.indexOf('maven-start'));
   assert(events.indexOf('maven-start') < events.indexOf('cargo-drained'));
   assert(events.includes('cargo-drained'));
