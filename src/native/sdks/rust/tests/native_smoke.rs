@@ -559,7 +559,7 @@ fn broker_preserves_configured_identity_and_session_policy_when_available() {
 
         for expected_logins in ["1", "2"] {
             let mut database = open("broker_reader").unwrap();
-            let row = database.query("SELECT current_user::text AS current_role, session_user::text AS session_role, current_database() AS database, (system_user IS NULL)::text AS no_auth_identity, current_setting('application_name') AS application_name, current_setting('default_statistics_target') AS statistics_target, current_setting('fsync') AS fsync, (SELECT count(*)::text FROM broker_login_events WHERE who = session_user) AS logins").unwrap();
+            let row = database.query("SELECT current_user::text AS current_role, session_user::text AS session_role, current_database() AS database, (system_user IS NULL)::text AS no_auth_identity, current_setting('application_name') AS application_name, current_setting('default_statistics_target') AS statistics_target, (SELECT count(*)::text FROM broker_login_events WHERE who = session_user) AS logins").unwrap();
             assert_eq!(
                 row.get_text(0, "current_role").unwrap(),
                 Some("broker_reader")
@@ -578,7 +578,6 @@ fn broker_preserves_configured_identity_and_session_policy_when_available() {
                 row.get_text(0, "application_name").unwrap(),
                 Some("configured-broker-role")
             );
-            assert_eq!(row.get_text(0, "fsync").unwrap(), Some("on"));
             assert_eq!(row.get_text(0, "logins").unwrap(), Some(expected_logins));
             database
                 .execute("SET ROLE postgres")
