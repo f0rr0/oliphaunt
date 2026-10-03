@@ -125,9 +125,6 @@ while IFS= read -r patch_name; do
     ????-wasmer-wasix-*.patch)
       patch_dir="$wasmer_wasix_dir"
       ;;
-    ????-virtual-fs-*.patch)
-      patch_dir="$virtual_fs_dir"
-      ;;
     ????-wasmer-*.patch)
       patch_dir="$wasmer_dir"
       ;;

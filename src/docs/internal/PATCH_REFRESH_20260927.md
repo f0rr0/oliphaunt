@@ -1,5 +1,14 @@
 # PR #202 refresh onto September 27 main
 
+## Scope update — October 4, 2026
+
+PR #218 was rebased onto main `ea89d7fb58059011c199e66fdc590999fee809a6`.
+Native fsync-on defaults and strict LLVM memory compilation are now independent
+follow-up PRs based on #218; the consolidated branch retains main's defaults.
+The evidence below describes the earlier combined candidate, not qualification
+or current policy of the split branches. See [the split record](PATCH_SPLIT_20261004.md).
+
+
 ## September 29 rebase — replacement PR #218
 
 Rebased onto remote main `32ce7b29510b74333e799601b69a71fd28122e80`.

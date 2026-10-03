@@ -1,5 +1,13 @@
 # Patch correctness consolidation — 2026-09-07
 
+## Scope update — October 4, 2026
+
+This is historical evidence for the combined candidate. Native fsync-on and
+strict LLVM memory policies were separated from consolidation after their costs
+were measured. See [the current split record](PATCH_SPLIT_20261004.md); do not
+infer the split branches' current defaults or qualification from this report.
+
+
 **Historical record:** this document describes PR #202 at `41c74d85` and its
 September 7–8 evidence, not current-main qualification or current benchmark
 results. Paths, task names, platform outcomes and retained-artifact locations
