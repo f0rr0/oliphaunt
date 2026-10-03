@@ -23,6 +23,7 @@ export const PUBLIC_CONSUMER_EVIDENCE_SCHEMA = 'oliphaunt-public-consumer-smoke-
 
 const TOOL = 'public-consumer-smoke';
 const REGISTRY_ECOSYSTEMS = ['cargo', 'maven', 'npm'];
+const PUBLIC_ENTRY_ROLES = new Set(['facade', 'plugin', 'resource', 'tool-facade']);
 const SUPPORTED_PUBLISH_TARGETS = new Set([
   'crates-io',
   'github-release',
@@ -155,7 +156,7 @@ function entryCarrierIds(carriers) {
     }
   }
   return carriers
-    .filter(({ id }) => !dependedOn.has(id))
+    .filter(({ id, role }) => PUBLIC_ENTRY_ROLES.has(role) || !dependedOn.has(id))
     .map(({ id }) => id)
     .sort(compareText);
 }
@@ -231,8 +232,8 @@ function repositoryUrl(repository) {
  * Derive the complete public-consumer surface from the same selected frozen
  * lock used for publication. Registry byte receipts already prove every
  * payload. This plan chooses dependency-graph roots for real consumer install
- * probes while retaining the complete transitive carrier set as a fail-closed
- * resolution assertion.
+ * probes, including public facades that are dependencies of other entries.
+ * The combined resolutions must still cover the complete frozen carrier set.
  */
 export function publicConsumerPlan(
   lock,
@@ -542,7 +543,10 @@ function resolvedSurfaceCoverage(surface, entries, rows) {
       const missing = [...planned]
         .filter((id) => !resolvedCarrierIds.includes(id))
         .sort(compareText);
-      if (missing.length > 0) {
+      // Enabling every feature of a Cargo entry does not enable every feature
+      // of its dependencies. Their public entries probe those opt-ins separately;
+      // the exhaustive merged coverage below still requires every frozen crate.
+      if (missing.length > 0 && surface.ecosystem !== 'cargo') {
         throw error(
           `${surface.ecosystem} public consumer entry ${entry.entryCarrierId} omitted frozen platform-independent lock dependencies: ${missing.join(', ')}`,
         );
@@ -637,7 +641,8 @@ export function cargoEntryFeatureNames(metadata, carrier) {
   // Cargo resolves target-specific dependencies for every target into the
   // lockfile, but it deliberately omits optional dependencies whose features
   // are not enabled. Resolve every public opt-in feature so the anonymous lock
-  // probe covers the complete frozen carrier closure. The crates.io checksum
+  // probe covers its own opt-ins. Transitive opt-ins are exercised by their
+  // separate public entries, not enabled implicitly here. The crates.io checksum
   // above binds this feature metadata to the same immutable .crate bytes
   // already proven by the exhaustive registry receipt.
   return [...merged.keys()].filter((name) => name !== 'default').sort(compareText);

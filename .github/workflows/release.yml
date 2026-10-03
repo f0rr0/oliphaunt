@@ -1179,7 +1179,7 @@ jobs:
       - plan-candidate
       - prepare-candidate
       - publish-bootstrap
-    runs-on: macos-26
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     if: ${{ always() && !cancelled() && inputs.operation == 'publish' && needs.prepare-candidate.result == 'success' && needs.prepare-candidate.outputs.has_release_changes == 'true' && (needs.publish-bootstrap.result == 'success' || needs.publish-bootstrap.result == 'skipped') }}
     environment: release-publish
@@ -1232,10 +1232,6 @@ jobs:
         run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-      - name: Set up bounded publication transport
-        run: |
-          bash .github/scripts/prepare-macos-homebrew.sh
-          command -v gtimeout >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
       - name: Verify direct-workflow OIDC identity
         id: verify_oidc_identity
         env:
