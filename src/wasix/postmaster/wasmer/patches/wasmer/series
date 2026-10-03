@@ -6,3 +6,4 @@
 0006-wasix-epoll-and-socket-readiness.patch
 0007-wasix-instance-linker-and-sealed-runtime.patch
 0008-postmaster-executor-and-build-closure.patch
+0009-strict-shared-memory-compilation.patch

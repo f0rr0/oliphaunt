@@ -29,9 +29,9 @@ test('accepts AOT metadata that exactly matches the canonical WASIX toolchain', 
   );
 });
 
-test('rejects artifacts compiled under a different memory-codegen profile', () => {
+test('rejects legacy artifacts instead of relabeling their memory-codegen profile', () => {
   assert.throws(
-    () => assertCanonicalWasixAotManifest(manifest({ engine: 'llvm-opta-ro_ftable' })),
+    () => assertCanonicalWasixAotManifest(manifest({ engine: 'llvm-opta' })),
     /engine must match canonical WASIX metadata/u,
   );
 });
