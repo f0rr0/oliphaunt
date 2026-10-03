@@ -57,7 +57,7 @@ if jq -e '.manifest != null' "$scratch/context.json" >/dev/null; then
   parents=(-p "$source_commit")
   commit_message="Release Oliphaunt Swift $version SwiftPM manifest"
   if [[ "$source_only" == true ]]; then parents=(); commit_message="Release $product $version SwiftPM source"; fi
-  tag_target="$(git commit-tree "$expected_tree" "${parents[@]}" -m "$commit_message")"
+  tag_target="$(git commit-tree "$expected_tree" ${parents[@]+"${parents[@]}"} -m "$commit_message")"
 fi
 if jq -e '.preflight or .push' "$scratch/context.json" >/dev/null; then
   transport_timeout="$(command -v timeout || command -v gtimeout)" || fail 'GNU timeout is required for bounded Git transport'

@@ -1232,6 +1232,10 @@ jobs:
         run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+      - name: Set up bounded publication transport
+        run: |
+          bash .github/scripts/prepare-macos-homebrew.sh
+          command -v gtimeout >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
       - name: Verify direct-workflow OIDC identity
         id: verify_oidc_identity
         env:
@@ -1661,7 +1665,6 @@ jobs:
         env:
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
-          command -v gtimeout >/dev/null || brew install coreutils
           bash tools/release/public-consumer-smoke.sh \
             --publication-lock "$PUBLICATION_LOCK_PATH" \
             --products-json "$PRODUCTS_JSON" \
