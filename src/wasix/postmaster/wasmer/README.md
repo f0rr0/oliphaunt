@@ -28,8 +28,9 @@ hashes. Runtime selection never falls back to a stock or `PATH` Wasmer.
 The ordered `series` files, not directory globs, select patches. Their digest
 includes the manifest, member names and contents; editing or reordering a patch
 invalidates receipts. The product executor lives in `../executor`.
-The compiler and verifier use the nonvolatile-memory profile. Compiler policy
-changes require rebuilt carriers with matching identities.
+Patch 0009 separately disables LLVM nonvolatile memory operations for shared
+guest memory; the product compiler and artifact verifier use the same strict
+policy. Carriers and AOT artifacts must be rebuilt, never relabelled.
 
 The libc series separates mapping, file, socket, process, exception and resource
 contracts. Its `sigsetjmp` fix evaluates the buffer expression once in the live
