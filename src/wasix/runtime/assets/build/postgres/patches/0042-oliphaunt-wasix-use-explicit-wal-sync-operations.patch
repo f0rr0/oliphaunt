@@ -1,4 +1,4 @@
-From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+From: Sid Jain <sid_26@outlook.com>
 Date: Sun, 30 Aug 2026 00:00:00 +0000
 Subject: [PATCH] oliphaunt-wasix: use explicit WAL sync operations
 
