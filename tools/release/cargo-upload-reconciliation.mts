@@ -51,7 +51,17 @@ export async function uploadCargoOnceAndReconcileExactVersion({
   }
 
   for (let attempt = 0; attempt < visibilityAttempts; attempt += 1) {
-    if (await inspectExactVersion()) {
+    let published;
+    try {
+      published = await inspectExactVersion();
+    } catch (cause) {
+      if (!mutationFailed) throw cause;
+      throw new Error(
+        `Cargo upload for ${crateName}@${version} failed (${mutationFailureDetail(mutationFailure)}) and immutable registry reconciliation failed (${mutationFailureDetail(cause)})`,
+        { cause: mutationFailure },
+      );
+    }
+    if (published) {
       return { reconciledMutationFailure: mutationFailed };
     }
     if (attempt + 1 < visibilityAttempts) {

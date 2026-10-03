@@ -43,7 +43,6 @@ const USER_AGENT = 'oliphaunt-bootstrap-capacity/1; https://github.com/f0rr0/oli
 const REQUEST_ATTEMPTS = 8;
 const REQUEST_TIMEOUT_MS = 30_000;
 const DEADLINE_RESERVE_MS = 5_000;
-const MAX_READ_RETRY_DELAY_BUDGET_SECONDS = 3 * 60;
 const MAX_RATE_LIMIT_RETRY_DELAY_SECONDS = 5 * 60;
 const MINIMUM_MUTATION_WINDOW_SECONDS = 15 * 60;
 const MAX_PLANNING_SECONDS_PER_CARRIER = 60 * 60;
@@ -183,7 +182,6 @@ async function crateResourceExists(
   const resource = resourceSegments.map((segment) => encodeURIComponent(segment)).join('/');
   const url = `${apiBase.replace(/\/+$/u, '')}/crates/${resource}`;
   let lastFailure = null;
-  let retryDelaySpentSeconds = 0;
   for (let attempt = 0; attempt < REQUEST_ATTEMPTS; attempt += 1) {
     try {
       const remainingMilliseconds = (deadlineEpochSeconds - nowImpl()) * 1000 - DEADLINE_RESERVE_MS;
@@ -232,11 +230,6 @@ async function crateResourceExists(
         (status === 429
           ? Math.min(60 * 2 ** attempt, MAX_RATE_LIMIT_RETRY_DELAY_SECONDS)
           : registryRetryDelaySeconds({ headers, attempt, now: nowImpl() * 1000 }));
-      if (delaySeconds > MAX_READ_RETRY_DELAY_BUDGET_SECONDS - retryDelaySpentSeconds) {
-        throw error(
-          `read-only existence check for ${label} exceeds its bounded ${MAX_READ_RETRY_DELAY_BUDGET_SECONDS}s retry-delay budget; retry the release later`,
-        );
-      }
       const delayMilliseconds = Math.ceil(delaySeconds * 1000);
       const retryRemainingMilliseconds =
         (deadlineEpochSeconds - nowImpl()) * 1000 - DEADLINE_RESERVE_MS;
@@ -245,7 +238,6 @@ async function crateResourceExists(
           `read-only existence check for ${label} cannot retry before the registry mutation deadline`,
         );
       }
-      retryDelaySpentSeconds += delaySeconds;
       readGate.defer(delaySeconds);
     } catch (cause) {
       if (
@@ -260,11 +252,6 @@ async function crateResourceExists(
         break;
       }
       const delaySeconds = registryRetryDelaySeconds({ attempt, now: nowImpl() * 1000 });
-      if (delaySeconds > MAX_READ_RETRY_DELAY_BUDGET_SECONDS - retryDelaySpentSeconds) {
-        throw error(
-          `read-only existence check for ${label} exceeds its bounded ${MAX_READ_RETRY_DELAY_BUDGET_SECONDS}s retry-delay budget; retry the release later`,
-        );
-      }
       const delayMilliseconds = Math.ceil(delaySeconds * 1000);
       const retryRemainingMilliseconds =
         (deadlineEpochSeconds - nowImpl()) * 1000 - DEADLINE_RESERVE_MS;
@@ -273,7 +260,6 @@ async function crateResourceExists(
           `read-only existence check for ${label} cannot retry before the registry mutation deadline`,
         );
       }
-      retryDelaySpentSeconds += delaySeconds;
       readGate.defer(delaySeconds);
     }
   }

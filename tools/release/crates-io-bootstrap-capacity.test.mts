@@ -469,7 +469,7 @@ describe('crates.io release capacity gates', () => {
     expect(late.notBeforeEpochSeconds).toBe(1_600);
   });
 
-  test('honors bounded transient read retry and rejects an excessive Retry-After', async () => {
+  test('honors registry Retry-After within the shared deadline and bounds retry attempts', async () => {
     let calls = 0;
     let now = 1_000;
     const sleeps = [];
@@ -505,21 +505,21 @@ describe('crates.io release capacity gates', () => {
       fetchImpl: async () => {
         rateLimitedCalls += 1;
         return rateLimitedCalls === 1
-          ? new Response('', { status: 429, headers: { 'Retry-After': '60' } })
+          ? new Response('', { status: 429, headers: { 'Retry-After': '258' } })
           : new Response('', { status: 404 });
       },
     });
     expect(rateLimitedInventory.missingNames).toEqual(['later']);
-    expect(rateLimitedSleeps).toEqual([60_000]);
+    expect(rateLimitedSleeps).toEqual([258_000]);
 
     await expect(
       inspectCratesIoBootstrapNames({
         plan: cargoPlan(['too-late']),
-        deadlineEpochSeconds: 10_000,
+        deadlineEpochSeconds: 1_262,
         nowImpl: () => 1_000,
-        fetchImpl: async () => new Response('', { status: 429, headers: { 'Retry-After': '181' } }),
+        fetchImpl: async () => new Response('', { status: 429, headers: { 'Retry-After': '258' } }),
       }),
-    ).rejects.toThrow(/bounded 180s retry-delay budget/u);
+    ).rejects.toThrow(/cannot retry before the registry mutation deadline/u);
 
     let sustainedCalls = 0;
     let sustainedNow = 1_000;
@@ -538,9 +538,9 @@ describe('crates.io release capacity gates', () => {
           return new Response('', { status: 429 });
         },
       }),
-    ).rejects.toThrow(/bounded 180s retry-delay budget/u);
-    expect(sustainedCalls).toBe(3);
-    expect(sustainedSleeps).toEqual([60_000, 120_000]);
+    ).rejects.toThrow(/cannot determine whether Cargo identity sustained exists.*HTTP 429/u);
+    expect(sustainedCalls).toBe(8);
+    expect(sustainedSleeps).toEqual([60_000, 120_000, 240_000, 300_000, 300_000, 300_000, 300_000]);
 
     let deadlineCalls = 0;
     await expect(

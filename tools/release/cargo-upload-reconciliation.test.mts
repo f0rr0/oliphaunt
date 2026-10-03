@@ -91,4 +91,19 @@ describe('Cargo upload reconciliation', () => {
     ).rejects.toBe(deferral);
     expect(events).toEqual(['upload']);
   });
+
+  test('a failed registry read preserves the original upload failure without replaying mutation', async () => {
+    const uploadFailure = new Error('connection reset after request body');
+    const fixture = laggingExactVersionFixture({ uploadFailure });
+    const readFailure = new Error('registry returned HTTP 429');
+    fixture.options.exactVersionPublished = async () => {
+      fixture.events.push('inspect');
+      throw readFailure;
+    };
+
+    const result = uploadCargoOnceAndReconcileExactVersion(fixture.options);
+    await expect(result).rejects.toThrow(/connection reset.*reconciliation failed.*HTTP 429/u);
+    await expect(result).rejects.toHaveProperty('cause', uploadFailure);
+    expect(fixture.events).toEqual(['upload', 'inspect']);
+  });
 });
