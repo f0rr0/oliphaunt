@@ -16,8 +16,8 @@ use zstd::stream::write::Encoder as ZstdEncoder;
 #[cfg(feature = "aot-serializer")]
 use crate::value_after;
 
-// Wasmer 7.2.1's deterministic_id omits these codegen choices. Keep our
-// artifact identity explicit; never label strict and nonvolatile code alike.
+// This profile names the fixed codegen policy in our published manifests;
+// Wasmer's deterministic_id independently identifies the compiler settings.
 pub(crate) const AOT_ENGINE_PROFILE: &str = "llvm-opta";
 
 pub(crate) fn check_aot_codegen_environment() -> Result<()> {

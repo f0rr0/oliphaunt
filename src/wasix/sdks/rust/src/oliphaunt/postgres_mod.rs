@@ -1545,6 +1545,7 @@ fn split_initdb_binary_package(
     Ok(BinaryPackage {
         id: package_id.clone(),
         package_ids: vec![package_id.clone()],
+        webc_version: webc::Version::V3,
         when_cached: None,
         entrypoint_cmd: Some("initdb".to_owned()),
         hash: Default::default(),

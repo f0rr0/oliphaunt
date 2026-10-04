@@ -2716,6 +2716,9 @@ mod tests {
         source_fingerprint: Option<&str>,
         postgres_version: Option<&str>,
     ) {
+        let toolchain = load_wasix_toolchain_manifest()
+            .expect("WASIX toolchain manifest")
+            .toolchain;
         let manifest = AotManifest {
             format_version: AOT_MANIFEST_FORMAT_VERSION,
             source_lane: source_lane.map(str::to_owned),
@@ -2723,8 +2726,8 @@ mod tests {
             postgres_version: postgres_version.map(str::to_owned),
             target_triple: "aarch64-apple-darwin".to_owned(),
             engine: crate::aot_serializer::AOT_ENGINE_PROFILE.to_owned(),
-            wasmer_version: "7.2.1".to_owned(),
-            wasmer_wasix_version: "0.702.1".to_owned(),
+            wasmer_version: toolchain.wasmer,
+            wasmer_wasix_version: toolchain.wasmer_wasix,
             artifacts: vec![AotManifestArtifact {
                 name: "runtime:oliphaunt".to_owned(),
                 path: "oliphaunt.aot.zst".to_owned(),
