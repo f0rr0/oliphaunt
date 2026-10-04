@@ -53,7 +53,7 @@ export async function loadHostBuildContract() {
     virtualFsVersion: tomlString(source, 'virtual-fs', 'version'),
     inputsSha256: sha256(digests.join('')),
     guestConcurrency: 'typed-single-program-host-policy',
-    clockDispatch: 'server-direct-js-canonical-fallback-16ms-or-1024-reads-tools-canonical',
+    clockDispatch: 'server-direct-js-16ms-or-1024-reads-shared-setter-fallback-tools-canonical',
     fdClose: 'typed-filesystem-durability-policy',
     syncFilesystemBridge: 'realm-local-fresh-owned-js-transfer',
     toolProtocolWrite: 'owned-js-copy-before-callback',

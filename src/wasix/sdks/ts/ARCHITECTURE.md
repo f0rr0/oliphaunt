@@ -488,8 +488,9 @@ shortcut. Realtime uses the JavaScript epoch clock, while monotonic reads
 calibrate the host's monotonic clock against the canonical Rust fallback epoch,
 so fast and fallback reads cannot jump between domains. Process and thread CPU
 clocks remain on the canonical fallback because wall time is not an equivalent
-clock. Synthetic clock offsets remain honored by declining the direct import
-for guests that import `clock_time_set`, and pending WASIX operations are
+clock. Calling `clock_time_set` switches every reader sharing the database's
+memory to the canonical WASIX clock, including readers linked later. Importing
+a setter alone leaves the fast path enabled. Pending WASIX operations are
 checked after 16 observed milliseconds or 1,024 direct reads per clock domain.
 The read bound also covers coarsened or stalled clocks. Invalid clock IDs, pointers, or host values use
 the complete Rust syscall. Other WASIX programs retain the complete upstream
