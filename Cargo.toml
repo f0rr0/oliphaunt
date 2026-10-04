@@ -33,7 +33,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
 license = "MIT"

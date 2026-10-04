@@ -645,7 +645,7 @@ test('Cargo consumer toolchain context fails closed on unpinned or unavailable i
         ),
       /must pin an exact stable Rust toolchain/u,
     );
-    writeFileSync(path.join(root, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.93.1"\n');
+    writeFileSync(path.join(root, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.96.0"\n');
     assert.throws(
       () =>
         publicCargoEnvironment(
