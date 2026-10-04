@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -25,7 +26,7 @@ import {
   extractTarZstd,
   injectRuntimeExtensionDependencies,
   packageWasixCargoArtifacts,
-  validateAotPayload,
+  validateRuntimeAotPayload,
   validateRuntimePayload,
 } from './package_liboliphaunt_wasix_cargo_artifacts.mts';
 import { canonicalWasixAotMetadata } from './wasix-aot-manifest.mts';
@@ -416,10 +417,12 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/was
     stageReleaseNotices(root, { profile: 'wasix-aot' });
     const save = () => writeFileSync(path.join(root, 'manifest.json'), JSON.stringify(manifest));
     save();
-    expect(() => validateAotPayload(root, target)).not.toThrow();
+    expect(() => validateRuntimeAotPayload(root, target)).not.toThrow();
+    const initdb = manifest.artifacts.find((artifact) => artifact.name === 'tool:initdb');
     manifest.artifacts = manifest.artifacts.filter((artifact) => artifact.name !== 'tool:initdb');
+    rmSync(path.join(root, initdb.path));
     save();
-    expect(() => validateAotPayload(root, target)).toThrow(
+    expect(() => validateRuntimeAotPayload(root, target)).toThrow(
       /missing core runtime AOT artifacts: tool:initdb/u,
     );
   });

@@ -425,7 +425,6 @@ export function validateAotPayload(root, expectedTarget) {
   const manifestPath = path.join(root, 'manifest.json');
   const manifest = readJson(manifestPath);
   validateCanonicalAotManifest(manifest, manifestPath, expectedTarget);
-  assertCoreRuntimeAotArtifacts(manifest, rel(manifestPath));
   let artifactRows;
   try {
     artifactRows = assertWasixAotArtifactPayloads(manifest, {
@@ -460,6 +459,12 @@ export function validateAotPayload(root, expectedTarget) {
       `WASIX AOT Cargo payload file set mismatch for ${rel(root)}: expected ${JSON.stringify([...expected].sort(compareText))}, got ${JSON.stringify([...actual].sort(compareText))}`,
     );
   }
+}
+
+export function validateRuntimeAotPayload(root, expectedTarget) {
+  validateAotPayload(root, expectedTarget);
+  const manifestPath = path.join(root, 'manifest.json');
+  assertCoreRuntimeAotArtifacts(readJson(manifestPath), rel(manifestPath));
 }
 
 function runtimeAotPayload(aotRoot, extractRoot, targetId) {
@@ -1617,7 +1622,7 @@ function packageSpecs(assetDir, extractRoot, version) {
     extractTarZstd(archive, extracted);
     const triple = AOT_TARGET_TRIPLES[targetId];
     const aotRoot = targetAotRoot(extracted, triple);
-    validateAotPayload(aotRoot, triple);
+    validateRuntimeAotPayload(aotRoot, triple);
     const aotCoreRoot = runtimeAotPayload(aotRoot, extractRoot, targetId);
     specs.push({
       name: packageName,
