@@ -49,20 +49,24 @@ function stageAotPayload(stage, target, profile = 'wasix-aot') {
     'wasmer-version': canonical.wasmerVersion,
     'wasmer-wasix-version': canonical.wasmerWasixVersion,
     artifacts: [
-      {
-        name: 'runtime:oliphaunt',
-        path: 'runtime.bin.zst',
-        sha256: sha256(compressed),
-        'raw-sha256': sha256(raw),
-        'raw-size': raw.length,
-        'module-sha256': sha256(Buffer.from('runtime-module')),
-        compressed: true,
-      },
-    ],
+      'runtime:oliphaunt',
+      'runtime-support:plpgsql',
+      'runtime-support:dict_snowball',
+      'tool:initdb',
+    ].map((name, index) => ({
+      name,
+      path: index === 0 ? 'runtime.bin.zst' : `core-${index}.bin.zst`,
+      sha256: sha256(compressed),
+      'raw-sha256': sha256(raw),
+      'raw-size': raw.length,
+      'module-sha256': sha256(Buffer.from('runtime-module')),
+      compressed: true,
+    })),
   };
   mkdirSync(stage, { recursive: true });
   writeFileSync(path.join(stage, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  writeFileSync(path.join(stage, 'runtime.bin.zst'), compressed);
+  for (const artifact of manifest.artifacts)
+    writeFileSync(path.join(stage, artifact.path), compressed);
   stageReleaseNotices(stage, { profile });
   return {
     artifact: path.join(stage, 'runtime.bin.zst'),
@@ -239,6 +243,14 @@ test('the AOT validator rejects duplicate metadata, tampering, and non-canonical
     const archive = archiveStage(stage, path.join(root, `${name}.tar.zst`), archiveRoot);
     assert.throws(() => validateAotReleaseAsset(archive, target), pattern, name);
   }
+
+  rejected(
+    'missing-initdb',
+    ({ manifest }) => {
+      manifest.artifacts = manifest.artifacts.filter((artifact) => artifact.name !== 'tool:initdb');
+    },
+    /missing core runtime AOT artifacts: tool:initdb/u,
+  );
 
   rejected(
     'duplicate-name',

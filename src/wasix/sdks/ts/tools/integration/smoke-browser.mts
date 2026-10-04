@@ -162,6 +162,7 @@ if (phase === '--prepare') {
     ]);
 
     await cdp.send('Page.navigate', { url: smokeUrl });
+    let snapshot: Record<string, string> = {};
     while (Date.now() < deadline) {
       if (browserFailures.length > 0) {
         throw new Error(
@@ -170,10 +171,10 @@ if (phase === '--prepare') {
       }
       const evaluated = await cdp.send('Runtime.evaluate', {
         expression:
-          "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
+          "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',phase:document.documentElement.dataset.oliphauntSmokePhase??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
         returnByValue: true,
       });
-      const snapshot = JSON.parse(evaluated.result.value ?? '{}');
+      snapshot = JSON.parse(evaluated.result.value ?? '{}');
       if (snapshot.state === 'passed') {
         if (benchmark) {
           await writeFile(
@@ -197,7 +198,7 @@ if (phase === '--prepare') {
       returnByValue: true,
     });
     if (finalState.result.value !== 'passed') {
-      throw new Error(`browser smoke timed out after ${timeoutMs}ms`);
+      throw new Error(`browser smoke timed out after ${timeoutMs}ms: ${JSON.stringify(snapshot)}`);
     }
   } finally {
     socket?.close();

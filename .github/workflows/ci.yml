@@ -1410,7 +1410,7 @@ jobs:
   wasix-napi:
     name: Builds / WASIX Node-API
     needs: [affected, wasix-host-linux, wasix-host-other]
-    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && (fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_linux).include[0] == null || needs.wasix-host-linux.result == 'success') && (fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_other).include[0] == null || needs.wasix-host-other.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -2244,7 +2244,7 @@ jobs:
   liboliphaunt-wasix-aot:
     name: Builds / WASIX AOT
     needs: [affected, wasix-host-linux, wasix-host-other]
-    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && (fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_linux).include[0] == null || needs.wasix-host-linux.result == 'success') && (fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_other).include[0] == null || needs.wasix-host-other.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

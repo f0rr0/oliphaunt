@@ -27,7 +27,7 @@ export OLIPHAUNT_INSTALL_DIR="$stage/runtime"
 export OLIPHAUNT_INITDB="$stage/runtime/bin/initdb$suffix"
 export OLIPHAUNT_POSTGRES="$stage/runtime/bin/postgres$suffix"
 export OLIPHAUNT_EMBEDDED_MODULE_DIR="$stage/lib/modules"
-export LD_LIBRARY_PATH="$stage/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$stage/lib:$stage/runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 while [ "${1:-}" = --tools ] || [ "${1:-}" = --broker ]; do
   option="$1"
   shift

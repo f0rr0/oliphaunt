@@ -47,6 +47,21 @@ export const FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES = [
 
 export const TOOLS_AOT_ARTIFACTS = ['tool:pg_dump', 'tool:psql'];
 
+export const CORE_AOT_ARTIFACTS = [
+  'runtime:oliphaunt',
+  'runtime-support:plpgsql',
+  'runtime-support:dict_snowball',
+  'tool:initdb',
+];
+
+export function assertCoreRuntimeAotArtifacts(manifest, context) {
+  const names = new Set(manifest.artifacts.map((artifact) => artifact.name));
+  const missing = CORE_AOT_ARTIFACTS.filter((name) => !names.has(name));
+  if (missing.length) {
+    throw new Error(`${context} is missing core runtime AOT artifacts: ${missing.join(', ')}`);
+  }
+}
+
 export const AOT_PACKAGES = {
   'macos-arm64': 'liboliphaunt-wasix-aot-aarch64-apple-darwin',
   'linux-arm64-gnu': 'liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu',

@@ -16,7 +16,7 @@ use super::base::DirectoryLock;
 use super::database_root_descriptor::{
     PGDATA_DIRECTORY, PHYSICAL_FORMAT, POSTGRES_MAJOR, write_database_root_descriptor,
 };
-use crate::oliphaunt::storage::{PgDataStorage, vfs_read};
+use crate::oliphaunt::storage::{PgDataStorage, for_each_publication_file, vfs_read};
 use crate::{StorageCommitState, StorageErrorCode, StorageErrorPhase};
 
 const PHYSICAL_ARCHIVE_MANIFEST_NAME: &str = ".oliphaunt/backup-manifest.properties";
@@ -49,6 +49,7 @@ enum HostTreeEntry {
 enum VirtualEntrySource {
     Directory,
     File(Vec<u8>),
+    InitializedFile(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,13 +212,45 @@ pub(crate) fn materialize_virtual_pgdata_view(
     filesystem: &(dyn VirtualFileSystem + Send + Sync),
 ) -> Result<tempfile::TempDir> {
     let temp = tempfile::TempDir::new().context("create materialized virtual PGDATA view")?;
+    copy_virtual_pgdata_into(filesystem, temp.path(), false)?;
+    Ok(temp)
+}
+
+pub(crate) fn materialize_initialized_pgdata_into(
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+    destination_root: &Path,
+) -> Result<()> {
+    // A completed initdb needs its entire WAL tree; an online backup's bulk
+    // view intentionally excludes WAL until its final checkpoint is captured.
+    copy_virtual_pgdata_into(filesystem, destination_root, true)
+}
+
+fn copy_virtual_pgdata_into(
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+    destination_root: &Path,
+    initialized: bool,
+) -> Result<()> {
     let mut entries = BTreeMap::<PathBuf, VirtualEntrySource>::new();
-    collect_virtual_pgdata_entries(filesystem, Path::new("/"), Path::new("/"), &mut entries)?;
+    collect_virtual_pgdata_entries(
+        filesystem,
+        Path::new("/"),
+        Path::new("/"),
+        &mut entries,
+        initialized,
+    )?;
+    let mut files = Vec::new();
     for (relative, source) in entries {
-        let destination = temp.path().join(relative);
+        let destination = destination_root.join(relative);
         match source {
-            VirtualEntrySource::Directory => fs::create_dir_all(&destination)
-                .with_context(|| format!("create {}", destination.display()))?,
+            VirtualEntrySource::Directory => {
+                if initialized {
+                    create_private_directory(&destination)?;
+                } else {
+                    fs::create_dir_all(&destination)
+                        .with_context(|| format!("create {}", destination.display()))?;
+                }
+            }
+            VirtualEntrySource::InitializedFile(path) => files.push((destination, path)),
             VirtualEntrySource::File(bytes) => {
                 if let Some(parent) = destination.parent() {
                     fs::create_dir_all(parent)?;
@@ -227,7 +260,21 @@ pub(crate) fn materialize_virtual_pgdata_view(
             }
         }
     }
-    Ok(temp)
+    // Initdb has exited, so its private filesystem is no longer changing.
+    // Read and copy each file in a worker instead of buffering the entire tree.
+    // Finish every file before the caller checks syncs and renames staging. Backups
+    // retain their sequential bulk-copy path and separate final WAL capture.
+    for_each_publication_file(&files, |(destination, source)| {
+        let bytes = vfs_read(filesystem, source)?;
+        let mut file = create_private_file(destination)
+            .with_context(|| format!("create {}", destination.display()))?;
+        file.write_all(&bytes)
+            .with_context(|| format!("write {}", destination.display()))?;
+        apply_private_permissions(destination, 0o600)?;
+        super::base::pre_sync_publication_file(&file);
+        Ok(())
+    })?;
+    Ok(())
 }
 
 pub(crate) fn refresh_materialized_pg_control(
@@ -1104,6 +1151,7 @@ fn collect_virtual_pgdata_entries(
     root: &Path,
     current: &Path,
     entries: &mut BTreeMap<PathBuf, VirtualEntrySource>,
+    initialized: bool,
 ) -> Result<()> {
     let mut children = filesystem
         .read_dir(current)
@@ -1118,7 +1166,9 @@ fn collect_virtual_pgdata_entries(
             .strip_prefix(root)
             .with_context(|| format!("strip virtual PGDATA root {}", root.display()))?
             .to_path_buf();
-        if relative.as_os_str().is_empty() || should_skip_bulk_backup_entry(&relative) {
+        if relative.as_os_str().is_empty()
+            || (!initialized && should_skip_bulk_backup_entry(&relative))
+        {
             continue;
         }
         let metadata = child
@@ -1126,11 +1176,15 @@ fn collect_virtual_pgdata_entries(
             .with_context(|| format!("stat virtual PGDATA entry {}", path.display()))?;
         if metadata.is_dir() {
             entries.insert(relative.clone(), VirtualEntrySource::Directory);
-            collect_virtual_pgdata_entries(filesystem, root, &path, entries)?;
+            collect_virtual_pgdata_entries(filesystem, root, &path, entries, initialized)?;
         } else if metadata.is_file() {
             entries.insert(
                 relative,
-                VirtualEntrySource::File(vfs_read(filesystem, &path)?),
+                if initialized {
+                    VirtualEntrySource::InitializedFile(path)
+                } else {
+                    VirtualEntrySource::File(vfs_read(filesystem, &path)?)
+                },
             );
         } else {
             bail!(
@@ -1902,6 +1956,53 @@ mod tests {
         assert!(!destination.path().join("pg_stat_tmp/state").exists());
         assert!(!destination.path().join("base/.DS_Store").exists());
         assert!(!destination.path().join("postmaster.pid").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn initialized_virtual_pgdata_keeps_wal_and_empty_directories() -> Result<()> {
+        let filesystem = virtual_fs::mem_fs::FileSystem::default();
+        super::super::storage::vfs_create_dir_all(
+            &filesystem,
+            Path::new("/pg_wal/archive_status"),
+        )?;
+        super::super::storage::vfs_create_dir_all(&filesystem, Path::new("/base/1"))?;
+        super::super::storage::vfs_write(&filesystem, Path::new("/pg_wal/segment"), b"wal")?;
+        super::super::storage::vfs_write(&filesystem, Path::new("/base/1/catalog"), b"catalog")?;
+        let destination = tempfile::tempdir()?;
+
+        materialize_initialized_pgdata_into(&filesystem, destination.path())?;
+
+        assert_eq!(fs::read(destination.path().join("pg_wal/segment"))?, b"wal");
+        assert_eq!(
+            fs::read(destination.path().join("base/1/catalog"))?,
+            b"catalog"
+        );
+        assert!(destination.path().join("pg_wal/archive_status").is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(destination.path().join("base/1"))?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(destination.path().join("base/1/catalog"))?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        let backup = materialize_virtual_pgdata_view(&filesystem)?;
+        assert!(!backup.path().join("pg_wal/segment").exists());
+        assert_eq!(fs::read(backup.path().join("base/1/catalog"))?, b"catalog");
+        let blocked = tempfile::tempdir()?;
+        fs::create_dir_all(blocked.path().join("base/1/catalog"))?;
+        assert!(materialize_initialized_pgdata_into(&filesystem, blocked.path()).is_err());
         Ok(())
     }
 

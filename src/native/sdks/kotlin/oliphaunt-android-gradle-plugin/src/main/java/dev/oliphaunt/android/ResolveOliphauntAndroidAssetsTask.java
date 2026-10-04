@@ -962,7 +962,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
         compatibility,
         "extensionRuntimeContract",
         source,
-        "extensions/contracts/contract.toml");
+        "src/extensions/contracts/contract.toml");
     requireJsonString(compatibility, "nativeRuntimeProduct", source, "liboliphaunt-native");
     String runtimeVersion =
         requireJsonString(compatibility, "nativeRuntimeVersion", source, null);

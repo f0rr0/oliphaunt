@@ -142,6 +142,20 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('WASIX aggregates require successful selected hosts before accepting their artifacts', () => {
+    for (const id of ['wasix-napi', 'liboliphaunt-wasix-aot']) {
+      for (const host of ['linux', 'other']) {
+        assert(
+          workflow.jobs[id].if.includes(
+            `(fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_${host}).include[0] == null || needs.wasix-host-${host}.result == 'success')`,
+          ),
+          `${id} accepts a skipped selected ${host} host`,
+        );
+      }
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('cross-workflow artifact gates reference existing producer job names', () => {
     const jobNames = Object.values(workflow.jobs).map((job) => job.name);
     for (const file of ['release.yml', 'mobile-e2e.yml']) {

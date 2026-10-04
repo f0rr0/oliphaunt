@@ -82,6 +82,7 @@ tasks:
       --configuration-cache
     inputs:
       - "/src/native/runtime/include/oliphaunt.h"
+      - "/src/native/runtime/bin/android-cxx-runtime.map"
       - project: "extensions"
         group: "sdk-metadata"
       - "@group(code)"
@@ -100,7 +101,9 @@ tasks:
       set -e
       ./gradlew :oliphaunt:jvmTest :oliphaunt:testDebugUnitTest :oliphaunt:testReleaseUnitTest :oliphaunt-android-gradle-plugin:check -x :oliphaunt:koverVerify --configuration-cache
     inputs:
+      - "/src/extensions/contrib/carriers.toml"
       - "/src/native/runtime/include/oliphaunt.h"
+      - "/src/native/runtime/bin/android-cxx-runtime.map"
       - project: "extensions"
         group: "sdk-metadata"
       - project: "shared-test-fixtures"
@@ -160,6 +163,7 @@ tasks:
       - project: "extensions"
         group: "sdk-metadata"
       - "/src/native/runtime/include/oliphaunt.h"
+      - "/src/native/runtime/bin/android-cxx-runtime.map"
       - "@group(code)"
       - project: "extension-runtime-contract"
         group: "contract"

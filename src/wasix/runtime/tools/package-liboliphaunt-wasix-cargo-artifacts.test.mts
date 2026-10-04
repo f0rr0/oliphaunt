@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -14,6 +15,7 @@ import path from 'node:path';
 import { gzipSync, zstdCompressSync } from 'node:zlib';
 import { createDeterministicTar } from '../../../../tools/packaging/cargo-source-package.mts';
 import { canonicalGzipSync } from '../../../../tools/packaging/portable-archive.mts';
+import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
 import {
   extensionReleaseProduct,
   extensionReleaseVersion,
@@ -24,11 +26,13 @@ import {
   extractTarZstd,
   injectRuntimeExtensionDependencies,
   packageWasixCargoArtifacts,
+  validateRuntimeAotPayload,
   validateRuntimePayload,
 } from './package_liboliphaunt_wasix_cargo_artifacts.mts';
 import { canonicalWasixAotMetadata } from './wasix-aot-manifest.mts';
 import {
   AOT_TARGET_TRIPLES,
+  CORE_AOT_ARTIFACTS,
   CORE_RUNTIME_ARCHIVE_FILES,
   wasixExtensionAotPackageName,
 } from './wasix-cargo-artifact-contract.mts';
@@ -383,6 +387,43 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/was
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     expect(() => validateRuntimePayload(payload)).toThrow(
       /trailing data or multiple Zstandard frames/u,
+    );
+  });
+
+  test('runtime Cargo packaging rejects an AOT carrier that cannot initialize fresh databases', () => {
+    const root = mkdtempSync(path.join(scratch, 'runtime-aot-closure-'));
+    const canonical = canonicalWasixAotMetadata();
+    const target = supportedRustcHostTriple();
+    const raw = Buffer.from('core AOT fixture');
+    const bytes = zstdCompressSync(raw);
+    const manifest = {
+      'format-version': 1,
+      'source-lane': canonical.sourceLane,
+      engine: canonical.engine,
+      'wasmer-version': canonical.wasmerVersion,
+      'wasmer-wasix-version': canonical.wasmerWasixVersion,
+      'target-triple': target,
+      artifacts: CORE_AOT_ARTIFACTS.map((name, index) => ({
+        name,
+        path: `core-${index}.bin.zst`,
+        sha256: sha256Bytes(bytes),
+        'raw-sha256': sha256Bytes(raw),
+        'raw-size': raw.length,
+        'module-sha256': sha256Bytes(Buffer.from(name)),
+        compressed: true,
+      })),
+    };
+    for (const artifact of manifest.artifacts) writeFileSync(path.join(root, artifact.path), bytes);
+    stageReleaseNotices(root, { profile: 'wasix-aot' });
+    const save = () => writeFileSync(path.join(root, 'manifest.json'), JSON.stringify(manifest));
+    save();
+    expect(() => validateRuntimeAotPayload(root, target)).not.toThrow();
+    const initdb = manifest.artifacts.find((artifact) => artifact.name === 'tool:initdb');
+    manifest.artifacts = manifest.artifacts.filter((artifact) => artifact.name !== 'tool:initdb');
+    rmSync(path.join(root, initdb.path));
+    save();
+    expect(() => validateRuntimeAotPayload(root, target)).toThrow(
+      /missing core runtime AOT artifacts: tool:initdb/u,
     );
   });
 
