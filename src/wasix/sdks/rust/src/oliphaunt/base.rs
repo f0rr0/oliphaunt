@@ -27,8 +27,8 @@ use crate::oliphaunt::database_root_descriptor::{
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
 use crate::oliphaunt::storage::{
-    DatabaseStorage, PgDataStorage, StorageRoot, vfs_create_dir_all, vfs_file_exists, vfs_read,
-    vfs_remove_file_if_exists, vfs_write,
+    DatabaseStorage, PgDataStorage, StorageRoot, for_each_publication_file, vfs_create_dir_all,
+    vfs_file_exists, vfs_read, vfs_remove_file_if_exists, vfs_write,
 };
 use crate::{StorageCommitState, StorageErrorCode, StorageErrorPhase};
 use tempfile::TempDir;
@@ -951,21 +951,47 @@ fn cluster_seed_publication_staging(pgdata: &Path) -> Result<PathBuf> {
 }
 
 fn sync_publication_tree(path: &Path) -> Result<()> {
+    let mut files = Vec::new();
+    let mut directories = Vec::new();
+    collect_publication_entries(path, &mut files, &mut directories)?;
+
+    // Start writing the whole private staging tree before waiting on each file.
+    // Every file and directory still receives its checked durability barrier.
+    for file in &files {
+        if let Ok(file) = fs::File::open(file) {
+            pre_sync_publication_file(&file);
+        }
+    }
+    for_each_publication_file(&files, |file| {
+        sync_publication_file(file)
+            .with_context(|| format!("sync publication file {}", file.display()))
+    })?;
+    for directory in directories {
+        sync_directory(&directory)
+            .with_context(|| format!("sync publication directory {}", directory.display()))?;
+    }
+    Ok(())
+}
+
+fn collect_publication_entries(
+    path: &Path,
+    files: &mut Vec<PathBuf>,
+    directories: &mut Vec<PathBuf>,
+) -> Result<()> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("inspect publication entry {}", path.display()))?;
     ensure!(
         !metadata.file_type().is_symlink(),
-        "cluster seed publication contains a symbolic link: {}",
+        "publication tree contains a symbolic link: {}",
         path.display()
     );
     if metadata.is_file() {
-        sync_publication_file(path)
-            .with_context(|| format!("sync publication file {}", path.display()))?;
+        files.push(path.to_owned());
         return Ok(());
     }
     ensure!(
         metadata.is_dir(),
-        "cluster seed publication contains a special file: {}",
+        "publication tree contains a special file: {}",
         path.display()
     );
     let mut entries = fs::read_dir(path)
@@ -973,10 +999,35 @@ fn sync_publication_tree(path: &Path) -> Result<()> {
         .collect::<std::io::Result<Vec<_>>>()?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        sync_publication_tree(&entry.path())?;
+        collect_publication_entries(&entry.path(), files, directories)?;
     }
-    sync_directory(path).with_context(|| format!("sync publication directory {}", path.display()))
+    directories.push(path.to_owned());
+    Ok(())
 }
+
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+#[allow(unsafe_code)]
+pub(super) fn pre_sync_publication_file(file: &fs::File) {
+    use std::os::fd::AsRawFd;
+    unsafe extern "C" {
+        fn sync_file_range(
+            fd: std::ffi::c_int,
+            offset: i64,
+            len: i64,
+            flags: u32,
+        ) -> std::ffi::c_int;
+    }
+    const SYNC_FILE_RANGE_WRITE: u32 = 2;
+
+    // SAFETY: the borrowed descriptor stays open for this call; zero offset
+    // and length cover the regular file. This optional Linux writeback hint
+    // is never a durability barrier. Unsupported hints fall back to the
+    // checked sync_all calls below, including their metadata/error handling.
+    let _ = unsafe { sync_file_range(file.as_raw_fd(), 0, 0, SYNC_FILE_RANGE_WRITE) };
+}
+
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+pub(super) fn pre_sync_publication_file(_file: &fs::File) {}
 
 #[cfg(windows)]
 fn sync_publication_file(path: &Path) -> std::io::Result<()> {
@@ -1805,8 +1856,8 @@ fn prepare_database_root(
     seed: Option<&ClusterSeed>,
     icu_data: Option<&IcuData>,
 ) -> Result<InstallOutcome> {
-    let mut runtime_layout = prepare_runtime_layout(&paths, profile, icu_data)?;
-    prepare_pgdata(&paths, initialize, profile, &mut runtime_layout, seed)?;
+    let runtime_layout = prepare_runtime_layout(&paths, profile, icu_data)?;
+    prepare_pgdata(&paths, initialize, profile, &runtime_layout, seed)?;
     Ok(InstallOutcome {
         runtime_layout,
         pgdata_storage: PgDataStorage::host_directory(paths.pgdata),
@@ -1817,7 +1868,7 @@ fn prepare_pgdata(
     paths: &OliphauntPaths,
     initialize: bool,
     profile: CatalogProfile,
-    runtime_layout: &mut RuntimeLayout,
+    runtime_layout: &RuntimeLayout,
     seed: Option<&ClusterSeed>,
 ) -> Result<()> {
     ensure!(
@@ -1837,10 +1888,48 @@ fn prepare_pgdata(
     if try_install_cluster_seed(paths, &runtime_layout.module_path(), profile, seed)? {
         return Ok(());
     }
-    PostgresMod::run_split_initdb(
-        runtime_layout,
-        &PgDataStorage::host_directory(paths.pgdata.clone()),
-    )?;
+    // Initialization is one unpublished transaction. Running it on private
+    // memory avoids thousands of host syncs on intermediate catalog files;
+    // the finished tree is durably published before any backend can open it.
+    let pgdata_storage = PgDataStorage::memory();
+    let mut initdb_layout = runtime_layout.clone();
+    if initdb_layout.uses_shared_overlay() {
+        // Scratch files belong to the private initialization transaction too.
+        // Keep the immutable runtime and explicit ICU selection shared.
+        initdb_layout.mutable_root = StorageRoot::memory();
+        initdb_layout.mutable_root.create_runtime_dirs()?;
+    }
+    PostgresMod::run_split_initdb(&initdb_layout, &pgdata_storage)?;
+    let filesystem = pgdata_storage
+        .memory_filesystem()
+        .expect("memory storage has a virtual filesystem");
+    ensure!(
+        virtual_cluster_is_complete(filesystem.as_ref()),
+        "split WASIX initdb did not create a complete PGDATA cluster"
+    );
+    remove_virtual_runtime_state(filesystem.as_ref())?;
+    ensure_virtual_pgdata_matches_runtime(filesystem.as_ref(), profile)?;
+    let root = paths
+        .pgdata
+        .parent()
+        .context("PGDATA has no managed-root parent")?;
+    let staging = tempfile::Builder::new()
+        .prefix(".pgdata-initdb-")
+        .tempdir_in(root)
+        .context("create private initdb publication staging")?;
+    let publication = (|| -> Result<()> {
+        super::data_dir::materialize_initialized_pgdata_into(filesystem.as_ref(), staging.path())?;
+        super::data_dir::apply_private_permissions(staging.path(), 0o700)?;
+        promote_synced_directory(staging.path(), &paths.pgdata, root, "initialized cluster")
+    })();
+    if let Err(mut error) = publication {
+        if let Err(cleanup) = staging.close()
+            && cleanup.kind() != std::io::ErrorKind::NotFound
+        {
+            error = error.context(format!("remove failed initdb staging: {cleanup}"));
+        }
+        return Err(error);
+    }
     ensure!(
         cluster_is_complete(paths),
         "split WASIX initdb finished but did not create a complete PGDATA cluster at {}",
@@ -1936,9 +2025,7 @@ fn prepare_memory_runtime_layout(
         "cached runtime catalog profile mismatch"
     );
     let mutable_root = StorageRoot::memory();
-    for path in ["/home", "/dev", "/dev/shm", "/tmp"] {
-        mutable_root.create_dir_all(Path::new(path))?;
-    }
+    mutable_root.create_runtime_dirs()?;
     Ok(RuntimeLayout {
         catalog_profile: profile,
         kind: RuntimeLayoutKind::SharedRuntimeOverlay,

@@ -107,6 +107,13 @@ impl StorageRoot {
         }
     }
 
+    pub(super) fn create_runtime_dirs(&self) -> Result<()> {
+        for path in ["/", "/home", "/dev", "/dev/shm", "/tmp"] {
+            self.create_dir_all(Path::new(path))?;
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "extensions")]
     pub(crate) fn read(&self, path: &Path) -> Result<Vec<u8>> {
         match self {
@@ -226,9 +233,36 @@ pub(crate) fn vfs_read(
         .open(path)
         .with_context(|| format!("open virtual file {} for reading", path.display()))?;
     let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(usize::try_from(file.size()).context("virtual file is too large")?)
+        .context("reserve virtual file read buffer")?;
     block_on_vfs(file.read_to_end(&mut bytes))
         .with_context(|| format!("read virtual file {}", path.display()))?;
     Ok(bytes)
+}
+
+pub(super) fn for_each_publication_file<T: Sync>(
+    files: &[T],
+    operation: impl Fn(&T) -> Result<()> + Sync,
+) -> Result<()> {
+    const WORKERS: usize = 4;
+    std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for chunk in files.chunks(files.len().div_ceil(WORKERS).max(1)) {
+            let operation = &operation;
+            workers.push(
+                std::thread::Builder::new()
+                    .spawn_scoped(scope, move || chunk.iter().try_for_each(operation))
+                    .context("start publication worker")?,
+            );
+        }
+        for worker in workers {
+            worker
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload))?;
+        }
+        Ok(())
+    })
 }
 
 pub(crate) fn vfs_file_exists(filesystem: &(dyn FileSystem + Send + Sync), path: &Path) -> bool {
@@ -251,6 +285,23 @@ pub(crate) fn vfs_remove_file_if_exists(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn publication_workers_finish_before_returning_an_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let finished = AtomicUsize::new(0);
+        let result = for_each_publication_file(&[0, 1, 2, 3], |index| {
+            if *index == 0 {
+                bail!("publication failed");
+            }
+            finished.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(finished.load(Ordering::SeqCst), 3);
+        assert!(for_each_publication_file::<()>(&[], |_| panic!("empty input")).is_ok());
+    }
 
     #[test]
     fn host_and_memory_storage_share_the_file_contract() -> Result<()> {

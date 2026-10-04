@@ -129,11 +129,29 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
       assert(dependencies.has('checks'), `${id} can start before source checks`);
       assert(dependencies.has('tests'), `${id} can start before source tests`);
       const direct = [job.needs ?? []].flat();
-      if (direct.includes('checks') && direct.includes('tests') && direct.length === 3)
+      if (direct.includes('checks') && direct.includes('tests') && direct.length === 3) {
+        // Optional source matrices may be skipped; require the aggregate gate results.
         assert(
-          !/always\(|!cancelled\(/u.test(job.if ?? ''),
+          job.if?.startsWith(
+            "${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && ",
+          ),
           `${id} must require successful source gates`,
         );
+      }
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('WASIX aggregates require successful selected hosts before accepting their artifacts', () => {
+    for (const id of ['wasix-napi', 'liboliphaunt-wasix-aot']) {
+      for (const host of ['linux', 'other']) {
+        assert(
+          workflow.jobs[id].if.includes(
+            `(fromJson(needs.affected.outputs.liboliphaunt_wasix_aot_runtime_matrix_${host}).include[0] == null || needs.wasix-host-${host}.result == 'success')`,
+          ),
+          `${id} accepts a skipped selected ${host} host`,
+        );
+      }
     }
   });
 

@@ -46,6 +46,8 @@ const PGDATA_DIR: &str = "/base";
 const ICU_DATA_DIR: &str = "/share/icu";
 const SKIP_ICU_COLLATION_DISCOVERY_ENV: &str = "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY";
 const WASM_PREFIX: &str = "/";
+const DEFAULT_SHARED_BUFFERS: &str = "128MB";
+const PRIVATE_INITDB_SHARED_BUFFERS: &str = "8MB";
 const RUNTIME_SIDE_MODULES: &[(&str, &str)] = &[
     ("plpgsql.so", "runtime-support:plpgsql"),
     ("dict_snowball.so", "runtime-support:dict_snowball"),
@@ -1006,6 +1008,9 @@ fn build_wasix_runtime(
 }
 
 fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStorage) -> Result<()> {
+    let filesystem = pgdata_storage
+        .memory_filesystem()
+        .context("split initdb requires private memory storage")?;
     let initdb_module = runtime_layout.module_root.join("bin/initdb");
     let postgres_module = runtime_layout.module_root.join("bin/postgres");
     ensure!(
@@ -1018,11 +1023,6 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
         "WASIX postgres module is not installed at {}",
         postgres_module.display()
     );
-
-    if let PgDataStorage::HostDirectory(pgdata) = pgdata_storage {
-        fs::create_dir_all(pgdata)
-            .with_context(|| format!("create fresh PGDATA {}", pgdata.display()))?;
-    }
 
     let (engine, _) = aot::load_runtime_module()?;
     let process_runtime = process_wasix_runtime(&engine)?;
@@ -1116,7 +1116,39 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
             });
         }
     }
+    let path = Path::new("/postgresql.conf");
+    let text = String::from_utf8(super::storage::vfs_read(filesystem.as_ref(), path)?)
+        .context("decode private initdb configuration")?;
+    let restored = restore_private_initdb_configuration(&text)?;
+    super::storage::vfs_write(filesystem.as_ref(), path, restored.as_bytes())?;
     Ok(())
+}
+
+fn restore_private_initdb_configuration(text: &str) -> Result<String> {
+    let temporary = format!("shared_buffers = {PRIVATE_INITDB_SHARED_BUFFERS}");
+    let replacement = format!("shared_buffers = {DEFAULT_SHARED_BUFFERS}");
+    let mut restored = String::with_capacity(text.len() + 2);
+    let mut found = false;
+    for line in text.split_inclusive('\n') {
+        if let Some(tail) = line.strip_prefix(&temporary)
+            && (tail.trim().is_empty() || tail.trim_start().starts_with('#'))
+        {
+            ensure!(
+                !found,
+                "private initdb emitted duplicate shared_buffers settings"
+            );
+            restored.push_str(&replacement);
+            restored.push_str(tail);
+            found = true;
+        } else {
+            restored.push_str(line);
+        }
+    }
+    ensure!(
+        found,
+        "private initdb did not emit its temporary shared_buffers setting"
+    );
+    Ok(restored)
 }
 
 fn split_initdb_root_filesystem(
@@ -1263,8 +1295,8 @@ fn dir_entry_sample(path: &Path) -> String {
     }
 }
 
-fn split_initdb_args() -> Vec<&'static str> {
-    vec![
+fn split_initdb_args() -> Vec<String> {
+    let mut args = vec![
         "--allow-group-access",
         "--encoding",
         "UTF8",
@@ -1277,6 +1309,17 @@ fn split_initdb_args() -> Vec<&'static str> {
         "-D",
         PGDATA_DIR,
     ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    // Bootstrap is private memory. Restore the serving buffer size before
+    // publication, whose checked syncs cover the complete initialized tree.
+    args.extend([
+        "--no-sync".to_owned(),
+        "--set".to_owned(),
+        format!("shared_buffers={PRIVATE_INITDB_SHARED_BUFFERS}"),
+    ]);
+    args
 }
 
 fn split_initdb_binary_package(
@@ -1799,16 +1842,14 @@ const DEFAULT_STARTUP_GUCS: &[(&str, &str)] = &[
     ("log_checkpoints", "false"),
     ("wal_buffers", "4MB"),
     ("min_wal_size", "80MB"),
-    ("shared_buffers", "128MB"),
+    ("shared_buffers", DEFAULT_SHARED_BUFFERS),
 ];
 
 fn ensure_runtime_dirs(
     runtime_storage: &StorageRoot,
     pgdata_storage: &PgDataStorage,
 ) -> Result<()> {
-    for path in ["/", "/home", "/dev", "/dev/shm", "/tmp"] {
-        runtime_storage.create_dir_all(Path::new(path))?;
-    }
+    runtime_storage.create_runtime_dirs()?;
     if let PgDataStorage::HostDirectory(pgdata) = pgdata_storage {
         fs::create_dir_all(pgdata)
             .with_context(|| format!("create PGDATA {}", pgdata.display()))?;
@@ -2025,6 +2066,43 @@ mod tests {
                 ("OLIPHAUNT_INTERNAL_ICU_READY", "1"),
             ]
         );
+    }
+
+    #[test]
+    fn private_initdb_settings_do_not_escape_bootstrap() -> Result<()> {
+        let args = split_initdb_args();
+        assert!(args.iter().any(|arg| arg == "--no-sync"));
+        assert!(args.iter().any(|arg| arg == "shared_buffers=8MB"));
+        let text = "# shared_buffers = 8MB\nshared_buffers = 8MB\t# min 128kB\nfsync = on\n";
+        assert_eq!(
+            restore_private_initdb_configuration(text)?,
+            "# shared_buffers = 8MB\nshared_buffers = 128MB\t# min 128kB\nfsync = on\n"
+        );
+        assert!(restore_private_initdb_configuration("# shared_buffers = 8MB\n").is_err());
+        assert!(restore_private_initdb_configuration("shared_buffers = 8MB0\n").is_err());
+        assert!(
+            restore_private_initdb_configuration("shared_buffers = 8MB\nshared_buffers = 8MB\n")
+                .is_err()
+        );
+        assert_eq!(
+            restore_private_initdb_configuration("shared_buffers = 8MB")?,
+            "shared_buffers = 128MB"
+        );
+        let layout = RuntimeLayout {
+            catalog_profile: crate::CatalogProfile::Standard,
+            kind: super::super::base::RuntimeLayoutKind::FullLocal,
+            mutable_root: StorageRoot::memory(),
+            shared_root: None,
+            module_root: "missing-runtime".into(),
+        };
+        let host = PgDataStorage::host_directory("must-not-initialize");
+        let error = run_split_initdb(&layout, &host).expect_err("host initdb must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("requires private memory storage")
+        );
+        Ok(())
     }
 
     #[test]
