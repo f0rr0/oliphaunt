@@ -193,6 +193,7 @@ fn print_aot_engine_config(_engine: &wasmer::Engine) {
     println!("wasmer-engine-id: {AOT_ENGINE_PROFILE}");
     println!("wasmer-target-triple: x86_64-pc-windows-msvc");
     println!("wasmer-wee8-version: 11.9.7");
+    println!("wasmer-v8-version: 13.6.233.17");
     println!("wasmer-feature-exceptions: enabled");
 }
 

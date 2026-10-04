@@ -26,7 +26,8 @@ const EXPECTED_WASMER_WASIX_VERSION: &str = "0.705.0";
 const AOT_ENGINE_ID: &str =
     "engine=llvm-opta;wasmer=7.5.0;wasmer-wasix=0.705.0;cpu=generic-baseline";
 #[cfg(windows)]
-const AOT_ENGINE_ID: &str = "engine=v8;wasmer=7.5.0;wasmer-wasix=0.705.0;wee8=11.9.7";
+const AOT_ENGINE_ID: &str =
+    "engine=v8;wasmer=7.5.0;wasmer-wasix=0.705.0;wee8=11.9.7;v8=13.6.233.17";
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
 const CACHE_RECEIPT_FORMAT_VERSION: u32 = 1;
 const TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"];

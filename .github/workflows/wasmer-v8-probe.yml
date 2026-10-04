@@ -89,7 +89,7 @@ jobs:
 
   integration-compile:
     if: ${{ github.ref == 'refs/heads/f0rr0/windows-v8-integration' }}
-    name: Windows SDK V8 compilation
+    name: Windows SDK V8 integration diagnostic
     runs-on: windows-2025-vs2026
     timeout-minutes: 45
     defaults:
@@ -103,9 +103,39 @@ jobs:
         with:
           toolchain: 1.96.0
       - uses: ./.github/actions/setup-msvc
-      - name: Compile automatic Windows backend and SDK adapters
+      - name: Compile Windows V8 serializer
+        run: cargo check --locked -p xtask --features aot-serializer
+      - name: Compile Windows Rust SDK
+        run: cargo check --locked -p oliphaunt-wasix --all-targets --features tools,extension-vector
+      - name: Compile Windows Node-API source adapters
+        run: cargo check --locked -p oliphaunt-wasix-napi --features tools,extension-vector
+      - name: Download immutable diagnostic portable runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: '37225721762'
+          artifact-ids: '11312707536'
+          github-token: ${{ github.token }}
+          path: .
+          merge-multiple: true
+      - name: Verify diagnostic PostgreSQL fixture identity
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cargo check --locked -p xtask --features aot-serializer
-          cargo check --locked -p oliphaunt-wasix --all-targets --features tools,extension-vector
-          cargo check --locked -p oliphaunt-wasix-napi --features release
+          mkdir -p target/windows-v8-diagnostic
+          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > target/windows-v8-diagnostic/guest-artifact.json
+          python tools/experiments/wasmer-v8/verify_guest.py . target/windows-v8-diagnostic
+      - name: Generate diagnostic Windows V8 artifacts
+        run: bash src/wasix/runtime/tools/build-aot-target.sh
+      - name: Exercise unchanged database API on Windows
+        run: |
+          set -euo pipefail
+          bash src/wasix/runtime/tools/runtime-smoke.sh core-smoke 2>&1 | tee target/windows-v8-diagnostic/runtime-smoke.log
+      - name: Retain diagnostic database evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-v8-sdk-diagnostic
+          path: target/windows-v8-diagnostic
+          if-no-files-found: warn
+          retention-days: 90

@@ -182,7 +182,7 @@ fn copy_symlink(src: &Path, dest: &Path) -> Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn copy_cluster_seed_pgdata(seed_root: &Path, dest_root: &Path) -> Result<()> {
     let source_pgdata = seed_root.join("tmp/oliphaunt/base");
     clone_cluster_seed_dir(&source_pgdata, &dest_root.join("tmp/oliphaunt/base"))
