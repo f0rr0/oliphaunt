@@ -20,6 +20,11 @@ and its correctness prerequisites. It is integration work, not yet a qualified
 Windows release. The [standalone experiment](../../../tools/experiments/wasmer-v8/README.md)
 records the upstream history and the six diagnostic failures.
 
+The [runtime alternatives research](windows-runtime-alternatives.md) evaluates
+upstream workarounds, engine packaging, Wasmtime, WasmEdge, wasm2c and interpreter
+limits against this consumer contract, including an actual Windows-target
+Wasmtime AOT compile of the PostgreSQL guest.
+
 ## Implementation
 
 - Windows automatically constructs the native Wasmer V8 engine. Linux and macOS
@@ -138,8 +143,17 @@ It is useful integration evidence, not release qualification.
 Selected-product all-platform qualification for source
 `d3f58e46272686fb0cd7dce2fa7c7264b2b064f2` is
 [run 37240991549](https://github.com/f0rr0/oliphaunt/actions/runs/37240991549).
-Its source checks and unit tests passed; producer jobs were still running when
-the Windows core diagnostic finished. It does not prove the newer branch HEAD.
+Its source checks, unit tests and portable producer passed. At 23:37 UTC on
+October 4, native iOS extension production was still running, while the WASIX
+extension, host AOT and installed-consumer jobs had been skipped despite being
+selected in the plan. Those skips leave qualification incomplete; this run
+does not prove the newer branch HEAD or the required Windows consumers.
+
+The newer diagnostic at `b1dac573b7a307a2ae2cbbbe06cbc4635befada9`,
+[run 37243260881](https://github.com/f0rr0/oliphaunt/actions/runs/37243260881),
+had passed the Windows database API step and was still running the new native
+cache-header compatibility probe at that snapshot. A running probe is not
+recorded as a pass.
 
 Do not treat skipped child jobs with green aggregate badges as passing builds.
 Qualification must identify the source SHA, actual executed jobs and artifact
