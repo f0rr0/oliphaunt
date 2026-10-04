@@ -453,6 +453,7 @@ fn seed_direct_database(root: &Path, backup: &Path) -> Result<(), Box<dyn std::e
     let mut database = DirectOliphaunt::builder()
         .storage(DatabaseStorage::Directory(root.to_path_buf()))
         .open()?;
+    assert_durability_settings(&mut database, "on");
     database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text)")?;
     let multiple = database
         .execute("CREATE TABLE must_not_exist(id integer); INSERT INTO must_not_exist VALUES (1)")
@@ -508,11 +509,22 @@ fn verify_direct_database(root: &Path) -> Result<(), Box<dyn std::error::Error>>
     let mut database = DirectOliphaunt::builder()
         .storage(DatabaseStorage::Directory(root.to_path_buf()))
         .open()?;
+    assert_durability_settings(&mut database, "on");
     let result = database.query("SELECT value FROM items ORDER BY id")?;
     assert_eq!(result.row_count(), Some(2));
     assert_eq!(result.get_text(0, "value")?, Some("one"));
     assert_eq!(result.get_text(1, "value")?, Some("two"));
     Ok(database.close()?)
+}
+
+fn assert_durability_settings(database: &mut DirectOliphaunt, fsync: &str) {
+    let settings = database
+        .query("SELECT current_setting('fsync') || ':' || current_setting('full_page_writes') || ':' || current_setting('synchronous_commit') AS value")
+        .unwrap();
+    assert_eq!(
+        settings.get_text(0, "value").unwrap(),
+        Some(format!("{fsync}:on:on").as_str())
+    );
 }
 
 #[test]
@@ -530,6 +542,7 @@ fn broker_preserves_configured_identity_and_session_policy_when_available() {
             .storage(DatabaseStorage::Directory(root.clone()))
             .open()
             .unwrap();
+        assert_durability_settings(&mut bootstrap, "on");
         bootstrap
             .execute("CREATE DATABASE broker_identity")
             .unwrap();
@@ -609,14 +622,7 @@ fn broker_preserves_configured_identity_and_session_policy_when_available() {
             .startup_guc("fsync", "off")
             .open()
             .unwrap();
-        assert_eq!(
-            opted_out
-                .query("SELECT current_setting('fsync') AS value")
-                .unwrap()
-                .get_text(0, "value")
-                .unwrap(),
-            Some("off")
-        );
+        assert_durability_settings(&mut opted_out, "off");
         opted_out.close().unwrap();
     });
     let _ = std::fs::remove_dir_all(root);
