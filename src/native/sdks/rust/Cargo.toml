@@ -2,7 +2,7 @@
 name = "oliphaunt"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "Native-first Rust SDK surface for embedded PostgreSQL through liboliphaunt."
 readme = "README.md"
 repository.workspace = true

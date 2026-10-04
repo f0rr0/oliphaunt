@@ -2,7 +2,7 @@
 name = "oliphaunt-wasix-napi"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.96"
+rust-version.workspace = true
 description = "Node-API adapter for the Oliphaunt WASIX Rust runtime."
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"

@@ -122,7 +122,7 @@ The supported target set is intentionally closed: macOS arm64, Linux arm64 or
 x64 with glibc, and Windows x64 with MSVC. macOS x64, Linux musl, and Windows
 arm64 do not have carriers. The native builder detects its Linux libc and
 rejects musl or an unidentifiable libc before compiling a GNU carrier. The
-Linux release addons are then compiled inside the pinned Rust 1.99.0 Debian
+Linux release addons are then compiled inside the pinned Rust 1.96.0 Debian
 Bookworm image (glibc 2.36), with exact payload paths mounted read-only and the
 actual build run without network access. This keeps them below the published
 glibc 2.38 ceiling; release staging also validates their ELF shape and resolves
