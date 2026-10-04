@@ -1,21 +1,102 @@
 From: Sid Jain <sid_26@outlook.com>
-Date: Mon, 7 Sep 2026 00:00:00 +0000
-Subject: [PATCH] wasmer-wasix: poll ready work before asyncify suspension
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] Preserve handle ownership and ready-seek continuation
 
-Complete immediately ready work without unnecessary asyncify setup while
-retaining exit checks, signal handling and the pending-work continuation. The
-seek path uses this only where its future and shared offset survive suspension.
-This general runtime optimization must retain pending/error/signal tests;
-ready-only benchmark wins do not justify weakening those paths.
+Release the registry borrow before borrowing an instance and keep its Rc alive
+for each guard. Conflicting access returns None; removal cannot silently leak
+registered handles. Poll ready seeks without suspension setup, preserving
+exit checks, work/signal ordering, and the same pinned future after Pending.
+The shared seek-offset fix and wake-retaining block_on already exist upstream.
 
-diff --git a/src/syscalls/mod.rs b/src/syscalls/mod.rs
-index 03e09d75..9decf21b 100644
---- a/src/syscalls/mod.rs
-+++ b/src/syscalls/mod.rs
-@@ -296,6 +296,56 @@ where
-     InlineWaker::block_on(work)
+diff --git a/lib/wasix/src/state/handles/thread_local.rs b/lib/wasix/src/state/handles/thread_local.rs
+index 5b1a504..c0610fa 100644
+--- a/lib/wasix/src/state/handles/thread_local.rs
++++ b/lib/wasix/src/state/handles/thread_local.rs
+@@ -17,6 +17,20 @@ thread_local! {
+         = RefCell::new(HashMap::new());
  }
  
++fn clone_registered<T>(
++    registry: &RefCell<HashMap<u64, Rc<RefCell<T>>>>,
++    id: u64,
++) -> Option<Rc<RefCell<T>>> {
++    registry.borrow().get(&id).cloned()
++}
++
++fn remove_registered<T>(
++    registry: &RefCell<HashMap<u64, Rc<RefCell<T>>>>,
++    id: u64,
++) -> Option<Rc<RefCell<T>>> {
++    registry.borrow_mut().remove(&id)
++}
++
+ /// This non-sendable guard provides memory safe access
+ /// to the WasiInstance object but only when it is
+ /// constructed with certain constraints
+@@ -79,9 +93,8 @@ impl WasiInstanceHandlesPointer {
+             .iter()
+             .filter_map(|id| {
+                 THREAD_LOCAL_INSTANCE_HANDLES.with(|map| {
+-                    let map = map.borrow();
+-                    if let Some(inner) = map.get(id) {
+-                        let borrow: Ref<WasiModuleTreeHandles> = inner.borrow();
++                    if let Some(inner) = clone_registered(map, *id) {
++                        let borrow: Ref<WasiModuleTreeHandles> = inner.try_borrow().ok()?;
+                         let borrow: Ref<'static, WasiModuleTreeHandles> =
+                             unsafe { std::mem::transmute(borrow) };
+                         Some(WasiInstanceGuard {
+@@ -101,8 +114,7 @@ impl WasiInstanceHandlesPointer {
+             .into_iter()
+             .filter_map(|id| {
+                 THREAD_LOCAL_INSTANCE_HANDLES.with(|map| {
+-                    let map = map.borrow_mut();
+-                    if let Some(inner) = map.get(&id) {
++                    if let Some(inner) = clone_registered(map, id) {
+                         let borrow: RefMut<WasiModuleTreeHandles> = inner.try_borrow_mut().ok()?;
+                         let borrow: RefMut<'static, WasiModuleTreeHandles> =
+                             unsafe { std::mem::transmute(borrow) };
+@@ -138,13 +150,30 @@ impl WasiInstanceHandlesPointer {
+     }
+     fn destroy(id: u64) {
+         THREAD_LOCAL_INSTANCE_HANDLES.with(|map| {
+-            if let Ok(mut map) = map.try_borrow_mut() {
+-                map.remove(&id);
+-            }
++            drop(remove_registered(map, id));
+         })
+     }
+ }
+ 
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn registry_removal_does_not_borrow_the_registered_value() {
++        let registry = RefCell::new(HashMap::new());
++        registry
++            .borrow_mut()
++            .insert(7, Rc::new(RefCell::new(41_u8)));
++        let inner = clone_registered(&registry, 7).expect("registered value");
++        let retained = inner.borrow();
++        assert!(inner.try_borrow_mut().is_err());
++        assert!(remove_registered(&registry, 7).is_some());
++        assert!(registry.borrow().is_empty());
++        assert_eq!(*retained, 41);
++    }
++}
++
+ /// This provides access to the memory inside the instance
+ pub(crate) struct WasiInstanceGuardMemory<'a> {
+     // the order is very important as the first value is
+diff --git a/lib/wasix/src/syscalls/mod.rs b/lib/wasix/src/syscalls/mod.rs
+index 1301c06..7f15412 100644
+--- a/lib/wasix/src/syscalls/mod.rs
++++ b/lib/wasix/src/syscalls/mod.rs
+@@ -307,6 +307,56 @@ where
+ /// thus allowed for asynchronous operations to execute. It has built in functionality
+ /// to (optionally) timeout the IO, force exit the process, callback signals and pump
+ /// synchronous IO engine
 +// This poller processes signals while the main working function is idle.
 +// The work is borrowed through its existing pin so a caller may poll it once
 +// before entering the blocking path without moving or recreating the future.
@@ -66,10 +147,10 @@ index 03e09d75..9decf21b 100644
 +    work.poll(cx)
 +}
 +
- /// Asyncify takes the current thread and blocks on the async runtime associated with it
- /// thus allowed for asynchronous operations to execute. It has built in functionality
- /// to (optionally) timeout the IO, force exit the process, callback signals and pump
-@@ -316,38 +366,102 @@ where
+ pub(crate) fn __asyncify<T, Fut>(
+     ctx: &mut FunctionEnvMut<'_, WasiEnv>,
+     timeout: Option<Duration>,
+@@ -323,38 +373,102 @@ where
          return Err(WasiError::Exit(exit_code));
      }
  
@@ -80,21 +161,6 @@ index 03e09d75..9decf21b 100644
 -    {
 -        ctx: &'a mut FunctionEnvMut<'b, WasiEnv>,
 -        pinned_work: Pin<Box<Fut>>,
--    }
--    impl<Fut, T> Future for SignalPoller<'_, '_, Fut, T>
--    where
--        Fut: Future<Output = Result<T, Errno>>,
--    {
--        type Output = Result<Fut::Output, WasiError>;
--        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
--            if let Poll::Ready(res) = Pin::new(&mut self.pinned_work).poll(cx) {
--                return Poll::Ready(Ok(res));
--            }
--            if let Some(signals) = self.ctx.data().thread.pop_signals_or_subscribe(cx.waker()) {
--                if let Err(err) = WasiEnv::process_signals_internal(self.ctx, signals) {
--                    return Poll::Ready(Err(err));
--                }
--                return Poll::Ready(Ok(Err(Errno::Intr)));
 +    // Block on the work
 +    let mut pinned_work = Box::pin(work);
 +    asyncify_continue(ctx, timeout, pinned_work.as_mut())
@@ -119,7 +185,21 @@ index 03e09d75..9decf21b 100644
 +    // This must remain the only exit check on both the ready and pending paths.
 +    if let Some(exit_code) = env.should_exit() {
 +        return Err(WasiError::Exit(exit_code));
-+    }
+     }
+-    impl<Fut, T> Future for SignalPoller<'_, '_, Fut, T>
+-    where
+-        Fut: Future<Output = Result<T, Errno>>,
+-    {
+-        type Output = Result<Fut::Output, WasiError>;
+-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+-            if let Poll::Ready(res) = Pin::new(&mut self.pinned_work).poll(cx) {
+-                return Poll::Ready(Ok(res));
+-            }
+-            if let Some(signals) = self.ctx.data().thread.pop_signals_or_subscribe(cx.waker()) {
+-                if let Err(err) = WasiEnv::process_signals_internal(self.ctx, signals) {
+-                    return Poll::Ready(Err(err));
+-                }
+-                return Poll::Ready(Ok(Err(Errno::Intr)));
 +
 +    futures::pin_mut!(work);
 +    let waker = WasiDummyWaker.into_waker();
@@ -190,7 +270,7 @@ index 03e09d75..9decf21b 100644
 +            let waker = WasiDummyWaker.into_waker();
 +            let mut cx = Context::from_waker(&waker);
 +            assert_eq!(poll_ready_once(seek.as_mut(), &mut cx), Poll::Pending);
-+            assert_eq!(InlineWaker::block_on(seek.as_mut()), Ok(41));
++            assert_eq!(block_on(seek.as_mut()), Ok(41));
 +        }
 +
 +        assert_eq!(file.starts, 1);
@@ -200,11 +280,11 @@ index 03e09d75..9decf21b 100644
  }
  
  /// Future that will be polled by asyncify methods
-diff --git a/src/syscalls/wasi/fd_seek.rs b/src/syscalls/wasi/fd_seek.rs
-index 2d93ae1c..3173325e 100644
---- a/src/syscalls/wasi/fd_seek.rs
-+++ b/src/syscalls/wasi/fd_seek.rs
-@@ -98,7 +98,7 @@ pub(crate) fn fd_seek_internal(
+diff --git a/lib/wasix/src/syscalls/wasi/fd_seek.rs b/lib/wasix/src/syscalls/wasi/fd_seek.rs
+index 35fdf7a..3a70f51 100644
+--- a/lib/wasix/src/syscalls/wasi/fd_seek.rs
++++ b/lib/wasix/src/syscalls/wasi/fd_seek.rs
+@@ -97,7 +97,7 @@ pub(crate) fn fd_seek_internal(
                          let fd_offset = fd_entry.inner.offset.clone();
                          drop(guard);
  
@@ -213,3 +293,17 @@ index 2d93ae1c..3173325e 100644
                              let mut handle = handle.write().unwrap();
                              let end = handle
                                  .seek(SeekFrom::End(offset))
+diff --git a/lib/wasix/src/syscalls/wasix/callback_signal.rs b/lib/wasix/src/syscalls/wasix/callback_signal.rs
+index 4592979..33cb1a4 100644
+--- a/lib/wasix/src/syscalls/wasix/callback_signal.rs
++++ b/lib/wasix/src/syscalls/wasix/callback_signal.rs
+@@ -28,7 +28,8 @@ pub fn callback_signal<M: MemorySize>(
+     Span::current().record("name", name.as_str());
+ 
+     let funct = env
+-        .inner()
++        .try_inner()
++        .ok_or_else(|| WasiError::Exit(Errno::Fault.into()))?
+         .main_module_instance_handles()
+         .instance
+         .exports

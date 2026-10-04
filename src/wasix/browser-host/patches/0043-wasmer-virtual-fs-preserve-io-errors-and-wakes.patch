@@ -1,7 +1,16 @@
-diff --git a/src/pipe.rs b/src/pipe.rs
---- a/src/pipe.rs
-+++ b/src/pipe.rs
-@@ -46,6 +46,23 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] Preserve virtual filesystem errors and pending wakes
+
+Do not report success with zero bytes when host entropy fails. A contended
+Pipe read must return Pending and register a wake rather than blocking its
+browser execution realm. These retain the existing focused regressions.
+
+diff --git a/lib/virtual-fs/src/pipe.rs b/lib/virtual-fs/src/pipe.rs
+index 88c53ae..51e6279 100644
+--- a/lib/virtual-fs/src/pipe.rs
++++ b/lib/virtual-fs/src/pipe.rs
+@@ -46,6 +46,23 @@ pub struct PipeRx {
  }
  
  impl PipeRx {
@@ -25,7 +34,7 @@ diff --git a/src/pipe.rs b/src/pipe.rs
      // Tries to read from the internal buffer if data is available.
      fn try_read_from_buffer(
          rx: &mut MutexGuard<'_, PipeReceiver>,
-@@ -108,7 +125,7 @@
+@@ -108,7 +125,7 @@ impl PipeRx {
              )));
          };
  
@@ -34,7 +43,7 @@ diff --git a/src/pipe.rs b/src/pipe.rs
          loop {
              {
                  if let Some(inner_buf) = rx.buffer.as_mut() {
-@@ -460,7 +477,7 @@
+@@ -460,7 +477,7 @@ impl AsyncRead for PipeRx {
              )));
          };
  
@@ -43,7 +52,7 @@ diff --git a/src/pipe.rs b/src/pipe.rs
          loop {
              if Self::try_read_from_buffer(&mut rx, buf.remaining(), |read_buf| {
                  buf.put_slice(read_buf);
-@@ -601,3 +618,63 @@
+@@ -601,3 +618,63 @@ impl DuplexPipe {
  /// Shared version of BidiPipe for situations where you need
  /// to emulate the old behaviour of `Pipe` (both send and recv on one channel).
  pub type WasiBidirectionalSharedPipePair = ArcFile<DuplexPipe>;
@@ -107,3 +116,16 @@ diff --git a/src/pipe.rs b/src/pipe.rs
 +        assert!(buf.filled().is_empty());
 +    }
 +}
+diff --git a/lib/virtual-fs/src/random_file.rs b/lib/virtual-fs/src/random_file.rs
+index 89be23c..58819c5 100644
+--- a/lib/virtual-fs/src/random_file.rs
++++ b/lib/virtual-fs/src/random_file.rs
+@@ -54,7 +54,7 @@ impl AsyncRead for RandomFile {
+         buf: &mut tokio::io::ReadBuf<'_>,
+     ) -> Poll<io::Result<()>> {
+         let mut data = vec![0u8; buf.remaining()];
+-        getrandom::fill(&mut data).ok();
++        getrandom::fill(&mut data).map_err(io::Error::other)?;
+         buf.put_slice(&data[..]);
+         Poll::Ready(Ok(()))
+     }

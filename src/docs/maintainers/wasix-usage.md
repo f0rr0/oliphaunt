@@ -87,6 +87,30 @@ caller-realm native placement, or `@oliphaunt/wasix-ts/worker` for a separate
 JavaScript Worker realm on every runtime. Browser execution requires
 cross-origin isolation.
 
+The browser host builds the engine and worker scheduler from the pinned
+Wasmer SDK source in `src/wasix/browser-host/source.toml`. Its repo-owned
+`adapter/` supplies our direct PostgreSQL and frontend-tool interfaces, not
+Wasmer's PostgreSQL example or registry packages. Shared-memory host workers
+require the browser-only nightly pinned in that project's `rust-toolchain.toml`;
+normal Rust builds retain the workspace toolchain. Browser host updates do not
+change Rust/Node-API or Postmaster engines.
+
+Browser PostgreSQL installs its fast clock through Wasmer's import hook; tools
+use ordinary WASIX clocks. Fast reads return through WASIX after 16 observed
+milliseconds or 1,024 reads per clock domain to service pending work. A guest
+clock-setting call switches all readers sharing that database's memory to
+ordinary WASIX reads before entering the setter, including readers in extensions
+loaded later. Importing a setter alone does not disable fast reads. The switch
+lasts until that guest is destroyed, even when the setter returns an error;
+Wasmer remains the sole owner of virtual clock adjustments. No public flag is
+needed. This optimization is restricted to the enforced single execution realm.
+
+The pinned SDK has a
+[Modified MIT license](https://github.com/wasmerio/wasmer-sdk/blob/wasmer-sdk-js-v0.19.0/LICENSE),
+including a prominent Wasmer UI attribution requirement for commercial
+products above one million monthly active users or US$1 million monthly revenue;
+it must not be described as plain MIT.
+
 Memory is the default. Persistent providers are selective imports:
 
 - `storage/indexed-db` and `storage/opfs` in browsers;

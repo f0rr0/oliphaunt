@@ -260,8 +260,8 @@ separate.
 
 Rust `postgres_mod.rs::DIAGNOSTIC_TAIL_BYTES` retains the latest 8 KiB from each
 split-initdb stdout and stderr stream. The backend separately retains 16 KiB
-of stderr in `instantiate_wasix_module`; browser patch
-`0018-wasmer-js-bound-direct-stderr.patch::STDERR_LIMIT_BYTES` also uses 16 KiB.
+of stderr in `instantiate_wasix_module`; browser adapter
+`src/wasix/browser-host/adapter/postgres_direct.rs::STDERR_LIMIT_BYTES` also uses 16 KiB.
 These matching backend values are not generated from the initdb constant.
 `STARTUP_OUTCOME_MAX_PROTOCOL_BYTES`
 allows up to 1 MiB of startup-error protocol payload and must match the guest
