@@ -34,17 +34,44 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
+#include "oliphaunt_wasix_protocol_contract.generated.h"
+
 #ifndef EMSCRIPTEN_KEEPALIVE
 #define EMSCRIPTEN_KEEPALIVE __attribute__((used))
 #endif
 
 #define OLIPHAUNT_UID 123
 #define OLIPHAUNT_PROTOCOL_FD 1
-#define POSTGRES_MAIN_LONGJMP 100
 #define MAX_ATEXIT_FUNCS 32
+#define OLIPHAUNT_WASIX_STARTUP_REJECTED_EXIT 98
+#define OLIPHAUNT_WASIX_STARTUP_OUTCOME_MAX_PROTOCOL_BYTES (1024U * 1024U)
+_Static_assert(OLIPHAUNT_WASIX_BUFFERED_PROTOCOL_OUTPUT_LIMIT > 0,
+			   "buffered protocol output limit must be positive");
+_Static_assert((size_t) OLIPHAUNT_WASIX_BUFFERED_PROTOCOL_OUTPUT_LIMIT <=
+				   (size_t) SSIZE_MAX,
+			   "buffered protocol output limit must fit in ssize_t");
+
+enum
+{
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_ABI_VERSION = 1,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_BYTE_SIZE = 32,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_PENDING = 0,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_REJECTED = 1,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_VERSION_OFFSET = 0,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_SIZE_OFFSET = 4,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_KIND_OFFSET = 8,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_RESERVED_OFFSET = 12,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_PTR_OFFSET = 16,
+	OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_LEN_OFFSET = 24,
+};
+
+_Static_assert(CHAR_BIT == 8, "startup outcome ABI requires 8-bit bytes");
+_Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t),
+			   "startup outcome ABI cannot encode this pointer width");
+_Static_assert(sizeof(size_t) <= sizeof(uint64_t),
+			   "startup outcome ABI cannot encode this length width");
 
 volatile int is_oliphaunt_active = 0;
-volatile int force_host_error_recovery = 0;
 volatile int oliphaunt_wasix_startup_error_capture_active = 0;
 sigjmp_buf postgresmain_sigjmp_buf;
 volatile bool ignore_till_sync = false;
@@ -85,20 +112,22 @@ static size_t oliphaunt_wasix_output_len_value;
 static size_t oliphaunt_wasix_output_cap;
 static size_t oliphaunt_wasix_output_scan_off;
 static bool oliphaunt_wasix_output_contains_error_value;
-enum
-{
-	OLIPHAUNT_WASIX_PROTOCOL_BUFFERED = 0,
-	OLIPHAUNT_WASIX_PROTOCOL_STREAM = 1,
-	OLIPHAUNT_WASIX_PROTOCOL_HYBRID = 2,
-};
-enum
-{
-	OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE = 0,
-	OLIPHAUNT_WASIX_PROTOCOL_COPY_IN = 1,
-	OLIPHAUNT_WASIX_PROTOCOL_COPY_OUT = 2,
-	OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH = 3,
-};
-
+static int oliphaunt_wasix_output_failure_status;
+/*
+ * This descriptor is a wire ABI, not a native C struct: keeping its storage as
+ * bytes makes the 32-byte little-endian layout independent of host alignment.
+ * The address is stable for the lifetime of the module.  Rejected protocol
+ * bytes live in a separate bridge-owned allocation and remain immutable until
+ * the next startup attempt resets the descriptor.
+ */
+static volatile unsigned char
+	oliphaunt_wasix_startup_outcome_descriptor[OLIPHAUNT_WASIX_STARTUP_OUTCOME_BYTE_SIZE] = {
+		1, 0, 0, 0,
+		32, 0, 0, 0,
+	};
+static unsigned char *oliphaunt_wasix_startup_outcome_protocol;
+static size_t oliphaunt_wasix_startup_outcome_protocol_len;
+static size_t oliphaunt_wasix_startup_outcome_protocol_cap;
 static int oliphaunt_wasix_protocol_transport;
 static int oliphaunt_wasix_protocol_fd = OLIPHAUNT_PROTOCOL_FD;
 static int oliphaunt_wasix_protocol_status_flags;
@@ -110,15 +139,79 @@ static bool oliphaunt_wasix_protocol_stream_active_value;
 static void (*atexit_funcs[MAX_ATEXIT_FUNCS])(void);
 static int atexit_func_count;
 
-int oliphaunt_wasix_set_protocol_transport(int mode);
 int oliphaunt_wasix_socket(int domain, int type, int protocol);
 ssize_t oliphaunt_wasix_recv(int fd, void *buf, size_t n, int flags);
 ssize_t oliphaunt_wasix_send(int fd, const void *buf, size_t n, int flags);
 
+static void
+oliphaunt_wasix_startup_outcome_store_u32(size_t offset, uint32_t value)
+{
+	for (size_t i = 0; i < sizeof(value); i++)
+		oliphaunt_wasix_startup_outcome_descriptor[offset + i] =
+			(unsigned char) (value >> (i * CHAR_BIT));
+}
+
+static void
+oliphaunt_wasix_startup_outcome_store_u64(size_t offset, uint64_t value)
+{
+	for (size_t i = 0; i < sizeof(value); i++)
+		oliphaunt_wasix_startup_outcome_descriptor[offset + i] =
+			(unsigned char) (value >> (i * CHAR_BIT));
+}
+
+static uint32_t
+oliphaunt_wasix_startup_outcome_load_u32(size_t offset)
+{
+	uint32_t value = 0;
+	for (size_t i = 0; i < sizeof(value); i++)
+		value |= (uint32_t) oliphaunt_wasix_startup_outcome_descriptor[offset + i]
+			<< (i * CHAR_BIT);
+	return value;
+}
+
+static uint64_t
+oliphaunt_wasix_startup_outcome_load_u64(size_t offset)
+{
+	uint64_t value = 0;
+	for (size_t i = 0; i < sizeof(value); i++)
+		value |= (uint64_t) oliphaunt_wasix_startup_outcome_descriptor[offset + i]
+			<< (i * CHAR_BIT);
+	return value;
+}
+
+const void *EMSCRIPTEN_KEEPALIVE
+oliphaunt_wasix_startup_outcome_v1(void)
+{
+	return (const void *) (uintptr_t) oliphaunt_wasix_startup_outcome_descriptor;
+}
+
+void
+oliphaunt_wasix_startup_outcome_reset(void)
+{
+	/* Invalidate a prior result before clearing or replacing its payload. */
+	oliphaunt_wasix_startup_outcome_store_u32(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_KIND_OFFSET,
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PENDING);
+	oliphaunt_wasix_startup_outcome_store_u32(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_VERSION_OFFSET,
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_ABI_VERSION);
+	oliphaunt_wasix_startup_outcome_store_u32(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_SIZE_OFFSET,
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_BYTE_SIZE);
+	oliphaunt_wasix_startup_outcome_store_u32(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_RESERVED_OFFSET, 0);
+	oliphaunt_wasix_startup_outcome_store_u64(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_PTR_OFFSET, 0);
+	oliphaunt_wasix_startup_outcome_store_u64(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_LEN_OFFSET, 0);
+	oliphaunt_wasix_startup_outcome_protocol_len = 0;
+}
+
 int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_set_protocol_transport(int mode)
 {
-	if (mode < OLIPHAUNT_WASIX_PROTOCOL_BUFFERED || mode > OLIPHAUNT_WASIX_PROTOCOL_HYBRID)
+	if (mode < OLIPHAUNT_WASIX_PROTOCOL_BUFFERED ||
+		mode > OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT)
 	{
 		errno = EINVAL;
 		return -1;
@@ -163,14 +256,6 @@ oliphaunt_wasix_protocol_copy_state(void)
 }
 
 int EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_set_force_host_error_recovery(int new_value)
-{
-	int current = force_host_error_recovery;
-	force_host_error_recovery = new_value != 0;
-	return current;
-}
-
-int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_set_active(int new_value)
 {
 	int current = is_oliphaunt_active;
@@ -187,18 +272,10 @@ void EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_longjmp(jmp_buf env, int val)
 {
 	/*
-	 * Some hosts can run nested WebAssembly exception unwinds and can preserve
-	 * PostgreSQL's normal PG_TRY/PG_CATCH behavior. Hosts without that support
-	 * must route every PostgreSQL ERROR longjmp through the existing
-	 * single-user process-exit boundary; Rust then invokes PostgresMainLongJmp()
-	 * to perform the same top-level cleanup and emit the backend ErrorResponse.
+	 * PostgreSQL owns every nested and top-level error boundary.  With
+	 * sigsetjmp expanded at each WebAssembly call site, the jump must remain
+	 * inside the guest so PG_CATCH cleanup cannot be skipped by the host.
 	 */
-	if (is_oliphaunt_active &&
-		(force_host_error_recovery ||
-		 env == (void *) postgresmain_sigjmp_buf))
-	{
-		exit(POSTGRES_MAIN_LONGJMP);
-	}
 	longjmp(env, val);
 }
 
@@ -314,6 +391,39 @@ oliphaunt_wasix_buffer_read(void *buffer, size_t max_length)
 }
 
 static int
+oliphaunt_wasix_record_output_failure(int status)
+{
+	if (status <= 0)
+		status = EIO;
+	if (oliphaunt_wasix_output_failure_status == 0)
+		oliphaunt_wasix_output_failure_status = status;
+	errno = oliphaunt_wasix_output_failure_status;
+	return -1;
+}
+
+static ssize_t
+oliphaunt_wasix_stream_write(int fd, const void *buffer, size_t length)
+{
+	if (length == 0)
+		return 0;
+	if (buffer == NULL)
+		return oliphaunt_wasix_record_output_failure(EINVAL);
+
+	ssize_t written = write(fd, buffer, length);
+	if (written < 0)
+		return oliphaunt_wasix_record_output_failure(errno);
+	if (written == 0)
+		return oliphaunt_wasix_record_output_failure(EIO);
+	return written;
+}
+
+int
+oliphaunt_wasix_output_status(void)
+{
+	return oliphaunt_wasix_output_failure_status;
+}
+
+static int
 oliphaunt_wasix_flush_output_to_stdio(void)
 {
 	size_t off = 0;
@@ -323,12 +433,9 @@ oliphaunt_wasix_flush_output_to_stdio(void)
 								oliphaunt_wasix_output_buf + off,
 								oliphaunt_wasix_output_len_value - off);
 		if (written < 0)
-			return -1;
+			return oliphaunt_wasix_record_output_failure(errno);
 		if (written == 0)
-		{
-			errno = EIO;
-			return -1;
-		}
+			return oliphaunt_wasix_record_output_failure(EIO);
 		off += (size_t) written;
 	}
 	oliphaunt_wasix_output_len_value = 0;
@@ -341,6 +448,7 @@ oliphaunt_wasix_output_reset(void)
 	oliphaunt_wasix_output_len_value = 0;
 	oliphaunt_wasix_output_scan_off = 0;
 	oliphaunt_wasix_output_contains_error_value = false;
+	oliphaunt_wasix_output_failure_status = 0;
 	oliphaunt_wasix_protocol_copy_state_value = OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE;
 	oliphaunt_wasix_protocol_stream_requested = false;
 	return 0;
@@ -386,42 +494,201 @@ oliphaunt_wasix_scan_buffered_output(void)
 	}
 }
 
-static ssize_t
-oliphaunt_wasix_buffer_write(const void *buffer, size_t length)
+static bool
+oliphaunt_wasix_error_response_has_valid_sqlstate(const unsigned char *fields, size_t length)
 {
-	if (length == 0)
-		return 0;
-	if (buffer == NULL)
+	size_t offset = 0;
+	bool contains_sqlstate = false;
+
+	if (fields == NULL || length == 0 || fields[length - 1] != 0)
+		return false;
+	while (offset < length - 1)
 	{
-		errno = EINVAL;
+		unsigned char field_type = fields[offset++];
+		const unsigned char *terminator;
+		size_t value_len;
+
+		if (field_type == 0)
+			return false;
+		terminator = memchr(fields + offset, 0, length - offset);
+		if (terminator == NULL)
+			return false;
+		value_len = (size_t) (terminator - (fields + offset));
+		if (field_type == 'C')
+		{
+			if (value_len != 5)
+				return false;
+			contains_sqlstate = true;
+		}
+		offset += value_len + 1;
+	}
+	return offset == length - 1 && contains_sqlstate;
+}
+
+static bool
+oliphaunt_wasix_protocol_is_complete_with_error(const unsigned char *buffer, size_t length)
+{
+	size_t offset = 0;
+	bool contains_error = false;
+
+	if (buffer == NULL || length == 0)
+		return false;
+	while (offset + 5 <= length)
+	{
+		const unsigned char *message = buffer + offset;
+		size_t body_len = ((size_t) message[1] << 24) |
+			((size_t) message[2] << 16) |
+			((size_t) message[3] << 8) |
+			(size_t) message[4];
+		if (body_len < 4 || body_len > SIZE_MAX - 1)
+			return false;
+		size_t message_len = body_len + 1;
+		if (message_len > length - offset)
+			return false;
+		if (message[0] == 'E')
+		{
+			if (!oliphaunt_wasix_error_response_has_valid_sqlstate(
+					message + 5, body_len - 4))
+				return false;
+			contains_error = true;
+		}
+		offset += message_len;
+	}
+	return offset == length && contains_error;
+}
+
+int
+oliphaunt_wasix_startup_outcome_publish_rejected(void)
+{
+	if (!oliphaunt_wasix_startup_error_capture_active)
+	{
+		errno = EPERM;
 		return -1;
 	}
-
-	if (length > INT_MAX || oliphaunt_wasix_output_len_value > (size_t) INT_MAX - length)
+	if (oliphaunt_wasix_startup_outcome_load_u32(
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_VERSION_OFFSET) !=
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_ABI_VERSION ||
+		oliphaunt_wasix_startup_outcome_load_u32(
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_SIZE_OFFSET) !=
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_BYTE_SIZE ||
+		oliphaunt_wasix_startup_outcome_load_u32(
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_RESERVED_OFFSET) != 0)
+	{
+		errno = EPROTO;
+		return -1;
+	}
+	if (oliphaunt_wasix_startup_outcome_load_u32(
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_KIND_OFFSET) !=
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PENDING)
+	{
+		errno = EALREADY;
+		return -1;
+	}
+	if (oliphaunt_wasix_output_len_value == 0 ||
+		oliphaunt_wasix_output_scan_off != oliphaunt_wasix_output_len_value ||
+		!oliphaunt_wasix_output_contains_error_value ||
+		!oliphaunt_wasix_protocol_is_complete_with_error(
+			oliphaunt_wasix_output_buf, oliphaunt_wasix_output_len_value))
+	{
+		errno = EPROTO;
+		return -1;
+	}
+	if (oliphaunt_wasix_output_len_value >
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_MAX_PROTOCOL_BYTES)
 	{
 		errno = EOVERFLOW;
 		return -1;
 	}
 
+	if (oliphaunt_wasix_output_len_value > oliphaunt_wasix_startup_outcome_protocol_cap)
+	{
+		unsigned char *protocol = realloc(oliphaunt_wasix_startup_outcome_protocol,
+										  oliphaunt_wasix_output_len_value);
+		if (protocol == NULL)
+			return -1;
+		oliphaunt_wasix_startup_outcome_protocol = protocol;
+		oliphaunt_wasix_startup_outcome_protocol_cap = oliphaunt_wasix_output_len_value;
+	}
+	memcpy(oliphaunt_wasix_startup_outcome_protocol,
+		   oliphaunt_wasix_output_buf,
+		   oliphaunt_wasix_output_len_value);
+	oliphaunt_wasix_startup_outcome_protocol_len = oliphaunt_wasix_output_len_value;
+
+	/* Publish owned payload metadata before making the result observable. */
+	oliphaunt_wasix_startup_outcome_store_u64(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_PTR_OFFSET,
+		(uint64_t) (uintptr_t) oliphaunt_wasix_startup_outcome_protocol);
+	oliphaunt_wasix_startup_outcome_store_u64(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_LEN_OFFSET,
+		(uint64_t) oliphaunt_wasix_startup_outcome_protocol_len);
+	__atomic_signal_fence(__ATOMIC_RELEASE);
+	oliphaunt_wasix_startup_outcome_store_u32(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_KIND_OFFSET,
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_REJECTED);
+	return 0;
+}
+
+static bool
+oliphaunt_wasix_startup_outcome_is_valid_rejection(void)
+{
+	uint64_t protocol_ptr = oliphaunt_wasix_startup_outcome_load_u64(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_PTR_OFFSET);
+	uint64_t protocol_len = oliphaunt_wasix_startup_outcome_load_u64(
+		OLIPHAUNT_WASIX_STARTUP_OUTCOME_PROTOCOL_LEN_OFFSET);
+
+	return oliphaunt_wasix_startup_outcome_load_u32(
+			   OLIPHAUNT_WASIX_STARTUP_OUTCOME_VERSION_OFFSET) ==
+			   OLIPHAUNT_WASIX_STARTUP_OUTCOME_ABI_VERSION &&
+		oliphaunt_wasix_startup_outcome_load_u32(
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_SIZE_OFFSET) ==
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_BYTE_SIZE &&
+		oliphaunt_wasix_startup_outcome_load_u32(
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_KIND_OFFSET) ==
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_REJECTED &&
+		oliphaunt_wasix_startup_outcome_load_u32(
+			OLIPHAUNT_WASIX_STARTUP_OUTCOME_RESERVED_OFFSET) == 0 &&
+		protocol_ptr == (uint64_t) (uintptr_t) oliphaunt_wasix_startup_outcome_protocol &&
+		protocol_len == (uint64_t) oliphaunt_wasix_startup_outcome_protocol_len &&
+		oliphaunt_wasix_protocol_is_complete_with_error(
+			oliphaunt_wasix_startup_outcome_protocol,
+			oliphaunt_wasix_startup_outcome_protocol_len);
+}
+
+static ssize_t
+oliphaunt_wasix_buffer_write(const void *buffer, size_t length)
+{
+	if (oliphaunt_wasix_output_failure_status != 0)
+		return oliphaunt_wasix_record_output_failure(
+			oliphaunt_wasix_output_failure_status);
+	if (length == 0)
+		return 0;
+	if (buffer == NULL)
+		return oliphaunt_wasix_record_output_failure(EINVAL);
+
+	const size_t output_limit =
+		(size_t) OLIPHAUNT_WASIX_BUFFERED_PROTOCOL_OUTPUT_LIMIT;
+	if (oliphaunt_wasix_output_len_value > output_limit ||
+		length > output_limit - oliphaunt_wasix_output_len_value)
+		return oliphaunt_wasix_record_output_failure(EFBIG);
+
 	size_t required = oliphaunt_wasix_output_len_value + length;
 	if (required > oliphaunt_wasix_output_cap)
 	{
 		size_t next_cap = oliphaunt_wasix_output_cap ? oliphaunt_wasix_output_cap : 8192;
+		if (next_cap > output_limit)
+			next_cap = output_limit;
 		while (next_cap < required)
 		{
-			if (next_cap > SIZE_MAX / 2)
+			if (next_cap > output_limit / 2)
 			{
-				next_cap = required;
+				next_cap = output_limit;
 				break;
 			}
 			next_cap *= 2;
 		}
 		unsigned char *new_buf = realloc(oliphaunt_wasix_output_buf, next_cap);
 		if (new_buf == NULL)
-		{
-			errno = ENOMEM;
-			return -1;
-		}
+			return oliphaunt_wasix_record_output_failure(ENOMEM);
 		oliphaunt_wasix_output_buf = new_buf;
 		oliphaunt_wasix_output_cap = next_cap;
 	}
@@ -679,6 +946,8 @@ oliphaunt_wasix_exit(int status)
 	if (oliphaunt_wasix_startup_error_capture_active && status != 0)
 	{
 		oliphaunt_wasix_startup_error_capture_active = 0;
+		if (oliphaunt_wasix_startup_outcome_is_valid_rejection())
+			exit(OLIPHAUNT_WASIX_STARTUP_REJECTED_EXIT);
 		__builtin_trap();
 	}
 	exit(status);
@@ -942,11 +1211,21 @@ oliphaunt_wasix_send(int fd, const void *buf, size_t n, int flags)
 {
 	if (fd != oliphaunt_wasix_protocol_fd)
 		return send(fd, buf, n, flags);
+	if (oliphaunt_wasix_output_failure_status != 0)
+		return oliphaunt_wasix_record_output_failure(
+			oliphaunt_wasix_output_failure_status);
+	if (oliphaunt_wasix_protocol_transport ==
+		OLIPHAUNT_WASIX_PROTOCOL_BUFFERED_INPUT_STREAMED_OUTPUT)
+	{
+		(void) flags;
+		return oliphaunt_wasix_stream_write(STDOUT_FILENO, buf, n);
+	}
 	if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_STREAM ||
 		oliphaunt_wasix_protocol_stream_active_value)
 	{
 		(void) flags;
-		return write(oliphaunt_wasix_direct_tool_active ? fd : STDOUT_FILENO, buf, n);
+		return oliphaunt_wasix_stream_write(
+			oliphaunt_wasix_direct_tool_active ? fd : STDOUT_FILENO, buf, n);
 	}
 	return oliphaunt_wasix_buffer_write(buf, n);
 }

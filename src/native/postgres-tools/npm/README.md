@@ -17,3 +17,9 @@ non-interactive and accepts `command`, `script`, or ordinary passthrough
 arguments.
 Failures reject with `PostgresToolError`, including the exit code or signal and
 captured standard output and standard error.
+
+The API captures complete stdout and stderr in memory, subject to available
+memory and host Buffer/string-size limits. A capture failure rejects the
+invocation and discards both partial outputs; the child pipes are still drained
+until it exits. For dumps that should not stay in memory, use an external tool
+with file/stream output; this API does not yet offer a streaming sink.

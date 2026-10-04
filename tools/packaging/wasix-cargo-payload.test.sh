@@ -13,6 +13,15 @@ while IFS=$'\t' read -r crate payload variable external; do
   CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --locked --offline --quiet \
     --manifest-path "$crate/Cargo.toml" --example probe
   if [[ "$payload" == artifacts ]]; then
+    cp "$crate/$payload/manifest.json" "$crate/current-profile.json"
+    bun -e 'const p = process.argv[1]; const m = await Bun.file(p).json(); m.engine += "-incompatible"; await Bun.write(p, JSON.stringify(m));' "$crate/$payload/manifest.json"
+    if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --lib > "$scratch/stale-profile.log" 2>&1; then
+      echo "Published carrier accepted stale AOT codegen profile: $crate" >&2
+      exit 1
+    fi
+    rg -q 'stale WASIX AOT profile' "$scratch/stale-profile.log"
+    mv "$crate/current-profile.json" "$crate/$payload/manifest.json"
     mkdir "$crate/removed-aot"
     mv "$crate/$payload/"*.zst "$crate/removed-aot/"
     if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \

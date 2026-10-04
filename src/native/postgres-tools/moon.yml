@@ -39,15 +39,21 @@ tasks:
       set -e
       cargo build -p oliphaunt-tools --locked
       bun run --cwd src/native/postgres-tools/npm build
-    inputs: ["crates/tools/**/*", "@group(cargo-workspace)", "npm/index.mts", "/tools/packaging/emit-javascript.mts"]
+    inputs: ["crates/tools/**/*", "@group(cargo-workspace)", "npm/index.mts", "npm/output-capture.mjs", "/tools/packaging/emit-javascript.mts"]
     outputs: ["npm/index.js", "/target/debug/liboliphaunt_tools.rlib"]
     options:
       runFromWorkspaceRoot: true
   test:
     tags: ["quality", "unit", "requires-rust"]
-    command: "cargo test -p oliphaunt-tools --locked"
+    script: |
+      set -e
+      cargo test -p oliphaunt-tools --locked
+      node --test src/native/postgres-tools/npm/output-capture.test.mjs
     inputs:
       - "crates/tools/**/*"
+      - "npm/index.mts"
+      - "npm/output-capture.mjs"
+      - "npm/output-capture.test.mjs"
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
         group: "fixtures"

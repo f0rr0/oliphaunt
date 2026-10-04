@@ -36,7 +36,7 @@ index b35b8cc..347803d 100644
 
  /*
   * Windows has enough specialized port stuff that we push most of it off
-@@ -531,7 +538,26 @@ extern void pqsignal(int signo, pqsigfunc func);
+@@ -532,7 +539,26 @@ extern void pqsignal(int signo, pqsigfunc func);
  #endif
  typedef void (*pqsigfunc) (SIGNAL_ARGS);
  extern void pqsignal(int signo, pqsigfunc func);
@@ -67,7 +67,7 @@ diff --git a/src/port/pqsignal.c b/src/port/pqsignal.c
 index 1e46997..082fed5 100644
 --- a/src/port/pqsignal.c
 +++ b/src/port/pqsignal.c
-@@ -69,7 +69,41 @@ StaticAssertDecl(SIGTERM < PG_NSIG, "SIGTERM >= PG_NSIG");
+@@ -70,7 +70,41 @@ StaticAssertDecl(SIGTERM < PG_NSIG, "SIGTERM >= PG_NSIG");
  StaticAssertDecl(SIGALRM < PG_NSIG, "SIGALRM >= PG_NSIG");
 
  static volatile pqsigfunc pqsignal_handlers[PG_NSIG];
@@ -109,7 +109,7 @@ index 1e46997..082fed5 100644
  /*
   * Except when called with SIG_IGN or SIG_DFL, pqsignal() sets up this function
   * as the handler for all signals.  This wrapper handler function checks that
-@@ -127,7 +161,12 @@ pqsignal(int signo, pqsigfunc func)
+@@ -128,7 +162,12 @@ pqsignal(int signo, pqsigfunc func)
 
  	Assert(signo > 0);
  	Assert(signo < PG_NSIG);

@@ -166,7 +166,7 @@ export type WasixAssetManifest = {
 };
 
 export type OpenConfig<Kind extends WasixStorageKind = WasixStorageKind> = {
-  /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
+  /** Existing login role. Honors role defaults and LOGIN/CONNECT restrictions; the host authenticates the caller. */
   username?: string;
   database?: string;
   /** PostgreSQL `-c name=value` settings applied before the database opens. */

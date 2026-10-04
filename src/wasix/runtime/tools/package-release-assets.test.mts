@@ -11,8 +11,42 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { stageAotAssets, stagePortableAssets } from './package-release-assets.mts';
+import {
+  postgresSourceFingerprint,
+  stageAotAssets,
+  stagePortableAssets,
+} from './package-release-assets.mts';
 import { canonicalWasixAotMetadata } from './wasix-aot-manifest.mts';
+
+test('PostgreSQL source identity includes the generated protocol header and normalizes line endings', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'wasix-source-identity-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const write = (name, bytes) => {
+    const file = path.join(root, name);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, bytes);
+  };
+  write(
+    'src/third-party/postgres/source.toml',
+    '[postgresql]\nversion = "18.4"\nsha256 = "source"\n',
+  );
+  write('src/wasix/runtime/postgres/series', 'fixture.patch\n');
+  write('fixture.patch', 'patch\n');
+  const header =
+    'src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h';
+  const inputs = 'src/wasix/runtime/postgres/source-inputs';
+  write(inputs, `# ordered inputs\nsrc/wasix/runtime/postgres/series\n${header}\n`);
+  write(header, '#define LIMIT 1\n');
+  const original = postgresSourceFingerprint(root);
+  write(header, '#define LIMIT 2\n');
+  assert.notEqual(postgresSourceFingerprint(root), original);
+  write(header, '#define LIMIT 1\r\n');
+  write(inputs, `# ordered inputs\r\nsrc/wasix/runtime/postgres/series\r\n${header}\r\n`);
+  assert.equal(postgresSourceFingerprint(root), original);
+  write('extra.h', 'extra\n');
+  write(inputs, `src/wasix/runtime/postgres/series\n${header}\nextra.h\n`);
+  assert.notEqual(postgresSourceFingerprint(root), original);
+});
 
 test('release staging excludes independent tools and extensions, and rejects stale or unsafe inputs', (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'wasix-release-stage-'));

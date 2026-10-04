@@ -1,8 +1,7 @@
 import type { WasixDirectoryMount, WasixRuntimeLayout } from '../../resources/archive.js';
 import { WasixStorageError } from '../../core/errors.js';
 import type { Directory } from '../../host/index.mjs';
-import { simpleQuery } from '../../protocol/protocol.js';
-import { assertSuccessfulQueryResponse, PostgresError } from '../../protocol/query.js';
+import { PostgresError } from '../../protocol/query.js';
 import type { SerializedOpenOptions } from '../../workers/rpc.js';
 import { normalizeWasixStartupGUCs } from '../../core/startup-config.js';
 import { releaseWasixToolMounts } from '../../resources/tool-runtime.js';
@@ -227,24 +226,4 @@ export function composeLifecycleFailure(primary: Error, label: string, secondary
     });
   }
   return new Error(message, { cause });
-}
-
-/** @internal Apply caller role after the direct bridge reaches ReadyForQuery. */
-export async function configureWasixDatabase(
-  options: SerializedOpenOptions,
-  exec: (input: Uint8Array) => Promise<Uint8Array>,
-): Promise<void> {
-  // Extension selection owns files and startup configuration only. Database-
-  // local CREATE EXTENSION/LOAD/schema/migration SQL remains application-owned.
-  await configureWasixRole(options.username, exec);
-}
-
-/** @internal Restore the configured application role after DISCARD ALL. */
-export async function configureWasixRole(
-  username: string,
-  exec: (input: Uint8Array) => Promise<Uint8Array>,
-): Promise<void> {
-  if (username === 'postgres') return;
-  const quoted = username.replaceAll('"', '""');
-  assertSuccessfulQueryResponse(await exec(simpleQuery(`SET ROLE "${quoted}"`)));
 }

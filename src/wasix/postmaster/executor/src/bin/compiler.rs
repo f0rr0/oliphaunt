@@ -106,6 +106,16 @@ fn parse() -> Result<Option<Options>> {
     }))
 }
 
+fn product_compiler() -> LLVM {
+    let mut compiler = LLVM::new();
+    // Retain main's policy; strict shared-memory compilation is a separate change.
+    compiler
+        .opt_level(LLVMOptLevel::Aggressive)
+        .non_volatile_memops(true)
+        .readonly_funcref_table(true);
+    compiler
+}
+
 fn main() -> Result<()> {
     let arguments: Vec<_> = env::args_os().skip(1).collect();
     if arguments.first().and_then(|value| value.to_str()) == Some("verify-aot") {
@@ -120,11 +130,7 @@ fn main() -> Result<()> {
     verify_module_bytes(&module_bytes)
         .with_context(|| format!("admit sealed module {}", options.input.display()))?;
 
-    let mut compiler = LLVM::new();
-    compiler
-        .opt_level(LLVMOptLevel::Aggressive)
-        .non_volatile_memops(true)
-        .readonly_funcref_table(true);
+    let mut compiler = product_compiler();
     if let Some(threads) = options.compiler_threads {
         compiler.num_threads(threads);
     }
@@ -171,11 +177,7 @@ fn verify_aot(module_path: PathBuf, artifact_path: PathBuf) -> Result<()> {
         .context("derive product verifier linear-memory profile")?;
     let mut features = Features::default();
     features.threads(true).exceptions(true);
-    let mut compiler = LLVM::new();
-    compiler
-        .opt_level(LLVMOptLevel::Aggressive)
-        .non_volatile_memops(true)
-        .readonly_funcref_table(true);
+    let compiler = product_compiler();
     let mut engine = Engine::new(
         Box::new(compiler) as Box<dyn CompilerConfig>,
         target,
@@ -208,4 +210,15 @@ fn verify_aot(module_path: PathBuf, artifact_path: PathBuf) -> Result<()> {
         .context("AOT linear-memory allocation plan differs")?;
     println!("{}", expected_hash);
     Ok(())
+}
+
+#[test]
+fn product_compiler_uses_main_memory_identity() {
+    let relaxed_id = Box::new(product_compiler()).compiler().deterministic_id();
+    let mut strict = product_compiler();
+    strict.non_volatile_memops(false);
+    let strict_id = Box::new(strict).compiler().deterministic_id();
+    assert!(strict_id.contains("-nv0-"));
+    assert!(relaxed_id.contains("-nv1-"));
+    assert_ne!(strict_id, relaxed_id);
 }

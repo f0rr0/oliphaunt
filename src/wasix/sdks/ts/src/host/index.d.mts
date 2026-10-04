@@ -113,7 +113,7 @@ export function runOliphauntToolDirect(
   prepared: OliphauntPreparedTool,
   options: RunWasixOptions,
   protocolRead: (maximumBytes: number) => Uint8Array,
-  /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
+  /** Owned bytes: the receiver may retain or mutate this callback-local copy. */
   protocolWrite: (chunk: Uint8Array) => void,
 ): Promise<OliphauntToolOutput>;
 export function instantiateOliphauntDirect(
