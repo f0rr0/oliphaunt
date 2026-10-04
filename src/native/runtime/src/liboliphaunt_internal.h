@@ -173,6 +173,7 @@ struct OliphauntHandle {
     bool thread_started;
     bool backend_exited;
     int backend_status;
+    int cwd_capture_errno;
 
     pthread_mutex_t mutex;
     pthread_mutex_t error_mutex;

@@ -11,23 +11,33 @@ and restore it after PostgreSQL's normal exit callbacks run.
 Capture is a startup precondition: if the caller cwd is already unresolvable,
 fail before consuming PostgreSQL process state. On POSIX, retain a directory
 descriptor and restore with fchdir() so a rename or replacement of the original
-pathname cannot redirect cleanup. Windows has no portable directory-handle
-equivalent and retains path-based restoration. Track the later ChangeToDataDir
-boundary separately so cleanup never mistakes capture for a mutation owned by
-this invocation.
+pathname cannot redirect cleanup. Use O_PATH on Linux/Android and O_SEARCH on
+Apple: retaining a return location must not require directory-listing access.
+Search permission is still required when restoring; the descriptor does not
+override later permission changes. Preserve capture errno for the host's
+startup error without entering PostgreSQL's error machinery.
+
+Windows has no portable directory-handle equivalent and retains path-based
+restoration. Track the later ChangeToDataDir boundary separately so cleanup
+never mistakes capture for a mutation owned by this invocation.
 
 This is terminal cleanup, not lifetime isolation. Direct execution still uses
 the process-wide cwd until the physical backend exits; process-isolated callers
 must use the broker.
 ---
- src/backend/tcop/postgres.c | 32 ++++++++++++++++++++++++++++++++
- 1 file changed, 32 insertions(+)
+ src/backend/tcop/postgres.c | 50 +++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 48 insertions(+), 2 deletions(-)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
 index 31e14a1..70f1baf 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -4199,11 +4199,24 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4195,15 +4195,42 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 					 const char *dbname, const char *username,
+-					 OliphauntEmbeddedIO *io)
++					 OliphauntEmbeddedIO *io, int *cwd_capture_errno)
+ {
+ 	const char *switch_dbname = NULL;
  	int			socket_pair[2] = {-1, -1};
  	ClientSocket client_sock;
  	struct sockaddr_in *addr;
@@ -38,21 +48,36 @@ index 31e14a1..70f1baf 100644
 +	bool		cwd_restore_required = false;
  
  	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
- 		username == NULL || io == NULL)
+-		username == NULL || io == NULL)
++		username == NULL || io == NULL || cwd_capture_errno == NULL)
  		return -1;
  
++	*cwd_capture_errno = 0;
 +	if (getcwd(original_cwd, sizeof(original_cwd)) == NULL)
++	{
++		*cwd_capture_errno = errno;
 +		return -1;
++	}
 +#ifndef WIN32
-+	original_cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
++	/* Returning to a directory does not require listing its contents. */
++#if defined(O_PATH)
++	original_cwd_fd = open(".", O_PATH | O_DIRECTORY | O_CLOEXEC);
++#elif defined(O_SEARCH)
++	original_cwd_fd = open(".", O_SEARCH | O_CLOEXEC);
++#else
++	original_cwd_fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++#endif
 +	if (original_cwd_fd < 0)
++	{
++		*cwd_capture_errno = errno;
 +		return -1;
++	}
 +#endif
 +
  	Assert(!IsUnderPostmaster);
  
  	if (progname == NULL)
-@@ -4224,9 +4237,15 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4224,9 +4251,15 @@ oliphaunt_embedded_main(int argc, char *argv[],
  				 errmsg("embedded liboliphaunt database name was provided twice")));
  
  	if (!SelectConfigFiles(userDoption, progname))
@@ -68,7 +93,7 @@ index 31e14a1..70f1baf 100644
  	ChangeToDataDir();
  	CreateDataDirLockFile(false);
  	LocalProcessControlFile(false);
-@@ -4275,5 +4294,18 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4275,5 +4308,18 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	PostgresMain(dbname, username);
  	oliphaunt_embedded_proc_exit(0);
  

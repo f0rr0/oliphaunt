@@ -870,18 +870,19 @@ index fd020198f3b6f7ebd122f757ed286cdac617ced1..b9718e038c89874b33ca517b10b07820
  } OliphauntEmbeddedLifecycle;
  
  static void
-@@ -4388,7 +4390,11 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4388,8 +4390,12 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	int			socket_error;
  
  	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
--		username == NULL || io == NULL)
-+		username == NULL || io == NULL ||
+-		username == NULL || io == NULL || cwd_capture_errno == NULL)
++		username == NULL || io == NULL || cwd_capture_errno == NULL ||
 +		io->abi_version != OLIPHAUNT_EMBEDDED_IO_ABI_VERSION ||
 +		io->struct_size < sizeof(*io) || io->context == NULL ||
 +		io->read == NULL || io->write == NULL || io->set_timeout == NULL ||
 +		io->set_interrupt_wakeup == NULL)
  		return -1;
  
+ 	*cwd_capture_errno = 0;
  	lifecycle = calloc(1, sizeof(*lifecycle));
 @@ -4396,6 +4402,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
  		return -1;
@@ -1747,7 +1748,7 @@ index 69164e11425bcde5388e22d1434ba576eb421da0..92c5eecfb90334fe29ceeb03c786294c
  typedef struct OliphauntEmbeddedIO OliphauntEmbeddedIO;
  extern int	oliphaunt_embedded_main(int argc, char *argv[],
 -							 const char *dbname, const char *username,
--							 OliphauntEmbeddedIO *io);
+-							 OliphauntEmbeddedIO *io, int *cwd_capture_errno);
 -extern void PostgresSingleUserMain(int argc, char *argv[],
 -								   const char *username);
 -extern void PostgresMain(const char *dbname,
@@ -1755,7 +1756,7 @@ index 69164e11425bcde5388e22d1434ba576eb421da0..92c5eecfb90334fe29ceeb03c786294c
 -						 bits32 init_postgres_flags);
 -#else
 +								 const char *dbname, const char *username,
-+								 OliphauntEmbeddedIO *io);
++								 OliphauntEmbeddedIO *io, int *cwd_capture_errno);
 +#endif
  pg_noreturn extern void PostgresSingleUserMain(int argc, char *argv[],
  											   const char *username);

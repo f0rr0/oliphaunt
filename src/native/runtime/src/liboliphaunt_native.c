@@ -23,7 +23,8 @@ extern int oliphaunt_embedded_main(
     char **argv,
     const char *dbname,
     const char *username,
-    OliphauntEmbeddedIO *io);
+    OliphauntEmbeddedIO *io,
+    int *cwd_capture_errno);
 
 extern void RequestTrustedEmbeddedQueryCancel(void);
 
@@ -382,16 +383,19 @@ static void *backend_thread_main(void *arg) {
         return NULL;
     }
 
+    int cwd_capture_errno = 0;
     int rc = oliphaunt_embedded_main(
         backend_argv.argc,
         backend_argv.argv,
         handle->database,
         handle->username,
-        &handle->io);
+        &handle->io,
+        &cwd_capture_errno);
     restore_backend_runtime_env(handle);
     oliphaunt_free_backend_argv(&backend_argv);
 
     pthread_mutex_lock(&handle->mutex);
+    handle->cwd_capture_errno = cwd_capture_errno;
     handle->backend_status = rc;
     handle->backend_exited = true;
     handle->closing = true;
@@ -450,6 +454,17 @@ static int start_backend(OliphauntHandle *handle) {
 
     pthread_mutex_lock(&handle->mutex);
     rc = oliphaunt_wait_for_ready_locked(handle, oliphaunt_startup_timeout_ms());
+    if (rc != 0 && handle->cwd_capture_errno != 0) {
+        /* Capture happens before PostgreSQL can emit a protocol error. Keep
+         * its cause confined to startup, not ordinary query readiness waits. */
+        char message[OLIPHAUNT_ERROR_CAPACITY];
+        snprintf(
+            message,
+            sizeof(message),
+            "could not retain caller working directory: %s",
+            strerror(handle->cwd_capture_errno));
+        set_error(handle, message);
+    }
     if (rc == 0) {
         handle->output_len = 0;
         handle->output_scan_off = 0;

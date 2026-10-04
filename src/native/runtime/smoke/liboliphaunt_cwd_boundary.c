@@ -10,6 +10,7 @@
 #include "../include/oliphaunt.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -49,7 +50,6 @@ static const char direct_open_marker[] = "cwd-direct-open-relative.txt";
 static const char direct_detach_marker[] = "cwd-direct-detach-relative.txt";
 static const char fatal_marker[] = "cwd-startup-fatal-relative.txt";
 static const char early_fatal_marker[] = "cwd-early-startup-fatal-relative.txt";
-static const char unresolvable_close_marker[] = "cwd-unresolvable-close-relative.txt";
 static const char renamed_close_marker[] = "cwd-renamed-close-relative.txt";
 static const char missing_database[] = "oliphaunt_cwd_probe_missing_database";
 
@@ -377,10 +377,7 @@ static int run_unresolvable_cwd(
     const char *module_dir,
     const char *expected_cwd) {
     char original_cwd[PATH_MAX];
-    char open_cwd[PATH_MAX];
-    char close_cwd[PATH_MAX];
-    char relative_path[PATH_MAX];
-    char error[1024];
+    OliphauntErrorCapture error;
     OliphauntHandle *handle = NULL;
 
     if (current_directory(original_cwd) != 0 || !same_directory(original_cwd, expected_cwd)) {
@@ -399,49 +396,95 @@ static int run_unresolvable_cwd(
     }
 
     OliphauntConfig config = config_for(pgdata, runtime_dir, module_dir, "postgres");
-    int32_t rc = oliphaunt_init(&config, &handle);
-    if (rc != 0 || handle == NULL) {
-        const char *last_error = last_error_message(NULL);
-        snprintf(error, sizeof(error), "%s", last_error != NULL ? last_error : "(null)");
-        fputs("{\"schema\":\"oliphaunt-native-cwd-boundary-child-v1\",", stdout);
-        fputs("\"mode\":\"unresolvable-cwd\",\"deletedOriginalCwd\":", stdout);
-        print_json_string(original_cwd);
-        fputs(",\"publicAbiError\":", stdout);
-        print_json_string(error);
-        fputs(",\"getcwdFailedBeforeOpen\":true,\"initRejectedUnrestorableCwd\":true,", stdout);
-        fputs("\"contractSatisfied\":true}\n", stdout);
-        return 0;
+    int32_t rc = oliphaunt_init_with_error(&config, &handle, &error);
+    if (rc == 0 || handle != NULL) {
+        if (handle != NULL) {
+            (void)oliphaunt_close(handle);
+        }
+        return fail("init accepted an unresolvable caller cwd");
     }
-
-    if (current_directory(open_cwd) != 0 || !same_directory(open_cwd, pgdata)) {
-        (void)oliphaunt_close(handle);
-        return fail("Direct open from an unresolvable cwd did not reach PGDATA");
+    if (strstr(error.message, "could not retain caller working directory:") == NULL ||
+        strstr(error.message, strerror(ENOENT)) == NULL ||
+        strcmp(error.message, last_error_message(NULL)) != 0) {
+        fprintf(stderr, "unexpected cwd capture error: %s\n", error.message);
+        return fail("startup did not preserve the cwd capture diagnostic");
     }
-    if (oliphaunt_close(handle) != 0) {
-        return fail("terminal close after unresolvable-cwd Direct open failed");
-    }
-    handle = NULL;
-    if (current_directory(close_cwd) != 0 || !same_directory(close_cwd, pgdata)) {
-        return fail("unexpected cwd after terminal close from an unresolvable cwd");
-    }
-    if (write_relative_marker(unresolvable_close_marker, "written after unrestorable Direct close\n") != 0 ||
-        joined_path(relative_path, pgdata, unresolvable_close_marker) != 0 ||
-        !regular_file_exists(relative_path)) {
-        return fail("relative I/O after unrestorable Direct close did not remain under PGDATA");
+    if (getcwd(unavailable, sizeof(unavailable)) != NULL || errno != ENOENT) {
+        return fail("startup from an unresolvable cwd changed the caller cwd");
     }
 
     fputs("{\"schema\":\"oliphaunt-native-cwd-boundary-child-v1\",", stdout);
     fputs("\"mode\":\"unresolvable-cwd\",\"deletedOriginalCwd\":", stdout);
     print_json_string(original_cwd);
-    fputs(",\"cwdAfterOpen\":", stdout);
-    print_json_string(open_cwd);
-    fputs(",\"cwdAfterTerminalClose\":", stdout);
-    print_json_string(close_cwd);
-    fputs(",\"relativePathAfterClose\":", stdout);
-    print_json_string(relative_path);
-    fputs(",\"getcwdFailedBeforeOpen\":true,\"initAcceptedUnrestorableCwd\":true,", stdout);
-    fputs("\"terminalCloseRestoredCwd\":false,\"contractSatisfied\":false}\n", stdout);
+    fputs(",\"publicAbiError\":", stdout);
+    print_json_string(error.message);
+    fputs(",\"initRejectedUnrestorableCwd\":true,\"contractSatisfied\":true}\n", stdout);
     return 0;
+}
+
+static int run_search_only_cwd(
+    const char *pgdata,
+    const char *runtime_dir,
+    const char *module_dir,
+    const char *expected_cwd) {
+    struct stat original_identity;
+    struct stat restored_identity;
+    OliphauntHandle *handle = NULL;
+    int result = 1;
+
+    if (geteuid() == 0 || strcmp(expected_cwd, "/") == 0 || strlen(expected_cwd) < 16) {
+        return fail("search-only probe requires an unprivileged, owned cwd sentinel");
+    }
+    if (!same_directory(".", expected_cwd) || stat(".", &original_identity) != 0) {
+        return fail("search-only child did not start in its owned cwd sentinel");
+    }
+    if (chmod(expected_cwd, S_IXUSR) != 0) {
+        return fail_errno("restrict owned cwd to search permission");
+    }
+    int fd = open(".", O_RDONLY);
+    if (fd >= 0) {
+        close(fd);
+        fail("fixture must deny directory reading (run as an unprivileged user)");
+        goto cleanup;
+    }
+    if (errno != EACCES) {
+        fail_errno("verify search-only cwd denies reading");
+        goto cleanup;
+    }
+
+    OliphauntConfig config = config_for(pgdata, runtime_dir, module_dir, "postgres");
+    if (oliphaunt_init(&config, &handle) != 0 || handle == NULL) {
+        fprintf(stderr, "search-only cwd init failed: %s\n", last_error_message(handle));
+        goto cleanup;
+    }
+    OliphauntResponse response = {0};
+    int32_t query_rc = oliphaunt_exec_simple_query(handle, "SELECT 1", strlen("SELECT 1"), &response);
+    bool query_ok = query_rc == 0 && response.len > 0;
+    oliphaunt_free_response(&response);
+    if (!query_ok) {
+        fail("query from search-only caller cwd failed");
+        goto cleanup;
+    }
+    int32_t close_rc = oliphaunt_close(handle);
+    handle = NULL;
+    if (close_rc != 0 || stat(".", &restored_identity) != 0 ||
+        !same_file_identity(&original_identity, &restored_identity)) {
+        fail("terminal close did not restore the search-only caller cwd");
+        goto cleanup;
+    }
+    fputs("{\"schema\":\"oliphaunt-native-cwd-boundary-child-v1\","
+          "\"mode\":\"search-only-cwd\",\"querySucceeded\":true,"
+          "\"terminalCloseRestoredIdentity\":true,\"contractSatisfied\":true}\n", stdout);
+    result = 0;
+
+cleanup:
+    if (handle != NULL) {
+        (void)oliphaunt_close(handle);
+    }
+    if (chmod(expected_cwd, original_identity.st_mode & 0777) != 0) {
+        return fail_errno("restore owned cwd fixture permissions");
+    }
+    return result;
 }
 
 static int run_renamed_cwd(
@@ -540,7 +583,7 @@ static int run_renamed_cwd(
 
 int main(int argc, char **argv) {
     if (argc < 5 || argc > 7) {
-        fprintf(stderr, "usage: %s <direct|startup-fatal|early-startup-fatal|unresolvable-cwd|renamed-cwd> <pgdata> <runtime-dir> <module-dir> [owned-cwd [renamed-cwd]]\n", argv[0]);
+        fprintf(stderr, "usage: %s <direct|startup-fatal|early-startup-fatal|unresolvable-cwd|search-only-cwd|renamed-cwd> <pgdata> <runtime-dir> <module-dir> [owned-cwd [renamed-cwd]]\n", argv[0]);
         return 2;
     }
     if (strcmp(argv[1], "unresolvable-cwd") == 0) {
@@ -554,6 +597,12 @@ int main(int argc, char **argv) {
             return fail("renamed-cwd mode requires exact original and renamed cwd sentinels");
         }
         return run_renamed_cwd(argv[2], argv[3], argv[4], argv[5], argv[6]);
+    }
+    if (strcmp(argv[1], "search-only-cwd") == 0) {
+        if (argc != 6) {
+            return fail("search-only-cwd mode requires its exact owned cwd sentinel");
+        }
+        return run_search_only_cwd(argv[2], argv[3], argv[4], argv[5]);
     }
     if (argc != 5) {
         return fail("unexpected exact-owned-cwd argument for this probe mode");

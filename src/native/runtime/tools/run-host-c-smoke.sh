@@ -220,9 +220,14 @@ if [ "$platform" = linux ]; then
   cp -R "$smoke_root/pgdata" "$process_root/database/pgdata"
   bun src/native/runtime/tools/native-smoke-data.mts managed-root "$process_root/database"
   "$bin_dir/liboliphaunt_signal_boundary" "$process_root/database/pgdata" "$install_dir" "$module_dir"
-  for mode in direct startup-fatal early-startup-fatal; do
+  for mode in direct startup-fatal early-startup-fatal unresolvable-cwd search-only-cwd renamed-cwd; do
     probe_cwd="$(mktemp -d "$process_root/cwd.XXXXXX")"
-    (cd "$probe_cwd" && "$bin_dir/liboliphaunt_cwd_boundary" "$mode" "$process_root/database/pgdata" "$install_dir" "$module_dir")
+    cwd_args=()
+    case "$mode" in
+      unresolvable-cwd | search-only-cwd) cwd_args=("$probe_cwd") ;;
+      renamed-cwd) cwd_args=("$probe_cwd" "$probe_cwd.renamed") ;;
+    esac
+    (cd "$probe_cwd" && "$bin_dir/liboliphaunt_cwd_boundary" "$mode" "$process_root/database/pgdata" "$install_dir" "$module_dir" ${cwd_args[@]+"${cwd_args[@]}"})
   done
 fi
 smoke_failure_root=''

@@ -138,7 +138,7 @@ index 86c4a89..89b516f 100644
 +	int			socket_error;
  
  	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
- 		username == NULL || io == NULL)
+ 		username == NULL || io == NULL || cwd_capture_errno == NULL)
 @@ -4328,8 +4394,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	lifecycle = calloc(1, sizeof(*lifecycle));
  	if (lifecycle == NULL)
