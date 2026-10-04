@@ -44,6 +44,7 @@ test('every released product and resource combination keeps its exact scope and 
     assert.deepEqual(plan.qualification_products, [...selection].sort());
     assert.equal(plan.qualification_head_sha, 'a'.repeat(40));
     assert.equal(plan.qualification_mode, 'selected-products');
+    assert(plan.tasks.includes('release-tools:version-pins-unit'));
     for (const [job, matrix] of [
       ['liboliphaunt-native-desktop', plan.liboliphaunt_native_desktop_runtime_matrix],
       ['liboliphaunt-native-android', plan.liboliphaunt_native_android_runtime_matrix],
