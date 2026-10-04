@@ -16,15 +16,15 @@ use super::assets;
 
 const RUNTIME_ARTIFACT: &str = "runtime:oliphaunt";
 const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
-const EXPECTED_WASMER_VERSION: &str = "7.2.1";
-const EXPECTED_WASMER_WASIX_VERSION: &str = "0.702.1";
+const EXPECTED_WASMER_VERSION: &str = "7.5.0";
+const EXPECTED_WASMER_WASIX_VERSION: &str = "0.705.0";
 const AOT_ENGINE_ID: &str = concat!(
     "engine=",
     "llvm-opta",
     ";wasmer=",
-    "7.2.1",
+    "7.5.0",
     ";wasmer-wasix=",
-    "0.702.1",
+    "0.705.0",
     ";cpu=generic-baseline"
 );
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];

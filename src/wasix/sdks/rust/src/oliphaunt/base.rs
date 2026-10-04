@@ -1113,7 +1113,7 @@ fn logical_tree_sha256(root: &Path) -> Result<String> {
         digest.update(size.to_string().as_bytes());
         digest.update([0]);
         digest.update(fs::read(&file).with_context(|| format!("read {}", file.display()))?);
-        digest.update([b'\n']);
+        digest.update(b"\n");
     }
     Ok(format!("{:x}", digest.finalize()))
 }

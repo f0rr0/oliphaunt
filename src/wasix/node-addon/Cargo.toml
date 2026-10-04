@@ -2,7 +2,7 @@
 name = "oliphaunt-wasix-napi"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "Node-API adapter for the Oliphaunt WASIX Rust runtime."
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
@@ -97,8 +97,8 @@ extension-vector = ["extensions", "oliphaunt-wasix/extension-vector"]
 serde_json = "1"
 sha2 = "0.10"
 oliphaunt-pgwire-server = { path = "../pgwire-server" }
-napi = { version = "=3.12.2", default-features = false, features = ["napi8"] }
-napi-derive = { version = "=3.6.3", default-features = false, features = ["strict", "type-def"] }
+napi = { version = "=3.14.0", default-features = false, features = ["napi8"] }
+napi-derive = { version = "=3.6.10", default-features = false, features = ["strict", "type-def"] }
 liboliphaunt-wasix-portable = { version = "*", path = "../runtime/crates/assets" }
 oliphaunt-wasix = { version = "*", path = "../sdks/rust", features = ["__internal-napi"] }
 
@@ -106,4 +106,4 @@ oliphaunt-wasix = { version = "*", path = "../sdks/rust", features = ["__interna
 rustix = { version = "=1.1.4", features = ["fs"] }
 
 [build-dependencies]
-napi-build = "=2.4.1"
+napi-build = "=2.6.0"
