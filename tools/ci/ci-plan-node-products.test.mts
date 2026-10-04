@@ -44,6 +44,7 @@ test('every released product and resource combination keeps its exact scope and 
     assert.deepEqual(plan.qualification_products, [...selection].sort());
     assert.equal(plan.qualification_head_sha, 'a'.repeat(40));
     assert.equal(plan.qualification_mode, 'selected-products');
+    assert(plan.tasks.includes('release-tools:version-pins-unit'));
     for (const [job, matrix] of [
       ['liboliphaunt-native-desktop', plan.liboliphaunt_native_desktop_runtime_matrix],
       ['liboliphaunt-native-android', plan.liboliphaunt_native_android_runtime_matrix],
@@ -890,6 +891,7 @@ test('JavaScript release metadata does not rebuild unrelated products', () => {
   assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:metadata'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
+  assert.equal(result.tasks.includes('release-tools:version-pins-unit'), true);
   for (const target of [
     'oliphaunt-broker:build-release-assets',
     'oliphaunt-react-native:package',
@@ -910,6 +912,7 @@ test('release-please bookkeeping does not rebuild product artifacts', () => {
   assert.equal(result.tasks.includes('release-tools:graph-unit'), true);
   assert.equal(result.tasks.includes('release-tools:metadata'), true);
   assert.equal(result.tasks.includes('release-tools:test'), false);
+  assert.equal(result.tasks.includes('release-tools:version-pins-unit'), true);
   assert.equal(
     result.tasks.some((target) =>
       /:(aggregate-release-assets|package-artifacts|release-assets|[a-z-]+-sdk-package)$/u.test(

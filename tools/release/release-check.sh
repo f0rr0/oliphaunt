@@ -10,6 +10,12 @@ for argument in "$@"; do
     *) echo "unexpected argument: $argument" >&2; exit 2 ;;
   esac
 done
+
+# Resolve the pinned runtime once. Repeated proto shim startup can exhaust
+# process-backed fixtures' deadlines before their mocked workflow work begins.
+bun_executable="$(bash tools/dev/bun.sh -p process.execPath)"
+PATH="$(dirname "$bun_executable"):$PATH"
+export PATH
 if [ "$metadata" = 1 ]; then bash tools/release/release-metadata-check.sh; fi
 
 # Synthetic fixtures must not inherit live publication credentials or state.

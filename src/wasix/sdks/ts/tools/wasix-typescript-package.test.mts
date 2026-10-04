@@ -12,14 +12,14 @@ function manifest() {
     publishConfig: { access: 'public', provenance: true },
     dependencies: {
       '@oliphaunt/ts-query': '0.1.0',
-      '@oliphaunt/liboliphaunt-wasix': '1.2.3',
+      '@oliphaunt/liboliphaunt-wasix': '1.1.0',
       fzstd: '0.1.1',
     },
     optionalDependencies: {
-      '@oliphaunt/wasix-napi-darwin-arm64': '1.2.3',
-      '@oliphaunt/wasix-napi-linux-arm64-gnu': '1.2.3',
-      '@oliphaunt/wasix-napi-linux-x64-gnu': '1.2.3',
-      '@oliphaunt/wasix-napi-win32-x64-msvc': '1.2.3',
+      '@oliphaunt/wasix-napi-darwin-arm64': '0.9.1',
+      '@oliphaunt/wasix-napi-linux-arm64-gnu': '0.9.1',
+      '@oliphaunt/wasix-napi-linux-x64-gnu': '0.9.1',
+      '@oliphaunt/wasix-napi-win32-x64-msvc': '0.9.1',
     },
     engines: {
       node: '>=22.13 <25',
@@ -28,9 +28,9 @@ function manifest() {
     },
     oliphaunt: {
       runtimeProduct: 'liboliphaunt-wasix',
-      runtimeVersion: '1.2.3',
+      runtimeVersion: '1.1.0',
       wasixNapiProduct: 'oliphaunt-wasix-napi',
-      wasixNapiVersion: '1.2.3',
+      wasixNapiVersion: '0.9.1',
       wasixAddonAbiVersion: 3,
       nodeApiVersion: 8,
       browserHost: 'wasmer-js-patched',

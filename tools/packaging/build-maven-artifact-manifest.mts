@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { currentVersion } from '../release/product-version.mts';
+import { requireCompatibilityVersionBounds } from '../release/compatibility-version-policy.mts';
 import {
   allArtifactTargets,
   exactExtensionProducts as logicalExactExtensionProducts,
@@ -278,12 +279,17 @@ async function extensionRows(extensionRoot, selectedProducts) {
     ) {
       fail(`${product} must declare exact native runtime compatibility for Maven carriers`);
     }
-    const currentRuntimeVersion = await currentVersion(runtimeProduct);
-    if (runtimeVersion !== currentRuntimeVersion) {
-      fail(
-        `${product} native runtime compatibility ${runtimeVersion} does not match ${runtimeProduct}@${currentRuntimeVersion}`,
-      );
-    }
+    // Unchanged external products retain their published runtime pin when the
+    // runtime releases independently, just like their Cargo, npm and Swift carriers.
+    requireCompatibilityVersionBounds(
+      {
+        id: `${product} native runtime`,
+        value: runtimeVersion,
+        sourceProduct: runtimeProduct,
+        sourceVersion: await currentVersion(runtimeProduct),
+      },
+      { prefix: PREFIX },
+    );
     const productRoot = path.join(
       extensionArtifactProductRoot(product, 'native', extensionRoot, PREFIX),
       'release-assets',

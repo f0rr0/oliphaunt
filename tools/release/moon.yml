@@ -150,6 +150,29 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
+  version-pins-unit:
+    tags:
+      - quality
+      - unit
+    command: bash tools/release/independent-version-pins.test.sh
+    inputs:
+      - "@group(package-test-metadata)"
+      - "@group(release-target-contract)"
+      - "@group(legal-files)"
+      - "@group(upstream-licenses)"
+      - /src/extensions/tools/extension-upstream-licenses.mts
+      - /src/extensions/external/**/upstream-license-data.json
+      - /tools/release/**/*
+      - /tools/packaging/**/*
+      - /src/native/sdks/rust/tools/prepare-rust-release-source.mts
+      - /src/wasix/sdks/rust/tools/prepare-rust-release-source.mts
+      - /src/wasix/sdks/ts/tools/package.mts
+      - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
+      - /tools/ci/with-projects.sh
+      - /tools/dev/bun.sh
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   graph-unit:
     tags:
       - quality
@@ -206,6 +229,7 @@ tasks:
       - release-tools:metadata
       - release-tools:test
       - release-tools:graph-unit
+      - release-tools:version-pins-unit
     inputs:
       []
     options:
