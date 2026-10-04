@@ -147,11 +147,17 @@ fn cross_module() -> Result<()> {
     Ok(())
 }
 
-fn callback(panic: bool, dynamic: bool) -> Result<()> {
+fn callback(panic: bool, dynamic: bool, contain_panic: bool) -> Result<()> {
     let mut store = Store::new(engine());
     let fail = move || -> Result<i32, RuntimeError> {
         if panic {
-            panic!("intentional isolated host callback panic");
+            let trigger = || -> i32 { panic!("intentional isolated host callback panic") };
+            if contain_panic {
+                return std::panic::catch_unwind(trigger).map_err(|_| {
+                    RuntimeError::new("intentional host error marker: contained panic")
+                });
+            }
+            return Ok(trigger());
         }
         Err(RuntimeError::new("intentional host error marker"))
     };
@@ -209,6 +215,102 @@ fn host_atomics() -> Result<()> {
         results.iter().all(|(_, r)| r.is_ok()),
         "host atomic operations unavailable"
     );
+    Ok(())
+}
+
+fn host_error_identity(dynamic: bool) -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[derive(Debug)]
+    struct Marker(Arc<AtomicUsize>);
+    impl std::fmt::Display for Marker {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("typed host error marker")
+        }
+    }
+    impl std::error::Error for Marker {}
+    impl Drop for Marker {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let destroyed = Arc::new(AtomicUsize::new(0));
+    let counter = destroyed.clone();
+    let mut store = Store::new(engine());
+    let fail = move || -> Result<i32, RuntimeError> {
+        Err(RuntimeError::user(Box::new(Marker(counter.clone()))))
+    };
+    let host = if dynamic {
+        Function::new(
+            &mut store,
+            wasmer::FunctionType::new([], [wasmer::Type::I32]),
+            move |_| fail().map(|n| vec![Value::I32(n)]),
+        )
+    } else {
+        Function::new_typed(&mut store, fail)
+    };
+    let inst = instance(
+        &mut store,
+        r#"(module
+      (import "env" "host" (func $host (result i32)))
+      (func (export "run") (result i32) call $host)
+      (func (export "simple") (result i32) i32.const 42))"#,
+        &imports! { "env" => {"host" => host} },
+    )?;
+    let run = inst.exports.get_typed_function::<(), i32>(&store, "run")?;
+    let simple = inst
+        .exports
+        .get_typed_function::<(), i32>(&store, "simple")?;
+    for n in 0..100 {
+        let error = run
+            .call(&mut store)
+            .expect_err("typed host error must propagate");
+        ensure!(
+            error.downcast_ref::<Marker>().is_some(),
+            "host error type identity lost: {error}"
+        );
+        ensure!(
+            destroyed.load(Ordering::SeqCst) == n,
+            "error destroyed prematurely"
+        );
+        drop(error);
+        ensure!(
+            destroyed.load(Ordering::SeqCst) == n + 1,
+            "error payload was not destroyed exactly once"
+        );
+        ensure!(simple.call(&mut store)? == 42);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "wasix")]
+fn wasi_exit() -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let _guard = runtime.enter();
+    let mut store = Store::new(engine());
+    let module = Module::new(
+        &store,
+        r#"(module
+      (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+      (memory (export "memory") 1)
+      (func (export "_start"))
+      (func (export "run") i32.const 42 call $exit))"#,
+    )?;
+    let (inst, env) = wasmer_wasix::WasiEnv::builder("v8-exit-probe")
+        .engine(store.engine().clone())
+        .instantiate(module, &mut store)?;
+    let error = inst
+        .exports
+        .get_typed_function::<(), ()>(&store, "run")?
+        .call(&mut store)
+        .expect_err("proc_exit must return a host error");
+    println!("wasi_exit_error={error}");
+    ensure!(
+        matches!(error.downcast_ref::<wasmer_wasix::WasiError>(), Some(wasmer_wasix::WasiError::Exit(code)) if code.raw()==42),
+        "WasiError::Exit type or exit code lost"
+    );
+    env.on_exit(&mut store, None);
     Ok(())
 }
 
@@ -486,15 +588,48 @@ fn main() -> Result<()> {
                 .exports
                 .get_typed_function::<i32, i32>(&store, "throw")?;
             for n in 0..100 {
-                ensure!(throw.call(&mut store, n).is_err());
+                let error = throw
+                    .call(&mut store, n)
+                    .expect_err("guest exception must escape as an error");
+                if n == 0 {
+                    println!(
+                        "uncaught_message={} is_exception={} exception_object={}",
+                        error.message(),
+                        error.is_exception(),
+                        error.to_exception().is_some()
+                    );
+                }
             }
             check_eh(&mut store, &inst)?;
         }
-        "host-error" => callback(false, false)?,
-        "host-error-dynamic" => callback(false, true)?,
-        "host-panic" => callback(true, false)?,
-        "host-panic-dynamic" => callback(true, true)?,
+        "host-error" => callback(false, false, false)?,
+        "host-error-dynamic" => callback(false, true, false)?,
+        "host-error-identity" => host_error_identity(false)?,
+        "host-error-identity-dynamic" => host_error_identity(true)?,
+        "contained-host-panic" => callback(true, false, true)?,
+        "contained-host-panic-dynamic" => callback(true, true, true)?,
+        "host-panic" => callback(true, false, false)?,
+        "host-panic-dynamic" => callback(true, true, false)?,
         "host-atomics" => host_atomics()?,
+        "uncaught-eh-metadata" => {
+            let mut store = Store::new(engine());
+            let inst = instance(&mut store, EH, &imports! {})?;
+            let error = inst
+                .exports
+                .get_typed_function::<i32, i32>(&store, "throw")?
+                .call(&mut store, 42)
+                .expect_err("guest exception must escape");
+            println!(
+                "uncaught_message={} is_exception={} exception_object={}",
+                error.message(),
+                error.is_exception(),
+                error.to_exception().is_some()
+            );
+            ensure!(
+                error.is_exception() && error.to_exception().is_some(),
+                "V8 does not expose typed uncaught-exception metadata"
+            );
+        }
         "host-exception" => {
             let mut store = Store::new(engine());
             let tag = Tag::new(&mut store, [wasmer::Type::I32]);
@@ -550,9 +685,44 @@ fn main() -> Result<()> {
             #[cfg(not(feature = "wasix"))]
             bail!("rebuild with --features wasix");
         }
+        "wasi-exit" => {
+            #[cfg(feature = "wasix")]
+            wasi_exit()?;
+            #[cfg(not(feature = "wasix"))]
+            bail!("rebuild with --features wasix");
+        }
         "async-call" => {
             #[cfg(feature = "wasix")]
             async_call()?;
+            #[cfg(not(feature = "wasix"))]
+            bail!("rebuild with --features wasix");
+        }
+        "postgres-module" => {
+            #[cfg(feature = "wasix")]
+            {
+                let path = std::env::args()
+                    .nth(2)
+                    .context("expected portable PostgreSQL Wasm path")?;
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                let _guard = runtime.enter();
+                let mut store = Store::new(engine());
+                eprintln!("stage: compile real PostgreSQL module");
+                let module = Module::from_file(&store, path)?;
+                println!(
+                    "postgres_imports={} postgres_exports={}",
+                    module.imports().count(),
+                    module.exports().count()
+                );
+                eprintln!("stage: instantiate real PostgreSQL module through WASIX");
+                let (_inst, env) = wasmer_wasix::WasiEnv::builder("postgres")
+                    .engine(store.engine().clone())
+                    .instantiate(module, &mut store)?;
+                env.on_exit(&mut store, None);
+                // Deliberately do not call _start: this case only probes loading the existing
+                // dynamic-main artifact. A complete SDK, filesystem and seed are needed for SQL.
+            }
             #[cfg(not(feature = "wasix"))]
             bail!("rebuild with --features wasix");
         }

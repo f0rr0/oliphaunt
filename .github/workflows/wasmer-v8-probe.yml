@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: wasmer-v8-probe-${{ github.ref }}
   cancel-in-progress: true
@@ -34,6 +35,23 @@ jobs:
           cache-workspaces: tools/experiments/wasmer-v8 -> target
       - uses: ./.github/actions/setup-msvc
         if: runner.os == 'Windows'
+      - name: Record PostgreSQL fixture provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p tools/experiments/wasmer-v8/results
+          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > tools/experiments/wasmer-v8/results/guest-artifact.json
+      - name: Download exact portable PostgreSQL fixture
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: '37225721762'
+          artifact-ids: '11312707536'
+          github-token: ${{ github.token }}
+          path: tools/experiments/wasmer-v8/guest
+          merge-multiple: true
+      - name: Verify guest identity
+        run: python tools/experiments/wasmer-v8/verify_guest.py tools/experiments/wasmer-v8/guest tools/experiments/wasmer-v8/results
       - name: Record toolchain and build
         run: |
           set -euo pipefail
@@ -45,7 +63,7 @@ jobs:
           set -euo pipefail
           binary=tools/experiments/wasmer-v8/target/release/oliphaunt-wasmer-v8-probe
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
-          python tools/experiments/wasmer-v8/run.py "$binary" --wasix --output tools/experiments/wasmer-v8/results
+          python tools/experiments/wasmer-v8/run.py "$binary" --wasix --postgres-module tools/experiments/wasmer-v8/results/postgres.wasm --output tools/experiments/wasmer-v8/results
       - name: Record V8-only store thread constraint
         if: ${{ !cancelled() }}
         run: |
@@ -62,4 +80,4 @@ jobs:
           name: wasmer-v8-probe-${{ matrix.os }}
           path: tools/experiments/wasmer-v8/results
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90

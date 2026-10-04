@@ -40,16 +40,21 @@ The workflow records the source SHA, run ID, actual runner image revision, Rust 
 | `cross-module-eh` | Imported tag identity and calls across three modules, 100 payload checks |
 | `uncaught-eh` | 100 uncaught guest exceptions reach Rust as errors, followed by the full catch/rethrow suite |
 | `host-error`, `host-error-dynamic` | Typed and dynamic Rust callbacks return errors; marker survives and the instance remains callable |
+| `host-error-identity`, `host-error-identity-dynamic` | 100 errors retain their Rust type and destroy each payload exactly once, followed by successful calls |
+| `contained-host-panic`, `contained-host-panic-dynamic` | Catch a Rust panic inside each callback style, return an error and continue using the instance |
 | `shared-memory` | Shared guest atomics, memory growth and host access after growth |
 | `shared-memory-thread` | Attach shared memory to a store constructed on another thread; observe atomic writes from the original store |
 | `stack-overflow`, `eh-stack-overflow` | Million-depth recursion traps, with and without EH frames; subsequent call returns 42 |
 | `cache-write`, `cache-read` | V8 module serialization and fresh-process reopening, including EH behavior |
 | `module-thread` | Instantiate an already compiled module in a new store on its owning worker thread |
 | `wasix` | WASIX environment construction, clock import and writes to guest memory |
+| `wasi-exit` | A guest `proc_exit(42)` retains the `WasiError::Exit` type and numeric exit code used by the SDK |
 | `blocking-io` | Guest `fd_read` blocks until delayed pipe data arrives, then sees EOF; environment shuts down |
 | `directory-io` | Guest WASI file creation/write/`fd_sync`/close and a fresh environment's reopen/read/close |
+| `postgres-module` | Compile and instantiate the existing PostgreSQL dynamic-main through WASIX, with 92 imports and 1,245 exports; does not execute SQL |
 | `host-panic`, `host-panic-dynamic` | Diagnostic: behavior when a Rust callback panics |
 | `host-exception` | Diagnostic: host-created Wasmer `Exception` API |
+| `uncaught-eh-metadata` | Diagnostic: Rust `RuntimeError::is_exception` and `to_exception` for an uncaught guest exception |
 | `host-atomics` | Diagnostic: host `notify`, `wait`, wake-all and disable-atomics operations |
 | `async-call` | Diagnostic: Wasmer's coroutine-based async invocation on a V8 store |
 | `store_send` example | Compile diagnostic for moving a V8-only store between threads |
@@ -59,7 +64,7 @@ Integer exception payloads and instance teardown are covered; arbitrary external
 ## Important integration limits
 
 1. **Guest EH and Rust panics have different behavior.** Guest exceptions recover in the Linux control; callback panics abort. Catch a possible Rust panic within the callback boundary and convert it to a controlled error before it crosses the engine ABI. Existing SDK panic-containment behavior needs its own V8 qualification.
-2. **Create the store on its executing thread.** Modules/shared-memory handles can cross threads in the probe. A V8-only Store fails the `Send` compile check. Adding Sys features can change Rust trait availability without removing V8's owner-thread checks.
+2. **Create the store on its executing thread.** Modules/shared-memory handles can cross threads in the probe. Store fails the `Send` compile check with both the V8-only and WASIX feature sets. V8 also checks its owner thread at runtime. Do not introduce an unsafe `Send` wrapper to bypass this boundary.
 3. **Shared memory is not equivalent to host atomic control.** Attach, growth and guest atomic instructions work in the control. The host wake/disable operations are unavailable. A timeout kills the probe process; it does not demonstrate safe cancellation of an embedded database thread.
 4. **Wasmer async is Sys-only in this release.** Plain synchronous WASIX imports may still work. SDK-level asynchronous Rust APIs can potentially keep an actor thread, but any coroutine, JSPI, context-switch or fork requirement needs separate proof.
 5. **V8 caching is a different artifact contract.** These caches are trusted, generated and reopened by the same executable on the same machine/version. No existing LLVM AOT, cross-version compatibility, cross-platform cache interchange or sealed-loader policy is validated.

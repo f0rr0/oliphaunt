@@ -11,10 +11,12 @@ import time
 
 CORE = [
     "basic", "guest-eh", "cross-module-eh", "uncaught-eh", "host-error", "host-error-dynamic",
+    "contained-host-panic", "contained-host-panic-dynamic",
+    "host-error-identity", "host-error-identity-dynamic",
     "shared-memory", "shared-memory-thread", "stack-overflow", "eh-stack-overflow",
     "cache-write", "cache-read", "module-thread",
 ]
-DIAGNOSTICS = ["host-panic", "host-panic-dynamic", "host-exception", "host-atomics"]
+DIAGNOSTICS = ["host-panic", "host-panic-dynamic", "host-exception", "host-atomics", "uncaught-eh-metadata"]
 
 
 def main():
@@ -22,6 +24,7 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("--output", type=Path, default=Path("results"))
     parser.add_argument("--wasix", action="store_true")
+    parser.add_argument("--postgres-module", type=Path)
     args = parser.parse_args()
     binary = args.binary.resolve()
     output = args.output.resolve()
@@ -38,6 +41,10 @@ def main():
         "wasix": "0.705.0" if args.wasix else None,
         "cases": [],
     }
+    guest = args.postgres_module.resolve() if args.postgres_module else None
+    if guest:
+        evidence["postgres_module"] = {"sha256": hashlib.sha256(guest.read_bytes()).hexdigest(),
+                                       "bytes": guest.stat().st_size}
     artifact_root = binary.parent.parent / "wee8-artifacts"
     evidence["v8_distribution"] = [
         {"path": str(path.relative_to(artifact_root)), "bytes": path.stat().st_size,
@@ -48,14 +55,14 @@ def main():
     send_status = output / "store-send-exit-code.txt"
     if send_status.exists():
         evidence["v8_only_store_send_check_exit_code"] = int(send_status.read_text().strip())
-    required = CORE + (["wasix", "blocking-io", "directory-io"] if args.wasix else [])
+    required = CORE + (["wasix", "blocking-io", "directory-io", "wasi-exit"] if args.wasix else []) + (["postgres-module"] if guest else [])
     for case in required + DIAGNOSTICS + (["async-call"] if args.wasix else []):
         start = time.monotonic()
         try:
             if case == "cache-read" and evidence["cases"][-1]["status"] != "pass":
                 raise RuntimeError("cache-write failed; do not consume a stale cache")
             result = subprocess.run(
-                [str(binary), case], cwd=output, capture_output=True,
+                [str(binary), case] + ([str(guest)] if case == "postgres-module" else []), cwd=output, capture_output=True,
                 timeout=45, env={**os.environ, "RUST_BACKTRACE": "1"},
             )
             code = result.returncode
