@@ -226,6 +226,9 @@ pub(crate) fn vfs_read(
         .open(path)
         .with_context(|| format!("open virtual file {} for reading", path.display()))?;
     let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(usize::try_from(file.size()).context("virtual file is too large")?)
+        .context("reserve virtual file read buffer")?;
     block_on_vfs(file.read_to_end(&mut bytes))
         .with_context(|| format!("read virtual file {}", path.display()))?;
     Ok(bytes)

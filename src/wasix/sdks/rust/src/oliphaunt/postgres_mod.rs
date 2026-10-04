@@ -46,6 +46,8 @@ const PGDATA_DIR: &str = "/base";
 const ICU_DATA_DIR: &str = "/share/icu";
 const SKIP_ICU_COLLATION_DISCOVERY_ENV: &str = "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY";
 const WASM_PREFIX: &str = "/";
+const DEFAULT_SHARED_BUFFERS: &str = "128MB";
+const PRIVATE_INITDB_SHARED_BUFFERS: &str = "8MB";
 const RUNTIME_SIDE_MODULES: &[(&str, &str)] = &[
     ("plpgsql.so", "runtime-support:plpgsql"),
     ("dict_snowball.so", "runtime-support:dict_snowball"),
@@ -1070,7 +1072,9 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
     runner
         .with_current_dir("/")
         .with_injected_package(package.clone())
-        .with_args(split_initdb_args())
+        .with_args(split_initdb_args(
+            pgdata_storage.memory_filesystem().is_some(),
+        ))
         .with_envs([
             ("PGDATA", PGDATA_DIR),
             ("PGSYSCONFDIR", PGDATA_DIR),
@@ -1116,7 +1120,40 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
             });
         }
     }
+    if let Some(filesystem) = pgdata_storage.memory_filesystem() {
+        let path = Path::new("/postgresql.conf");
+        let text = String::from_utf8(super::storage::vfs_read(filesystem.as_ref(), path)?)
+            .context("decode private initdb configuration")?;
+        let restored = restore_private_initdb_configuration(&text)?;
+        super::storage::vfs_write(filesystem.as_ref(), path, restored.as_bytes())?;
+    }
     Ok(())
+}
+
+fn restore_private_initdb_configuration(text: &str) -> Result<String> {
+    let temporary = format!("shared_buffers = {PRIVATE_INITDB_SHARED_BUFFERS}");
+    let replacement = format!("shared_buffers = {DEFAULT_SHARED_BUFFERS}");
+    let mut restored = String::with_capacity(text.len() + 2);
+    let mut found = false;
+    for line in text.split_inclusive('\n') {
+        if let Some(tail) = line.strip_prefix(&temporary)
+            && (tail.trim().is_empty() || tail.trim_start().starts_with('#'))
+        {
+            ensure!(
+                !found,
+                "private initdb emitted duplicate shared_buffers settings"
+            );
+            restored.push_str(&line.replacen(&temporary, &replacement, 1));
+            found = true;
+        } else {
+            restored.push_str(line);
+        }
+    }
+    ensure!(
+        found,
+        "private initdb did not emit its temporary shared_buffers setting"
+    );
+    Ok(restored)
 }
 
 fn split_initdb_root_filesystem(
@@ -1263,8 +1300,8 @@ fn dir_entry_sample(path: &Path) -> String {
     }
 }
 
-fn split_initdb_args() -> Vec<&'static str> {
-    vec![
+fn split_initdb_args(private_memory: bool) -> Vec<String> {
+    let mut args = vec![
         "--allow-group-access",
         "--encoding",
         "UTF8",
@@ -1277,6 +1314,19 @@ fn split_initdb_args() -> Vec<&'static str> {
         "-D",
         PGDATA_DIR,
     ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    if private_memory {
+        // Bootstrap needs a small buffer pool. Restore the normal persistent
+        // setting before publication; host PGDATA still performs initdb syncs.
+        args.extend([
+            "--no-sync".to_owned(),
+            "--set".to_owned(),
+            format!("shared_buffers={PRIVATE_INITDB_SHARED_BUFFERS}"),
+        ]);
+    }
+    args
 }
 
 fn split_initdb_binary_package(
@@ -1799,7 +1849,7 @@ const DEFAULT_STARTUP_GUCS: &[(&str, &str)] = &[
     ("log_checkpoints", "false"),
     ("wal_buffers", "4MB"),
     ("min_wal_size", "80MB"),
-    ("shared_buffers", "128MB"),
+    ("shared_buffers", DEFAULT_SHARED_BUFFERS),
 ];
 
 fn ensure_runtime_dirs(
@@ -2025,6 +2075,25 @@ mod tests {
                 ("OLIPHAUNT_INTERNAL_ICU_READY", "1"),
             ]
         );
+    }
+
+    #[test]
+    fn private_initdb_settings_do_not_escape_bootstrap() -> Result<()> {
+        assert!(split_initdb_args(true).iter().any(|arg| arg == "--no-sync"));
+        let host = split_initdb_args(false);
+        assert!(!host.iter().any(|arg| arg == "--no-sync" || arg == "--set"));
+        let text = "# shared_buffers = 8MB\nshared_buffers = 8MB\t# min 128kB\nfsync = on\n";
+        assert_eq!(
+            restore_private_initdb_configuration(text)?,
+            "# shared_buffers = 8MB\nshared_buffers = 128MB\t# min 128kB\nfsync = on\n"
+        );
+        assert!(restore_private_initdb_configuration("# shared_buffers = 8MB\n").is_err());
+        assert!(restore_private_initdb_configuration("shared_buffers = 8MB0\n").is_err());
+        assert!(
+            restore_private_initdb_configuration("shared_buffers = 8MB\nshared_buffers = 8MB\n")
+                .is_err()
+        );
+        Ok(())
     }
 
     #[test]

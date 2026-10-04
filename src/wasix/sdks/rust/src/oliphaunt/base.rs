@@ -958,18 +958,36 @@ fn sync_publication_tree(path: &Path) -> Result<()> {
     // Start writing the whole private staging tree before waiting on each file.
     // Every file and directory still receives its checked durability barrier.
     for file in &files {
-        pre_sync_publication_file(file);
+        if let Ok(file) = fs::File::open(file) {
+            pre_sync_publication_file(&file);
+        }
     }
-    for file in files {
-        sync_publication_file(&file)
-            .with_context(|| format!("sync publication file {}", file.display()))?;
-    }
+    std::thread::scope(|scope| -> Result<()> {
+        let mut workers = Vec::new();
+        for chunk in files.chunks(files.len().div_ceil(PUBLICATION_WORKERS).max(1)) {
+            workers.push(scope.spawn(move || -> Result<()> {
+                for file in chunk {
+                    sync_publication_file(file)
+                        .with_context(|| format!("sync publication file {}", file.display()))?;
+                }
+                Ok(())
+            }));
+        }
+        for worker in workers {
+            worker
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload))?;
+        }
+        Ok(())
+    })?;
     for directory in directories {
         sync_directory(&directory)
             .with_context(|| format!("sync publication directory {}", directory.display()))?;
     }
     Ok(())
 }
+
+pub(super) const PUBLICATION_WORKERS: usize = 4;
 
 fn collect_publication_entries(
     path: &Path,
@@ -1005,7 +1023,7 @@ fn collect_publication_entries(
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 #[allow(unsafe_code)]
-fn pre_sync_publication_file(path: &Path) {
+pub(super) fn pre_sync_publication_file(file: &fs::File) {
     use std::os::fd::AsRawFd;
     unsafe extern "C" {
         fn sync_file_range(
@@ -1017,17 +1035,15 @@ fn pre_sync_publication_file(path: &Path) {
     }
     const SYNC_FILE_RANGE_WRITE: u32 = 2;
 
-    if let Ok(file) = fs::File::open(path) {
-        // SAFETY: the borrowed descriptor stays open for this call; zero offset
-        // and length cover the regular file. This optional Linux writeback hint
-        // is never a durability barrier. Unsupported hints fall back to the
-        // checked sync_all calls below, including their metadata/error handling.
-        let _ = unsafe { sync_file_range(file.as_raw_fd(), 0, 0, SYNC_FILE_RANGE_WRITE) };
-    }
+    // SAFETY: the borrowed descriptor stays open for this call; zero offset
+    // and length cover the regular file. This optional Linux writeback hint
+    // is never a durability barrier. Unsupported hints fall back to the
+    // checked sync_all calls below, including their metadata/error handling.
+    let _ = unsafe { sync_file_range(file.as_raw_fd(), 0, 0, SYNC_FILE_RANGE_WRITE) };
 }
 
 #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
-fn pre_sync_publication_file(_path: &Path) {}
+pub(super) fn pre_sync_publication_file(_file: &fs::File) {}
 
 #[cfg(windows)]
 fn sync_publication_file(path: &Path) -> std::io::Result<()> {
@@ -1892,7 +1908,16 @@ fn prepare_pgdata(
     // memory avoids thousands of host syncs on intermediate catalog files;
     // the finished tree is durably published before any backend can open it.
     let pgdata_storage = PgDataStorage::memory();
-    PostgresMod::run_split_initdb(runtime_layout, &pgdata_storage)?;
+    let mut initdb_layout = runtime_layout.clone();
+    if initdb_layout.uses_shared_overlay() {
+        // Scratch files belong to the private initialization transaction too.
+        // Keep the immutable runtime and explicit ICU selection shared.
+        initdb_layout.mutable_root = StorageRoot::memory();
+        for path in ["/home", "/dev", "/dev/shm", "/tmp"] {
+            initdb_layout.mutable_root.create_dir_all(Path::new(path))?;
+        }
+    }
+    PostgresMod::run_split_initdb(&initdb_layout, &pgdata_storage)?;
     let filesystem = pgdata_storage
         .memory_filesystem()
         .expect("memory storage has a virtual filesystem");

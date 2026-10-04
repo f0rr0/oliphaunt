@@ -30,9 +30,25 @@ fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
     let workspace = tempfile::TempDir::new()?;
     let source_root = workspace.path().join("source");
     let mut database = Oliphaunt::builder()
-        .storage(DatabaseStorage::Directory(source_root))
+        .storage(DatabaseStorage::Directory(source_root.clone()))
         .startup_guc("work_mem", "8MB")
         .open()?;
+
+    let settings = database.query(
+        "SELECT current_setting('shared_buffers') AS buffers, current_setting('fsync') AS fsync, \
+         current_setting('full_page_writes') AS full_pages, \
+         current_setting('synchronous_commit') AS synchronous_commit",
+    )?;
+    assert_eq!(settings.get_text(0, "buffers")?, Some("128MB"));
+    for setting in ["fsync", "full_pages", "synchronous_commit"] {
+        assert_eq!(settings.get_text(0, setting)?, Some("on"));
+    }
+    let configuration = std::fs::read_to_string(source_root.join("pgdata/postgresql.conf"))?;
+    assert!(
+        configuration
+            .lines()
+            .any(|line| line.starts_with("shared_buffers = 128MB"))
+    );
 
     database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text NOT NULL)")?;
     let multiple = database
@@ -140,7 +156,15 @@ fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
 
 #[test]
 fn direct_api_recovers_after_postgres_error() -> Result<()> {
-    let mut database = Oliphaunt::open()?;
+    let mut database = Oliphaunt::builder()
+        .startup_guc("shared_buffers", "16MB")
+        .open()?;
+    assert_eq!(
+        database
+            .query("SHOW shared_buffers")?
+            .get_text(0, "shared_buffers")?,
+        Some("16MB")
+    );
     let error = database
         .query_with_params("SELECT 1 / $1::int4", [0_i32])
         .expect_err("division by zero must fail");
