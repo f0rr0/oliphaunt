@@ -1,31 +1,18 @@
 From: Sid Jain <sid_26@outlook.com>
-Date: Mon, 7 Sep 2026 00:00:00 +0000
-Subject: [PATCH] wasmer: instantiate JavaScript modules asynchronously
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] Instantiate large browser modules asynchronously
 
-Expose asynchronous module instantiation for the JavaScript backend. Large
-PostgreSQL modules exceed browser main-thread synchronous instantiation limits;
-non-JavaScript backends keep their existing instantiation semantics. This is
-a general engine API addition suitable for a separate upstream proposal.
+WebAssembly.instantiate avoids the synchronous main-realm size limit. Share
+import validation and retain table-function annotations for indirect calls.
+Enabled non-JavaScript backends keep their synchronous instantiation.
 
-diff --git a/Cargo.toml b/Cargo.toml
---- a/Cargo.toml
-+++ b/Cargo.toml
-@@ -363,6 +363,9 @@
- [target.'cfg(target_arch = "wasm32")'.dependencies.wasm-bindgen]
- version = "0.2.100"
-
-+[target.'cfg(target_arch = "wasm32")'.dependencies.wasm-bindgen-futures]
-+version = "0.4"
-+
- [target.'cfg(target_arch = "wasm32")'.dependencies.wasmer-compiler]
- version = "=6.1.0"
-
-diff --git a/src/backend/js/entities/instance.rs b/src/backend/js/entities/instance.rs
---- a/src/backend/js/entities/instance.rs
-+++ b/src/backend/js/entities/instance.rs
+diff --git a/lib/api/src/backend/js/entities/instance.rs b/lib/api/src/backend/js/entities/instance.rs
+index 22a7a71..e847fd4 100644
+--- a/lib/api/src/backend/js/entities/instance.rs
++++ b/lib/api/src/backend/js/entities/instance.rs
 @@ -19,6 +19,21 @@ pub struct Instance {
  // unsafe impl Send for Instance {}
-
+ 
  impl Instance {
 +    #[cfg(target_arch = "wasm32")]
 +    pub(crate) async fn new_async(
@@ -45,38 +32,20 @@ diff --git a/src/backend/js/entities/instance.rs b/src/backend/js/entities/insta
      pub(crate) fn new(
          mut store: &mut impl AsStoreMut,
          module: &Module,
-@@ -29,7 +44,7 @@ impl Instance {
-             .instantiate(&mut store, imports)
-             .map_err(|e| InstantiationError::Start(e))?;
-
--        Self::from_module_and_instance(store, &module, instance)
-+        Self::from_module_and_instance(store, module, instance)
-     }
-
-     pub(crate) fn new_by_index(
-diff --git a/src/backend/js/entities/module.rs b/src/backend/js/entities/module.rs
---- a/src/backend/js/entities/module.rs
-+++ b/src/backend/js/entities/module.rs
-@@ -3,7 +3,11 @@ use crate::backend::js::vm::{VMExtern, VMInstance};
- use bytes::Bytes;
- use js_sys::{Reflect, Uint8Array, WebAssembly};
- use tracing::{debug, warn};
--use wasm_bindgen::{prelude::*, JsValue};
-+use wasm_bindgen::{prelude::*, JsValue};
-+#[cfg(target_arch = "wasm32")]
-+use wasm_bindgen::JsCast;
-+#[cfg(target_arch = "wasm32")]
-+use wasm_bindgen_futures::JsFuture;
- use wasmer_types::{
-     CompileError, DeserializeError, ExportType, ExportsIterator, ExternType, FunctionType,
-     GlobalType, ImportType, ImportsIterator, MemoryType, ModuleInfo, Mutability, Pages,
-@@ -139,6 +143,32 @@ impl Module {
+diff --git a/lib/api/src/backend/js/entities/module.rs b/lib/api/src/backend/js/entities/module.rs
+index ce0884d..c5e8f2e 100644
+--- a/lib/api/src/backend/js/entities/module.rs
++++ b/lib/api/src/backend/js/entities/module.rs
+@@ -230,6 +230,38 @@ impl Module {
          store: &mut impl AsStoreMut,
          imports: &Imports,
      ) -> Result<VMInstance, RuntimeError> {
 +        let (imports_object, _import_externs) = self.imports_object(store, imports)?;
-+        Ok(WebAssembly::Instance::new(&self.module, &imports_object)
-+            .map_err(|e: JsValue| -> RuntimeError { e.into() })?)
++        let instance = WebAssembly::Instance::new(&self.local_module(), &imports_object)
++            .map_err(|e: JsValue| -> RuntimeError { e.into() })?;
++        #[cfg(feature = "wasm-types-polyfill")]
++        self.annotate_table_functions(store, imports, &instance);
++        Ok(instance)
 +    }
 +
 +    #[cfg(target_arch = "wasm32")]
@@ -87,12 +56,15 @@ diff --git a/src/backend/js/entities/module.rs b/src/backend/js/entities/module.
 +    ) -> Result<VMInstance, RuntimeError> {
 +        let (imports_object, _import_externs) = self.imports_object(store, imports)?;
 +        let instance = JsFuture::from(WebAssembly::instantiate_module(
-+            &self.module,
++            &self.local_module(),
 +            &imports_object,
 +        ))
 +        .await
 +        .map_err(|e: JsValue| -> RuntimeError { e.into() })?;
-+        Ok(instance.unchecked_into())
++        let instance = instance.unchecked_into();
++        #[cfg(feature = "wasm-types-polyfill")]
++        self.annotate_table_functions(store, imports, &instance);
++        Ok(instance)
 +    }
 +
 +    fn imports_object(
@@ -103,22 +75,26 @@ diff --git a/src/backend/js/entities/module.rs b/src/backend/js/entities/module.
          // Ensure all imports come from the same store.
          if imports
              .into_iter()
-@@ -205,8 +235,7 @@ impl Module {
+@@ -296,11 +328,7 @@ impl Module {
              // in case the import is not found, the JS Wasm VM will handle
              // the error for us, so we don't need to handle it
          }
--        Ok(WebAssembly::Instance::new(&self.module, &imports_object)
--            .map_err(|e: JsValue| -> RuntimeError { e.into() })?)
+-        let instance = WebAssembly::Instance::new(&self.local_module(), &imports_object)
+-            .map_err(|e: JsValue| -> RuntimeError { e.into() })?;
+-        #[cfg(feature = "wasm-types-polyfill")]
+-        self.annotate_table_functions(store, imports, &instance);
+-        Ok(instance)
 +        Ok((imports_object, import_externs))
      }
-
-     pub fn name(&self) -> Option<&str> {
-diff --git a/src/entities/instance.rs b/src/entities/instance.rs
---- a/src/entities/instance.rs
-+++ b/src/entities/instance.rs
-@@ -20,6 +20,59 @@ pub struct Instance {
+ 
+     #[cfg(feature = "wasm-types-polyfill")]
+diff --git a/lib/api/src/entities/instance.rs b/lib/api/src/entities/instance.rs
+index edea32f..ae5033e 100644
+--- a/lib/api/src/entities/instance.rs
++++ b/lib/api/src/entities/instance.rs
+@@ -20,6 +20,44 @@ pub struct Instance {
  }
-
+ 
  impl Instance {
 +    /// Asynchronously creates a new JavaScript-backed WebAssembly instance.
 +    ///
@@ -138,16 +114,6 @@ diff --git a/src/entities/instance.rs b/src/entities/instance.rs
 +                let (i, e) = crate::backend::sys::instance::Instance::new(store, module, imports)?;
 +                (crate::BackendInstance::Sys(i), e)
 +            }
-+            #[cfg(feature = "wamr")]
-+            crate::BackendStore::Wamr(_) => {
-+                let (i, e) = crate::backend::wamr::instance::Instance::new(store, module, imports)?;
-+                (crate::BackendInstance::Wamr(i), e)
-+            }
-+            #[cfg(feature = "wasmi")]
-+            crate::BackendStore::Wasmi(_) => {
-+                let (i, e) = crate::backend::wasmi::instance::Instance::new(store, module, imports)?;
-+                (crate::BackendInstance::Wasmi(i), e)
-+            }
 +            #[cfg(feature = "v8")]
 +            crate::BackendStore::V8(_) => {
 +                let (i, e) = crate::backend::v8::instance::Instance::new(store, module, imports)?;
@@ -158,11 +124,6 @@ diff --git a/src/entities/instance.rs b/src/entities/instance.rs
 +                    crate::backend::js::instance::Instance::new_async(store, module, imports)
 +                        .await?;
 +                (crate::BackendInstance::Js(i), e)
-+            }
-+            #[cfg(feature = "jsc")]
-+            crate::BackendStore::Jsc(_) => {
-+                let (i, e) = crate::backend::jsc::instance::Instance::new(store, module, imports)?;
-+                (crate::BackendInstance::Jsc(i), e)
 +            }
 +        };
 +

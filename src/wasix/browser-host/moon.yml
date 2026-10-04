@@ -9,7 +9,7 @@ tasks:
   test:
     tags: ["quality", "unit"]
     command: "bun test src/wasix/browser-host/clock.test.mts"
-    inputs: ["clock.test.mts", "patches/0013-wasmer-wasix-fast-single-backend-clock.patch"]
+    inputs: ["clock.test.mts", "adapter/clock.rs", "patches/0045-wasmer-wasix-correct-browser-clock-domains.patch"]
     options:
       runFromWorkspaceRoot: true
   build:
