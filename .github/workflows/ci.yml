@@ -512,7 +512,7 @@ jobs:
   extension-artifacts-native-linux:
     name: Native Extensions (Linux)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_linux).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -522,7 +522,7 @@ jobs:
   extension-artifacts-native-android-static:
     name: Native Extensions (Android Compilation)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
       phase: android-static
@@ -544,7 +544,7 @@ jobs:
   extension-artifacts-native-ios:
     name: Native Extensions (iOS)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_ios).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_ios).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -554,7 +554,7 @@ jobs:
   extension-artifacts-native-other:
     name: Native Extensions (Desktop)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_other).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_other).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -732,7 +732,7 @@ jobs:
   liboliphaunt-native-desktop-linux:
     name: Native Runtime (Linux)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_linux).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/liboliphaunt-native-desktop.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -742,7 +742,7 @@ jobs:
   liboliphaunt-native-desktop-other:
     name: Native Runtime (Desktop)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_other).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_other).include[0] != null }}
     uses: ./.github/workflows/liboliphaunt-native-desktop.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -770,7 +770,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.liboliphaunt_native_android_runtime_matrix) }}
@@ -857,7 +857,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.liboliphaunt_native_ios_runtime_matrix) }}
@@ -1165,7 +1165,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'rust-sdk-package') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'rust-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -1249,7 +1249,7 @@ jobs:
   broker-runtime-linux:
     name: Broker Runtime (Linux)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.broker_runtime_matrix_linux).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.broker_runtime_matrix_linux).include[0] != null }}
     uses: ./.github/workflows/broker-runtime.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -1259,7 +1259,7 @@ jobs:
   broker-runtime-other:
     name: Broker Runtime (Desktop)
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.broker_runtime_matrix_other).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && fromJson(needs.affected.outputs.broker_runtime_matrix_other).include[0] != null }}
     uses: ./.github/workflows/broker-runtime.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -1287,7 +1287,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'node-direct') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'node-direct') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.node_direct_runtime_matrix) }}
@@ -1466,7 +1466,7 @@ jobs:
   swift-bindings:
     name: Builds / Swift Native Bindings
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'swift-bindings') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'swift-bindings') }}
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -1550,7 +1550,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'kotlin-sdk-package') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'kotlin-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -1693,7 +1693,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -1867,7 +1867,7 @@ jobs:
   wasix-ts-package:
     name: Packages / WASIX TypeScript SDK
     needs: [affected, checks, tests]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-package') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -2027,7 +2027,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-rust-package') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-rust-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -2073,7 +2073,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -2333,7 +2333,7 @@ jobs:
       - affected
       - checks
       - tests
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:

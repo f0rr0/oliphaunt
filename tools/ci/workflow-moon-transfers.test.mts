@@ -130,11 +130,10 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
       assert(dependencies.has('tests'), `${id} can start before source tests`);
       const direct = [job.needs ?? []].flat();
       if (direct.includes('checks') && direct.includes('tests') && direct.length === 3) {
-        // Optional source matrices may be skipped while their aggregate succeeds.
-        // Explicit status functions bypass GitHub's implicit transitive success().
+        // Optional source matrices may be skipped; require the aggregate gate results.
         assert(
           job.if?.startsWith(
-            "${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && ",
+            "${{ !cancelled() && needs.affected.result == 'success' && needs.checks.result == 'success' && needs.tests.result == 'success' && ",
           ),
           `${id} must require successful source gates`,
         );
