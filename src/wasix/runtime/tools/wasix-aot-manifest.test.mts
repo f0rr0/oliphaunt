@@ -29,6 +29,25 @@ test('accepts AOT metadata that exactly matches the canonical WASIX toolchain', 
   );
 });
 
+test('Windows requires V8 artifacts while Linux and macOS retain LLVM', () => {
+  const target = 'x86_64-pc-windows-msvc';
+  assert.equal(canonicalWasixAotMetadata(undefined, target).engine, 'v8');
+  assert.equal(canonicalWasixAotMetadata(undefined, 'aarch64-apple-darwin').engine, 'llvm-opta');
+  assert.doesNotThrow(() =>
+    assertCanonicalWasixAotManifest(manifest({ 'target-triple': target, engine: 'v8' }), {
+      expectedTarget: target,
+    }),
+  );
+  assert.throws(
+    () => assertCanonicalWasixAotManifest(manifest({ 'target-triple': target })),
+    /engine must match canonical WASIX metadata/u,
+  );
+  assert.throws(
+    () => assertCanonicalWasixAotManifest(manifest({ engine: 'v8' })),
+    /engine must match canonical WASIX metadata/u,
+  );
+});
+
 test('rejects artifacts compiled under a different memory-codegen profile', () => {
   assert.throws(
     () => assertCanonicalWasixAotManifest(manifest({ engine: 'llvm-opta-ro_ftable' })),

@@ -1,11 +1,15 @@
 name: Wasmer V8 feasibility
 on:
   push:
-    branches: [f0rr0/wasmer-v8-windows-probe]
+    branches: [f0rr0/wasmer-v8-windows-probe, f0rr0/windows-v8-integration]
     paths:
       - tools/experiments/wasmer-v8/**
       - '!tools/experiments/wasmer-v8/README.md'
       - .github/workflows/wasmer-v8-probe.yml
+      - Cargo.toml
+      - Cargo.lock
+      - src/wasix/sdks/rust/**
+      - src/wasix/runtime/tools/xtask/**
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,6 +19,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   probe:
+    if: ${{ github.ref != 'refs/heads/f0rr0/windows-v8-integration' }}
     name: V8 probe (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -81,3 +86,26 @@ jobs:
           path: tools/experiments/wasmer-v8/results
           if-no-files-found: error
           retention-days: 90
+
+  integration-compile:
+    if: ${{ github.ref == 'refs/heads/f0rr0/windows-v8-integration' }}
+    name: Windows SDK V8 compilation
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust-tools
+        with:
+          toolchain: 1.96.0
+      - uses: ./.github/actions/setup-msvc
+      - name: Compile automatic Windows backend and SDK adapters
+        run: |
+          set -euo pipefail
+          cargo check --locked -p xtask --features aot-serializer
+          cargo check --locked -p oliphaunt-wasix --all-targets --features tools,extension-vector
+          cargo check --locked -p oliphaunt-wasix-napi --features release

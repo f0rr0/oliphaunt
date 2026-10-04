@@ -18,7 +18,18 @@ use crate::value_after;
 
 // This profile names the fixed codegen policy in our published manifests;
 // Wasmer's deterministic_id independently identifies the compiler settings.
+#[cfg(not(windows))]
 pub(crate) const AOT_ENGINE_PROFILE: &str = "llvm-opta";
+#[cfg(windows)]
+pub(crate) const AOT_ENGINE_PROFILE: &str = "v8";
+
+pub(crate) fn aot_engine_profile(target: &str) -> &'static str {
+    if target == "x86_64-pc-windows-msvc" {
+        "v8"
+    } else {
+        "llvm-opta"
+    }
+}
 
 pub(crate) fn check_aot_codegen_environment() -> Result<()> {
     for (name, expected) in [
@@ -86,14 +97,14 @@ fn probe_aot_serializer_in_process() -> Result<()> {
 
 #[cfg(feature = "aot-serializer")]
 fn probe_aot_serializer_in_process() -> Result<()> {
-    let engine = llvm_aot_engine();
+    let engine = aot_engine();
     let store = wasmer::Store::new(engine.clone());
     const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
-    let module =
-        wasmer::Module::new(&store, EMPTY_WASM).context("compile LLVM AOT probe module")?;
+    let module = wasmer::Module::new(&store, EMPTY_WASM)
+        .context("compile engine serialization probe module")?;
     let serialized = module
         .serialize()
-        .context("serialize LLVM AOT probe module")?;
+        .context("serialize engine probe module")?;
     print_aot_engine_config(&engine);
     println!("serialized-probe-bytes: {}", serialized.len());
     Ok(())
@@ -101,7 +112,7 @@ fn probe_aot_serializer_in_process() -> Result<()> {
 
 #[cfg(feature = "aot-serializer")]
 fn serialize_aot_module(input: &Path, output: &Path) -> Result<()> {
-    let engine = llvm_aot_engine();
+    let engine = aot_engine();
     print_aot_engine_config(&engine);
     println!("host-target: {}-{}", env::consts::OS, env::consts::ARCH);
 
@@ -131,8 +142,13 @@ fn serialize_aot_module(input: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "aot-serializer")]
-fn llvm_aot_engine() -> wasmer::Engine {
+#[cfg(all(feature = "aot-serializer", windows))]
+fn aot_engine() -> wasmer::Engine {
+    wasmer::v8::V8::new().into()
+}
+
+#[cfg(all(feature = "aot-serializer", not(windows)))]
+fn aot_engine() -> wasmer::Engine {
     use wasmer::sys::{CompilerConfig, EngineBuilder, Features, LLVM};
 
     let mut features = Features::new();
@@ -152,7 +168,7 @@ fn llvm_aot_engine() -> wasmer::Engine {
         .into()
 }
 
-#[cfg(feature = "aot-serializer")]
+#[cfg(all(feature = "aot-serializer", not(windows)))]
 fn portable_aot_target() -> wasmer_types::target::Target {
     use wasmer_types::target::{Architecture, CpuFeature, Target, Triple};
 
@@ -171,7 +187,16 @@ fn portable_aot_target() -> wasmer_types::target::Target {
     Target::new(triple, cpu_features)
 }
 
-#[cfg(feature = "aot-serializer")]
+#[cfg(all(feature = "aot-serializer", windows))]
+fn print_aot_engine_config(_engine: &wasmer::Engine) {
+    println!("wasmer-engine: v8");
+    println!("wasmer-engine-id: {AOT_ENGINE_PROFILE}");
+    println!("wasmer-target-triple: x86_64-pc-windows-msvc");
+    println!("wasmer-wee8-version: 11.9.7");
+    println!("wasmer-feature-exceptions: enabled");
+}
+
+#[cfg(all(feature = "aot-serializer", not(windows)))]
 fn print_aot_engine_config(engine: &wasmer::Engine) {
     let target = portable_aot_target();
     println!("wasmer-engine: llvm");
@@ -188,7 +213,7 @@ fn print_aot_engine_config(engine: &wasmer::Engine) {
     println!("wasmer-llvm-readonly-funcref-table: enabled");
 }
 
-#[cfg(feature = "aot-serializer")]
+#[cfg(all(feature = "aot-serializer", not(windows)))]
 fn format_aot_cpu_features(target: &wasmer_types::target::Target) -> String {
     let mut features = target
         .cpu_features()
@@ -203,7 +228,7 @@ fn format_aot_cpu_features(target: &wasmer_types::target::Target) -> String {
     }
 }
 
-#[cfg(feature = "aot-serializer")]
+#[cfg(all(feature = "aot-serializer", not(windows)))]
 fn env_flag(name: &str) -> bool {
     env::var(name)
         .map(|value| {
@@ -223,7 +248,8 @@ mod tests {
 
     #[test]
     fn fixed_codegen_profile_rejects_conflicting_and_ambiguous_overrides() {
-        assert_eq!(AOT_ENGINE_PROFILE, "llvm-opta");
+        assert_eq!(aot_engine_profile("x86_64-pc-windows-msvc"), "v8");
+        assert_eq!(aot_engine_profile("x86_64-unknown-linux-gnu"), "llvm-opta");
         for expected in [false, true] {
             validate_profile_override("test", None, expected).unwrap();
             validate_profile_override("test", Some(if expected { "1" } else { "0" }), expected)

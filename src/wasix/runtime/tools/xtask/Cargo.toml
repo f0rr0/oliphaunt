@@ -10,8 +10,6 @@ publish = false
 default = []
 aot-serializer = [
   "dep:wasmer",
-  "wasmer/llvm",
-  "wasmer/wasmer-artifact-create",
   "dep:wasmer-types",
 ]
 
@@ -24,9 +22,15 @@ sha2 = "0.10"
 tar = "0.4"
 toml = "0.9"
 walkdir = "2"
-wasmer = { version = "=7.5.0", default-features = false, features = [
-  "sys",
-], optional = true }
+wasmer = { version = "=7.5.0", default-features = false, optional = true }
 wasmer-types = { version = "=7.5.0", optional = true }
 wasmparser = "0.261.0"
 zstd = "0.13"
+
+[target.'cfg(not(windows))'.dependencies]
+wasmer = { version = "=7.5.0", default-features = false, optional = true, features = [
+  "sys", "llvm", "wasmer-artifact-create",
+] }
+
+[target.'cfg(windows)'.dependencies]
+wasmer = { version = "=7.5.0", default-features = false, optional = true, features = ["v8"] }

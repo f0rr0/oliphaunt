@@ -78,6 +78,7 @@ jobs:
           path: target/extensions/wasix/assets
 
       - name: Install Wasmer LLVM 22.1 for AOT generation
+        if: ${{ runner.os != 'Windows' }}
         uses: ./.github/actions/setup-wasmer-llvm
         with:
           cache-save-if: ${{ inputs.cache-save-if }}

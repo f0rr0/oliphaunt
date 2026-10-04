@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail, ensure};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(not(windows))]
 use wasmer::sys::{EngineBuilder, Features, NativeEngineExt};
 use wasmer::{Engine, Module};
 use zstd::stream::read::Decoder as ZstdDecoder;
@@ -15,18 +16,17 @@ use zstd::stream::read::Decoder as ZstdDecoder;
 use super::assets;
 
 const RUNTIME_ARTIFACT: &str = "runtime:oliphaunt";
+#[cfg(not(windows))]
 const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
+#[cfg(windows)]
+const EXPECTED_AOT_ENGINE: &str = "v8";
 const EXPECTED_WASMER_VERSION: &str = "7.5.0";
 const EXPECTED_WASMER_WASIX_VERSION: &str = "0.705.0";
-const AOT_ENGINE_ID: &str = concat!(
-    "engine=",
-    "llvm-opta",
-    ";wasmer=",
-    "7.5.0",
-    ";wasmer-wasix=",
-    "0.705.0",
-    ";cpu=generic-baseline"
-);
+#[cfg(not(windows))]
+const AOT_ENGINE_ID: &str =
+    "engine=llvm-opta;wasmer=7.5.0;wasmer-wasix=0.705.0;cpu=generic-baseline";
+#[cfg(windows)]
+const AOT_ENGINE_ID: &str = "engine=v8;wasmer=7.5.0;wasmer-wasix=0.705.0;wee8=11.9.7";
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
 const CACHE_RECEIPT_FORMAT_VERSION: u32 = 1;
 const TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"];
@@ -50,12 +50,19 @@ enum AotVerifyMode {
 pub(crate) fn headless_engine() -> Engine {
     HEADLESS_ENGINE
         .get_or_init(|| {
-            let mut features = Features::new();
-            features.exceptions(true);
-            EngineBuilder::headless()
-                .set_features(Some(features))
-                .engine()
-                .into()
+            #[cfg(windows)]
+            {
+                wasmer::v8::V8::new().into()
+            }
+            #[cfg(not(windows))]
+            {
+                let mut features = Features::new();
+                features.exceptions(true);
+                EngineBuilder::headless()
+                    .set_features(Some(features))
+                    .engine()
+                    .into()
+            }
         })
         .clone()
 }
@@ -368,7 +375,7 @@ fn artifact_raw_bytes(
         bytes.to_vec()
     } else {
         bail!(
-            "no package-manager-resolved Wasmer LLVM AOT artifact named '{name}' is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
+            "no package-manager-resolved Wasmer runtime artifact named '{name}' is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
             target_triple()
         )
     };
@@ -557,7 +564,7 @@ fn target_aot_manifest() -> Result<AotManifest> {
         return Ok(manifest);
     }
     bail!(
-        "no package-manager-resolved Wasmer LLVM AOT manifest is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
+        "no package-manager-resolved Wasmer runtime manifest is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
         target_triple()
     )
 }
@@ -803,9 +810,20 @@ fn aot_verify_mode() -> Result<AotVerifyMode> {
 
 #[allow(unsafe_code)]
 fn deserialize_headless(engine: &Engine, path: &Path) -> Result<Module> {
-    deserialize_headless_mmap(engine, path)
+    #[cfg(windows)]
+    {
+        // SAFETY: these are the same trusted package bytes validated and
+        // materialized by the artifact installer. V8 has no Sys mmap loader.
+        unsafe { Module::deserialize_from_file(engine, path) }
+            .with_context(|| format!("deserialize Wasmer V8 artifact {}", path.display()))
+    }
+    #[cfg(not(windows))]
+    {
+        deserialize_headless_mmap(engine, path)
+    }
 }
 
+#[cfg(not(windows))]
 #[allow(unsafe_code)]
 fn deserialize_headless_mmap(engine: &Engine, path: &Path) -> Result<Module> {
     // SAFETY: same artifact ownership and cache-key constraints as the file

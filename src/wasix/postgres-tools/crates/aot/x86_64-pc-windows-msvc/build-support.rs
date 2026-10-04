@@ -132,37 +132,24 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
             "missing declared WASIX AOT artifact: {relative}"
         );
     }
+    let generated: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&generated_manifest).expect("read retained AOT manifest")
+    ).expect("parse retained AOT manifest");
     let mut cases = String::new();
-    if let Ok(entries) = fs::read_dir(artifact_dir) {
-        let mut files = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("zst"))
-            .collect::<Vec<_>>();
-        files.sort();
-        for file in files {
-            let Some(file_name) = file.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            let Some(stem) = file_name.strip_suffix("-llvm-opta.bin.zst") else {
-                continue;
-            };
-            let artifact_name = artifact_name_from_file_stem(stem);
-            if !artifact_belongs_to_crate(&artifact_name) {
-                continue;
-            }
-            cases.push_str(&format!(
-                "        {:?} => Some(include_bytes!({})),\n",
-                artifact_name,
-                rust_string_literal(&file)
-            ));
-        }
+    for artifact in generated["artifacts"].as_array().expect("AOT artifacts") {
+        let name = artifact["name"].as_str().expect("AOT name");
+        let file = artifact_dir.join(artifact["path"].as_str().expect("AOT path"));
+        cases.push_str(&format!(
+            "        {:?} => Some(include_bytes!({})),\n",
+            name, rust_string_literal(&file)
+        ));
     }
     cases.push_str("        _ => None,\n");
 
+    let engine = aot_engine(target);
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = {engine:?};\n\
          pub const HAS_EMBEDDED_AOT: bool = true;\n\
          pub const MANIFEST_JSON: &str = include_str!({});\n\
          #[rustfmt::skip]\n\
@@ -187,12 +174,13 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 }
 
 fn write_source_only_aot(out: &Path, target: &str) {
+    let engine = aot_engine(target);
     let manifest = format!(
-        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.5.0\",\"wasmer-wasix-version\":\"0.705.0\",\"artifacts\":[]}}"
+        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":{engine:?},\"wasmer-version\":\"7.5.0\",\"wasmer-wasix-version\":\"0.705.0\",\"artifacts\":[]}}"
     );
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {target:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = {engine:?};\n\
          pub const HAS_EMBEDDED_AOT: bool = false;\n\
          pub const MANIFEST_JSON: &str = r#\"{manifest}\"#;\n\
          pub fn artifact_bytes(_name: &str) -> Option<&'static [u8]> {{ None }}\n"
@@ -200,20 +188,8 @@ fn write_source_only_aot(out: &Path, target: &str) {
     fs::write(out, text).expect("write source-only AOT include module");
 }
 
-fn artifact_name_from_file_stem(stem: &str) -> String {
-    match stem {
-        "oliphaunt" => "runtime:oliphaunt".to_owned(),
-        "pg_dump" => "tool:pg_dump".to_owned(),
-        "psql" => "tool:psql".to_owned(),
-        "initdb" => "tool:initdb".to_owned(),
-        "plpgsql" => "runtime-support:plpgsql".to_owned(),
-        "dict_snowball" => "runtime-support:dict_snowball".to_owned(),
-        extension_support if extension_support.ends_with("_deps") => {
-            let sql_name = extension_support.trim_end_matches("_deps");
-            format!("extension:{sql_name}:{extension_support}")
-        }
-        extension => format!("extension:{extension}"),
-    }
+fn aot_engine(target: &str) -> &'static str {
+    if target == "x86_64-pc-windows-msvc" { "v8" } else { "llvm-opta" }
 }
 
 fn rust_string_literal(path: &Path) -> String {
@@ -233,7 +209,7 @@ fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
         serde_json::from_str(&text).expect("parse generated WASIX AOT manifest");
     assert_eq!(
         manifest.get("engine").and_then(serde_json::Value::as_str),
-        Some("llvm-opta"),
+        Some(aot_engine(manifest["target-triple"].as_str().expect("AOT target"))),
         "stale WASIX AOT profile; rebuild artifacts before compiling the carrier"
     );
     let artifacts = manifest
