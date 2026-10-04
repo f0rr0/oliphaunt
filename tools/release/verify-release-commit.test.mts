@@ -68,6 +68,13 @@ function prepareBasic(base) {
     write('src/removable.rs', 'pub fn must_not_disappear() {}\n');
     write('src/future-version.txt', '0.1.0\n');
   } else if (scenario === 'hidden-version-config') changelog('packages/beta', beta);
+  for (const sdk of ['kotlin', 'swift']) {
+    if (base || scenario === `${sdk}-readme`)
+      write(
+        `src/native/sdks/${sdk}/README.md`,
+        base ? 'See the canonical installation guide.\n' : 'Unexpected release edit.\n',
+      );
+  }
   if (
     base ||
     ['hidden-derived-config', 'derived-version-only', 'unrelated-derived-dependency'].includes(
@@ -255,6 +262,8 @@ if (phase === 'write') {
         mutated: /release-please-config[.]json contains a non-version semantic change/u,
         downgrade: /must advance to a semver version/u,
         tainted: /non-release-derived path.*src\/fix[.]rs/u,
+        'kotlin-readme': /non-release-derived path.*kotlin\/README[.]md/u,
+        'swift-readme': /non-release-derived path.*swift\/README[.]md/u,
         deletion: /non-release-derived path.*src\/removable[.]rs/u,
         rename: /non-release-derived path.*src\/future-version[.]txt/u,
         'hidden-version-config': /canonical version file.*non-version semantic change/u,
