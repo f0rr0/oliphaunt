@@ -302,7 +302,7 @@ validate_exact_sysroot() {
 	local source_commit
 	local source_patch_sha256
 	local source_worktree_sha256
-	local expected_patch="$UPSTREAM_SOURCE_ROOT/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+	local expected_patch="$UPSTREAM_SOURCE_ROOT/patches/wasix-libc/series"
 
 	CARRIER_MANIFEST="$WASIXCC_SYSROOT_PREFIX/$CARRIER_MANIFEST_NAME"
 	PATCHED_SYSROOT_MANIFEST="$WASIXCC_SYSROOT/$VARIANT_MANIFEST_NAME"
@@ -405,7 +405,7 @@ validate_exact_sysroot() {
 	source_patch_sha256="$(required_manifest_value "$PATCHED_SYSROOT_MANIFEST" source_patch_sha256)"
 	valid_sha256 "$source_patch_sha256" || fail_sysroot 'source_patch_sha256 is invalid'
 	[ -f "$expected_patch" ] || fail_sysroot "local source patch is missing: $expected_patch"
-	[ "$source_patch_sha256" = "$(sha256_file "$expected_patch")" ] ||
+	[ "$source_patch_sha256" = "$(fresh_runtime_patch_hash "$expected_patch")" ] ||
 		fail_sysroot 'carrier was not built from the current wasix-libc patch'
 
 	PATCHED_SYSROOT_DOCKER_IMAGE_ID="$(required_manifest_value "$PATCHED_SYSROOT_MANIFEST" docker_image_id)"

@@ -6,6 +6,11 @@ enum { QUEUE_LIMIT = 65536, INPUT_SIZE = QUEUE_LIMIT * 9 + 17 };
 
 static unsigned char input[INPUT_SIZE];
 
+/* This queue-only fixture has no PostgreSQL backend or armed deadline. */
+void RequestTrustedEmbeddedTimeoutCheck(void) {
+    assert(!"an unarmed queue fixture must not notify PostgreSQL of a timeout");
+}
+
 static void *produce(void *context) {
     OliphauntHandle *handle = context;
     pthread_mutex_lock(&handle->mutex);

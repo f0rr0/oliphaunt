@@ -223,3 +223,11 @@ run_tests \
 	--features "$FRESH_MEMORY_PROFILE_FEATURES" \
 	-- \
 	memory_profile::wasm_tool::tests
+
+# The product compiler must preserve main's policy and distinguish strict AOT.
+run_tests --locked --target-dir "$POSTMASTER_COMPILER_TARGET_DIR" \
+	--manifest-path "$FRESH_ROOT/executor/Cargo.toml" \
+	--package "$FRESH_POSTMASTER_EXECUTOR_PACKAGE" \
+	--bin "$FRESH_POSTMASTER_COMPILER_BINARY" \
+	--no-default-features --features "$FRESH_POSTMASTER_COMPILER_FEATURES" \
+	-- --exact product_compiler_uses_main_memory_identity

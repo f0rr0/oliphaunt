@@ -38,12 +38,12 @@ features="$3"
 [ "$target_triple" = "$rust_host" ] || fail "target $target_triple does not match native host $rust_host"
 [ "$features" = "release" ] || fail "unsupported WASIX Node-API feature set: $features"
 
-# Official rust:1.93.1-slim-bookworm, pinned as one multi-architecture OCI
+# Official rust:1.96.0-slim-bookworm, pinned as one multi-architecture OCI
 # index. Bookworm's glibc 2.36 is below the published glibc 2.38 ceiling. The
 # Fedora 39 consumer rehearsal still checks the completed addon under 2.38.
-readonly image="rust@sha256:5b9332190bb3b9ece73b810cd1f1e9f06343b294ce184bcb067f0747d7d333ea"
-readonly rust_release="1.93.1"
-readonly rust_commit="01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf"
+readonly image="rust@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950"
+readonly rust_release="1.96.0"
+readonly rust_commit="ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
 readonly rust_toolchain="${rust_release}-${rust_host}"
 readonly expected_builder_glibc="glibc 2.36"
 readonly manifest="/workspace/src/wasix/node-addon/Cargo.toml"

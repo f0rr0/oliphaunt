@@ -16,7 +16,41 @@ use zstd::stream::write::Encoder as ZstdEncoder;
 #[cfg(feature = "aot-serializer")]
 use crate::value_after;
 
+// This profile names the fixed codegen policy in our published manifests;
+// Wasmer's deterministic_id independently identifies the compiler settings.
+pub(crate) const AOT_ENGINE_PROFILE: &str = "llvm-opta";
+
+pub(crate) fn check_aot_codegen_environment() -> Result<()> {
+    for (name, expected) in [
+        ("OLIPHAUNT_WASM_AOT_NON_VOLATILE_MEMOPS", true),
+        ("OLIPHAUNT_WASM_AOT_READONLY_FUNCREF_TABLE", true),
+    ] {
+        match std::env::var(name) {
+            Ok(value) => validate_profile_override(name, Some(&value), expected)?,
+            Err(std::env::VarError::NotPresent) => {}
+            Err(error) => bail!("invalid {name}: {error}"),
+        }
+    }
+    Ok(())
+}
+
+fn validate_profile_override(name: &str, value: Option<&str>, expected: bool) -> Result<()> {
+    let Some(value) = value else { return Ok(()) };
+    let actual = match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "" | "0" | "false" | "no" | "off" => false,
+        _ => bail!("invalid {name}={value:?}; remove this retired codegen override"),
+    };
+    if actual != expected {
+        bail!(
+            "{name}={value:?} conflicts with fixed AOT profile {AOT_ENGINE_PROFILE}; remove this retired codegen override and rebuild AOT artifacts"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn aot_serializer(args: Vec<String>) -> Result<()> {
+    check_aot_codegen_environment()?;
     match args.first().map(String::as_str) {
         Some("serialize") => serialize_aot_cli(&args[1..]),
         Some("probe") => probe_aot_serializer_in_process(),
@@ -107,12 +141,10 @@ fn llvm_aot_engine() -> wasmer::Engine {
     if env_flag("OLIPHAUNT_WASM_WASMER_PERFMAP") {
         llvm.enable_perfmap();
     }
-    if env_flag_default_true("OLIPHAUNT_WASM_AOT_NON_VOLATILE_MEMOPS") {
-        llvm.enable_non_volatile_memops();
-    }
-    if env_flag_default_true("OLIPHAUNT_WASM_AOT_READONLY_FUNCREF_TABLE") {
-        llvm.enable_readonly_funcref_table();
-    }
+    // Retain main's codegen policy here; strict memory semantics are a separate
+    // correctness/performance change, not part of patch consolidation.
+    llvm.enable_non_volatile_memops();
+    llvm.enable_readonly_funcref_table();
     EngineBuilder::new(llvm)
         .set_target(Some(portable_aot_target()))
         .set_features(Some(features))
@@ -143,7 +175,8 @@ fn portable_aot_target() -> wasmer_types::target::Target {
 fn print_aot_engine_config(engine: &wasmer::Engine) {
     let target = portable_aot_target();
     println!("wasmer-engine: llvm");
-    println!("wasmer-engine-id: {}", engine.deterministic_id());
+    println!("wasmer-engine-id: {AOT_ENGINE_PROFILE}");
+    println!("wasmer-compiler-id: {}", engine.deterministic_id());
     println!("wasmer-target-triple: {}", target.triple());
     println!(
         "wasmer-target-cpu-features: {}",
@@ -151,18 +184,8 @@ fn print_aot_engine_config(engine: &wasmer::Engine) {
     );
     println!("wasmer-feature-exceptions: enabled");
     println!("wasmer-llvm-target-cpu: generic");
-    println!(
-        "wasmer-llvm-non-volatile-memops: {}",
-        enabled_label(env_flag_default_true(
-            "OLIPHAUNT_WASM_AOT_NON_VOLATILE_MEMOPS"
-        ))
-    );
-    println!(
-        "wasmer-llvm-readonly-funcref-table: {}",
-        enabled_label(env_flag_default_true(
-            "OLIPHAUNT_WASM_AOT_READONLY_FUNCREF_TABLE"
-        ))
-    );
+    println!("wasmer-llvm-non-volatile-memops: enabled");
+    println!("wasmer-llvm-readonly-funcref-table: enabled");
 }
 
 #[cfg(feature = "aot-serializer")]
@@ -194,20 +217,22 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(feature = "aot-serializer")]
-fn env_flag_default_true(name: &str) -> bool {
-    env::var(name)
-        .map(|value| {
-            let value = value.trim();
-            !matches!(
-                value.to_ascii_lowercase().as_str(),
-                "" | "0" | "false" | "no" | "off"
-            )
-        })
-        .unwrap_or(true)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[cfg(feature = "aot-serializer")]
-fn enabled_label(enabled: bool) -> &'static str {
-    if enabled { "enabled" } else { "disabled" }
+    #[test]
+    fn fixed_codegen_profile_rejects_conflicting_and_ambiguous_overrides() {
+        assert_eq!(AOT_ENGINE_PROFILE, "llvm-opta");
+        for expected in [false, true] {
+            validate_profile_override("test", None, expected).unwrap();
+            validate_profile_override("test", Some(if expected { "1" } else { "0" }), expected)
+                .unwrap();
+            assert!(
+                validate_profile_override("test", Some(if expected { "0" } else { "1" }), expected)
+                    .is_err()
+            );
+            assert!(validate_profile_override("test", Some("typo"), expected).is_err());
+        }
+    }
 }

@@ -2,7 +2,7 @@
 name = "oliphaunt-wasix"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "Embedded PostgreSQL 18 for Rust with synchronous and asynchronous APIs."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
@@ -102,7 +102,7 @@ liboliphaunt-wasix-portable = { version = "*", path = "../../runtime/crates/asse
 oliphaunt-wasix-tools = { version = "*", path = "../../postgres-tools/crates/tools", optional = true }
 oliphaunt-icu = { version = "*", path = "../../../database-resources/icu/cargo", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync"] }
-wasmer = { version = "=7.2.1", default-features = false, features = [
+wasmer = { version = "=7.5.0", default-features = false, features = [
   "sys",
   "headless",
   "compiler",
@@ -112,21 +112,21 @@ wasmer = { version = "=7.2.1", default-features = false, features = [
 # release family. Keep the complete family constrained here so a fresh
 # consumer cannot silently mix a later patch generation with the runtime and
 # AOT artifacts built against this exact toolchain.
-wasmer-config = { version = "=0.702.1", default-features = false }
-wasmer-journal = { version = "=0.702.1", default-features = false }
-wasmer-package = { version = "=0.702.1", default-features = false }
-wasmer-types = "=7.2.1"
-wasmer-wasix = { version = "=0.702.1", default-features = false, features = [
+wasmer-config = { version = "=0.705.0", default-features = false }
+wasmer-journal = { version = "=0.705.0", default-features = false }
+wasmer-package = { version = "=0.705.0", default-features = false }
+wasmer-types = "=7.5.0"
+wasmer-wasix = { version = "=0.705.0", default-features = false, features = [
   "sys-minimal",
   "sys-poll",
   "host-vnet",
   "time",
 ] }
-wasmer-wasix-types = { version = "=0.702.1", default-features = false }
-virtual-fs = { version = "=0.702.1", default-features = false }
-virtual-mio = { version = "=0.702.1", default-features = false }
-virtual-net = { version = "=0.702.1", default-features = false }
-webc = "=12.0.0"
+wasmer-wasix-types = { version = "=0.705.0", default-features = false }
+virtual-fs = { version = "=0.705.0", default-features = false }
+virtual-mio = { version = "=0.705.0", default-features = false }
+virtual-net = { version = "=0.705.0", default-features = false }
+webc = "=12.0.1"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 liboliphaunt-wasix-aot-aarch64-apple-darwin = { version = "*", path = "../../runtime/crates/aot/aarch64-apple-darwin" }

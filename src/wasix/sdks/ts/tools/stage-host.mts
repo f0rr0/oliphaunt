@@ -48,7 +48,13 @@ function assertHostDeclarationCompatibility() {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    lib: ['lib.es2023.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts', 'lib.webworker.d.ts'],
+    lib: [
+      'lib.es2023.d.ts',
+      'lib.esnext.disposable.d.ts',
+      'lib.dom.d.ts',
+      'lib.dom.iterable.d.ts',
+      'lib.webworker.d.ts',
+    ],
     types: [],
   };
   const defaultHost = ts.createCompilerHost(compilerOptions);
