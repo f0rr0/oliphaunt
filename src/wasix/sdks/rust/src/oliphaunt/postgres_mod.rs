@@ -2633,7 +2633,11 @@ mod tests {
     #[test]
     fn split_initdb_selects_exact_collation_profile_environment() {
         // Main's initdb patch uses environment policy, not a seed-profile CLI.
-        assert!(!split_initdb_args().contains(&"--oliphaunt-seed-profile"));
+        assert!(
+            split_initdb_args()
+                .iter()
+                .all(|arg| arg != "--oliphaunt-seed-profile")
+        );
         assert_eq!(
             split_initdb_profile_environment(false),
             vec![(SKIP_ICU_COLLATION_DISCOVERY_ENV, "1")]
