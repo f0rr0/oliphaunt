@@ -76,6 +76,13 @@
   Recovery now requires an explicit close and new open; the SDK never replaces
   a session invisibly or replays work with an uncertain outcome.
 
+## [0.3.1]() (2026-10-05)
+
+
+### Bug Fixes
+
+* **packaging:** restore WASIX initdb and isolate Android C++ runtime ([#245](https://github.com/f0rr0/oliphaunt/issues/245)) ([96c566a](https://github.com/f0rr0/oliphaunt/commit/96c566a7251aae09e441cc0fc4479c58c8809f58))
+
 ## [0.3.0]() (2026-09-29)
 
 

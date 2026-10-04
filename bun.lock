@@ -149,19 +149,19 @@
     },
     "src/native/runtime/packages/darwin-arm64": {
       "name": "@oliphaunt/liboliphaunt-darwin-arm64",
-      "version": "0.3.0",
+      "version": "0.3.1",
     },
     "src/native/runtime/packages/linux-arm64-gnu": {
       "name": "@oliphaunt/liboliphaunt-linux-arm64-gnu",
-      "version": "0.3.0",
+      "version": "0.3.1",
     },
     "src/native/runtime/packages/linux-x64-gnu": {
       "name": "@oliphaunt/liboliphaunt-linux-x64-gnu",
-      "version": "0.3.0",
+      "version": "0.3.1",
     },
     "src/native/runtime/packages/win32-x64-msvc": {
       "name": "@oliphaunt/liboliphaunt-win32-x64-msvc",
-      "version": "0.3.0",
+      "version": "0.3.1",
     },
     "src/native/sdks/react-native": {
       "name": "@oliphaunt/react-native",
@@ -245,7 +245,7 @@
     },
     "src/wasix/postgres-tools/npm": {
       "name": "@oliphaunt/liboliphaunt-wasix-tools",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "optionalDependencies": {
         "@oliphaunt/liboliphaunt-wasix-tools-darwin-arm64": "workspace:*",
         "@oliphaunt/liboliphaunt-wasix-tools-linux-arm64-gnu": "workspace:*",
@@ -255,23 +255,23 @@
     },
     "src/wasix/postgres-tools/npm-platforms/darwin-arm64": {
       "name": "@oliphaunt/liboliphaunt-wasix-tools-darwin-arm64",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/wasix/postgres-tools/npm-platforms/linux-arm64-gnu": {
       "name": "@oliphaunt/liboliphaunt-wasix-tools-linux-arm64-gnu",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/wasix/postgres-tools/npm-platforms/linux-x64-gnu": {
       "name": "@oliphaunt/liboliphaunt-wasix-tools-linux-x64-gnu",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/wasix/postgres-tools/npm-platforms/win32-x64-msvc": {
       "name": "@oliphaunt/liboliphaunt-wasix-tools-win32-x64-msvc",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/wasix/postgres-tools/ts": {
       "name": "@oliphaunt/wasix-tools",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "dependencies": {
         "@oliphaunt/liboliphaunt-wasix-tools": "workspace:*",
       },
@@ -287,7 +287,7 @@
     },
     "src/wasix/sdks/ts": {
       "name": "@oliphaunt/wasix-ts",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@oliphaunt/ts-query": "0.1.1",
         "fzstd": "0.1.1",
