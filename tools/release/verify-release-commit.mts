@@ -11,7 +11,7 @@ import {
 import { compatibilityVersionEntries, loadProducts } from './release-graph.mts';
 import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
-import { releaseDerivedPathInventory, SDK_INSTALL_VERSION_RULES } from './sync-release-pr.mts';
+import { releaseDerivedPathInventory } from './sync-release-pr.mts';
 
 const TOOL = 'verify-release-commit.mts';
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -306,10 +306,6 @@ function derivedVersionRules() {
     }
   }
 
-  for (const { file, product, prefix, suffix } of SDK_INSTALL_VERSION_RULES) {
-    addText(file, { type: 'embedded', sourceProduct: product, prefix, suffix });
-  }
-
   for (const {
     file,
     versionPaths,
@@ -360,14 +356,6 @@ function productTransition(rule, before, after, transitions) {
   return rule.wrapped
     ? versionTransition(before, after, [transition])
     : before === transition.before && after === transition.after;
-}
-
-function embeddedTextTransition(rule, before, after, transitions) {
-  const transition = transitions.find(({ product }) => product === rule.sourceProduct);
-  if (transition === undefined) return false;
-  const prior = `${rule.prefix}${transition.before}${rule.suffix}`;
-  const next = `${rule.prefix}${transition.after}${rule.suffix}`;
-  return before.split(prior).length === 2 && after === before.replace(prior, next);
 }
 
 function valueAt(root, parts) {
@@ -640,11 +628,6 @@ function validateTextSemanticDiff({
   ) {
     return;
   }
-  if (
-    derivedRule?.type === 'embedded' &&
-    embeddedTextTransition(derivedRule, before, after, transitions)
-  )
-    return;
   throw error(
     `${derived ? 'derived file' : 'release file'} ${file} contains a non-version semantic change`,
   );

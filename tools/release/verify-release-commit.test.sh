@@ -26,7 +26,7 @@ for family in bootstrap basic cargo wildcard wasix example; do
   release=''
   case "$family" in
     bootstrap) assert_history base; scenarios=(clean mutated) ;;
-    basic) scenarios=(clean later-fix downgrade tainted deletion rename hidden-version-config hidden-derived-config derived-version-only unrelated-derived-dependency) ;;
+    basic) scenarios=(clean later-fix downgrade tainted kotlin-readme swift-readme deletion rename hidden-version-config hidden-derived-config derived-version-only unrelated-derived-dependency) ;;
     cargo) scenarios=(exact unrelated-pin unrelated-package unrelated-lock wrong-workspace-version unrelated-workspace-version workspace-metadata) ;;
     wildcard) scenarios=(workspace-wildcard local-version wrong-version changed-path removed-path changed-features) ;;
     wasix) scenarios=(workspace-links) ;;
