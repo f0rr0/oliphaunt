@@ -6,6 +6,12 @@ layer: "library"
 stack: "frontend"
 
 tasks:
+  test:
+    tags: ["quality", "unit"]
+    command: "bun test src/wasix/browser-host/clock.test.mts"
+    inputs: ["clock.test.mts", "patches/0013-wasmer-wasix-fast-single-backend-clock.patch"]
+    options:
+      runFromWorkspaceRoot: true
   build:
     tags: ["artifact", "build", "requires-rust"]
     command: "bash src/wasix/browser-host/build-sdk.sh"
@@ -17,6 +23,11 @@ tasks:
       - "/tools/dev/curl-platform-flags.sh"
       - "/tools/dev/acquisition.sh"
       - "/src/third-party/tools/{fetch-sources.sh,source-fetch-core.mts,source-archive.mts}"
+      - "/src/wasix/runtime/protocol-contract/contract.json"
+      - "/src/wasix/runtime/protocol-contract/generate.mjs"
+      - "/src/wasix/runtime/assets/build/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h"
+      - "/src/wasix/sdks/rust/src/oliphaunt/protocol_limits_generated.rs"
+      - "/src/wasix/sdks/ts/src/protocol-limits.generated.ts"
       - "@group(cargo-workspace)"
     outputs:
       - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"

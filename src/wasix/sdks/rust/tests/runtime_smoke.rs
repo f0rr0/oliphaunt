@@ -1,5 +1,3 @@
-#![cfg(feature = "extensions")]
-
 use anyhow::Result;
 use oliphaunt_wasix::{
     AsyncOliphaunt, AsyncTransaction, DatabaseStorage, Error, Oliphaunt, TransactionResult,
@@ -23,6 +21,185 @@ fn synthetic_sdk_error() -> oliphaunt_wasix::Error {
     let workspace = tempfile::tempdir().expect("temporary callback-error workspace");
     Oliphaunt::restore(workspace.path().join("invalid"), b"not a physical archive")
         .expect_err("invalid archive creates a public SDK error")
+}
+
+#[test]
+fn terminal_raw_exchange_reports_closed_without_hiding_cleanup() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let storage = DatabaseStorage::Directory(workspace.path().join("terminal"));
+    let mut database = Oliphaunt::builder().storage(storage.clone()).open()?;
+    database.execute("CREATE TABLE kept(value int)")?;
+    database.execute("INSERT INTO kept VALUES (1)")?;
+    database.exec_protocol_raw(oliphaunt_query::simple_query(
+        "BEGIN; INSERT INTO kept VALUES (2)",
+    )?)?;
+    // A frontend Terminate ends the backend; there is no response to collect.
+    database
+        .exec_protocol_raw([b'X', 0, 0, 0, 4])
+        .expect_err("terminated backend");
+    assert!(database.is_closed());
+    assert_eq!(
+        database.query("SELECT 1").unwrap_err().kind(),
+        oliphaunt_wasix::ErrorKind::Lifecycle
+    );
+    // Discard the failed guest and release the root lock without re-entering it.
+    database.close()?;
+    database.close()?;
+    let mut reopened = Oliphaunt::builder().storage(storage).open()?;
+    assert_eq!(
+        reopened
+            .query("SELECT sum(value)::text AS value FROM kept")?
+            .get_text(0, "value")?,
+        Some("1")
+    );
+    reopened.close()?;
+    Ok(())
+}
+
+#[test]
+fn buffered_query_above_64_mib_keeps_session_usable() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    for storage in [
+        DatabaseStorage::Memory,
+        DatabaseStorage::Directory(workspace.path().join("large")),
+    ] {
+        let mut database = Oliphaunt::builder().storage(storage).open()?;
+        // Many ordinary rows: callers should not need a transport flag just
+        // because their complete result exceeds an internal buffer budget.
+        let result =
+            database.query("SELECT repeat('x', 8192) AS payload FROM generate_series(1, 10240)")?;
+        assert_eq!(result.rows().len(), 10240);
+        for row in [0, 10239] {
+            assert_eq!(result.get_text(row, "payload")?.unwrap().len(), 8192);
+        }
+        drop(result);
+        assert_eq!(
+            database.query("SELECT 42 AS value")?.get_text(0, "value")?,
+            Some("42")
+        );
+        database.close()?;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn terminal_async_exchange_can_close_and_reopen_the_same_directory() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let storage = DatabaseStorage::Directory(workspace.path().join("terminal-async"));
+    let database = AsyncOliphaunt::builder()
+        .storage(storage.clone())
+        .open()
+        .await?;
+    database
+        .exec_protocol_raw([b'X', 0, 0, 0, 4])
+        .await
+        .expect_err("terminated backend");
+    assert_eq!(
+        database.query("SELECT 1").await.unwrap_err().kind(),
+        oliphaunt_wasix::ErrorKind::Lifecycle
+    );
+    database.close().await?;
+    assert!(database.is_closed());
+    let reopened = AsyncOliphaunt::builder().storage(storage).open().await?;
+    assert_eq!(
+        reopened
+            .query("SELECT 42 AS value")
+            .await?
+            .get_text(0, "value")?,
+        Some("42")
+    );
+    reopened.close().await?;
+    Ok(())
+}
+
+#[test]
+fn configured_startup_identity_survives_reset_role() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let storage = DatabaseStorage::Directory(workspace.path().join("identity"));
+    let mut setup = Oliphaunt::builder().storage(storage.clone()).open()?;
+    setup.execute("CREATE ROLE patch_app LOGIN")?;
+    setup.execute("CREATE ROLE patch_member NOLOGIN")?;
+    setup.execute("GRANT patch_member TO patch_app")?;
+    setup.execute("ALTER ROLE patch_app SET work_mem = '9MB'")?;
+    setup.execute("CREATE ROLE patch_blocked LOGIN")?;
+    setup.execute("CREATE ROLE patch_limited LOGIN CONNECTION LIMIT 0")?;
+    setup.execute("CREATE ROLE patch_no_connect LOGIN")?;
+    setup.execute("REVOKE CONNECT ON DATABASE postgres FROM PUBLIC")?;
+    setup.execute("GRANT CONNECT ON DATABASE postgres TO patch_app, patch_blocked")?;
+    setup.execute(
+        "CREATE FUNCTION patch_login() RETURNS event_trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF session_user = 'patch_blocked' THEN
+             RAISE EXCEPTION 'patch login denied' USING ERRCODE = '28000';
+           END IF;
+           PERFORM set_config('patch.login', 'fired', false);
+         END $$",
+    )?;
+    setup.execute("CREATE EVENT TRIGGER patch_login ON login EXECUTE FUNCTION patch_login()")?;
+    setup.close()?;
+
+    let mut database = Oliphaunt::builder()
+        .storage(storage.clone())
+        .username("patch_app")
+        .open()?;
+    let identity = database.query(
+        "SELECT current_user::text AS current_role, session_user::text AS session_role, current_setting('work_mem') AS work_mem",
+    )?;
+    assert_eq!(identity.get_text(0, "current_role")?, Some("patch_app"));
+    assert_eq!(identity.get_text(0, "session_role")?, Some("patch_app"));
+    assert_eq!(identity.get_text(0, "work_mem")?, Some("9MB"));
+    let login = database.query("SELECT current_setting('patch.login') AS login")?;
+    assert_eq!(login.get_text(0, "login")?, Some("fired"));
+    database.execute("SET ROLE patch_member")?;
+    database.execute("RESET ROLE")?;
+    let reset = database.query("SELECT current_user::text AS current_role")?;
+    assert_eq!(reset.get_text(0, "current_role")?, Some("patch_app"));
+    database.execute("SET work_mem = '12MB'")?;
+    database.execute("DISCARD ALL")?;
+    let discarded = database.query(
+        "SELECT current_user::text AS current_role, current_setting('work_mem') AS work_mem",
+    )?;
+    assert_eq!(discarded.get_text(0, "current_role")?, Some("patch_app"));
+    assert_eq!(discarded.get_text(0, "work_mem")?, Some("9MB"));
+    let denied = database
+        .execute("SET ROLE postgres")
+        .expect_err("no bootstrap-superuser escape");
+    assert_eq!(
+        denied
+            .postgres_error()
+            .and_then(|error| error.sqlstate.as_deref()),
+        Some("42501")
+    );
+    database.close()?;
+    for (username, expected, sqlstate) in [
+        ("patch_member", "not permitted to log in", "28000"),
+        ("patch_missing", "does not exist", "28000"),
+        ("patch_blocked", "patch login denied", "28000"),
+        ("patch_limited", "too many connections", "53300"),
+        (
+            "patch_no_connect",
+            "permission denied for database",
+            "42501",
+        ),
+    ] {
+        let error = Oliphaunt::builder()
+            .storage(storage.clone())
+            .username(username)
+            .open()
+            .err()
+            .expect("startup must enforce the configured role's admission policy");
+        assert!(error.to_string().contains(expected), "{username}: {error}");
+        assert_eq!(
+            error
+                .postgres_error()
+                .and_then(|error| error.sqlstate.as_deref()),
+            Some(sqlstate),
+            "{username}: admission must preserve PostgreSQL's structured error",
+        );
+    }
+    // Rejected startup must leave the directory usable by a permitted session.
+    Oliphaunt::builder().storage(storage).open()?.close()?;
+    Ok(())
 }
 
 #[test]
@@ -206,6 +383,74 @@ fn direct_protocol_callback_error_and_panic_recover_before_returning() -> Result
         Some("42")
     );
     database.close()?;
+    Ok(())
+}
+
+#[test]
+fn copy_output_streams_exact_bytes_and_recovers_after_callback_failure() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let expected: String = (1..=10_000)
+        .map(|row| format!("{row}\trow-{row}\n"))
+        .collect();
+    let request = oliphaunt_query::simple_query(
+        "COPY (SELECT i, 'row-' || i FROM generate_series(1, 10000) AS i) TO STDOUT",
+    )?;
+    for storage in [
+        DatabaseStorage::Memory,
+        DatabaseStorage::Directory(workspace.path().join("copy")),
+    ] {
+        let mut database = Oliphaunt::builder().storage(storage).open()?;
+        let output = Arc::new(Mutex::new((Vec::new(), 0)));
+        let capture = Arc::clone(&output);
+        database.exec_protocol_raw_stream(&request, move |chunk| {
+            assert!(
+                chunk.len() <= 64 * 1024,
+                "callback exceeds transport contract"
+            );
+            let mut capture = capture.lock().expect("COPY capture");
+            capture.1 += 1;
+            capture.0.extend_from_slice(chunk);
+        })?;
+        let captured = output.lock().expect("COPY capture");
+        let (output, callbacks) = &*captured;
+        assert!(*callbacks > 1, "COPY must cross a callback boundary");
+        let mut frames = output.as_slice();
+        let mut data = Vec::new();
+        let mut complete = false;
+        let mut ready = false;
+        while !frames.is_empty() {
+            let (tag, body, rest) = oliphaunt_query::read_backend_message(frames)?;
+            match tag {
+                b'd' => data.extend_from_slice(body),
+                b'C' => {
+                    assert_eq!(body, b"COPY 10000\0");
+                    complete = true;
+                }
+                b'Z' => {
+                    assert_eq!(body, b"I");
+                    ready = true;
+                }
+                b'E' => panic!("unexpected COPY ErrorResponse: {body:?}"),
+                _ => {}
+            }
+            frames = rest;
+        }
+        assert_eq!(data, expected.as_bytes());
+        assert!(complete && ready, "COPY did not finish at ReadyForQuery");
+        let mut failure = Some(synthetic_sdk_error());
+        database
+            .exec_protocol_raw_stream(&request, move |_| {
+                Err(failure.take().expect("one callback"))
+            })
+            .expect_err("callback failure must propagate after draining COPY");
+        assert_eq!(
+            database
+                .query("SELECT 42::int4 AS answer")?
+                .get_text(0, "answer")?,
+            Some("42")
+        );
+        database.close()?;
+    }
     Ok(())
 }
 

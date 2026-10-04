@@ -19,9 +19,10 @@ esac
 
 UPSTREAM_WORK_ROOT="${UPSTREAM_WORK_ROOT:-$FRESH_WORK_ROOT/runtime}"
 WASMER_ROOT="${WASMER_ROOT:-$UPSTREAM_WORK_ROOT/wasmer}"
+WASIX_LIBC_ROOT="${WASIX_LIBC_ROOT:-$UPSTREAM_WORK_ROOT/wasix-libc}"
 LLVM_MAJOR=22
-WASMER_PATCH="$FRESH_ROOT/wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch"
-WASIX_LIBC_PATCH="$FRESH_ROOT/wasmer/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+WASMER_PATCH="$FRESH_ROOT/wasmer/patches/wasmer/series"
+WASIX_LIBC_PATCH="$FRESH_ROOT/wasmer/patches/wasix-libc/series"
 WASMER_BUILD_RECEIPT_OUT="${WASMER_BUILD_RECEIPT_OUT:-$FRESH_WASMER_BUILD_RECEIPT}"
 POSTMASTER_EXECUTOR_BUILD_RECEIPT_OUT="${POSTMASTER_EXECUTOR_BUILD_RECEIPT_OUT:-$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT}"
 WASMER_TARGET_DIR="$WASMER_ROOT/target"
@@ -107,6 +108,7 @@ LLVM_SYS_221_PREFIX="$(find_llvm_prefix)"
 export LLVM_SYS_221_PREFIX
 
 UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+	WASMER_ROOT="$WASMER_ROOT" WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 	"$FRESH_ROOT/wasmer/bin/prepare-upstream-checkouts.sh"
 [ -f "$WASMER_ROOT/lib/cli/Cargo.toml" ] || {
 	printf 'missing prepared Wasmer checkout: %s\n' "$WASMER_ROOT" >&2
@@ -215,18 +217,22 @@ cargo build \
 	--features "$FRESH_POSTMASTER_COMPILER_FEATURES"
 if [ "$PORTABLE_INPUTS" -eq 1 ]; then
 	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+		WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 		"$FRESH_ROOT/wasmer/bin/build-patched-wasix-libc-sysroot.sh" \
 		--no-build --portable-inputs
 elif [ -f "$WASIXCC_SYSROOT_PREFIX/.oliphaunt-patched-sysroots.manifest" ] && \
 	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+	WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 	"$FRESH_ROOT/wasmer/bin/build-patched-wasix-libc-sysroot.sh" --no-build; then
 	:
 else
 	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+	WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 	"$FRESH_ROOT/wasmer/bin/build-patched-wasix-libc-sysroot.sh"
 fi
 
 UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+	WASMER_ROOT="$WASMER_ROOT" WASIX_LIBC_ROOT="$WASIX_LIBC_ROOT" \
 	"$FRESH_ROOT/wasmer/bin/prepare-upstream-checkouts.sh"
 
 wasmer_bin="$WASMER_TARGET_DIR/release/wasmer"
@@ -270,7 +276,7 @@ trap 'rm -f "$temporary_manifest"' EXIT
 	printf 'wasmer_napi_commit=%s\n' "$(git -C "$WASMER_ROOT/lib/napi" rev-parse HEAD)"
 	printf 'wasmer_test_files_commit=%s\n' "$(git -C "$WASMER_ROOT/wasmer-test-files" rev-parse HEAD)"
 	printf 'wasmer_spec_commit=%s\n' "$(git -C "$WASMER_ROOT/tests/wast/spec" rev-parse HEAD)"
-	printf 'wasmer_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_PATCH")"
+	printf 'wasmer_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$WASMER_PATCH")"
 	printf 'wasmer_prepared_signature_sha256=%s\n' "$(fresh_wasmer_bin_hash "$prepared_signature")"
 	printf 'wasmer_cargo_lock_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_ROOT/Cargo.lock")"
 	printf 'wasmer_binary_sha256=%s\n' "$(fresh_wasmer_bin_hash "$wasmer_bin")"
@@ -280,7 +286,7 @@ trap 'rm -f "$temporary_manifest"' EXIT
 	printf 'runtime_abi_id=%s\n' "$runtime_abi_id"
 	printf 'artifact_abi_version=%s\n' "$FRESH_WASMER_ARTIFACT_ABI_VERSION"
 	printf 'wasix_libc_source_commit=%s\n' "$(git -C "$UPSTREAM_WORK_ROOT/wasix-libc" rev-parse HEAD)"
-	printf 'wasix_libc_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASIX_LIBC_PATCH")"
+	printf 'wasix_libc_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$WASIX_LIBC_PATCH")"
 	printf 'wasix_libc_prepared_signature_sha256=%s\n' "$(fresh_wasmer_bin_hash "$libc_prepared_signature")"
 	printf 'sysroot_carrier_manifest_sha256=%s\n' "$(fresh_wasmer_bin_hash "$carrier_manifest")"
 	printf 'sysroot_variant=%s\n' "$WASIXCC_SYSROOT_VARIANT"
@@ -308,7 +314,7 @@ trap 'rm -f "$temporary_executor_receipt"' EXIT
 	printf 'build_recipe_sha256=%s\n' "$(fresh_runtime_build_recipe_sha256)"
 	printf 'wasmer_build_receipt_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_BUILD_RECEIPT_OUT")"
 	printf 'wasmer_source_commit=%s\n' "$(git -C "$WASMER_ROOT" rev-parse HEAD)"
-	printf 'wasmer_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_PATCH")"
+	printf 'wasmer_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$WASMER_PATCH")"
 	printf 'wasmer_prepared_signature_sha256=%s\n' "$(fresh_wasmer_bin_hash "$prepared_signature")"
 	printf 'wasmer_cargo_lock_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_ROOT/Cargo.lock")"
 	printf 'runtime_abi_id=%s\n' "$runtime_abi_id"

@@ -13,6 +13,7 @@ import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { standardSeed } from './resources.js';
 
 import { expectStructuredApi } from './structured-api-smoke.js';
+import { expectConfiguredIdentity } from './configured-identity-smoke.js';
 
 const status = requireElement<HTMLParagraphElement>('status');
 const sql = requireElement<HTMLTextAreaElement>('sql');
@@ -102,6 +103,7 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
+    await expectConfiguredIdentity();
     smokePhase('OPFS persistence');
     const opfsAnswers = await expectOpfsPersistence(extensions);
     smokePhase('OPFS crash recovery');
@@ -115,6 +117,7 @@ try {
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
       directWorkers: 0,
+      configuredIdentity: true,
       opfsTransport: 'synchronous-access',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,
@@ -307,10 +310,11 @@ async function expectOwnedRawProtocolResponse(database: OliphauntDatabase): Prom
     simpleQuery("SELECT repeat('a', 10240) AS retained_payload"),
   );
   const snapshot = retained.slice();
+  // Many ordinary rows must not hit an application-specific 64 MiB quota.
   const large = await database.execProtocolRaw(
-    simpleQuery("SELECT repeat('z', 1048576) AS large_payload"),
+    simpleQuery("SELECT repeat('z', 8192) AS large_payload FROM generate_series(1, 10240)"),
   );
-  if (large.byteLength < 1048576) {
+  if (large.byteLength < 80 * 1024 * 1024) {
     throw new Error(
       `browser worker returned a truncated large PGWire response: ${large.byteLength}`,
     );
@@ -321,6 +325,7 @@ async function expectOwnedRawProtocolResponse(database: OliphauntDatabase): Prom
   ) {
     throw new Error('browser worker response changed after the guest reused its output memory');
   }
+  await expectAnswer(database);
 }
 
 async function expectClockConsistency(database: OliphauntDatabase): Promise<void> {

@@ -128,7 +128,7 @@ tasks:
       cargo test -p oliphaunt-wasix --doc --locked
       cargo test -p oliphaunt-wasix --doc --locked --features tools
       cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features extensions,tools,extension-vector --test public_api --no-tests=fail --test-threads=1
-      cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1
+      cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features tools-execution --lib --no-tests=fail --test-threads=1
     env:
       # Cargo releases its build lock before rustdoc consumes the compiled libraries.
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/unit"

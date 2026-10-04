@@ -142,6 +142,31 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('mandatory artifact consumers check direct producer success explicitly', () => {
+    for (const id of [
+      'extension-artifacts-native-android',
+      'extension-artifacts-wasix',
+      'mobile-extension-packages-android',
+      'mobile-extension-packages-ios',
+      'liboliphaunt-native-release-assets',
+      'swift-sdk-package',
+      'liboliphaunt-wasix-release-assets',
+      'mobile-build-ios',
+      'mobile-e2e-ios',
+    ]) {
+      const job = workflow.jobs[id];
+      assert(job.if.startsWith('${{ !cancelled() && '), `${id} can inherit skipped ancestors`);
+      for (const dependency of [job.needs].flat()) {
+        assert(
+          job.if.includes(`needs.${dependency}.result == 'success'`),
+          `${id} must require successful ${dependency}`,
+        );
+      }
+      assert(!job.if.includes('needs.*.result'), `${id} relies on wildcard status filtering`);
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('WASIX aggregates require successful selected hosts before accepting their artifacts', () => {
     for (const id of ['wasix-napi', 'liboliphaunt-wasix-aot']) {
       for (const host of ['linux', 'other']) {

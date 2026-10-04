@@ -12,7 +12,7 @@ WASIX_LIBC_ROOT="${WASIX_LIBC_ROOT:-$UPSTREAM_WORK_ROOT/wasix-libc}"
 OUTPUT_PREFIX="${OUTPUT_PREFIX:-$UPSTREAM_WORK_ROOT/build/patched-wasixcc-sysroot}"
 BUILD_LOG="${BUILD_LOG:-$UPSTREAM_WORK_ROOT/reports/wasix-libc-build.log}"
 WASIX_LIBC_VARIANTS="${WASIX_LIBC_VARIANTS:-sysroot-ehpic sysroot-exnref-ehpic}"
-WASIX_LIBC_PATCH="$UPSTREAM_SOURCE_ROOT/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+WASIX_LIBC_PATCH="$UPSTREAM_SOURCE_ROOT/patches/wasix-libc/series"
 VARIANT_MANIFEST_NAME=".oliphaunt-patched-sysroot.manifest"
 CARRIER_MANIFEST_NAME=".oliphaunt-patched-sysroots.manifest"
 
@@ -313,10 +313,14 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 fi
 SOURCE_COMMIT="$(git -C "$WASIX_LIBC_ROOT" rev-parse --verify 'HEAD^{commit}')" ||
 	fail "wasix-libc checkout is not a Git worktree: $WASIX_LIBC_ROOT"
-if ! git -C "$WASIX_LIBC_ROOT" apply --reverse --check "$WASIX_LIBC_PATCH" >/dev/null 2>&1; then
-	fail "required wasix-libc patch is not applied cleanly: $WASIX_LIBC_PATCH"
-fi
-SOURCE_PATCH_SHA256="$(sha256_file "$WASIX_LIBC_PATCH")"
+SOURCE_PATCH_SHA256="$(fresh_runtime_patch_hash "$WASIX_LIBC_PATCH")"
+# Later series members intentionally modify earlier ones. Reverse --check on
+# individual patch files cannot validate that composed result; use the existing
+# prepared-tree receipt, which binds the pin, ordered series and complete tree.
+fresh_require_prepared_worktree wasix-libc "$WASIX_LIBC_ROOT" \
+	"$FRESH_WASIX_LIBC_SOURCE_COMMIT" "$SOURCE_PATCH_SHA256" "" \
+	"$UPSTREAM_WORK_ROOT/.prepared/wasix-libc.signature" ||
+	fail "wasix-libc does not match its prepared patch series"
 SOURCE_WORKTREE_SHA256="$(source_worktree_sha256)"
 
 if [ "$PORTABLE_INPUTS" -eq 1 ]; then

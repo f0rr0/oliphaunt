@@ -1,0 +1,698 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Thu, 27 Aug 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: model trusted embedded sessions
+
+Native serves FE/BE protocol from standalone process topology. Previously the
+entrypoint selected B_BACKEND only after InitProcess, so PGPROC remained
+non-regular; InitPostgres then installed bootstrap postgres identity, skipped
+LOGIN and database policy, ignored role/database settings, and fired login
+triggers as the wrong user.
+
+Add a private one-way UNSELECTED to PREPARED to ATTACHED lifecycle and carry
+an explicit trusted-client flag into InitPostgres. Keep IsUnderPostmaster and
+IsPostmasterEnvironment false. Pin synchronous I/O and zero worker topology
+before shared-memory sizing, reject later live parallel settings, select
+B_BACKEND before InitProcess, and populate the synthetic Port identity.
+
+The attached branch trusts the in-process host to select a role instead of
+running HBA or ClientAuthentication_hook. It still resolves the catalog role,
+enforces LOGIN and connection limits, checks database access, loads
+pg_db_role_setting, and leaves system_user unset because no authentication
+provider or principal ran. Genuine recovery standalone mode retains its bootstrap escape
+hatch.
+
+Use the positive session capability only for enumerated normal-user semantics:
+event triggers, text-search validation, OID allocation, XID and MultiXact stop
+protection, and catalog-backed superuser checks. Keep XLOG ownership, worker
+launch, postmaster signalling, latches, and supervisor topology on their
+original predicates; reject reload, rotation, and promotion before
+absent-postmaster signalling.
+---
+ src/backend/access/transam/multixact.c    |   5 +-
+ src/backend/access/transam/varsup.c       |   6 +-
+ src/backend/access/transam/xlogfuncs.c    |   5 +
+ src/backend/commands/event_trigger.c      |   2 +-
+ src/backend/commands/tsearchcmds.c        |   2 +-
+ src/backend/storage/ipc/signalfuncs.c     |  12 +++
+ src/backend/tcop/backend_startup.c        |   2 +-
+ src/backend/tcop/postgres.c               |  32 +++++--
+ src/backend/utils/init/Makefile           |   1 +
+ src/backend/utils/init/embedded_session.c | 112 ++++++++++++++++++++++
+ src/backend/utils/init/meson.build        |   1 +
+ src/backend/utils/init/miscinit.c         |   8 +-
+ src/backend/utils/init/postinit.c         |  41 +++++++-
+ src/backend/utils/misc/guc_tables.c       |  31 +++++-
+ src/backend/utils/misc/superuser.c        |   2 +-
+ src/include/miscadmin.h                   |  27 ++++++
+ src/include/tcop/tcopprot.h               |   6 +-
+ 17 files changed, 266 insertions(+), 29 deletions(-)
+ create mode 100644 src/backend/utils/init/embedded_session.c
+
+diff --git a/src/backend/access/transam/multixact.c b/src/backend/access/transam/multixact.c
+index da2a174..6d83697 100644
+--- a/src/backend/access/transam/multixact.c
++++ b/src/backend/access/transam/multixact.c
+@@ -1248,7 +1248,7 @@ GetNewMultiXactId(int nmembers, MultiXactOffset *offset)
+ 
+ 		LWLockRelease(MultiXactGenLock);
+ 
+-		if (IsUnderPostmaster &&
++		if (IsNormalUserSession() &&
+ 			!MultiXactIdPrecedes(result, multiStopLimit))
+ 		{
+ 			char	   *oldest_datname = get_database_name(oldest_datoid);
+@@ -1257,7 +1257,8 @@ GetNewMultiXactId(int nmembers, MultiXactOffset *offset)
+ 			 * Immediately kick autovacuum into action as we're already in
+ 			 * ERROR territory.
+ 			 */
+-			SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_LAUNCHER);
++			if (IsUnderPostmaster)
++				SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_LAUNCHER);
+ 
+ 			/* complain even if that DB has disappeared */
+ 			if (oldest_datname)
+diff --git a/src/backend/access/transam/varsup.c b/src/backend/access/transam/varsup.c
+index fe89578..1cb34ad 100644
+--- a/src/backend/access/transam/varsup.c
++++ b/src/backend/access/transam/varsup.c
+@@ -144,7 +144,7 @@ GetNewTransactionId(bool isSubXact)
+ 		if (IsUnderPostmaster && (xid % 65536) == 0)
+ 			SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_LAUNCHER);
+ 
+-		if (IsUnderPostmaster &&
++		if (IsNormalUserSession() &&
+ 			TransactionIdFollowsOrEquals(xid, xidStopLimit))
+ 		{
+ 			char	   *oldest_datname = get_database_name(oldest_datoid);
+@@ -578,7 +578,7 @@ GetNewObjectId(void)
+ 	 */
+ 	if (TransamVariables->nextOid < ((Oid) FirstNormalObjectId))
+ 	{
+-		if (IsPostmasterEnvironment)
++		if (IsNormalUserSession())
+ 		{
+ 			/* wraparound, or first post-initdb assignment, in normal mode */
+ 			TransamVariables->nextOid = FirstNormalObjectId;
+@@ -623,7 +623,7 @@ static void
+ SetNextObjectId(Oid nextOid)
+ {
+ 	/* Safety check, this is only allowable during initdb */
+-	if (IsPostmasterEnvironment)
++	if (IsNormalUserSession())
+ 		elog(ERROR, "cannot advance OID counter anymore");
+ 
+ 	/* Taking the lock is, therefore, just pro forma; but do it anyway */
+diff --git a/src/backend/access/transam/xlogfuncs.c b/src/backend/access/transam/xlogfuncs.c
+index 8c30901..95bc950 100644
+--- a/src/backend/access/transam/xlogfuncs.c
++++ b/src/backend/access/transam/xlogfuncs.c
+@@ -674,6 +674,11 @@ pg_promote(PG_FUNCTION_ARGS)
+ 	FILE	   *promote_file;
+ 	int			i;
+ 
++	if (IsTrustedEmbeddedSession())
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("standby promotion is not supported in a trusted embedded session")));
++
+ 	if (!RecoveryInProgress())
+ 		ereport(ERROR,
+ 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+diff --git a/src/backend/commands/event_trigger.c b/src/backend/commands/event_trigger.c
+index 4defe1b..6f100b6 100644
+--- a/src/backend/commands/event_trigger.c
++++ b/src/backend/commands/event_trigger.c
+@@ -89,7 +89,7 @@ static bool
+ EventTriggersHaveRunnableBackend(void)
+ {
+ #ifdef OLIPHAUNT_EMBEDDED
+-	return IsUnderPostmaster || AmRegularBackendProcess();
++	return IsNormalUserSession();
+ #else
+ 	return IsUnderPostmaster;
+ #endif
+diff --git a/src/backend/commands/tsearchcmds.c b/src/backend/commands/tsearchcmds.c
+index ab16d42..97a3ec6 100644
+--- a/src/backend/commands/tsearchcmds.c
++++ b/src/backend/commands/tsearchcmds.c
+@@ -352,7 +352,7 @@ verify_dictoptions(Oid tmplId, List *dictoptions)
+ 	 * that can't be translated into template1's encoding).  We want to create
+ 	 * them anyway, since they might be usable later in other databases.
+ 	 */
+-	if (!IsUnderPostmaster)
++	if (!IsNormalUserSession())
+ 		return;
+ 
+ 	tup = SearchSysCache1(TSTEMPLATEOID, ObjectIdGetDatum(tmplId));
+diff --git a/src/backend/storage/ipc/signalfuncs.c b/src/backend/storage/ipc/signalfuncs.c
+index a3a670b..563bc04 100644
+--- a/src/backend/storage/ipc/signalfuncs.c
++++ b/src/backend/storage/ipc/signalfuncs.c
+@@ -287,6 +287,11 @@ pg_terminate_backend(PG_FUNCTION_ARGS)
+ Datum
+ pg_reload_conf(PG_FUNCTION_ARGS)
+ {
++	if (IsTrustedEmbeddedSession())
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("configuration reload is not supported in a trusted embedded session")));
++
+ 	if (kill(PostmasterPid, SIGHUP))
+ 	{
+ 		ereport(WARNING,
+@@ -307,6 +312,13 @@ pg_reload_conf(PG_FUNCTION_ARGS)
+ Datum
+ pg_rotate_logfile(PG_FUNCTION_ARGS)
+ {
++	if (IsTrustedEmbeddedSession())
++	{
++		ereport(WARNING,
++				(errmsg("log rotation is not supported in a trusted embedded session")));
++		PG_RETURN_BOOL(false);
++	}
++
+ 	if (!Logging_collector)
+ 	{
+ 		ereport(WARNING,
+diff --git a/src/backend/tcop/backend_startup.c b/src/backend/tcop/backend_startup.c
+index c89fe12..f9e8884 100644
+--- a/src/backend/tcop/backend_startup.c
++++ b/src/backend/tcop/backend_startup.c
+@@ -121,7 +121,7 @@ BackendMain(const void *startup_data, size_t startup_data_len)
+ 	 */
+ 	MemoryContextSwitchTo(TopMemoryContext);
+ 
+-	PostgresMain(MyProcPort->database_name, MyProcPort->user_name);
++	PostgresMain(MyProcPort->database_name, MyProcPort->user_name, 0);
+ }
+ 
+ 
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index be79438..fd02019 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4185,7 +4185,7 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	 * Now that sufficient infrastructure has been initialized, PostgresMain()
+ 	 * can do the rest.
+ 	 */
+-	PostgresMain(dbname, username);
++	PostgresMain(dbname, username, 0);
+ }
+ 
+ #ifdef OLIPHAUNT_EMBEDDED
+@@ -4434,6 +4434,11 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 		goto embedded_cleanup;
+ 	}
+ 	lifecycle->entrypoint_admitted = true;
++	if (!PrepareTrustedEmbeddedSession())
++	{
++		lifecycle->rc = -1;
++		goto embedded_cleanup;
++	}
+ 
+ 	if (progname == NULL)
+ 		progname = get_progname(argv[0]);
+@@ -4471,6 +4476,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 		lifecycle->rc = -1;
+ 		goto embedded_cleanup;
+ 	}
++	ConfigurePreparedTrustedEmbeddedSession();
+ 
+ 	checkDataDir();
+ 	lifecycle->cwd_restore_required = true;
+@@ -4487,7 +4493,11 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	CreateSharedMemoryAndSemaphores();
+ 	set_max_safe_fds();
+ 	PgStartTime = GetCurrentTimestamp();
++	MyBackendType = B_BACKEND;
+ 	InitProcess();
++	if (!MyProc->isRegularBackend)
++		ereport(FATAL,
++				(errmsg("trusted embedded session did not initialize a regular backend process")));
+ 
+ 	socket_error = oliphaunt_embedded_create_socketpair(lifecycle->socket_pair);
+ 	if (socket_error != 0)
+@@ -4512,8 +4522,10 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	client_sock.raddr.salen = sizeof(struct sockaddr_in);
+ 
+ 	whereToSendOutput = DestRemote;
+-	MyBackendType = B_BACKEND;
+ 	MyProcPort = pq_init(&client_sock);
++	MyProcPort->proto = PG_PROTOCOL_EARLIEST;
++	MyProcPort->database_name = pstrdup(dbname);
++	MyProcPort->user_name = pstrdup(username);
+ 	MyProcPort->oliphaunt_io = io;
+ 
+ 	/*
+@@ -4529,7 +4541,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 		pq_endmessage(&buf);
+ 	}
+ 
+-	PostgresMain(dbname, username);
++	PostgresMain(dbname, username, INIT_PG_TRUSTED_CLIENT);
+ 	oliphaunt_embedded_proc_exit(0);
+ 	lifecycle->rc = 0;
+ 
+@@ -4590,14 +4602,16 @@ embedded_cleanup:
+  *	   postgres main loop -- all backends, interactive or otherwise loop here
+  *
+  * dbname is the name of the database to connect to, username is the
+- * PostgreSQL user name to be used for the session.
++ * PostgreSQL user name to be used for the session, and init_postgres_flags
++ * carries explicit InitPostgres startup policy from the owning entrypoint.
+  *
+  * NB: Single user mode specific setup should go to PostgresSingleUserMain()
+  * if reasonably possible.
+  * ----------------------------------------------------------------
+  */
+ void
+-PostgresMain(const char *dbname, const char *username)
++PostgresMain(const char *dbname, const char *username,
++			 bits32 init_postgres_flags)
+ {
+ 	sigjmp_buf	local_sigjmp_buf;
+ 
+@@ -4608,6 +4622,11 @@ PostgresMain(const char *dbname, const char *username)
+ 
+ 	Assert(dbname != NULL);
+ 	Assert(username != NULL);
++#ifdef OLIPHAUNT_EMBEDDED
++	Assert((init_postgres_flags & ~INIT_PG_TRUSTED_CLIENT) == 0);
++#else
++	Assert(init_postgres_flags == 0);
++#endif
+ 
+ 	Assert(GetProcessingMode() == InitProcessing);
+ 
+@@ -4709,7 +4728,8 @@ PostgresMain(const char *dbname, const char *username)
+ 	 */
+ 	InitPostgres(dbname, InvalidOid,	/* database to connect to */
+ 				 username, InvalidOid,	/* role to connect as */
+-				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
++				 init_postgres_flags |
++				 ((!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0),
+ 				 NULL);			/* no out_dbname */
+ 
+ 	/*
+diff --git a/src/backend/utils/init/Makefile b/src/backend/utils/init/Makefile
+index 18c9474..5f9b641 100644
+--- a/src/backend/utils/init/Makefile
++++ b/src/backend/utils/init/Makefile
+@@ -13,6 +13,7 @@ top_builddir = ../../../..
+ include $(top_builddir)/src/Makefile.global
+ 
+ OBJS = \
++	embedded_session.o \
+ 	globals.o \
+ 	miscinit.o \
+ 	postinit.o \
+diff --git a/src/backend/utils/init/embedded_session.c b/src/backend/utils/init/embedded_session.c
+new file mode 100644
+index 0000000..d506094
+--- /dev/null
++++ b/src/backend/utils/init/embedded_session.c
+@@ -0,0 +1,112 @@
++/*-------------------------------------------------------------------------
++ *
++ * embedded_session.c
++ *	  trusted embedded session lifecycle and topology policy
++ *
++ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
++ * Portions Copyright (c) 1994, Regents of the University of California
++ *
++ * IDENTIFICATION
++ *	  src/backend/utils/init/embedded_session.c
++ *
++ *-------------------------------------------------------------------------
++ */
++#include "postgres.h"
++
++#ifdef OLIPHAUNT_EMBEDDED
++
++#include "miscadmin.h"
++#include "optimizer/cost.h"
++#include "port/atomics.h"
++#include "replication/walsender.h"
++#include "storage/aio.h"
++#include "utils/guc.h"
++
++typedef enum TrustedEmbeddedSessionLifecycle
++{
++	TRUSTED_EMBEDDED_SESSION_UNSELECTED = 0,
++	TRUSTED_EMBEDDED_SESSION_PREPARED,
++	TRUSTED_EMBEDDED_SESSION_ATTACHED
++} TrustedEmbeddedSessionLifecycle;
++
++/*
++ * Preparation and attachment are distinct one-way transitions.  PREPARED is
++ * deliberately not an active user session: PostgreSQL startup still owns the
++ * decision to attach the trusted client at the catalog-safe point.
++ */
++static pg_atomic_uint32 trusted_embedded_session_lifecycle = {0};
++
++bool
++PrepareTrustedEmbeddedSession(void)
++{
++	uint32		expected = TRUSTED_EMBEDDED_SESSION_UNSELECTED;
++
++	return pg_atomic_compare_exchange_u32(
++		&trusted_embedded_session_lifecycle,
++		&expected,
++		TRUSTED_EMBEDDED_SESSION_PREPARED);
++}
++
++static bool
++trusted_embedded_settings_are_safe(void)
++{
++	return io_method == IOMETHOD_SYNC &&
++		max_worker_processes == 0 &&
++		max_parallel_workers == 0 &&
++		max_parallel_workers_per_gather == 0 &&
++		max_parallel_maintenance_workers == 0 &&
++		max_wal_senders == 0;
++}
++
++void
++ConfigurePreparedTrustedEmbeddedSession(void)
++{
++	if (pg_atomic_read_u32(&trusted_embedded_session_lifecycle) !=
++		TRUSTED_EMBEDDED_SESSION_PREPARED)
++		ereport(FATAL,
++				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
++				 errmsg("trusted embedded session was not prepared before configuration")));
++
++	/*
++	 * Pin topology before shared-memory sizing.  PGC_S_OVERRIDE wins over
++	 * database and role defaults; GUC check hooks reject later live nonzero
++	 * worker settings after attachment.
++	 */
++	SetConfigOption("io_method", "sync", PGC_POSTMASTER, PGC_S_OVERRIDE);
++	SetConfigOption("max_worker_processes", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_parallel_workers", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_parallel_workers_per_gather", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_parallel_maintenance_workers", "0", PGC_POSTMASTER,
++					PGC_S_OVERRIDE);
++	SetConfigOption("max_wal_senders", "0", PGC_POSTMASTER, PGC_S_OVERRIDE);
++
++	if (!trusted_embedded_settings_are_safe())
++		ereport(FATAL,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("trusted embedded sessions require synchronous I/O and zero PostgreSQL workers")));
++}
++
++bool
++AttachPreparedTrustedEmbeddedSession(void)
++{
++	uint32		expected = TRUSTED_EMBEDDED_SESSION_PREPARED;
++
++	if (!trusted_embedded_settings_are_safe())
++		return false;
++	return pg_atomic_compare_exchange_u32(
++		&trusted_embedded_session_lifecycle,
++		&expected,
++		TRUSTED_EMBEDDED_SESSION_ATTACHED);
++}
++
++bool
++IsTrustedEmbeddedSession(void)
++{
++	return pg_atomic_read_u32(&trusted_embedded_session_lifecycle) ==
++		TRUSTED_EMBEDDED_SESSION_ATTACHED;
++}
++
++#endif
+diff --git a/src/backend/utils/init/meson.build b/src/backend/utils/init/meson.build
+index c5d42e6..3d9af56 100644
+--- a/src/backend/utils/init/meson.build
++++ b/src/backend/utils/init/meson.build
+@@ -1,6 +1,7 @@
+ # Copyright (c) 2022-2025, PostgreSQL Global Development Group
+ 
+ backend_sources += files(
++  'embedded_session.c',
+   'globals.c',
+   'miscinit.c',
+   'postinit.c',
+diff --git a/src/backend/utils/init/miscinit.c b/src/backend/utils/init/miscinit.c
+index df18257..2000cc1 100644
+--- a/src/backend/utils/init/miscinit.c
++++ b/src/backend/utils/init/miscinit.c
+@@ -842,11 +842,11 @@ InitializeSessionUserId(const char *rolename, Oid roleid,
+ 					PGC_BACKEND, PGC_S_OVERRIDE);
+ 
+ 	/*
+-	 * These next checks are not enforced when in standalone mode, so that
+-	 * there is a way to recover from sillinesses like "UPDATE pg_authid SET
+-	 * rolcanlogin = false;".
++	 * These checks apply to normal user sessions.  Genuine recovery standalone
++	 * mode uses InitializeSessionUserIdStandalone() and retains its escape
++	 * hatch for damaged catalogs.
+ 	 */
+-	if (IsUnderPostmaster)
++	if (IsNormalUserSession())
+ 	{
+ 		/*
+ 		 * Is role allowed to login at all?  (But background workers can
+diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
+index c86ceef..497ce5e 100644
+--- a/src/backend/utils/init/postinit.c
++++ b/src/backend/utils/init/postinit.c
+@@ -351,7 +351,7 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
+ 	 * a way to recover from disabling all access to all databases, for
+ 	 * example "UPDATE pg_database SET datallowconn = false;".
+ 	 */
+-	if (IsUnderPostmaster)
++	if (IsNormalUserSession())
+ 	{
+ 		/*
+ 		 * Check that the database is currently allowing connections.
+@@ -677,6 +677,9 @@ BaseInit(void)
+  *	  - INIT_PG_LOAD_SESSION_LIBS to honor [session|local]_preload_libraries.
+  *	  - INIT_PG_OVERRIDE_ALLOW_CONNS to connect despite !datallowconn.
+  *	  - INIT_PG_OVERRIDE_ROLE_LOGIN to connect despite !rolcanlogin.
++ *	  - INIT_PG_TRUSTED_CLIENT (embedded builds) to use a prepared
++ *	    host-authenticated identity
++ *	    while retaining standalone process topology.
+  *	out_dbname: optional output parameter, see below; pass NULL if not used
+  *
+  * The database can be specified by name, using the in_dbname parameter, or by
+@@ -716,6 +719,9 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ {
+ 	bool		bootstrap = IsBootstrapProcessingMode();
+ 	bool		am_superuser;
++#ifdef OLIPHAUNT_EMBEDDED
++	bool		trusted_client = (flags & INIT_PG_TRUSTED_CLIENT) != 0;
++#endif
+ 	char	   *fullpath;
+ 	char		dbname[NAMEDATALEN];
+ 	int			nfree = 0;
+@@ -855,19 +861,44 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 		XactIsoLevel = XACT_READ_COMMITTED;
+ 	}
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++	if (trusted_client)
++	{
++		if (bootstrap || IsPostmasterEnvironment || IsUnderPostmaster ||
++			!AmRegularBackendProcess() || MyProcPort == NULL)
++			ereport(FATAL,
++					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
++					 errmsg("trusted client requires a standalone regular backend and protocol port")));
++		if (!AttachPreparedTrustedEmbeddedSession())
++			ereport(FATAL,
++					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
++					 errmsg("trusted embedded session attach was not prepared or was already consumed")));
++	}
++#endif
++
+ 	/*
+ 	 * Perform client authentication if necessary, then figure out our
+ 	 * postgres user ID, and see if we are a superuser.
+ 	 *
+-	 * In standalone mode, autovacuum worker processes and slot sync worker
+-	 * process, we use a fixed ID, otherwise we figure it out from the
+-	 * authenticated user name.
++	 * In recovery standalone mode, autovacuum worker processes and slot sync
++	 * worker process, we use a fixed ID.  A prepared trusted client has no HBA
++	 * exchange, but still resolves the host-authenticated name through the
++	 * catalogs and enforces normal login policy.
+ 	 */
+ 	if (bootstrap || AmAutoVacuumWorkerProcess() || AmLogicalSlotSyncWorkerProcess())
+ 	{
+ 		InitializeSessionUserIdStandalone();
+ 		am_superuser = true;
+ 	}
++#ifdef OLIPHAUNT_EMBEDDED
++	else if (trusted_client)
++	{
++		Assert(MyProcPort != NULL);
++		Assert(IsTrustedEmbeddedSession());
++		InitializeSessionUserId(username, useroid, false);
++		am_superuser = superuser();
++	}
++#endif
+ 	else if (!IsUnderPostmaster)
+ 	{
+ 		InitializeSessionUserIdStandalone();
+@@ -1311,7 +1342,7 @@ process_settings(Oid databaseid, Oid roleid)
+ 	Relation	relsetting;
+ 	Snapshot	snapshot;
+ 
+-	if (!IsUnderPostmaster)
++	if (!IsNormalUserSession())
+ 		return;
+ 
+ 	relsetting = table_open(DbRoleSettingRelationId, AccessShareLock);
+diff --git a/src/backend/utils/misc/guc_tables.c b/src/backend/utils/misc/guc_tables.c
+index 6b82a23..49646da 100644
+--- a/src/backend/utils/misc/guc_tables.c
++++ b/src/backend/utils/misc/guc_tables.c
+@@ -55,6 +55,7 @@
+ #include "libpq/libpq.h"
+ #include "libpq/oauth.h"
+ #include "libpq/scram.h"
++#include "miscadmin.h"
+ #include "nodes/queryjumble.h"
+ #include "optimizer/cost.h"
+ #include "optimizer/geqo.h"
+@@ -112,6 +113,30 @@
+ #define PG_KRB_SRVTAB ""
+ #endif
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++static bool
++check_trusted_embedded_worker_limit(int *newval, void **extra,
++									GucSource source)
++{
++	(void) extra;
++
++	/* PGC_S_TEST validates stored values without changing this process. */
++	if (IsTrustedEmbeddedSession() &&
++		source != PGC_S_TEST &&
++		source >= PGC_S_OVERRIDE &&
++		*newval != 0)
++	{
++		GUC_check_errdetail("Trusted embedded sessions cannot launch PostgreSQL workers.");
++		return false;
++	}
++
++	return true;
++}
++#define CHECK_TRUSTED_EMBEDDED_WORKER_LIMIT check_trusted_embedded_worker_limit
++#else
++#define CHECK_TRUSTED_EMBEDDED_WORKER_LIMIT NULL
++#endif
++
+ /*
+  * Options for enum values defined in this module.
+  *
+@@ -3620,7 +3645,7 @@ struct config_int ConfigureNamesInt[] =
+ 		},
+ 		&max_parallel_maintenance_workers,
+ 		2, 0, MAX_PARALLEL_WORKER_LIMIT,
+-		NULL, NULL, NULL
++		CHECK_TRUSTED_EMBEDDED_WORKER_LIMIT, NULL, NULL
+ 	},
+ 
+ 	{
+@@ -3631,7 +3656,7 @@ struct config_int ConfigureNamesInt[] =
+ 		},
+ 		&max_parallel_workers_per_gather,
+ 		2, 0, MAX_PARALLEL_WORKER_LIMIT,
+-		NULL, NULL, NULL
++		CHECK_TRUSTED_EMBEDDED_WORKER_LIMIT, NULL, NULL
+ 	},
+ 
+ 	{
+@@ -3642,7 +3667,7 @@ struct config_int ConfigureNamesInt[] =
+ 		},
+ 		&max_parallel_workers,
+ 		8, 0, MAX_PARALLEL_WORKER_LIMIT,
+-		NULL, NULL, NULL
++		CHECK_TRUSTED_EMBEDDED_WORKER_LIMIT, NULL, NULL
+ 	},
+ 
+ 	{
+diff --git a/src/backend/utils/misc/superuser.c b/src/backend/utils/misc/superuser.c
+index 5858b0a..eb896e2 100644
+--- a/src/backend/utils/misc/superuser.c
++++ b/src/backend/utils/misc/superuser.c
+@@ -63,7 +63,7 @@ superuser_arg(Oid roleid)
+ 		return last_roleid_is_super;
+ 
+ 	/* Special escape path in case you deleted all your users. */
+-	if (!IsUnderPostmaster && roleid == BOOTSTRAP_SUPERUSERID)
++	if (!IsNormalUserSession() && roleid == BOOTSTRAP_SUPERUSERID)
+ 		return true;
+ 
+ 	/* OK, look up the information in pg_authid */
+diff --git a/src/include/miscadmin.h b/src/include/miscadmin.h
+index 9a7d733..addc346 100644
+--- a/src/include/miscadmin.h
++++ b/src/include/miscadmin.h
+@@ -168,6 +168,30 @@ extern PGDLLIMPORT bool IsPostmasterEnvironment;
+ extern PGDLLIMPORT bool IsUnderPostmaster;
+ extern PGDLLIMPORT bool IsBinaryUpgrade;
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++extern bool PrepareTrustedEmbeddedSession(void);
++extern void ConfigurePreparedTrustedEmbeddedSession(void);
++extern bool AttachPreparedTrustedEmbeddedSession(void);
++extern bool IsTrustedEmbeddedSession(void);
++#else
++static inline bool
++IsTrustedEmbeddedSession(void)
++{
++	return false;
++}
++#endif
++
++/*
++ * A normal user session is either a real postmaster child or an explicitly
++ * attached trusted embedded client.  This says nothing about supervisor,
++ * worker, socket, or XLOG topology.
++ */
++static inline bool
++IsNormalUserSession(void)
++{
++	return IsUnderPostmaster || IsTrustedEmbeddedSession();
++}
++
+ extern PGDLLIMPORT bool ExitOnAnyError;
+ 
+ extern PGDLLIMPORT char *DataDir;
+@@ -499,6 +523,9 @@ extern PGDLLIMPORT ProcessingMode Mode;
+ #define INIT_PG_LOAD_SESSION_LIBS		0x0001
+ #define INIT_PG_OVERRIDE_ALLOW_CONNS	0x0002
+ #define INIT_PG_OVERRIDE_ROLE_LOGIN		0x0004
++#ifdef OLIPHAUNT_EMBEDDED
++#define INIT_PG_TRUSTED_CLIENT			0x0008
++#endif
+ extern void pg_split_opts(char **argv, int *argcp, const char *optstr);
+ extern void InitializeMaxBackends(void);
+ extern void InitializeFastPathLocks(void);
+diff --git a/src/include/tcop/tcopprot.h b/src/include/tcop/tcopprot.h
+index 8e3ab1e..69164e1 100644
+--- a/src/include/tcop/tcopprot.h
++++ b/src/include/tcop/tcopprot.h
+@@ -86,12 +86,14 @@ extern int	oliphaunt_embedded_main(int argc, char *argv[],
+ extern void PostgresSingleUserMain(int argc, char *argv[],
+ 								   const char *username);
+ extern void PostgresMain(const char *dbname,
+-						 const char *username);
++						 const char *username,
++						 bits32 init_postgres_flags);
+ #else
+ pg_noreturn extern void PostgresSingleUserMain(int argc, char *argv[],
+ 											   const char *username);
+ pg_noreturn extern void PostgresMain(const char *dbname,
+-									 const char *username);
++									 const char *username,
++									 bits32 init_postgres_flags);
+ #endif
+ extern void ResetUsage(void);
+ extern void ShowUsage(const char *title);
