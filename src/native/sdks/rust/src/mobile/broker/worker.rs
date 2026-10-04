@@ -373,10 +373,10 @@ impl Worker {
                         Ok(()) => {
                             let mut output = output;
                             let mut frames = OutputFrames::default();
-                            let worker = Arc::clone(self);
                             match block_on(request.stream(input, move |bytes| {
                                 if frames.has_copy_input(bytes)? {
-                                    worker.cancel(worker.epoch, begin.request);
+                                    // Native callback recovery sends CopyFail and recovery Sync.
+                                    // Cancelling here races with it and can leave input queued.
                                     return Err(failure(Reason::InvalidRequest, Execution::Completed, false,
                                         "interactive COPY input is not supported by broker operations"));
                                 }

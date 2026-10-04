@@ -26,12 +26,14 @@ tar -czf "$archive" -C "$scratch/payload" .
 export PATH="$scratch/bin:$PATH"
 export OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="$scratch/assets"
 export OLIPHAUNT_INITDB=/must/not/use/a/previous/runtime
+export LD_LIBRARY_PATH="$scratch/existing-library-path"
 "$BASH" src/native/sdks/tests/with-runtime.sh bash -c '
   test -f "$LIBOLIPHAUNT_PATH"
   test -x "$OLIPHAUNT_INITDB"
+  test "$LD_LIBRARY_PATH" = "${OLIPHAUNT_INSTALL_DIR%/runtime}/lib:$OLIPHAUNT_INSTALL_DIR/lib:$1/existing-library-path"
   test ! -e "$OLIPHAUNT_INSTALL_DIR/bin/pg_config"
-  printf "%s\n" "$OLIPHAUNT_INSTALL_DIR" > "$1"
-' -- "$scratch/staged"
+  printf "%s\n" "$OLIPHAUNT_INSTALL_DIR" > "$1/staged"
+' -- "$scratch"
 test ! -e "$(cat "$scratch/staged")"
 tar -czf "$scratch/assets/oliphaunt-tools-1.0.0-$target.tar.gz" -C "$scratch/payload" .
 mkdir -p "$scratch/broker/bin"

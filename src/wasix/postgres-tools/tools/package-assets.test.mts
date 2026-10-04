@@ -2,13 +2,50 @@ import { afterAll, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { zstdCompressSync } from 'node:zlib';
 import { postgresSourceFingerprint } from '../../runtime/tools/package-release-assets.mts';
+import { validateRuntimeAotPayload } from '../../runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts';
+import { canonicalWasixAotMetadata } from '../../runtime/tools/wasix-aot-manifest.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
-import { packageWasixToolsAssets, sha256 } from './package-assets.mts';
+import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
+import { packageWasixToolsAssets, sha256, validateToolsAotPayload } from './package-assets.mts';
 import { packageWasixToolsCargoArtifacts } from './package-cargo-artifacts.mts';
 
 const scratch = mkdtempSync(path.join(tmpdir(), 'wasix-tools-package-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+test('standalone tools AOT validates independently of core and still rejects modified bytes', () => {
+  const root = mkdtempSync(path.join(scratch, 'tools-aot-'));
+  const canonical = canonicalWasixAotMetadata();
+  const target = 'x86_64-unknown-linux-gnu';
+  const raw = Buffer.from('tools AOT fixture');
+  const bytes = zstdCompressSync(raw);
+  const manifest = {
+    'format-version': 1,
+    'source-lane': canonical.sourceLane,
+    'source-fingerprint': postgresSourceFingerprint(),
+    engine: canonical.engine,
+    'wasmer-version': canonical.wasmerVersion,
+    'wasmer-wasix-version': canonical.wasmerWasixVersion,
+    'target-triple': target,
+    artifacts: ['pg_dump', 'psql'].map((name) => ({
+      name: `tool:${name}`,
+      path: `${name}.bin.zst`,
+      sha256: sha256(bytes),
+      'raw-sha256': sha256(raw),
+      'raw-size': raw.length,
+      'module-sha256': sha256(Buffer.from(name)),
+      compressed: true,
+    })),
+  };
+  for (const artifact of manifest.artifacts) writeFileSync(path.join(root, artifact.path), bytes);
+  stageReleaseNotices(root, { profile: 'wasix-aot' });
+  writeFileSync(path.join(root, 'manifest.json'), JSON.stringify(manifest));
+  expect(() => validateToolsAotPayload(root, target)).not.toThrow();
+  expect(() => validateRuntimeAotPayload(root, target)).toThrow(/missing core runtime AOT/u);
+  writeFileSync(path.join(root, 'psql.bin.zst'), 'corrupted');
+  expect(() => validateToolsAotPayload(root, target)).toThrow();
+});
 
 test('independent tools archive freezes real Cargo payload and rejects stale or modified inputs', () => {
   const source = path.join(scratch, 'source');
