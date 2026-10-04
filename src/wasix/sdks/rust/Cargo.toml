@@ -129,7 +129,9 @@ wasmer = { version = "=7.5.0", default-features = false, features = [
 ] }
 
 [target.'cfg(windows)'.dependencies]
-wasmer = { version = "=7.5.0", default-features = false, features = ["v8"] }
+# WASIX sys-minimal retains Sys types. Headless satisfies that dependency
+# without enabling a Windows compiler; runtime stores explicitly use V8.
+wasmer = { version = "=7.5.0", default-features = false, features = ["v8", "headless"] }
 wasmer-wasix = { version = "=0.705.0", default-features = false, features = ["v8"] }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
