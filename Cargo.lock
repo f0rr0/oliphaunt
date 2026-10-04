@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2057,7 +2057,7 @@ dependencies = [
 
 [[package]]
 name = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2073,7 +2073,7 @@ dependencies = [
 
 [[package]]
 name = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2081,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "liboliphaunt-wasix-portable"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
@@ -2671,7 +2671,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-build"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "sha2 0.10.9",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2860,14 +2860,14 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-tools"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "sha2 0.10.9",
 ]
 
 [[package]]
 name = "oliphaunt-wasix-tools-aot-aarch64-apple-darwin"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2875,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2883,7 +2883,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2891,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",

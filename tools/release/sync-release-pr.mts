@@ -44,20 +44,6 @@ const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
   ROOT,
   'src/extensions/generated/docs/extension-evidence.json',
 );
-export const SDK_INSTALL_VERSION_RULES = Object.freeze([
-  {
-    product: 'oliphaunt-swift',
-    file: 'src/native/sdks/swift/README.md',
-    prefix: '.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "',
-    suffix: '")',
-  },
-  ...['src/native/sdks/kotlin/README.md'].map((file) => ({
-    product: 'oliphaunt-kotlin',
-    file,
-    prefix: 'implementation("dev.oliphaunt:oliphaunt-android:',
-    suffix: '")',
-  })),
-]);
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -396,37 +382,6 @@ function syncElectronExampleDependencies(changes, { write }) {
     writeTextIfChanged(ELECTRON_EXAMPLE_PACKAGE, jsonText(data), changes, details.join('; '), {
       write,
     });
-  }
-}
-
-export function syncSdkInstallDocs(changes, { root = ROOT, write, transitions }) {
-  const transitionsByProduct = new Map(
-    transitions.map((transition) => [transition.product, transition]),
-  );
-  for (const rule of SDK_INSTALL_VERSION_RULES) {
-    const transition = transitionsByProduct.get(rule.product);
-    if (transition === undefined) continue;
-    if (transition.before === null)
-      fail(`${rule.product} install docs require a prior release version`);
-    const file = path.join(root, rule.file);
-    const before = `${rule.prefix}${transition.before}${rule.suffix}`;
-    const after = `${rule.prefix}${transition.after}${rule.suffix}`;
-    const text = readText(file);
-    const beforeCount = text.split(before).length - 1;
-    const afterCount = text.split(after).length - 1;
-    if (beforeCount === 0 && afterCount === 1) continue;
-    if (beforeCount !== 1 || afterCount !== 0) {
-      fail(
-        `${rule.file} must contain exactly one ${rule.product} install contract for ${transition.before}`,
-      );
-    }
-    writeTextIfChanged(
-      file,
-      text.replace(before, after),
-      changes,
-      `${rule.product} install contract ${transition.before} -> ${transition.after}`,
-      { write },
-    );
   }
 }
 
@@ -921,7 +876,6 @@ async function main(argv) {
   syncExtensionRegistryMetadata(changes, { write });
   await syncNativeToolsOptionalDependencies(changes, { write, transitions });
   syncElectronExampleDependencies(changes, { write });
-  syncSdkInstallDocs(changes, { write, transitions });
   syncCargoPathDependencyPins(changes, { write, transitions });
   syncExampleCargoRegistryPins(changes, { write });
   syncLockfiles(changes, { write });
@@ -965,7 +919,6 @@ export function releaseDerivedPathInventory() {
         EXTENSION_EVIDENCE_SUMMARY_PATH,
         NATIVE_TOOLS_FACADE_PACKAGE,
         WASIX_TOOLS_FACADE_PACKAGE,
-        ...SDK_INSTALL_VERSION_RULES.map(({ file }) => path.join(ROOT, file)),
         ...compatibilityVersionLinks().map(({ path: pathText }) => path.join(ROOT, pathText)),
         ...exactExtensionReleaseProducts(PREFIX).map((product) =>
           path.join(ROOT, packagePath(product), 'release.toml'),

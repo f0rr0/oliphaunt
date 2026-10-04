@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,10 +9,8 @@ import {
   cargoPathDependencyBindings,
   desiredCargoPathDependencyVersion,
   priorCargoPathDependencyVersions,
-  SDK_INSTALL_VERSION_RULES,
   syncExampleCargoManifestText,
   syncLockfile,
-  syncSdkInstallDocs,
   syncTomlStringPath,
 } from './sync-release-pr.mts';
 
@@ -85,38 +83,6 @@ alias = { package = 'runtime', path = '../native', version = '*' }
     text: result.text,
     details: [],
   });
-});
-
-test('release sync advances every SDK install contract with its product', (t) => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-sdk-install-docs-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const transitions = [
-    { product: 'oliphaunt-swift', before: '0.6.1', after: '0.7.0' },
-    { product: 'oliphaunt-kotlin', before: '0.1.1', after: '0.2.0' },
-  ];
-  for (const rule of SDK_INSTALL_VERSION_RULES) {
-    const transition = transitions.find(({ product }) => product === rule.product);
-    const file = path.join(root, rule.file);
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, `${rule.prefix}${transition.before}${rule.suffix}\n`);
-  }
-
-  const changes = [];
-  syncSdkInstallDocs(changes, { root, write: true, transitions });
-  assert.deepEqual(
-    changes.map(({ path: file }) => path.relative(root, file)).sort(),
-    SDK_INSTALL_VERSION_RULES.map(({ file }) => file).sort(),
-  );
-  for (const rule of SDK_INSTALL_VERSION_RULES) {
-    const transition = transitions.find(({ product }) => product === rule.product);
-    assert.equal(
-      readFileSync(path.join(root, rule.file), 'utf8'),
-      `${rule.prefix}${transition.after}${rule.suffix}\n`,
-    );
-  }
-  const checkChanges = [];
-  syncSdkInstallDocs(checkChanges, { root, write: false, transitions });
-  assert.deepEqual(checkChanges, []);
 });
 
 test('release sync updates only unsourced local packages in a nested Cargo lock', () => {
