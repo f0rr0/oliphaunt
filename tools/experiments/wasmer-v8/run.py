@@ -14,7 +14,7 @@ CORE = [
     "contained-host-panic", "contained-host-panic-dynamic",
     "host-error-identity", "host-error-identity-dynamic",
     "shared-memory", "shared-memory-thread", "stack-overflow", "eh-stack-overflow",
-    "cache-write", "cache-read", "module-thread",
+    "cache-write", "cache-read", "cache-header-compatibility", "module-thread",
 ]
 DIAGNOSTICS = ["host-panic", "host-panic-dynamic", "host-exception", "host-atomics", "uncaught-eh-metadata"]
 

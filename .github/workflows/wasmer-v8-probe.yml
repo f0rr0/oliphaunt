@@ -131,6 +131,10 @@ jobs:
         run: |
           set -euo pipefail
           bash src/wasix/runtime/tools/runtime-smoke.sh core-smoke 2>&1 | tee target/windows-v8-diagnostic/runtime-smoke.log
+      - name: Check V8 artifact CPU and flag compatibility
+        run: |
+          set -euo pipefail
+          cargo run --locked --release --manifest-path tools/experiments/wasmer-v8/Cargo.toml -- cache-header-compatibility 2>&1 | tee target/windows-v8-diagnostic/cache-header-compatibility.log
       - name: Retain diagnostic database evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -34,6 +34,53 @@ fn engine() -> Engine {
     wasmer::v8::V8::new().into()
 }
 
+fn cache_header_compatibility() -> Result<()> {
+    let mut store = Store::new(engine());
+    let bytes = Module::new(&store, EH)?.serialize()?.to_vec();
+    // Research only: V8 13.6's native header starts with 0xC0DE0000 XOR
+    // its external-reference count, followed by four little-endian u32s.
+    // This tiny, locally generated fixture must contain exactly one header.
+    let offsets: Vec<_> = bytes
+        .windows(20)
+        .enumerate()
+        .filter_map(|(offset, data)| (data[2..4] == [0xde, 0xc0]).then_some(offset))
+        .collect();
+    ensure!(
+        offsets.len() == 1,
+        "ambiguous V8 native header: {offsets:?}"
+    );
+    let header = offsets[0];
+    let words: Vec<_> = bytes[header..header + 20]
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+        .collect();
+    println!(
+        "native_header_offset={header} version_hash={:#x} cpu_features={:#x} flag_hash={:#x} wasm_features={:#x}",
+        words[1], words[2], words[3], words[4]
+    );
+    // Only deserialize trusted output from this engine. Confirm the original
+    // executes, then change compatibility fields without changing guest code.
+    let module = unsafe { Module::deserialize(&store, &bytes)? };
+    let inst = Instance::new(&mut store, &module, &imports! {})?;
+    check_eh(&mut store, &inst)?;
+    for (name, field) in [("cpu_features", 2), ("flag_hash", 3)] {
+        let mut changed = bytes.clone();
+        changed[header + field * 4] ^= 1;
+        let error = unsafe { Module::deserialize(&store, &changed) }
+            .expect_err("a different native header must be rejected");
+        ensure!(
+            error
+                .to_string()
+                .contains("Failed to deserialize V8 module"),
+            "expected native V8 rejection, got {error}"
+        );
+        println!("changed_{name}=rejected error={error}");
+    }
+    let module = unsafe { Module::deserialize(&store, &bytes)? };
+    let inst = Instance::new(&mut store, &module, &imports! {})?;
+    check_eh(&mut store, &inst)
+}
+
 fn instance(store: &mut Store, wat: &str, imports: &wasmer::Imports) -> Result<Instance> {
     eprintln!("stage: compile");
     let module = Module::new(&*store, wat).context("compile guest")?;
@@ -654,6 +701,7 @@ fn main() -> Result<()> {
             let inst = Instance::new(&mut store, &module, &imports! {})?;
             check_eh(&mut store, &inst)?;
         }
+        "cache-header-compatibility" => cache_header_compatibility()?,
         "module-thread" => {
             let engine = engine();
             let store = Store::new(engine.clone());

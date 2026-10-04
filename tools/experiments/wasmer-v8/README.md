@@ -12,6 +12,15 @@ On October 4, 2026, the [final hosted run](https://github.com/f0rr0/oliphaunt/ac
 
 Do not interpret a green experiment workflow as Windows PostgreSQL qualification. The workflow distinguishes required capability probes from deliberately exercised diagnostics. The evidence files preserve both categories.
 
+Later SDK integration at `034012d0` passed 21 real Windows runtime tests and
+7 PostgreSQL regression tests using the existing public API. However, V8's
+exact CPU/flag cache restriction and consumer-side libclang/objcopy requirements
+remain blockers for the requested identical cross-platform installation and
+precompiled-artifact experience. See the
+[integration ledger](../../../src/docs/maintainers/windows-v8-integration.md).
+The later `cache-header-compatibility` probe adds a 23rd required capability
+check; the recorded 22-case run above predates it.
+
 ## Why this experiment exists
 
 - Wasmer 7.2.1 compiled Windows AOT artifacts but aborted during SQL error recovery in its unimplemented MSVC exception runtime. [Failing job](https://github.com/f0rr0/oliphaunt/actions/runs/34172865750/job/101905963703).
@@ -114,6 +123,7 @@ The build uses release optimization with debug level 1. Linux DWARF and Windows 
 | `shared-memory-thread` | Attach shared memory to a store constructed on another thread; observe atomic writes from the original store |
 | `stack-overflow`, `eh-stack-overflow` | Million-depth recursion traps, with and without EH frames; subsequent call returns 42 |
 | `cache-write`, `cache-read` | V8 module serialization and fresh-process reopening, including EH behavior |
+| `cache-header-compatibility` | Execute a trusted serialized EH fixture, verify native CPU/flag header mismatches are rejected, then execute the original again; does not prove cross-CPU portability |
 | `module-thread` | Instantiate an already compiled module in a new store on its owning worker thread |
 | `wasix` | WASIX environment construction, clock import and writes to guest memory |
 | `wasi-exit` | A guest `proc_exit(42)` retains the `WasiError::Exit` type and numeric exit code used by the SDK |
