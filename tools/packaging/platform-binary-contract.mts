@@ -813,6 +813,57 @@ function alignFour(value) {
   return (value + 3) & ~3;
 }
 
+function validateAndroidCppRuntime(buffer, sectionOffset, sectionEntrySize, sectionCount, label) {
+  const sectionData = (index) => {
+    if (index <= 0 || index >= sectionCount) fail(label, 'ELF section link is out of range');
+    const section = sectionOffset + index * sectionEntrySize;
+    const offset = safeNumber(buffer.readBigUInt64LE(section + 24), label, 'ELF section offset');
+    const size = safeNumber(buffer.readBigUInt64LE(section + 32), label, 'ELF section size');
+    requireRange(buffer, offset, size, label, 'ELF section data');
+    return buffer.subarray(offset, offset + size);
+  };
+  const stringAt = (strings, offset) => {
+    const end = strings.indexOf(0, offset);
+    if (offset < 0 || offset >= strings.length || end < 0)
+      fail(label, 'ELF dynamic string is out of range or unterminated');
+    return strings.toString('utf8', offset, end);
+  };
+  for (let index = 1; index < sectionCount; index += 1) {
+    const section = sectionOffset + index * sectionEntrySize;
+    const type = buffer.readUInt32LE(section + 4);
+    if (type !== 6 && type !== 11) continue; // SHT_DYNAMIC and SHT_DYNSYM
+    const data = sectionData(index);
+    const link = buffer.readUInt32LE(section + 40);
+    const strings = sectionData(link);
+    if (buffer.readUInt32LE(sectionOffset + link * sectionEntrySize + 4) !== 3)
+      fail(label, 'ELF dynamic section must link to a string table');
+    const entrySize = safeNumber(buffer.readBigUInt64LE(section + 56), label, 'ELF entry size');
+    if (entrySize !== (type === 6 ? 16 : 24) || data.length % entrySize !== 0)
+      fail(label, 'ELF dynamic section has an invalid entry size');
+    for (let offset = 0; offset < data.length; offset += entrySize) {
+      if (type === 6) {
+        const tag = data.readBigInt64LE(offset);
+        if (tag === 0n) break; // DT_NULL
+        if (tag !== 1n) continue; // DT_NEEDED
+        const name = stringAt(
+          strings,
+          safeNumber(data.readBigUInt64LE(offset + 8), label, 'DT_NEEDED'),
+        );
+        if (name === 'libc++_shared.so')
+          fail(label, 'Android libraries must link their C++ runtime statically');
+      } else {
+        const binding = data[offset + 4] >> 4;
+        const visibility = data[offset + 5] & 3;
+        const defined = data.readUInt16LE(offset + 6) !== 0;
+        if (!defined || ![1, 2].includes(binding) || ![0, 3].includes(visibility)) continue;
+        const name = stringAt(strings, data.readUInt32LE(offset));
+        if (/^(?:_Z|__cxa_|__gxx_|_Unwind_|__dynamic_cast)/u.test(name))
+          fail(label, `Android library exposes private C++ symbol ${name}`);
+      }
+    }
+  }
+}
+
 function androidApiNotes(buffer, sectionOffset, sectionEntrySize, sectionCount, label) {
   const values = [];
   for (let index = 0; index < sectionCount; index += 1) {
@@ -942,6 +993,7 @@ function parseElf(buffer, label, contract) {
           `Android ELF API level ${androidApi} does not match the release contract ${contract.elf.androidApiLevel}`,
         );
       }
+      validateAndroidCppRuntime(buffer, sectionOffset, sectionEntrySize, sectionCount, label);
     }
   } else {
     for (const required of requiredVersions) {

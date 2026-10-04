@@ -76,13 +76,22 @@ public abstract class LinkOliphauntAndroidExtensionsTask extends DefaultTask {
 
   @Input
   public String getBundledHeaderSha256() {
-    try (InputStream input = getClass().getResourceAsStream(HEADER_RESOURCE)) {
+    return bundledResourceSha256(HEADER_RESOURCE);
+  }
+
+  @Input
+  public String getBundledCppRuntimeMapSha256() {
+    return bundledResourceSha256("/dev/oliphaunt/android/android-cxx-runtime.map");
+  }
+
+  private String bundledResourceSha256(String resource) {
+    try (InputStream input = getClass().getResourceAsStream(resource)) {
       if (input == null) {
-        throw new GradleException("Oliphaunt Android plugin is missing " + HEADER_RESOURCE);
+        throw new GradleException("Oliphaunt Android plugin is missing " + resource);
       }
       return sha256(input.readAllBytes());
     } catch (IOException error) {
-      throw new GradleException("read bundled Oliphaunt C header", error);
+      throw new GradleException("read bundled Oliphaunt resource " + resource, error);
     }
   }
 
@@ -101,7 +110,10 @@ public abstract class LinkOliphauntAndroidExtensionsTask extends DefaultTask {
     deleteTree(include);
     createDirectories(include);
     Path header = include.resolve("oliphaunt.h");
-    copyBundledHeader(header);
+    copyBundledResource(HEADER_RESOURCE, header);
+    copyBundledResource(
+        "/dev/oliphaunt/android/android-cxx-runtime.map",
+        include.resolve("android-cxx-runtime.map"));
 
     List<String> abis = canonicalAbis(getSelectedAbis().get());
     for (String abi : abis) {
@@ -188,6 +200,8 @@ public abstract class LinkOliphauntAndroidExtensionsTask extends DefaultTask {
     command.add("--sysroot=" + toolchain.sysroot());
     command.add("-shared");
     command.add("-static-libstdc++");
+    command.add("-Wl,--exclude-libs,libc++_static.a:libc++abi.a:libunwind.a");
+    command.add("-Wl,--version-script," + include.resolve("android-cxx-runtime.map"));
     command.add("-Wl,--build-id=sha1");
     command.add("-Wl,--no-undefined");
     command.add("-Wl,--fatal-warnings");
@@ -498,6 +512,10 @@ public abstract class LinkOliphauntAndroidExtensionsTask extends DefaultTask {
       throw new GradleException(
           "linked Oliphaunt Android extension library does not require liboliphaunt.so");
     }
+    if (dynamic.contains("[libc++_shared.so]")) {
+      throw new GradleException(
+          "linked Oliphaunt Android extension library must link its C++ runtime statically");
+    }
     String symbols =
         runTool(
             List.of(
@@ -509,6 +527,10 @@ public abstract class LinkOliphauntAndroidExtensionsTask extends DefaultTask {
     if (!symbols.matches("(?s).*\\b[TD]\\s+liboliphaunt_selected_static_extensions\\b.*")) {
       throw new GradleException(
           "linked Oliphaunt Android extension library does not export the registry selector");
+    }
+    if (symbols.matches("(?s).*\\b[A-Za-z]\\s+(?:_Z|__cxa_|__gxx_|_Unwind_|__dynamic_cast)\\S*.*")) {
+      throw new GradleException(
+          "linked Oliphaunt Android extension library must hide its C++ runtime symbols");
     }
   }
 
@@ -582,14 +604,14 @@ public abstract class LinkOliphauntAndroidExtensionsTask extends DefaultTask {
     return ndk.toAbsolutePath().normalize();
   }
 
-  private void copyBundledHeader(Path destination) {
-    try (InputStream input = getClass().getResourceAsStream(HEADER_RESOURCE)) {
+  private void copyBundledResource(String resource, Path destination) {
+    try (InputStream input = getClass().getResourceAsStream(resource)) {
       if (input == null) {
-        throw new GradleException("Oliphaunt Android plugin is missing " + HEADER_RESOURCE);
+        throw new GradleException("Oliphaunt Android plugin is missing " + resource);
       }
       Files.copy(input, destination, StandardCopyOption.REPLACE_EXISTING);
     } catch (IOException error) {
-      throw new GradleException("materialize bundled Oliphaunt C header", error);
+      throw new GradleException("materialize bundled Oliphaunt resource " + resource, error);
     }
   }
 

@@ -5,6 +5,7 @@ import groovy.json.JsonSlurper;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -1868,7 +1869,7 @@ public final class OliphauntExtensionCatalogContractTest {
 
     Map<String, Object> compatibility = new LinkedHashMap<>();
     compatibility.put(
-        "extensionRuntimeContract", "extensions/contracts/contract.toml");
+        "extensionRuntimeContract", canonicalRuntimeContractPath());
     compatibility.put("nativeRuntimeProduct", "liboliphaunt-native");
     compatibility.put("nativeRuntimeVersion", "1.2.3");
     compatibility.put("postgresMajor", "18");
@@ -2331,15 +2332,18 @@ public final class OliphauntExtensionCatalogContractTest {
       Path output = root.resolve("output");
       Path nativeSources = Files.createDirectories(root.resolve("native"));
       Path baseSource = nativeSources.resolve("base.c");
-      Path extensionSource = nativeSources.resolve("auto_explain.c");
+      Path extensionSource = nativeSources.resolve("auto_explain.cpp");
       Path extensionObject = nativeSources.resolve("auto_explain.o");
       Path baseLibrary = jni.resolve("liboliphaunt.so");
       Path extensionArchive = archives.resolve("liboliphaunt_extension_auto_explain.a");
       Files.writeString(baseSource, "void oliphaunt_fixture(void) {}\n", StandardCharsets.UTF_8);
       Files.writeString(
           extensionSource,
-          "const void *oliphaunt_static_auto_explain_Pg_magic_func(void) { return 0; }\n"
-              + "void oliphaunt_static_auto_explain__PG_init(void) {}\n",
+          "#include <stdexcept>\n#include <string>\n"
+              + "extern \"C\" const void *oliphaunt_static_auto_explain_Pg_magic_func(void) { return 0; }\n"
+              + "extern \"C\" void oliphaunt_static_auto_explain__PG_init(void) {\n"
+              + "  try { throw std::runtime_error(std::string(100, 'x')); } catch (const std::exception &) {}\n"
+              + "}\n",
           StandardCharsets.UTF_8);
       runFixtureTool(
           List.of(
@@ -2884,6 +2888,20 @@ public final class OliphauntExtensionCatalogContractTest {
         "no canonical upstream legal bytes for " + product + " " + logicalPath);
   }
 
+  private static String canonicalRuntimeContractPath() {
+    try {
+      String carriers =
+          Files.readString(repositoryRoot().resolve("src/extensions/contrib/carriers.toml"));
+      Matcher match = Pattern.compile("(?m)^contract = \"([^\"]+)\"$").matcher(carriers);
+      if (!match.find()) {
+        throw new AssertionError("contrib producer is missing its runtime contract identity");
+      }
+      return match.group(1);
+    } catch (IOException error) {
+      throw new AssertionError("read contrib producer runtime contract", error);
+    }
+  }
+
   private static Path repositoryRoot() {
     Path candidate = Path.of("").toAbsolutePath().normalize();
     while (candidate != null) {
@@ -2955,6 +2973,20 @@ public final class OliphauntExtensionCatalogContractTest {
                 extensionOwnerVersions,
                 "1.2.3"),
             target + " runtime member count");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> compatibility = (Map<String, Object>) manifest.get("compatibility");
+        compatibility.put("extensionRuntimeContract", "extensions/contracts/contract.toml");
+        writeBundleManifest(root, manifest);
+        expectFailure(
+            () ->
+                ResolveOliphauntAndroidAssetsTask.validateBundleSourcesForContractTest(
+                    new File("oliphaunt-extension-contrib-pg18-" + target + ".tar.gz"),
+                    root.toFile(),
+                    extensionOwnerVersions,
+                    "1.2.3"),
+            "must declare extensionRuntimeContract=" + canonicalRuntimeContractPath());
+        compatibility.put("extensionRuntimeContract", canonicalRuntimeContractPath());
 
         manifest.put("licenseProfile", "contrib-native");
         writeBundleManifest(root, manifest);
@@ -3127,7 +3159,7 @@ public final class OliphauntExtensionCatalogContractTest {
       String target, List<Map<String, Object>> members) {
     Map<String, Object> compatibility = new LinkedHashMap<>();
     compatibility.put(
-        "extensionRuntimeContract", "extensions/contracts/contract.toml");
+        "extensionRuntimeContract", canonicalRuntimeContractPath());
     compatibility.put("nativeRuntimeProduct", "liboliphaunt-native");
     compatibility.put("nativeRuntimeVersion", "1.2.3");
     compatibility.put("postgresMajor", "18");
@@ -3289,7 +3321,7 @@ public final class OliphauntExtensionCatalogContractTest {
     Map<String, Object> compatible =
         Map.of(
             "extensionRuntimeContract",
-            "extensions/contracts/contract.toml",
+            canonicalRuntimeContractPath(),
             "nativeRuntimeProduct",
             "liboliphaunt-native",
             "nativeRuntimeVersion",

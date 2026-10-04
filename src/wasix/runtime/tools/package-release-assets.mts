@@ -24,7 +24,10 @@ import {
   currentProductVersionSync,
 } from '../../../../tools/release/release-artifact-targets.mts';
 import { assertCanonicalWasixAotManifest } from './wasix-aot-manifest.mts';
-import { AOT_TARGET_TRIPLES } from './wasix-cargo-artifact-contract.mts';
+import {
+  AOT_TARGET_TRIPLES,
+  assertCoreRuntimeAotArtifacts,
+} from './wasix-cargo-artifact-contract.mts';
 import { main as checkReleaseAssets } from './check-release-assets.mts';
 
 const ASSETS = 'target/oliphaunt-wasix/assets';
@@ -135,6 +138,7 @@ export function stageAotAssets(source, destination, target, fingerprint) {
     Array.isArray(manifest.artifacts) && manifest.artifacts.length,
     'empty AOT artifact manifest',
   );
+  assertCoreRuntimeAotArtifacts(manifest, source);
   mkdirSync(destination, { recursive: true });
   manifest.artifacts = manifest.artifacts.filter((artifact) => {
     assert.equal(typeof artifact.name, 'string', 'missing AOT artifact name');
@@ -144,7 +148,12 @@ export function stageAotAssets(source, destination, target, fingerprint) {
       artifact.path,
       'noncanonical AOT artifact path',
     );
-    if (artifact.name.startsWith('extension:') || artifact.name.startsWith('tool:')) return false;
+    // initdb initializes fresh databases and belongs to the core runtime.
+    if (
+      artifact.name.startsWith('extension:') ||
+      (artifact.name.startsWith('tool:') && artifact.name !== 'tool:initdb')
+    )
+      return false;
     copyTree(path.join(source, artifact.path), path.join(destination, artifact.path));
     return true;
   });

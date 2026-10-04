@@ -64,6 +64,9 @@ test('release staging excludes independent tools and extensions, and rejects sta
     'wasmer-wasix-version': canonical.wasmerWasixVersion,
     artifacts: [
       { name: 'runtime:oliphaunt', path: 'nested/runtime.bin.zst' },
+      { name: 'runtime-support:plpgsql', path: 'plpgsql.bin.zst' },
+      { name: 'runtime-support:dict_snowball', path: 'dict_snowball.bin.zst' },
+      { name: 'tool:initdb', path: 'initdb.bin.zst' },
       { name: 'tool:pg_dump', path: 'pg_dump.bin.zst' },
       { name: 'tool:psql', path: 'psql.bin.zst' },
       { name: 'extension:vector:module', path: 'vector.bin.zst' },
@@ -80,7 +83,19 @@ test('release staging excludes independent tools and extensions, and rejects sta
     readFileSync(path.join(root, 'aot-out/nested/runtime.bin.zst'), 'utf8'),
     'runtime:oliphaunt',
   );
-  assert.deepEqual(readdirSync(path.join(root, 'aot-out')).sort(), ['manifest.json', 'nested']);
+  assert.deepEqual(readdirSync(path.join(root, 'aot-out')).sort(), [
+    'dict_snowball.bin.zst',
+    'initdb.bin.zst',
+    'manifest.json',
+    'nested',
+    'plpgsql.bin.zst',
+  ]);
+  const staged = JSON.parse(readFileSync(path.join(root, 'aot-out/manifest.json'), 'utf8'));
+  assert(staged.artifacts.some((artifact) => artifact.name === 'tool:initdb'));
+  aot.artifacts = aot.artifacts.filter((artifact) => artifact.name !== 'tool:initdb');
+  save();
+  assert.throws(() => stage('missing-initdb'), /missing core runtime AOT artifacts: tool:initdb/);
+  aot.artifacts.push({ name: 'tool:initdb', path: 'initdb.bin.zst' });
   aot.artifacts[0].path = '../outside';
   save();
   assert.throws(() => stage('traversal'), /unsafe|relative|component/);

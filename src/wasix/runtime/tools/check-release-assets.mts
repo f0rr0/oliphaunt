@@ -22,6 +22,7 @@ import {
 import { assertCanonicalWasixAotManifest } from './wasix-aot-manifest.mts';
 import {
   AOT_TARGET_TRIPLES,
+  assertCoreRuntimeAotArtifacts,
   CORE_RUNTIME_ARCHIVE_FILES,
 } from './wasix-cargo-artifact-contract.mts';
 import { WASIX_PORTABLE_RELEASE_MEMBERS } from './wasix-runtime-npm-contract.mts';
@@ -514,6 +515,7 @@ export function validateAotReleaseAsset(archive, expectedTarget) {
       context: `${rel(archive)} ${manifestPath}`,
       expectedTarget,
     });
+    assertCoreRuntimeAotArtifacts(manifest, `${rel(archive)} ${manifestPath}`);
   } catch (error) {
     fail(error.message);
   }

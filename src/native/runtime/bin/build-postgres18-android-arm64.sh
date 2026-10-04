@@ -268,6 +268,7 @@ desired_hash() {
     printf 'jit_objects=%s\n' "${jit_objects[*]}"
     printf 'script_sha256=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
     shasum -a 256 "$script_dir/postgres-backend-objects.mk"
+    shasum -a 256 "$script_dir/android-cxx-runtime.map"
     shasum -a 256 "$script_dir/mobile-static-extensions.sh" "$script_dir/mobile-postgis-extensions.sh"
     shasum -a 256 "$(oliphaunt_mobile_static_specs_tsv)"
     shasum -a 256 \
@@ -290,8 +291,14 @@ artifact_ready() {
   local elf_header
   elf_header="$("$toolchain_dir/bin/llvm-readelf" -h "$lib_out" 2>/dev/null)" || return 1
   oliphaunt_text_matches_ere "$elf_header" "$android_readelf_arch_regex" || return 1
+  local dynamic
+  dynamic="$("$toolchain_dir/bin/llvm-readelf" -d "$lib_out" 2>/dev/null)" || return 1
+  case "$dynamic" in *'[libc++_shared.so]'*) return 1 ;; esac
   local symbols
   symbols="$("$llvm_nm" -D --defined-only "$lib_out" 2>/dev/null)" || return 1
+  if oliphaunt_text_matches_ere "$symbols" ' [A-Za-z] (_Z|__cxa_|__gxx_|_Unwind_|__dynamic_cast)'; then
+    return 1
+  fi
   local linked_symbols
   linked_symbols="$("$llvm_nm" --defined-only "$lib_out" 2>/dev/null)" || return 1
   oliphaunt_icu_linked_symbols_ready "$linked_symbols" || return 1
@@ -934,7 +941,9 @@ link_liboliphaunt() {
   (
     cd "$build_dir"
     set +u
-    "${cxx[@]}" -shared \
+    "${cxx[@]}" -shared -static-libstdc++ \
+      -Wl,--exclude-libs,libc++_static.a:libc++abi.a:libunwind.a \
+      -Wl,--version-script,"$script_dir/android-cxx-runtime.map" \
       -Wl,-soname,liboliphaunt.so \
       -Wl,-z,defs \
       -Wl,-z,max-page-size=16384 \
