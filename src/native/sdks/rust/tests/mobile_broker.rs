@@ -169,14 +169,6 @@ fn child(action: &str, root: &Path) {
                 block_on(Request::new(&database).execute(query("SELECT repeat('x', 8388608)")))
                     .unwrap();
             assert!(large.len() > 8 * 1024 * 1024); // One field exceeds native's 4 MiB queue.
-            let copy =
-                block_on(Request::new(&database).execute(query("COPY broker_probe FROM STDIN")))
-                    .unwrap_err();
-            assert_eq!(
-                copy.broker_failure().unwrap().execution,
-                broker::Execution::Completed
-            );
-            assert!(!copy.broker_failure().unwrap().requires_reopen);
             let mut extended_copy = Vec::new();
             let mut parse = b"\0COPY broker_probe FROM STDIN\0".to_vec();
             parse.extend_from_slice(&[0, 0]);
@@ -190,12 +182,21 @@ fn child(action: &str, root: &Path) {
                 extended_copy.extend_from_slice(&((payload.len() + 4) as u32).to_be_bytes());
                 extended_copy.extend_from_slice(payload);
             }
-            let copy = block_on(Request::new(&database).execute(extended_copy)).unwrap_err();
-            assert_eq!(
-                copy.broker_failure().unwrap().execution,
-                broker::Execution::Completed
-            );
-            assert!(!copy.broker_failure().unwrap().requires_reopen);
+            for request in [query("COPY broker_probe FROM STDIN"), extended_copy] {
+                // Recovery must drain its input before accepting another query.
+                for _ in 0..16 {
+                    let copy =
+                        block_on(Request::new(&database).execute(request.clone())).unwrap_err();
+                    assert_eq!(
+                        copy.broker_failure().unwrap().execution,
+                        broker::Execution::Completed
+                    );
+                    assert!(!copy.broker_failure().unwrap().requires_reopen);
+                    let recovered =
+                        block_on(Request::new(&database).execute(query("SELECT 42"))).unwrap();
+                    assert!(recovered.windows(2).any(|bytes| bytes == b"42"));
+                }
+            }
             connection.set_operation_budget(Some(Duration::from_millis(100)));
             let cancelled =
                 block_on(Request::new(&database).execute(query("SELECT pg_sleep(60)"))).unwrap();

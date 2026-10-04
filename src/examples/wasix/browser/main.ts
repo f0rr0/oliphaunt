@@ -32,9 +32,11 @@ try {
   }
   if (smoke) {
     expectOwnedMemoryCopyAcrossGrowth();
+    smokePhase('direct startup recovery');
     await expectFailedDirectOpenRecovery();
   }
   const storage = indexedDB('browser-smoke');
+  smokePhase('IndexedDB open');
   let database = await (smoke ? Oliphaunt : WorkerOliphaunt).open({
     seed: standardSeed,
     extensions,
@@ -42,6 +44,7 @@ try {
   });
   status.textContent = `PostgreSQL 18 is running through the ${smoke ? 'direct root' : 'Worker-owned'} entrypoint.`;
   if (smoke) {
+    smokePhase('direct API and concurrent databases');
     await installSelectedExtensions(database, extensions);
     await expectStructuredApi(database, 'browser direct');
     await expectConcurrentDirectExecution(database);
@@ -71,9 +74,12 @@ try {
     await database.close();
 
     directWorkerAudit?.assertNoneAndRestore();
+    smokePhase('direct API without Worker');
     await expectDirectWithoutWorker();
+    smokePhase('Worker startup recovery');
     await expectFailedWorkerOpenRecovery();
 
+    smokePhase('IndexedDB Worker reopen');
     database = await WorkerOliphaunt.open({ storage, extensions });
     await expectStructuredApi(database, 'browser Worker');
     await expectSqlstate(database, 'SELEC 1', '42601');
@@ -96,8 +102,11 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
+    smokePhase('OPFS persistence');
     const opfsAnswers = await expectOpfsPersistence(extensions);
+    smokePhase('OPFS crash recovery');
     const opfsCrash = await expectOpfsCrashRecovery();
+    smokePhase('PostGIS Worker');
     const postgisVersion = postgisWorkerCanary ? await expectLargePostgisWorkerModule() : undefined;
     status.textContent = 'Browser smoke passed.';
     output.textContent = JSON.stringify({
@@ -140,6 +149,12 @@ try {
   document.documentElement.dataset.oliphauntSmoke = 'failed';
 } finally {
   directWorkerAudit?.restore();
+}
+
+function smokePhase(phase: string): void {
+  if (!smoke) return;
+  document.documentElement.dataset.oliphauntSmokePhase = phase;
+  console.debug(`browser smoke phase: ${phase}`);
 }
 
 function simpleQuery(sql: string): Uint8Array {
