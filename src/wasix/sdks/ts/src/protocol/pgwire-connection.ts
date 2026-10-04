@@ -9,6 +9,8 @@ const SSL_REQUEST = 80_877_103;
 const GSSENC_REQUEST = 80_877_104;
 const CANCEL_REQUEST = 80_877_102;
 const PROTOCOL_3 = 196_608;
+// One complete frontend frame including its header, not an eager allocation or
+// stream-size limit. Keep the same admission policy as the Rust wire reader.
 const MAX_FRONTEND_MESSAGE_BYTES = 128 * 1024 * 1024;
 const POSTGRES_IDENTIFIER_BYTES = 63;
 

@@ -41,6 +41,8 @@ impl Broker {
                 "127.0.0.1:0",
                 "--control-listen",
                 "127.0.0.1:0",
+                "--startup-guc",
+                "application_name=broker-default",
             ])
             .env("OLIPHAUNT_BROKER_AUTH_TOKEN", "actual-consumer-test-secret")
             .stdout(Stdio::piped())
@@ -170,6 +172,46 @@ fn query(stream: &mut TcpStream, sql: &str) -> Vec<u8> {
         .is_none()
     );
     result
+}
+
+#[test]
+#[ignore = "requires a prepared native runtime; runs the actual broker executable"]
+fn startup_application_name_distinguishes_omission_from_empty() {
+    for application in [None, Some(""), Some("client-application")] {
+        let broker = Broker::start();
+        let _owner = broker.owner();
+        let mut client = connect(&broker.sql);
+        let mut startup = oliphaunt_query::wire::PROTOCOL_3.to_be_bytes().to_vec();
+        startup.extend_from_slice(b"user\0postgres\0database\0postgres\0");
+        if let Some(value) = application {
+            startup.extend_from_slice(format!("application_name\0{value}\0").as_bytes());
+        }
+        startup.push(0);
+        client
+            .write_all(&((startup.len() + 4) as u32).to_be_bytes())
+            .unwrap();
+        client.write_all(&startup).unwrap();
+        assert_eq!(response(&mut client), frame(b'R', &3_i32.to_be_bytes()));
+        client
+            .write_all(&frame(b'p', b"actual-consumer-test-secret\0"))
+            .unwrap();
+        loop {
+            let message = response(&mut client);
+            assert_ne!(message[0], b'E', "startup failed: {message:?}");
+            if message[0] == b'Z' {
+                break;
+            }
+        }
+        let result = oliphaunt_query::parse_query_response(
+            &query(&mut client, "SHOW application_name"),
+            oliphaunt_query::ExpectedProtocol::Simple,
+        )
+        .unwrap();
+        assert_eq!(
+            result.get_text(0, "application_name").unwrap(),
+            Some(application.unwrap_or("broker-default")),
+        );
+    }
 }
 
 #[test]

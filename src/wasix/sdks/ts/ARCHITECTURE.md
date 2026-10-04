@@ -127,9 +127,12 @@ smaller qualified side modules remain supported in a direct Window.
 5. The direct export driver completes the exported startup transition before
    exposing the session. Selected carriers contribute verified artifacts and
    required startup/preload configuration only; database-local extension SQL is
-   application/ORM-owned. A requested non-default user is selected from existing
-   roles with `SET ROLE`; standalone bootstrap remains the fixed `postgres`
-   identity.
+   application/ORM-owned. PostgreSQL selects the trusted configured `PGUSER`
+   as the actual session principal during startup, applying catalog login,
+   database access, settings and login-trigger policy. The host does not emulate
+   that identity with later `SET ROLE` SQL; `RESET ROLE` and `DISCARD ALL` restore
+   the configured session principal. Fresh cluster seeds retain `postgres` as
+   their bootstrap owner.
 6. The binding frames later responses through `ReadyForQuery` and exposes
    serialized `query`, `execute`, buffered `execProtocolRaw`, callback
    `execProtocolRawStream`, and callback-scoped `transaction` calls
@@ -142,11 +145,11 @@ smaller qualified side modules remain supported in a direct Window.
    final boundary. A new persistent synchronous-OPFS root uses a separate internal
    full-publication boundary after initialization; it is not a public database
    operation. PostgreSQL `CHECKPOINT` remains available through ordinary
-   `execute`. If a
-   PostgreSQL `ERROR` crosses the host boundary, the direct host
-   invokes `PostgresMainLongJmp`, sends and flushes readiness, and continues
-   through `PostgresMainLoopOnce`. Normal ErrorResponse returns receive the same
-   top-level cleanup as trapping errors.
+   `execute`. PostgreSQL `ERROR` recovery stays inside the live guest invocation:
+   `PostgresMainLoopOnce` returns a typed outcome (processed, recovered, or input
+   ended). The host never resumes a guest `longjmp` after unwinding into the host.
+   Unexpected traps, invalid outcomes, and failed guest phases close the backend;
+   ordinary SQL errors remain pgwire ErrorResponses with their original SQLSTATE.
 7. `close` establishes a terminal admission cutoff and lets already accepted
    database work drain. The direct owner
    sends PostgreSQL Terminate through the same direct bridge, deactivates the
@@ -485,16 +488,19 @@ shortcut. Realtime uses the JavaScript epoch clock, while monotonic reads
 calibrate the host's monotonic clock against the canonical Rust fallback epoch,
 so fast and fallback reads cannot jump between domains. Process and thread CPU
 clocks remain on the canonical fallback because wall time is not an equivalent
-clock. Synthetic clock offsets remain honored by declining the direct import
-for guests that import `clock_time_set`, and pending WASIX operations are
-checked on a real-time bound. Invalid clock IDs, pointers, or host values use
+clock. Calling `clock_time_set` switches every reader sharing the database's
+memory to the canonical WASIX clock, including readers linked later. Importing
+a setter alone leaves the fast path enabled. Pending WASIX operations are
+checked after 16 observed milliseconds or 1,024 direct reads per clock domain.
+The read bound also covers coarsened or stalled clocks. Invalid clock IDs, pointers, or host values use
 the complete Rust syscall. Other WASIX programs retain the complete upstream
 per-call path.
 
-The exact pairing is qualified for the single-process direct Oliphaunt export
-path in both execution surfaces, including repeated PostgreSQL `ERROR` recovery. The
-direct driver treats every `PostgresMainLoopOnce` trap as the guest's exported
-top-level recovery boundary and also cleans up non-trapping ErrorResponses.
+The pairing requires single-process direct Oliphaunt integration checks in both
+execution surfaces, including repeated PostgreSQL `ERROR` recovery. A recovered
+typed outcome confirms that the live guest boundary performed top-level cleanup.
+The direct driver treats every `PostgresMainLoopOnce` trap as terminal, not as
+permission to invoke another guest recovery export.
 Its JavaScript memory bridge is limited to the direct Oliphaunt driver: generic
 WASIX streams keep their normal ownership and scheduling semantics. Copy failures
 are caught before guest buffers are released, and protocol responses are copied
@@ -511,7 +517,7 @@ stock `@wasmer/sdk`; the published binding owns the source-pinned host. A larger
 current-Wasmer JS port is outside this host's compatibility contract.
 
 The version skew is upstream-owned rather than a loose Oliphaunt dependency.
-The commit referenced by the latest npm `@wasmer/sdk` 0.10.0 release identifies
+The commit referenced by the historical npm `@wasmer/sdk` 0.10.0 release identifies
 its checked-in source as 0.8.0 and embeds Wasmer 6.1 with the 0.601 Wasmer
 support family. `wasmer-wasix` 0.702.1 embeds Wasmer 7.2.1 and
 matching 0.702.1 virtual filesystem/network, package, configuration, backend,
@@ -525,16 +531,18 @@ that port exists.
 
 ## PGlite reference, not product inheritance
 
-PGlite independently validates the recovery shape used here. Its Emscripten
+PGlite is useful prior art for error reporting, not proof of our runtime's
+recovery safety. In the pinned reference below, its Emscripten
 guest turns the active PostgreSQL top-level `longjmp` into a known exit status;
 the TypeScript host then calls `PostgresMainLongJmp`, sends readiness, flushes,
 and resumes `PostgresMainLoopOnce`. Its public database error is separately
 decoded from pgwire. See PGlite's
 [runtime loop](https://github.com/electric-sql/pglite/blob/67872123b637ba132cceb8dbb3f739a09685ee87/packages/pglite/src/pglite.ts#L932-L965)
 and [guest shim](https://github.com/electric-sql/postgres-pglite/blob/7b4ee5086055dc5e54ae1e13e487888249438e68/pglite/src/pglitec/pglitec.c#L52-L84).
-Oliphaunt deliberately uses an environment-gated Wasmer exception discriminator
-instead of Emscripten's numeric sentinel, but preserves the same separation
-between control-flow recovery and the pgwire `PostgresError` seen by callers.
+Oliphaunt does not copy that host-side reentry: its guest catches PostgreSQL
+errors before returning a typed outcome to Wasmer. There is no environment-gated
+exception discriminator or process-exit sentinel for query recovery. Control-flow
+recovery remains separate from the pgwire `PostgresError` seen by callers.
 Lifecycle SQL for a selectively imported extension runs in the owning realm.
 Isolated-host errors are serialized by PostgreSQL field and rebuilt in the caller;
 direct errors retain the same `PostgresError` identity in place. Generic

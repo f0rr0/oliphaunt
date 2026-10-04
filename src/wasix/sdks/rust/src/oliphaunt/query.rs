@@ -13,6 +13,18 @@ pub(crate) fn simple_query(sql: &str) -> Result<Vec<u8>> {
     query_core_result(query_core::simple_query(sql))
 }
 
+pub(crate) fn read_backend_message(bytes: &[u8]) -> Result<(u8, &[u8], &[u8])> {
+    query_core_result(query_core::read_backend_message(bytes))
+}
+
+pub(crate) fn parse_postgres_error(body: &[u8]) -> Result<PostgresError> {
+    let fields = query_core_result(query_core::parse_diagnostic_fields(body, "ErrorResponse"))?;
+    Ok(PostgresError::from_core(query_core::diagnostic(
+        fields,
+        "PostgreSQL ErrorResponse",
+    )))
+}
+
 fn query_core_result<T>(result: query_core::Result<T>) -> Result<T> {
     result.map_err(query_core_error)
 }

@@ -1279,14 +1279,25 @@ fn has_wasm_export(link: &WasmLinkMetadataOut, name: &str) -> bool {
         .any(|export| export.name == name || export.name == format!("_{name}"))
 }
 
+fn aot_source_dir(product: AssetProduct, target: &str) -> PathBuf {
+    // Old producer outputs used a different memory-codegen policy. A fresh
+    // profile directory prevents packaging those bytes under the new identity.
+    product
+        .root()
+        .join("aot-source")
+        .join(target)
+        .join(crate::aot_serializer::AOT_ENGINE_PROFILE)
+}
+
 pub(crate) fn prepare_aot_artifacts(
     target: &str,
     source_lane: &str,
     product: AssetProduct,
 ) -> Result<()> {
+    crate::aot_serializer::check_aot_codegen_environment()?;
     ensure_supported_aot_target(target)?;
     let outputs = BuildOutputs::discover_product_for_aot(source_lane, product)?;
-    let source_dir = outputs.product.root().join("aot-source").join(target);
+    let source_dir = aot_source_dir(outputs.product, target);
     if source_dir.exists() {
         fs::remove_dir_all(&source_dir)
             .with_context(|| format!("remove {}", source_dir.display()))?;
@@ -1920,7 +1931,8 @@ fn package_aot_artifacts(
     outputs: &BuildOutputs,
     sources: &SourcesManifest,
 ) -> Result<()> {
-    let source_dir = outputs.product.root().join("aot-source").join(target);
+    crate::aot_serializer::check_aot_codegen_environment()?;
+    let source_dir = aot_source_dir(outputs.product, target);
     if !source_dir.exists() {
         let source_lane_arg = if outputs.source_lane == DEFAULT_SOURCE_LANE {
             String::new()
@@ -1988,7 +2000,7 @@ fn package_aot_artifacts(
         source_fingerprint: outputs.source_fingerprint.clone(),
         postgres_version: Some(outputs.postgres_version.clone()),
         target_triple: target.to_owned(),
-        engine: "llvm-opta".to_owned(),
+        engine: crate::aot_serializer::AOT_ENGINE_PROFILE.to_owned(),
         wasmer_version: sources.toolchain.wasmer.clone(),
         wasmer_wasix_version: sources.toolchain.wasmer_wasix.clone(),
         artifacts: manifest_artifacts,
@@ -2008,8 +2020,9 @@ pub(crate) fn package_extension_aot_artifacts(
     target: &str,
     source_lane: &str,
 ) -> Result<()> {
+    crate::aot_serializer::check_aot_codegen_environment()?;
     let outputs = BuildOutputs::discover_product_for_aot(source_lane, AssetProduct::Extensions)?;
-    let source_dir = outputs.product.root().join("aot-source").join(target);
+    let source_dir = aot_source_dir(outputs.product, target);
     if !source_dir.exists() {
         let source_lane_arg = if outputs.source_lane == DEFAULT_SOURCE_LANE {
             String::new()
@@ -2081,7 +2094,7 @@ pub(crate) fn package_extension_aot_artifacts(
             source_fingerprint: outputs.source_fingerprint.clone(),
             postgres_version: Some(outputs.postgres_version.clone()),
             target_triple: target.to_owned(),
-            engine: "llvm-opta".to_owned(),
+            engine: crate::aot_serializer::AOT_ENGINE_PROFILE.to_owned(),
             wasmer_version: sources.toolchain.wasmer.clone(),
             wasmer_wasix_version: sources.toolchain.wasmer_wasix.clone(),
             artifacts,
@@ -2146,7 +2159,11 @@ pub(crate) fn check_aot_product_manifest(
         target,
         "AOT manifest target-triple",
     )?;
-    ensure_eq(&manifest.engine, "llvm-opta", "AOT manifest engine")?;
+    ensure_eq(
+        &manifest.engine,
+        crate::aot_serializer::AOT_ENGINE_PROFILE,
+        "AOT manifest engine",
+    )?;
     ensure_eq(
         &manifest.wasmer_version,
         &sources.toolchain.wasmer,
@@ -2558,6 +2575,23 @@ fn extension_control_files_for_asset_manifest(
 mod tests {
     use super::*;
 
+    #[test]
+    fn strict_codegen_does_not_reuse_legacy_producer_outputs() {
+        let target = "x86_64-unknown-linux-gnu";
+        for product in [
+            AssetProduct::Runtime,
+            AssetProduct::Tools,
+            AssetProduct::Extensions,
+        ] {
+            let legacy = product.root().join("aot-source").join(target);
+            assert_eq!(
+                aot_source_dir(product, target),
+                legacy.join(crate::aot_serializer::AOT_ENGINE_PROFILE)
+            );
+            assert_ne!(aot_source_dir(product, target), legacy);
+        }
+    }
+
     fn manifest_extension_metadata(
         create_extension: bool,
         control_files: Vec<&str>,
@@ -2688,7 +2722,7 @@ mod tests {
             source_fingerprint: source_fingerprint.map(str::to_owned),
             postgres_version: postgres_version.map(str::to_owned),
             target_triple: "aarch64-apple-darwin".to_owned(),
-            engine: "llvm-opta".to_owned(),
+            engine: crate::aot_serializer::AOT_ENGINE_PROFILE.to_owned(),
             wasmer_version: "7.2.1".to_owned(),
             wasmer_wasix_version: "0.702.1".to_owned(),
             artifacts: vec![AotManifestArtifact {

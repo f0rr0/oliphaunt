@@ -19,4 +19,5 @@ src/native/runtime/patches/postgresql-18.4/0017-liboliphaunt-namespace-dynahash-
 src/native/runtime/patches/postgresql-18.4/0018-liboliphaunt-contain-embedded-proc-signals.patch
 src/native/runtime/patches/postgresql-18.4/0019-liboliphaunt-link-windows-embedded-modules-to-host.patch
 src/native/runtime/patches/postgresql-18.4/0020-liboliphaunt-enforce-embedded-signal-boundary.patch
-src/native/runtime/patches/postgresql-18.4/0021-liboliphaunt-wake-embedded-epoll-through-self-pipe.patch
+src/native/runtime/patches/postgresql-18.4/0021-liboliphaunt-model-trusted-embedded-sessions.patch
+src/native/runtime/patches/postgresql-18.4/0022-liboliphaunt-preserve-host-process-boundaries.patch

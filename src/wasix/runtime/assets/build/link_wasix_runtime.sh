@@ -17,6 +17,7 @@ icu_prefix="$2"
 bridge_object="$3"
 exports_file="$4"
 profile="$5"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 [ -z "${WASIXCC_LINKER_FLAGS:-}" ] ||
   fail "custom WASIXCC_LINKER_FLAGS are unsupported by the sealed runtime link"
@@ -93,6 +94,11 @@ response="$stage/exports.rsp"
 while IFS= read -r symbol; do
   printf '%s\n' "--export=$symbol"
 done < "$exports_file" > "$response"
+
+# Recovery must target a live call-site SJLJ frame in the main module.
+bash "$script_dir/verify_wasix_sjlj_artifact.sh" \
+  "$build_dir/libpgcore.o" "$wasix_home/llvm/bin/llvm-nm" \
+  "$wasix_home/binaryen/bin/wasm-dis"
 
 raw="$stage/oliphaunt.unoptimized.wasm"
 "$linker" \
