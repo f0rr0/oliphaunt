@@ -42,7 +42,17 @@ static void number(usize value, int hex) {
   for(unsigned i=0;i<n/2;i++) { char c=out[i]; out[i]=out[n-1-i]; out[n-1-i]=c; }
   out[n]=0; print(out);
 }
-static void fail(const char *s, DWORD code) { print(s); print("\n"); ExitProcess(code); }
+static void finish(DWORD code) {
+#ifdef RESEARCH_EMULATED_CACHE_PRODUCER
+  /* Only the emulated helper avoids Wine/QEMU's process-detach failure.
+     Preserve the requested success or rejection status. */
+  TerminateProcess(GetCurrentProcess(),code);
+  ExitProcess(31);
+#else
+  ExitProcess(code);
+#endif
+}
+static void fail(const char *s, DWORD code) { print(s); print("\n"); finish(code); }
 static Vec read(const WCHAR *path) {
   HANDLE f=CreateFileW(path,0x80000000,1,0,3,0,0);
   long long size=0; DWORD got=0; Vec v;
@@ -96,9 +106,6 @@ void mainCRTStartup(void) {
      Only this internal producer avoids that detach path. Native readers and
      SDK applications retain ordinary Windows process shutdown. */
   print("stage=emulated_producer_completed\n");
-  TerminateProcess(GetCurrentProcess(),0);
-  ExitProcess(31);
-#else
-  ExitProcess(0);
 #endif
+  finish(0);
 }

@@ -205,9 +205,18 @@ jobs:
         target/wine-guest'
       env:
         GH_TOKEN: ${{ github.token }}
+    - name: Download immutable genuine native CPU profile
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37353127348'
+        artifact-ids: '11363551962'
+        github-token: ${{ github.token }}
+        path: target/frozen-native-cpu-profile
+        merge-multiple: true
     - name: Produce genuine Windows cache and fresh emulated reader
       run: python3 tools/experiments/wasmer-v8/expanded-ownership/wine-producer.py
         target/wine-cache target/frozen-engine target/wine-guest/postgres.wasm
+        target/frozen-native-cpu-profile
     - name: Retain genuine profile evidence
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -218,6 +227,10 @@ jobs:
           target/wine-cache/wine-producer-receipt.json
 
           target/wine-cache/cache-probe.exe
+
+          target/wine-cache/wine-producer.exe
+
+          target/wine-cache/atomic-wait.exe
 
           target/wine-cache/wine-postgres.cache
 

@@ -10,3 +10,9 @@ GetCommandLineW
 ExitProcess
 GetCurrentProcess
 TerminateProcess
+Sleep
+GetTickCount64
+GetModuleHandleW
+GetProcAddress
+CreateThread
+WaitForSingleObject
