@@ -23,7 +23,13 @@ env["PATH"] = os.pathsep.join([str(output / "engine")] + paths)
 bash = pathlib.Path(os.environ["PROGRAMFILES"]) / "Git/bin/bash.exe"
 if not bash.is_file():
     raise RuntimeError(f"missing runner Git Bash: {bash}")
+import shutil
+shutil.copy2(pathlib.Path(__file__).with_name("call-ownership.rs"),
+             "src/wasix/sdks/rust/tests/research_v8_call_ownership.rs")
 commands = [
+    ("call-ownership.log", ["cargo", "test", "--locked", "-p", "oliphaunt-wasix",
+                            "--no-default-features", "--test", "research_v8_call_ownership",
+                            "--", "--nocapture", "--test-threads=1"]),
     ("runtime-extension-tools.log", [str(bash), "src/wasix/sdks/rust/tools/test-aot.sh"]),
     ("lifecycle-driver.log", [sys.executable, "tools/experiments/wasmer-v8/lifecycle_check.py", str(output)]),
 ]

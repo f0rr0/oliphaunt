@@ -1,4 +1,4 @@
-name: Windows V8 DLL ownership fault diagnosis
+name: Windows V8 borrowed argument ownership control
 'on':
   workflow_dispatch: null
 permissions:
@@ -13,6 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         runner:
+        - windows-2022
         - windows-2025-vs2026
     defaults:
       run:
