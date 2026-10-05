@@ -78,10 +78,10 @@ Draft inventories use the same renewable App credentials as uploads so read-only
 workflow tokens cannot hide drafts. Registry authentication retains workflow OIDC.
 A missing App installation or permission fails before release mutations.
 
-The existing App's bot account is `oliphaunt-release-bot[bot]` (GitHub user ID
+The existing App's bot account is `oli-release-bot[bot]` (GitHub user ID
 `326451763`). `tools/release/release-bot.json` uses **Oli [bot]** as the commit
-display name and retains the linked noreply address. If renaming the App changes
-its bot login, update that address from the installation's actual bot login and
+display name and uses the renamed bot's linked noreply address. If renaming the
+App changes its bot login, update that address from the installation's actual bot login and
 the same numeric user ID; do not invent a separate `oli[bot]` account.
 SwiftPM commit authorship
 is read from the candidate's copy of that file so newer publisher code cannot
