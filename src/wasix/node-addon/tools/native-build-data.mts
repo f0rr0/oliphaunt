@@ -59,7 +59,21 @@ switch (command) {
       addon.runtimeVersion() !== expectedRuntime ||
       JSON.stringify(addon.supportedProfiles()) !== JSON.stringify(['standard', 'icu'])
     ) {
-      throw new Error(`${addonPath} reports an incompatible ABI/runtime/profile contract`);
+      const expected = {
+        runtime: expectedRuntime,
+        addonAbi: expectedAbi,
+        nodeApi: expectedNodeApi,
+        profiles: ['standard', 'icu'],
+      };
+      const actual = {
+        runtime: addon.runtimeVersion(),
+        addonAbi: addon.addonAbiVersion(),
+        nodeApi: addon.nodeApiVersion(),
+        profiles: addon.supportedProfiles(),
+      };
+      throw new Error(
+        `${addonPath} reports an incompatible ABI/runtime/profile contract: expected ${JSON.stringify(expected)}, actual ${JSON.stringify(actual)}`,
+      );
     }
 
     function expectedIdentity(record, kind) {
