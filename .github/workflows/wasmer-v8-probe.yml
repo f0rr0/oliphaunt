@@ -14,7 +14,6 @@ jobs:
       matrix:
         runner:
         - windows-2022
-        - windows-2025-vs2026
     defaults:
       run:
         shell: bash
@@ -25,7 +24,17 @@ jobs:
     - uses: ./.github/actions/setup-rust-tools
       with:
         toolchain: 1.96.0
-    - uses: ./.github/actions/setup-msvc
+    - name: Set up research-only Visual Studio 2022 host
+      uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+      with:
+        arch: x64
+        vsversion: '2022'
+    - name: Pin research linker under Git Bash
+      shell: pwsh
+      run: |
+        $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
+        if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
     - name: Compile Windows V8 serializer
       run: cargo check --locked -p xtask --features aot-serializer
     - name: Download immutable diagnostic portable runtime
