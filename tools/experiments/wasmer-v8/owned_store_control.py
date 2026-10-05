@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("output", type=pathlib.Path)
 parser.add_argument("--dry-run", action="store_true")
 parser.add_argument("--shared-memory", action="store_true")
+parser.add_argument("--shared-module", action="store_true")
 parser.add_argument("--observe-compilation", action="store_true")
 args = parser.parse_args()
 output = args.output.resolve()
@@ -80,25 +81,41 @@ impl Drop for SharedMemoryPointer {''')
         "patched_sha256": hashlib.sha256(patches[shared_relative]).hexdigest(),
         "method": "private MSVC wasm::Shared<Memory>::destroy; existing Arc Drop; research only",
     }
-if args.observe_compilation:
+if args.observe_compilation or args.shared_module:
     module_relative = pathlib.Path("src/backend/v8/entities/module.rs")
     module_original = (source / module_relative).read_bytes()
     module_sha = "85cb8b002f654d293e881eac74d443e2ad250a5feaa8733950d0334a99b43e47"
     if hashlib.sha256(module_original).hexdigest() != module_sha:
         raise RuntimeError("pinned Module source changed; refuse compilation observation")
     module_replacement = module_original.decode("utf-8")
-    entry = "    fn new(engine: &impl AsEngineRef, binary: &[u8]) -> Result<Self, CompileError> {"
-    if module_replacement.count(entry) != 1:
-        raise RuntimeError("unexpected pinned Module constructor layout")
-    module_replacement = module_replacement.replace(entry, entry +
-        '\n        eprintln!("research_v8_module_compile bytes={}", binary.len());')
+    if args.observe_compilation:
+        entry = "    fn new(engine: &impl AsEngineRef, binary: &[u8]) -> Result<Self, CompileError> {"
+        if module_replacement.count(entry) != 1:
+            raise RuntimeError("unexpected pinned Module constructor layout")
+        module_replacement = module_replacement.replace(entry, entry +
+            '\n        eprintln!("research_v8_module_compile bytes={}", binary.len());')
+    if args.shared_module:
+        old_module_drop = "        unsafe { wasm_shared_module_delete(self.v8_shared_module_handle) }"
+        if module_replacement.count(old_module_drop) != 1:
+            raise RuntimeError("unexpected pinned shared-module Drop layout")
+        module_replacement = module_replacement.replace("impl Drop for ModuleHandle {", '''// Preserve Module's existing Arc ownership and its unique final shared handle.
+unsafe extern "C" {
+    #[link_name = "?destroy@?$Shared@VModule@wasm@@@wasm@@AEAAXXZ"]
+    fn research_owned_shared_module_destroy(module: *mut wasm_shared_module_t);
+}
+
+impl Drop for ModuleHandle {''')
+        module_replacement = module_replacement.replace(old_module_drop,
+            "        unsafe { research_owned_shared_module_destroy(self.v8_shared_module_handle) }")
     patches[module_relative] = module_replacement.encode("utf-8")
     (output / "original-module.rs").write_bytes(module_original)
     (output / "patched-module.rs").write_bytes(patches[module_relative])
-    receipt["compilation_observation"] = {
+    receipt["module_control"] = {
         "original_sha256": module_sha,
         "patched_sha256": hashlib.sha256(patches[module_relative]).hexdigest(),
-        "method": "log every Wasmer V8 ModuleHandle::new call; excludes internal V8 compilation",
+        "shared_module_owner_cleanup": args.shared_module,
+        "observe_compilation": args.observe_compilation,
+        "method": "private MSVC shared Module owner; log Wasmer V8 new calls; excludes internal V8 compilation",
     }
 if not args.dry_run:
     host = subprocess.check_output(["rustc", "-vV"], encoding="utf-8")

@@ -375,9 +375,9 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --locked --release --manifest-path tools/experiments/wasmer-v8/Cargo.toml -- cache-header-compatibility 2>&1 | tee target/windows-v8-diagnostic/cache-header-compatibility.log
-      - name: Prepare private owned Store and shared-memory cleanup control
-        run: python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/owned-store-control --shared-memory --observe-compilation
-      - name: Repeat runtime and extension checks with owned Store and shared-memory cleanup
+      - name: Prepare private Store and shared-owner cleanup control
+        run: python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/owned-store-control --shared-memory --shared-module --observe-compilation
+      - name: Repeat runtime and extension checks with owned cleanup
         run: |
           set -euo pipefail
           control=target/windows-v8-diagnostic/owned-store-control
