@@ -112,10 +112,13 @@ async function withConsumer(run: () => Promise<void>): Promise<void> {
     const target = liboliphauntPackageTarget(platform(), arch());
     const carrier = join(consumerRoot, 'node_modules', target.packageName);
     await mkdir(carrier, { recursive: true });
-    await copyFile(
-      require.resolve(target.packageName + '/package.json'),
-      join(carrier, 'package.json'),
+    const metadata = JSON.parse(
+      await readFile(require.resolve(target.packageName + '/package.json'), 'utf8'),
     );
+    // This consumer fixture represents the SDK's pinned carrier. Workspace
+    // carriers can advance independently of an unchanged SDK.
+    metadata.version = (await readTypeScriptPackageVersions()).liboliphauntVersion;
+    await writeFile(join(carrier, 'package.json'), JSON.stringify(metadata));
     nodeAssets = await import(pathToFileURL(join(sdk, 'src/native/assets.ts')).href);
     await run();
   } finally {
@@ -1789,4 +1792,18 @@ function nativeModuleSuffixForTarget(target: string): string {
 
 test('asset resolver', async () => {
   await main();
+});
+
+test('asset resolver rejects an installed carrier outside the SDK runtime pin', async () => {
+  await withConsumer(async () => {
+    const target = liboliphauntPackageTarget(platform(), arch());
+    const file = join(packageRoot(target.packageName), 'package.json');
+    const metadata = JSON.parse(await readFile(file, 'utf8'));
+    metadata.version = `${Number(metadata.version.split('.')[0]) + 1}.0.0`;
+    await writeFile(file, JSON.stringify(metadata));
+    await assert.rejects(
+      nodeResolverUsesStandardCarrierRuntime,
+      /does not match @oliphaunt\/ts liboliphauntVersion/,
+    );
+  });
 });

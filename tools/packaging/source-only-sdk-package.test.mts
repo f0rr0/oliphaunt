@@ -20,6 +20,11 @@ import {
 } from './source-only-sdk-package.mts';
 
 const QUERY_PACKAGE = '@oliphaunt/ts-query';
+const COMPATIBILITY_VERSIONS = {
+  liboliphauntVersion: '1.1.0',
+  brokerVersion: '1.0.2',
+  nodeDirectAddonVersion: '0.9.1',
+};
 
 import { assertReleaseNoticesInDirectory } from './release-notices.mts';
 
@@ -48,7 +53,7 @@ function packageManifest(profile) {
     manifest.oliphaunt = Object.fromEntries(
       [...new Set(Object.values(profile.optionalDependencyVersions))].map((field) => [
         field,
-        '1.2.0',
+        COMPATIBILITY_VERSIONS[field],
       ]),
     );
     manifest.optionalDependencies = Object.fromEntries(
@@ -77,7 +82,10 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
         assert.deepEqual(
           staged.optionalDependencies,
           Object.fromEntries(
-            Object.keys(profile.optionalDependencyVersions).map((name) => [name, '1.2.0']),
+            Object.entries(profile.optionalDependencyVersions).map(([name, field]) => [
+              name,
+              COMPATIBILITY_VERSIONS[field],
+            ]),
           ),
         );
       }

@@ -513,6 +513,9 @@ export function planForReleaseProducts(
     )
       throw new Error(`release product ${product} has no qualifying Moon tasks`);
   }
+  // A dependency-only release must still prove that unchanged SDKs and
+  // extensions retain their compatibility pins across package managers.
+  roots.add('release-tools:version-pins-unit');
   const excludedTargets = new Set(RELEASE_ONLY_TARGETS);
   const reusePublished =
     products.length === 1 &&

@@ -58,14 +58,21 @@ export function renderOliphauntWasixReleaseCargoToml(
   for (const carrier of catalog.carriers.filter((entry) => entry.ecosystem === 'cargo')) {
     const crate = carrier.name;
     const pattern = new RegExp(
-      `^(${escapeRegExp(crate)}\\s*=\\s*\\{[^}\\n]*version\\s*=\\s*")[^"]+("[^}\\n]*\\})$`,
+      `^(${escapeRegExp(crate)}\\s*=\\s*\\{[^}\\n]*version\\s*=\\s*")([^"]+)("[^}\\n]*\\})$`,
       'gmu',
     );
     if (!pattern.test(text)) {
       continue;
     }
-    const version = carrier.product === 'liboliphaunt-wasix' ? runtimeVersion : carrier.version;
-    text = text.replace(pattern, `$1=${version}$2`);
+    text = text.replace(pattern, (_, before, declaredVersion, after) => {
+      const version =
+        carrier.product === 'liboliphaunt-wasix'
+          ? runtimeVersion
+          : declaredVersion === '*'
+            ? carrier.version
+            : declaredVersion.replace(/^=/u, '');
+      return `${before}=${version}${after}`;
+    });
   }
   return text;
 }

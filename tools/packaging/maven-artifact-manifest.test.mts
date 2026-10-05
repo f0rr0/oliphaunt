@@ -9,8 +9,10 @@ import { createDeterministicTar } from './cargo-source-package.mts';
 import { stageExtensionUpstreamLicenses } from '../../src/extensions/tools/extension-upstream-licenses.mts';
 import { canonicalGzipSync } from './portable-archive.mts';
 import { parseMavenArtifactManifest } from './maven-artifact-manifest.mts';
+import { renderMavenArtifactPom } from './maven-artifact-staging.mts';
 import {
   currentProductVersionSync,
+  extensionMetadata,
   extensionReleaseVersion,
 } from '../release/release-artifact-targets.mts';
 import { ROOT } from '../release/release-graph.mts';
@@ -244,7 +246,18 @@ test('the Maven manifest builder validates singleton upstream licenses in the ru
     extensionProducts: ['oliphaunt-extension-pg-hashids'],
     extensionArtifactRoot: root,
   });
-  expect(readFileSync(manifest, 'utf8').trimEnd().split('\n')).toHaveLength(2);
+  const product = 'oliphaunt-extension-pg-hashids';
+  const compatibility = extensionMetadata(product).compatibility;
+  const records = parseMavenArtifactManifest(manifest);
+  expect(records).toHaveLength(2);
+  for (const record of records) {
+    expect(record.version).toBe(currentProductVersionSync(product));
+    expect(record.runtimeProduct).toBe(compatibility.nativeRuntimeProduct);
+    expect(record.runtimeVersion).toBe(compatibility.nativeRuntimeVersion);
+    expect(renderMavenArtifactPom(record)).toContain(
+      `<oliphaunt.runtime.version>${compatibility.nativeRuntimeVersion}</oliphaunt.runtime.version>`,
+    );
+  }
 
   for (const [label, options, pattern] of [
     ['missing files namespace', { upstreamRoot: null }, /packed upstream license members differ/u],
