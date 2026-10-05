@@ -76,6 +76,7 @@ test('every binary release includes its compiled sources across product boundari
 });
 
 test('new transitive, build and target Cargo dependencies automatically select embedding releases', () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
   const scratch = mkdtempSync(path.join(ROOT, 'target/embedded-cargo-'));
   const relative = path.relative(ROOT, scratch).split(path.sep).join('/');
   try {

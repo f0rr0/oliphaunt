@@ -156,6 +156,8 @@ tasks:
       - unit
     command: bash tools/release/independent-version-pins.test.sh
     inputs:
+      - /Cargo.toml
+      - /Cargo.lock
       - "@group(package-test-metadata)"
       - "@group(release-target-contract)"
       - "@group(legal-files)"

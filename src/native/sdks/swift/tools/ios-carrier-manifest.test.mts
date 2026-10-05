@@ -136,6 +136,7 @@ function writeManifest(root, product, body) {
 }
 
 test('an independently pinned base carrier uses the pinned release and rejects current runtime assets', async () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
   const root = mkdtempSync(path.join(ROOT, 'target', 'ios-pinned-carrier-test-'));
   const version = '0.1.0';
   try {
