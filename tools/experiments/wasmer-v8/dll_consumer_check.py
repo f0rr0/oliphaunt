@@ -51,7 +51,7 @@ examples = release / "examples"
 shutil.copy2(output / "oliphaunt_wee8.dll", examples / "oliphaunt_wee8.dll")
 for i in range(10):
     run(f"ordinary-md-runtime-{i}", [str(examples / "mixed_host.exe")])
-dumpbin = pathlib.Path(env["VCToolsInstallDir"]) / "bin/HostX64/x64/dumpbin.exe"
+dumpbin = pathlib.Path(os.environ["VCToolsInstallDir"]) / "bin/HostX64/x64/dumpbin.exe"
 assert dumpbin.is_file(), dumpbin
 for tool, argument, name in [(str(dumpbin), "/EXPORTS", "dll-exports"),
                             (str(dumpbin), "/DEPENDENTS", "dll-dependencies")]:
