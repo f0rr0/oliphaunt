@@ -1,4 +1,4 @@
-name: Windows V8 DLL expanded ownership control
+name: Windows V8 DLL ownership fault diagnosis
 'on':
   workflow_dispatch: null
 permissions:
@@ -13,7 +13,6 @@ jobs:
       fail-fast: false
       matrix:
         runner:
-        - windows-2022
         - windows-2025-vs2026
     defaults:
       run:
@@ -122,6 +121,9 @@ jobs:
         export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-ownership/vector-artifacts"
 
         python tools/experiments/wasmer-v8/expanded-ownership/sdk-dll-check.py target/windows-v8-ownership/control'
+    - name: Diagnose native ownership failure
+      if: ${{ failure() }}
+      run: python tools/experiments/wasmer-v8/expanded-ownership/debug-failure.py target/windows-v8-ownership/control
     - name: Retain ownership receipts
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

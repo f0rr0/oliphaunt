@@ -211,11 +211,15 @@ fn panicking_transaction_callback_rolls_back_and_releases_the_database() -> Resu
 
 #[test]
 fn memory_instances_are_isolated() -> Result<()> {
+    eprintln!("research_stage=first_open_before");
     let mut first = Oliphaunt::open()?;
+    eprintln!("research_stage=first_open_after");
     first.execute("CREATE TABLE private_state(value integer)")?;
     first.execute("INSERT INTO private_state VALUES (1)")?;
 
+    eprintln!("research_stage=second_open_before");
     let mut second = Oliphaunt::open()?;
+    eprintln!("research_stage=second_open_after");
     ensure!(
         second
             .query("SELECT to_regclass('private_state')::text AS value")?
@@ -223,8 +227,12 @@ fn memory_instances_are_isolated() -> Result<()> {
             .is_none(),
         "independent memory databases shared PostgreSQL state"
     );
+    eprintln!("research_stage=second_close_before");
     second.close()?;
+    eprintln!("research_stage=second_close_after");
+    eprintln!("research_stage=first_close_before");
     first.close()?;
+    eprintln!("research_stage=first_close_after");
     Ok(())
 }
 
