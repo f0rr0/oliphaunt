@@ -181,6 +181,11 @@ jobs:
           restore-keys: |
             ios-carrier-v1-${{ hashFiles('src/native/runtime/VERSION', 'src/native/sdks/swift/tools/ios-carrier-manifest.mts', 'tools/packaging/**', 'tools/release/**') }}-
 
+      - name: Set up Cargo for dependency metadata
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+
       - name: Plan artifact builder jobs
         id: plan
         env:
@@ -241,6 +246,11 @@ jobs:
         with:
           task-cache: "false"
           install-workspace: "false"
+
+      - name: Set up Cargo for dependency metadata
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
 
       - name: Check release intent
         env:

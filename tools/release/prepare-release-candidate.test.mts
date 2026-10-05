@@ -7,7 +7,15 @@ import {
   useSourceDate,
   applyCandidate,
 } from './prepare-release-candidate.mts';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -75,12 +83,19 @@ test('every binary release includes its compiled sources across product boundari
   }
 });
 
-test('new transitive, build and target Cargo dependencies automatically select embedding releases', () => {
+test('Cargo owns transitive, inherited, renamed, build, target and custom source inputs', () => {
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });
   const scratch = mkdtempSync(path.join(ROOT, 'target/embedded-cargo-'));
   const relative = path.relative(ROOT, scratch).split(path.sep).join('/');
+  const previousCargoHome = process.env.CARGO_HOME;
   try {
-    for (const name of ['binary', 'middle', 'leaf', 'build', 'target', 'test-only']) {
+    const names = ['binary', 'middle', 'leaf', 'build', 'target', 'test-only'];
+    writeFileSync(
+      path.join(scratch, 'Cargo.toml'),
+      `[workspace]\nmembers = ${JSON.stringify(names)}\nresolver = "3"\n` +
+        '[workspace.dependencies]\nrenamed = { package = "leaf", path = "leaf" }\n',
+    );
+    for (const name of names) {
       mkdirSync(path.join(scratch, name, 'src'), { recursive: true });
       writeFileSync(path.join(scratch, name, 'src/lib.rs'), 'pub fn fixture() {}\n');
       writeFileSync(
@@ -88,24 +103,35 @@ test('new transitive, build and target Cargo dependencies automatically select e
         `[package]\nname = "${name}"\nversion = "1.0.0"\n`,
       );
     }
-    writeFileSync(
+    appendFileSync(
       path.join(scratch, 'binary/Cargo.toml'),
       '[dependencies]\nmiddle = { path = "../middle" }\n' +
         '[build-dependencies]\nbuild = { path = "../build" }\n' +
-        '[target.\'cfg(unix)\'.dependencies]\ntarget = { path = "../target", optional = true }\n' +
-        '[dev-dependencies]\ntest = { path = "../test-only" }\n',
+        '[target.\'cfg(target_arch = "riscv64")\'.dependencies]\ntarget = { path = "../target", optional = true }\n' +
+        '[dev-dependencies]\ntest-only = { path = "../test-only" }\n',
     );
-    writeFileSync(
+    appendFileSync(
       path.join(scratch, 'middle/Cargo.toml'),
-      '[dependencies]\nleaf = { path = "../leaf" }\n',
+      '[dependencies]\nrenamed.workspace = true\nserde = "1"\n',
     );
+    mkdirSync(path.join(scratch, 'leaf/custom'), { recursive: true });
+    mkdirSync(path.join(scratch, 'leaf/scripts'), { recursive: true });
+    writeFileSync(path.join(scratch, 'leaf/custom/lib.rs'), 'pub fn custom() {}\n');
+    writeFileSync(path.join(scratch, 'leaf/scripts/build.rs'), 'fn main() {}\n');
+    writeFileSync(
+      path.join(scratch, 'leaf/Cargo.toml'),
+      '[package]\nname = "leaf"\nversion = "1.0.0"\nbuild = "scripts/build.rs"\n' +
+        '[lib]\npath = "custom/lib.rs"\n',
+    );
+    // Planning must work before any registry cache or lockfile exists.
+    process.env.CARGO_HOME = path.join(scratch, 'empty-cargo-cache');
     const impacts = declaredSharedSourceImpacts({
       'oliphaunt-node-direct': {
         embedded_cargo_manifests: [`${relative}/binary/Cargo.toml`],
       },
     });
     const fixtureGraph = { ...graph, shared_release_sources: impacts };
-    for (const name of ['middle', 'leaf', 'build', 'target']) {
+    for (const name of ['middle', 'build', 'target']) {
       expect(buildPlan(fixtureGraph, [`${relative}/${name}/src/lib.rs`]).releaseProducts).toEqual([
         'oliphaunt-node-direct',
       ]);
@@ -114,7 +140,17 @@ test('new transitive, build and target Cargo dependencies automatically select e
       [],
     );
     expect(buildPlan(fixtureGraph, [`${relative}/leaf/README.md`]).releaseProducts).toEqual([]);
+    expect(buildPlan(fixtureGraph, [`${relative}/leaf/src/lib.rs`]).releaseProducts).toEqual([]);
+    for (const file of ['leaf/custom/module.rs', 'leaf/scripts/helper.rs']) {
+      expect(buildPlan(fixtureGraph, [`${relative}/${file}`]).releaseProducts).toEqual([
+        'oliphaunt-node-direct',
+      ]);
+    }
+    expect(existsSync(path.join(scratch, 'Cargo.lock'))).toBe(false);
+    expect(existsSync(path.join(process.env.CARGO_HOME, 'registry'))).toBe(false);
   } finally {
+    if (previousCargoHome === undefined) delete process.env.CARGO_HOME;
+    else process.env.CARGO_HOME = previousCargoHome;
     rmSync(scratch, { recursive: true, force: true });
   }
 });

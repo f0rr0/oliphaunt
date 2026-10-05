@@ -183,6 +183,7 @@ tasks:
     tags:
       - quality
       - unit
+      - requires-rust
     inputs:
       - /.moon/tasks/**/*
       - /.moon/toolchains.yml
@@ -193,10 +194,9 @@ tasks:
       - /.release-please-manifest.json
       - /Cargo.toml
       - /Cargo.lock
+      - /rust-toolchain.toml
       - /**/Cargo.toml
-      - /src/{native,wasix}/**/*.rs
-      - /src/query/rust/**/*.rs
-      - /src/database-resources/icu/cargo/**/*.rs
+      - /src/**/*.rs
       - /Package.swift
       - /package.json
       - /release-please-config.json

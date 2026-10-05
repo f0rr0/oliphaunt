@@ -35,11 +35,16 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   check:
-    tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools"]
+    tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools", "requires-rust"]
     command: "bash tools/ci/check-workflows.sh"
     inputs:
       - "/.moon/toolchains.yml"
+      - "/.moon/tasks/**/*"
+      - "/**/moon.yml"
       - "/.prototools"
+      - "/rust-toolchain.toml"
+      - "/Cargo.lock"
+      - "/**/Cargo.toml"
       - "/.github/actions/**/*"
       - "/.github/scripts/**/*"
       - "/.github/workflows/**/*"

@@ -48,17 +48,9 @@ const manifest = json('.release-please-manifest.json');
 
 // Advance dependencies without selecting their consumers. Distinct versions
 // expose both accidental coupling and substitution of a current workspace pin.
-for (const [index, product] of [
-  'liboliphaunt-native',
-  'liboliphaunt-wasix',
-  'oliphaunt-broker',
-  'oliphaunt-node-direct',
-  'oliphaunt-wasix-napi',
-  'oliphaunt-query',
-  'oliphaunt-query-ts',
-  'oliphaunt-swift',
-  'oliphaunt-kotlin',
-].entries()) {
+for (const [index, product] of [...new Set(sdkPins.map((entry) => entry.sourceProduct))]
+  .sort()
+  .entries()) {
   const metadata = products[product];
   const version = `${Number(metadata.version.split('.')[0]) + 10 + index}.0.0`;
   manifest[metadata.path] = version;

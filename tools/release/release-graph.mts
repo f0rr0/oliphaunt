@@ -375,60 +375,85 @@ function contribCarrierImpact(products, prefix) {
 }
 
 export function declaredSharedSourceImpacts(products, prefix = 'release-graph') {
+  const packages = new Map();
+  const relative = (file) => {
+    const value = path.relative(ROOT, file).split(path.sep).join('/');
+    if (!value || value.startsWith('../') || path.isAbsolute(value)) {
+      fail(prefix, `embedded Cargo inputs must stay in the repository: ${file}`);
+    }
+    return value;
+  };
+  const cargoPackage = (manifestPath) => {
+    if (!packages.has(manifestPath)) {
+      // Cargo resolves inherited/renamed dependencies and custom targets. No
+      // registry resolution, compilation, network or lockfile mutation belongs
+      // in release planning. Cache all workspace members from this one read.
+      const result = spawnSync(
+        'cargo',
+        [
+          'metadata',
+          '--manifest-path',
+          manifestPath,
+          '--format-version',
+          '1',
+          '--no-deps',
+          '--frozen',
+        ],
+        { cwd: ROOT, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      if (result.error || result.status !== 0) {
+        fail(
+          prefix,
+          `Cargo metadata failed for ${manifestPath}: ${result.error?.message ?? result.stderr}`,
+        );
+      }
+      const metadata = JSON.parse(result.stdout);
+      for (const pkg of metadata.packages) {
+        packages.set(relative(pkg.manifest_path), { ...pkg, workspace: metadata.workspace_root });
+      }
+    }
+    const pkg = packages.get(manifestPath);
+    if (!pkg) fail(prefix, `Cargo metadata omitted embedded package ${manifestPath}`);
+    return pkg;
+  };
   return Object.entries(products).flatMap(([product, config]) => {
     const manifests = config.embedded_cargo_manifests ?? [];
     assertStringList(manifests, `${product}.embedded_cargo_manifests`, prefix);
     const declaredPaths = config.shared_source_paths ?? [];
     assertStringList(declaredPaths, `${product}.shared_source_paths`, prefix);
     const paths = [...declaredPaths];
-    // These binaries use the workspace's locked dependency graph and build
-    // configuration, which can change shipped code without a local source edit.
-    if (manifests.length > 0) paths.push('Cargo.toml', 'Cargo.lock');
     const visited = new Set();
     const visit = (manifestPath) => {
       if (visited.has(manifestPath)) return;
       visited.add(manifestPath);
       const directory = path.posix.dirname(manifestPath);
-      const manifest = readToml(manifestPath, prefix);
+      const pkg = cargoPackage(manifestPath);
       // Local runtime and build dependencies become part of the shipped binary.
       // Derive their sources from Cargo so a new dependency cannot silently
       // cross an independently versioned release boundary. Tests stay local.
       paths.push(manifestPath);
+      // Locked dependencies and workspace build settings determine binary bytes.
+      for (const name of ['Cargo.toml', 'Cargo.lock']) {
+        const file = path.join(pkg.workspace, name);
+        if (existsSync(file)) paths.push(relative(file));
+      }
       for (const entry of readdirSync(path.join(ROOT, directory), {
         withFileTypes: true,
       })) {
-        if (
-          (entry.isDirectory() && entry.name === 'src') ||
-          (entry.isFile() && entry.name.endsWith('.rs'))
-        ) {
+        if (entry.isFile() && entry.name.endsWith('.rs')) {
           paths.push(path.posix.join(directory, entry.name));
         }
       }
-      for (const section of [manifest, ...Object.values(manifest.target ?? {})]) {
-        for (const table of ['dependencies', 'build-dependencies']) {
-          for (const dependency of Object.values(section[table] ?? {})) {
-            if (dependency?.workspace === true) {
-              fail(
-                prefix,
-                `${product} embedded Cargo dependencies must declare their source paths explicitly`,
-              );
-            }
-            if (typeof dependency?.path === 'string') {
-              if (path.posix.isAbsolute(dependency.path)) {
-                fail(prefix, `${product} embedded Cargo dependency must stay in the repository`);
-              }
-              const dependencyManifest = path.posix.normalize(
-                path.posix.join(directory, dependency.path, 'Cargo.toml'),
-              );
-              if (
-                dependencyManifest.startsWith('../') ||
-                path.posix.isAbsolute(dependencyManifest)
-              ) {
-                fail(prefix, `${product} embedded Cargo dependency must stay in the repository`);
-              }
-              visit(dependencyManifest);
-            }
-          }
+      for (const target of pkg.targets) {
+        if (target.kind.some((kind) => ['test', 'bench', 'example'].includes(kind))) continue;
+        const source = relative(target.src_path);
+        // Custom lib/bin/build-script directories can contain sibling modules.
+        const sourceDirectory = path.posix.dirname(source);
+        paths.push(sourceDirectory === directory ? source : sourceDirectory);
+      }
+      for (const dependency of pkg.dependencies) {
+        if (dependency.kind !== 'dev' && typeof dependency.path === 'string') {
+          visit(relative(path.join(dependency.path, 'Cargo.toml')));
         }
       }
     };

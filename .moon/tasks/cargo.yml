@@ -6,7 +6,9 @@ inheritedBy:
 fileGroups:
   cargo-sources:
     - "src/**/*"
-    - "{Cargo.toml,build.rs}"
+    - "**/*.rs"
+    - "!**/{tests,benches,examples}/**"
+    - "Cargo.toml"
 
 tasks:
   # Cargo owns compilation. This command-free node only carries source hashes
