@@ -71,7 +71,9 @@ materialized = cache / "oliphaunt_wee8.dll"
 assert hashlib.sha256(materialized.read_bytes()).hexdigest() == digest
 for index in range(3):
     text = (output / f"embedded-cold-{index}.log").read_text()
-    assert f"research_embedded_engine_loaded={materialized}" in text, text[-2000:]
+    loaded = [pathlib.Path(line.removeprefix("research_embedded_engine_loaded="))
+              for line in text.splitlines() if line.startswith("research_embedded_engine_loaded=")]
+    assert len(loaded) == 1 and loaded[0].resolve() == materialized.resolve(), text[-2000:]
 with (output / "embedded-warm.log").open("w") as log:
     result = subprocess.run([str(executable), "--nocapture", "--test-threads=1"],
                             cwd=sandbox, env=env, stdout=log, stderr=subprocess.STDOUT,
