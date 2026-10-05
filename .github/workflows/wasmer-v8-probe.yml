@@ -45,6 +45,13 @@ jobs:
         with:
           arch: x64
           vsversion: '2022'
+      - name: Pin research linker under Git Bash
+        if: matrix.os == 'windows-2022'
+        shell: pwsh
+        run: |
+          $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
+          if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
       - name: Record host CPU
         shell: pwsh
         if: runner.os == 'Windows'
@@ -58,6 +65,7 @@ jobs:
           path: tools/experiments/wasmer-v8/guest
           merge-multiple: true
       - name: Verify and test fixed CPU profile in fresh processes
+        id: fixed_profile
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -108,7 +116,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
       - name: Check consumer build without libclang
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.fixed_profile.outcome == 'success' }}
         run: |
           set +e
           LIBCLANG_PATH="$PWD/target/absent-libclang" cargo build --locked --release --features wasix --manifest-path tools/experiments/wasmer-v8/Cargo.toml > tools/experiments/wasmer-v8/profile-results/no-libclang.log 2>&1
@@ -157,6 +165,13 @@ jobs:
         with:
           arch: x64
           vsversion: '2022'
+      - name: Pin research linker under Git Bash
+        if: matrix.os == 'windows-2022'
+        shell: pwsh
+        run: |
+          $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
+          if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
       - name: Download trusted same-run cache fixtures
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
