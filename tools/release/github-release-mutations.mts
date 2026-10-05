@@ -698,6 +698,9 @@ export async function requestGithubMutation(endpoint, options = {}) {
   ) {
     throw mutationError('GitHub mutation abort guard must be a function');
   }
+  if (options.getToken !== undefined && typeof options.getToken !== 'function') {
+    throw mutationError('GitHub mutation token provider must be a function');
+  }
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) {
     throw mutationError('GitHub mutation timeout must be a positive integer');
   }
@@ -733,6 +736,9 @@ export async function requestGithubMutation(endpoint, options = {}) {
     label: options.coreRequestLabel ?? 'GitHub release mutation',
     ...(options.coreJournalOptions ?? {}),
   });
+  const token = options.getToken
+    ? await options.getToken()
+    : environment.GH_TOKEN || environment.GITHUB_TOKEN || '';
   // Recheck after the independently locked request journal so a peer failure
   // observed while this worker waited cannot leak a new mutation transport.
   options.assertMutationAllowed?.();
@@ -747,10 +753,7 @@ export async function requestGithubMutation(endpoint, options = {}) {
   }
   const upload = endpoint.startsWith('https://uploads.github.com/');
   const url = upload ? endpoint : 'https://api.github.com/' + endpoint;
-  const headers = authHeaders(
-    'application/vnd.github+json',
-    environment.GH_TOKEN || environment.GITHUB_TOKEN || '',
-  );
+  const headers = authHeaders('application/vnd.github+json', token);
   let body = options.input;
   if (upload) {
     const file = options.file;
@@ -782,7 +785,7 @@ export async function requestGithubMutation(endpoint, options = {}) {
     if (!response.ok) {
       const error = mutationError(`GitHub mutation returned HTTP ${response.status}`);
       error.httpStatus = response.status;
-      error.detail = redactGitHubReadDetail(text, environment);
+      error.detail = redactGitHubReadDetail(text, { ...environment, GH_TOKEN: token });
       throw error;
     }
     return text;
