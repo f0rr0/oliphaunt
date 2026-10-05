@@ -36,7 +36,8 @@ Create these environments:
 | `release-publish` | Normal trusted publication | Release App credentials, Maven Central credentials and signing key | `main` only; independent approval when available |
 
 Use the existing private GitHub App for all release mutations, with the friendly
-display name **Oli (Oliphaunt)**. Its installation remains limited to
+display name **Oli Release Bot**. GitHub reserves existing account names, so
+the short name `Oli` cannot be used. Its installation remains limited to
 `f0rr0/oliphaunt`, without webhooks or account/organization permissions. Grant
 repository **Contents**, **Workflows**, **Issues**, **Pull requests**, and
 **Attestations** read and write, plus **Actions** read-only. Each workflow phase
