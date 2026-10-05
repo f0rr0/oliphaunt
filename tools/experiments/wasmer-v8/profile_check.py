@@ -28,7 +28,8 @@ def run(mode, operation, path, expect_success=True, postgres=None):
         raise RuntimeError(f"expected V8 compatibility rejection: {command}")
 
 
-for profile in ("default", "baseline"):
+profiles = ("default", "baseline", "baseline-no-jcc")
+for profile in profiles:
     path = args.output / f"{profile}.cache"
     run(profile, "write", path, postgres=args.postgres)
     run(profile, "read", path, postgres=args.postgres)
@@ -37,16 +38,17 @@ for profile in ("default", "baseline"):
 run("default", "read", args.output / "baseline.cache", expect_success=False)
 run("baseline", "read", args.output / "default.cache", expect_success=False)
 if args.peers:
-    own_header = json.loads((args.output / "baseline.cache.header").read_text())
-    for peer in sorted(args.peers.rglob("baseline.cache")):
-        # SDK artifacts also require an exact native OS/ABI. Do not infer
-        # cross-OS compatibility from this V8 header alone.
-        if ("windows" in peer.parent.name) != (sys.platform == "win32"):
-            print(f"peer={peer.parent.name} skipped=different-native-OS", flush=True)
-            continue
-        peer_header = json.loads(pathlib.Path(f"{peer}.header").read_text())
-        expected = own_header == peer_header
-        print(f"peer={peer.parent.name} expected_compatible={expected}", flush=True)
-        postgres = "load-persisted-postgres" if pathlib.Path(f"{peer}.postgres.cache").is_file() else None
-        run("baseline", "read", peer, expect_success=expected, postgres=postgres)
+    for profile in profiles[1:]:
+        own_header = json.loads((args.output / f"{profile}.cache.header").read_text())
+        for peer in sorted(args.peers.rglob(f"{profile}.cache")):
+            # SDK artifacts also require an exact native OS/ABI. Do not infer
+            # cross-OS compatibility from this V8 header alone.
+            if ("windows" in peer.parent.name) != (sys.platform == "win32"):
+                print(f"peer={peer.parent.name} skipped=different-native-OS", flush=True)
+                continue
+            peer_header = json.loads(pathlib.Path(f"{peer}.header").read_text())
+            expected = own_header == peer_header
+            print(f"profile={profile} peer={peer.parent.name} expected_compatible={expected}", flush=True)
+            postgres = "load-persisted-postgres" if pathlib.Path(f"{peer}.postgres.cache").is_file() else None
+            run(profile, "read", peer, expect_success=expected, postgres=postgres)
 print("PASS CPU profile validation", flush=True)
