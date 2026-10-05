@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -134,6 +135,82 @@ function writeManifest(root, product, body) {
   );
   return file;
 }
+
+test('an independently pinned base carrier uses the pinned release and rejects current runtime assets', async () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
+  const root = mkdtempSync(path.join(ROOT, 'target', 'ios-pinned-carrier-test-'));
+  const version = '0.1.0';
+  try {
+    await archive(
+      root,
+      `liboliphaunt-${version}-apple-spm-xcframework.zip`,
+      'liboliphaunt.xcframework',
+      'zip',
+      {
+        insideMember: true,
+        profile: 'native-runtime',
+      },
+    );
+    await archive(
+      root,
+      `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`,
+      'oliphaunt',
+      'tar.gz',
+      {
+        insideMember: false,
+        profile: 'native-runtime-resources',
+      },
+    );
+    const carrier = buildIosCarrierManifest({
+      baseAssetDir: root,
+      baseRuntimeVersion: version,
+      extensionManifests: [],
+    });
+    assert.equal(carrier.base.version, version);
+    assert.equal(carrier.base.tag, `liboliphaunt-native-v${version}`);
+    for (const row of carrier.base.assets)
+      assert.ok(row.url.includes(`/liboliphaunt-native-v${version}/liboliphaunt-${version}-`));
+    assert.throws(
+      () => buildIosCarrierManifest({ baseAssetDir: root, extensionManifests: [] }),
+      /missing|does not exist/,
+    );
+    const frozen = path.join(root, 'carrier.json');
+    writeFileSync(frozen, JSON.stringify(carrier));
+    const ambient = path.join(ROOT, 'target/extension-artifacts', path.basename(root));
+    mkdirSync(ambient, { recursive: true });
+    writeFileSync(path.join(ambient, 'extension-artifacts.json'), '{}');
+    try {
+      assert.deepEqual(
+        buildIosCarrierManifest({ baseCarrierManifest: frozen, baseRuntimeVersion: version }),
+        carrier,
+      );
+      const output = path.join(root, 'cli-carrier.json');
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.join(import.meta.dir, 'ios-carrier-manifest.mts'),
+          '--base-carrier',
+          frozen,
+          '--base-runtime-version',
+          version,
+          '--output',
+          output,
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), carrier);
+    } finally {
+      rmSync(ambient, { recursive: true, force: true });
+    }
+    assert.throws(
+      () => buildIosCarrierManifest({ baseCarrierManifest: frozen, extensionManifests: [] }),
+      /does not freeze/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('produces exact local and GitHub carrier envelopes ', async () => {
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });

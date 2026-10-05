@@ -14,6 +14,7 @@ import {
   ROOT,
 } from './release-artifact-targets.mts';
 import { compatibilityVersionEntries, loadGraph, loadProducts } from './release-graph.mts';
+import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import {
   exampleCargoPolicies,
   exampleCargoReleaseVersionBindings,
@@ -873,6 +874,21 @@ async function main(argv) {
   const transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
   syncReleasePleaseBootstrapBoundary(changes, { write });
   await syncCompatibilityVersions(changes, { write, transitions });
+  if (
+    transitions.some(({ product }) => product === 'oliphaunt-wasix-ts') &&
+    (write || changes.length === 0)
+  ) {
+    const sdk = readJsonObject(path.join(ROOT, 'src/wasix/sdks/ts/package.json')).oliphaunt;
+    const addon = readJsonObject(path.join(ROOT, 'src/wasix/node-addon/package.json')).oliphaunt;
+    requireMatchingWasixRuntime(
+      {
+        runtimeVersion: sdk.runtimeVersion,
+        napiVersion: sdk.wasixNapiVersion,
+        napiRuntimeVersion: addon.runtimeVersion,
+      },
+      { prefix: PREFIX },
+    );
+  }
   syncExtensionRegistryMetadata(changes, { write });
   await syncNativeToolsOptionalDependencies(changes, { write, transitions });
   syncElectronExampleDependencies(changes, { write });

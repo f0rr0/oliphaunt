@@ -10,6 +10,7 @@ import {
   compatibilityVersionSource,
   requireCompatibilityVersionBinding,
   requireCompatibilityVersionBounds,
+  requireMatchingWasixRuntime,
 } from './compatibility-version-policy.mts';
 import {
   declaredCarrierMap,
@@ -361,6 +362,25 @@ function validateCompatibility(graph, { publication = false } = {}) {
         sourceProduct: entry.sourceProduct,
         sourceVersion: graph.products[entry.sourceProduct].version,
         provenance,
+      },
+      { prefix: TOOL },
+    );
+  }
+  if (publication) {
+    const pin = (product, sourceProduct, options = {}) =>
+      compatibilityVersionValue(
+        entries.find((entry) => entry.product === product && entry.sourceProduct === sourceProduct),
+        { prefix: TOOL, ...options },
+      );
+    const napiProduct = graph.products['oliphaunt-wasix-napi'];
+    const napiVersion = pin('oliphaunt-wasix-ts', 'oliphaunt-wasix-napi');
+    requireMatchingWasixRuntime(
+      {
+        runtimeVersion: pin('oliphaunt-wasix-ts', 'liboliphaunt-wasix'),
+        napiVersion,
+        napiRuntimeVersion: pin('oliphaunt-wasix-napi', 'liboliphaunt-wasix', {
+          ref: napiVersion === napiProduct.version ? null : napiProduct.tag_prefix + napiVersion,
+        }),
       },
       { prefix: TOOL },
     );

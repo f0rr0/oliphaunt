@@ -11,6 +11,7 @@ import {
 import { createDeterministicTar } from '../../../../../../tools/packaging/cargo-source-package.mts';
 import {
   canonicalGzipSync,
+  extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../../../../../tools/packaging/portable-archive.mts';
 import { packWasixToolsNpmCarrier } from '../../../../postgres-tools/tools/wasix-tools-npm-carrier.mts';
@@ -54,7 +55,12 @@ export async function stagePackedWasixConsumer({
   const tarballs = resolve(scratch, 'tarballs');
   await mkdir(tarballs, { recursive: true });
 
-  const binding = await packedBinding();
+  const binding = await packedBinding({
+    scratch,
+    tarballs,
+    runtimeVersion,
+    nativeVersion: releaseVersions['src/wasix/node-addon'],
+  });
   const queryFile = resolve(scratch, 'query.tgz');
   const queryEntries = readPortableArchiveEntries(queryFile);
   const queryManifest = queryEntries.get('package/package.json');
@@ -196,15 +202,46 @@ export default Object.freeze({
   return pack(staging, tarballs);
 }
 
-async function packedBinding() {
+export function workspaceBindingManifest(manifest, { runtimeVersion, nativeVersion }) {
+  requireReleaseVersion(runtimeVersion, 'liboliphaunt-wasix');
+  requireReleaseVersion(nativeVersion, 'oliphaunt-wasix-napi');
+  return {
+    ...manifest,
+    oliphaunt: {
+      ...manifest.oliphaunt,
+      runtimeVersion,
+      wasixNapiVersion: nativeVersion,
+      qualificationOnly: true,
+    },
+    dependencies: { ...manifest.dependencies, '@oliphaunt/liboliphaunt-wasix': runtimeVersion },
+    optionalDependencies: Object.fromEntries(
+      Object.keys(manifest.optionalDependencies).map((name) => [name, nativeVersion]),
+    ),
+  };
+}
+
+async function packedBinding({ scratch, tarballs, runtimeVersion, nativeVersion }) {
   const { version } = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
   const file = resolve(
     repositoryRoot,
     `target/oliphaunt-wasix-ts/package/packages/oliphaunt-wasix-ts-${version}.tgz`,
   );
   const manifest = assertWasixTypescriptNpmArchive(file);
-  const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
   requireReleaseVersion(nativeVersion, 'oliphaunt-wasix-napi');
+  if (
+    manifest.oliphaunt.runtimeVersion !== runtimeVersion ||
+    manifest.oliphaunt.wasixNapiVersion !== nativeVersion
+  ) {
+    // Source qualification runs against this checkout's producers. Keep the
+    // release tarball intact and use a private, unpublishable copy for the test.
+    const staging = resolve(scratch, 'workspace-binding');
+    extractPortableArchiveTree(file, staging, 'package');
+    await writeJson(
+      resolve(staging, 'package.json'),
+      workspaceBindingManifest(manifest, { runtimeVersion, nativeVersion }),
+    );
+    return { ...(await pack(staging, tarballs)), nativeVersion };
+  }
   const bytes = await readFile(file);
   return {
     file,

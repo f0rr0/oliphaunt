@@ -18,7 +18,7 @@ import {
   SOURCE_ONLY_NPM_PROFILES,
   assertSourceOnlyNpmArchive,
 } from '../../../../../tools/packaging/source-only-sdk-package.mts';
-import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
+import { productDependencyCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 
 /**
  * Prove that the selection-neutral Apple carrier users receive in the React
@@ -92,7 +92,8 @@ export async function checkReactNativePackage(root) {
         validateReactNativePackagedCarrier({
           artifact: tarball,
           evidence: readFileSync(carrierEvidence),
-          expectedNativeVersion: productCompatibilityVersion(
+          expectedNativeVersion: productDependencyCompatibilityVersion(
+            'oliphaunt-react-native',
             'oliphaunt-swift',
             'liboliphaunt-native',
             PREFIX,

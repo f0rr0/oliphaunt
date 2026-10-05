@@ -191,11 +191,15 @@ function pathDependencyPatches(manifests, scratch, packagedManifests, packagedNa
           .filter(({ name }) => name === dependency.name)
           .map(({ version }) => exactVersion(version, dependency.name)),
       );
-      if (packagedVersions.size !== 1 || !packagedVersions.has(local.version)) {
+      if (packagedVersions.size !== 1) {
         throw error(
           `local patch ${dependency.name}@${local.version} does not match packaged requirement ${[...packagedVersions].join(', ') || 'none'}`,
         );
       }
+      // Independently released SDKs keep their exact dependency pins. A local
+      // source hint is usable only for that version; otherwise Cargo fetches
+      // the declared published dependency instead of substituting workspace code.
+      if (!packagedVersions.has(local.version)) continue;
       const realSource = realpathSync(directory);
       const previousSource = sourceDirectories.get(dependency.name);
       if (previousSource !== undefined && previousSource !== realSource) {

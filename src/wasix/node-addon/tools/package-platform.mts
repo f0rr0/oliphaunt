@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
 
 import { archiveDirectory } from '../../../../tools/packaging/archive-directory.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
@@ -113,6 +114,18 @@ async function main() {
     mkdirSync(path.join(packageWork, 'prebuilds'), { recursive: true });
     mkdirSync(packageOutput, { recursive: true });
     cpSync(sourcePackage, packageWork, { recursive: true });
+    writeFileSync(
+      path.join(packageWork, 'package.json'),
+      `${JSON.stringify(
+        workspaceCarrierManifest(
+          readJson(path.join(sourcePackage, 'package.json')),
+          rootManifest.oliphaunt,
+          WORKSPACE_ROOT,
+        ),
+        null,
+        2,
+      )}\n`,
+    );
     const packagePrebuilds = path.join(packageWork, 'prebuilds');
     mkdirSync(packagePrebuilds, { recursive: true });
     cpSync(path.join(prebuildDirectory, BINARY), path.join(packagePrebuilds, BINARY));

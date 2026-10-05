@@ -61,7 +61,7 @@ describe('normal publication plan', () => {
     ];
     expect(buildPlan(graph, files).releaseProducts).toEqual([]);
     expect(buildPlan(graph, [...files, 'src/native/sdks/rust/src/lib.rs']).releaseProducts).toEqual(
-      ['oliphaunt-rust'],
+      ['oliphaunt-kotlin', 'oliphaunt-rust', 'oliphaunt-swift'],
     );
     const explicit = {
       ...graph,
@@ -217,13 +217,26 @@ describe('normal publication plan', () => {
     expect(runtime.topology.carrierCount).toBe(runtime.catalog.carriers.length);
 
     const contrib = realSelection('src/extensions/contrib/postgres18.toml');
-    expect(contrib.release.directProducts).toEqual(['liboliphaunt-native', 'liboliphaunt-wasix']);
-    expect(contrib.release.releaseProducts).toEqual(['liboliphaunt-native', 'liboliphaunt-wasix']);
-    expect(contrib.release.releaseProducts).not.toContain('oliphaunt-wasix-napi');
+    expect(contrib.release.directProducts).toEqual([
+      'liboliphaunt-native',
+      'liboliphaunt-wasix',
+      'oliphaunt-wasix-napi',
+    ]);
+    expect(contrib.release.releaseProducts).toEqual([
+      'liboliphaunt-native',
+      'liboliphaunt-wasix',
+      'oliphaunt-wasix-napi',
+    ]);
 
     const icu = realSelection('src/database-resources/icu/cargo/src/lib.rs');
-    expect(icu.release.directProducts).toEqual(['database-resources']);
-    expect(icu.release.releaseProducts).toEqual(['database-resources']);
+    expect(icu.release.directProducts.sort()).toEqual([
+      'database-resources',
+      'oliphaunt-wasix-napi',
+    ]);
+    expect(icu.release.releaseProducts.sort()).toEqual([
+      'database-resources',
+      'oliphaunt-wasix-napi',
+    ]);
 
     const sdk = realSelection('src/native/sdks/react-native/CHANGELOG.md');
     expect(sdk.release.directProducts).toEqual(['oliphaunt-react-native']);

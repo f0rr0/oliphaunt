@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { currentProductVersion } from './release-artifact-targets.mts';
+import { productDependencyCompatibilityVersion } from './release-graph.mts';
 
 const TOOL = 'product-version.mts';
 
@@ -9,7 +10,9 @@ function fail(message) {
 }
 
 function usage() {
-  fail('usage: tools/release/product-version.mts version <product-id>');
+  fail(
+    'usage: tools/release/product-version.mts version <product-id> | dependency-compatibility <consumer> <dependency> <source>',
+  );
 }
 
 function ensureSemver(product, version) {
@@ -27,6 +30,10 @@ export async function currentVersion(product) {
 }
 
 async function main(argv) {
+  if (argv.length === 4 && argv[0] === 'dependency-compatibility') {
+    console.log(productDependencyCompatibilityVersion(argv[1], argv[2], argv[3], TOOL));
+    return;
+  }
   if (argv.length !== 2 || argv[0] !== 'version') {
     usage();
   }

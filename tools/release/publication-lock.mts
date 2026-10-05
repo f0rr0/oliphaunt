@@ -258,6 +258,9 @@ function npmArtifact(file) {
     ecosystem: 'npm',
     name: manifest.name,
     version: manifest.version,
+    ...(Object.hasOwn(manifest.oliphaunt ?? {}, 'qualificationOnly')
+      ? { qualificationOnly: true }
+      : {}),
     dependencies: dependencyRows('npm', [
       ['runtime', manifest.dependencies],
       ['optional', manifest.optionalDependencies],
@@ -1376,6 +1379,9 @@ function extensionGithubReleaseArtifacts(files, product) {
       (extensionCarrierFamily(product) === null ||
         value?.family === extensionCarrierFamily(product))
     ) {
+      if (Object.hasOwn(value, 'qualificationOnly')) {
+        throw error(`${product.id} cannot publish a workspace qualification carrier: ${rel(file)}`);
+      }
       manifests.push([file, value]);
     }
   }
@@ -1598,6 +1604,11 @@ function extensionGithubReleaseArtifacts(files, product) {
 }
 
 function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
+  for (const file of files.filter((file) => path.basename(file) === 'Package.swift.release')) {
+    if (existsSync(path.join(path.dirname(file), 'qualification.json'))) {
+      throw error(`${product.id} cannot publish a workspace qualification carrier: ${rel(file)}`);
+    }
+  }
   const expectedFiles = [
     ['Oliphaunt-source.zip', 'swiftpm-source-archive'],
     ['Package.swift.release', 'swiftpm-release-manifest'],
@@ -2040,6 +2051,11 @@ export function buildPublicationCandidate({
     );
     if (!selectedProducts.has(resolved.product)) {
       continue;
+    }
+    if (artifact.qualificationOnly) {
+      throw error(
+        `${artifact.name}@${artifact.version} is a workspace qualification carrier; prepare a new release with matching dependency pins`,
+      );
     }
     if (artifact.version !== resolved.version) {
       throw error(

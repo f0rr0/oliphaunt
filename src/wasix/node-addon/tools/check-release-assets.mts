@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
 import { finalizeHelperAssets } from '../../../../tools/packaging/finalize-helper-assets.mts';
 import { inspectPlatformBinaryEntries } from '../../../../tools/packaging/platform-binary-contract.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
@@ -206,7 +207,13 @@ function assertBuildInputs(buildInputs, target, label) {
   }
 }
 
-export function assertWasixNapiCarrierManifest(manifest, target, version, label = 'carrier') {
+export function assertWasixNapiCarrierManifest(
+  manifest,
+  target,
+  version,
+  label = 'carrier',
+  contract = PRODUCT_MANIFEST.oliphaunt,
+) {
   if (manifest.name !== target.npmPackage || manifest.version !== version) {
     throw new Error(`${label} must identify ${target.npmPackage}@${version}`);
   }
@@ -218,7 +225,8 @@ export function assertWasixNapiCarrierManifest(manifest, target, version, label 
   if (
     manifest.oliphaunt?.target !== target.target ||
     manifest.oliphaunt?.runtimeProduct !== PRODUCT_MANIFEST.oliphaunt.runtimeProduct ||
-    manifest.oliphaunt?.runtimeVersion !== PRODUCT_MANIFEST.oliphaunt.runtimeVersion ||
+    manifest.oliphaunt?.runtimeVersion !== contract.runtimeVersion ||
+    manifest.oliphaunt?.qualificationOnly !== contract.qualificationOnly ||
     manifest.oliphaunt?.addonAbiVersion !== PRODUCT_MANIFEST.oliphaunt.addonAbiVersion ||
     manifest.oliphaunt?.nodeApiVersion !== PRODUCT_MANIFEST.oliphaunt.nodeApiVersion ||
     JSON.stringify(manifest.oliphaunt?.profiles) !== JSON.stringify(['standard', 'icu'])
@@ -319,7 +327,7 @@ export function assertWasixNapiPlatformEntries(
   }
 }
 
-function assertPayload(entries, { prefix = '', label, target, version, npm = false }) {
+function assertPayload(entries, { prefix = '', label, target, version, npm = false, contract }) {
   assertReleaseNoticesInEntries(entries, { profile: PROFILE, prefix, label });
   const member = (name) => (prefix ? `${prefix}/${name}` : name);
   const provenance = archiveJson(entries, member('artifact-provenance.json'), label);
@@ -368,10 +376,10 @@ function assertPayload(entries, { prefix = '', label, target, version, npm = fal
   if (!npm) return;
   assertSingleWasixNapiAddonMember(entries, binaryMember, label);
   const manifest = archiveJson(entries, member('package.json'), label);
-  assertWasixNapiCarrierManifest(manifest, target, version, label);
+  assertWasixNapiCarrierManifest(manifest, target, version, label, contract);
 }
 
-export function assertWasixNapiNpmArchive(file, targets, version) {
+export function assertWasixNapiNpmArchive(file, targets, version, contract) {
   const label = path.basename(file);
   let entries;
   try {
@@ -386,7 +394,7 @@ export function assertWasixNapiNpmArchive(file, targets, version) {
       `${label} package name is not a published WASIX Node-API carrier: ${JSON.stringify(manifest.name)}`,
     );
   }
-  assertPayload(entries, { prefix: 'package', label, target, version, npm: true });
+  assertPayload(entries, { prefix: 'package', label, target, version, npm: true, contract });
   assertWasixNapiPlatformEntries(entries, {
     target: target.target,
     label,
@@ -410,6 +418,11 @@ async function validateArchive(file, target, version) {
 }
 
 export async function checkWasixNapiReleaseAssets(argv) {
+  const workspace = argv.includes('--workspace');
+  argv = argv.filter((arg) => arg !== '--workspace');
+  const contract = workspace
+    ? workspaceCarrierManifest(PRODUCT_MANIFEST, PRODUCT_MANIFEST.oliphaunt).oliphaunt
+    : undefined;
   if (argv.includes('--aggregate'))
     argv = await finalizeHelperAssets(PRODUCT, KIND, argv, {
       assetDir:
@@ -467,7 +480,7 @@ export async function checkWasixNapiReleaseAssets(argv) {
   }
   for (const npmPackage of args.npmPackages) {
     try {
-      assertWasixNapiNpmArchive(npmPackage, targets, version);
+      assertWasixNapiNpmArchive(npmPackage, targets, version, contract);
     } catch (error) {
       fail(PREFIX, error.message);
     }

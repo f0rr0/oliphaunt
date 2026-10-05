@@ -197,6 +197,11 @@ tasks:
       - "/src/native/sdks/swift/tools/check-package.mts"
       - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
       - "/src/native/sdks/swift/tools/ios-carrier-manifest.mts"
+      - "/src/native/sdks/swift/tools/pinned-native-carrier.mts"
+      - "/tools/release/github-read.mts"
+      - "/tools/release/github-core-request-journal.mts"
+      - "/src/native/sdks/swift/tools/swift-carrier-resolver.mts"
+      - "/src/native/sdks/swift/tools/render_swiftpm_release_package.mts"
       - "/src/native/sdks/swift/tools/prepare-swift-release-consumer.mts"
       - "/tools/release/release-graph.mts"
       - "/tools/packaging/staging.mts"
@@ -219,7 +224,7 @@ tasks:
       set -eu
       bash src/native/sdks/swift/tools/swift-carrier-resolver.test.sh
       bun src/native/sdks/swift/tools/extension-resource-inventory.test.mts
-      bash tools/dev/bun.sh test ./src/native/sdks/swift/tools/ios-carrier-manifest.test.mts ./src/native/sdks/swift/tools/render_swiftpm_release_package.test.mts ./src/native/sdks/swift/tools/check-package.test.mts ./src/native/sdks/swift/tools/prepare-swift-release-consumer.test.mts ./src/native/sdks/swift/tools/swift-extension-release-consumer-inputs.test.mts
+      bash tools/dev/bun.sh test ./src/native/sdks/swift/tools/ios-carrier-manifest.test.mts ./src/native/sdks/swift/tools/pinned-native-carrier.test.mts ./src/native/sdks/swift/tools/render_swiftpm_release_package.test.mts ./src/native/sdks/swift/tools/check-package.test.mts ./src/native/sdks/swift/tools/prepare-swift-release-consumer.test.mts ./src/native/sdks/swift/tools/swift-extension-release-consumer-inputs.test.mts
     inputs:
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"

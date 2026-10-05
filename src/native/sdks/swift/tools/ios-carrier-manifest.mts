@@ -471,9 +471,16 @@ function carrierEnvelope({ file, tag, repository, localUrls }) {
   };
 }
 
-function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archiveCache }) {
+function baseCarrier({
+  baseAssetDir,
+  baseRuntimeVersion,
+  repository,
+  localUrls,
+  verifyMembers,
+  archiveCache,
+}) {
   const product = 'liboliphaunt-native';
-  const version = currentProductVersionSync(product, 'ios-carrier-manifest');
+  const version = stableVersion(baseRuntimeVersion, 'base runtime version');
   const tag = `${tagPrefix(product, 'ios-carrier-manifest')}${version}`;
   const rows = [
     {
@@ -516,7 +523,7 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archi
   };
 }
 
-function frozenBaseCarrier(file) {
+function frozenBaseCarrier(file, baseRuntimeVersion) {
   let manifest;
   try {
     manifest = JSON.parse(
@@ -528,7 +535,7 @@ function frozenBaseCarrier(file) {
   const base = manifest?.schema === IOS_CARRIER_SCHEMA ? manifest.base : manifest;
   const legal = manifest?.schema === IOS_CARRIER_SCHEMA ? manifest.legal?.base : manifest?.legal;
   const product = 'liboliphaunt-native';
-  const version = currentProductVersionSync(product, 'ios-carrier-manifest');
+  const version = stableVersion(baseRuntimeVersion, 'base runtime version');
   const tag = `${tagPrefix(product, 'ios-carrier-manifest')}${version}`;
   if (
     base?.product !== product ||
@@ -536,7 +543,7 @@ function frozenBaseCarrier(file) {
     base.tag !== tag ||
     !Array.isArray(base.assets)
   ) {
-    throw error(`${file} does not freeze the current ${product} base carrier`);
+    throw error(`${file} does not freeze ${product} ${version} base carrier`);
   }
   const expectedRoles = ['base-xcframework', 'runtime-resources'];
   if (JSON.stringify(base.assets.map(({ role }) => role)) !== JSON.stringify(expectedRoles)) {
@@ -1119,8 +1126,9 @@ export function discoveredExtensionManifests(root) {
 
 export function buildIosCarrierManifest({
   baseAssetDir = path.join(ROOT, 'target/liboliphaunt/release-assets'),
+  baseRuntimeVersion = currentProductVersionSync('liboliphaunt-native', 'ios-carrier-manifest'),
   baseCarrierManifest = undefined,
-  extensionManifests = discoveredExtensionManifests(path.join(ROOT, 'target/extension-artifacts')),
+  extensionManifests = [],
   repository = DEFAULT_REPOSITORY,
   localUrls = false,
   verifyMembers = true,
@@ -1132,11 +1140,12 @@ export function buildIosCarrierManifest({
       ? baseCarrier({
           archiveCache,
           baseAssetDir: path.resolve(baseAssetDir),
+          baseRuntimeVersion,
           repository,
           localUrls,
           verifyMembers,
         })
-      : frozenBaseCarrier(baseCarrierManifest);
+      : frozenBaseCarrier(baseCarrierManifest, baseRuntimeVersion);
   const { base, legal: baseLegal } = frozenBase;
   const documents = extensionManifests.map((file) => {
     const document = extensionCarriers(path.resolve(file), {
@@ -1200,7 +1209,7 @@ function parseArgs(argv) {
     if (arg === '--help' || arg === '-h') {
       console.log(
         `usage: ${path.basename(import.meta.path)} [--base-asset-dir DIR] [--extension-manifest FILE ...] ` +
-          `[--base-carrier FILE] [--extension-root DIR] [--repository OWNER/REPO] [--output FILE] [--local-urls]`,
+          `[--base-carrier FILE] [--base-runtime-version VERSION] [--extension-root DIR] [--repository OWNER/REPO] [--output FILE] [--local-urls]`,
       );
       process.exit(0);
     }
@@ -1209,6 +1218,7 @@ function parseArgs(argv) {
     index += 1;
     if (arg === '--base-asset-dir') options.baseAssetDir = value;
     else if (arg === '--base-carrier') options.baseCarrierManifest = value;
+    else if (arg === '--base-runtime-version') options.baseRuntimeVersion = value;
     else if (arg === '--extension-manifest') options.extensionManifests.push(value);
     else if (arg === '--extension-root')
       options.extensionManifests.push(...discoveredExtensionManifests(path.resolve(value)));
@@ -1216,7 +1226,6 @@ function parseArgs(argv) {
     else if (arg === '--output') output = path.resolve(value);
     else throw error(`unknown argument ${arg}`);
   }
-  if (options.extensionManifests.length === 0) delete options.extensionManifests;
   return { options, output };
 }
 

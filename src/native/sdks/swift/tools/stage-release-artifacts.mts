@@ -16,6 +16,7 @@ import {
 } from '../../../../../tools/packaging/release-notices.mts';
 import { productCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 import { validateSwiftSourceReleaseContract } from './swift-source-carrier-contract.mts';
+import { pinnedNativeCarrierDirectory } from './pinned-native-carrier.mts';
 import {
   ROOT,
   copyDirContents,
@@ -34,10 +35,20 @@ export async function stageArtifacts(artifactRoot, workRoot) {
   requireFile(swiftSourceArchive);
   const stagedSourceArchive = path.join(artifactRoot, 'Oliphaunt-source.zip');
   copyFileSync(swiftSourceArchive, stagedSourceArchive);
-  const assetDir = process.env.OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR;
-  if (!assetDir) {
+  const producerAssetDir = process.env.OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR;
+  if (!producerAssetDir) {
     fail('oliphaunt-swift package artifacts require OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR');
   }
+  const nativeVersion = productCompatibilityVersion(
+    'oliphaunt-swift',
+    'liboliphaunt-native',
+    PREFIX,
+  );
+  const assetDir = await pinnedNativeCarrierDirectory({
+    version: nativeVersion,
+    assetDir: producerAssetDir,
+    workRoot,
+  });
   await renderSwiftpmReleasePackage([
     '--asset-dir',
     assetDir,
@@ -53,6 +64,7 @@ export async function stageArtifacts(artifactRoot, workRoot) {
   assertReleaseNoticesInDirectory(releaseTree);
   const carrier = buildIosCarrierManifest({
     baseAssetDir: assetDir,
+    baseRuntimeVersion: nativeVersion,
     extensionManifests: [],
   });
   const carrierFile = path.join(releaseTree, 'src/sdks/swift/Carriers', IOS_CARRIER_FILENAME);
@@ -96,11 +108,7 @@ export async function stageArtifacts(artifactRoot, workRoot) {
   try {
     validateSwiftSourceReleaseContract({
       carrier,
-      expectedNativeVersion: productCompatibilityVersion(
-        'oliphaunt-swift',
-        'liboliphaunt-native',
-        PREFIX,
-      ),
+      expectedNativeVersion: nativeVersion,
       label: `${rel(artifactRoot)} source release`,
       manifestText: manifest,
     });

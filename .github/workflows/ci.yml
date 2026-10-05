@@ -181,6 +181,11 @@ jobs:
           restore-keys: |
             ios-carrier-v1-${{ hashFiles('src/native/runtime/VERSION', 'src/native/sdks/swift/tools/ios-carrier-manifest.mts', 'tools/packaging/**', 'tools/release/**') }}-
 
+      - name: Set up Cargo for dependency metadata
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+
       - name: Plan artifact builder jobs
         id: plan
         env:
@@ -241,6 +246,11 @@ jobs:
         with:
           task-cache: "false"
           install-workspace: "false"
+
+      - name: Set up Cargo for dependency metadata
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
 
       - name: Check release intent
         env:
@@ -1533,6 +1543,7 @@ jobs:
 
       - name: Build Swift SDK package artifacts
         env:
+          GH_TOKEN: ${{ github.token }}
           OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: ${{ github.workspace }}/target/liboliphaunt/abi-compatible-release-assets/ios-datum64
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-native:finalize-runtime-ios-abi", "oliphaunt-swift:package-bindings"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh swift-sdk-package
@@ -1659,6 +1670,7 @@ jobs:
 
       - name: Build React Native SDK package artifacts
         env:
+          GH_TOKEN: ${{ github.token }}
           OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: ${{ needs.affected.outputs.reuse_ios_carrier == 'true' && 'target/ci/ios-carrier/manifest.json' || '' }}
           OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: ${{ github.workspace }}/target/liboliphaunt/abi-compatible-release-assets/ios-datum64
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-native:finalize-runtime-ios-abi"]'
@@ -2957,6 +2969,9 @@ jobs:
           name: oliphaunt-mobile-extension-package-artifacts-android
           path: target/extension-artifacts
 
+      - name: Stage workspace mobile qualification
+        run: tools/dev/bun.sh src/native/sdks/react-native/tools/stage-mobile-qualification.mts android target/extension-artifacts target/qualification/mobile-android
+
       - name: Build Android mobile app
         env:
           OLIPHAUNT_EXPO_ALLOW_NATIVE_BUILDS: "0"
@@ -2967,7 +2982,7 @@ jobs:
           OLIPHAUNT_EXPO_ANDROID_EXTENSIONS: ${{ needs.affected.outputs.extension_package_sql_names_csv }}
           OLIPHAUNT_EXPO_ANDROID_ICU: "1"
           OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS: "1"
-          OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
+          OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/qualification/mobile-android/extensions
           OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO: ${{ github.workspace }}/${{ matrix.build-root }}/out/liboliphaunt.so
           OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR: ${{ github.workspace }}/target/liboliphaunt-mobile-host/${{ matrix.target }}/install
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-query-ts:package", "database-resources:package-icu", "database-resources:build-native-android-icu", "extension-packages:package-mobile", "liboliphaunt-native:package-runtime-android-x86_64", "liboliphaunt-native:finalize-runtime-android-abi", "oliphaunt-kotlin:package", "oliphaunt-react-native:package"]'
@@ -3007,7 +3022,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 180
     env:
-      OLIPHAUNT_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/mobile-extension-artifacts
+      OLIPHAUNT_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/qualification/mobile-ios/extensions
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -3114,17 +3129,12 @@ jobs:
           name: oliphaunt-mobile-extension-package-artifacts-ios
           path: target/mobile-extension-artifacts
 
-      - name: Render exact-SHA cache-warm iOS carrier manifest
-        run: |
-          tools/dev/bun.sh src/native/sdks/swift/tools/ios-carrier-manifest.mts \
-            --base-asset-dir target/liboliphaunt/release-assets \
-            --extension-root target/mobile-extension-artifacts \
-            --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json \
-            --local-urls
+      - name: Stage workspace mobile qualification
+        run: tools/dev/bun.sh src/native/sdks/react-native/tools/stage-mobile-qualification.mts ios target/mobile-extension-artifacts target/qualification/mobile-ios
 
       - name: Qualify every exact iOS carrier
         env:
-          IOS_CARRIER_MANIFEST: target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
+          IOS_CARRIER_MANIFEST: target/qualification/mobile-ios/ios-carriers/oliphaunt-react-native-ios-carriers.json
           IOS_CARRIER_STAGE: target/qualification/react-native-ios-all-carriers
           IOS_CARRIER_CACHE: target/qualification/react-native-ios-carrier-cache
           PLANNED_EXTENSION_SQL_NAMES: ${{ needs.affected.outputs.extension_package_sql_names_csv }}
@@ -3135,15 +3145,16 @@ jobs:
         env:
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           OLIPHAUNT_SWIFT_NATIVE_ASSET_DIR: ${{ github.workspace }}/target/liboliphaunt/release-assets
-          OLIPHAUNT_SWIFT_SDK_ARTIFACT_DIR: ${{ github.workspace }}/target/sdk-artifacts/oliphaunt-swift
+          OLIPHAUNT_SWIFT_SDK_ARTIFACT_DIR: ${{ github.workspace }}/target/qualification/mobile-ios/swift-sdk
           PLANNED_EXTENSION_PRODUCTS: ${{ needs.affected.outputs.extension_package_products_csv }}
         run: |
-          source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
+          published_source_carrier=target/sdk-artifacts/oliphaunt-swift/release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json
+          source_carrier="$OLIPHAUNT_SWIFT_SDK_ARTIFACT_DIR/release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json"
           react_native_source_carrier=target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json
-          cache_warm_carrier=target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
-          if ! cmp -s "$source_carrier" "$react_native_source_carrier"; then
+          cache_warm_carrier=target/qualification/mobile-ios/ios-carriers/oliphaunt-react-native-ios-carriers.json
+          if ! cmp -s "$published_source_carrier" "$react_native_source_carrier"; then
             echo 'Swift and React Native package artifacts disagree on the selection-neutral source carrier.' >&2
-            diff -u "$source_carrier" "$react_native_source_carrier" || true
+            diff -u "$published_source_carrier" "$react_native_source_carrier" || true
             exit 1
           fi
           consumer_args=(
@@ -3153,6 +3164,7 @@ jobs:
           evidence_dir=target/release/ios-carriers/qualification/swift-independent-carriers
           mkdir -p "$evidence_dir"
           cp "$source_carrier" "$evidence_dir/selection-neutral-source-carrier.json"
+          cp "$published_source_carrier" "$evidence_dir/swift-published-selection-neutral-source-carrier.json"
           cp "$react_native_source_carrier" "$evidence_dir/react-native-selection-neutral-source-carrier.json"
 
           product_count=0
@@ -3199,7 +3211,7 @@ jobs:
           OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS: "1"
           OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK: ${{ github.workspace }}/target/liboliphaunt-ios-xcframework/out/liboliphaunt.xcframework
           OLIPHAUNT_EXPO_IOS_RUNTIME_DIR: ${{ github.workspace }}/target/liboliphaunt-mobile-host/ios-xcframework/install
-          OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: ${{ github.workspace }}/target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json
+          OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: ${{ github.workspace }}/target/qualification/mobile-ios/ios-carriers/oliphaunt-react-native-ios-carriers.json
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["oliphaunt-query-ts:package", "database-resources:package-icu", "database-resources:build-native-ios-icu", "extension-packages:package-mobile", "liboliphaunt-native:package-runtime-ios-xcframework", "oliphaunt-react-native:package", "oliphaunt-swift:package"]'
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' .github/scripts/run-planned-moon-job.sh mobile-build-ios
 

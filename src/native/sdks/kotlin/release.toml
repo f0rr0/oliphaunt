@@ -15,6 +15,7 @@ release_artifacts = [
   "maven-publication",
   "runtime-assets-external",
 ]
+embedded_cargo_manifests = ["src/native/mobile-bindings/Cargo.toml"]
 
 [compatibility_versions.oliphaunt-kotlin-liboliphaunt]
 source_product = "liboliphaunt-native"
