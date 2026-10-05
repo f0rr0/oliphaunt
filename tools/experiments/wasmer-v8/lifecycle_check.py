@@ -11,8 +11,8 @@ output = pathlib.Path(sys.argv[1])
 command = ["cargo", "test", "--locked", "-p", "oliphaunt-wasix", "--no-default-features",
            "--features", "extension-vector", "--test", "extensions_smoke", "--no-run",
            "--message-format=json"]
-build = subprocess.run(command, capture_output=True, text=True)
-(output / "lifecycle-build.log").write_text(build.stdout + build.stderr)
+build = subprocess.run(command, capture_output=True, encoding="utf-8")
+(output / "lifecycle-build.log").write_text(build.stdout + build.stderr, encoding="utf-8")
 if build.returncode:
     print(build.stderr, file=sys.stderr)
     sys.exit(build.returncode)

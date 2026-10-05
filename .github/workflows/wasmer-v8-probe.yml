@@ -288,7 +288,7 @@ jobs:
     if: ${{ github.ref == 'refs/heads/f0rr0/windows-v8-integration' }}
     name: Windows SDK V8 integration diagnostic
     runs-on: windows-2025-vs2026
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -375,14 +375,14 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --locked --release --manifest-path tools/experiments/wasmer-v8/Cargo.toml -- cache-header-compatibility 2>&1 | tee target/windows-v8-diagnostic/cache-header-compatibility.log
-      - name: Prepare private owned Store cleanup control
-        run: python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/owned-store-control
-      - name: Repeat runtime and extension checks with owned Store cleanup
+      - name: Prepare private owned Store and shared-memory cleanup control
+        run: python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/owned-store-control --shared-memory --observe-compilation
+      - name: Repeat runtime and extension checks with owned Store and shared-memory cleanup
         run: |
           set -euo pipefail
           control=target/windows-v8-diagnostic/owned-store-control
           bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee "$control/runtime-extension-tools.log"
-      - name: Compare database retention with owned Store cleanup on the same machine
+      - name: Compare database retention with owned cleanup on the same machine
         env:
           OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
           OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
