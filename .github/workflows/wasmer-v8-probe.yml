@@ -1,4 +1,4 @@
-name: Windows V8 borrowed argument ownership control
+name: Windows V8 automatic embedded DLL delivery control
 'on':
   workflow_dispatch: null
 permissions:
@@ -112,7 +112,9 @@ jobs:
         \ --family wasix --require-wasix oliphaunt-extension-vector\n"
     - name: Apply the pinned private DLL ownership control
       run: python tools/experiments/wasmer-v8/expanded-ownership/prepare-dll.py target/windows-v8-ownership/control
-    - name: Test actual SDK without consumer engine build tools
+    - name: Embed the private engine and generate C function dispatch
+      run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
+    - name: Test standalone cold and warm engine delivery and actual SDK
       env:
         OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
@@ -121,7 +123,7 @@ jobs:
 
         export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-ownership/vector-artifacts"
 
-        python tools/experiments/wasmer-v8/expanded-ownership/sdk-dll-check.py target/windows-v8-ownership/control'
+        python tools/experiments/wasmer-v8/expanded-ownership/embedded-check.py target/windows-v8-ownership/control'
     - name: Diagnose native ownership failure
       if: ${{ failure() }}
       run: python tools/experiments/wasmer-v8/expanded-ownership/debug-failure.py target/windows-v8-ownership/control
