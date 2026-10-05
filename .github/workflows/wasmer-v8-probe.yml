@@ -1,498 +1,112 @@
-name: Wasmer V8 feasibility
-on:
-  push:
-    branches: [f0rr0/wasmer-v8-windows-probe, f0rr0/windows-v8-integration]
-    paths:
-      - tools/experiments/wasmer-v8/**
-      - '!tools/experiments/wasmer-v8/README.md'
-      - .github/workflows/wasmer-v8-probe.yml
-      - Cargo.toml
-      - Cargo.lock
-      - src/wasix/sdks/rust/**
-      - src/wasix/runtime/tools/xtask/**
-  workflow_dispatch:
+name: Windows V8 expanded ownership control
+'on':
+  workflow_dispatch: null
 permissions:
   contents: read
   actions: read
-concurrency:
-  group: wasmer-v8-probe-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
-  dll-boundary:
-    name: Private DLL and ordinary consumer (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2022, windows-2025-vs2026]
-    defaults:
-      run:
-        shell: bash
-        working-directory: tools/experiments/wasmer-v8
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust-tools
-        with:
-          toolchain: 1.96.0
-          cache-workspaces: tools/experiments/wasmer-v8 -> target
-      - uses: ./.github/actions/setup-msvc
-        if: matrix.os == 'windows-2025-vs2026'
-      - name: Set up research-only Visual Studio 2022 host
-        if: matrix.os == 'windows-2022'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
-        with:
-          arch: x64
-          vsversion: '2022'
-      - name: Pin research linker under Git Bash
-        if: matrix.os == 'windows-2022'
-        shell: pwsh
-        run: |
-          $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
-          if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
-          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
-      - name: Download immutable PostgreSQL fixture
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: '37225721762'
-          artifact-ids: '11312707536'
-          github-token: ${{ github.token }}
-          path: tools/experiments/wasmer-v8/guest
-          merge-multiple: true
-      - name: Prepare producer bindings and archive
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p profile-results
-          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > profile-results/guest-artifact.json
-          python verify_guest.py guest profile-results
-          cargo build --locked --release --features wasix
-      - name: Compile ordinary dynamic-CRT host library
-        shell: pwsh
-        run: |
-          $out = 'target/host-map'
-          New-Item -ItemType Directory -Force $out | Out-Null
-          cl.exe /nologo /O2 /MD /EHsc /std:c++20 /DPROBE_STANDALONE host_map.cpp "/Fo$out/control.obj" "/Fe$out/control.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$out/control.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cl.exe /nologo /c /O2 /MD /EHsc /std:c++20 host_map.cpp "/Fo$out/host_map.obj"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          lib.exe /nologo "/OUT:$out/probe_host.lib" "$out/host_map.obj"
-          exit $LASTEXITCODE
-      - name: Produce private C import boundary and dependency copy
-        run: python dll_control.py dll-results
-      - name: Build without producer tools and execute ordinary MD host
-        run: python dll_consumer_check.py dll-results
-      - name: Retain DLL boundary evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: v8-dll-${{ matrix.os }}
-          path: tools/experiments/wasmer-v8/dll-results
-          if-no-files-found: warn
-          retention-days: 90
-
-  cpu-profile:
-    name: Fixed CPU profile (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2022, windows-2025-vs2026]
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust-tools
-        with:
-          toolchain: 1.96.0
-          cache-workspaces: tools/experiments/wasmer-v8 -> target
-      - uses: ./.github/actions/setup-msvc
-        if: matrix.os == 'windows-2025-vs2026'
-      - name: Set up research-only Visual Studio 2022 host
-        if: matrix.os == 'windows-2022'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
-        with:
-          arch: x64
-          vsversion: '2022'
-      - name: Pin research linker under Git Bash
-        if: matrix.os == 'windows-2022'
-        shell: pwsh
-        run: |
-          $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
-          if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
-          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
-      - name: Record host CPU
-        shell: pwsh
-        if: runner.os == 'Windows'
-        run: Get-CimInstance Win32_Processor | Format-List Name,Manufacturer,ProcessorId
-      - name: Download immutable PostgreSQL fixture
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: '37225721762'
-          artifact-ids: '11312707536'
-          github-token: ${{ github.token }}
-          path: tools/experiments/wasmer-v8/guest
-          merge-multiple: true
-      - name: Verify and test fixed CPU profile in fresh processes
-        id: fixed_profile
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          results=tools/experiments/wasmer-v8/profile-results
-          mkdir -p "$results"
-          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > "$results/guest-artifact.json"
-          python tools/experiments/wasmer-v8/verify_guest.py tools/experiments/wasmer-v8/guest "$results"
-          cargo build --locked --release --features wasix --manifest-path tools/experiments/wasmer-v8/Cargo.toml
-          binary=tools/experiments/wasmer-v8/target/release/oliphaunt-wasmer-v8-probe
-          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
-          python tools/experiments/wasmer-v8/profile_check.py "$binary" "$results" --postgres "$results/postgres.wasm"
-      - name: Retain CPU profile evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: v8-profile-${{ matrix.os }}
-          path: tools/experiments/wasmer-v8/profile-results
-          if-no-files-found: error
-          retention-days: 90
-      - name: Compile ordinary MSVC host library
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $out = 'tools/experiments/wasmer-v8/target/host-map'
-          New-Item -ItemType Directory -Force $out | Out-Null
-          cl.exe /nologo /O2 /MD /EHsc /std:c++20 /DPROBE_STANDALONE "tools/experiments/wasmer-v8/host_map.cpp" "/Fo$out/control.obj" "/Fe$out/control.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$out/control.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cl.exe /nologo /c /O2 /MD /EHsc /std:c++20 "tools/experiments/wasmer-v8/host_map.cpp" "/Fo$out/host_map.obj"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          lib.exe /nologo "/OUT:$out/probe_host.lib" "$out/host_map.obj"
-          exit $LASTEXITCODE
-      - name: Check static V8 and ordinary C++ library coexistence
-        if: runner.os == 'Windows'
-        run: |
-          set -euo pipefail
-          cargo rustc --locked --release --example mixed_host --manifest-path tools/experiments/wasmer-v8/Cargo.toml -- \
-            -L "native=$(cygpath -m "$PWD/tools/experiments/wasmer-v8/target/host-map")" 2>&1 | tee tools/experiments/wasmer-v8/profile-results/host-map-build.log
-          tools/experiments/wasmer-v8/target/release/examples/mixed_host.exe 2>&1 | tee tools/experiments/wasmer-v8/profile-results/host-map.log
-      - name: Compile matching static CRT control and host library
-        if: ${{ !cancelled() && runner.os == 'Windows' && steps.fixed_profile.outcome == 'success' }}
-        shell: pwsh
-        run: |
-          $out = 'tools/experiments/wasmer-v8/target/host-map-static'
-          New-Item -ItemType Directory -Force $out | Out-Null
-          cl.exe /nologo /O2 /MT /EHsc /std:c++20 /DPROBE_STANDALONE "tools/experiments/wasmer-v8/host_map.cpp" "/Fo$out/control.obj" "/Fe$out/control.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$out/control.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cl.exe /nologo /c /O2 /MT /EHsc /std:c++20 "tools/experiments/wasmer-v8/host_map.cpp" "/Fo$out/host_map.obj"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          lib.exe /nologo "/OUT:$out/probe_host.lib" "$out/host_map.obj"
-          exit $LASTEXITCODE
-      - name: Check hash behavior with matching static CRT
-        if: ${{ !cancelled() && runner.os == 'Windows' && steps.fixed_profile.outcome == 'success' }}
-        run: |
-          set -euo pipefail
-          cargo rustc --locked --release --example mixed_host --manifest-path tools/experiments/wasmer-v8/Cargo.toml -- \
-            -C target-feature=+crt-static -L "native=$(cygpath -m "$PWD/tools/experiments/wasmer-v8/target/host-map-static")" \
-            2>&1 | tee tools/experiments/wasmer-v8/profile-results/host-map-static-build.log
-          tools/experiments/wasmer-v8/target/release/examples/mixed_host.exe 2>&1 | tee tools/experiments/wasmer-v8/profile-results/host-map-static.log
-      - name: Retain native coexistence evidence
-        if: ${{ always() && runner.os == 'Windows' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: v8-host-map-${{ matrix.os }}
-          path: tools/experiments/wasmer-v8/profile-results/host-map*.log
-          if-no-files-found: warn
-          retention-days: 90
-      - name: Check consumer build without libclang
-        if: ${{ !cancelled() && runner.os == 'Windows' && steps.fixed_profile.outcome == 'success' }}
-        run: |
-          set +e
-          LIBCLANG_PATH="$PWD/target/absent-libclang" cargo build --locked --release --features wasix --manifest-path tools/experiments/wasmer-v8/Cargo.toml > tools/experiments/wasmer-v8/profile-results/no-libclang.log 2>&1
-          code=$?
-          cat tools/experiments/wasmer-v8/profile-results/no-libclang.log
-          if [[ "$code" == 0 ]] || ! rg -q 'Unable to find libclang' tools/experiments/wasmer-v8/profile-results/no-libclang.log; then
-            echo "expected the pinned Wasmer consumer build to expose its libclang dependency" >&2
-            exit 1
-          fi
-          echo 'CONFIRMED BLOCKER: ordinary V8 consumers still require libclang'
-      - name: Retain consumer tool requirement evidence
-        if: ${{ always() && runner.os == 'Windows' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: v8-consumer-tools-${{ matrix.os }}
-          path: tools/experiments/wasmer-v8/profile-results/no-libclang.log
-          if-no-files-found: warn
-          retention-days: 90
-
-  cpu-profile-exchange:
-    name: Cross-runner native cache validation (${{ matrix.os }})
-    needs: cpu-profile
-    if: ${{ !cancelled() }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2022, windows-2025-vs2026]
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust-tools
-        with:
-          toolchain: 1.96.0
-          cache-workspaces: tools/experiments/wasmer-v8 -> target
-      - uses: ./.github/actions/setup-msvc
-        if: matrix.os == 'windows-2025-vs2026'
-      - name: Set up research-only Visual Studio 2022 host
-        if: matrix.os == 'windows-2022'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
-        with:
-          arch: x64
-          vsversion: '2022'
-      - name: Pin research linker under Git Bash
-        if: matrix.os == 'windows-2022'
-        shell: pwsh
-        run: |
-          $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
-          if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
-          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
-      - name: Download trusted same-run cache fixtures
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: v8-profile-*
-          path: tools/experiments/wasmer-v8/profile-peers
-      - name: Validate peer caches without rewriting their native headers
-        run: |
-          set -euo pipefail
-          cargo build --locked --release --features wasix --manifest-path tools/experiments/wasmer-v8/Cargo.toml
-          binary=tools/experiments/wasmer-v8/target/release/oliphaunt-wasmer-v8-probe
-          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
-          python tools/experiments/wasmer-v8/profile_check.py "$binary" tools/experiments/wasmer-v8/exchange-results --peers tools/experiments/wasmer-v8/profile-peers
-      - name: Retain cross-runner evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: v8-exchange-${{ matrix.os }}
-          path: tools/experiments/wasmer-v8/exchange-results
-          if-no-files-found: warn
-          retention-days: 90
-
-  probe:
-    if: ${{ github.ref != 'refs/heads/f0rr0/windows-v8-integration' }}
-    name: V8 probe (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2025-vs2026]
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust-tools
-        with:
-          toolchain: 1.96.0
-          cache-workspaces: tools/experiments/wasmer-v8 -> target
-      - uses: ./.github/actions/setup-msvc
-        if: runner.os == 'Windows'
-      - name: Record PostgreSQL fixture provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p tools/experiments/wasmer-v8/results
-          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > tools/experiments/wasmer-v8/results/guest-artifact.json
-      - name: Download exact portable PostgreSQL fixture
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: '37225721762'
-          artifact-ids: '11312707536'
-          github-token: ${{ github.token }}
-          path: tools/experiments/wasmer-v8/guest
-          merge-multiple: true
-      - name: Verify guest identity
-        run: python tools/experiments/wasmer-v8/verify_guest.py tools/experiments/wasmer-v8/guest tools/experiments/wasmer-v8/results
-      - name: Record toolchain and build
-        run: |
-          set -euo pipefail
-          mkdir -p tools/experiments/wasmer-v8/results
-          rustc +1.96.0 -Vv > tools/experiments/wasmer-v8/results/toolchain.txt
-          cargo +1.96.0 build --locked --release --features wasix --manifest-path tools/experiments/wasmer-v8/Cargo.toml 2>&1 | tee tools/experiments/wasmer-v8/results/build.log
-      - name: Execute isolated cases
-        run: |
-          set -euo pipefail
-          binary=tools/experiments/wasmer-v8/target/release/oliphaunt-wasmer-v8-probe
-          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
-          python tools/experiments/wasmer-v8/run.py "$binary" --wasix --postgres-module tools/experiments/wasmer-v8/results/postgres.wasm --output tools/experiments/wasmer-v8/results
-      - name: Record V8-only store thread constraint
-        if: ${{ !cancelled() }}
-        run: |
-          set +e
-          cargo +1.96.0 check --locked --release --example store_send --manifest-path tools/experiments/wasmer-v8/Cargo.toml > tools/experiments/wasmer-v8/results/store-send.log 2>&1
-          code=$?
-          echo "$code" > tools/experiments/wasmer-v8/results/store-send-exit-code.txt
-          echo "V8-only Store Send diagnostic exit code: $code (see store-send.log)"
-          exit 0
-      - name: Upload experiment evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: wasmer-v8-probe-${{ matrix.os }}
-          path: tools/experiments/wasmer-v8/results
-          if-no-files-found: error
-          retention-days: 90
-
-  integration-compile:
-    if: ${{ github.ref == 'refs/heads/f0rr0/windows-v8-integration' }}
-    name: Windows SDK V8 integration diagnostic
-    runs-on: windows-2025-vs2026
+  expanded-ownership:
+    name: Expanded ownership (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+        - windows-2022
+        - windows-2025-vs2026
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust-tools
-        with:
-          toolchain: 1.96.0
-      - uses: ./.github/actions/setup-msvc
-      - name: Compile Windows V8 serializer
-        run: cargo check --locked -p xtask --features aot-serializer
-      - name: Compile Windows Rust SDK
-        run: cargo check --locked -p oliphaunt-wasix --all-targets --features tools,extension-vector
-      - name: Compile Windows Node-API source adapters
-        run: cargo check --locked -p oliphaunt-wasix-napi --features tools,extension-vector
-      - name: Download immutable diagnostic portable runtime
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: '37225721762'
-          artifact-ids: '11312707536'
-          github-token: ${{ github.token }}
-          path: .
-          merge-multiple: true
-      - name: Verify diagnostic PostgreSQL fixture identity
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p target/windows-v8-diagnostic
-          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > target/windows-v8-diagnostic/guest-artifact.json
-          python tools/experiments/wasmer-v8/verify_guest.py . target/windows-v8-diagnostic
-      - name: Generate diagnostic Windows V8 artifacts
-        run: bash src/wasix/runtime/tools/build-aot-target.sh
-      - name: Download immutable diagnostic extension compiler outputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: '37240991549'
-          artifact-ids: '11318826010'
-          github-token: ${{ github.token }}
-          path: target/extensions/wasix/assets
-          merge-multiple: true
-      - name: Download immutable diagnostic tools compiler outputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          run-id: '37240991549'
-          artifact-ids: '11318277384'
-          github-token: ${{ github.token }}
-          path: target/postgres-tools/wasix/assets
-          merge-multiple: true
-      - name: Record extension and tools provenance and generate Windows AOT
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh api repos/f0rr0/oliphaunt/actions/artifacts/11318826010 > target/windows-v8-diagnostic/extension-artifact.json
-          gh api repos/f0rr0/oliphaunt/actions/artifacts/11318277384 > target/windows-v8-diagnostic/tools-artifact.json
-          cp target/extensions/wasix/assets/manifest.json target/windows-v8-diagnostic/extension-manifest.json
-          cp target/postgres-tools/wasix/assets/manifest.json target/windows-v8-diagnostic/tools-manifest.json
-          bash src/extensions/artifacts/wasix/tools/build-aot.sh
-          bash src/wasix/postgres-tools/tools/build-aot.sh
-      - name: Exercise unchanged database API on Windows
-        run: |
-          set -euo pipefail
-          bash src/wasix/runtime/tools/runtime-smoke.sh core-smoke 2>&1 | tee target/windows-v8-diagnostic/runtime-smoke.log
-      - name: Exercise actual dynamic extension loading, restart and logical tools
-        run: |
-          set -euo pipefail
-          bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee target/windows-v8-diagnostic/extension-tools.log
-      - name: Exercise repeated extension lifecycles and SQL error recovery
-        env:
-          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
-          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
-        run: |
-          set -euo pipefail
-          OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$PWD/target/extensions/wasix/assets" \
-          OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$PWD/target/extensions/wasix/aot-artifacts" \
-            bash tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \
-              --output-root target/windows-v8-diagnostic/vector-artifacts --family wasix --require-wasix oliphaunt-extension-vector
-          export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-diagnostic/vector-artifacts"
-          python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-diagnostic
-      - name: Check V8 artifact CPU and flag compatibility
-        run: |
-          set -euo pipefail
-          cargo run --locked --release --manifest-path tools/experiments/wasmer-v8/Cargo.toml -- cache-header-compatibility 2>&1 | tee target/windows-v8-diagnostic/cache-header-compatibility.log
-      - name: Prepare private Store and shared-owner cleanup control
-        run: python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/owned-store-control --shared-memory --shared-module --observe-compilation
-      - name: Repeat runtime and extension checks with owned cleanup
-        run: |
-          set -euo pipefail
-          control=target/windows-v8-diagnostic/owned-store-control
-          bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee "$control/runtime-extension-tools.log"
-      - name: Compare database retention with owned cleanup on the same machine
-        env:
-          OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
-          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
-          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
-        run: |
-          set -euo pipefail
-          export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-diagnostic/vector-artifacts"
-          python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-diagnostic/owned-store-control
-      - name: Prepare callback payload cleanup control
-        run: |
-          set -euo pipefail
-          cp target/windows-v8-diagnostic/owned-store-control/original-Cargo.lock Cargo.lock
-          rm .cargo/config.toml
-          python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/callback-control --shared-memory --shared-module --observe-compilation --callback-finalizers
-      - name: Validate callback cleanup through runtime and tools
-        run: |
-          set -euo pipefail
-          bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee target/windows-v8-diagnostic/callback-control/runtime-extension-tools.log
-      - name: Measure callback cleanup over 100 closed databases
-        env:
-          OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
-          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
-          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
-        run: |
-          set -euo pipefail
-          export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-diagnostic/vector-artifacts"
-          python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-diagnostic/callback-control
-      - name: Retain diagnostic database evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: windows-v8-sdk-diagnostic
-          path: target/windows-v8-diagnostic
-          if-no-files-found: warn
-          retention-days: 90
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        persist-credentials: false
+    - uses: ./.github/actions/setup-rust-tools
+      with:
+        toolchain: 1.96.0
+    - uses: ./.github/actions/setup-msvc
+    - name: Compile Windows V8 serializer
+      run: cargo check --locked -p xtask --features aot-serializer
+    - name: Download immutable diagnostic portable runtime
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37225721762'
+        artifact-ids: '11312707536'
+        github-token: ${{ github.token }}
+        path: .
+        merge-multiple: true
+    - name: Verify diagnostic PostgreSQL fixture identity
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        mkdir -p target/windows-v8-diagnostic
+        gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > target/windows-v8-diagnostic/guest-artifact.json
+        python tools/experiments/wasmer-v8/verify_guest.py . target/windows-v8-diagnostic
+    - name: Generate diagnostic Windows V8 artifacts
+      run: bash src/wasix/runtime/tools/build-aot-target.sh
+    - name: Download immutable diagnostic extension compiler outputs
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37240991549'
+        artifact-ids: '11318826010'
+        github-token: ${{ github.token }}
+        path: target/extensions/wasix/assets
+        merge-multiple: true
+    - name: Download immutable diagnostic tools compiler outputs
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37240991549'
+        artifact-ids: '11318277384'
+        github-token: ${{ github.token }}
+        path: target/postgres-tools/wasix/assets
+        merge-multiple: true
+    - name: Record extension and tools provenance and generate Windows AOT
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        gh api repos/f0rr0/oliphaunt/actions/artifacts/11318826010 > target/windows-v8-diagnostic/extension-artifact.json
+        gh api repos/f0rr0/oliphaunt/actions/artifacts/11318277384 > target/windows-v8-diagnostic/tools-artifact.json
+        cp target/extensions/wasix/assets/manifest.json target/windows-v8-diagnostic/extension-manifest.json
+        cp target/postgres-tools/wasix/assets/manifest.json target/windows-v8-diagnostic/tools-manifest.json
+        bash src/extensions/artifacts/wasix/tools/build-aot.sh
+        bash src/wasix/postgres-tools/tools/build-aot.sh
+    - name: Materialize the immutable vector extension package
+      env:
+        OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+        OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+      run: |
+        set -euo pipefail
+        OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$PWD/target/extensions/wasix/assets" \
+        OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$PWD/target/extensions/wasix/aot-artifacts" \
+          bash tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \
+            --output-root target/windows-v8-ownership/vector-artifacts --family wasix --require-wasix oliphaunt-extension-vector
+    - name: Apply the pinned private ownership control
+      run: python tools/experiments/wasmer-v8/expanded-ownership/prepare.py target/windows-v8-ownership/control
+    - name: Exercise runtime, dynamic extension loading and logical tools
+      run: |-
+        set -euo pipefail
+        bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee target/windows-v8-ownership/control/runtime-extension-tools.log
+    - name: Measure 100 completely closed vector databases
+      env:
+        OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
+        OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+        OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+      run: |-
+        set -euo pipefail
+        export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-ownership/vector-artifacts"
+        python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-ownership/control
+    - name: Retain ownership receipts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-v8-expanded-ownership-${{ matrix.runner }}
+        path: |-
+          target/windows-v8-ownership/control
+          target/windows-v8-diagnostic/guest-artifact.json
+          target/windows-v8-diagnostic/extension-manifest.json
+          target/windows-v8-diagnostic/tools-manifest.json
+        if-no-files-found: warn
+        retention-days: 90
