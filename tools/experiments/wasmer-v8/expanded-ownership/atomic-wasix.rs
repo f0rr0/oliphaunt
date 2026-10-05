@@ -96,6 +96,12 @@ fn cycle(engine: &wasmer::Engine, workers: usize, stock: bool, index: usize) {
             let memory = shared.attach(&mut store);
             let captured = registry.clone();
             let capture = Function::new_typed(&mut store, move || captured.lock().unwrap().capture(number));
+            // Direct host-function calls enter this Store's isolate scope.
+            // Acquire the initial capability before creating any guest module.
+            if !registry.lock().unwrap().disabled {
+                capture.call(&mut store, &[]).unwrap();
+                assert!(registry.lock().unwrap().entries[number].is_some());
+            }
             let module = Module::new(&store, include_bytes!("atomic-wasix.wasm")).unwrap();
             let instance = Instance::new(&mut store, &module,
                 &imports! { "env" => { "capture" => capture, "memory" => memory } }).unwrap();
