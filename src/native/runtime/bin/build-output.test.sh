@@ -42,7 +42,8 @@ fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-bash "$0" worker "$work" success
+bash "$0" worker "$work" success >"$work/success.log"
+grep -F 'apple-build-budget total_jobs=6 lanes=3 jobs_per_lane=2 mode=parallel' "$work/success.log"
 set +e
 bash "$0" worker "$work" failure >"$work/failure.log" 2>&1
 status="$?"

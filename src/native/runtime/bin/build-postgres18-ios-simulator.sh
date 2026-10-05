@@ -146,8 +146,8 @@ min_ios="${OLIPHAUNT_IOS_SIMULATOR_MIN_VERSION:-17.0}"
 cc=("$clang_path" -target "arm64-apple-ios${min_ios}-simulator" "-mios-simulator-version-min=${min_ios}" -isysroot "$sdk_path")
 cxx=("$clangxx_path" -target "arm64-apple-ios${min_ios}-simulator" "-mios-simulator-version-min=${min_ios}" -isysroot "$sdk_path")
 ccache_mode="${OLIPHAUNT_CCACHE:-auto}"
+ccache_bin=""
 if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
-  ccache_bin=""
   if [ "$ccache_mode" = "auto" ]; then
     ccache_bin="$(command -v ccache || true)"
   else

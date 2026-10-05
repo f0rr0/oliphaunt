@@ -26,6 +26,11 @@ fileGroups:
     - "/tools/packaging/*.{mjs,mts,sh}"
     - "!/tools/packaging/*.test.{mjs,mts,sh}"
     - "!/tools/packaging/test.sh"
+    - "!/tools/packaging/check-cargo-package-tests.sh"
+    - "!/tools/packaging/cargo-package-test-closure.mts"
+  cargo-package-test:
+    - "/tools/packaging/check-cargo-package-tests.sh"
+    - "/tools/packaging/cargo-package-test-closure.mts"
   release-archive-contract:
     - "/tools/packaging/windows-vc-runtime-policy.json"
     - "/tools/packaging/release-directory-safety.mts"

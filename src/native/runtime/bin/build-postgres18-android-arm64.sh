@@ -163,8 +163,8 @@ oliphaunt_icu_require_source "$icu_source_dir"
 cc=("$clang_path")
 cxx=("$clangxx_path")
 ccache_mode="${OLIPHAUNT_CCACHE:-auto}"
+ccache_bin=""
 if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
-  ccache_bin=""
   if [ "$ccache_mode" = "auto" ]; then
     ccache_bin="$(command -v ccache || true)"
   else

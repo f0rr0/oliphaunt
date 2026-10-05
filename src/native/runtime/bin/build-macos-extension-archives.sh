@@ -85,8 +85,8 @@ cxx=(
   -isysroot "$sdk_path"
 )
 ccache_mode="${OLIPHAUNT_CCACHE:-auto}"
+ccache_bin=""
 if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
-  ccache_bin=""
   if [ "$ccache_mode" = "auto" ]; then
     ccache_bin="$(command -v ccache || true)"
   else

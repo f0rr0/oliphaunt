@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 # The inner shell, not this test process, owns the child pid expansions.
-OLIPHAUNT_PHASE_HEARTBEAT_SECONDS=1 "$runner" \
+OLIPHAUNT_JOBS=2 OLIPHAUNT_PHASE_HEARTBEAT_SECONDS=1 "$runner" \
   --label "test slow success" \
   --log "$tmp/success.log" \
   -- sh -c 'printf "captured stdout\n"; sleep 2; printf "inherited stderr\n" >&2' \
@@ -27,8 +27,10 @@ OLIPHAUNT_PHASE_HEARTBEAT_SECONDS=1 "$runner" \
 
 grep -F 'phase-start ' "$tmp/success.out" >/dev/null
 grep -F 'label=test slow success' "$tmp/success.out" >/dev/null
+grep -F 'jobs=2' "$tmp/success.out" >/dev/null
 grep -F 'phase-heartbeat ' "$tmp/success.out" >/dev/null
 grep -F 'phase-complete ' "$tmp/success.out" >/dev/null
+grep -E 'phase-cpu elapsed_seconds=[0-9.]+ user_seconds=[0-9.]+ system_seconds=[0-9.]+ label=test slow success$' "$tmp/success.out" >/dev/null
 grep -Fx 'captured stdout' "$tmp/success.log" >/dev/null
 grep -Fx 'inherited stderr' "$tmp/success.log" >/dev/null
 [ ! -s "$tmp/success.err" ]
@@ -46,6 +48,25 @@ grep -F 'phase-failed ' "$tmp/failure.err" >/dev/null
 grep -F 'status=7' "$tmp/failure.err" >/dev/null
 grep -Fx 'failure detail' "$tmp/failure.err" >/dev/null
 grep -Fx 'failure detail' "$tmp/failure.log" >/dev/null
+
+# Removing the capture file must not let optional timing replace the exit code.
+for expected_status in 0 7; do
+  set +e
+  OLIPHAUNT_PHASE_HEARTBEAT_SECONDS=1 "$runner" \
+    --label "removed log" --log "$tmp/removed.log" \
+    -- sh -c 'rm "$1"; exit "$2"' sh "$tmp/removed.log" "$expected_status" \
+    >"$tmp/removed.out" 2>"$tmp/removed.err"
+  status="$?"
+  set -e
+  [ "$status" -eq "$expected_status" ]
+  if [ "$expected_status" -eq 0 ]; then
+    grep -F 'phase-complete ' "$tmp/removed.out" >/dev/null
+    [ ! -s "$tmp/removed.err" ]
+  else
+    grep -F 'phase-failed ' "$tmp/removed.err" >/dev/null
+    grep -F 'status=7' "$tmp/removed.err" >/dev/null
+  fi
+done
 
 OLIPHAUNT_PHASE_HEARTBEAT_SECONDS=1 "$runner" \
   --label "test interruption" \

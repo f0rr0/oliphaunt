@@ -364,13 +364,9 @@ cxx_string="${cxx[*]}"
 cmake_compiler_args=(
   "-DCMAKE_C_COMPILER=$native_cc"
   "-DCMAKE_CXX_COMPILER=$native_cxx"
+  "-DCMAKE_C_COMPILER_LAUNCHER=$ccache_bin"
+  "-DCMAKE_CXX_COMPILER_LAUNCHER=$ccache_bin"
 )
-if [ -n "$ccache_bin" ]; then
-  cmake_compiler_args+=(
-    "-DCMAKE_C_COMPILER_LAUNCHER=$ccache_bin"
-    "-DCMAKE_CXX_COMPILER_LAUNCHER=$ccache_bin"
-  )
-fi
 native_cflags="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED)"
 postgres_embedded_copt="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED | sed 's/^-O2 //')"
 liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL"
@@ -1240,12 +1236,16 @@ native_postgis_cmake_install() {
   local build_root="$2"
   local dependency_dir="$3"
   shift 3
-  cmake -S "$source_dir" -B "$build_root" \
+  CMAKE_C_COMPILER_LAUNCHER="$ccache_bin" \
+    CMAKE_CXX_COMPILER_LAUNCHER="$ccache_bin" \
+    cmake -S "$source_dir" -B "$build_root" \
     -DCMAKE_INSTALL_PREFIX="$dependency_dir" \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     "${cmake_compiler_args[@]}" \
     "$@" >> "$postgis_dependency_log" 2>&1
-  cmake --build "$build_root" --target install -- -j"$jobs" >> "$postgis_dependency_log" 2>&1
+  CMAKE_C_COMPILER_LAUNCHER="$ccache_bin" \
+    CMAKE_CXX_COMPILER_LAUNCHER="$ccache_bin" \
+    cmake --build "$build_root" --target install -- -j"$jobs" >> "$postgis_dependency_log" 2>&1
 }
 
 build_native_postgis_jsonc_dependency() {
@@ -1278,12 +1278,12 @@ build_native_postgis_sqlite_dependency() {
   rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
   (
     cd "$build_root"
-    CC="$native_cc" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
+    CC="$cc_string" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
       --disable-shared \
       --enable-static \
       --prefix="$dependency_dir" >> "$postgis_dependency_log" 2>&1
     make -j"$jobs" sqlite3.c >> "$postgis_dependency_log" 2>&1
-    "$native_cc" $(oliphaunt_native_release_cflags -fPIC) \
+    "${cc[@]}" $(oliphaunt_native_release_cflags -fPIC) \
       -DSQLITE_THREADSAFE=0 \
       -DSQLITE_OMIT_LOAD_EXTENSION \
       -c sqlite3.c \
@@ -1533,7 +1533,7 @@ build_postgis_extension() {
     # shellcheck source=/dev/null
     . "$postgis_time_helper"
     oliphaunt_postgis_enable_reproducible_time "$repo_root"
-    export CC="$native_cc"
+    export CC="$cc_string"
     export "${postgis_configure_env[@]}"
     if [ ! -f configure ]; then
       ./autogen.sh >> "$make_log" 2>&1
@@ -1553,13 +1553,13 @@ build_postgis_extension() {
     make postgis_revision.h >> "$make_log" 2>&1
     make clean >> "$make_log" 2>&1 || true
     make postgis_revision.h >> "$make_log" 2>&1
-    make -C doc CC="$native_cc" "${postgis_make_args[@]}" comments-install >> "$make_log" 2>&1
-    make -j"$jobs" -C postgis CC="$native_cc" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
-    make -j1 -C extensions CC="$native_cc" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
-    make -j1 -C extensions CC="$native_cc" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
+    make -C doc CC="$cc_string" "${postgis_make_args[@]}" comments-install >> "$make_log" 2>&1
+    make -j"$jobs" -C postgis CC="$cc_string" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
+    make -j1 -C extensions CC="$cc_string" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
+    make -j1 -C extensions CC="$cc_string" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
     make -C postgis clean >> "$make_log" 2>&1 || true
     make postgis_revision.h >> "$make_log" 2>&1
-    make -j"$jobs" -C postgis CC="$native_cc" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
+    make -j"$jobs" -C postgis CC="$cc_string" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
   )
   copy_embedded_postgis_module "$postgis_build_dir/postgis"
   stage_postgis_data_files "$postgis_build_dir"
