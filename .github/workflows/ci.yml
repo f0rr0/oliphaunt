@@ -533,7 +533,7 @@ jobs:
   extension-artifacts-native-android:
     name: Native Extensions (Android Packaging)
     needs: [affected, extension-artifacts-native-android-static, extension-artifacts-native-linux]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-native-android-static.result == 'success' && needs.extension-artifacts-native-linux.result == 'success' && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
       phase: android-package
@@ -564,17 +564,18 @@ jobs:
   extension-artifacts-native:
     name: Builds / Native Extensions
     needs: [affected, extension-artifacts-native-linux, extension-artifacts-native-android, extension-artifacts-native-ios, extension-artifacts-native-other]
-    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check selected platform producers
         env:
-          RESULTS: ${{ join(needs.*.result, ',') }}
+          SELECTED_PRODUCERS_SUCCEEDED: ${{ (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_linux).include[0] == null || needs.extension-artifacts-native-linux.result == 'success') && (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] == null || needs.extension-artifacts-native-android.result == 'success') && (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_ios).include[0] == null || needs.extension-artifacts-native-ios.result == 'success') && (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_other).include[0] == null || needs.extension-artifacts-native-other.result == 'success') }}
         run: |
-          case ",$RESULTS," in
-            *,failure,*|*,cancelled,*) exit 1 ;;
-          esac
+          if [[ "$SELECTED_PRODUCERS_SUCCEEDED" != true ]]; then
+            echo 'A selected native extension producer did not succeed' >&2
+            exit 1
+          fi
 
   extension-artifacts-wasix:
     name: Builds / WASIX Extensions (${{ matrix.target }})

@@ -156,6 +156,37 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('Android packaging waits for both transferred producers and native gates reject selected skips', () => {
+    const packaging = workflow.jobs['extension-artifacts-native-android'];
+    for (const producer of [
+      'affected',
+      'extension-artifacts-native-android-static',
+      'extension-artifacts-native-linux',
+    ]) {
+      assert(packaging.needs.includes(producer));
+      assert(packaging.if.includes(`needs.${producer}.result == 'success'`));
+    }
+    assert(!packaging.if.includes('needs.*.result'));
+    const gate = workflow.jobs['extension-artifacts-native'];
+    assert(!gate.if.includes('!failure()'), 'the gate must report failed producers');
+    const step = gate.steps.find((step) => step.name === 'Check selected platform producers');
+    for (const platform of ['linux', 'android', 'ios', 'other']) {
+      assert(
+        step.env.SELECTED_PRODUCERS_SUCCEEDED.includes(
+          `(fromJson(needs.affected.outputs.extension_artifacts_native_matrix_${platform}).include[0] == null || needs.extension-artifacts-native-${platform}.result == 'success')`,
+        ),
+        `native gate accepts a skipped selected ${platform} producer`,
+      );
+    }
+    for (const result of ['true', 'false']) {
+      const execution = Bun.spawnSync(['bash', '-c', step.run], {
+        env: { ...process.env, SELECTED_PRODUCERS_SUCCEEDED: result },
+      });
+      assert.equal(execution.exitCode, result === 'true' ? 0 : 1);
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('cross-workflow artifact gates reference existing producer job names', () => {
     const jobNames = Object.values(workflow.jobs).map((job) => job.name);
     for (const file of ['release.yml', 'mobile-e2e.yml']) {
