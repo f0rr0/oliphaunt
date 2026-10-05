@@ -1,0 +1,25 @@
+--- a/src/backend/v8/entities/module.rs
++++ b/src/backend/v8/entities/module.rs
+@@ -77,6 +77,22 @@
+     }
+ 
+     fn deserialize(engine: &impl AsEngineRef, binary: &[u8]) -> Result<Self, CompileError> {
++        // The pinned C API compiles wire-only serialized modules. Deserialization
++        // of an AOT artifact must reject that case before entering V8.
++        let mut wire_len = 0u64;
++        let mut prefix_len = None;
++        for (index, byte) in binary.iter().copied().take(10).enumerate() {
++            if index == 9 && byte > 1 { break; }
++            wire_len |= u64::from(byte & 0x7f) << (index * 7);
++            if byte & 0x80 == 0 { prefix_len = Some(index + 1); break; }
++        }
++        let native_start = prefix_len
++            .and_then(|n| usize::try_from(wire_len).ok().and_then(|wire| n.checked_add(wire)));
++        if native_start.and_then(|n| binary.len().checked_sub(n)).is_none_or(|n| n < 20) {
++            return Err(CompileError::Validate(
++                "V8 AOT artifact has no complete native payload; guest compilation is disabled".into(),
++            ));
++        }
+         let bytes = wasm_byte_vec_t {
+             size: binary.len(),
+             data: binary.as_ptr() as _,

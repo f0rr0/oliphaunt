@@ -12,6 +12,7 @@ name: Windows V8 genuine cache pair and owned trap control
         - errors-only
         - catalog-only
         - interrupt-only
+        - catalog-strict-only
 permissions:
   contents: read
   actions: read
@@ -297,7 +298,7 @@ jobs:
         if-no-files-found: warn
         retention-days: 90
   catalog-full:
-    if: ${{ inputs.scope == 'catalog-only' }}
+    if: ${{ inputs.scope == 'catalog-only' || inputs.scope == 'catalog-strict-only' }}
     name: Full native Windows catalog, server and tools
     runs-on: windows-2025-vs2026
     timeout-minutes: 90
@@ -405,6 +406,22 @@ jobs:
         '
     - name: Embed the private engine and generate C function dispatch
       run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
+    - name: Require cached WASIX modules and block consumer guest compilation
+      if: ${{ inputs.scope == 'catalog-strict-only' }}
+      run: 'python tools/experiments/wasmer-v8/expanded-ownership/cache-only-prepare.py target/windows-v8-ownership/control
+
+        cp tools/experiments/wasmer-v8/expanded-ownership/cache-only.rs src/wasix/sdks/rust/tests/research_v8_cache_only.rs
+
+        python -c ''from pathlib import Path; p=Path("src/wasix/sdks/rust/tests/research_v8_cache_only.rs");
+        p.write_text(p.read_text().replace("fn main() {", "#[test]\nfn cache_only_policy() {"))''
+
+        cargo test --locked -p oliphaunt-wasix --no-default-features --test research_v8_cache_only --
+        --nocapture --test-threads=1
+
+        '
+      env:
+        OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+        OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
     - name: Qualify the full native Windows catalog and server
       env:
         CI_HEAD_SHA: ${{ github.sha }}
@@ -425,7 +442,9 @@ jobs:
 
           target/windows-v8-diagnostic/tools-manifest.json
 
-          !target/windows-v8-ownership/control/engine/dependency'
+          !target/windows-v8-ownership/control/engine/dependency
+
+          !target/windows-v8-ownership/control/cache-only-dependency'
         if-no-files-found: warn
         retention-days: 90
   interrupt-native:
