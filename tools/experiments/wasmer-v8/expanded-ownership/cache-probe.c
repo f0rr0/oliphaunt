@@ -4,6 +4,8 @@ typedef unsigned int DWORD;
 typedef unsigned short WCHAR;
 typedef void *HANDLE;
 typedef struct { usize size; unsigned char *data; } Vec;
+void __cpuidex(int[4], int, int);
+#pragma intrinsic(__cpuidex)
 #define IMP __declspec(dllimport)
 IMP HANDLE __stdcall GetStdHandle(DWORD);
 IMP HANDLE __stdcall CreateFileW(const WCHAR *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
@@ -51,6 +53,9 @@ static void write(const WCHAR *path, const Vec *v) {
   CloseHandle(f);
 }
 void mainCRTStartup(void) {
+  int cpu[4];
+  __cpuidex(cpu,1,0); print("cpuid_leaf1_ecx="); number((DWORD)cpu[2],1);
+  __cpuidex(cpu,7,0); print(" cpuid_leaf7_ecx="); number((DWORD)cpu[2],1); print("\n");
   static const char flags[]="--mcpu=generic --no-enable-sse4-2 --no-enable-sahf --no-enable-avx --no-enable-avx2 --no-enable-avx-vnni --no-enable-avx-vnni-int8 --no-enable-fma3 --no-enable-f16c --no-enable-bmi1 --no-enable-bmi2 --no-enable-lzcnt --no-enable-popcnt --no-intel-jcc-erratum-mitigation";
   research_set_v8_flags(flags,sizeof(flags)-1);
   int reader=0; const WCHAR *cmd=GetCommandLineW();

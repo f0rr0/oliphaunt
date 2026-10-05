@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import struct
 import subprocess
@@ -53,10 +54,19 @@ env.update(WINEPREFIX=str(prefix), WINEDEBUG="-all",
            WINEDLLPATH=str(libs / "x86_64-windows") + ":" + str(libs / "x86_64-unix"),
            LD_LIBRARY_PATH=str(libs / "x86_64-unix"))
 run([str(wine / "wine64"), "cmd", "/c", "exit", "0"], "wine-initialize.log", env)
+# Wine's first launch execs another native loader, which escapes QEMU user
+# emulation. Keep this producer in the emulated process; its CPUID log verifies it.
+env["WINELOADERNOEXEC"] = "1"
 qemu = private / "usr/bin/qemu-x86_64"
 command = [str(qemu), "-cpu", "Penryn", str(wine / "wine64"), "cache-probe.exe"]
 run(command + ["write"], "wine-penryn-write.log", env)
 run(command + ["read"], "wine-penryn-fresh-read.log", env)
+for name in ["wine-penryn-write.log", "wine-penryn-fresh-read.log"]:
+    cpu = re.findall(r"cpuid_leaf1_ecx=(0x[0-9a-f]+) cpuid_leaf7_ecx=(0x[0-9a-f]+)",
+                     (output / name).read_text())
+    assert len(cpu) == 1, name
+    leaf1, leaf7 = (int(value, 16) for value in cpu[0])
+    assert leaf1 & (1 << 19) and not leaf1 & (1 << 28) and not leaf7 & (1 << 7), cpu
 data = (output / "cache.bin").read_bytes()
 offset = 0
 wire = 0
