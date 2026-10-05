@@ -86,9 +86,12 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -e\nbash src/wasix/runtime/tools/build-runtime-portable.test.sh\nbash src/wasix/runtime/tools/serialize-aot.test.sh\nbash src/wasix/runtime/assets/build/dependency-prefix.test.sh\n"
+    script: "set -e\nbash src/wasix/runtime/tools/build-runtime-portable.test.sh\nbash src/wasix/runtime/tools/serialize-aot.test.sh\nbash src/wasix/runtime/assets/build/dependency-prefix.test.sh\nbash src/wasix/runtime/assets/build/prepare_postgres_source.test.sh\n"
     inputs:
       - assets/build/dependency-prefix.test.sh
+      - assets/build/prepare_postgres_source.sh
+      - assets/build/prepare_postgres_source.test.sh
+      - assets/build/source_lane.sh
       - assets/build/build_wasix_geos.sh
       - assets/build/build_wasix_proj.sh
       - assets/build/build_wasix_openssl.sh

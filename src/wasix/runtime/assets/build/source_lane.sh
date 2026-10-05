@@ -41,7 +41,7 @@ oliphaunt_wasix_prepare_source_for_docker() {
   case "$lane" in
     stable | released | packaged | default)
       local host_pgsrc
-      host_pgsrc="$(SOURCE_CACHE="${SOURCE_CACHE:-$REPO_ROOT/target/liboliphaunt-pg18/source}" "$ROOT/prepare_postgres_source.sh")"
+      host_pgsrc="$(SOURCE_CACHE="${SOURCE_CACHE:-$REPO_ROOT/target/liboliphaunt-pg18/source}" "$ROOT/prepare_postgres_source.sh")" || return
       case "$host_pgsrc" in
         "$REPO_ROOT"/*)
           printf '%s\n' "/work${host_pgsrc#"$REPO_ROOT"}"

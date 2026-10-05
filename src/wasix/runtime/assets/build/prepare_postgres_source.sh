@@ -93,8 +93,11 @@ series_hash="$(
 )"
 new_fingerprint="$PG_VERSION:$PG_SHA256:$series_hash"
 
-if [[ -d "$PATCHED_PGSRC" && -f "$FINGERPRINT" && "$(cat "$FINGERPRINT")" == "$new_fingerprint" ]] && ! source_has_patch_artifacts "$PATCHED_PGSRC"; then
-  install -m 0644 "$CONTRACT_HEADER" "$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
+if [[ -d "$PATCHED_PGSRC" && -f "$FINGERPRINT" && "$(cat "$FINGERPRINT")" == "$new_fingerprint" ]] &&
+   ! source_has_patch_artifacts "$PATCHED_PGSRC" &&
+   cmp -s "$CONTRACT_HEADER" "$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"; then
+  # Extension and tools producers share this prepared tree. The contract is
+  # already fingerprinted; rewriting it here races with another cache reader.
   if [[ ! -f "$SOURCE_FINGERPRINT_FILE" || "$(cat "$SOURCE_FINGERPRINT_FILE")" != "$new_fingerprint" ]]; then
     printf '%s\n' "$new_fingerprint" > "$SOURCE_FINGERPRINT_FILE"
   fi
