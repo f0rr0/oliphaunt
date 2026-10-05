@@ -31,7 +31,7 @@ def run(mode, operation, path, expect_success=True, postgres=None):
 for profile in ("default", "baseline"):
     path = args.output / f"{profile}.cache"
     run(profile, "write", path, postgres=args.postgres)
-    run(profile, "read", path)
+    run(profile, "read", path, postgres=args.postgres)
 
 # Flag hashes differ even on hosts whose ISA masks might coincide.
 run("default", "read", args.output / "baseline.cache", expect_success=False)
@@ -47,5 +47,6 @@ if args.peers:
         peer_header = json.loads(pathlib.Path(f"{peer}.header").read_text())
         expected = own_header == peer_header
         print(f"peer={peer.parent.name} expected_compatible={expected}", flush=True)
-        run("baseline", "read", peer, expect_success=expected)
+        postgres = "load-persisted-postgres" if pathlib.Path(f"{peer}.postgres.cache").is_file() else None
+        run("baseline", "read", peer, expect_success=expected, postgres=postgres)
 print("PASS CPU profile validation", flush=True)

@@ -936,8 +936,6 @@ fn find_local_extension_archive(
     repo_root: Option<&Path>,
     package: ExtensionPackage,
 ) -> Option<PathBuf> {
-    let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
-    let archive_name = format!("{}-{version}-wasix-portable.tar.zst", package.product);
     let roots = if let Some(path) = env::var_os("OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT") {
         // An explicit root takes precedence over workspace and package assets.
         vec![PathBuf::from(path)]
@@ -952,6 +950,27 @@ fn find_local_extension_archive(
 
     for root in roots {
         for product_root in local_extension_product_roots(&root, package.product) {
+            let manifest_path = product_root.join("extension-artifacts.json");
+            if !manifest_path.is_file() {
+                continue;
+            }
+            let manifest: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(&manifest_path).expect("read local extension manifest"),
+            )
+            .expect("parse local extension manifest");
+            assert_eq!(manifest["product"].as_str(), Some(package.product));
+            // External extensions have their own release version.
+            let version = manifest["version"]
+                .as_str()
+                .filter(|value| {
+                    !value.is_empty()
+                        && value.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+')
+                        })
+                })
+                .expect("local extension manifest has an invalid version");
+            let archive_name = format!("{}-{version}-wasix-portable.tar.zst", package.product);
+            println!("cargo:rerun-if-changed={}", manifest_path.display());
             for candidate in [
                 product_root
                     .join("member-assets")

@@ -18,7 +18,7 @@ if bun "$contract" unsupported > /dev/null 2>&1; then
 fi
 bash tools/dev/bun.sh test ./src/wasix/runtime/tools
 node src/wasix/runtime/tools/wasix-runtime-npm.test-consumer.mts
-for scenario in nested-owner aggregate; do
+for scenario in nested-owner aggregate independent-version; do
   root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/$scenario"
   # Keep registry dependencies at the qualified workspace versions; this
   # disposable consumer only changes local carrier paths and feature selection.

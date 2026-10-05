@@ -217,6 +217,55 @@ function aggregateFixture(root, { nestedOwner = false } = {}) {
 }
 
 describe('aggregate WASIX Cargo artifact packaging', () => {
+  test('local runtime selects an independently versioned extension archive', () => {
+    const root = path.join(scratch, 'independent-version');
+    const product = 'oliphaunt-extension-vector';
+    const productRoot = path.join(root, product);
+    mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
+    writeFileSync(
+      path.join(productRoot, 'extension-artifacts.json'),
+      JSON.stringify({
+        schema: 'oliphaunt-extension-ci-artifacts-v1',
+        product,
+        version: '9.8.7',
+        sqlName: 'vector',
+        nativeModuleStem: null,
+      }),
+    );
+    writeFileSync(
+      path.join(productRoot, 'release-assets', `${product}-9.8.7-wasix-portable.tar.zst`),
+      'independent extension fixture',
+    );
+    const runtimeSource = path.join(root, 'runtime');
+    cpSync(path.join(ROOT, 'src/wasix/runtime/crates/assets'), runtimeSource, {
+      recursive: true,
+      filter: (source) => !['target', 'payload', 'artifacts'].includes(path.basename(source)),
+    });
+    const app = path.join(root, 'app');
+    mkdirSync(path.join(app, 'src'), { recursive: true });
+    writeFileSync(
+      path.join(app, 'Cargo.toml'),
+      `[package]
+name = "wasix-independent-version-proof"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+liboliphaunt-wasix-portable = { path = ${JSON.stringify(runtimeSource)}, features = ["extension-vector"] }
+
+[workspace]
+`,
+    );
+    writeFileSync(
+      path.join(app, 'src/main.rs'),
+      `fn main() {
+    assert_ne!(liboliphaunt_wasix_portable::PACKAGE_VERSION, "9.8.7");
+    assert_eq!(liboliphaunt_wasix_portable::extension_archive("vector"),
+        Some(b"independent extension fixture".as_slice()));
+}
+`,
+    );
+  });
   test('runtime source build resolves runtime-owned contrib archives and AOT under the WASIX owner', {
     timeout: 180_000,
   }, () => {
@@ -502,7 +551,10 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/was
     const members = extensionSqlNames(
       'oliphaunt-extension-contrib-pg18',
       'package-liboliphaunt-wasix-cargo-artifacts.test',
-    ).map((sqlName) => ({ sqlName, dependencies: sqlName === 'earthdistance' ? ['cube'] : [] }));
+    ).map((sqlName) => ({
+      sqlName,
+      dependencies: sqlName === 'earthdistance' ? ['cube'] : [],
+    }));
     const runtimeCargoToml = path.join(runtimeSource, 'Cargo.toml');
     const aotSources = Object.values(AOT_TARGET_TRIPLES).map((target) => ({
       spec: {

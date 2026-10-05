@@ -53,7 +53,9 @@ with (output / "lifecycle.log").open("w") as log:
             if psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
                 samples.append({"seconds": round(time.monotonic() - start, 3),
                                 "private_bytes": counters.PrivateUsage,
-                                "working_set_bytes": counters.WorkingSetSize})
+                                "working_set_bytes": counters.WorkingSetSize,
+                                "completed_cycles": (output / "lifecycle.log").read_text().count(
+                                    "completed_extension_lifecycle=")})
             if time.monotonic() - start > 300:
                 process.kill()
                 process.wait()
@@ -61,7 +63,9 @@ with (output / "lifecycle.log").open("w") as log:
             time.sleep(0.1)
     finally:
         kernel.CloseHandle(handle)
-(output / "lifecycle-memory.json").write_text(json.dumps(samples, indent=2) + "\n")
+        (output / "lifecycle-memory.json").write_text(json.dumps(samples, indent=2) + "\n")
 print((output / "lifecycle.log").read_text())
+if not samples:
+    raise RuntimeError("Windows process memory counters produced no samples")
 print(f"samples={len(samples)} peak_private_bytes={max(s['private_bytes'] for s in samples)}")
 sys.exit(process.returncode)
