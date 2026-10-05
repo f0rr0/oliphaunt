@@ -1379,6 +1379,9 @@ function extensionGithubReleaseArtifacts(files, product) {
       (extensionCarrierFamily(product) === null ||
         value?.family === extensionCarrierFamily(product))
     ) {
+      if (Object.hasOwn(value, 'qualificationOnly')) {
+        throw error(`${product.id} cannot publish a workspace qualification carrier: ${rel(file)}`);
+      }
       manifests.push([file, value]);
     }
   }
@@ -1601,6 +1604,11 @@ function extensionGithubReleaseArtifacts(files, product) {
 }
 
 function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
+  for (const file of files.filter((file) => path.basename(file) === 'Package.swift.release')) {
+    if (existsSync(path.join(path.dirname(file), 'qualification.json'))) {
+      throw error(`${product.id} cannot publish a workspace qualification carrier: ${rel(file)}`);
+    }
+  }
   const expectedFiles = [
     ['Oliphaunt-source.zip', 'swiftpm-source-archive'],
     ['Package.swift.release', 'swiftpm-release-manifest'],

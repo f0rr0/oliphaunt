@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -175,14 +176,33 @@ test('an independently pinned base carrier uses the pinned release and rejects c
     );
     const frozen = path.join(root, 'carrier.json');
     writeFileSync(frozen, JSON.stringify(carrier));
-    assert.deepEqual(
-      buildIosCarrierManifest({
-        baseCarrierManifest: frozen,
-        baseRuntimeVersion: version,
-        extensionManifests: [],
-      }),
-      carrier,
-    );
+    const ambient = path.join(ROOT, 'target/extension-artifacts', path.basename(root));
+    mkdirSync(ambient, { recursive: true });
+    writeFileSync(path.join(ambient, 'extension-artifacts.json'), '{}');
+    try {
+      assert.deepEqual(
+        buildIosCarrierManifest({ baseCarrierManifest: frozen, baseRuntimeVersion: version }),
+        carrier,
+      );
+      const output = path.join(root, 'cli-carrier.json');
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.join(import.meta.dir, 'ios-carrier-manifest.mts'),
+          '--base-carrier',
+          frozen,
+          '--base-runtime-version',
+          version,
+          '--output',
+          output,
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), carrier);
+    } finally {
+      rmSync(ambient, { recursive: true, force: true });
+    }
     assert.throws(
       () => buildIosCarrierManifest({ baseCarrierManifest: frozen, extensionManifests: [] }),
       /does not freeze/,

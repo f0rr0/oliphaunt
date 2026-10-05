@@ -1128,7 +1128,7 @@ export function buildIosCarrierManifest({
   baseAssetDir = path.join(ROOT, 'target/liboliphaunt/release-assets'),
   baseRuntimeVersion = currentProductVersionSync('liboliphaunt-native', 'ios-carrier-manifest'),
   baseCarrierManifest = undefined,
-  extensionManifests = discoveredExtensionManifests(path.join(ROOT, 'target/extension-artifacts')),
+  extensionManifests = [],
   repository = DEFAULT_REPOSITORY,
   localUrls = false,
   verifyMembers = true,
@@ -1226,7 +1226,6 @@ function parseArgs(argv) {
     else if (arg === '--output') output = path.resolve(value);
     else throw error(`unknown argument ${arg}`);
   }
-  if (options.extensionManifests.length === 0) delete options.extensionManifests;
   return { options, output };
 }
 

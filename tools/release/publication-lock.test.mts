@@ -1018,6 +1018,25 @@ describe('publication artifact discovery and freezing', () => {
     ).toThrow('workspace qualification carrier');
   });
 
+  test('rejects qualification extension fixtures only when their product is selected', () => {
+    const root = temporaryDirectory();
+    const product = loadPublicationCatalog('publication-lock.test', {
+      products: ['oliphaunt-extension-vector'],
+    }).products[0];
+    const { manifestPath } = extensionGithubReleaseFixture(root, product);
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    // Presence rejects even a forged false marker.
+    manifest.qualificationOnly = false;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(() => discoverProductArtifacts([root], [product])).toThrow(
+      'workspace qualification carrier',
+    );
+    const unrelated = loadPublicationCatalog('publication-lock.test', {
+      products: ['oliphaunt-js'],
+    }).products[0];
+    expect(discoverProductArtifacts([root], [unrelated])).toEqual([]);
+  });
+
   test.each([
     'oliphaunt-broker',
     'postgres-tools-native',
@@ -1453,6 +1472,12 @@ describe('publication artifact discovery and freezing', () => {
         [sdk, fixture],
       ),
     ).not.toThrow();
+    const qualificationMarker = path.join(sdk, 'qualification.json');
+    writeFileSync(qualificationMarker, JSON.stringify({ qualificationOnly: true }));
+    expect(() => discoverProductArtifacts(selectedRoots, catalog.products)).toThrow(
+      'workspace qualification carrier',
+    );
+    unlinkSync(qualificationMarker);
     const frozenFixture = swiftArtifacts.find(
       ({ id }) => id === 'release-input:swiftpm-extension-consumer-fixture',
     );

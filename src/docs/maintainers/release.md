@@ -216,6 +216,10 @@ Swift and React Native carrier staging also retains the exact native pin.
 React Native resolves that pin through its declared Swift release, including
 immutable historical metadata when Swift has advanced. Older runtime pins use
 verified published Apple archives; current pins require same-run producer assets.
+Mobile app qualification stages private extension and Swift carrier fixtures
+under `target/qualification` against the current workspace runtimes. It leaves
+the release packages intact, retains payload hashes and exact runtime validation,
+and marks extension fixtures `qualificationOnly` so publication rejects them.
 
 PR CI recognizes generated `chore(release):` changes only on the generated
 Release Please branch. Before merge it requires the release commit's parent to

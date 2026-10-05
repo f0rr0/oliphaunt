@@ -193,11 +193,19 @@ tasks:
       - "/tools/dev/bun.sh"
       - /src/examples/native/react-native-expo/package.json
       - /tools/packaging/portable-archive.mts
+      - /tools/packaging/archive-directory.mts
+      - "@group(release-archive-contract)"
+      - "@group(legal-files)"
+      - /src/extensions/tools/extension-upstream-licenses.mts
       - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
       - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
       - /src/native/sdks/swift/tools/pinned-native-carrier.mts
       - /src/native/sdks/swift/tools/swift-carrier-resolver.mts
       - /src/native/sdks/swift/tools/render_swiftpm_release_package.mts
+      - /src/native/sdks/swift/tools/prepare-swift-release-consumer.mts
+      - /src/native/sdks/swift/tools/swift-extension-release-consumer-inputs.mts
+      - /src/native/runtime/VERSION
+      - /src/wasix/runtime/VERSION
       - /tools/release/*.{mts,sh}
       - project: oliphaunt-query-ts
         group: sources
