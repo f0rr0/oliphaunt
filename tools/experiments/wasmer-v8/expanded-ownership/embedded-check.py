@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -71,8 +72,7 @@ materialized = cache / "oliphaunt_wee8.dll"
 assert hashlib.sha256(materialized.read_bytes()).hexdigest() == digest
 for index in range(3):
     text = (output / f"embedded-cold-{index}.log").read_text()
-    loaded = [pathlib.Path(line.removeprefix("research_embedded_engine_loaded="))
-              for line in text.splitlines() if line.startswith("research_embedded_engine_loaded=")]
+    loaded = [pathlib.Path(path) for path in re.findall(r"research_embedded_engine_loaded=([^\r\n]+)", text)]
     assert len(loaded) == 1 and loaded[0].resolve() == materialized.resolve(), text[-2000:]
 with (output / "embedded-warm.log").open("w") as log:
     result = subprocess.run([str(executable), "--nocapture", "--test-threads=1"],

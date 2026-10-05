@@ -116,7 +116,7 @@ jobs:
       run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
     - name: Test standalone cold and warm engine delivery and actual SDK
       env:
-        OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
+        OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '500'
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
         OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
       run: 'set -euo pipefail
