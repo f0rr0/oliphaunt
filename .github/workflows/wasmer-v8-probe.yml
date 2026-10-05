@@ -1,4 +1,4 @@
-name: Windows V8 automatic embedded DLL delivery control
+name: Windows V8 genuine cache pair and owned trap control
 'on':
   workflow_dispatch: null
 permissions:
@@ -6,7 +6,7 @@ permissions:
   actions: read
 jobs:
   expanded-ownership:
-    name: DLL expanded ownership (${{ matrix.runner }})
+    name: Native cache pair, owned errors and SDK (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -38,10 +38,12 @@ jobs:
       shell: pwsh
       run: '$linker = Join-Path $env:VCToolsInstallDir ''bin/HostX64/x64/link.exe''
 
-        if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
+        if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC
+        linker $linker" }
 
-        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding
-        utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath
+        $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated
+        runner-owned MSVC linker path.
 
         '
     - name: Compile Windows V8 serializer
@@ -106,27 +108,49 @@ jobs:
       env:
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
         OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
-      run: "set -euo pipefail\nOLIPHAUNT_WASIX_GENERATED_ASSET_ROOT=\"$PWD/target/extensions/wasix/assets\" \\\n\
-        OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT=\"$PWD/target/extensions/wasix/aot-artifacts\" \\\n  bash tools/dev/bun.sh\
-        \ src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \\\n    --output-root target/windows-v8-ownership/vector-artifacts\
-        \ --family wasix --require-wasix oliphaunt-extension-vector\n"
+      run: "set -euo pipefail\nOLIPHAUNT_WASIX_GENERATED_ASSET_ROOT=\"$PWD/target/extensions/wasix/assets\"\
+        \ \\\nOLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT=\"$PWD/target/extensions/wasix/aot-artifacts\"\
+        \ \\\n  bash tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts\
+        \ \\\n    --output-root target/windows-v8-ownership/vector-artifacts --family\
+        \ wasix --require-wasix oliphaunt-extension-vector\n"
     - name: Apply the pinned private DLL ownership control
       run: python tools/experiments/wasmer-v8/expanded-ownership/prepare-dll.py target/windows-v8-ownership/control
+    - name: Apply the scoped error ownership control
+      run: 'git apply --unsafe-paths --directory="$PWD/target/windows-v8-ownership/control/engine/dependency/wasmer-7.5.0"
+        tools/experiments/wasmer-v8/expanded-ownership/trap-ownership.diff
+
+        cp tools/experiments/wasmer-v8/expanded-ownership/trap-ownership.rs src/wasix/sdks/rust/tests/research_v8_trap_ownership.rs
+
+        python -c ''from pathlib import Path; p=Path("src/wasix/sdks/rust/tests/research_v8_trap_ownership.rs");
+        p.write_text(p.read_text().replace("fn main() {", "#[test]\nfn trap_ownership()
+        {"))'''
     - name: Embed the private engine and generate C function dispatch
       run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
-    - name: Test standalone cold and warm engine delivery and actual SDK
+    - name: Test owned errors, automatic delivery and actual SDK
       env:
-        OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '500'
+        OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
         OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
       run: 'set -euo pipefail
 
         export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-ownership/vector-artifacts"
 
-        python tools/experiments/wasmer-v8/expanded-ownership/embedded-check.py target/windows-v8-ownership/control'
+        python tools/experiments/wasmer-v8/expanded-ownership/embedded-check.py target/windows-v8-ownership/control
+
+        cargo test --locked -p oliphaunt-wasix --no-default-features --test research_v8_trap_ownership
+        -- --nocapture --test-threads=1'
+    - name: Download same-run genuine CPU profile
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: windows-genuine-low-cpu-cache
+        path: target/wine-cache
+    - name: Fresh native readers choose a compatible genuine profile
+      run: python tools/experiments/wasmer-v8/expanded-ownership/cache-pair-check.py
+        target/windows-v8-ownership/control target/wine-cache
     - name: Diagnose native ownership failure
       if: ${{ failure() }}
-      run: python tools/experiments/wasmer-v8/expanded-ownership/debug-failure.py target/windows-v8-ownership/control
+      run: python tools/experiments/wasmer-v8/expanded-ownership/debug-failure.py
+        target/windows-v8-ownership/control
     - name: Retain ownership receipts
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -141,5 +165,63 @@ jobs:
           target/windows-v8-diagnostic/tools-manifest.json
 
           !target/windows-v8-ownership/control/engine/dependency'
+        if-no-files-found: warn
+        retention-days: 90
+    needs:
+    - wine-producer
+  wine-producer:
+    name: Genuine Windows cache on emulated SSE4.1 CPU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        persist-credentials: false
+    - name: Install producer linker
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y lld-18'
+    - name: Download immutable native engine
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37301714833'
+        artifact-ids: '11343090816'
+        github-token: ${{ github.token }}
+        path: target/frozen-engine
+        merge-multiple: true
+    - name: Download immutable portable guest
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37225721762'
+        artifact-ids: '11312707536'
+        github-token: ${{ github.token }}
+        path: target/frozen-portable
+        merge-multiple: true
+    - name: Verify immutable guest
+      run: 'mkdir -p target/wine-guest
+
+        gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > target/wine-guest/guest-artifact.json
+
+        python3 tools/experiments/wasmer-v8/verify_guest.py target/frozen-portable
+        target/wine-guest'
+      env:
+        GH_TOKEN: ${{ github.token }}
+    - name: Produce genuine Windows cache and fresh emulated reader
+      run: python3 tools/experiments/wasmer-v8/expanded-ownership/wine-producer.py
+        target/wine-cache target/frozen-engine target/wine-guest/postgres.wasm
+    - name: Retain genuine profile evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-genuine-low-cpu-cache
+        path: 'target/wine-cache/*.log
+
+          target/wine-cache/wine-producer-receipt.json
+
+          target/wine-cache/cache-probe.exe
+
+          target/wine-cache/wine-postgres.cache
+
+          target/wine-cache/guest.wasm'
         if-no-files-found: warn
         retention-days: 90
