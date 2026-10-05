@@ -1,0 +1,289 @@
+--- a/src/backend/v8/entities/store/mod.rs
++++ b/src/backend/v8/entities/store/mod.rs
+@@ -1,5 +1,5 @@
+ //! Data types, functions and traits for `v8` runtime's `Store` implementation.
+-use std::thread::ThreadId;
++use std::{cell::RefCell, sync::Arc, thread::ThreadId};
+ 
+ use crate::{
+     AsStoreRef, BackendStore, StoreRef,
+@@ -7,6 +7,7 @@
+     engine::{AsEngineRef, Engine, EngineRef},
+ };
+ 
++pub(crate) mod interrupt;
+ mod obj;
+ pub use obj::*;
+ 
+@@ -32,6 +33,8 @@
+     pub(crate) thread_id: ThreadId,
+     pub(crate) research_exports: Vec<ResearchExports>,
+     pub(crate) research_refs: Vec<ResearchRef>,
++    interrupt: Arc<interrupt::StoreInterrupt>,
++    shared_memories: RefCell<Vec<(ResearchRef, Arc<interrupt::MemoryInterrupt>)>>,
+ }
+ 
+ impl std::fmt::Debug for Store {
+@@ -46,12 +49,39 @@
+     pub(crate) fn new(engine: crate::engine::Engine) -> Self {
+         let inner: *mut wasm_store_t = unsafe { wasm_store_new(engine.as_v8().inner.engine) };
+         let thread_id = std::thread::current().id();
+-        Self {
++        let store = Self {
+             inner,
+             engine,
+             thread_id,
+             research_exports: Vec::new(),
+             research_refs: Vec::new(),
++            interrupt: interrupt::StoreInterrupt::new(),
++            shared_memories: RefCell::new(Vec::new()),
++        };
++        store.interrupt.capture(inner);
++        store
++    }
++
++    pub(crate) fn shared_memory_ops(&self, memory: *mut crate::backend::v8::bindings::wasm_memory_t) -> Arc<interrupt::MemoryInterrupt> {
++        use crate::backend::v8::bindings::*;
++        let mut memories = self.shared_memories.borrow_mut();
++        if let Some((_, ops)) = memories.iter().find(|(entry, _)| unsafe {
++            wasm_memory_same(wasm_ref_as_memory(entry.0), memory)
++        }) {
++            return ops.clone();
++        }
++        let ops = interrupt::MemoryInterrupt::new(&self.interrupt);
++        memories.push((ResearchRef(unsafe { wasm_memory_as_ref(wasm_memory_copy(memory)) }), ops.clone()));
++        ops
++    }
++
++    pub(crate) fn remember_shared_memory(&self, memory: *mut crate::backend::v8::bindings::wasm_memory_t, ops: Arc<interrupt::MemoryInterrupt>) {
++        use crate::backend::v8::bindings::*;
++        let mut memories = self.shared_memories.borrow_mut();
++        if !memories.iter().any(|(entry, _)| unsafe {
++            wasm_memory_same(wasm_ref_as_memory(entry.0), memory)
++        }) {
++            memories.push((ResearchRef(unsafe { wasm_memory_as_ref(wasm_memory_copy(memory)) }), ops));
+         }
+     }
+ 
+@@ -68,6 +98,8 @@
+     fn drop(&mut self) {
+         // These vectors uniquely own the export wrappers. Rust export clones
+         // borrow them through their Store, so retain them until Store teardown.
++        self.interrupt.retire();
++        self.shared_memories.get_mut().clear();
+         self.research_exports.clear();
+         self.research_refs.clear();
+         unsafe { wasm_store_delete(self.inner) }
+--- a/src/backend/v8/entities/memory/mod.rs
++++ b/src/backend/v8/entities/memory/mod.rs
+@@ -226,9 +226,9 @@
+             .copy_to_memory(src_view.data_size(), &dst_view)
+             .map_err(|err| MemoryError::Generic(format!("failed to copy V8 memory: {err}")))?;
+ 
+-        Ok(SharedMemory::new(crate::vm::VMSharedMemory::V8(
+-            copied.handle.as_shared()?,
+-        )))
++        let shared = copied.handle.as_shared(v8_store)?;
++        let ops = shared.1.clone();
++        Ok(SharedMemory::new_with_ops(crate::vm::VMSharedMemory::V8(shared), ops))
+     }
+ 
+     pub fn is_from_store(&self, store: &impl AsStoreRef) -> bool {
+@@ -238,9 +238,10 @@
+ 
+     pub fn as_shared(&self, store: &impl AsStoreRef) -> Result<SharedMemory, MemoryError> {
+         check_isolate(store);
+-        Ok(SharedMemory::new(crate::vm::VMSharedMemory::V8(
+-            self.handle.as_shared()?,
+-        )))
++        let store = store.as_store_ref();
++        let shared = self.handle.as_shared(store.inner.store.as_v8())?;
++        let ops = shared.1.clone();
++        Ok(SharedMemory::new_with_ops(crate::vm::VMSharedMemory::V8(shared), ops))
+     }
+ }
+ 
+--- a/src/backend/v8/vm/mod.rs
++++ b/src/backend/v8/vm/mod.rs
+@@ -154,7 +154,7 @@
+ #[derive(Debug, Clone)]
+ pub struct VMMemory(pub(super) *mut wasm_memory_t);
+ struct SharedMemoryPointer(*mut wasm_shared_memory_t);
+-pub struct VMSharedMemory(Arc<SharedMemoryPointer>);
++pub struct VMSharedMemory(Arc<SharedMemoryPointer>, pub(crate) Arc<crate::backend::v8::store::interrupt::MemoryInterrupt>);
+ pub(crate) type VMExternMemory = *mut wasm_memory_t;
+ 
+ impl SharedMemoryPointer {
+@@ -182,7 +182,7 @@
+ 
+ impl VMMemory {
+     /// Created a shared detached memory that can be attached in another Store.
+-    pub(crate) fn as_shared(&self) -> Result<VMSharedMemory, MemoryError> {
++    pub(crate) fn as_shared(&self, store: &Store) -> Result<VMSharedMemory, MemoryError> {
+         let memory_type = unsafe { wasm_memory_type(self.0) };
+         let limits = unsafe { wasm_memorytype_limits(memory_type) };
+         if !unsafe { (*limits).shared } {
+@@ -202,19 +202,20 @@
+             ));
+         }
+ 
+-        Ok(VMSharedMemory(Arc::new(SharedMemoryPointer::new(shared))))
++        Ok(VMSharedMemory(Arc::new(SharedMemoryPointer::new(shared)), store.shared_memory_ops(self.0)))
+     }
+ }
+ 
+ impl VMSharedMemory {
+     /// We can clone a shared memory handle as we want.
+     pub(crate) fn clone(&self) -> Self {
+-        Self(self.0.clone())
++        Self(self.0.clone(), self.1.clone())
+     }
+ 
+     /// Attach the shared memory handle to a new Store and convert it to VMMemory
+     pub(crate) fn into_vm_memory(self, store: &mut Store) -> VMMemory {
+-        let memory = unsafe { wasm_memory_obtain(store.inner, self.0.0) };
++        let memory = self.1.attach(store, self.0.0);
++        store.research_refs.push(crate::backend::v8::store::ResearchRef(unsafe { wasm_memory_as_ref(memory) }));
+         assert!(
+             !memory.is_null(),
+             "Failed to obtain V8 shared memory: wasm_memory_obtain returned null"
+--- a/src/vm/impls.rs
++++ b/src/vm/impls.rs
+@@ -59,7 +59,11 @@
+             #[cfg(feature = "sys")]
+             Self::Sys(s) => s.0.as_shared().map(VMSharedMemory::Sys),
+             #[cfg(feature = "v8")]
+-            Self::V8(s) => s.as_shared().map(VMSharedMemory::V8),
++            // V8 sharing needs its owning Store to preserve interruption state.
++            // The V8 Memory API supplies it; this store-free helper is Sys-only.
++            Self::V8(_) => Err(wasmer_types::MemoryError::Generic(
++                "V8 memory sharing requires its owning Store".to_owned(),
++            )),
+             #[cfg(feature = "js")]
+             Self::Js(s) => s.try_clone().map(VMSharedMemory::Js),
+         }
+--- /dev/null
++++ b/src/backend/v8/entities/store/interrupt.rs
+@@ -0,0 +1,122 @@
++use std::{cell::Cell, ffi::c_void, sync::{Arc, Mutex, Weak}};
++
++use crate::{error::AtomicsError, location::SharedMemoryOps};
++use crate::backend::v8::bindings::*;
++
++#[cfg(not(windows))]
++unsafe extern "C" {
++    #[link_name = "_ZN2v87Isolate10GetCurrentEv"]
++    fn current_isolate() -> *mut c_void;
++    #[link_name = "_ZN2v87Isolate18TerminateExecutionEv"]
++    fn terminate_execution(isolate: *mut c_void);
++}
++#[cfg(windows)]
++use crate::backend::v8::bindings::{
++    oliphaunt_v8_current_isolate as current_isolate,
++    oliphaunt_v8_terminate_execution as terminate_execution,
++};
++
++thread_local! { static CAPTURED: Cell<usize> = const { Cell::new(0) }; }
++
++unsafe extern "C" fn capture(
++    _args: *const wasm_val_vec_t,
++    _results: *mut wasm_val_vec_t,
++) -> *mut wasm_trap_t {
++    // The pinned C API enters the Store's isolate before a direct host call.
++    CAPTURED.with(|slot| slot.set(unsafe { current_isolate() } as usize));
++    std::ptr::null_mut()
++}
++
++pub(super) struct StoreInterrupt(Mutex<Option<usize>>);
++
++impl StoreInterrupt {
++    pub(super) fn new() -> Arc<Self> { Arc::new(Self(Mutex::new(None))) }
++
++    pub(super) fn capture(&self, store: *mut wasm_store_t) {
++        unsafe {
++            let mut params = std::mem::zeroed();
++            let mut results = std::mem::zeroed();
++            let ty = wasm_functype_new(&mut params, &mut results);
++            assert!(!ty.is_null(), "cannot create V8 interrupt capture type");
++            let function = wasm_func_new(store, ty, Some(capture));
++            wasm_functype_delete(ty);
++            assert!(!function.is_null(), "cannot create V8 interrupt capture function");
++            let owner = super::ResearchRef(wasm_func_as_ref(function));
++            let mut args = std::mem::zeroed();
++            let mut results = std::mem::zeroed();
++            CAPTURED.with(|slot| slot.set(0));
++            let trap = wasm_func_call(function, &mut args, &mut results);
++            let pointer = CAPTURED.with(Cell::get);
++            if !trap.is_null() { wasm_trap_delete(trap); }
++            drop(owner);
++            assert!(trap.is_null() && pointer != 0, "cannot capture V8 Store interrupt");
++            *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pointer);
++        }
++    }
++
++    fn terminate(&self) {
++        // Keep the lock through termination. Store teardown takes this same
++        // lock before retiring the pointer and deleting the native Store.
++        let pointer = self.0.lock().unwrap_or_else(|e| e.into_inner());
++        if let Some(pointer) = *pointer {
++            unsafe { terminate_execution(pointer as *mut c_void) };
++        }
++    }
++
++    pub(super) fn retire(&self) {
++        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
++    }
++}
++
++#[derive(Default)]
++struct MemoryState {
++    disabled: bool,
++    stores: Vec<Weak<StoreInterrupt>>,
++}
++
++pub(crate) struct MemoryInterrupt(Mutex<MemoryState>);
++
++impl MemoryInterrupt {
++    pub(super) fn new(store: &Arc<StoreInterrupt>) -> Arc<Self> {
++        Arc::new(Self(Mutex::new(MemoryState {
++            disabled: false, stores: vec![Arc::downgrade(store)],
++        })))
++    }
++
++    pub(crate) fn attach(
++        self: &Arc<Self>,
++        store: &mut super::Store,
++        memory: *mut wasm_shared_memory_t,
++    ) -> *mut wasm_memory_t {
++        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
++        if state.disabled {
++            // attach's existing infallible API cannot return a MemoryError.
++            // Release the lock before rejecting so cancellation stays usable.
++            drop(state);
++            panic!("cannot attach V8 shared memory after atomics are disabled");
++        }
++        let handle = unsafe { wasm_memory_obtain(store.inner, memory) };
++        assert!(!handle.is_null(), "cannot obtain V8 shared memory");
++        state.stores.retain(|entry| entry.strong_count() != 0);
++        let interrupt = Arc::downgrade(&store.interrupt);
++        if !state.stores.iter().any(|entry| Weak::ptr_eq(entry, &interrupt)) {
++            state.stores.push(interrupt);
++        }
++        store.remember_shared_memory(handle, self.clone());
++        handle
++    }
++}
++
++impl SharedMemoryOps for MemoryInterrupt {
++    fn disable_atomics(&self) -> Result<(), AtomicsError> {
++        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
++        state.disabled = true;
++        state.stores.retain(|entry| {
++            if let Some(store) = entry.upgrade() {
++                store.terminate();
++                true
++            } else { false }
++        });
++        Ok(())
++    }
++}

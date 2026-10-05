@@ -49,6 +49,24 @@ loader = pathlib.Path(__file__).with_name("embedded-engine.rs").read_text()
 loader = loader.replace("RESEARCH_ENGINE_DIGEST", digest)
 generated += "\nmod research_embedded_engine {\n" + loader + "\n}\n"
 generated += '''
+pub(crate) unsafe fn oliphaunt_v8_current_isolate() -> *mut std::ffi::c_void {
+    type Function = unsafe extern "C" fn() -> *mut std::ffi::c_void;
+    static FUNCTION: std::sync::OnceLock<Function> = std::sync::OnceLock::new();
+    let function = FUNCTION.get_or_init(|| unsafe {
+        std::mem::transmute::<*mut std::ffi::c_void, Function>(
+            research_embedded_engine::symbol(b"?GetCurrent@Isolate@v8@@SAPEAV12@XZ\\0"))
+    });
+    unsafe { function() }
+}
+pub(crate) unsafe fn oliphaunt_v8_terminate_execution(ptr: *mut std::ffi::c_void) {
+    type Function = unsafe extern "C" fn(*mut std::ffi::c_void);
+    static FUNCTION: std::sync::OnceLock<Function> = std::sync::OnceLock::new();
+    let function = FUNCTION.get_or_init(|| unsafe {
+        std::mem::transmute::<*mut std::ffi::c_void, Function>(
+            research_embedded_engine::symbol(b"?TerminateExecution@Isolate@v8@@QEAAXXZ\\0"))
+    });
+    unsafe { function(ptr) }
+}
 pub(crate) unsafe fn research_externtype_delete(ptr: *mut wasm_tagtype_t) {
     type Function = unsafe extern "C" fn(*mut wasm_tagtype_t);
     static FUNCTION: std::sync::OnceLock<Function> = std::sync::OnceLock::new();
