@@ -59,7 +59,7 @@
         }
       },
       "branchPolicies": [{ "name": "main", "type": "branch" }],
-      "secretNames": ["RELEASE_PR_TOKEN"]
+      "secretNames": ["RELEASE_TAG_APP_CLIENT_ID", "RELEASE_TAG_APP_PRIVATE_KEY"]
     },
     "release-dry-run": {
       "environment": {

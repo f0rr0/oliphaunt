@@ -356,6 +356,7 @@ function pendingError(message, options = {}) {
 function singleSnapshotReadOptions(budget, dependencies) {
   return remainingGitHubReadOptions(budget, {
     ...dependencies.singleReadOptions,
+    getToken: dependencies.getToken,
     maxAttempts: 1,
   });
 }
@@ -634,6 +635,7 @@ export async function uploadFrozenReleaseAssets(plan, dependencies = {}) {
               assertMutationAllowed: () => assertSharedUploadMutationAllowed(environment),
               deadlineMs: budget.deadlineMs,
               environment,
+              getToken: dependencies.getToken,
               now: budget.now,
               timeoutMs,
             },

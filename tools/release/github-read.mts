@@ -556,7 +556,7 @@ export async function requestGithubPages(endpoint, options = {}) {
     const { data, link } = await requestGithubJsonWithRetry(
       'https://api.github.com/' + pageEndpoint,
       {
-        authToken: environment.GH_TOKEN || environment.GITHUB_TOKEN || '',
+        authToken: options.getToken ?? (environment.GH_TOKEN || environment.GITHUB_TOKEN || ''),
         coreJournalOptions: { environment, ...options.coreJournalOptions },
         deadlineMs: paginationDeadlineMs,
         fetchImpl: options.fetchImpl,
@@ -608,7 +608,7 @@ export async function requestGithubRepositoryJson(endpoint, options = {}) {
   return await requestGithubJsonWithRetry(
     endpoint.startsWith('https:') ? endpoint : 'https://api.github.com/' + endpoint,
     {
-      authToken: environment.GH_TOKEN || environment.GITHUB_TOKEN || '',
+      authToken: options.getToken ?? (environment.GH_TOKEN || environment.GITHUB_TOKEN || ''),
       coreJournalOptions: { environment, ...options.coreJournalOptions },
       deadlineMs: Math.min(
         now() + settings.deadlineMs,
@@ -848,6 +848,7 @@ export async function requestGithubJsonWithRetry(
       ...(coreJournalOptions ?? {}),
       label: `GitHub release JSON ${new URL(url).pathname}`,
     });
+    const token = typeof authToken === 'function' ? await authToken() : authToken;
     const transportRemaining = effectiveDeadline - nowImpl();
     if (transportRemaining <= 0) {
       throw new Error(
@@ -856,7 +857,7 @@ export async function requestGithubJsonWithRetry(
     }
     try {
       response = await fetchImpl(url, {
-        headers: authHeaders('application/vnd.github+json', authToken),
+        headers: authHeaders('application/vnd.github+json', token),
         redirect: 'error',
         signal: AbortSignal.timeout(Math.max(1, Math.min(attemptTimeoutMs, transportRemaining))),
       });

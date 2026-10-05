@@ -62,6 +62,7 @@ import { compareText, currentProductVersionSync } from './release-artifact-targe
 import { ROOT, uniqueValueFlag } from './release-cli-utils.mts';
 import { loadProducts, releaseOrder } from './release-graph.mts';
 import { frozenUploadPlan, uploadFrozenReleaseAssets } from './upload_github_release_assets.mts';
+import { createReleaseAppToken } from './release-app-token.mts';
 
 const TOOL = 'release-publish.mts';
 const REGISTRY_DEADLINE_RESERVE_MS = 5_000;
@@ -355,12 +356,15 @@ async function publishSelectedGithubReleaseAssetSets(products, headRef, { check 
   );
   if (check) return;
   await verifyReleaseTags(selected, headRef);
+  const credentials = createReleaseAppToken();
   const coordinationRoot = mkdtempSync(path.join(tmpdir(), 'oliphaunt-github-release-asset-wave-'));
   const abortPath = path.join(coordinationRoot, 'abort.json');
   const reportPath =
     process.env.GITHUB_RELEASE_ASSET_UPLOAD_REPORT_PATH ??
     path.join(coordinationRoot, 'report.json');
+  let failure;
   try {
+    await credentials.token();
     let execution;
     try {
       execution = await executeConcurrentGithubReleaseAssetUploadPlan(plan, {
@@ -380,6 +384,7 @@ async function publishSelectedGithubReleaseAssetSets(products, headRef, { check 
               `(${wave.assetCount} assets, ${wave.windowMs}ms bound).`,
           );
           return uploadFrozenReleaseAssets(uploadPlans.get(product), {
+            getToken: () => credentials.token(),
             environment: githubReleaseAssetUploadEnvironment(process.env, {
               abortPath,
               windowMs: wave.windowMs,
@@ -403,10 +408,17 @@ async function publishSelectedGithubReleaseAssetSets(products, headRef, { check 
       sourceCommit: ACTIVE_PUBLICATION_LOCK.source.commit,
     });
   } catch (cause) {
-    fail(cause instanceof Error ? cause.message : String(cause));
+    failure = cause;
   } finally {
-    rmSync(coordinationRoot, { force: true, recursive: true });
+    try {
+      await credentials.close();
+    } catch (cause) {
+      failure = new Error([failure?.message, cause.message].filter(Boolean).join('; '));
+    } finally {
+      rmSync(coordinationRoot, { force: true, recursive: true });
+    }
   }
+  if (failure) throw failure;
 }
 
 function releaseEnvironment(name) {
@@ -944,11 +956,15 @@ if (
 ) {
   const requested = parseProductsJson(argv.slice(1));
   if (requested !== null) {
-    await publishSelectedGithubReleaseAssetSets(
-      releaseOrderedProducts(requested),
-      flagValue(argv.slice(1), '--head-ref') ?? 'HEAD',
-      { check: argv.slice(1).includes('--check') },
-    );
+    try {
+      await publishSelectedGithubReleaseAssetSets(
+        releaseOrderedProducts(requested),
+        flagValue(argv.slice(1), '--head-ref') ?? 'HEAD',
+        { check: argv.slice(1).includes('--check') },
+      );
+    } catch (cause) {
+      fail(cause instanceof Error ? cause.message : String(cause));
+    }
     process.exit(0);
   }
 }

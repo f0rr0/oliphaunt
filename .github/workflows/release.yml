@@ -78,9 +78,9 @@ jobs:
     if: ${{ inputs.operation == 'prepare-release-pr' }}
     environment: release-pr
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
+      issues: read
+      pull-requests: read
     steps:
       - name: Require main
         run: |
@@ -97,15 +97,17 @@ jobs:
         id: require_current_main
         timeout-minutes: 1
         run: bash .github/scripts/require-current-main.sh "$GITHUB_SHA"
-      - name: Require release PR token
-        env:
-          RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
-        run: |
-          if [[ -z "${RELEASE_PR_TOKEN}" ]]; then
-            echo "RELEASE_PR_TOKEN is required so generated release PRs trigger normal PR CI." >&2
-            echo "Configure a GitHub App or maintainer bot token in the release-pr environment." >&2
-            exit 1
-          fi
+      - name: Create Oli release PR token
+        id: release_pr_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
@@ -114,7 +116,7 @@ jobs:
       - name: Generate the Release Please candidate locally
         id: prepare_candidate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+          GH_TOKEN: ${{ steps.release_pr_token.outputs.token }}
         run: bash tools/release/prepare-release-pr.sh "$RUNNER_TEMP/release-candidate"
       - name: Set up Rust for release manifest synchronization
         if: ${{ steps.prepare_candidate.outputs.required == 'true' }}
@@ -125,7 +127,7 @@ jobs:
       - name: Publish the completed release PR tree
         if: ${{ steps.prepare_candidate.outputs.required == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+          GH_TOKEN: ${{ steps.release_pr_token.outputs.token }}
         run: bash .github/scripts/publish-release-pr.sh "$RUNNER_TEMP/release-candidate"
       - name: Report no release changes
         if: ${{ steps.prepare_candidate.outputs.required != 'true' }}
@@ -885,7 +887,7 @@ jobs:
     environment: release-bootstrap
     permissions:
       actions: read
-      contents: write
+      contents: read
       id-token: write
       pull-requests: read
     steps:
@@ -937,9 +939,18 @@ jobs:
         uses: ./.github/actions/setup-npm-publisher
         with:
           npm-version: ${{ env.NPM_VERSION }}
+      - name: Create Oli bootstrap preflight token
+        id: bootstrap_preflight_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
       - name: Preflight selected product tag and release collisions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.bootstrap_preflight_token.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
           bash tools/release/verify-product-tags.sh \
@@ -1187,11 +1198,9 @@ jobs:
       promoted: ${{ steps.promote_github_releases.outcome == 'success' }}
     permissions:
       actions: read
-      artifact-metadata: write
-      attestations: write
-      contents: write
+      contents: read
       id-token: write
-      pull-requests: write
+      pull-requests: read
     steps:
       - name: Record release deadline
         id: release_job_deadline
@@ -1237,11 +1246,25 @@ jobs:
         env:
           RELEASE_OPERATION: publish
         run: bun .github/scripts/verify-github-oidc-identity.mts
+      - name: Check Oli release App permissions
+        id: check_release_tag_app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
+          permission-workflows: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-attestations: write
+          permission-actions: read
       - name: Prove Release Please PR can complete after publication
         id: assert_release_please_markable
         timeout-minutes: 1
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.check_release_tag_app.outputs.token }}
         run: |
           tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \
             assert-markable \
@@ -1249,7 +1272,7 @@ jobs:
             --base main
       - name: Preflight selected product tag and release collisions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.check_release_tag_app.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
           gh auth setup-git
@@ -1260,14 +1283,10 @@ jobs:
           bun .github/scripts/manage-release-drafts.mts preflight \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
-      - name: Check release tag App permissions
-        id: check_release_tag_app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with: *release_tag_app
       - name: Check publish environment
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.check_release_tag_app.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.check_release_tag_app.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
@@ -1316,8 +1335,8 @@ jobs:
       - name: Validate product versions and registry state
         id: validate_release_registry_state
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.check_release_tag_app.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.check_release_tag_app.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
           bash tools/release/release-check-registries.sh \
@@ -1423,14 +1442,14 @@ jobs:
         id: verify_product_tags
         timeout-minutes: 5
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: bash tools/release/verify-product-tags.sh --products-json "${PRODUCTS_JSON}" --target "$RELEASE_HEAD_SHA"
       - name: Verify exact-SHA GitHub release staging
         id: verify_github_staging
         timeout-minutes: 5
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release_tag_token.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: bun .github/scripts/manage-release-drafts.mts verify --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA" --state staged
       - name: Publish all selected GitHub release asset sets concurrently
@@ -1439,6 +1458,9 @@ jobs:
         env:
           GITHUB_RELEASE_ASSET_UPLOAD_REPORT_PATH: ${{ runner.temp }}/oliphaunt-github-release-asset-upload-report.json
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG_APP_CLIENT_ID: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          RELEASE_TAG_APP_PRIVATE_KEY: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          RELEASE_APP_INSTALLATION_ID: ${{ steps.check_release_tag_app.outputs.installation-id }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/release-publish.mts publish --step github-release-assets --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
       - name: Resolve frozen release provenance subjects
@@ -1455,6 +1477,17 @@ jobs:
         run: |
           tools/dev/bun.sh tools/release/github-content-write-pacer.mts reserve --label "release asset provenance"
           tools/dev/bun.sh tools/release/github-core-request-journal.mts reserve --label "release asset provenance API attempt"
+      - name: Create Oli attestation token
+        id: release_attestation_token
+        if: ${{ steps.release_provenance_subjects.outputs.has_subjects == 'true' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: read
+          permission-attestations: write
       - name: Attest frozen release assets
         id: release_provenance
         if: ${{ steps.release_provenance_subjects.outputs.has_subjects == 'true' }}
@@ -1462,6 +1495,7 @@ jobs:
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
           subject-path: ${{ steps.release_provenance_subjects.outputs.subject_paths }}
+          github-token: ${{ steps.release_attestation_token.outputs.token }}
       - name: Create fresh SwiftPM tag token
         id: swift_tag_token
         if: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') }}
@@ -1474,12 +1508,23 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.swift_tag_token.outputs.token }}
         run: bash tools/release/publish-swiftpm-source-tag.sh --push --target "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
+      - name: Create fresh Oli verification token
+        id: release_evidence_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: &release_evidence_app
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
+          permission-actions: read
+          permission-attestations: read
       - name: Freeze exact GitHub release asset and attestation evidence
         id: freeze_github_evidence
         timeout-minutes: 10
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release_evidence_token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.release_evidence_token.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
           RELEASE_PROVENANCE_BUNDLE: ${{ steps.release_provenance.outputs.bundle-path }}
         run: |
@@ -1521,12 +1566,16 @@ jobs:
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
             --publication-lock "$PUBLICATION_LOCK_PATH"
+      - name: Create fresh Oli verification token
+        id: release_verify_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with: *release_evidence_app
       - name: Verify published release
         id: verify_published_release
         timeout-minutes: 8
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release_verify_token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.release_verify_token.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
           gh auth setup-git
@@ -1585,11 +1634,22 @@ jobs:
           include-hidden-files: true
           overwrite: true
           retention-days: 90
+      - name: Create Oli release promotion token
+        id: release_promotion_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
       - name: Promote verified GitHub release drafts
         id: promote_github_releases
         timeout-minutes: 16
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release_promotion_token.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
           tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts \

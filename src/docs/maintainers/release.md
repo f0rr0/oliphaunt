@@ -269,9 +269,11 @@ those names and revoke bootstrap tokens before the next release.
 
 Credential-bearing jobs directly select `release-pr`, `release-bootstrap`,
 or `release-publish`. Keep secrets in those protected environments. The
-bootstrap job's content-write permission creates the immutable transport tag;
-normal publication owns GitHub staging, attestations, and promotion. GitHub
-provides each job's scoped `GITHUB_TOKEN`.
+Oli App's phase-scoped content-write token creates the bootstrap transport tag;
+the same App owns release PRs, GitHub staging, asset uploads, attestations, and
+promotion. Long asset uploads renew the App credential before its one-hour
+expiry and revoke issued tokens after the lanes drain. GitHub provides each
+job's read-only repository `GITHUB_TOKEN` and workflow OIDC credentials.
 
 Trusted publishers match `release.yml`: direct publication exposes that file
 through `workflow_ref`, together with the exact `workflow_sha` and the

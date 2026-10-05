@@ -30,33 +30,60 @@ Create these environments:
 
 | Environment | Purpose | Secrets | Protection |
 | --- | --- | --- | --- |
-| `release-pr` | Create/update the generated release PR | `RELEASE_PR_TOKEN` | main only |
+| `release-pr` | Create/update the generated release PR | Release App credentials | main only |
 | `release-dry-run` | Exact-SHA artifact assembly and dry-run | none | main only |
-| `release-bootstrap` | First npm/crates publication and required unpublished dependency versions | Release tag App credentials plus only the short-lived, registry-scoped `CRATES_IO_BOOTSTRAP_TOKEN` and/or `NPM_BOOTSTRAP_TOKEN` required by the approved lock | `main` only; independent approval when available |
-| `release-publish` | Normal trusted publication | Release tag App credentials, Maven Central credentials and signing key | `main` only; independent approval when available |
+| `release-bootstrap` | First npm/crates publication and required unpublished dependency versions | Release App credentials plus only the short-lived, registry-scoped `CRATES_IO_BOOTSTRAP_TOKEN` and/or `NPM_BOOTSTRAP_TOKEN` required by the approved lock | `main` only; independent approval when available |
+| `release-publish` | Normal trusted publication | Release App credentials, Maven Central credentials and signing key | `main` only; independent approval when available |
 
-Use a GitHub App or narrowly scoped bot token for `RELEASE_PR_TOKEN`; PRs created by the default workflow token do not trigger the normal PR workflow. Keep bootstrap tokens out of repository secrets and out of `release-publish`. The approved-candidate inventory determines which of the two bootstrap tokens is required; do not provision a Cargo token for an npm-only bootstrap or vice versa. Delete/revoke each token immediately after trusted publishers are configured.
+Use the existing private GitHub App for all release mutations, with the friendly
+display name **Oli Release Bot**. GitHub reserves existing account names, so
+the short name `Oli` cannot be used. Its installation remains limited to
+`f0rr0/oliphaunt`, without webhooks or account/organization permissions. Grant
+repository **Contents**, **Workflows**, **Issues**, **Pull requests**, and
+**Attestations** read and write, plus **Actions** read-only. Each workflow phase
+requests only its own subset of these permissions. PR creation uses an App token
+so normal PR CI runs automatically; the default workflow token requires approval
+for workflow-created PR runs.
 
-Create one private GitHub App installed only on `f0rr0/oliphaunt`, with
-repository **Contents: read and write** and **Workflows: read and write** (no
-webhooks or account permissions). Store `RELEASE_TAG_APP_CLIENT_ID` and
-`RELEASE_TAG_APP_PRIVATE_KEY` in both `release-publish` and `release-bootstrap`.
-These are GitHub tag credentials; retain them when retiring registry bootstrap
-tokens. Do not copy `RELEASE_PR_TOKEN` or use a personal token for this role.
+Keep `RELEASE_TAG_APP_CLIENT_ID` and `RELEASE_TAG_APP_PRIVATE_KEY` in each of
+`release-pr`, `release-publish`, and `release-bootstrap`. These existing secret
+names now cover the complete release App. Retain them when retiring registry
+bootstrap tokens. The legacy `RELEASE_PR_TOKEN` is no longer used.
+
+To migrate an existing installation, rename the existing App in GitHub's
+Developer settings, add the permissions above, and accept the installation's
+permission update. Add the same App credentials to the protected `release-pr`
+environment. GitHub cannot return encrypted secret values for copying, so use
+the original private key or provision a replacement key in all three environments.
+After the migrated preparation job creates a PR and its CI starts automatically,
+remove/revoke the obsolete `RELEASE_PR_TOKEN`. Do not recreate the App or rewrite
+existing release history to change its name.
+
+Keep bootstrap tokens out of repository secrets and out of `release-publish`.
+The approved-candidate inventory determines which of the two bootstrap tokens
+is required; do not provision a Cargo token for an npm-only bootstrap or vice
+versa. Delete/revoke each token immediately after trusted publishers are configured.
 
 GitHub can reject tags on an older candidate whose workflow files differ from
 the publishing commit, even with an existing transport ref. The normal
 `GITHUB_TOKEN` cannot request `workflows: write`. The pinned
-`actions/create-github-app-token` action requests only the two required
-permissions for this repository, checks them before publication, and
-mints fresh tokens immediately before product/transport tags and SwiftPM tags.
-It revokes each installation token during job cleanup. Ordinary publication,
-attestations, and registry authentication keep their existing credentials.
+`actions/create-github-app-token` action requests explicit phase permissions
+for this repository, checks the complete App permissions before publication,
+and mints fresh tokens before tags, attestations, evidence checks, and promotion.
+It revokes its installation tokens during job cleanup. The concurrent asset
+uploader uses `release-app-token.mts` to mint repository-scoped, Contents-only
+tokens and share a single refresh across its lanes five minutes before expiry.
+It revokes all still-live tokens after every lane has drained, including on failure.
+Draft inventories use the same renewable App credentials as uploads so read-only
+workflow tokens cannot hide drafts. Registry authentication retains workflow OIDC.
 A missing App installation or permission fails before release mutations.
 
-The App's bot account is `oliphaunt-release-bot[bot]` (GitHub user ID
-`326451763`). `tools/release/release-bot.json` owns its commit name and linked
-noreply address for generated release helper commits. SwiftPM commit authorship
+The existing App's bot account is `oli-release-bot[bot]` (GitHub user ID
+`326451763`). `tools/release/release-bot.json` uses **Oli [bot]** as the commit
+display name and uses the renamed bot's linked noreply address. If renaming the
+App changes its bot login, update that address from the installation's actual bot login and
+the same numeric user ID; do not invent a separate `oli[bot]` account.
+SwiftPM commit authorship
 is read from the candidate's copy of that file so newer publisher code cannot
 change an older approved synthetic commit; candidates predating the file retain
 the legacy identity. Do not rewrite existing release history to change avatars.
@@ -152,13 +179,16 @@ Each credential-bearing job directly selects exactly one protected environment:
 `release-pr`, `release-bootstrap`, or `release-publish`. Keep the named secrets
 only in those environments; do not add repository-level duplicates or a
 reusable-workflow secret bridge. GitHub automatically provides the scoped
-`GITHUB_TOKEN`. Every job declares its own effective permissions: dry-run is
-read-only, bootstrap adds `contents: write`,
-preparation gets release-PR writes, and normal publish runs in one direct job
-with the `release-publish` grants. Bootstrap's
-content write is solely to create the immutable
-release transport tag immediately before its first registry mutation;
-reruns do not create, move, or delete repository refs.
+`GITHUB_TOKEN`. Release PR, bootstrap, and publication jobs keep the built-in
+token's repository mutation permissions read-only. The qualification request
+job retains `actions: write` to dispatch CI; publication and bootstrap retain
+`id-token: write` for registry/Sigstore OIDC.
+Oli performs release PR, tag, asset, attestation, and promotion mutations with
+phase-scoped App tokens. Bootstrap's App content write is solely to create the
+immutable release transport tag immediately before its first registry mutation.
+Its draft-collision preflight also uses an App token with Contents write so draft
+releases remain visible; that check performs only reads. Reruns do not create,
+move, or delete repository refs.
 Candidate preparation, conditional bootstrap, and publication are dependent
 jobs in one `publish` run with separate permissions and environments.
 The read-only dry-run validates every public release visible to its token and
