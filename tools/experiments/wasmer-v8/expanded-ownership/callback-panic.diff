@@ -1,0 +1,38 @@
+--- a/src/backend/v8/entities/function/mod.rs
++++ b/src/backend/v8/entities/function/mod.rs
+@@ -566,8 +566,9 @@
+                 unsafe { trap.into_wasm_trap(&mut store) }
+             }
+ 
+-            Err(e) => {
+-                unimplemented!("host function panicked");
++            Err(_) => {
++                let trap = Trap::user(Box::new(RuntimeError::new("host function panicked")));
++                unsafe { trap.into_wasm_trap(&mut store) }
+             }
+         }
+     }
+@@ -674,8 +675,9 @@
+                         // unimplemented!("host function panicked");
+                     },
+ 
+-                    Err(e) => {
+-                        unimplemented!("host function panicked");
++                    Err(_) => {
++                        let trap = Trap::user(Box::new(RuntimeError::new("host function panicked")));
++                        unsafe { trap.into_wasm_trap(store) }
+                     }
+                 }
+             }}
+@@ -747,7 +749,10 @@
+                     let trap = crate::backend::v8::error::Trap::user(Box::new(e)); unsafe { trap.into_wasm_trap(store) }
+                 },
+ 
+-                Err(e) => { unimplemented!("host function panicked"); }
++                Err(_) => {
++                    let trap = Trap::user(Box::new(RuntimeError::new("host function panicked")));
++                    unsafe { trap.into_wasm_trap(store) }
++                }
+               }
+             }}
+ 

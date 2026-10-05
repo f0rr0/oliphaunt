@@ -9,6 +9,7 @@ name: Windows V8 genuine cache pair and owned trap control
         options:
         - errors-and-cpu
         - cpu-only
+        - errors-only
 permissions:
   contents: read
   actions: read
@@ -133,6 +134,12 @@ jobs:
         python -c ''from pathlib import Path; p=Path("src/wasix/sdks/rust/tests/research_v8_trap_ownership.rs");
         p.write_text(p.read_text().replace("fn main() {", "#[test]\nfn trap_ownership()
         {"))'''
+    - name: Apply callback panic containment and stage binary fixtures
+      run: |
+        git apply --unsafe-paths --directory="$PWD/target/windows-v8-ownership/control/engine/dependency/wasmer-7.5.0" tools/experiments/wasmer-v8/expanded-ownership/callback-panic.diff
+        cp tools/experiments/wasmer-v8/expanded-ownership/*.wasm src/wasix/sdks/rust/tests/
+        cp tools/experiments/wasmer-v8/expanded-ownership/callback-panic.rs src/wasix/sdks/rust/tests/research_v8_callback_panic.rs
+        python -c 'from pathlib import Path; p=Path("src/wasix/sdks/rust/tests/research_v8_callback_panic.rs"); p.write_text(p.read_text().replace("fn main() {", "#[test]\nfn callback_panic_containment() {"))'
     - name: Embed the private engine and generate C function dispatch
       run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
     - name: Test owned errors, automatic delivery and actual SDK
@@ -147,6 +154,9 @@ jobs:
         python tools/experiments/wasmer-v8/expanded-ownership/embedded-check.py target/windows-v8-ownership/control
 
         cargo test --locked -p oliphaunt-wasix --no-default-features --test research_v8_trap_ownership
+        -- --nocapture --test-threads=1
+
+        cargo test --locked -p oliphaunt-wasix --no-default-features --test research_v8_callback_panic
         -- --nocapture --test-threads=1'
     - name: Diagnose native ownership failure
       if: ${{ failure() }}
@@ -169,6 +179,7 @@ jobs:
         if-no-files-found: warn
         retention-days: 90
   wine-producer:
+    if: ${{ inputs.scope != 'errors-only' }}
     name: Genuine Windows cache on emulated SSE4.1 CPU
     runs-on: ubuntu-24.04
     timeout-minutes: 20

@@ -13,9 +13,8 @@ impl Drop for Marker {
 
 fn main() {
     let mut store = Store::new(wasmer::v8::V8::new());
-    let module = Module::new(&store, r#"(module
-      (func (export "fail") (param i32) (result i32) unreachable)
-      (func (export "good") (param i32) (result i32) local.get 0))"#).unwrap();
+    // Precompiled fixture: the SDK intentionally has no runtime WAT parser.
+    let module = Module::new(&store, include_bytes!("trap-guest.wasm")).unwrap();
     let instance = Instance::new(&mut store, &module, &imports! {}).unwrap();
     let fail = instance.exports.get_typed_function::<i32, i32>(&store, "fail").unwrap();
     let good = instance.exports.get_typed_function::<i32, i32>(&store, "good").unwrap();
@@ -45,9 +44,7 @@ fn main() {
             Function::new(&mut store, FunctionType::new([], [Type::I32]),
                 move |_| callback().map(|n| vec![Value::I32(n)]))
         } else { Function::new_typed(&mut store, callback) };
-        let module = Module::new(&store, r#"(module
-          (import "env" "host" (func $host (result i32)))
-          (func (export "run") (result i32) call $host))"#).unwrap();
+        let module = Module::new(&store, include_bytes!("trap-host.wasm")).unwrap();
         let instance = Instance::new(&mut store, &module, &imports! { "env" => { "host" => host } }).unwrap();
         let run = instance.exports.get_typed_function::<(), i32>(&store, "run").unwrap();
         for index in 0..10_000 {
