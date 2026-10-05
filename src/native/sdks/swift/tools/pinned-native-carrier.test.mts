@@ -35,10 +35,18 @@ test('older runtime pins stage exact published bytes, including paginated assets
   }));
   let corrupt = false;
   let downloads = 0;
-  const fetchImpl = async (input) => {
+  let releaseQueries = 0;
+  const fetchImpl = async (input, options) => {
     const url = String(input);
-    if (url.includes('/releases/tags/'))
+    if (url.startsWith('https://api.github.com/')) {
+      assert.equal(options.headers.Accept, 'application/vnd.github+json');
+      assert.equal(options.redirect, 'error');
+    }
+    if (url.includes('/releases/tags/')) {
+      releaseQueries += 1;
+      if (releaseQueries === 1) return new Response('temporary failure', { status: 503 });
       return Response.json({ id: 23, tag_name: tag, draft: false, prerelease: false });
+    }
     if (new URL(url).searchParams.get('page') === '1')
       return Response.json(Array.from({ length: 100 }, (_, id) => ({ name: `other-${id}` })));
     if (new URL(url).searchParams.get('page') === '2') return Response.json(assets);
@@ -52,6 +60,7 @@ test('older runtime pins stage exact published bytes, including paginated assets
   try {
     const options = { version, assetDir: '/current-producer', workRoot, fetchImpl };
     const directory = await pinnedNativeCarrierDirectory(options);
+    assert.equal(releaseQueries, 2);
     for (const name of names) assert.equal(readFileSync(path.join(directory, name), 'utf8'), name);
     assert.equal(downloads, 2);
     await pinnedNativeCarrierDirectory(options);

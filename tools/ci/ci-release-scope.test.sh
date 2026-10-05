@@ -77,10 +77,11 @@ export FIXTURE_AFFECTED=true
 ln -s "$root/src" "$repo/src"
 mkdir -p target/ci/ios-carrier
 bun - "$root" "$scratch/carrier.json" <<'JS'
-import {writeFileSync, readFileSync} from 'node:fs';
+import {writeFileSync} from 'node:fs';
 const root = process.argv[2];
 const {iosBaseLegalMetadata} = await import(`${root}/src/native/sdks/swift/tools/ios-carrier-manifest.mts`);
-const version = readFileSync(`${root}/src/native/runtime/VERSION`, 'utf8').trim();
+const {productDependencyCompatibilityVersion} = await import(`${root}/tools/release/release-graph.mts`);
+const version = productDependencyCompatibilityVersion('oliphaunt-react-native', 'oliphaunt-swift', 'liboliphaunt-native');
 const tag = `liboliphaunt-native-v${version}`;
 const assets = [
   ['base-xcframework', `liboliphaunt-${version}-apple-spm-xcframework.zip`, 'zip', 'liboliphaunt.xcframework'],
@@ -91,7 +92,7 @@ writeFileSync(process.argv[3], JSON.stringify({schema:'oliphaunt-react-native-io
   base:{product:'liboliphaunt-native', version, tag, assets}, carriers:[], extensions:[],
   legal:{base:iosBaseLegalMetadata(), extensions:[]}}));
 JS
-for scenario in missing same-sha invalid-sha corrupt unchanged-ios changed-ios; do
+for scenario in missing same-sha invalid-sha corrupt wrong-pin unchanged-ios changed-ios; do
   expected=false
   cp "$scratch/carrier.json" target/ci/ios-carrier/manifest.json
   printf '%s\n' "$MOON_HEAD" > target/ci/ios-carrier/source-sha
@@ -101,6 +102,7 @@ for scenario in missing same-sha invalid-sha corrupt unchanged-ios changed-ios; 
     same-sha) expected=true ;;
     invalid-sha) printf 'invalid\n' > target/ci/ios-carrier/source-sha ;;
     corrupt) printf '{invalid\n' > target/ci/ios-carrier/manifest.json ;;
+    wrong-pin) bun -e 'const file=process.argv[1]; const value=await Bun.file(file).json(); value.base.version="999.0.0"; await Bun.write(file, JSON.stringify(value))' target/ci/ios-carrier/manifest.json ;;
     unchanged-ios) printf '%s\n' "$before" > target/ci/ios-carrier/source-sha; expected=true ;;
     changed-ios) printf '%s\n' "$before" > target/ci/ios-carrier/source-sha; export FIXTURE_IOS_CHANGED=true ;;
   esac

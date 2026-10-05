@@ -44,7 +44,8 @@ if [[ $# == 0 && ${GITHUB_EVENT_NAME:-} != workflow_dispatch && ${CI_RELEASE_PRO
       printf '{"tasks":{}}\n' > "$plan_dir/carrier-affected.json"
     fi
     if bun -e 'const data=await Bun.file(process.argv[1]).json(); process.exit(Object.hasOwn(data.tasks ?? {}, "liboliphaunt-native:finalize-runtime-ios-abi") ? 1 : 0)' "$plan_dir/carrier-affected.json" &&
-      bun src/native/sdks/swift/tools/ios-carrier-manifest.mts --base-carrier "$carrier_cache/manifest.json" --output "$plan_dir/carrier.json"; then
+      native_version="$(bun tools/release/product-version.mts dependency-compatibility oliphaunt-react-native oliphaunt-swift liboliphaunt-native)" &&
+      bun src/native/sdks/swift/tools/ios-carrier-manifest.mts --base-carrier "$carrier_cache/manifest.json" --base-runtime-version "$native_version" --output "$plan_dir/carrier.json"; then
       export OLIPHAUNT_REUSE_IOS_CARRIER=true
     fi
   fi

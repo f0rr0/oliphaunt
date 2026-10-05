@@ -198,6 +198,8 @@ tasks:
       - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
       - "/src/native/sdks/swift/tools/ios-carrier-manifest.mts"
       - "/src/native/sdks/swift/tools/pinned-native-carrier.mts"
+      - "/tools/release/github-read.mts"
+      - "/tools/release/github-core-request-journal.mts"
       - "/src/native/sdks/swift/tools/swift-carrier-resolver.mts"
       - "/src/native/sdks/swift/tools/render_swiftpm_release_package.mts"
       - "/src/native/sdks/swift/tools/prepare-swift-release-consumer.mts"

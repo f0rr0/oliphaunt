@@ -1209,7 +1209,7 @@ function parseArgs(argv) {
     if (arg === '--help' || arg === '-h') {
       console.log(
         `usage: ${path.basename(import.meta.path)} [--base-asset-dir DIR] [--extension-manifest FILE ...] ` +
-          `[--base-carrier FILE] [--extension-root DIR] [--repository OWNER/REPO] [--output FILE] [--local-urls]`,
+          `[--base-carrier FILE] [--base-runtime-version VERSION] [--extension-root DIR] [--repository OWNER/REPO] [--output FILE] [--local-urls]`,
       );
       process.exit(0);
     }
@@ -1218,6 +1218,7 @@ function parseArgs(argv) {
     index += 1;
     if (arg === '--base-asset-dir') options.baseAssetDir = value;
     else if (arg === '--base-carrier') options.baseCarrierManifest = value;
+    else if (arg === '--base-runtime-version') options.baseRuntimeVersion = value;
     else if (arg === '--extension-manifest') options.extensionManifests.push(value);
     else if (arg === '--extension-root')
       options.extensionManifests.push(...discoveredExtensionManifests(path.resolve(value)));

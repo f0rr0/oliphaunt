@@ -1,7 +1,10 @@
 import { copyFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { currentProductVersionSync } from '../../../../../tools/release/release-artifact-targets.mts';
-import { fetchText } from './render_swiftpm_release_package.mts';
+import {
+  githubReleaseQueryDeadline,
+  requestGithubJsonWithRetry,
+} from '../../../../../tools/release/github-read.mts';
 import { materialize } from './swift-carrier-resolver.mts';
 
 // Source builds use the same-run producer for the current runtime. Independent
@@ -21,7 +24,8 @@ export async function pinnedNativeCarrierDirectory({
   }
   const tag = `liboliphaunt-native-v${version}`;
   const api = 'https://api.github.com/repos/f0rr0/oliphaunt';
-  const readJson = async (url) => JSON.parse(await fetchText(url, { fetchImpl }));
+  const deadlineMs = githubReleaseQueryDeadline();
+  const readJson = (url) => requestGithubJsonWithRetry(url, { fetchImpl, deadlineMs });
   const release = await readJson(`${api}/releases/tags/${tag}`);
   if (
     release.tag_name !== tag ||
