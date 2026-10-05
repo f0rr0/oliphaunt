@@ -15,6 +15,10 @@ IMP int __stdcall GetFileSizeEx(HANDLE, long long *);
 IMP int __stdcall CloseHandle(HANDLE);
 IMP WCHAR *__stdcall GetCommandLineW(void);
 IMP void __stdcall ExitProcess(DWORD);
+#ifdef RESEARCH_EMULATED_CACHE_PRODUCER
+IMP HANDLE __stdcall GetCurrentProcess(void);
+IMP int __stdcall TerminateProcess(HANDLE, DWORD);
+#endif
 IMP void research_set_v8_flags(const char *, usize);
 IMP void *wee8_wasm_engine_new(void);
 IMP void *wee8_wasm_store_new(void *);
@@ -84,6 +88,17 @@ void mainCRTStartup(void) {
   if(!module) fail("native_deserialize=REJECT",24);
   print("native_deserialize=PASS (no compilation fallback)\n");
   wee8_wasm_module_delete(module); wee8_wasm_byte_vec_delete(&data);
-  wee8_wasm_store_delete(store); wee8_wasm_engine_delete(engine);
+  print("stage=module_deleted\n");
+  wee8_wasm_store_delete(store); print("stage=store_deleted\n");
+  wee8_wasm_engine_delete(engine); print("stage=engine_deleted\n");
+#ifdef RESEARCH_EMULATED_CACHE_PRODUCER
+  /* Wine/QEMU crashes in process detach after all the above cleanup returns.
+     Only this internal producer avoids that detach path. Native readers and
+     SDK applications retain ordinary Windows process shutdown. */
+  print("stage=emulated_producer_completed\n");
+  TerminateProcess(GetCurrentProcess(),0);
+  ExitProcess(31);
+#else
   ExitProcess(0);
+#endif
 }

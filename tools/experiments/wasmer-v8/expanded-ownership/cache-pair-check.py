@@ -3,7 +3,6 @@ import hashlib
 import json
 import pathlib
 import shutil
-import struct
 import subprocess
 import sys
 
@@ -17,6 +16,8 @@ for name in ["cache-probe.exe", "wine-postgres.cache", "guest.wasm"]:
 shutil.copy2(engine / "oliphaunt_wee8.dll", sandbox)
 receipt = json.loads((wine / "wine-producer-receipt.json").read_text())
 assert hashlib.sha256((sandbox / "wine-postgres.cache").read_bytes()).hexdigest() == receipt["cache_sha256"]
+assert hashlib.sha256((sandbox / "cache-probe.exe").read_bytes()).hexdigest() == receipt["native_reader_exe_sha256"]
+assert hashlib.sha256((sandbox / "oliphaunt_wee8.dll").read_bytes()).hexdigest() == receipt["dll_sha256"]
 def run(operation, name):
     with (sandbox / name).open("w") as log:
         result = subprocess.run([str(sandbox / "cache-probe.exe"), operation], cwd=sandbox,

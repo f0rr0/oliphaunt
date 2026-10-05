@@ -1,11 +1,20 @@
 name: Windows V8 genuine cache pair and owned trap control
 'on':
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Diagnostic scope
+        type: choice
+        default: errors-and-cpu
+        options:
+        - errors-and-cpu
+        - cpu-only
 permissions:
   contents: read
   actions: read
 jobs:
   expanded-ownership:
+    if: ${{ inputs.scope != 'cpu-only' }}
     name: Owned errors, automatic delivery and SDK (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90

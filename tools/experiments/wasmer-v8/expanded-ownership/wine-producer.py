@@ -33,11 +33,13 @@ def run(command, name, env=None, timeout=300):
 clang = next((shutil.which(n) for n in ["clang-18", "clang"] if shutil.which(n)))
 link = next((shutil.which(n) for n in ["lld-link-18", "lld-link"] if shutil.which(n)))
 run([link, "/lib", "/machine:x64", "/def:kernel32.def", "/out:kernel32.lib"], "import-lib.log")
-run([clang, "--target=x86_64-pc-windows-msvc", "-c", "-O2", "-ffreestanding",
-     "-fno-stack-protector", "cache-probe.c", "-o", "cache-probe.obj"], "compile.log")
-run([link, "/nologo", "/nodefaultlib", "/machine:x64", "/entry:mainCRTStartup",
-     "/subsystem:console", "cache-probe.obj", "kernel32.lib", "oliphaunt_wee8.lib",
-     "/out:cache-probe.exe"], "link.log")
+for name, defines in [("cache-probe", []),
+                      ("wine-producer", ["-DRESEARCH_EMULATED_CACHE_PRODUCER"])]:
+    run([clang, "--target=x86_64-pc-windows-msvc", "-c", "-O2", "-ffreestanding",
+         "-fno-stack-protector", *defines, "cache-probe.c", "-o", name + ".obj"], name + "-compile.log")
+    run([link, "/nologo", "/nodefaultlib", "/machine:x64", "/entry:mainCRTStartup",
+         "/subsystem:console", name + ".obj", "kernel32.lib", "oliphaunt_wee8.lib",
+         "/out:" + name + ".exe"], name + "-link.log")
 run(["apt-get", "download", "wine64", "libwine", "libz-mingw-w64", "qemu-user"], "packages.log")
 private = output / "private"
 for package in output.glob("*.deb"):
@@ -58,7 +60,7 @@ run([str(wine / "wine64"), "cmd", "/c", "exit", "0"], "wine-initialize.log", env
 # emulation. Keep this producer in the emulated process; its CPUID log verifies it.
 env["WINELOADERNOEXEC"] = "1"
 qemu = private / "usr/bin/qemu-x86_64"
-command = [str(qemu), "-cpu", "Penryn", str(wine / "wine64"), "cache-probe.exe"]
+command = [str(qemu), "-cpu", "Penryn", str(wine / "wine64"), "wine-producer.exe"]
 run(command + ["write"], "wine-penryn-write.log", env)
 run(command + ["read"], "wine-penryn-fresh-read.log", env)
 for name in ["wine-penryn-write.log", "wine-penryn-fresh-read.log"]:
@@ -82,6 +84,9 @@ header = struct.unpack_from("<5I", data, offset + wire)
 assert header[0] == 0xc0de0689 and header[2] == 0xe, header
 shutil.copy2(output / "cache.bin", output / "wine-postgres.cache")
 evidence = {"method": "exact Windows DLL under Wine/QEMU Penryn; native cache headers unmodified",
+            "emulated_producer_exit": "module and Store cleanup, then direct Win32 process termination to avoid Wine/QEMU detach failure",
+            "native_reader_exe_sha256": hashlib.sha256((output / "cache-probe.exe").read_bytes()).hexdigest(),
+            "emulated_producer_exe_sha256": hashlib.sha256((output / "wine-producer.exe").read_bytes()).hexdigest(),
             "dll_sha256": receipt["hashes"]["dll"], "cache_sha256": hashlib.sha256(data).hexdigest(),
             "native_bytes": len(data) - offset - wire, "header": header,
             "guest_sha256": hashlib.sha256(data[offset:offset + wire]).hexdigest(),
