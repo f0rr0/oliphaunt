@@ -199,6 +199,46 @@ test('environment input changes retain their producer and runtime qualification'
   assert(planJobsForAffected(roots).has('wasix-release-regression'));
 });
 
+test('Cargo package-test harness changes retain consumers without invalidating unrelated producers', () => {
+  for (const file of [paths.cargoPackageTestWrapper, paths.cargoPackageTestClosure]) {
+    const result = effects(file);
+    for (const target of [
+      'oliphaunt-rust:test-consumer',
+      'oliphaunt-wasix-rust:test-consumer',
+      'oliphaunt-pgwire-server:test-consumer',
+    ]) {
+      assert(result.directTasks.includes(target), `${file} must affect ${target}`);
+    }
+    assert.deepEqual(result.jobs, [
+      'affected',
+      'broker-runtime',
+      'liboliphaunt-native-desktop',
+      'native-consumers',
+      'rust-sdk-package',
+      'wasix-rust-package',
+    ]);
+    assert.deepEqual(result.jobTargets['native-consumers'], [
+      'oliphaunt-rust:test-consumer-runtime',
+    ]);
+    const roots = new Set(result.directTasks);
+    const required = requiredTasksForAffected(roots);
+    for (const job of ['liboliphaunt-native-desktop', 'broker-runtime']) {
+      assert.deepEqual([...dependencyPlatformTargets(job, roots)], ['linux-x64-gnu']);
+    }
+    for (const target of [
+      'oliphaunt-rust:package',
+      'oliphaunt-wasix-rust:package',
+      'oliphaunt-pgwire-server:package',
+    ]) {
+      assert(!result.directTasks.includes(target), `${file} does not produce ${target}`);
+      assert(required.has(target), `consumer still requires ${target}`);
+    }
+  }
+  const unit = effects(paths.cargoPackageTestUnit);
+  assert.deepEqual(unit.jobs, ['affected']);
+  assert(unit.directTasks.includes('artifact-packaging:test'));
+});
+
 test('shared Windows DLL policy changes select native and WASIX packaging consumers', () => {
   const result = effects(paths.windowsVcRuntimePolicy);
   for (const target of [

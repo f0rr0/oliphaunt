@@ -75,12 +75,20 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -e\nbash src/native/runtime/bin/build-output.test.sh\nbash src/native/runtime/tools/build-dispatch.test.sh\nbash src/native/runtime/bin/postgis-dependency-cache.test.sh\n"
+    script: "set -e\nbash src/native/runtime/bin/build-output.test.sh\nbash src/native/runtime/tools/build-dispatch.test.sh\nbash src/native/runtime/bin/postgis-dependency-cache.test.sh\nbash src/native/runtime/bin/compiler-cache.test.sh\n"
     inputs:
       - bin/build-output.bash
       - bin/build-output.test.sh
       - bin/postgis-dependency-cache.sh
       - bin/postgis-dependency-cache.test.sh
+      - bin/compiler-cache.test.sh
+      - bin/build-postgres18-linux.sh
+      - bin/build-postgres18-macos.sh
+      - bin/build-postgres18-ios-device.sh
+      - bin/build-postgres18-ios-simulator.sh
+      - bin/build-postgres18-android-arm64.sh
+      - bin/build-macos-extension-archives.sh
+      - bin/mobile-postgis-extensions.sh
       - tools/build-dispatch.test.sh
       - tools/build-ci-target.sh
       - tools/release-runtime.sh

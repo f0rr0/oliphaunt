@@ -121,14 +121,17 @@ trap 'interrupt TERM 143' TERM
 trap 'interrupt HUP 129' HUP
 
 started_epoch="$(date +%s)"
-printf '==> phase-start timestamp=%s label=%s log=%s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$label" "$log_path"
+printf '==> phase-start timestamp=%s label=%s log=%s jobs=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$label" "$log_path" "${OLIPHAUNT_JOBS:-auto}"
 
 # Bash monitor mode makes this background job the leader of a distinct process
 # group even in a non-interactive shell. Disable it immediately after launch so
 # it cannot alter the remainder of the wrapper's execution semantics.
 set -m
-"$@" >"$log_path" 2>&1 &
+(
+  TIMEFORMAT=$'\n==> phase-cpu elapsed_seconds=%3R user_seconds=%3U system_seconds=%3S'
+  time "$@"
+) >"$log_path" 2>&1 &
 child_pid="$!"
 child_pgid="$child_pid"
 set +m
@@ -152,6 +155,11 @@ kill "$heartbeat_pid" 2>/dev/null || true
 wait "$heartbeat_pid" 2>/dev/null || true
 heartbeat_pid=""
 
+# Timing is diagnostic; a missing log must not replace the command's status.
+cpu_record="$(tail -n 1 "$log_path" 2>/dev/null || true)"
+case "$cpu_record" in
+  '==> phase-cpu '*) printf '%s label=%s\n' "$cpu_record" "$label" ;;
+esac
 finished_epoch="$(date +%s)"
 if [ "$status" -eq 0 ]; then
   printf '==> phase-complete timestamp=%s label=%s elapsed_seconds=%s\n' \

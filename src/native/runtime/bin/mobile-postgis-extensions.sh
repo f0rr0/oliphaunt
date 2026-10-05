@@ -121,11 +121,17 @@ oliphaunt_postgis_cmake_install() {
   while IFS= read -r platform_arg; do
     [ -n "$platform_arg" ] && platform_args+=("$platform_arg")
   done < <(oliphaunt_postgis_cmake_platform_args)
-  cmake -S "$source_dir" -B "$build_root" \
+  CMAKE_C_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    CMAKE_CXX_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    cmake -S "$source_dir" -B "$build_root" \
     "${platform_args[@]}" \
+    "-DCMAKE_C_COMPILER_LAUNCHER=${ccache_bin:-}" \
+    "-DCMAKE_CXX_COMPILER_LAUNCHER=${ccache_bin:-}" \
     -DCMAKE_INSTALL_PREFIX="$dependency_dir" \
     "$@" >> "$make_log" 2>&1
-  cmake --build "$build_root" --target install -- -j"$jobs" >> "$make_log" 2>&1
+  CMAKE_C_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    CMAKE_CXX_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    cmake --build "$build_root" --target install -- -j"$jobs" >> "$make_log" 2>&1
 }
 
 build_postgis_jsonc_dependency() {
@@ -183,13 +189,13 @@ build_postgis_sqlite_dependency() {
         "$libtool_path" -static -o "$archive" sqlite3.o >> "$make_log" 2>&1
         ;;
       android-arm64 | android-x86_64)
-        CC="$clang_path" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
+        CC="$cc_string" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
           --host="$android_host" \
           --disable-shared \
           --enable-static \
           --prefix="$dependency_dir" >> "$make_log" 2>&1
         make -j"$jobs" sqlite3.c >> "$make_log" 2>&1
-        "$clang_path" $(oliphaunt_native_release_cflags -fPIC) \
+        "${cc[@]}" $(oliphaunt_native_release_cflags -fPIC) \
           -DSQLITE_THREADSAFE=0 \
           -DSQLITE_OMIT_LOAD_EXTENSION \
           -c sqlite3.c \
@@ -321,7 +327,7 @@ build_postgis_libiconv_dependency() {
   rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
   (
     cd "$build_root"
-    CC="$clang_path" AR="$llvm_ar" RANLIB="$llvm_ranlib" \
+    CC="$cc_string" AR="$llvm_ar" RANLIB="$llvm_ranlib" \
       ./configure \
         --host="$android_host" \
         --disable-shared \

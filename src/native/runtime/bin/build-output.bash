@@ -10,10 +10,12 @@ oliphaunt_parallel_apple_builds() (
   case "$jobs" in ''|0*|*[!0-9]*) echo 'OLIPHAUNT_JOBS must be positive' >&2; return 2 ;; esac
   [ "$#" -gt 0 ] || return 2
   if [ "$jobs" -lt "$#" ]; then
+    printf '==> apple-build-budget total_jobs=%s lanes=%s jobs_per_lane=%s mode=serial\n' "$jobs" "$#" "$jobs"
     for command in "$@"; do "$command"; done
     return
   fi
   export OLIPHAUNT_JOBS="$((jobs / $#))"
+  printf '==> apple-build-budget total_jobs=%s lanes=%s jobs_per_lane=%s mode=parallel\n' "$jobs" "$#" "$OLIPHAUNT_JOBS"
   stop_lanes() {
     status="$?"
     trap - EXIT HUP INT TERM

@@ -1188,7 +1188,10 @@ oliphaunt_icu_require_source "$icu_source_dir"
 
 native_cc="${OLIPHAUNT_CC:-cc}"
 native_cxx="${OLIPHAUNT_CXX:-c++}"
+cc=("$native_cc")
+cxx=("$native_cxx")
 ccache_mode="${OLIPHAUNT_CCACHE:-auto}"
+ccache_bin=""
 if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
   if [ "$ccache_mode" != "auto" ]; then
     ccache_bin="$ccache_mode"
@@ -1196,16 +1199,12 @@ if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
     ccache_bin="$(command -v ccache || true)"
   fi
   if [ -n "$ccache_bin" ]; then
-    export CC="$ccache_bin $native_cc"
-    export CXX="$ccache_bin $native_cxx"
-  else
-    export CC="$native_cc"
-    export CXX="$native_cxx"
+    cc=("$ccache_bin" "${cc[@]}")
+    cxx=("$ccache_bin" "${cxx[@]}")
   fi
-else
-  export CC="$native_cc"
-  export CXX="$native_cxx"
 fi
+export CC="${cc[*]}"
+export CXX="${cxx[*]}"
 
 native_cflags="$(oliphaunt_native_release_cflags -fPIC "-mmacosx-version-min=$macos_deployment_target" -DOLIPHAUNT_EMBEDDED)"
 apple_toolchain_hash="$(apple_toolchain_identity | shasum -a 256 | awk '{print $1}')"
@@ -1251,6 +1250,8 @@ fi
 normal_module_be_dllibs="-undefined dynamic_lookup"
 embedded_module_be_dllibs="-L$out_dir -loliphaunt -Wl,-rpath,$out_dir"
 postgis_cc="${OLIPHAUNT_POSTGIS_CC:-$native_cc}"
+# Preserve the compiler identity and explicit override separately from its launcher.
+postgis_cc_string="${OLIPHAUNT_POSTGIS_CC:-$CC}"
 portable_uuid_dir="$repo_root/src/extensions/contrib/portable-uuid"
 native_uuid_dependency_dir="$work_root/portable-uuid-native"
 native_uuid_archive="$native_uuid_dependency_dir/lib/libuuid.a"
@@ -1467,13 +1468,19 @@ native_postgis_cmake_install() {
   local build_root="$2"
   local dependency_dir="$3"
   shift 3
-  cmake -S "$source_dir" -B "$build_root" \
+  CMAKE_C_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    CMAKE_CXX_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    cmake -S "$source_dir" -B "$build_root" \
     -DCMAKE_INSTALL_PREFIX="$dependency_dir" \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_C_COMPILER="$native_cc" \
     -DCMAKE_CXX_COMPILER="$native_cxx" \
+    "-DCMAKE_C_COMPILER_LAUNCHER=${ccache_bin:-}" \
+    "-DCMAKE_CXX_COMPILER_LAUNCHER=${ccache_bin:-}" \
     "$@" >> "$postgis_dependency_log" 2>&1
-  cmake --build "$build_root" --target install -- -j"$jobs" >> "$postgis_dependency_log" 2>&1
+  CMAKE_C_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    CMAKE_CXX_COMPILER_LAUNCHER="${ccache_bin:-}" \
+    cmake --build "$build_root" --target install -- -j"$jobs" >> "$postgis_dependency_log" 2>&1
 }
 
 build_native_postgis_jsonc_dependency() {
@@ -1513,12 +1520,12 @@ build_native_postgis_sqlite_dependency() {
   rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
   (
     cd "$build_root"
-    CC="$native_cc" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
+    CC="$CC" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
       --disable-shared \
       --enable-static \
       --prefix="$dependency_dir" >> "$postgis_dependency_log" 2>&1
     make -j"$jobs" sqlite3.c >> "$postgis_dependency_log" 2>&1
-    "$native_cc" $(oliphaunt_native_release_cflags -fPIC) \
+    "${cc[@]}" $(oliphaunt_native_release_cflags -fPIC) \
       -DSQLITE_THREADSAFE=0 \
       -DSQLITE_OMIT_LOAD_EXTENSION \
       -c sqlite3.c \
@@ -2095,7 +2102,7 @@ build_postgis_extension() {
       embedded_postgis_make_args+=("LDFLAGS=$embedded_postgis_ldflags")
     fi
 
-    export CC="$postgis_cc"
+    export CC="$postgis_cc_string"
     if [ ! -f configure ]; then
       ./autogen.sh
     fi
@@ -2121,15 +2128,15 @@ build_postgis_extension() {
     make postgis_revision.h
     make clean || true
     make postgis_revision.h
-    make -C doc CC="$postgis_cc" "${postgis_make_args[@]}" comments-install
-    make -j"$jobs" -C postgis CC="$postgis_cc" BE_DLLLIBS="$normal_module_be_dllibs" "${postgis_make_args[@]}" install
+    make -C doc CC="$postgis_cc_string" "${postgis_make_args[@]}" comments-install
+    make -j"$jobs" -C postgis CC="$postgis_cc_string" BE_DLLLIBS="$normal_module_be_dllibs" "${postgis_make_args[@]}" install
     # PostGIS extension SQL generation has shared raster helper outputs even
     # when raster support is disabled, so keep this packaging phase serial.
-    make -j1 -C extensions CC="$postgis_cc" "${postgis_make_args[@]}" all
-    make -j1 -C extensions CC="$postgis_cc" "${postgis_make_args[@]}" install
+    make -j1 -C extensions CC="$postgis_cc_string" "${postgis_make_args[@]}" all
+    make -j1 -C extensions CC="$postgis_cc_string" "${postgis_make_args[@]}" install
     make -C postgis clean || true
     make postgis_revision.h
-    make -j"$jobs" -C postgis CC="$postgis_cc" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${embedded_postgis_make_args[@]}" all
+    make -j"$jobs" -C postgis CC="$postgis_cc_string" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${embedded_postgis_make_args[@]}" all
   )
 
   normalize_installed_module_suffix postgis-3

@@ -212,7 +212,6 @@ tasks:
       - "@group(packaging-source)"
       - "/tools/packaging/cargo-source-package.mts"
       - "/tools/packaging/package-cargo-source.sh"
-      - "/tools/packaging/check-cargo-package-tests.sh"
       - "/src/native/sdks/rust/tools/check-package.mts"
       - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"
       - "/src/native/sdks/rust/tools/prepare-rust-release-source.mts"
@@ -249,6 +248,7 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/release-consumer"
     inputs:
+      - "@group(cargo-package-test)"
       - "/rust-toolchain.toml"
       - "/src/native/sdks/rust/tests/release-consumer/**/*"
       - "/src/native/sdks/rust/tools/check-release-consumer.sh"
