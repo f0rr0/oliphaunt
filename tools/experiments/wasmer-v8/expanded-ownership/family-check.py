@@ -86,7 +86,8 @@ executable = sandbox / pathlib.Path(executables[0]).name
 shutil.copy2(executables[0], executable)
 assert list(sandbox.iterdir()) == [executable]
 if sys.platform == 'win32':
-    dumpbin = pathlib.Path(env['VCToolsInstallDir']) / 'bin/HostX64/x64/dumpbin.exe'
+    dumpbin = shutil.which('dumpbin.exe', path=env['PATH'])
+    assert dumpbin, 'MSVC dependency inspector missing from qualification environment'
     imports = subprocess.check_output([str(dumpbin), '/nologo', '/dependents', str(executable)], encoding='utf-8')
     (output / 'consumer-imports.log').write_text(imports)
     assert 'oliphaunt_wee8.dll' not in imports.lower()
