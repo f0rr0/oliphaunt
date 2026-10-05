@@ -34,7 +34,9 @@ consumer = output / 'consumer-from-archives'
 (consumer / '.cargo').mkdir()
 (consumer / '.cargo/config.toml').write_text('[patch.crates-io]\n' + '\n'.join(patches) + '\n')
 features = ['v8'] if sys.platform == 'win32' else ['sys', 'headless']
-wasix_features = ['v8', 'sys-poll', 'host-vnet', 'time'] if sys.platform == 'win32' else ['sys-minimal', 'sys-poll', 'host-vnet', 'time']
+wasix_features = ['sys-minimal', 'sys-poll', 'host-vnet', 'time']
+if sys.platform == 'win32':
+    wasix_features.append('v8')
 (consumer / 'Cargo.toml').write_text('''[package]
 name = "family-consumer-control"
 version = "0.0.0"
