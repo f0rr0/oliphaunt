@@ -6,6 +6,8 @@ use wasmer::{
     Value, imports,
 };
 
+mod cpu_profile;
+
 const EH: &str = r#"(module
   (tag $error (export "error") (param i32))
   (func $throw (export "throw") (param i32) (result i32)
@@ -702,6 +704,7 @@ fn main() -> Result<()> {
             check_eh(&mut store, &inst)?;
         }
         "cache-header-compatibility" => cache_header_compatibility()?,
+        "cpu-profile" => cpu_profile::run()?,
         "module-thread" => {
             let engine = engine();
             let store = Store::new(engine.clone());

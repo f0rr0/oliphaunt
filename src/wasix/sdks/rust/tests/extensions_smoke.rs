@@ -15,3 +15,19 @@ fn vector_extension_works_in_direct_mode() -> Result<()> {
     database.close()?;
     Ok(())
 }
+
+#[test]
+#[ignore = "repeated native engine lifecycle diagnostic"]
+fn vector_extension_repeated_lifecycle() -> Result<()> {
+    for cycle in 0..25 {
+        let mut database = Oliphaunt::builder().extension(Extension::VECTOR).open()?;
+        database.execute("CREATE EXTENSION vector")?;
+        assert!(database.query("SELECT 1 / 0").is_err());
+        let result =
+            database.query("SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance")?;
+        assert_eq!(result.get_text(0, "distance")?, Some("1"));
+        database.close()?;
+        eprintln!("completed_extension_lifecycle={cycle}");
+    }
+    Ok(())
+}
