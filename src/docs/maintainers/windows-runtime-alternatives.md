@@ -1,6 +1,7 @@
 # Windows runtime alternatives and workarounds
 
-Research snapshot: **October 4, 2026**. This is a maintainer decision record,
+Research snapshot: **October 4, 2026**, with the WASIX compatibility follow-up
+on **October 5, 2026**. This is a maintainer decision record,
 not a Windows support announcement. See the [integration ledger](windows-v8-integration.md)
 and [original capability experiment](../../../tools/experiments/wasmer-v8/README.md)
 for repository history, execution evidence and the six diagnostic failures.
@@ -14,22 +15,23 @@ same APIs, features and behavior on Windows, Linux and macOS. **Stock Wasmer
 prototype passes real Windows database tests, but its native cache depends on
 the producer's CPU/flags and its Rust dependency build needs extra tools.
 
-There are two credible paths:
+The project has already selected WASIX dynamic linking over its earlier
+Wasmtime/static-WASI implementation; see [the recorded runtime direction](../internal/DONE.md#runtime-direction)
+and [migration PR #13](https://github.com/f0rr0/oliphaunt/pull/13). A better AOT
+distribution primitive alone does not justify reversing that choice.
 
-1. **Preserve Wasmer/WASIX:** maintain a prebuilt Wee8 integration with a
-   deliberately supported AOT CPU profile, pregenerated bindings and isolated
-   symbols. This preserves the host implementation, but entails engine changes
-   and continued V8 maintenance. No ready-made, verified portable profile was
-   found in the searched upstream code, issues, forks or documentation.
-2. **Use Wasmtime for Windows:** its explicit baseline targets and compiler-free
-   loader fit the distribution requirement more directly. The actual PostgreSQL
-   guest already cross-compiles to Windows with Wasmtime 49.0.2. The substantial
-   work is porting the WASIX host, dynamic linking and SDK behavior.
+**Recommendation:** prioritize fixes that retain Wasmer/WASIX. The
+[focused feasibility record](windows-wasmer-feasibility.md) examines fixed V8
+flags with a bounded cache family, a maintained engine profile, static-link
+isolation and the separate Windows Sys EH port. A new local experiment
+successfully constrained the existing engine's CPU mask while retaining EH
+and SIMD, and serialized the actual PostgreSQL guest. It does not yet qualify
+Windows or independently loaded PostgreSQL extensions.
 
-**Recommendation:** treat Wasmtime as the strongest alternative to evaluate,
-and compare a bounded host-port spike with the concrete cost of maintaining a
-portable Wee8 build before committing to either. Continue treating the V8
-integration as a prototype until the shipped artifact works across different
+The alternatives below remain comparison evidence. Wasmtime's compiler result
+does not establish a replacement for the WASIX environment or extension
+loader, and no runtime migration is recommended by this follow-up. Continue
+treating the V8 integration as a prototype until shipped artifacts work across
 consumer CPUs and installed packages need no Windows-specific tool setup.
 
 ## What changed upstream
@@ -160,6 +162,49 @@ requirements. Wasmtime's WASI implementation does not supply those WASIX
 semantics automatically. The [WASIX implementation guide](https://www.wasix.org/docs/developer-guide/)
 describes a separate extension namespace and reusable integration tests. No
 qualified off-the-shelf Wasmtime WASIX replacement was found in this research.
+
+### Dynamic extension loading is part of the host contract
+
+WASIX supplies more than an execution engine. Its
+[`dlopen` syscall](https://github.com/wasmerio/wasmer/blob/v7.5.0/lib/wasix/src/syscalls/wasix/dlopen.rs)
+loads a module from the guest filesystem through its linker;
+[`dlsym`](https://github.com/wasmerio/wasmer/blob/v7.5.0/lib/wasix/src/syscalls/wasix/dlsym.rs)
+returns callable function-table entries or data addresses. The
+[linker implementation](https://github.com/wasmerio/wasmer/tree/v7.5.0/lib/wasix/src/state/linker)
+handles the dynamic-linking metadata, dependencies, shared memory/table,
+symbol relocation and thread-local initialization. Replacing the engine does
+not automatically replace these services.
+
+Our SDK seeds separate precompiled extension and support modules into the
+WASIX cache before PostgreSQL requests them. The existing
+[`vector` smoke test](../../wasix/sdks/rust/tests/extensions_smoke.rs)
+selects the package, verifies it is not yet registered in `pg_extension`, then
+runs `CREATE EXTENSION vector` and calls its vector-distance function. A
+replacement must preserve this workflow without consumer compilation.
+
+| Candidate | Dynamic-loading evidence | What remains for our extensions |
+| --- | --- | --- |
+| Wasmer with Wee8/V8 | Uses the existing WASIX loader | Portable AOT and package qualification, including real Windows extension tests |
+| Wasmtime | Host-managed [module linking with shared memory](https://docs.wasmtime.dev/examples-linking.html), and independently loaded [component plugins](https://docs.wasmtime.dev/wasip2-plugins.html) | Port the WASIX guest loader and C ABI; component plugin interfaces do not directly accept PostgreSQL side modules |
+| WasmEdge | Module-loading facilities; no qualified WASIX PostgreSQL loader found | Host and guest-loader integration, then actual extension execution |
+| wasm2c | Maintainers can produce native binaries from modules | Design and qualify a loader/ABI connecting separately compiled extensions to the core |
+
+One promising-looking workaround has a narrower contract: `wasm-tools
+component link --dl-openable` supplies runtime name/symbol lookup for libraries
+included at component construction. Its
+[implementation at `5793351e3190a178d0dbdd509d183b6da896090a`](https://github.com/bytecodealliance/wasm-tools/blob/5793351e3190a178d0dbdd509d183b6da896090a/crates/wit-component/src/linking.rs#L19)
+explicitly describes all code as included ahead of time. It could serve a fixed
+bundled catalog, subject to ABI qualification, but does not demonstrate loading
+an independently added library without rebuilding the component.
+
+Dynamic loading and AOT can coexist: maintainers precompile the core and each
+extension for supported targets, and the SDK loads and links them when needed.
+Wasmtime's [precompiled-module loader](https://docs.wasmtime.dev/examples-pre-compiling-wasm.html)
+provides the execution primitive; implementing compatible `dlopen`/`dlsym`
+and preserving filesystem/thread behavior remains our responsibility. Neither
+the simple cross-module experiment nor the Wasmtime Windows compile proves
+that integration. A migration spike must execute a real extension, followed by
+one with support-library dependencies, before a runtime choice is justified.
 
 ### WasmEdge and wasm2c: real alternatives, separate host implementations
 

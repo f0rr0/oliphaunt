@@ -151,9 +151,15 @@ does not prove the newer branch HEAD or the required Windows consumers.
 
 The newer diagnostic at `b1dac573b7a307a2ae2cbbbe06cbc4635befada9`,
 [run 37243260881](https://github.com/f0rr0/oliphaunt/actions/runs/37243260881),
-had passed the Windows database API step and was still running the new native
-cache-header compatibility probe at that snapshot. A running probe is not
-recorded as a pass.
+completed successfully at 23:39 UTC on October 4. It repeats the 21 runtime and
+7 PostgreSQL regression passes and confirms native CPU/flag header rejection.
+Its recorded default mask is `0x33e7f`, with flag hash `0xb8ff7c37`. Extension,
+tools, installed-consumer and different-CPU qualification remain outstanding.
+
+The [October 5 Wasmer/WASIX feasibility follow-up](windows-wasmer-feasibility.md)
+records a new local fixed-flag experiment and the relevant upstream fixes and
+open issues. It narrows the next investigation to retaining WASIX, rather than
+recommending a runtime migration from an AOT compile result alone.
 
 Do not treat skipped child jobs with green aggregate badges as passing builds.
 Qualification must identify the source SHA, actual executed jobs and artifact
