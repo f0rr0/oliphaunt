@@ -20,8 +20,11 @@ env["PATH"] = os.pathsep.join([str(output / "engine")] + paths)
 (output / "sdk-consumer-tools.json").write_text(json.dumps({
     "removed": removed, "libclangPath": env["LIBCLANG_PATH"],
     "scope": "producer-owned DLL staging, not installed package discovery"}, indent=2) + "\n")
+bash = pathlib.Path(os.environ["PROGRAMFILES"]) / "Git/bin/bash.exe"
+if not bash.is_file():
+    raise RuntimeError(f"missing runner Git Bash: {bash}")
 commands = [
-    ("runtime-extension-tools.log", ["bash", "src/wasix/sdks/rust/tools/test-aot.sh"]),
+    ("runtime-extension-tools.log", [str(bash), "src/wasix/sdks/rust/tools/test-aot.sh"]),
     ("lifecycle-driver.log", [sys.executable, "tools/experiments/wasmer-v8/lifecycle_check.py", str(output)]),
 ]
 for name, command in commands:
