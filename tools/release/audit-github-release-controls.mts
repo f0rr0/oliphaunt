@@ -79,7 +79,7 @@ function expectedEnvironments(bootstrapState) {
   return {
     'release-bootstrap': [...RELEASE_TAG_APP_SECRETS, ...expectedBootstrapSecrets(bootstrapState)],
     'release-dry-run': [],
-    'release-pr': ['RELEASE_PR_TOKEN'],
+    'release-pr': RELEASE_TAG_APP_SECRETS,
     'release-publish': RELEASE_PUBLISH_SECRETS,
   };
 }
