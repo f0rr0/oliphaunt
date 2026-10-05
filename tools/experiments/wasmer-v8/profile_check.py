@@ -3,6 +3,7 @@ import argparse
 import json
 import pathlib
 import subprocess
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
@@ -38,6 +39,11 @@ run("baseline", "read", args.output / "default.cache", expect_success=False)
 if args.peers:
     own_header = json.loads((args.output / "baseline.cache.header").read_text())
     for peer in sorted(args.peers.rglob("baseline.cache")):
+        # SDK artifacts also require an exact native OS/ABI. Do not infer
+        # cross-OS compatibility from this V8 header alone.
+        if ("windows" in peer.parent.name) != (sys.platform == "win32"):
+            print(f"peer={peer.parent.name} skipped=different-native-OS", flush=True)
+            continue
         peer_header = json.loads(pathlib.Path(f"{peer}.header").read_text())
         expected = own_header == peer_header
         print(f"peer={peer.parent.name} expected_compatible={expected}", flush=True)

@@ -38,7 +38,13 @@ jobs:
           toolchain: 1.96.0
           cache-workspaces: tools/experiments/wasmer-v8 -> target
       - uses: ./.github/actions/setup-msvc
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-2025-vs2026'
+      - name: Set up research-only Visual Studio 2022 host
+        if: matrix.os == 'windows-2022'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+          vsversion: '2022'
       - name: Record host CPU
         shell: pwsh
         if: runner.os == 'Windows'
@@ -52,9 +58,13 @@ jobs:
           path: tools/experiments/wasmer-v8/guest
           merge-multiple: true
       - name: Verify and test fixed CPU profile in fresh processes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           results=tools/experiments/wasmer-v8/profile-results
+          mkdir -p "$results"
+          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > "$results/guest-artifact.json"
           python tools/experiments/wasmer-v8/verify_guest.py tools/experiments/wasmer-v8/guest "$results"
           cargo build --locked --release --features wasix --manifest-path tools/experiments/wasmer-v8/Cargo.toml
           binary=tools/experiments/wasmer-v8/target/release/oliphaunt-wasmer-v8-probe
@@ -97,6 +107,26 @@ jobs:
           path: tools/experiments/wasmer-v8/profile-results/host-map.log
           if-no-files-found: warn
           retention-days: 90
+      - name: Check consumer build without libclang
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: |
+          set +e
+          LIBCLANG_PATH="$PWD/target/absent-libclang" cargo build --locked --release --features wasix --manifest-path tools/experiments/wasmer-v8/Cargo.toml > tools/experiments/wasmer-v8/profile-results/no-libclang.log 2>&1
+          code=$?
+          cat tools/experiments/wasmer-v8/profile-results/no-libclang.log
+          if [[ "$code" == 0 ]] || ! rg -q 'Unable to find libclang' tools/experiments/wasmer-v8/profile-results/no-libclang.log; then
+            echo "expected the pinned Wasmer consumer build to expose its libclang dependency" >&2
+            exit 1
+          fi
+          echo 'CONFIRMED BLOCKER: ordinary V8 consumers still require libclang'
+      - name: Retain consumer tool requirement evidence
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v8-consumer-tools-${{ matrix.os }}
+          path: tools/experiments/wasmer-v8/profile-results/no-libclang.log
+          if-no-files-found: warn
+          retention-days: 90
 
   cpu-profile-exchange:
     name: Cross-runner native cache validation (${{ matrix.os }})
@@ -120,7 +150,13 @@ jobs:
           toolchain: 1.96.0
           cache-workspaces: tools/experiments/wasmer-v8 -> target
       - uses: ./.github/actions/setup-msvc
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-2025-vs2026'
+      - name: Set up research-only Visual Studio 2022 host
+        if: matrix.os == 'windows-2022'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+          vsversion: '2022'
       - name: Download trusted same-run cache fixtures
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
