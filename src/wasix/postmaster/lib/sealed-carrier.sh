@@ -155,7 +155,7 @@ fresh_aot_producer_recipe_sha256() {
     for guest_input in "${verifier_inputs[@]}"; do
       printf '%s\0%s\0' verifier-input-sha256 "$(fresh_wasmer_bin_hash "$guest_input")"
     done
-    printf '%s\0%s\0' producer-engine llvm-opta
+    printf '%s\0%s\0' producer-engine llvm-opta-ro_ftable
     printf '%s\0%s\0' compiler-config "$compiler_config"
     printf '%s\0%s\0' target-triple "$target_triple"
     printf '%s\0%s\0' cpu-policy generic-baseline
