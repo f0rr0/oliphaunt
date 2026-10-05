@@ -20,6 +20,13 @@ import { renderReleaseCargoToml } from '../../src/native/sdks/rust/tools/prepare
 import { renderOliphauntWasixReleaseCargoToml } from '../../src/wasix/sdks/rust/tools/prepare-rust-release-source.mts';
 import { prepareWasixTypescriptPackage } from '../../src/wasix/sdks/ts/tools/package.mts';
 import { assertWasixTypescriptManifest } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
+import {
+  workspaceCarrierManifest,
+  workspaceRuntimeVersion,
+} from '../../src/wasix/node-addon/tools/workspace-runtime-contract.mts';
+import { assertWasixNapiCarrierManifest } from '../../src/wasix/node-addon/tools/check-release-assets.mts';
+import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
+import { workspaceBindingManifest } from '../../src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts';
 
 if (process.env.OLIPHAUNT_INDEPENDENT_VERSION_TEST !== '1' || existsSync(path.join(ROOT, '.git'))) {
   throw new Error('Run bash tools/release/independent-version-pins.test.sh');
@@ -119,6 +126,89 @@ test('WASIX TypeScript npm staging uses its portable runtime and Node-API pins',
   for (const version of Object.values(staged.optionalDependencies)) {
     assert.equal(version, original.oliphaunt.wasixNapiVersion);
   }
+});
+
+test('WASIX addon qualification identifies the compiled workspace runtime without changing release pins', () => {
+  const product = json('src/wasix/node-addon/package.json');
+  const original = json('src/wasix/node-addon/packages/linux-x64-gnu/package.json');
+  const staged = workspaceCarrierManifest(original, product.oliphaunt);
+  assert.equal(staged.oliphaunt.runtimeVersion, workspaceRuntimeVersion());
+  assert.notEqual(staged.oliphaunt.runtimeVersion, original.oliphaunt.runtimeVersion);
+  assert.equal(staged.oliphaunt.qualificationOnly, true);
+  const currentRust = Bun.TOML.parse(read('src/wasix/sdks/rust/Cargo.toml')).package.version;
+  const currentContract = {
+    runtimeVersion: workspaceRuntimeVersion(),
+    rustBindingVersion: currentRust,
+  };
+  const aligned = workspaceCarrierManifest(original, currentContract);
+  assert.equal(Object.hasOwn(aligned.oliphaunt, 'qualificationOnly'), false);
+  const rustOnly = workspaceCarrierManifest(original, {
+    ...currentContract,
+    rustBindingVersion: '0.0.0',
+  });
+  assert.equal(rustOnly.oliphaunt.qualificationOnly, true);
+  assert.deepEqual(json('src/wasix/node-addon/packages/linux-x64-gnu/package.json'), original);
+  const target = {
+    target: 'linux-x64-gnu',
+    npmPackage: original.name,
+    npmOs: 'linux',
+    npmCpu: 'x64',
+    npmLibc: 'glibc',
+  };
+  assert.doesNotThrow(() =>
+    assertWasixNapiCarrierManifest(staged, target, original.version, 'workspace', staged.oliphaunt),
+  );
+  assert.throws(
+    () => assertWasixNapiCarrierManifest(staged, target, original.version),
+    /runtime\/ABI\/profile metadata/u,
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      'src/wasix/node-addon/tools/native-build-data.mts',
+      'metadata',
+      'src/wasix/node-addon/package.json',
+    ],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.split('\t')[0], staged.oliphaunt.runtimeVersion);
+});
+
+test('WASIX SDK release requires the same portable and addon runtime', () => {
+  assert.doesNotThrow(() =>
+    requireMatchingWasixRuntime({
+      runtimeVersion: '1.2.3',
+      napiVersion: '4.5.6',
+      napiRuntimeVersion: '1.2.3',
+    }),
+  );
+  assert.throws(
+    () =>
+      requireMatchingWasixRuntime({
+        runtimeVersion: '1.2.4',
+        napiVersion: '4.5.6',
+        napiRuntimeVersion: '1.2.3',
+      }),
+    /select a new addon release/u,
+  );
+});
+
+test('WASIX workspace consumer uses current producers while its release package retains its pins', () => {
+  const original = prepareWasixTypescriptPackage(
+    stageManifest('wasix-workspace-consumer', 'src/wasix/sdks/ts/package.json'),
+  );
+  const snapshot = structuredClone(original);
+  const runtimeVersion = workspaceRuntimeVersion();
+  const nativeVersion = manifest[products['oliphaunt-wasix-napi'].path];
+  const staged = workspaceBindingManifest(original, { runtimeVersion, nativeVersion });
+  assertWasixTypescriptManifest(staged);
+  assert.equal(staged.oliphaunt.runtimeVersion, runtimeVersion);
+  assert.equal(staged.dependencies['@oliphaunt/liboliphaunt-wasix'], runtimeVersion);
+  assert.equal(staged.oliphaunt.qualificationOnly, true);
+  for (const value of Object.values(staged.optionalDependencies))
+    assert.equal(value, nativeVersion);
+  assert.deepEqual(original, snapshot);
 });
 
 test('native Rust source generation uses its native runtime and broker pins', () => {

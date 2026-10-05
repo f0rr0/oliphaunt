@@ -9,6 +9,17 @@ registry_packages = [
   "npm:@oliphaunt/wasix-napi-win32-x64-msvc",
 ]
 release_artifacts = ["node-api-prebuilds", "npm-optional-platform-packages"]
+shared_source_paths = [
+  "src/wasix/sdks/rust/src",
+  "src/wasix/sdks/rust/build.rs",
+  "src/wasix/sdks/rust/Cargo.toml",
+  "src/wasix/pgwire-server/src",
+  "src/wasix/pgwire-server/Cargo.toml",
+  "src/query/rust/src",
+  "src/query/rust/Cargo.toml",
+  "src/wasix/runtime/assets",
+  "src/wasix/runtime/crates",
+]
 
 [compatibility_versions.oliphaunt-wasix-napi-runtime]
 source_product = "liboliphaunt-wasix"

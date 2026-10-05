@@ -258,6 +258,9 @@ function npmArtifact(file) {
     ecosystem: 'npm',
     name: manifest.name,
     version: manifest.version,
+    ...(Object.hasOwn(manifest.oliphaunt ?? {}, 'qualificationOnly')
+      ? { qualificationOnly: true }
+      : {}),
     dependencies: dependencyRows('npm', [
       ['runtime', manifest.dependencies],
       ['optional', manifest.optionalDependencies],
@@ -2040,6 +2043,11 @@ export function buildPublicationCandidate({
     );
     if (!selectedProducts.has(resolved.product)) {
       continue;
+    }
+    if (artifact.qualificationOnly) {
+      throw error(
+        `${artifact.name}@${artifact.version} is a workspace qualification carrier; prepare a new release with matching dependency pins`,
+      );
     }
     if (artifact.version !== resolved.version) {
       throw error(

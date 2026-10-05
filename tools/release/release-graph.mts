@@ -1261,9 +1261,9 @@ export function buildPlan(graph, files, prefix = 'release-graph') {
           directProjects.add(releaseProductProjectId(product, products, projects, prefix));
         }
       }
-      // The explicit carrier mapping is authoritative. Traversing the shared
-      // source project's other consumers would fabricate downstream releases.
-      continue;
+      // Contrib's carrier mapping is authoritative. Declared shared sources
+      // also retain the product that owns the source itself.
+      if (sharedImpacts.every((impact) => impact.source_paths === undefined)) continue;
     }
     // Documentation alone does not request a product release. Declared
     // changelogs and explicit shared release inputs remain release-affecting.
@@ -1422,7 +1422,17 @@ if (import.meta.main) {
     ['wanted-files', files],
     [
       'current-tags',
-      Object.values(products).map((config) => 'refs/tags/' + config.tag_prefix + config.version),
+      new Set([
+        ...Object.values(products).map(
+          (config) => 'refs/tags/' + config.tag_prefix + config.version,
+        ),
+        ...compatibilityVersionEntries(products, { root, requireSourceProduct: true }).map(
+          (entry) =>
+            'refs/tags/' +
+            products[entry.sourceProduct].tag_prefix +
+            compatibilityVersionValue(entry, { root }),
+        ),
+      ]),
     ],
   ])
     writeFileSync(path.join(directory, name), [...values].map((value) => value + '\0').join(''));

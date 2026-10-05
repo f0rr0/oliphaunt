@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { workspaceRuntimeVersion } from './workspace-runtime-contract.mts';
 
 const require = createRequire(import.meta.url);
 const [command, ...args] = process.argv.slice(2);
@@ -6,7 +7,7 @@ switch (command) {
   case 'metadata': {
     const manifest = JSON.parse(require('node:fs').readFileSync(args[0], 'utf8'));
     const values = [
-      manifest.oliphaunt?.runtimeVersion,
+      workspaceRuntimeVersion(),
       manifest.oliphaunt?.addonAbiVersion,
       manifest.oliphaunt?.nodeApiVersion,
     ];
@@ -53,13 +54,18 @@ switch (command) {
         throw new Error(`${addonPath} is missing function export ${name}`);
       }
     }
-    if (
-      addon.addonAbiVersion() !== expectedAbi ||
-      addon.nodeApiVersion() !== expectedNodeApi ||
-      addon.runtimeVersion() !== expectedRuntime ||
-      JSON.stringify(addon.supportedProfiles()) !== JSON.stringify(['standard', 'icu'])
-    ) {
-      throw new Error(`${addonPath} reports an incompatible ABI/runtime/profile contract`);
+    for (const [name, expected] of [
+      ['addonAbiVersion', expectedAbi],
+      ['nodeApiVersion', expectedNodeApi],
+      ['runtimeVersion', expectedRuntime],
+      ['supportedProfiles', ['standard', 'icu']],
+    ]) {
+      const actual = addon[name]();
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        throw new Error(
+          `${addonPath} ${name} reports ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}`,
+        );
+      }
     }
 
     function expectedIdentity(record, kind) {

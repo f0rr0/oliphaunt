@@ -969,6 +969,7 @@ describe('publication artifact discovery and freezing', () => {
     expect(unselectedNpm).toBeDefined();
     npmFixture(path.join(root, 'unselected-a'), unselectedNpm.name, unselectedNpm.version, {
       description: 'first unselected carrier bytes',
+      oliphaunt: { qualificationOnly: true },
     });
     npmFixture(path.join(root, 'unselected-b'), unselectedNpm.name, unselectedNpm.version, {
       description: 'second unselected carrier bytes',
@@ -1004,6 +1005,17 @@ describe('publication artifact discovery and freezing', () => {
         artifactRoots: [root],
       }),
     ).toThrow(/artifact identity cargo:undeclared-publication-carrier is not declared/u);
+  });
+
+  test('refuses to freeze a selected workspace qualification carrier', () => {
+    const root = temporaryDirectory();
+    const catalog = loadPublicationCatalog('publication-lock.test', { products: ['oliphaunt-js'] });
+    npmFixture(root, '@oliphaunt/ts', catalog.products[0].version, {
+      oliphaunt: { qualificationOnly: true },
+    });
+    expect(() =>
+      buildPublicationCandidate({ products: ['oliphaunt-js'], artifactRoots: [root] }),
+    ).toThrow('workspace qualification carrier');
   });
 
   test.each([

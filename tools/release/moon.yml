@@ -168,6 +168,10 @@ tasks:
       - /src/wasix/sdks/rust/tools/prepare-rust-release-source.mts
       - /src/wasix/sdks/ts/tools/package.mts
       - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
+      - /src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts
+      - /src/wasix/node-addon/tools/workspace-runtime-contract.mts
+      - /src/wasix/node-addon/tools/native-build-data.mts
+      - /src/wasix/node-addon/tools/check-release-assets.mts
       - /tools/ci/with-projects.sh
       - /tools/dev/bun.sh
     options:

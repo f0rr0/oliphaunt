@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { Manifest } from 'release-please';
 import { Version } from 'release-please/build/src/version.js';
-import { loadGraph } from './release-graph.mts';
+import { buildPlan, loadGraph } from './release-graph.mts';
 import {
   includeOwnedSourceCommits,
   useSourceDate,
@@ -18,6 +18,24 @@ const shared = 'src/extensions/contrib/postgres18.toml';
 const first = 'a'.repeat(40);
 const second = 'b'.repeat(40);
 const head = 'c'.repeat(40);
+
+test('addon releases include embedded Rust and runtime sources without releasing unrelated SDKs', () => {
+  for (const [file, owner] of [
+    ['src/wasix/sdks/rust/src/oliphaunt/base.rs', 'oliphaunt-wasix-rust'],
+    ['src/wasix/pgwire-server/src/lib.rs', 'oliphaunt-pgwire-server'],
+    ['src/query/rust/src/lib.rs', 'oliphaunt-query'],
+    ['src/wasix/runtime/crates/assets/src/lib.rs', 'liboliphaunt-wasix'],
+  ]) {
+    const plan = buildPlan(graph, [file]);
+    expect(plan.releaseProducts.sort()).toEqual([owner, 'oliphaunt-wasix-napi'].sort());
+  }
+  for (const file of [
+    'src/wasix/sdks/rust/tests/runtime_smoke.rs',
+    'src/wasix/sdks/rust/README.md',
+  ]) {
+    expect(buildPlan(graph, [file]).releaseProducts).not.toContain('oliphaunt-wasix-napi');
+  }
+});
 
 async function generate(commits, baselines = { [native]: first, [wasix]: first }) {
   useSourceDate('2026-09-11');
