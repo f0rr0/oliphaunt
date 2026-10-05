@@ -6,7 +6,7 @@ permissions:
   actions: read
 jobs:
   expanded-ownership:
-    name: Native cache pair, owned errors and SDK (${{ matrix.runner }})
+    name: Owned errors, automatic delivery and SDK (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -139,14 +139,6 @@ jobs:
 
         cargo test --locked -p oliphaunt-wasix --no-default-features --test research_v8_trap_ownership
         -- --nocapture --test-threads=1'
-    - name: Download same-run genuine CPU profile
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-      with:
-        name: windows-genuine-low-cpu-cache
-        path: target/wine-cache
-    - name: Fresh native readers choose a compatible genuine profile
-      run: python tools/experiments/wasmer-v8/expanded-ownership/cache-pair-check.py
-        target/windows-v8-ownership/control target/wine-cache
     - name: Diagnose native ownership failure
       if: ${{ failure() }}
       run: python tools/experiments/wasmer-v8/expanded-ownership/debug-failure.py
@@ -167,8 +159,6 @@ jobs:
           !target/windows-v8-ownership/control/engine/dependency'
         if-no-files-found: warn
         retention-days: 90
-    needs:
-    - wine-producer
   wine-producer:
     name: Genuine Windows cache on emulated SSE4.1 CPU
     runs-on: ubuntu-24.04
@@ -223,5 +213,51 @@ jobs:
           target/wine-cache/wine-postgres.cache
 
           target/wine-cache/guest.wasm'
+        if-no-files-found: warn
+        retention-days: 90
+  native-cache-pair:
+    name: Native compatible cache selection (${{ matrix.runner }})
+    needs:
+    - wine-producer
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+        - windows-2022
+        - windows-2025-vs2026
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        persist-credentials: false
+    - name: Download exact native engine
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37301714833'
+        artifact-ids: '11343090816'
+        github-token: ${{ github.token }}
+        path: target/frozen-engine
+        merge-multiple: true
+    - name: Stage frozen engine
+      run: python -c 'from pathlib import Path; import shutil; source=next(Path("target/frozen-engine").rglob("engine/oliphaunt_wee8.dll")).parent;
+        target=Path("target/windows-v8-ownership/control/engine"); shutil.copytree(source,target)'
+    - name: Download same-run genuine CPU profile
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: windows-genuine-low-cpu-cache
+        path: target/wine-cache
+    - name: Fresh native readers choose a compatible genuine profile
+      run: python tools/experiments/wasmer-v8/expanded-ownership/cache-pair-check.py
+        target/windows-v8-ownership/control target/wine-cache
+    - name: Retain native profile receipts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: native-cache-pair-${{ matrix.runner }}
+        path: target/windows-v8-ownership/control/cache-pair
         if-no-files-found: warn
         retention-days: 90
