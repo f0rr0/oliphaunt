@@ -141,6 +141,8 @@ tasks:
       - requires-rust
     command: bash src/extensions/artifacts/packages/tools/test.sh
     inputs:
+      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
       - /src/native/sdks/rust/crates/oliphaunt-build/src/**/*.rs
       - /src/native/sdks/rust/crates/oliphaunt-build/Cargo.toml
       - "@group(cargo-workspace)"

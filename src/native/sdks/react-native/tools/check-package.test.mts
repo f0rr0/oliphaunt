@@ -6,6 +6,7 @@ import { stageArtifacts } from './stage-release-artifacts.mts';
 import { iosBaseLegalMetadata } from '../../swift/tools/ios-carrier-manifest.mts';
 import assert from 'node:assert/strict';
 import { validateReactNativePackagedCarrier } from './check-package.mts';
+import { productDependencyCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 
 function selectionNeutralCarrier(version = '1.2.3') {
   const product = 'liboliphaunt-native';
@@ -92,14 +93,15 @@ test('binds the React Native npm carrier bytes to selection-neutral staged evide
   );
 });
 
-test('package staging accepts frozen current iOS metadata and rejects stale or corrupt metadata', () => {
+test('package staging accepts frozen pinned iOS metadata and rejects mismatched or corrupt metadata', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'rn-frozen-carrier-'));
   const previous = process.env.OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER;
   try {
-    const version = readFileSync(
-      new URL('../../../runtime/VERSION', import.meta.url),
-      'utf8',
-    ).trim();
+    const version = productDependencyCompatibilityVersion(
+      'oliphaunt-react-native',
+      'oliphaunt-swift',
+      'liboliphaunt-native',
+    );
     const carrier = selectionNeutralCarrier(version);
     const frozen = path.join(root, 'frozen.json');
     const work = path.join(root, 'work');
@@ -108,7 +110,7 @@ test('package staging accepts frozen current iOS metadata and rejects stale or c
     writeFileSync(path.join(work, 'package/package.json'), '{}');
     writeFileSync(frozen, JSON.stringify(carrier));
     process.env.OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER = frozen;
-    stageArtifacts(artifacts, work);
+    await stageArtifacts(artifacts, work);
     const evidence = readFileSync(
       path.join(artifacts, 'ios-carriers/oliphaunt-react-native-ios-carriers.json'),
       'utf8',
@@ -129,7 +131,7 @@ test('package staging accepts frozen current iOS metadata and rejects stale or c
       const invalid = structuredClone(carrier);
       mutate(invalid);
       writeFileSync(frozen, JSON.stringify(invalid));
-      assert.throws(() => stageArtifacts(artifacts, work));
+      await assert.rejects(stageArtifacts(artifacts, work));
     }
   } finally {
     if (previous === undefined) delete process.env.OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER;

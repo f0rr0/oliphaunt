@@ -9,6 +9,7 @@ registry_packages = [
   "npm:@oliphaunt/node-direct-win32-x64-msvc",
 ]
 release_artifacts = ["node-api-prebuilds", "npm-optional-platform-packages"]
+embedded_cargo_manifests = ["src/native/node-addon/Cargo.toml"]
 
 [compatibility_versions.oliphaunt-node-direct-liboliphaunt]
 source_product = "liboliphaunt-native"

@@ -569,19 +569,29 @@ test('combined JavaScript SDK and WASIX N-API changes release only changed produ
   assert.deepEqual(result.releaseProducts, ['oliphaunt-js', 'oliphaunt-wasix-napi']);
 });
 
-test('shared contrib source releases only its two runtime owners', () => {
+test('shared contrib source releases its runtime owners and the addon embedding WASIX payloads', () => {
   const release = buildPlan(
     GRAPH,
     ['src/extensions/contrib/postgres18.toml'],
     'ci-plan-node-products.test.mts',
   );
-  assert.deepEqual(release.directProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
-  assert.deepEqual(release.releaseProducts, ['liboliphaunt-native', 'liboliphaunt-wasix']);
+  assert.deepEqual(release.directProducts, [
+    'liboliphaunt-native',
+    'liboliphaunt-wasix',
+    'oliphaunt-wasix-napi',
+  ]);
+  assert.deepEqual(release.releaseProducts, [
+    'liboliphaunt-native',
+    'liboliphaunt-wasix',
+    'oliphaunt-wasix-napi',
+  ]);
   const plan = planForReleaseProducts(release.releaseProducts, 'c'.repeat(40));
   const contrib = contribCarrierDescriptor();
   assert(plan.extension_package_products.includes(contrib.artifactProduct));
   assert(plan.tasks.includes('native-extension-lifecycle:lifecycle'));
   assert(plan.tasks.includes('extension-artifacts-wasix:build-target'));
+  assert(plan.tasks.includes('oliphaunt-wasix-napi:build-release-assets'));
+  assert(plan.tasks.includes('oliphaunt-wasix-napi:finalize-release-assets'));
   for (const sql of ['hstore', 'pg_trgm']) {
     assert(plan.native_extension_lifecycle_sql_names.includes(sql));
     assert(

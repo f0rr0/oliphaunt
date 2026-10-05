@@ -156,6 +156,8 @@ tasks:
       - unit
     command: bash tools/release/independent-version-pins.test.sh
     inputs:
+      - /Cargo.toml
+      - /Cargo.lock
       - "@group(package-test-metadata)"
       - "@group(release-target-contract)"
       - "@group(legal-files)"
@@ -168,6 +170,10 @@ tasks:
       - /src/wasix/sdks/rust/tools/prepare-rust-release-source.mts
       - /src/wasix/sdks/ts/tools/package.mts
       - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
+      - /src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts
+      - /src/wasix/node-addon/tools/workspace-runtime-contract.mts
+      - /src/wasix/node-addon/tools/native-build-data.mts
+      - /src/wasix/node-addon/tools/check-release-assets.mts
       - /tools/ci/with-projects.sh
       - /tools/dev/bun.sh
     options:
@@ -177,6 +183,7 @@ tasks:
     tags:
       - quality
       - unit
+      - requires-rust
     inputs:
       - /.moon/tasks/**/*
       - /.moon/toolchains.yml
@@ -186,6 +193,10 @@ tasks:
       - /moon.yml
       - /.release-please-manifest.json
       - /Cargo.toml
+      - /Cargo.lock
+      - /rust-toolchain.toml
+      - /**/Cargo.toml
+      - /src/**/*.rs
       - /Package.swift
       - /package.json
       - /release-please-config.json

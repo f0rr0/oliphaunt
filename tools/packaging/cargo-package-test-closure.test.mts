@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -104,6 +104,40 @@ test('rejects conflicting path-patch sources for the same package identity', (t)
       }),
     /conflicting path-dependency sources/u,
   );
+});
+
+test('package qualification retains exact published pins after a local dependency advances', (t) => {
+  const root = fixture(t, 'cargo-closure-independent');
+  const cratePath = closureCrate(root);
+  const dependency = path.join(root, 'carrier');
+  writePackage(dependency, 'carrier');
+  const sourceManifest = path.join(root, 'Cargo.toml');
+  writeFileSync(sourceManifest, '[dependencies]\ncarrier = { path = "carrier", version = "*" }\n');
+  for (const version of ['0.1.0', '0.2.0']) {
+    const file = path.join(dependency, 'Cargo.toml');
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace(/^version = "[^"]+"/mu, `version = "${version}"`),
+    );
+    const scratch = path.join(root, `work-${version}`);
+    const manifestFile = preparePackagedCargoTestClosure({
+      cratePath,
+      scratch,
+      pathDependencyManifests: [sourceManifest],
+    });
+    const manifest = Bun.TOML.parse(readFileSync(manifestFile, 'utf8'));
+    assert.equal(manifest.dependencies.carrier.version, '=0.1.0');
+    const config = Bun.TOML.parse(readFileSync(path.join(scratch, '.cargo/config.toml'), 'utf8'));
+    if (version === '0.1.0') {
+      const patch = config.patch['crates-io'].carrier.path;
+      assert.equal(
+        Bun.TOML.parse(readFileSync(path.join(patch, 'Cargo.toml'), 'utf8')).package.version,
+        '0.1.0',
+      );
+    } else {
+      assert.equal(config.patch, undefined);
+    }
+  }
 });
 
 test('rejects unsafe packaged names', (t) => {

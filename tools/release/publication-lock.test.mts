@@ -969,6 +969,7 @@ describe('publication artifact discovery and freezing', () => {
     expect(unselectedNpm).toBeDefined();
     npmFixture(path.join(root, 'unselected-a'), unselectedNpm.name, unselectedNpm.version, {
       description: 'first unselected carrier bytes',
+      oliphaunt: { qualificationOnly: true },
     });
     npmFixture(path.join(root, 'unselected-b'), unselectedNpm.name, unselectedNpm.version, {
       description: 'second unselected carrier bytes',
@@ -1004,6 +1005,36 @@ describe('publication artifact discovery and freezing', () => {
         artifactRoots: [root],
       }),
     ).toThrow(/artifact identity cargo:undeclared-publication-carrier is not declared/u);
+  });
+
+  test('refuses to freeze a selected workspace qualification carrier', () => {
+    const root = temporaryDirectory();
+    const catalog = loadPublicationCatalog('publication-lock.test', { products: ['oliphaunt-js'] });
+    npmFixture(root, '@oliphaunt/ts', catalog.products[0].version, {
+      oliphaunt: { qualificationOnly: true },
+    });
+    expect(() =>
+      buildPublicationCandidate({ products: ['oliphaunt-js'], artifactRoots: [root] }),
+    ).toThrow('workspace qualification carrier');
+  });
+
+  test('rejects qualification extension fixtures only when their product is selected', () => {
+    const root = temporaryDirectory();
+    const product = loadPublicationCatalog('publication-lock.test', {
+      products: ['oliphaunt-extension-vector'],
+    }).products[0];
+    const { manifestPath } = extensionGithubReleaseFixture(root, product);
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    // Presence rejects even a forged false marker.
+    manifest.qualificationOnly = false;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(() => discoverProductArtifacts([root], [product])).toThrow(
+      'workspace qualification carrier',
+    );
+    const unrelated = loadPublicationCatalog('publication-lock.test', {
+      products: ['oliphaunt-js'],
+    }).products[0];
+    expect(discoverProductArtifacts([root], [unrelated])).toEqual([]);
   });
 
   test.each([
@@ -1441,6 +1472,12 @@ describe('publication artifact discovery and freezing', () => {
         [sdk, fixture],
       ),
     ).not.toThrow();
+    const qualificationMarker = path.join(sdk, 'qualification.json');
+    writeFileSync(qualificationMarker, JSON.stringify({ qualificationOnly: true }));
+    expect(() => discoverProductArtifacts(selectedRoots, catalog.products)).toThrow(
+      'workspace qualification carrier',
+    );
+    unlinkSync(qualificationMarker);
     const frozenFixture = swiftArtifacts.find(
       ({ id }) => id === 'release-input:swiftpm-extension-consumer-fixture',
     );

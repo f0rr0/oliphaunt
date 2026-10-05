@@ -28,6 +28,18 @@ function compareVersions(left, right) {
   return 0;
 }
 
+export function requireMatchingWasixRuntime(
+  { runtimeVersion, napiVersion, napiRuntimeVersion },
+  { prefix = 'compatibility-version-policy' } = {},
+) {
+  if (runtimeVersion !== napiRuntimeVersion) {
+    throw policyError(
+      prefix,
+      `oliphaunt-wasix-ts runtime ${runtimeVersion} differs from oliphaunt-wasix-napi ${napiVersion} runtime ${napiRuntimeVersion}; select a new addon release before advancing the SDK runtime`,
+    );
+  }
+}
+
 /**
  * Choose the immutable source of a compatibility field. A sink whose manifest
  * is pending from the latest verified release commit follows the current

@@ -97,6 +97,11 @@ Rust target triple.
 The addon's `runtimeVersion()` identity comes directly from the selected
 `liboliphaunt-wasix-portable` crate. Workspace builds therefore report the
 local runtime while released carriers retain exact product compatibility pins.
+Workspace carrier manifests report that compiled runtime. If the checkout's
+runtime or Rust binding differs from the committed release pins, staging marks
+the carrier `qualificationOnly`; publication refuses to freeze it. The ordinary
+release validator continues to require the declared pins, while the CI aggregate
+explicitly validates the workspace contract with `--workspace`.
 Product metadata tracks the runtime and `oliphaunt-wasix` Rust binding as
 separate compatibility versions; they are not assumed to advance together.
 

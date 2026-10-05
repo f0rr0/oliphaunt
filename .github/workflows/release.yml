@@ -113,14 +113,15 @@ jobs:
         with:
           task-cache: "false"
           install-workspace: "true"
+      - name: Set up Rust for dependency metadata and manifest synchronization
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
       - name: Generate the Release Please candidate locally
         id: prepare_candidate
         env:
           GH_TOKEN: ${{ steps.release_pr_token.outputs.token }}
         run: bash tools/release/prepare-release-pr.sh "$RUNNER_TEMP/release-candidate"
-      - name: Set up Rust for release manifest synchronization
-        if: ${{ steps.prepare_candidate.outputs.required == 'true' }}
-        uses: ./.github/actions/setup-rust
       - name: Close and validate the local release candidate
         if: ${{ steps.prepare_candidate.outputs.required == 'true' }}
         run: bash tools/release/close-release-candidate.sh "$RUNNER_TEMP/release-candidate"
@@ -160,6 +161,10 @@ jobs:
         with:
           task-cache: "false"
           install-workspace: "true"
+      - name: Set up Cargo for dependency metadata
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
       - name: Plan product releases
         id: release_plan
         run: |

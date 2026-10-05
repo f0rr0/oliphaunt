@@ -82,6 +82,8 @@ fi
 
 manifest="src/wasix/node-addon/Cargo.toml"
 package_manifest="src/wasix/node-addon/package.json"
+# Source qualification compiles the local runtime. Package staging records this
+# identity and marks mismatched release pins as ineligible for publication.
 metadata_contract="$(
   bun "$workspace_root/src/wasix/node-addon/tools/native-build-data.mts" metadata "$package_manifest"
 )"

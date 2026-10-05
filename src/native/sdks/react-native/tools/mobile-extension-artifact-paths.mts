@@ -101,9 +101,15 @@ const BUNDLE_CARRIER_ASSET_KEYS = new Set([
 
 function manifestEnvelopeKeys(baseKeys, manifest, repositoryContract) {
   const owner = repositoryContract.products.get(manifest.product);
-  return owner?.releaseProduct === owner?.artifactProduct
-    ? baseKeys
-    : new Set([...baseKeys, 'releaseProduct', 'family']);
+  const keys =
+    owner?.releaseProduct === owner?.artifactProduct
+      ? baseKeys
+      : new Set([...baseKeys, 'releaseProduct', 'family']);
+  if (Object.hasOwn(manifest, 'qualificationOnly')) {
+    if (manifest.qualificationOnly !== true) fail('qualificationOnly must be true when present');
+    return new Set([...keys, 'qualificationOnly']);
+  }
+  return keys;
 }
 
 class CliFailure extends Error {

@@ -130,6 +130,7 @@ tasks:
       - "/src/wasix/node-addon/src/**/*"
       - "/src/wasix/node-addon/tools/build-native.sh"
       - "/src/wasix/node-addon/tools/native-build-data.mts"
+      - "/src/wasix/node-addon/tools/workspace-runtime-contract.mts"
       - "/src/wasix/node-addon/tools/check-build-inputs.mts"
       - "/src/wasix/node-addon/tools/detect-linux-libc.mts"
       - "/src/wasix/node-addon/tools/package-platform.mts"
@@ -182,7 +183,7 @@ tasks:
 
   finalize-release-assets:
     tags: ["release", "artifact-package", "in-place-finalizer", "ci-wasix-napi-release-assets"]
-    command: "tools/dev/bun.sh src/wasix/node-addon/tools/check-release-assets.mts --aggregate"
+    command: "tools/dev/bun.sh src/wasix/node-addon/tools/check-release-assets.mts --aggregate --workspace"
     deps:
       - "oliphaunt-wasix-napi:build-release-assets"
     inputs:

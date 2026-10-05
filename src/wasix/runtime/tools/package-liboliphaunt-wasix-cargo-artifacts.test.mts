@@ -20,6 +20,7 @@ import {
   extensionReleaseProduct,
   extensionReleaseVersion,
   extensionSqlNames,
+  exactExtensionProducts,
 } from '../../../../tools/release/release-artifact-targets.mts';
 import {
   extractArchiveMemberToFile,
@@ -217,55 +218,77 @@ function aggregateFixture(root, { nestedOwner = false } = {}) {
 }
 
 describe('aggregate WASIX Cargo artifact packaging', () => {
-  test('local runtime selects an independently versioned extension archive', () => {
-    const root = path.join(scratch, 'independent-version');
-    const product = 'oliphaunt-extension-vector';
-    const productRoot = path.join(root, product);
-    mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
-    writeFileSync(
-      path.join(productRoot, 'extension-artifacts.json'),
-      JSON.stringify({
-        schema: 'oliphaunt-extension-ci-artifacts-v1',
-        product,
-        version: '9.8.7',
-        sqlName: 'vector',
-        nativeModuleStem: null,
-      }),
-    );
-    writeFileSync(
-      path.join(productRoot, 'release-assets', `${product}-9.8.7-wasix-portable.tar.zst`),
-      'independent extension fixture',
-    );
-    const runtimeSource = path.join(root, 'runtime');
-    cpSync(path.join(ROOT, 'src/wasix/runtime/crates/assets'), runtimeSource, {
-      recursive: true,
-      filter: (source) => !['target', 'payload', 'artifacts'].includes(path.basename(source)),
-    });
+  test('runtime source builds use every external extension product version independently of the runtime', () => {
+    const root = path.join(scratch, 'independent-extension');
+    const host = supportedRustcHostTriple();
+    const targetId = Object.entries(AOT_TARGET_TRIPLES).find(([, triple]) => triple === host)[0];
+    const features = [];
+    const assertions = [];
+    for (const [index, product] of exactExtensionProducts()
+      .filter((product) => product !== 'oliphaunt-extension-contrib-pg18')
+      .entries()) {
+      const [sqlName] = extensionSqlNames(product);
+      const version = `7.${index}.0`;
+      const productRoot = path.join(root, product);
+      const assets = path.join(productRoot, 'release-assets');
+      mkdirSync(assets, { recursive: true });
+      const archive = path.join(assets, `${product}-${version}-wasix-portable.tar.zst`);
+      const payload = `${sqlName}:independent-product-version`;
+      writeFileSync(archive, payload);
+      writeFileSync(
+        path.join(productRoot, 'extension-artifacts.json'),
+        JSON.stringify({
+          schema: 'oliphaunt-extension-ci-artifacts-v1',
+          product,
+          version,
+          sqlName,
+          nativeModuleStem: sqlName === 'pg_hashids' ? sqlName : null,
+        }),
+      );
+      features.push(`extension-${sqlName.replaceAll('_', '-')}`);
+      assertions.push(
+        `assert_eq!(liboliphaunt_wasix_portable::extension_archive(${JSON.stringify(sqlName)}).unwrap(), b${JSON.stringify(payload)});`,
+      );
+      if (sqlName === 'pg_hashids') {
+        const directory = path.join(productRoot, 'wasix-aot', targetId);
+        mkdirSync(directory, { recursive: true });
+        const artifact = path.join(directory, 'extension.bin.zst');
+        writeFileSync(artifact, 'independent-extension-aot');
+        writeFileSync(
+          path.join(directory, 'manifest.json'),
+          JSON.stringify({
+            'format-version': 1,
+            'target-triple': host,
+            artifacts: [
+              {
+                name: `extension:${sqlName}`,
+                path: path.basename(artifact),
+                sha256: sha256(artifact),
+              },
+            ],
+          }),
+        );
+        assertions.push(
+          `assert_eq!(liboliphaunt_wasix_portable::extension_aot_artifact_bytes(${JSON.stringify(host)}, "extension:pg_hashids").unwrap(), b"independent-extension-aot");`,
+        );
+      }
+    }
     const app = path.join(root, 'app');
     mkdirSync(path.join(app, 'src'), { recursive: true });
     writeFileSync(
       path.join(app, 'Cargo.toml'),
       `[package]
-name = "wasix-independent-version-proof"
+name = "wasix-independent-extension-proof"
 version = "0.0.0"
 edition = "2024"
-
 [dependencies]
-liboliphaunt-wasix-portable = { path = ${JSON.stringify(runtimeSource)}, features = ["extension-vector"] }
-
+liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/wasix/runtime/crates/assets'))}, features = ${JSON.stringify(features)} }
 [workspace]
 `,
     );
-    writeFileSync(
-      path.join(app, 'src/main.rs'),
-      `fn main() {
-    assert_ne!(liboliphaunt_wasix_portable::PACKAGE_VERSION, "9.8.7");
-    assert_eq!(liboliphaunt_wasix_portable::extension_archive("vector"),
-        Some(b"independent extension fixture".as_slice()));
-}
-`,
-    );
+    writeFileSync(path.join(app, 'src/main.rs'), `fn main() { ${assertions.join('\n')} }\n`);
   });
+
   test('runtime source build resolves runtime-owned contrib archives and AOT under the WASIX owner', {
     timeout: 180_000,
   }, () => {

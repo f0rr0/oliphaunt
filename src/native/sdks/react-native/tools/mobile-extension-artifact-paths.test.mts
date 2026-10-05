@@ -24,6 +24,7 @@ import {
   extensionCarrierLegalFileInventory,
 } from '../../../../extensions/tools/extension-upstream-licenses.mts';
 import { resolveMobileExtensionArtifactPaths } from './mobile-extension-artifact-paths.mts';
+import { stageMobileQualification } from './stage-mobile-qualification.mts';
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../../../..');
 const VERSION = '1.2.3';
@@ -579,6 +580,65 @@ test('materializes aggregate and singleton assets into immutable content-address
     aggregate.declaredContents.get('ios-xcframework:cube:ios-xcframework'),
     leaf.contents.get('ios-xcframework:ios-xcframework'),
   ]);
+});
+
+test('qualifies singleton and bundled workspace bytes without changing release pins or validation', async (t) => {
+  const value = fixture(t);
+  const aggregate = value.installAggregate();
+  const leaf = value.installLeaf();
+  leaf.manifest.compatibility = {
+    ...COMPATIBILITY,
+    nativeRuntimeVersion: '0.0.0',
+    wasixRuntimeVersion: '0.0.0',
+  };
+  value.writeManifest(VECTOR, leaf.manifest);
+  const original = readFileSync(value.manifestPath(VECTOR));
+  assert.equal(
+    (
+      await value.resolve({
+        extensions: 'vector',
+        assetKind: 'runtime',
+        assetTarget: 'android-x86_64',
+      })
+    ).status,
+    1,
+  );
+  const outputRoot = path.join(value.root, 'qualification');
+  stageMobileQualification({ platform: 'android', extensionRoot: value.artifactRoot, outputRoot });
+  assert.deepEqual(readFileSync(value.manifestPath(VECTOR)), original);
+  const manifestFile = path.join(outputRoot, 'extensions', VECTOR, 'extension-artifacts.json');
+  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+  assert.deepEqual(manifest.compatibility, COMPATIBILITY);
+  assert.equal(manifest.qualificationOnly, true);
+  assert.equal(manifest.version, VERSION);
+  const args = [
+    '--root',
+    REPOSITORY_ROOT,
+    '--artifact-root',
+    path.join(outputRoot, 'extensions'),
+    '--materialize-root',
+    value.materializeRoot,
+    '--extensions',
+    'amcheck,cube,vector',
+    '--asset-kind',
+    'runtime',
+    '--asset-target',
+    'android-x86_64',
+    '--required',
+    '1',
+  ];
+  assertContents(await resolveMobileExtensionArtifactPaths(args), [
+    aggregate.declaredContents.get('android-x86_64:amcheck:runtime'),
+    aggregate.declaredContents.get('android-x86_64:cube:runtime'),
+    leaf.contents.get('android-x86_64:runtime'),
+  ]);
+  manifest.qualificationOnly = false;
+  writeJson(manifestFile, manifest);
+  await assert.rejects(resolveMobileExtensionArtifactPaths(args), /qualificationOnly must be true/);
+  manifest.qualificationOnly = true;
+  manifest.compatibility.nativeRuntimeVersion = '0.0.0';
+  writeJson(manifestFile, manifest);
+  await assert.rejects(resolveMobileExtensionArtifactPaths(args), /must exactly match/);
 });
 
 test('rejects outer and nested carrier tampering independently', async (t) => {

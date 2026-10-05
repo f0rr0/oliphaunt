@@ -6,7 +6,7 @@ trap 'rm -rf "$scratch"' EXIT
 
 # Exercise the current sources in an isolated tree, including uncommitted fixes.
 git ls-files -z --cached --others --exclude-standard -- tools src \
-  LICENSE THIRD_PARTY_NOTICES.md .prototools package.json \
+  LICENSE THIRD_PARTY_NOTICES.md .prototools package.json Cargo.toml Cargo.lock \
   release-please-config.json .release-please-manifest.json \
   > "$scratch/files"
 tar -cf "$scratch/source.tar" --null -T "$scratch/files"
