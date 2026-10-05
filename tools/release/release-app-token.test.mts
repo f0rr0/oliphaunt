@@ -187,6 +187,18 @@ test('release workflow reserves repository mutations for Oli with per-step token
   assert.equal(pr.environment, 'release-pr');
   for (const step of pr.steps.filter((step) => step.env?.GH_TOKEN))
     assert.equal(step.env.GH_TOKEN, '${{ steps.release_pr_token.outputs.token }}');
+  for (const name of ['publish-bootstrap', 'publish']) {
+    const preflight = workflow.jobs[name].steps.find(
+      (step) => step.name === 'Preflight selected product tag and release collisions',
+    );
+    assert.match(preflight.env.GH_TOKEN, /steps\.[a-z_]+\.outputs\.token/u);
+    const tokenId = preflight.env.GH_TOKEN.match(/steps\.([a-z_]+)\.outputs/u)[1];
+    const tokenStep = workflow.jobs[name].steps.find((step) => step.id === tokenId);
+    assert.equal(tokenStep.with['permission-contents'], 'write', 'draft collision visibility');
+  }
+  assert.equal(workflow.jobs['request-qualification'].permissions.actions, 'write');
+  assert.equal(workflow.jobs['publish-bootstrap'].permissions['id-token'], 'write');
+  assert.equal(workflow.jobs.publish.permissions['id-token'], 'write');
 });
 
 test('draft inventories resolve fresh App credentials for repository and paginated reads', async () => {

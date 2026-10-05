@@ -939,9 +939,18 @@ jobs:
         uses: ./.github/actions/setup-npm-publisher
         with:
           npm-version: ${{ env.NPM_VERSION }}
+      - name: Create Oli bootstrap preflight token
+        id: bootstrap_preflight_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          owner: f0rr0
+          repositories: oliphaunt
+          permission-contents: write
       - name: Preflight selected product tag and release collisions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.bootstrap_preflight_token.outputs.token }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
         run: |
           bash tools/release/verify-product-tags.sh \

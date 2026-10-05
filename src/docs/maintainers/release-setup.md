@@ -178,12 +178,16 @@ Each credential-bearing job directly selects exactly one protected environment:
 `release-pr`, `release-bootstrap`, or `release-publish`. Keep the named secrets
 only in those environments; do not add repository-level duplicates or a
 reusable-workflow secret bridge. GitHub automatically provides the scoped
-`GITHUB_TOKEN`. Repository permissions on the built-in token remain read-only;
-publication and bootstrap retain `id-token: write` for registry/Sigstore OIDC.
+`GITHUB_TOKEN`. Release PR, bootstrap, and publication jobs keep the built-in
+token's repository mutation permissions read-only. The qualification request
+job retains `actions: write` to dispatch CI; publication and bootstrap retain
+`id-token: write` for registry/Sigstore OIDC.
 Oli performs release PR, tag, asset, attestation, and promotion mutations with
 phase-scoped App tokens. Bootstrap's App content write is solely to create the
-immutable release transport tag immediately before its first registry mutation;
-reruns do not create, move, or delete repository refs.
+immutable release transport tag immediately before its first registry mutation.
+Its draft-collision preflight also uses an App token with Contents write so draft
+releases remain visible; that check performs only reads. Reruns do not create,
+move, or delete repository refs.
 Candidate preparation, conditional bootstrap, and publication are dependent
 jobs in one `publish` run with separate permissions and environments.
 The read-only dry-run validates every public release visible to its token and
