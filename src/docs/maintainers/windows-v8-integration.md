@@ -1,5 +1,17 @@
 # Automatic Windows V8 integration
 
+Closing snapshot, **October 5, 2026**: all four desktop host jobs, including
+Windows installed consumers, and the TypeScript/browser consumer job pass at
+`2654aa260a31b71ceb31d019770408ad20151e16`. The full Linux/portable WASIX
+lifecycle receipt independently verifies 39 extensions across five modes.
+Android packaging also passes after the CI fix. Native iOS production and
+the final qualification gates remain pending in
+[run 37267345495](https://github.com/f0rr0/oliphaunt/actions/runs/37267345495),
+which is left running at the user's request. These notes close the investigation
+without claiming release readiness; see the
+[feasibility conclusion](windows-wasmer-feasibility.md#conclusion) for the
+remaining Windows consumer requirements.
+
 ## Consumer contract
 
 The same Oliphaunt dependency, constructors, configuration, queries, transactions,
@@ -13,7 +25,10 @@ no dependency or feature changes, engine flags, environment variables, compiler
 installation or first-run guest compilation. Maintainers produce and package
 the PostgreSQL, extension and tools AOT artifacts. Consumers load them. An
 automatic fallback to `Module::new` on an incompatible Windows cache would
-violate this contract and is not implemented.
+violate this contract. The SDK's direct artifact loader has no such fallback;
+WASIX's default resolver can still compile on module-cache misses. A strict
+cache-only resolver and native-payload checks remain qualification work; see
+the [feasibility follow-up](windows-wasmer-feasibility.md#engine-packaging-and-static-link-isolation).
 
 This branch builds on [Wasmer upgrade PR #247](https://github.com/f0rr0/oliphaunt/pull/247)
 and its correctness prerequisites. It is integration work, not yet a qualified
@@ -90,7 +105,8 @@ The exact V8 source makes the restriction explicit:
   configuration is empty in this engine generation.
 
 V8's public C++ flag API could disable many optional instructions before engine
-initialization. That alone is not a proven portable profile:
+initialization. The follow-up proves constrained profiles and fresh-process
+PostgreSQL cache reads, but those flags alone are not a universal profile:
 [`CpuFeatures::ProbeImpl`](https://github.com/v8/v8/blob/b0a55a7dad7f536cce1f9aaddba89894c8533946/src/codegen/x64/assembler-x64.cc#L87)
 still records CET shadow-stack support directly from hardware, without an
 `enable_*` flag. Clearing all optional SIMD features also removes V8's
@@ -160,6 +176,176 @@ The [October 5 Wasmer/WASIX feasibility follow-up](windows-wasmer-feasibility.md
 records a new local fixed-flag experiment and the relevant upstream fixes and
 open issues. It narrows the next investigation to retaining WASIX, rather than
 recommending a runtime migration from an AOT compile result alone.
+
+At source `91acf30d6e8393b2f83e0999f1d03d1e4219768e`,
+[run 37249648979](https://github.com/f0rr0/oliphaunt/actions/runs/37249648979/job/111574511372)
+passed the same 21 runtime and 7 PostgreSQL regressions, then executed **three
+UUID-OSSP AOT tests** covering direct dynamic loading/reopen, materialization,
+and logical dump/restore through the split `pg_dump` and `psql` modules. This
+is the first recorded Windows extension/tools execution in this branch. Core
+fixture `11312707536` and extension/tools fixtures `11318826010`/`11318277384`
+are immutable earlier compiler outputs. Evidence artifact `11320343594` has
+digest `sha256:43ef2d65c5242aa3c0120124391b2e0feace99e9eb9b72ea90cf3760100137f6`.
+
+That integration job fails later, before vector lifecycle execution: local
+archive discovery assumes the runtime's version for an external extension.
+The corrected lookup at `31e154b1` reads the extension manifest's version; a
+real Cargo consumer regression covers differing versions. Repeated vector
+opens, error recovery and memory samples were then executed in the follow-up
+hosted run described below.
+The separate CPU-profile Windows jobs pass their cache tests but fail native
+coexistence at link time due to Wee8's static C++ CRT conflicting with an
+ordinary `/MD` library. Their red results remain blockers, rather than waived
+diagnostics. See the feasibility record for masks and their coverage limits.
+
+At exact source **`31e154b1d5f47f35b384c6d2856754287d41a57f`**,
+[run 37251912738 / SDK job 111581122909](https://github.com/f0rr0/oliphaunt/actions/runs/37251912738/job/111581122909)
+completes successfully: source serializer, SDK and N-API checks; generated V8
+core/support, extension and tools artifacts; the 21 runtime and 7 PostgreSQL
+regression tests; 3 UUID-OSSP/tool tests; and 25 vector database lifecycles with
+SQL error recovery. Its retained evidence is artifact `11322237408`, digest
+`sha256:39c28d183d1fa0d26af138f7b338a91f5f3be2989c22ac20e9772578052c862b`.
+The same immutable older fixtures are used; this is not same-run product
+qualification.
+
+**Memory remains a release blocker despite that functional pass.** Across the
+25-cycle test, sampled private memory grows by about 334 MiB per cycle between
+the first samples after cycles 1 and 24, and peaks at 8.588 GiB; peak working
+set is 7.014 GiB. The final process-teardown drop does not qualify reclamation
+inside a long-running application. The [feasibility record](windows-wasmer-feasibility.md#windows-database-lifecycle-measurement)
+contains the sample scope and limits.
+
+The same diagnostic's fresh Windows readers accept a matching-profile
+PostgreSQL native cache through WASIX and reject a different CPU mask, including
+a cache from another machine with the same Windows runner label. Both Windows
+toolsets pass the scoped `/MT` mixed-library runtime control, but their ordinary
+`/MD` link remains broken. The overall diagnostic is therefore red. These
+controls do not resolve the consumer CRT requirement or upstream STL issue.
+
+The selected-product all-platform qualification at this source is
+[run 37251945930](https://github.com/f0rr0/oliphaunt/actions/runs/37251945930).
+Source checks, unit tests and selected SDK packaging pass. Core compiler output
+and portable packaging also finish, but the portable producer job fails when
+parallel extension/tools preparation rewrites the same generated PostgreSQL
+header: `install: ... File exists`. Host AOT and installed-consumer jobs cannot
+qualify that run. It was cancelled after inspecting the failure.
+
+Commit **`23962fbda83594257abf77fd0bc16821acb7e118`** makes a valid cached
+header read-only and propagates preparation failures before Docker path mapping.
+The new behavioral regression fails on the previous code and passes after the
+fix: eight concurrent cache readers preserve the header inode; corrupt or
+changed headers still rebuild. Runtime unit/orchestration tasks and the complete
+workflow gate pass locally. All-platform selected-product qualification was
+restarted in [run 37255463925](https://github.com/f0rr0/oliphaunt/actions/runs/37255463925).
+That dispatch was rejected before builds because the manually supplied
+qualification request key did not match the source/scope digest. A corrected
+dispatch omits that optional key; no gate was weakened. The corrected run is
+[37255647955](https://github.com/f0rr0/oliphaunt/actions/runs/37255647955), at the
+same exact `23962fbd` source SHA and three selected products, with every platform
+selector set to `all`.
+
+That corrected run completes with **Required and Qualified both failing**.
+Portable core, tools, all 39 WASIX extension compiler outputs, standard/ICU
+seeds and all seven native extension producer platforms pass. All four desktop
+host AOT build/validation/runtime/representative-extension steps also pass.
+Each host then fails Node-API packaging: metadata declares runtime 0.3.0 while
+the selected workspace runtime actually reports 0.3.1. Installed TypeScript
+consumers and the exhaustive WASIX extension lifecycle are skipped after these
+failures; they are not qualified.
+
+Commit `8553acb2` explicitly advances this integration's Node-API runtime and
+Rust binding compatibility pins to 0.3.1 in the build package and its four
+carriers. ABI/profile checks are preserved, and mismatch errors now print
+expected and actual identities. Local Node-API formatting/lint, ten JavaScript
+package tests, the compiled packaging/failure controls, five Rust tests and
+release metadata checks pass. This changes these selected consumers' pins;
+it does not reinstate automatic version coupling for independently released
+products.
+
+Retry [37261508648](https://github.com/f0rr0/oliphaunt/actions/runs/37261508648)
+stops before builds because main advanced; it is merged into the branch.
+Retry [37261777310](https://github.com/f0rr0/oliphaunt/actions/runs/37261777310)
+stops before builds because its `test:` HEAD subject lacks release intent for
+the branch's production changes. The local release-intent gate passes with the
+subsequent `fix:` HEAD. Full selected-product/all-platform qualification is
+attempted in [run 37261920946](https://github.com/f0rr0/oliphaunt/actions/runs/37261920946)
+at **`a4697f0666d2367e164363542e398c8908d9c0fb`**. Required and Qualified
+finish red because final extension packaging lacks Android artifacts.
+
+At this source, all four desktop AOT/Node-API host jobs and the installed
+TypeScript/browser consumer job pass. Each host executes 21 runtime tests,
+7 PostgreSQL regressions and 3 UUID-OSSP/tool tests; pgwire and packaged
+Node/Bun/Deno/Electron smoke paths execute too. The Windows carrier includes
+its VC runtime DLLs with verified hashes, but inspection finds the V8 notices
+missing from the package. This remains required packaging work before shipping.
+
+The full WASIX lifecycle job also passes. Artifact **`11325864072`**,
+`wasix-release-regression-evidence`, has verified ZIP digest
+`sha256:85acd90e4ad679a8b2779503dde80931b730e75df941899ebd94a3889a800268`.
+All 39 selected catalog extensions have passed direct, server, restart,
+materialization and physical backup/restore evidence, with no missing current
+claims. The receipt records source tree `6e61b839e86b80770a86cef2d7fa0502d7fbe938`
+and source digest
+`sha256:05c44ce681c43857fb4b49081cb8a290cf3051ea102de324964ec61f4f9566d2`.
+The collector enforces `--require-current-evidence` at the candidate SHA. This
+exhaustive lifecycle execution is Linux/portable evidence; it does not replace
+full catalog execution on Windows V8. These are diagnostic receipts from a
+failed candidate, not publishable qualification evidence.
+
+Both Android compilation jobs and the Linux support producer pass, but Android
+packaging is skipped. The native aggregate incorrectly accepts that selected
+skip. Final package assembly then correctly rejects missing `android-arm64-v8a`
+and `android-x86_64` extension artifacts. Commit `2654aa26` replaces the Android
+wildcard status check with successful named producer checks and makes the
+native aggregate fail when any selected platform producer does not succeed.
+The full local workflow gate and selected-skip regression pass. Qualification
+is repeated in [run 37267345495](https://github.com/f0rr0/oliphaunt/actions/runs/37267345495)
+at **`2654aa260a31b71ceb31d019770408ad20151e16`**, with all three selected
+WASIX products, every platform selector at `all`, and its own artifacts and
+lifecycle evidence. Its final gates must be recorded before qualification.
+Both Android packaging jobs execute and pass at this SHA: `111633416119`
+(`android-x86_64`) and `111633416131` (`android-arm64-v8a`). They download the
+same-run static archives and Linux support, restore the inputs, assemble the
+packages and upload final artifacts `11327921038` and `11327906132`. This
+resolves the skipped-packaging defect observed in the failed candidate.
+
+At the closing snapshot, all four desktop host jobs pass, including Windows
+job `111631094438`. They execute the runtime, PostgreSQL, representative
+extension/tools, pgwire and installed Node/Bun/Deno/Electron checks. The
+TypeScript/browser consumer job `111635989378` also passes. Full WASIX
+lifecycle job `111635989382` produces artifact **`11327404928`**, whose ZIP
+digest is independently verified as
+`sha256:3b01c10863bfafa5c3299552f651ee98a7371dc8a787fd05c585b2f80b9ceddb`.
+Its source tree is `8ac4e817616b2f578802fa6b74b0ac3561032b40`, and source digest
+is `sha256:05c44ce681c43857fb4b49081cb8a290cf3051ea102de324964ec61f4f9566d2`.
+The receipt matches the exact candidate and all 39 planned catalog names:
+**195 passed mode statuses**, with no missing current WASIX claims. This is
+Linux/portable lifecycle execution, not exhaustive Windows V8 qualification.
+
+Native iOS extension production, final extension package assembly and the
+Required/Qualified gates are still pending. CI continues without cancellation
+or a new dispatch. The closing documentation commit follows the tested source;
+this run tests `2654aa26`, not the later documentation commit. Raw logs and the
+verified receipt are retained locally under the ignored
+`tools/experiments/wasmer-v8/results/validation-2026-10-05/` directory; durable
+run and artifact identities above allow the evidence to be retrieved again.
+
+The [ownership investigation](windows-wasmer-feasibility.md#store-ownership-defect-and-a-partial-linux-remedy)
+finds concrete defects in the pinned V8 C API Store and shared-owner deletion
+paths, with bounded Linux controls showing large reductions in retention.
+The corrected Windows comparison at `04ff56b6` also passes the 21 runtime,
+7 PostgreSQL, 3 UUID-OSSP/tool tests and 25 vector lifecycles. Peak private
+memory falls from 8.590 to 0.795 GiB and sampled growth from 334.2 to 2.9 MiB
+per cycle. Residual retention remains. Artifact `11326071452` has verified
+digest `sha256:9e8075025b1d9fe9158c07b01ac4b0fce82a225c7370173bbd04f67cad3046b9`.
+The patched logs record zero Wasmer V8 module-construction calls; they do not
+exclude internal V8 compilation. Fresh Linux debugger controls subsequently
+observe zero guest body compilations while loading the PostgreSQL cache,
+but 21 host-import adapters and one C-to-Wasm entry adapter generated inside
+V8. A positive fresh-compilation control detects guest compilation. See the
+feasibility ledger for the bounded proof and Windows limitation. This is a
+source-pinned private experiment.
+These changes have not been installed in the production SDK dependency closure.
 
 Do not treat skipped child jobs with green aggregate badges as passing builds.
 Qualification must identify the source SHA, actual executed jobs and artifact

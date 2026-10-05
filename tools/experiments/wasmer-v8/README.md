@@ -95,6 +95,12 @@ The separate Store `Send` failure is an integration constraint rather than one o
 
 The next decision gate is a real PostgreSQL session on Windows: initialize/open the database, exercise SQL error recovery and continued use, then verify shutdown and directory reopen/durability. We can ship without unused exception-object and engine-async APIs if that qualification passes. We cannot waive callback process-abort risk or required interruption/teardown behavior merely because these tests were classified as diagnostics.
 
+The subsequent integration run at `91acf30d` passes real SQL recovery,
+callback-panic recovery, async ownership and normal/terminal close paths, plus
+UUID-OSSP loading and dump/restore. That strengthens the remedies above but
+does not exercise interruption of an indefinitely blocked guest atomic waiter.
+See the integration ledger for exact runs and fixture provenance.
+
 ### Runner and distribution identity
 
 | Final measurement | Windows | Linux |
@@ -190,6 +196,67 @@ To include the real guest, add `--postgres-module /absolute/path/to/verified/pos
 No physical Windows machine is needed: the experiment workflow uses GitHub-hosted Windows. It runs on the dedicated experiment branch or through manual dispatch once the workflow is available on the default branch.
 
 ## Product work still required
+
+The October 5 follow-up adds `cpu-profile.rs` and `profile_check.py` for
+fixed-flag writers and compilation-free readers. PostgreSQL native bytes are
+persisted alongside the EH/SIMD cache and exchanged only between matching
+native operating systems. `host_map.cpp`/`mixed_host.rs` test an ordinary MSVC
+container alongside V8; `/MD` is the consumer control and `/MT` is a separate
+diagnostic to reach runtime behavior with matching CRTs. `lifecycle_check.py`
+measures the actual SDK test process over 25 vector open/error/query/close
+cycles and retains raw Windows private-memory/working-set samples, including
+on timeout. Results and unresolved blockers are recorded in the
+[feasibility follow-up](../../../src/docs/maintainers/windows-wasmer-feasibility.md).
+
+At `31e154b1`, all 25 vector cycles pass on Windows, but private memory reaches
+8.588 GiB and grows by about 334 MiB per cycle over the measured interval.
+This is a release blocker, not a successful memory qualification. Fresh Windows
+readers also prove PostgreSQL cache acceptance for matching CPU profiles and
+rejection for different profiles. Matching `/MT` native-library controls pass;
+ordinary `/MD` linking still fails on both tested Windows toolsets. The linked
+feasibility record identifies the exact runs, artifacts and limits.
+
+The follow-up isolates a pinned V8 C API deletion defect: its public nonvirtual
+base deletes do not reach the designated Store, shared-memory and shared-module
+implementation owners. Linux controls preserve Wasmer's existing Arc lifetimes
+and use the designated C++ deleters. The 1,000-store control's growth falls to
+12 KiB; PostgreSQL/WASIX instantiation growth falls from about 5 MiB to
+0.14 MiB per cycle, while repeated PostgreSQL module-load retention falls from
+39.64 MiB to about 13 KiB per load over the initial measured interval. These
+are distinct controls, without SQL or extensions; residual retention remains.
+
+`owned_store_control.py` creates a private source-pinned Windows dependency
+override and records source/lockfile receipts. `--shared-memory` and
+`--shared-module` preserve existing final-owner Drops; `--observe-compilation`
+logs Wasmer V8 module construction, excluding compilation internal to V8.
+The first hosted ownership setup fails on a CP1252 decoding error before any
+patched runtime executes. The corrected paired comparison uses explicit UTF-8,
+the same physical runner and the same AOT bytes, then repeats ordinary SDK,
+UUID-OSSP/tools and 25-vector-cycle tests. Its outcome is recorded in the linked
+feasibility ledger. This private ABI mechanism is research, not the published
+SDK's dependency closure or a complete AOT guarantee.
+
+The corrected Windows comparison at `04ff56b6` passes all those functional
+checks. Peak private memory falls from **8.590 to 0.795 GiB**, and sampled
+growth from **334.2 to 2.9 MiB per cycle**. Residual retention remains. Its
+patched logs prove actual Store cleanup and record no Wasmer V8
+`ModuleHandle::new` calls; they cannot exclude compilation internal to V8.
+Artifact `11326071452` has verified digest
+`sha256:9e8075025b1d9fe9158c07b01ac4b0fce82a225c7370173bbd04f67cad3046b9`.
+This validates a feasible ownership remedy, not a shipped engine fix or complete
+memory/AOT/consumer qualification.
+
+Additional fresh-process Linux GDB controls observe zero guest function body
+compilations and zero C API module constructions when loading the PostgreSQL
+cache. V8 nevertheless generates 21 host-import adapters and one C-to-Wasm
+entry adapter during WASIX instantiation. A fresh tiny-module compilation
+control detects two guest body compilations and one module construction,
+confirming the probes are active. Cached tiny EH execution returns 42 and
+generates only one entry adapter. Adapter code generation happens inside the
+embedded engine and needs no external compiler. This is bounded Linux evidence,
+not a count of all compiler paths or a direct Windows observation; it does not
+establish a headless runtime. Scripts, raw logs and hashed input receipts are
+retained with the other local controls.
 
 Only proceed after reviewing the actual Windows results and resolving relevant blockers. Qualify the existing PostgreSQL guest, full WASIX imports, side modules/extension linking, memory and directory storage, SQL errors/constraints/savepoints/PL/pgSQL, rollback and successful reuse, COPY/disconnect/reconnect, terminal-fault shutdown, clean SDK consumption and native-host coexistence. Then compare real startup/cache costs, query RTT, mixed workloads, memory and distributable package size.
 
