@@ -15,6 +15,7 @@ name: Windows V8 genuine cache pair and owned trap control
         - catalog-strict-only
         - automatic-only
         - automatic-and-catalog
+        - family-only
 permissions:
   contents: read
   actions: read
@@ -547,10 +548,10 @@ jobs:
         if-no-files-found: warn
         retention-days: 90
   automatic-store-interruption:
-    if: ${{ inputs.scope == 'automatic-only' || inputs.scope == 'automatic-and-catalog' }}
+    if: ${{ inputs.scope == 'automatic-only' || inputs.scope == 'automatic-and-catalog' || inputs.scope == 'family-only' }}
     name: Automatic Store interruption and teardown (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -567,6 +568,9 @@ jobs:
     - uses: ./.github/actions/setup-rust-tools
       with:
         toolchain: 1.96.0
+    - name: Set up verified Bun for generated package envelopes
+      if: ${{ inputs.scope == 'family-only' }}
+      uses: ./.github/actions/setup-bun
     - name: Set up research-only Visual Studio 2022 host
       uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
       with:
@@ -645,6 +649,16 @@ jobs:
         OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
         OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+    - name: Stage aligned unpublished crate family and frozen engine packages
+      if: ${{ inputs.scope == 'family-only' }}
+      run: |
+        python tools/experiments/wasmer-v8/expanded-ownership/cache-only-prepare.py target/windows-v8-ownership/control
+        python tools/experiments/wasmer-v8/expanded-ownership/stage-family.py target/windows-v8-ownership/control
+    - name: Build and run the family consumer from extracted crate contents
+      if: ${{ inputs.scope == 'family-only' }}
+      run: python tools/experiments/wasmer-v8/expanded-ownership/family-check.py target/windows-v8-ownership/control
+      env:
+        CARGO_TARGET_DIR: ${{ github.workspace }}/target/research-family
     - name: Retain automatic lifetime receipts
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -652,6 +666,14 @@ jobs:
         name: automatic-store-interruption-${{ matrix.runner }}
         path: 'target/windows-v8-ownership/control
 
-          !target/windows-v8-ownership/control/engine/dependency'
+          !target/windows-v8-ownership/control/engine/dependency
+
+          !target/windows-v8-ownership/control/cache-only-dependency
+
+          !target/windows-v8-ownership/control/family/sources
+
+          !target/windows-v8-ownership/control/family/extracted
+
+          !target/windows-v8-ownership/control/family/consumer-from-archives/reconstructed.dll'
         if-no-files-found: warn
         retention-days: 90
