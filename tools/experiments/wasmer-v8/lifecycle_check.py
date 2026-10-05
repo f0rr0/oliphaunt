@@ -2,12 +2,16 @@
 import ctypes
 from ctypes import wintypes
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import time
 
 output = pathlib.Path(sys.argv[1])
+cycles = int(os.environ.get("OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES", "25"))
+if not 1 <= cycles <= 500:
+    raise ValueError("diagnostic cycles must be between 1 and 500")
 command = ["cargo", "test", "--locked", "-p", "oliphaunt-wasix", "--no-default-features",
            "--features", "extension-vector", "--test", "extensions_smoke", "--no-run",
            "--message-format=json"]
@@ -56,10 +60,10 @@ with (output / "lifecycle.log").open("w") as log:
                                 "working_set_bytes": counters.WorkingSetSize,
                                 "completed_cycles": (output / "lifecycle.log").read_text().count(
                                     "completed_extension_lifecycle=")})
-            if time.monotonic() - start > 300:
+            if time.monotonic() - start > max(300, cycles * 15):
                 process.kill()
                 process.wait()
-                raise TimeoutError("25 SDK lifecycles exceeded five minutes")
+                raise TimeoutError(f"{cycles} SDK lifecycles exceeded their diagnostic time budget")
             time.sleep(0.1)
     finally:
         kernel.CloseHandle(handle)

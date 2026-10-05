@@ -2263,7 +2263,7 @@ jobs:
       - affected
       - liboliphaunt-wasix-runtime
       - liboliphaunt-wasix-aot
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'skipped') && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-release-assets') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all') }}
+    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-release-assets') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

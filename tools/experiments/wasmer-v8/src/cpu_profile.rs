@@ -9,8 +9,12 @@ use wasmer::{Instance, Module, Store, imports};
 unsafe extern "C" {
     #[cfg_attr(target_os = "linux", link_name = "_ZN2v82V818SetFlagsFromStringEPKcm")]
     #[cfg_attr(
-        target_os = "windows",
+        all(target_os = "windows", not(feature = "private-dll-control")),
         link_name = "?SetFlagsFromString@V8@v8@@SAXPEBD_K@Z"
+    )]
+    #[cfg_attr(
+        all(target_os = "windows", feature = "private-dll-control"),
+        link_name = "research_set_v8_flags"
     )]
     fn set_v8_flags(flags: *const u8, len: usize);
 }
@@ -36,13 +40,18 @@ pub fn run() -> Result<()> {
     );
     let mode = args[0].as_str();
     ensure!(
-        mode == "baseline" || mode == "default",
+        mode == "baseline" || mode == "baseline-no-jcc" || mode == "default",
         "unknown CPU profile"
     );
     ensure!(args[1] == "write" || args[1] == "read", "unknown operation");
     // V8 initialization is process-wide. This must precede even the first engine.
-    if mode == "baseline" {
-        unsafe { set_v8_flags(BASELINE.as_ptr(), BASELINE.len()) };
+    if mode.starts_with("baseline") {
+        let flags = if mode == "baseline-no-jcc" {
+            format!("{BASELINE} --no-intel-jcc-erratum-mitigation")
+        } else {
+            BASELINE.to_owned()
+        };
+        unsafe { set_v8_flags(flags.as_ptr(), flags.len()) };
     }
     let mut store = Store::new(super::engine());
     let bytes = if args[1] == "write" {
@@ -66,9 +75,12 @@ pub fn run() -> Result<()> {
         "mode={mode} operation={} artifact_cpu_features={:#x} flag_hash={:#x} native_header={header:?}",
         args[1], header[2], header[3]
     );
-    if mode == "baseline" && args[1] == "write" {
+    if mode.starts_with("baseline") && args[1] == "write" {
         // SSE4.1 + SSSE3 + SSE3; leave JCC mitigation and CETSS enabled.
         ensure!(header[2] & !0x18000 == 0xe, "unexpected normalized mask");
+        if mode == "baseline-no-jcc" {
+            ensure!(header[2] & 0x8000 == 0, "JCC bit remains enabled");
+        }
     }
     if args[1] == "write" {
         std::fs::write(&args[2], &bytes)?;

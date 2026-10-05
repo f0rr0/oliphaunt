@@ -18,6 +18,84 @@ concurrency:
   group: wasmer-v8-probe-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  dll-boundary:
+    name: Private DLL and ordinary consumer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025-vs2026]
+    defaults:
+      run:
+        shell: bash
+        working-directory: tools/experiments/wasmer-v8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust-tools
+        with:
+          toolchain: 1.96.0
+          cache-workspaces: tools/experiments/wasmer-v8 -> target
+      - uses: ./.github/actions/setup-msvc
+        if: matrix.os == 'windows-2025-vs2026'
+      - name: Set up research-only Visual Studio 2022 host
+        if: matrix.os == 'windows-2022'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+          vsversion: '2022'
+      - name: Pin research linker under Git Bash
+        if: matrix.os == 'windows-2022'
+        shell: pwsh
+        run: |
+          $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
+          if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
+      - name: Download immutable PostgreSQL fixture
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: '37225721762'
+          artifact-ids: '11312707536'
+          github-token: ${{ github.token }}
+          path: tools/experiments/wasmer-v8/guest
+          merge-multiple: true
+      - name: Prepare producer bindings and archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p profile-results
+          gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > profile-results/guest-artifact.json
+          python verify_guest.py guest profile-results
+          cargo build --locked --release --features wasix
+      - name: Compile ordinary dynamic-CRT host library
+        shell: pwsh
+        run: |
+          $out = 'target/host-map'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          cl.exe /nologo /O2 /MD /EHsc /std:c++20 /DPROBE_STANDALONE host_map.cpp "/Fo$out/control.obj" "/Fe$out/control.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$out/control.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cl.exe /nologo /c /O2 /MD /EHsc /std:c++20 host_map.cpp "/Fo$out/host_map.obj"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          lib.exe /nologo "/OUT:$out/probe_host.lib" "$out/host_map.obj"
+          exit $LASTEXITCODE
+      - name: Produce private C import boundary and dependency copy
+        run: python dll_control.py dll-results
+      - name: Build without producer tools and execute ordinary MD host
+        run: python dll_consumer_check.py dll-results
+      - name: Retain DLL boundary evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v8-dll-${{ matrix.os }}
+          path: tools/experiments/wasmer-v8/dll-results
+          if-no-files-found: warn
+          retention-days: 90
+
   cpu-profile:
     name: Fixed CPU profile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -288,7 +366,7 @@ jobs:
     if: ${{ github.ref == 'refs/heads/f0rr0/windows-v8-integration' }}
     name: Windows SDK V8 integration diagnostic
     runs-on: windows-2025-vs2026
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -384,12 +462,32 @@ jobs:
           bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee "$control/runtime-extension-tools.log"
       - name: Compare database retention with owned cleanup on the same machine
         env:
+          OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
           OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
           OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
         run: |
           set -euo pipefail
           export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-diagnostic/vector-artifacts"
           python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-diagnostic/owned-store-control
+      - name: Prepare callback payload cleanup control
+        run: |
+          set -euo pipefail
+          cp target/windows-v8-diagnostic/owned-store-control/original-Cargo.lock Cargo.lock
+          rm .cargo/config.toml
+          python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/callback-control --shared-memory --shared-module --observe-compilation --callback-finalizers
+      - name: Validate callback cleanup through runtime and tools
+        run: |
+          set -euo pipefail
+          bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee target/windows-v8-diagnostic/callback-control/runtime-extension-tools.log
+      - name: Measure callback cleanup over 100 closed databases
+        env:
+          OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
+          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+        run: |
+          set -euo pipefail
+          export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-diagnostic/vector-artifacts"
+          python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-diagnostic/callback-control
       - name: Retain diagnostic database evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

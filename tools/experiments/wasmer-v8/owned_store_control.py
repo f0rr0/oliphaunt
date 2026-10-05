@@ -13,6 +13,7 @@ parser.add_argument("--dry-run", action="store_true")
 parser.add_argument("--shared-memory", action="store_true")
 parser.add_argument("--shared-module", action="store_true")
 parser.add_argument("--observe-compilation", action="store_true")
+parser.add_argument("--callback-finalizers", action="store_true")
 args = parser.parse_args()
 output = args.output.resolve()
 output.mkdir(parents=True, exist_ok=True)
@@ -116,6 +117,34 @@ impl Drop for ModuleHandle {''')
         "shared_module_owner_cleanup": args.shared_module,
         "observe_compilation": args.observe_compilation,
         "method": "private MSVC shared Module owner; log Wasmer V8 new calls; excludes internal V8 compilation",
+    }
+if args.callback_finalizers:
+    relative_function = pathlib.Path("src/backend/v8/entities/function/mod.rs")
+    original_function = (source / relative_function).read_bytes()
+    expected_function = "1f0547903ab30346edc57a8159ecce176634bea64d65efe439d20bfb08d9fe87"
+    if hashlib.sha256(original_function).hexdigest() != expected_function:
+        raise RuntimeError("pinned host callback source changed")
+    function = original_function.decode("utf-8")
+    old_finalizer = "                None,\n            )"
+    if function.count(old_finalizer) != 3:
+        raise RuntimeError("unexpected callback constructor layout")
+    function = function.replace(old_finalizer,
+        "                Some(research_drop_callback_env::<F>),\n            )")
+    function = function.replace("impl Function {", '''// Research only: each constructor transfers one unique Box to V8.
+// V8's existing host-info finalizer releases it when its isolate is disposed.
+unsafe extern "C" fn research_drop_callback_env<F: 'static>(ptr: *mut c_void) {
+    unsafe { drop(Box::from_raw(ptr.cast::<FunctionCallbackEnv<'static, F>>())) };
+}
+
+impl Function {''', 1)
+    patches[relative_function] = function.encode("utf-8")
+    (output / "original-function.rs").write_bytes(original_function)
+    (output / "patched-function.rs").write_bytes(patches[relative_function])
+    receipt["callback_finalizers"] = {
+        "original_sha256": expected_function,
+        "patched_sha256": hashlib.sha256(patches[relative_function]).hexdigest(),
+        "constructors": 3,
+        "method": "use existing C API callback finalizer for unique callback payloads",
     }
 if not args.dry_run:
     host = subprocess.check_output(["rustc", "-vV"], encoding="utf-8")

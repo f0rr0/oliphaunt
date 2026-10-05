@@ -153,6 +153,12 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         );
       }
     }
+    const packaging = workflow.jobs['liboliphaunt-wasix-release-assets'];
+    for (const producer of ['affected', 'liboliphaunt-wasix-runtime', 'liboliphaunt-wasix-aot']) {
+      assert(packaging.needs.includes(producer));
+      assert(packaging.if.includes(`needs.${producer}.result == 'success'`));
+    }
+    assert(!packaging.if.includes('needs.*.result'));
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
