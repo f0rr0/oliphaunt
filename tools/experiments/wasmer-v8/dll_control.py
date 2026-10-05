@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -18,6 +19,9 @@ parser.add_argument("output", type=pathlib.Path)
 args = parser.parse_args()
 output = args.output.resolve()
 output.mkdir(parents=True, exist_ok=False)
+msvc = pathlib.Path(os.environ["VCToolsInstallDir"]) / "bin/HostX64/x64"
+for tool in ["cl.exe", "link.exe", "lib.exe"]:
+    assert (msvc / tool).is_file(), msvc / tool
 metadata = json.loads(subprocess.check_output(
     ["cargo", "metadata", "--locked", "--format-version=1"], encoding="utf-8"))
 packages = [p for p in metadata["packages"] if p["name"] == "wasmer" and p["version"] == "7.5.0"]
@@ -71,16 +75,16 @@ owners = {
 exports = [f"  {s}={owners.get(s, s.removeprefix('wee8_'))}" for s in symbols]
 exports.append("  research_set_v8_flags=?SetFlagsFromString@V8@v8@@SAXPEBD_K@Z")
 (output / "engine.def").write_text("LIBRARY oliphaunt_wee8\nEXPORTS\n" + "\n".join(exports) + "\n")
-run(["cl.exe", "/nologo", "/c", "/O2", "/MT", "/EHsc", "/std:c++20",
+run([str(msvc / "cl.exe"), "/nologo", "/c", "/O2", "/MT", "/EHsc", "/std:c++20",
      str(output / "bridge.cpp"), f"/Fo{output / 'bridge.obj'}"])
-run(["link.exe", "/NOLOGO", "/DLL", f"/OUT:{output / 'oliphaunt_wee8.dll'}",
+run([str(msvc / "link.exe"), "/NOLOGO", "/DLL", f"/OUT:{output / 'oliphaunt_wee8.dll'}",
      f"/DEF:{output / 'engine.def'}", f"/IMPLIB:{output / 'engine-all-exports.lib'}",
      str(output / "bridge.obj"), str(archive), "winmm.lib", "dbghelp.lib", "shlwapi.lib"])
 # V8 archive directives may export C++ symbols. Restrict the consumer import
 # library to C entries regardless; inspect the DLL's exports in the evidence.
 (output / "imports.def").write_text("LIBRARY oliphaunt_wee8.dll\nEXPORTS\n" +
     "\n".join("  " + s for s in symbols + ["research_set_v8_flags"]) + "\n")
-run(["lib.exe", "/NOLOGO", "/MACHINE:X64", f"/DEF:{output / 'imports.def'}",
+run([str(msvc / "lib.exe"), "/NOLOGO", "/MACHINE:X64", f"/DEF:{output / 'imports.def'}",
      f"/OUT:{output / 'oliphaunt_wee8.lib'}"])
 dependency = output / "dependency/wasmer-7.5.0"
 shutil.copytree(source, dependency)

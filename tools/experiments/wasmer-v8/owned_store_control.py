@@ -132,8 +132,8 @@ if args.callback_finalizers:
         "                Some(research_drop_callback_env::<F>),\n            )")
     function = function.replace("impl Function {", '''// Research only: each constructor transfers one unique Box to V8.
 // V8's existing host-info finalizer releases it when its isolate is disposed.
-unsafe extern "C" fn research_drop_callback_env<F: 'static>(ptr: *mut c_void) {
-    unsafe { drop(Box::from_raw(ptr.cast::<FunctionCallbackEnv<'static, F>>())) };
+unsafe extern "C" fn research_drop_callback_env<F>(ptr: *mut c_void) {
+    unsafe { drop(Box::from_raw(ptr.cast::<FunctionCallbackEnv<'_, F>>())) };
 }
 
 impl Function {''', 1)
