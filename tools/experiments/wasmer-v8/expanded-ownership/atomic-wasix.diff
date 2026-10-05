@@ -1,0 +1,22 @@
+--- a/src/entities/memory/shared.rs
++++ b/src/entities/memory/shared.rs
+@@ -122,6 +122,19 @@
+ }
+ 
+ impl MemoryOps {
++    /// Disposable signal-path control only. This does not implement host
++    /// wait/notify/wake-all or memory-wide, multi-isolate shutdown semantics.
++    pub fn research_sigkill_bridge(interrupt: Arc<dyn Fn() + Send + Sync>) -> Self {
++        struct Interrupt(Arc<dyn Fn() + Send + Sync>);
++        impl SharedMemoryOps for Interrupt {
++            fn disable_atomics(&self) -> Result<(), AtomicsError> {
++                (self.0)();
++                Ok(())
++            }
++        }
++        Self { ops: Some(Arc::new(Interrupt(interrupt))) }
++    }
++
+     #[inline]
+     fn shared_ops(&self) -> Result<&(dyn SharedMemoryOps + Send + Sync), AtomicsError> {
+         self.ops

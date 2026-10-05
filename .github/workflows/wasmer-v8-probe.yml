@@ -11,12 +11,13 @@ name: Windows V8 genuine cache pair and owned trap control
         - cpu-only
         - errors-only
         - catalog-only
+        - interrupt-only
 permissions:
   contents: read
   actions: read
 jobs:
   expanded-ownership:
-    if: ${{ inputs.scope != 'cpu-only' && inputs.scope != 'catalog-only' }}
+    if: ${{ inputs.scope == 'errors-only' || inputs.scope == 'errors-and-cpu' }}
     name: Owned errors, automatic delivery and SDK (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -182,7 +183,7 @@ jobs:
         if-no-files-found: warn
         retention-days: 90
   wine-producer:
-    if: ${{ inputs.scope != 'errors-only' && inputs.scope != 'catalog-only' }}
+    if: ${{ inputs.scope == 'cpu-only' || inputs.scope == 'errors-and-cpu' }}
     name: Genuine Windows cache on emulated SSE4.1 CPU
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -423,6 +424,128 @@ jobs:
           target/windows-v8-diagnostic/extension-manifest.json
 
           target/windows-v8-diagnostic/tools-manifest.json
+
+          !target/windows-v8-ownership/control/engine/dependency'
+        if-no-files-found: warn
+        retention-days: 90
+  interrupt-native:
+    if: ${{ inputs.scope == 'interrupt-only' }}
+    name: Native WASIX signal and shared-memory registry (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+        - windows-2022
+        - windows-2025-vs2026
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        persist-credentials: false
+    - uses: ./.github/actions/setup-rust-tools
+      with:
+        toolchain: 1.96.0
+    - name: Set up research-only Visual Studio 2022 host
+      uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+      with:
+        arch: x64
+        vsversion: '2022'
+      if: ${{ matrix.runner == 'windows-2022' }}
+    - name: Set up current MSVC host
+      if: ${{ matrix.runner == 'windows-2025-vs2026' }}
+      uses: ./.github/actions/setup-msvc
+    - name: Pin research linker under Git Bash
+      shell: pwsh
+      run: '$linker = Join-Path $env:VCToolsInstallDir ''bin/HostX64/x64/link.exe''
+
+        if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
+
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append
+        -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
+
+        '
+    - name: Compile Windows V8 serializer
+      run: cargo check --locked -p xtask --features aot-serializer
+    - name: Download immutable diagnostic portable runtime
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37225721762'
+        artifact-ids: '11312707536'
+        github-token: ${{ github.token }}
+        path: .
+        merge-multiple: true
+    - name: Verify diagnostic PostgreSQL fixture identity
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: 'set -euo pipefail
+
+        mkdir -p target/windows-v8-diagnostic
+
+        gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > target/windows-v8-diagnostic/guest-artifact.json
+
+        python tools/experiments/wasmer-v8/verify_guest.py . target/windows-v8-diagnostic
+
+        '
+    - name: Generate diagnostic Windows V8 artifacts
+      run: bash src/wasix/runtime/tools/build-aot-target.sh
+    - name: Download immutable diagnostic extension compiler outputs
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        run-id: '37240991549'
+        artifact-ids: '11318826010'
+        github-token: ${{ github.token }}
+        path: target/extensions/wasix/assets
+        merge-multiple: true
+    - name: Apply the pinned private DLL ownership control
+      run: python tools/experiments/wasmer-v8/expanded-ownership/prepare-dll.py target/windows-v8-ownership/control
+    - name: Apply the scoped error ownership control
+      run: 'git apply --unsafe-paths --directory="$PWD/target/windows-v8-ownership/control/engine/dependency/wasmer-7.5.0"
+        tools/experiments/wasmer-v8/expanded-ownership/trap-ownership.diff
+
+        cp tools/experiments/wasmer-v8/expanded-ownership/trap-ownership.rs src/wasix/sdks/rust/tests/research_v8_trap_ownership.rs
+
+        python -c ''from pathlib import Path; p=Path("src/wasix/sdks/rust/tests/research_v8_trap_ownership.rs");
+        p.write_text(p.read_text().replace("fn main() {", "#[test]\nfn trap_ownership() {"))'''
+    - name: Apply callback panic containment and stage binary fixtures
+      run: 'git apply --unsafe-paths --directory="$PWD/target/windows-v8-ownership/control/engine/dependency/wasmer-7.5.0"
+        tools/experiments/wasmer-v8/expanded-ownership/callback-panic.diff
+
+        cp tools/experiments/wasmer-v8/expanded-ownership/*.wasm src/wasix/sdks/rust/tests/
+
+        cp tools/experiments/wasmer-v8/expanded-ownership/callback-panic.rs src/wasix/sdks/rust/tests/research_v8_callback_panic.rs
+
+        python -c ''from pathlib import Path; p=Path("src/wasix/sdks/rust/tests/research_v8_callback_panic.rs");
+        p.write_text(p.read_text().replace("fn main() {", "#[test]\nfn callback_panic_containment() {"))''
+
+        '
+    - name: Stage the private signal registry control
+      run: 'git apply --unsafe-paths --directory="$PWD/target/windows-v8-ownership/control/engine/dependency/wasmer-7.5.0"
+        tools/experiments/wasmer-v8/expanded-ownership/atomic-wasix.diff
+
+        cp tools/experiments/wasmer-v8/expanded-ownership/atomic-wasix.rs src/wasix/sdks/rust/tests/research_v8_atomic_wasix.rs
+
+        python -c ''from pathlib import Path; p=Path("src/wasix/sdks/rust/tests/research_v8_atomic_wasix.rs");
+        p.write_text(p.read_text().replace("fn main() {", "#[test]\nfn atomic_wasix_registry() {"))''
+
+        '
+    - name: Embed the private engine and generate C function dispatch
+      run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
+    - name: Exercise the real WASIX kill path and multi-isolate cleanup
+      run: python tools/experiments/wasmer-v8/expanded-ownership/atomic-wasix-check.py target/windows-v8-ownership/control
+      env:
+        OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
+        OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+        OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+    - name: Retain signal registry receipts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: native-wasix-signal-registry-${{ matrix.runner }}
+        path: 'target/windows-v8-ownership/control
 
           !target/windows-v8-ownership/control/engine/dependency'
         if-no-files-found: warn
