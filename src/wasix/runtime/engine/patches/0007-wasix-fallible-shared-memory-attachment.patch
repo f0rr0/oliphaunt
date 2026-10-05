@@ -1,0 +1,35 @@
+--- a/src/runtime/task_manager/mod.rs
++++ b/src/runtime/task_manager/mod.rs
+@@ -206,7 +206,8 @@
+                 })?;
+                 Ok(Some(mem))
+             }
+-            SpawnType::AttachMemory(mem) => Ok(Some(mem.attach(store))),
++            SpawnType::AttachMemory(mem) => mem.try_attach(store)
++                .map(Some).map_err(WasiThreadError::MemoryCreateFailed),
+             SpawnType::CreateMemory | SpawnType::NewLinkerInstanceGroup(..) => Ok(None),
+         }
+     }
+--- a/src/runtime/task_manager/tokio.rs
++++ b/src/runtime/task_manager/tokio.rs
+@@ -150,7 +150,8 @@
+                 SpawnType::CreateMemoryOfType(t) => (SpawnMemoryTypeOrStore::Type(t), None),
+                 SpawnType::AttachMemory(mem) => {
+                     let mut store = task.env.runtime().new_store();
+-                    let memory = mem.attach(&mut store);
++                    let memory = mem.try_attach(&mut store)
++                        .map_err(WasiThreadError::MemoryCreateFailed)?;
+                     (SpawnMemoryTypeOrStore::StoreAndMemory(store, memory), None)
+                 }
+             };
+--- a/src/state/linker/mod.rs
++++ b/src/state/linker/mod.rs
+@@ -692,7 +692,7 @@
+ 
+         let mut imports = import_object_for_all_wasi_versions(&main_module, store, &func_env.env);
+ 
+-        let memory = memory.attach(store);
++        let memory = memory.try_attach(store)?;
+ 
+         let indirect_function_table = create_indirect_function_table(
+             store,

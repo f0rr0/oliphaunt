@@ -1,0 +1,83 @@
+--- a/src/backend/v8/entities/store/interrupt.rs
++++ b/src/backend/v8/entities/store/interrupt.rs
+@@ -87,23 +87,24 @@
+         self: &Arc<Self>,
+         store: &mut super::Store,
+         memory: *mut wasm_shared_memory_t,
+-    ) -> *mut wasm_memory_t {
++    ) -> Result<*mut wasm_memory_t, crate::MemoryError> {
+         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+         if state.disabled {
+-            // attach's existing infallible API cannot return a MemoryError.
+-            // Release the lock before rejecting so cancellation stays usable.
+-            drop(state);
+-            panic!("cannot attach V8 shared memory after atomics are disabled");
++            return Err(crate::MemoryError::Generic(
++                "cannot attach V8 shared memory after atomics are disabled".to_owned(),
++            ));
+         }
+         let handle = unsafe { wasm_memory_obtain(store.inner, memory) };
+-        assert!(!handle.is_null(), "cannot obtain V8 shared memory");
++        if handle.is_null() {
++            return Err(crate::MemoryError::Generic("cannot obtain V8 shared memory".to_owned()));
++        }
+         state.stores.retain(|entry| entry.strong_count() != 0);
+         let interrupt = Arc::downgrade(&store.interrupt);
+         if !state.stores.iter().any(|entry| Weak::ptr_eq(entry, &interrupt)) {
+             state.stores.push(interrupt);
+         }
+         store.remember_shared_memory(handle, self.clone());
+-        handle
++        Ok(handle)
+     }
+ }
+ 
+--- a/src/backend/v8/vm/mod.rs
++++ b/src/backend/v8/vm/mod.rs
+@@ -214,12 +214,16 @@
+ 
+     /// Attach the shared memory handle to a new Store and convert it to VMMemory
+     pub(crate) fn into_vm_memory(self, store: &mut Store) -> VMMemory {
+-        let memory = self.1.attach(store, self.0.0);
++        self.try_into_vm_memory(store).expect("cannot attach V8 shared memory")
++    }
++
++    pub(crate) fn try_into_vm_memory(self, store: &mut Store) -> Result<VMMemory, MemoryError> {
++        let memory = self.1.attach(store, self.0.0)?;
+         store.research_refs.push(crate::backend::v8::store::ResearchRef(unsafe { wasm_memory_as_ref(memory) }));
+         assert!(
+             !memory.is_null(),
+             "Failed to obtain V8 shared memory: wasm_memory_obtain returned null"
+         );
+-        VMMemory(memory)
+-    }
+-}
++        Ok(VMMemory(memory))
++    }
++}
+--- a/src/entities/memory/shared.rs
++++ b/src/entities/memory/shared.rs
+@@ -66,6 +66,23 @@
+     pub fn attach(self, store: &mut impl AsStoreMut) -> Memory {
+         let memory = self.memory.into_vm_memory(store);
+         Memory::new_from_existing(store, memory)
++    }
++
++    /// Attach shared memory, returning an error if V8 atomics were disabled.
++    ///
++    /// This permits task creation to race with terminal cancellation without
++    /// unwinding through the task or linker. Other backends retain their
++    /// existing attachment behavior.
++    pub fn try_attach(self, store: &mut impl AsStoreMut) -> Result<Memory, crate::MemoryError> {
++        let memory = match self.memory {
++            #[cfg(feature = "v8")]
++            VMSharedMemory::V8(memory) => {
++                let mut store = store.as_store_mut();
++                VMMemory::V8(memory.try_into_vm_memory(store.inner.store.as_v8_mut())?)
++            }
++            memory => memory.into_vm_memory(store),
++        };
++        Ok(Memory::new_from_existing(store, memory))
+     }
+ 
+     /// Create an operations handle that does not keep the underlying memory alive.

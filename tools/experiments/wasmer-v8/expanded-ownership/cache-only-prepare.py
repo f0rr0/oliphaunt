@@ -13,8 +13,16 @@ drivers = pathlib.Path(__file__).resolve().parent
 metadata = json.loads(subprocess.check_output(
     ["cargo", "metadata", "--locked", "--format-version=1"], encoding="utf-8"))
 packages = [p for p in metadata["packages"] if p["name"] == "wasmer-wasix" and p["version"] == "0.705.0"]
-assert len(packages) == 1 and packages[0]["source"].startswith("registry+")
+assert len(packages) == 1
 source = pathlib.Path(packages[0]["manifest_path"]).parent
+private_attachment = output / "interrupt-dependency/wasmer-wasix-0.705.0"
+if packages[0]["source"] is None:
+    assert source.resolve() == private_attachment.resolve()
+    attachment = json.loads((output / "fallible-attachment-source-receipt.json").read_text())
+    for name, digest in attachment["patches"]["0007-wasix-fallible-shared-memory-attachment"]["outputs"].items():
+        assert hashlib.sha256((source / name).read_bytes()).hexdigest() == digest, name
+else:
+    assert packages[0]["source"].startswith("registry+")
 expected = json.loads((drivers / "cache-only-wasix.inputs.json").read_text())
 for name, digest in expected.items():
     assert hashlib.sha256((source / name).read_bytes()).hexdigest() == digest, name
@@ -24,8 +32,15 @@ subprocess.run(["git", "apply", "--unsafe-paths", "--directory=" + dependency.as
                 str(drivers / "cache-only-wasix.diff")], check=True)
 root = pathlib.Path(metadata["workspace_root"])
 config = root / ".cargo/config.toml"
-assert config.exists() and "wasmer-wasix" not in config.read_text()
-config.write_text(config.read_text() + "\n[patch.crates-io.wasmer-wasix]\npath = " + json.dumps(dependency.as_posix()) + "\n")
+assert config.exists()
+if source.resolve() == private_attachment.resolve():
+    text = config.read_text()
+    old = json.dumps(private_attachment.as_posix())
+    assert text.count(old) == 1
+    config.write_text(text.replace(old, json.dumps(dependency.as_posix())))
+else:
+    assert "wasmer-wasix" not in config.read_text()
+    config.write_text(config.read_text() + "\n[patch.crates-io.wasmer-wasix]\npath = " + json.dumps(dependency.as_posix()) + "\n")
 lock = root / "Cargo.lock"
 before = lock.read_bytes()
 subprocess.run(["cargo", "metadata", "--offline", "--format-version=1"], check=True, stdout=subprocess.DEVNULL)

@@ -165,7 +165,7 @@ report = {
                for name, package in packages.items()},
     'dll_sha256': hashlib.sha256(dll).hexdigest(), 'dll_size': len(dll),
     'compressed_size': len(compressed), 'parts': parts,
-    'bindings_sha256': hashlib.sha256(binding_text.encode()).hexdigest(),
+    'bindings_sha256': hashlib.sha256((wasmer / 'prebuilt/embedded_bindings.rs').read_bytes()).hexdigest(),
     'diagnostic_compilation_sentinel_omitted': True,
 }
 root = pathlib.Path(__file__).resolve().parents[4]

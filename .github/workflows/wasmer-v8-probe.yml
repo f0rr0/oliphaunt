@@ -16,6 +16,7 @@ name: Windows V8 genuine cache pair and owned trap control
         - automatic-only
         - automatic-and-catalog
         - family-only
+        - fallible-and-catalog
 permissions:
   contents: read
   actions: read
@@ -287,7 +288,7 @@ jobs:
         if-no-files-found: warn
         retention-days: 90
   catalog-full:
-    if: ${{ inputs.scope == 'catalog-only' || inputs.scope == 'catalog-strict-only' || inputs.scope == 'automatic-and-catalog' }}
+    if: ${{ inputs.scope == 'catalog-only' || inputs.scope == 'catalog-strict-only' || inputs.scope == 'automatic-and-catalog' || inputs.scope == 'fallible-and-catalog' }}
     name: Full native Windows catalog, server and tools
     runs-on: windows-2025-vs2026
     timeout-minutes: 90
@@ -389,12 +390,15 @@ jobs:
 
         '
     - name: Apply automatic Store and memory lifetime hooks
-      if: ${{ inputs.scope == 'automatic-and-catalog' }}
+      if: ${{ inputs.scope == 'automatic-and-catalog' || inputs.scope == 'fallible-and-catalog' }}
       run: python tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt-prepare.py target/windows-v8-ownership/control
+    - name: Propagate cancellation attachment errors through WASIX
+      if: ${{ inputs.scope == 'fallible-and-catalog' }}
+      run: python tools/experiments/wasmer-v8/expanded-ownership/fallible-attachment.py target/windows-v8-ownership/control
     - name: Embed the private engine and generate C function dispatch
       run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
     - name: Require cached WASIX modules and block consumer guest compilation
-      if: ${{ inputs.scope == 'catalog-strict-only' || inputs.scope == 'automatic-and-catalog' }}
+      if: ${{ inputs.scope == 'catalog-strict-only' || inputs.scope == 'automatic-and-catalog' || inputs.scope == 'fallible-and-catalog' }}
       run: 'python tools/experiments/wasmer-v8/expanded-ownership/cache-only-prepare.py target/windows-v8-ownership/control
 
         cp tools/experiments/wasmer-v8/expanded-ownership/cache-only.rs src/wasix/sdks/rust/tests/research_v8_cache_only.rs
@@ -548,7 +552,7 @@ jobs:
         if-no-files-found: warn
         retention-days: 90
   automatic-store-interruption:
-    if: ${{ inputs.scope == 'automatic-only' || inputs.scope == 'automatic-and-catalog' || inputs.scope == 'family-only' }}
+    if: ${{ inputs.scope == 'automatic-only' || inputs.scope == 'automatic-and-catalog' || inputs.scope == 'family-only' || inputs.scope == 'fallible-and-catalog' }}
     name: Automatic Store interruption and teardown (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -569,7 +573,7 @@ jobs:
       with:
         toolchain: 1.96.0
     - name: Set up verified Bun for generated package envelopes
-      if: ${{ inputs.scope == 'family-only' }}
+      if: ${{ inputs.scope == 'family-only' || inputs.scope == 'fallible-and-catalog' }}
       uses: ./.github/actions/setup-bun
     - name: Set up research-only Visual Studio 2022 host
       uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
@@ -641,21 +645,28 @@ jobs:
         '
     - name: Apply automatic Store and memory lifetime hooks
       run: python tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt-prepare.py target/windows-v8-ownership/control
+    - name: Propagate cancellation attachment errors through WASIX
+      if: ${{ inputs.scope == 'fallible-and-catalog' }}
+      run: python tools/experiments/wasmer-v8/expanded-ownership/fallible-attachment.py target/windows-v8-ownership/control
     - name: Embed the private engine and generate C function dispatch
       run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
     - name: Exercise automatic WASIX interruption and Store teardown races
+      if: ${{ inputs.scope != 'fallible-and-catalog' }}
       run: python tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt-check.py target/windows-v8-ownership/control
       env:
         OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
         OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+    - name: Exercise clean WASIX attachment errors and shutdown races
+      if: ${{ inputs.scope == 'fallible-and-catalog' }}
+      run: python tools/experiments/wasmer-v8/expanded-ownership/fallible-attachment.py target/windows-v8-ownership/control --check
     - name: Stage aligned unpublished crate family and frozen engine packages
-      if: ${{ inputs.scope == 'family-only' }}
+      if: ${{ inputs.scope == 'family-only' || inputs.scope == 'fallible-and-catalog' }}
       run: |
         python tools/experiments/wasmer-v8/expanded-ownership/cache-only-prepare.py target/windows-v8-ownership/control
         python tools/experiments/wasmer-v8/expanded-ownership/stage-family.py target/windows-v8-ownership/control
     - name: Build and run the family consumer from extracted crate contents
-      if: ${{ inputs.scope == 'family-only' }}
+      if: ${{ inputs.scope == 'family-only' || inputs.scope == 'fallible-and-catalog' }}
       run: python tools/experiments/wasmer-v8/expanded-ownership/family-check.py target/windows-v8-ownership/control
       env:
         CARGO_TARGET_DIR: ${{ github.workspace }}/target/research-family
