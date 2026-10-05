@@ -14,6 +14,7 @@ registry_packages = [
   "npm:@oliphaunt/broker-win32-x64-msvc",
 ]
 release_artifacts = ["broker-helper-binary", "cargo-crate"]
+embedded_cargo_manifests = ["src/native/broker/Cargo.toml"]
 
 [compatibility_versions.broker_native_bindings]
 source_product = "liboliphaunt-native-bindings"

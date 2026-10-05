@@ -135,6 +135,62 @@ function writeManifest(root, product, body) {
   return file;
 }
 
+test('an independently pinned base carrier uses the pinned release and rejects current runtime assets', async () => {
+  const root = mkdtempSync(path.join(ROOT, 'target', 'ios-pinned-carrier-test-'));
+  const version = '0.1.0';
+  try {
+    await archive(
+      root,
+      `liboliphaunt-${version}-apple-spm-xcframework.zip`,
+      'liboliphaunt.xcframework',
+      'zip',
+      {
+        insideMember: true,
+        profile: 'native-runtime',
+      },
+    );
+    await archive(
+      root,
+      `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`,
+      'oliphaunt',
+      'tar.gz',
+      {
+        insideMember: false,
+        profile: 'native-runtime-resources',
+      },
+    );
+    const carrier = buildIosCarrierManifest({
+      baseAssetDir: root,
+      baseRuntimeVersion: version,
+      extensionManifests: [],
+    });
+    assert.equal(carrier.base.version, version);
+    assert.equal(carrier.base.tag, `liboliphaunt-native-v${version}`);
+    for (const row of carrier.base.assets)
+      assert.ok(row.url.includes(`/liboliphaunt-native-v${version}/liboliphaunt-${version}-`));
+    assert.throws(
+      () => buildIosCarrierManifest({ baseAssetDir: root, extensionManifests: [] }),
+      /missing|does not exist/,
+    );
+    const frozen = path.join(root, 'carrier.json');
+    writeFileSync(frozen, JSON.stringify(carrier));
+    assert.deepEqual(
+      buildIosCarrierManifest({
+        baseCarrierManifest: frozen,
+        baseRuntimeVersion: version,
+        extensionManifests: [],
+      }),
+      carrier,
+    );
+    assert.throws(
+      () => buildIosCarrierManifest({ baseCarrierManifest: frozen, extensionManifests: [] }),
+      /does not freeze/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('produces exact local and GitHub carrier envelopes ', async () => {
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });
   const root = mkdtempSync(path.join(ROOT, 'target', 'ios-carrier-test-'));

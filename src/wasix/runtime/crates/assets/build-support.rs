@@ -681,16 +681,12 @@ fn find_local_extension_product_root(root: &Path, package: ExtensionPackage) -> 
         .find(|candidate| candidate.join("extension-artifacts.json").is_file())
 }
 
-fn local_extension_aot_package(package: ExtensionPackage) -> Option<SelectedExtensionAotPackage> {
-    let root = PathBuf::from(env::var_os("OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT")?);
-    let product_root = find_local_extension_product_root(&root, package).unwrap_or_else(|| {
-        panic!(
-            "local extension artifact root {} has no manifest for {}",
-            root.display(),
-            package.product,
-        )
-    });
+fn local_extension_artifact_manifest(
+    product_root: &Path,
+    package: ExtensionPackage,
+) -> serde_json::Value {
     let product_manifest = product_root.join("extension-artifacts.json");
+    println!("cargo:rerun-if-changed={}", product_manifest.display());
     let product_value: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(&product_manifest).unwrap_or_else(|error| {
             panic!(
@@ -713,6 +709,35 @@ fn local_extension_aot_package(package: ExtensionPackage) -> Option<SelectedExte
         "local extension artifact manifest {} has the wrong product",
         product_manifest.display(),
     );
+    let version = product_value
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .expect("local extension artifact manifest must declare its product version");
+    let parts = version.split('.').collect::<Vec<_>>();
+    assert!(
+        parts.len() == 3
+            && parts.iter().all(|part| {
+                !part.is_empty()
+                    && part.bytes().all(|byte| byte.is_ascii_digit())
+                    && (part.len() == 1 || !part.starts_with('0'))
+            }),
+        "local extension artifact manifest {} has invalid product version {version}",
+        product_manifest.display(),
+    );
+    product_value
+}
+
+fn local_extension_aot_package(package: ExtensionPackage) -> Option<SelectedExtensionAotPackage> {
+    let root = PathBuf::from(env::var_os("OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT")?);
+    let product_root = find_local_extension_product_root(&root, package).unwrap_or_else(|| {
+        panic!(
+            "local extension artifact root {} has no manifest for {}",
+            root.display(),
+            package.product,
+        )
+    });
+    let product_manifest = product_root.join("extension-artifacts.json");
+    let product_value = local_extension_artifact_manifest(&product_root, package);
     let schema = product_value
         .get("schema")
         .and_then(serde_json::Value::as_str)
@@ -895,7 +920,6 @@ fn local_extension_aot_package(package: ExtensionPackage) -> Option<SelectedExte
             path: artifact,
         });
     }
-    println!("cargo:rerun-if-changed={}", product_manifest.display());
     println!("cargo:rerun-if-changed={}", manifest.display());
     Some(SelectedExtensionAotPackage {
         target,
@@ -936,8 +960,6 @@ fn find_local_extension_archive(
     repo_root: Option<&Path>,
     package: ExtensionPackage,
 ) -> Option<PathBuf> {
-    let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
-    let archive_name = format!("{}-{version}-wasix-portable.tar.zst", package.product);
     let roots = if let Some(path) = env::var_os("OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT") {
         // An explicit root takes precedence over workspace and package assets.
         vec![PathBuf::from(path)]
@@ -952,6 +974,14 @@ fn find_local_extension_archive(
 
     for root in roots {
         for product_root in local_extension_product_roots(&root, package.product) {
+            if !product_root.join("extension-artifacts.json").is_file() {
+                continue;
+            }
+            let manifest = local_extension_artifact_manifest(&product_root, package);
+            let version = manifest["version"]
+                .as_str()
+                .expect("validated product version");
+            let archive_name = format!("{}-{version}-wasix-portable.tar.zst", package.product);
             for candidate in [
                 product_root
                     .join("member-assets")

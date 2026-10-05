@@ -190,6 +190,11 @@ tasks:
       - /moon.yml
       - /.release-please-manifest.json
       - /Cargo.toml
+      - /Cargo.lock
+      - /**/Cargo.toml
+      - /src/{native,wasix}/**/*.rs
+      - /src/query/rust/**/*.rs
+      - /src/database-resources/icu/cargo/**/*.rs
       - /Package.swift
       - /package.json
       - /release-please-config.json

@@ -535,7 +535,7 @@ function byteLimitTransform(limit, label) {
     },
   });
 }
-async function materialize(row, cacheDir, { offline }) {
+export async function materialize(row, cacheDir, { offline = false, fetchImpl = fetch } = {}) {
   const directory = path.join(cacheDir, 'objects');
   const output = path.join(directory, `${row.sha256}-${row.name}`);
   await fs.mkdir(directory, { recursive: true });
@@ -557,7 +557,10 @@ async function materialize(row, cacheDir, { offline }) {
       }
       await fs.copyFile(source, temporary, fsConstants.COPYFILE_EXCL);
     } else {
-      const response = await fetch(url, { redirect: 'follow' });
+      const response = await fetchImpl(url, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(120_000),
+      });
       if (!response.ok || !response.body || new URL(response.url).protocol !== 'https:')
         fail(`download failed for ${row.url}`);
       await pipeline(

@@ -18,7 +18,7 @@ if bun "$contract" unsupported > /dev/null 2>&1; then
 fi
 bash tools/dev/bun.sh test ./src/wasix/runtime/tools
 node src/wasix/runtime/tools/wasix-runtime-npm.test-consumer.mts
-for scenario in nested-owner aggregate; do
+for scenario in nested-owner aggregate independent-extension; do
   root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/$scenario"
   # Keep registry dependencies at the qualified workspace versions; this
   # disposable consumer only changes local carrier paths and feature selection.
@@ -28,6 +28,16 @@ for scenario in nested-owner aggregate; do
     OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$root" \
     cargo run --locked --offline --manifest-path "$root/app/Cargo.toml"
 done
+root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/independent-extension"
+manifest="$root/oliphaunt-extension-pg-hashids/extension-artifacts.json"
+bun -e 'import fs from "node:fs"; const file = process.argv[1]; const value = JSON.parse(fs.readFileSync(file, "utf8")); value.version = "../invalid"; fs.writeFileSync(file, JSON.stringify(value));' "$manifest"
+if CARGO_TARGET_DIR="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/cargo-target" \
+  OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$root" \
+  cargo check --locked --offline --manifest-path "$root/app/Cargo.toml" > "$root/invalid-version.log" 2>&1; then
+  echo 'Invalid extension product version was accepted' >&2
+  exit 1
+fi
+rg -q 'invalid product version' "$root/invalid-version.log"
 root="$OLIPHAUNT_WASIX_PACKAGING_TEST_ROOT/aggregate"
 chunk="$(find "$root/work/cargo-package-sources/oliphaunt-extension-contrib-pg18-wasix-part-001/payload" -type f -print -quit)"
 printf 'corrupt' >> "$chunk"

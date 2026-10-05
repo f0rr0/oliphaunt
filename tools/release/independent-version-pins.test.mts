@@ -9,13 +9,18 @@ import {
   compatibilityVersionValue,
   loadProducts,
   productCompatibilityVersion,
+  productDependencyCompatibilityVersion,
   ROOT,
 } from './release-graph.mts';
 import {
   prepareSourceOnlyNpmPackage,
   SOURCE_ONLY_NPM_PROFILES,
 } from '../packaging/source-only-sdk-package.mts';
-import { packagedCargoManifestText } from '../packaging/cargo-source-package.mts';
+import {
+  packagedCargoManifestText,
+  packageGeneratedCargoSource,
+} from '../packaging/cargo-source-package.mts';
+import { preparePackagedCargoTestClosure } from '../packaging/cargo-package-test-closure.mts';
 import { renderReleaseCargoToml } from '../../src/native/sdks/rust/tools/prepare-rust-release-source.mts';
 import { renderOliphauntWasixReleaseCargoToml } from '../../src/wasix/sdks/rust/tools/prepare-rust-release-source.mts';
 import { prepareWasixTypescriptPackage } from '../../src/wasix/sdks/ts/tools/package.mts';
@@ -57,14 +62,22 @@ for (const [index, product] of [
   const metadata = products[product];
   const version = `${Number(metadata.version.split('.')[0]) + 10 + index}.0.0`;
   manifest[metadata.path] = version;
-  const file = metadata.version_files[0];
-  if (path.basename(file) === 'package.json') {
-    write(file, JSON.stringify({ ...json(file), version }));
-  } else if (path.basename(file) === 'Cargo.toml') {
-    write(file, read(file).replace(/^version = "[^"]+"/mu, `version = "${version}"`));
-  } else {
-    assert.equal(path.basename(file), 'VERSION');
-    write(file, `${version}\n`);
+  for (const file of metadata.version_files) {
+    if (path.basename(file) === 'package.json') {
+      write(file, JSON.stringify({ ...json(file), version }));
+    } else if (path.basename(file) === 'Cargo.toml') {
+      write(file, read(file).replace(/^version = "[^"]+"/mu, `version = "${version}"`));
+    } else if (path.basename(file) === 'gradle.properties') {
+      write(file, read(file).replace(/^VERSION_NAME=.+/mu, `VERSION_NAME=${version}`));
+    } else if (path.basename(file) === 'liboliphaunt_native.c') {
+      write(
+        file,
+        read(file).replace(/(#define OLIPHAUNT_PRODUCT_VERSION )"[^"]+"/u, `$1"${version}"`),
+      );
+    } else {
+      assert.equal(path.basename(file), 'VERSION');
+      write(file, `${version}\n`);
+    }
   }
 }
 write('.release-please-manifest.json', JSON.stringify(manifest));
@@ -89,6 +102,30 @@ test('every SDK retains its declared compatibility pins after independent depend
       assert.notEqual(entry.value, manifest[source.path], entry.id);
     }
   }
+});
+
+test('React Native resolves the runtime through its pinned Swift release after Swift advances', () => {
+  const swiftPin = productCompatibilityVersion('oliphaunt-react-native', 'oliphaunt-swift');
+  const nativePin = sdkPins.find(
+    (entry) => entry.product === 'oliphaunt-swift' && entry.sourceProduct === 'liboliphaunt-native',
+  ).value;
+  assert.equal(
+    productDependencyCompatibilityVersion(
+      'oliphaunt-react-native',
+      'oliphaunt-swift',
+      'liboliphaunt-native',
+      'independent-version-pins',
+      {
+        readCompatibility(product, source, prefix, { ref }) {
+          assert.equal(product, 'oliphaunt-swift');
+          assert.equal(source, 'liboliphaunt-native');
+          assert.equal(ref, `${products[product].tag_prefix}${swiftPin}`);
+          return nativePin;
+        },
+      },
+    ),
+    nativePin,
+  );
 });
 
 test('native TypeScript and React Native npm staging retains independent product pins', () => {
@@ -252,6 +289,41 @@ test('WASIX Rust source generation retains its runtime and explicit query pins',
         assert.equal(dependency.version, runtimeVersion);
     }
   }
+});
+
+test('WASIX Rust package qualification does not patch older pins with newer workspace sources', () => {
+  const source = read('src/wasix/sdks/rust/Cargo.toml');
+  const stage = path.join(ROOT, 'target', 'independent-version-pins', 'cargo-closure');
+  mkdirSync(path.join(stage, 'src'), { recursive: true });
+  writeFileSync(path.join(stage, 'src/lib.rs'), 'pub fn fixture() {}\n');
+  writeFileSync(path.join(stage, 'Cargo.toml'), renderOliphauntWasixReleaseCargoToml(source));
+  // A minimal payload exercises the real packaged dependency manifest. Cargo
+  // compilation is owned by each installed-consumer task.
+  const cratePath = packageGeneratedCargoSource(
+    path.join(stage, 'Cargo.toml'),
+    path.join(stage, 'crate'),
+    {
+      root: ROOT,
+      rel: String,
+      fail: (message) => {
+        throw new Error(message);
+      },
+    },
+  );
+  const scratch = path.join(stage, 'consumer');
+  const manifestFile = preparePackagedCargoTestClosure({
+    cratePath,
+    scratch,
+    pathDependencyManifests: [path.join(ROOT, 'src/wasix/sdks/rust/Cargo.toml')],
+  });
+  const packaged = Bun.TOML.parse(readFileSync(manifestFile, 'utf8'));
+  assert.equal(
+    packaged.dependencies['liboliphaunt-wasix-portable'].version,
+    `=${Bun.TOML.parse(source).package.metadata.oliphaunt['runtime-version']}`,
+  );
+  const config = Bun.TOML.parse(readFileSync(path.join(scratch, '.cargo/config.toml'), 'utf8'));
+  assert.equal(config.patch?.['crates-io']?.['liboliphaunt-wasix-portable'], undefined);
+  assert.equal(config.patch?.['crates-io']?.['oliphaunt-query'], undefined);
 });
 
 function mavenTests() {

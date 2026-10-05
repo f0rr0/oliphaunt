@@ -121,7 +121,14 @@ tasks:
       - /src/native/sdks/react-native/tools/check-package.mts
       - /src/extensions/artifacts/packages/tools/contrib-carriers.mts
       - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/pinned-native-carrier.mts
+      - /src/native/sdks/swift/tools/swift-carrier-resolver.mts
+      - /src/native/sdks/swift/tools/render_swiftpm_release_package.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
       - /tools/release/release-graph.mts
+      - /tools/release/product-version.mts
+      - /tools/release/with-product-history.sh
+      - /tools/release/release-history.mts
       - /tools/packaging/npm-package.mts
       - /src/native/sdks/react-native/tools/stage-release-artifacts.mts
       - /src/native/sdks/react-native/tools/stage-release-artifacts.sh
@@ -184,6 +191,12 @@ tasks:
       - "/tools/dev/bun.sh"
       - /src/examples/native/react-native-expo/package.json
       - /tools/packaging/portable-archive.mts
+      - /src/native/sdks/swift/tools/ios-carrier-manifest.mts
+      - /src/native/sdks/swift/tools/swift-source-carrier-contract.mts
+      - /src/native/sdks/swift/tools/pinned-native-carrier.mts
+      - /src/native/sdks/swift/tools/swift-carrier-resolver.mts
+      - /src/native/sdks/swift/tools/render_swiftpm_release_package.mts
+      - /tools/release/*.{mts,sh}
       - project: oliphaunt-query-ts
         group: sources
       - "@group(bun-workspace)"

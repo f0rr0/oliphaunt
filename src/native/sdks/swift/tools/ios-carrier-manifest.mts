@@ -471,9 +471,16 @@ function carrierEnvelope({ file, tag, repository, localUrls }) {
   };
 }
 
-function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archiveCache }) {
+function baseCarrier({
+  baseAssetDir,
+  baseRuntimeVersion,
+  repository,
+  localUrls,
+  verifyMembers,
+  archiveCache,
+}) {
   const product = 'liboliphaunt-native';
-  const version = currentProductVersionSync(product, 'ios-carrier-manifest');
+  const version = stableVersion(baseRuntimeVersion, 'base runtime version');
   const tag = `${tagPrefix(product, 'ios-carrier-manifest')}${version}`;
   const rows = [
     {
@@ -516,7 +523,7 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archi
   };
 }
 
-function frozenBaseCarrier(file) {
+function frozenBaseCarrier(file, baseRuntimeVersion) {
   let manifest;
   try {
     manifest = JSON.parse(
@@ -528,7 +535,7 @@ function frozenBaseCarrier(file) {
   const base = manifest?.schema === IOS_CARRIER_SCHEMA ? manifest.base : manifest;
   const legal = manifest?.schema === IOS_CARRIER_SCHEMA ? manifest.legal?.base : manifest?.legal;
   const product = 'liboliphaunt-native';
-  const version = currentProductVersionSync(product, 'ios-carrier-manifest');
+  const version = stableVersion(baseRuntimeVersion, 'base runtime version');
   const tag = `${tagPrefix(product, 'ios-carrier-manifest')}${version}`;
   if (
     base?.product !== product ||
@@ -536,7 +543,7 @@ function frozenBaseCarrier(file) {
     base.tag !== tag ||
     !Array.isArray(base.assets)
   ) {
-    throw error(`${file} does not freeze the current ${product} base carrier`);
+    throw error(`${file} does not freeze ${product} ${version} base carrier`);
   }
   const expectedRoles = ['base-xcframework', 'runtime-resources'];
   if (JSON.stringify(base.assets.map(({ role }) => role)) !== JSON.stringify(expectedRoles)) {
@@ -1119,6 +1126,7 @@ export function discoveredExtensionManifests(root) {
 
 export function buildIosCarrierManifest({
   baseAssetDir = path.join(ROOT, 'target/liboliphaunt/release-assets'),
+  baseRuntimeVersion = currentProductVersionSync('liboliphaunt-native', 'ios-carrier-manifest'),
   baseCarrierManifest = undefined,
   extensionManifests = discoveredExtensionManifests(path.join(ROOT, 'target/extension-artifacts')),
   repository = DEFAULT_REPOSITORY,
@@ -1132,11 +1140,12 @@ export function buildIosCarrierManifest({
       ? baseCarrier({
           archiveCache,
           baseAssetDir: path.resolve(baseAssetDir),
+          baseRuntimeVersion,
           repository,
           localUrls,
           verifyMembers,
         })
-      : frozenBaseCarrier(baseCarrierManifest);
+      : frozenBaseCarrier(baseCarrierManifest, baseRuntimeVersion);
   const { base, legal: baseLegal } = frozenBase;
   const documents = extensionManifests.map((file) => {
     const document = extensionCarriers(path.resolve(file), {

@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { Manifest } from 'release-please';
 import { Version } from 'release-please/build/src/version.js';
-import { buildPlan, loadGraph } from './release-graph.mts';
+import { buildPlan, declaredSharedSourceImpacts, loadGraph, ROOT } from './release-graph.mts';
 import {
   includeOwnedSourceCommits,
   useSourceDate,
@@ -19,21 +19,111 @@ const first = 'a'.repeat(40);
 const second = 'b'.repeat(40);
 const head = 'c'.repeat(40);
 
-test('addon releases include embedded Rust and runtime sources without releasing unrelated SDKs', () => {
-  for (const [file, owner] of [
-    ['src/wasix/sdks/rust/src/oliphaunt/base.rs', 'oliphaunt-wasix-rust'],
-    ['src/wasix/pgwire-server/src/lib.rs', 'oliphaunt-pgwire-server'],
-    ['src/query/rust/src/lib.rs', 'oliphaunt-query'],
-    ['src/wasix/runtime/crates/assets/src/lib.rs', 'liboliphaunt-wasix'],
+test('every binary release includes its compiled sources across product boundaries', () => {
+  const mobile = ['oliphaunt-swift', 'oliphaunt-kotlin'];
+  for (const [file, products] of [
+    ['src/wasix/sdks/rust/src/oliphaunt/base.rs', ['oliphaunt-wasix-rust', 'oliphaunt-wasix-napi']],
+    ['src/wasix/pgwire-server/src/lib.rs', ['oliphaunt-pgwire-server', 'oliphaunt-wasix-napi']],
+    [
+      'src/query/rust/src/lib.rs',
+      ['oliphaunt-query', 'oliphaunt-broker', 'oliphaunt-wasix-napi', ...mobile],
+    ],
+    ['src/wasix/runtime/crates/assets/src/lib.rs', ['liboliphaunt-wasix', 'oliphaunt-wasix-napi']],
+    ['src/wasix/runtime/toolchain.toml', ['liboliphaunt-wasix', 'oliphaunt-wasix-napi']],
+    [
+      'src/wasix/postgres-tools/crates/tools/build-support.rs',
+      ['postgres-tools-wasix', 'oliphaunt-wasix-napi'],
+    ],
+    ['src/database-resources/icu/cargo/src/lib.rs', ['database-resources', 'oliphaunt-wasix-napi']],
+    [
+      'src/native/rust-bindings/src/lib.rs',
+      ['liboliphaunt-native-bindings', 'oliphaunt-broker', 'oliphaunt-node-direct', ...mobile],
+    ],
+    ['src/native/broker/src/lib.rs', ['oliphaunt-broker', ...mobile]],
+    ['src/native/sdks/rust/src/lib.rs', ['oliphaunt-rust', ...mobile]],
+    ['src/native/mobile-bindings/src/lib.rs', mobile],
+    ['src/native/sdks/rust/crates/oliphaunt-build/src/lib.rs', ['oliphaunt-rust', ...mobile]],
   ]) {
     const plan = buildPlan(graph, [file]);
-    expect(plan.releaseProducts.sort()).toEqual([owner, 'oliphaunt-wasix-napi'].sort());
+    expect(plan.releaseProducts.sort()).toEqual(products.sort());
   }
   for (const file of [
     'src/wasix/sdks/rust/tests/runtime_smoke.rs',
     'src/wasix/sdks/rust/README.md',
   ]) {
     expect(buildPlan(graph, [file]).releaseProducts).not.toContain('oliphaunt-wasix-napi');
+  }
+  for (const file of [
+    'src/native/sdks/rust/tests/mobile_broker.rs',
+    'src/native/broker/README.md',
+  ]) {
+    for (const product of mobile)
+      expect(buildPlan(graph, [file]).releaseProducts).not.toContain(product);
+  }
+  // A dynamically loaded native runtime does not become part of the adapter binary.
+  expect(buildPlan(graph, ['src/native/runtime/VERSION']).releaseProducts).toEqual([
+    'liboliphaunt-native',
+  ]);
+  for (const file of ['Cargo.toml', 'Cargo.lock']) {
+    expect(buildPlan(graph, [file]).releaseProducts.sort()).toEqual([
+      'oliphaunt-broker',
+      'oliphaunt-kotlin',
+      'oliphaunt-node-direct',
+      'oliphaunt-swift',
+      'oliphaunt-wasix-napi',
+    ]);
+  }
+});
+
+test('new transitive, build and target Cargo dependencies automatically select embedding releases', () => {
+  const scratch = mkdtempSync(path.join(ROOT, 'target/embedded-cargo-'));
+  const relative = path.relative(ROOT, scratch).split(path.sep).join('/');
+  try {
+    for (const name of ['binary', 'middle', 'leaf', 'build', 'target', 'test-only']) {
+      mkdirSync(path.join(scratch, name, 'src'), { recursive: true });
+      writeFileSync(path.join(scratch, name, 'src/lib.rs'), 'pub fn fixture() {}\n');
+      writeFileSync(
+        path.join(scratch, name, 'Cargo.toml'),
+        `[package]\nname = "${name}"\nversion = "1.0.0"\n`,
+      );
+    }
+    writeFileSync(
+      path.join(scratch, 'binary/Cargo.toml'),
+      '[dependencies]\nmiddle = { path = "../middle" }\n' +
+        '[build-dependencies]\nbuild = { path = "../build" }\n' +
+        '[target.\'cfg(unix)\'.dependencies]\ntarget = { path = "../target", optional = true }\n' +
+        '[dev-dependencies]\ntest = { path = "../test-only" }\n',
+    );
+    writeFileSync(
+      path.join(scratch, 'middle/Cargo.toml'),
+      '[dependencies]\nleaf = { path = "../leaf" }\n',
+    );
+    const impacts = declaredSharedSourceImpacts({
+      'oliphaunt-node-direct': {
+        embedded_cargo_manifests: [`${relative}/binary/Cargo.toml`],
+      },
+    });
+    const fixtureGraph = { ...graph, shared_release_sources: impacts };
+    for (const name of ['middle', 'leaf', 'build', 'target']) {
+      expect(buildPlan(fixtureGraph, [`${relative}/${name}/src/lib.rs`]).releaseProducts).toEqual([
+        'oliphaunt-node-direct',
+      ]);
+    }
+    expect(buildPlan(fixtureGraph, [`${relative}/test-only/src/lib.rs`]).releaseProducts).toEqual(
+      [],
+    );
+    expect(buildPlan(fixtureGraph, [`${relative}/leaf/README.md`]).releaseProducts).toEqual([]);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('embedded generated payloads follow private producer ownership for source-pin changes', () => {
+  for (const file of ['src/third-party/postgres/source.toml', 'src/third-party/icu/source.toml']) {
+    expect(existsSync(path.join(ROOT, file))).toBe(true);
+    const plan = buildPlan(graph, [file]);
+    expect(plan.releaseProducts).toContain('liboliphaunt-wasix');
+    expect(plan.releaseProducts).toContain('oliphaunt-wasix-napi');
   }
 });
 

@@ -155,6 +155,17 @@ contrib inputs may select both runtime owners because those source files are
 physically bundled into both products. No Moon dependency edge creates another
 release candidate.
 
+Binary products declare `embedded_cargo_manifests` in their `release.toml`.
+Release planning follows those manifests' local runtime, build, and target
+dependencies through independent product boundaries and includes their Rust
+sources and build scripts. It excludes development dependencies and prose.
+The workspace Cargo manifest and lockfile conservatively select these binaries,
+since dependency resolution and build settings also determine their shipped bytes.
+This covers both Node addons, the native broker, and Swift/Kotlin native
+bindings. Generated assets use `embedded_payload_products`: changes to an
+embedded producer's sources, pins, or recipes also select the embedding binary.
+Source-only facades and dynamically loaded runtimes retain independent releases.
+
 Moon `production` and `peer` edges describe source and qualification impact.
 Product-local `compatibility_versions` describe the exact published product
 versions a carrier consumes. A native runtime can therefore be published
@@ -169,6 +180,22 @@ dependency to be either selected at that exact version or already available at
 its exact product tag and registry/GitHub carriers. Selecting a newer dependency
 does not satisfy an older consumer pin. Structured release-commit verification
 also rejects source changes hidden inside compatibility-only edits.
+
+Source qualification uses current workspace producers and identifies the
+runtime actually compiled. If those producers differ from immutable release
+pins, npm fixtures carry `qualificationOnly` and publication rejects them.
+Release package tests retain their declared pins: Cargo uses a local source
+patch only at the matching exact version and otherwise resolves the published
+dependency. A WASIX TypeScript release must pair the portable runtime with an
+addon embedding the same runtime version.
+WASIX source builds resolve local extension archive versions from each staged
+extension product manifest. External extension versions are independent of the
+runtime; contrib manifests carry their owning runtime's version. Cargo tracks
+those manifests so a changed extension identity refreshes its embedded bytes.
+Swift and React Native carrier staging also retains the exact native pin.
+React Native resolves that pin through its declared Swift release, including
+immutable historical metadata when Swift has advanced. Older runtime pins use
+verified published Apple archives; current pins require same-run producer assets.
 
 PR CI recognizes generated `chore(release):` changes only on the generated
 Release Please branch. Before merge it requires the release commit's parent to

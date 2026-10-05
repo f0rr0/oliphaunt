@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   CONTRIB_CARRIERS_PATH,
   loadContribCarriers,
@@ -373,16 +374,86 @@ function contribCarrierImpact(products, prefix) {
   };
 }
 
-function declaredSharedSourceImpacts(products, prefix) {
+export function declaredSharedSourceImpacts(products, prefix = 'release-graph') {
   return Object.entries(products).flatMap(([product, config]) => {
-    const paths = config.shared_source_paths ?? [];
-    assertStringList(paths, `${product}.shared_source_paths`, prefix);
-    return paths.map((sourcePath) => {
+    const manifests = config.embedded_cargo_manifests ?? [];
+    assertStringList(manifests, `${product}.embedded_cargo_manifests`, prefix);
+    const declaredPaths = config.shared_source_paths ?? [];
+    assertStringList(declaredPaths, `${product}.shared_source_paths`, prefix);
+    const paths = [...declaredPaths];
+    // These binaries use the workspace's locked dependency graph and build
+    // configuration, which can change shipped code without a local source edit.
+    if (manifests.length > 0) paths.push('Cargo.toml', 'Cargo.lock');
+    const visited = new Set();
+    const visit = (manifestPath) => {
+      if (visited.has(manifestPath)) return;
+      visited.add(manifestPath);
+      const directory = path.posix.dirname(manifestPath);
+      const manifest = readToml(manifestPath, prefix);
+      // Local runtime and build dependencies become part of the shipped binary.
+      // Derive their sources from Cargo so a new dependency cannot silently
+      // cross an independently versioned release boundary. Tests stay local.
+      paths.push(manifestPath);
+      for (const entry of readdirSync(path.join(ROOT, directory), {
+        withFileTypes: true,
+      })) {
+        if (
+          (entry.isDirectory() && entry.name === 'src') ||
+          (entry.isFile() && entry.name.endsWith('.rs'))
+        ) {
+          paths.push(path.posix.join(directory, entry.name));
+        }
+      }
+      for (const section of [manifest, ...Object.values(manifest.target ?? {})]) {
+        for (const table of ['dependencies', 'build-dependencies']) {
+          for (const dependency of Object.values(section[table] ?? {})) {
+            if (dependency?.workspace === true) {
+              fail(
+                prefix,
+                `${product} embedded Cargo dependencies must declare their source paths explicitly`,
+              );
+            }
+            if (typeof dependency?.path === 'string') {
+              if (path.posix.isAbsolute(dependency.path)) {
+                fail(prefix, `${product} embedded Cargo dependency must stay in the repository`);
+              }
+              const dependencyManifest = path.posix.normalize(
+                path.posix.join(directory, dependency.path, 'Cargo.toml'),
+              );
+              if (
+                dependencyManifest.startsWith('../') ||
+                path.posix.isAbsolute(dependencyManifest)
+              ) {
+                fail(prefix, `${product} embedded Cargo dependency must stay in the repository`);
+              }
+              visit(dependencyManifest);
+            }
+          }
+        }
+      }
+    };
+    for (const manifest of manifests) {
+      if (
+        path.posix.isAbsolute(manifest) ||
+        manifest.split('/').includes('..') ||
+        path.posix.basename(manifest) !== 'Cargo.toml'
+      ) {
+        fail(
+          prefix,
+          `${product}.embedded_cargo_manifests must contain repository-relative Cargo.toml paths`,
+        );
+      }
+      visit(manifest);
+    }
+    return [...new Set(paths)].map((sourcePath) => {
       if (!sourcePath || path.isAbsolute(sourcePath) || sourcePath.startsWith('../')) {
         fail(prefix, `${product}.shared_source_paths must contain repository-relative paths`);
       }
       requireExistingPath(sourcePath, `${product} shared source`, prefix);
-      return { source_paths: [sourcePath.replace(/\/$/u, '')], products: [product] };
+      return {
+        source_paths: [sourcePath.replace(/\/$/u, '')],
+        products: [product],
+      };
     });
   });
 }
@@ -391,6 +462,18 @@ export function loadGraph(prefix = 'release-graph') {
   const moonProjects = moonProjectsById(prefix);
   releasePackagePaths(moonProjects, prefix);
   const products = loadProducts(prefix);
+  for (const [product, config] of Object.entries(products)) {
+    assertStringList(
+      config.embedded_payload_products ?? [],
+      `${product}.embedded_payload_products`,
+      prefix,
+    );
+    for (const dependency of config.embedded_payload_products ?? []) {
+      if (!(dependency in products) || dependency === product) {
+        fail(prefix, `${product}.embedded_payload_products must name other release products`);
+      }
+    }
+  }
   const graph = {
     products,
     moon_projects: Object.fromEntries(moonProjects),
@@ -567,7 +650,12 @@ export function compatibilityVersionValue(
   return value;
 }
 
-export function productCompatibilityVersion(product, sourceProduct, prefix = 'release-graph') {
+export function productCompatibilityVersion(
+  product,
+  sourceProduct,
+  prefix = 'release-graph',
+  options = {},
+) {
   const entries = compatibilityVersionEntries(loadProducts(prefix), {
     requireSourceProduct: true,
     prefix,
@@ -575,11 +663,61 @@ export function productCompatibilityVersion(product, sourceProduct, prefix = 're
   if (entries.length === 0) {
     fail(prefix, `${product} does not declare compatibility with ${sourceProduct}`);
   }
-  const values = new Set(entries.map((entry) => compatibilityVersionValue(entry, { prefix })));
+  const values = new Set(
+    entries.map((entry) => compatibilityVersionValue(entry, { prefix, ...options })),
+  );
   if (values.size !== 1) {
     fail(prefix, `${product} declares conflicting compatibility versions for ${sourceProduct}`);
   }
   return [...values][0];
+}
+
+// Resolve a transitive pin through the dependency version the consumer actually
+// declares. A newer workspace SDK must not rewrite an older consumer's runtime.
+export function productDependencyCompatibilityVersion(
+  product,
+  dependencyProduct,
+  sourceProduct,
+  prefix = 'release-graph',
+  { readCompatibility = productCompatibilityVersion } = {},
+) {
+  const version = productCompatibilityVersion(product, dependencyProduct, prefix);
+  if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(version)) {
+    fail(prefix, `${product} must pin an exact stable ${dependencyProduct} version`);
+  }
+  const dependency = loadProducts(prefix)[dependencyProduct];
+  const ref = version === dependency.version ? null : dependency.tag_prefix + version;
+  if (
+    ref &&
+    !process.env.OLIPHAUNT_PRODUCT_HISTORY &&
+    readCompatibility === productCompatibilityVersion
+  ) {
+    const result = spawnSync(
+      'bash',
+      [
+        path.join(ROOT, 'tools/release/with-product-history.sh'),
+        ROOT,
+        'HEAD',
+        '',
+        '@workspace',
+        process.execPath,
+        path.join(ROOT, 'tools/release/product-version.mts'),
+        'dependency-compatibility',
+        product,
+        dependencyProduct,
+        sourceProduct,
+      ],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120_000 },
+    );
+    if (result.status !== 0)
+      throw new Error(`${prefix}: could not resolve ${ref}: ${result.stderr}`);
+    const resolved = result.stdout.trim();
+    if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(resolved)) {
+      fail(prefix, `${ref} returned an invalid ${sourceProduct} compatibility version`);
+    }
+    return resolved;
+  }
+  return readCompatibility(dependencyProduct, sourceProduct, prefix, { ref });
 }
 
 export function tagPrefixes(config, prefix = 'release-graph') {
@@ -1288,6 +1426,25 @@ export function buildPlan(graph, files, prefix = 'release-graph') {
     directProjects,
     prefix,
   );
+  // Generated payload bytes cross the same release boundary as compiled source.
+  // Resolve producer ownership first so source pins, recipes and private build
+  // projects select every product that embeds their resulting artifacts.
+  let expanded;
+  do {
+    expanded = false;
+    for (const [product, config] of Object.entries(products)) {
+      if (
+        !releaseProductSet.has(product) &&
+        (config.embedded_payload_products ?? []).some((dependency) =>
+          releaseProductSet.has(dependency),
+        )
+      ) {
+        releaseProductSet.add(product);
+        directProjects.add(releaseProductProjectId(product, products, projects, prefix));
+        expanded = true;
+      }
+    }
+  } while (expanded);
   const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
   const direct = releaseOrder(
     products,
