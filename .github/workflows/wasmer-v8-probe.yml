@@ -375,6 +375,21 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --locked --release --manifest-path tools/experiments/wasmer-v8/Cargo.toml -- cache-header-compatibility 2>&1 | tee target/windows-v8-diagnostic/cache-header-compatibility.log
+      - name: Prepare private owned Store cleanup control
+        run: python tools/experiments/wasmer-v8/owned_store_control.py target/windows-v8-diagnostic/owned-store-control
+      - name: Repeat runtime and extension checks with owned Store cleanup
+        run: |
+          set -euo pipefail
+          control=target/windows-v8-diagnostic/owned-store-control
+          bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee "$control/runtime-extension-tools.log"
+      - name: Compare database retention with owned Store cleanup on the same machine
+        env:
+          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+        run: |
+          set -euo pipefail
+          export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-diagnostic/vector-artifacts"
+          python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-diagnostic/owned-store-control
       - name: Retain diagnostic database evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
