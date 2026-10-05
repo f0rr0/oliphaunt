@@ -1,0 +1,553 @@
+--- a/src/backend/v8/entities/function/mod.rs
++++ b/src/backend/v8/entities/function/mod.rs
+@@ -59,6 +59,12 @@
+             .field("env_is_some", &self.env_handle.is_some())
+             .finish()
+     }
++}
++
++// Research only: each constructor transfers one unique Box to V8.
++// V8's existing host-info finalizer releases it when its isolate is disposed.
++unsafe extern "C" fn research_drop_callback_env<F>(ptr: *mut c_void) {
++    unsafe { drop(Box::from_raw(ptr.cast::<FunctionCallbackEnv<'_, F>>())) };
+ }
+ 
+ impl Function {
+@@ -145,8 +151,15 @@
+                 wasm_functype,
+                 Some(callback),
+                 callback_env as *mut _ as _,
+-                None,
++                Some(research_drop_callback_env::<F>),
+             )
++        };
++
++        // The callback has a borrowed StoreMut; retain only its unique C root.
++        unsafe {
++            let root = wasm_func_as_ref(wasm_function);
++            (*callback_env).store.inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(root));
++            wasm_functype_delete(wasm_functype);
+         };
+ 
+         if wasm_function.is_null() {
+@@ -217,8 +230,15 @@
+                 wasm_functype,
+                 Some(callback),
+                 callback_env as _,
+-                None,
++                Some(research_drop_callback_env::<F>),
+             )
++        };
++
++        // The callback has a borrowed StoreMut; retain only its unique C root.
++        unsafe {
++            let root = wasm_func_as_ref(wasm_function);
++            (*callback_env).store.inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(root));
++            wasm_functype_delete(wasm_functype);
+         };
+ 
+         if wasm_function.is_null() {
+@@ -297,8 +317,15 @@
+                 wasm_functype,
+                 Some(callback),
+                 callback_env as _,
+-                None,
++                Some(research_drop_callback_env::<F>),
+             )
++        };
++
++        // The callback has a borrowed StoreMut; retain only its unique C root.
++        unsafe {
++            let root = wasm_func_as_ref(wasm_function);
++            (*callback_env).store.inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(root));
++            wasm_functype_delete(wasm_functype);
+         };
+ 
+         if wasm_function.is_null() {
+@@ -332,6 +359,7 @@
+             res
+         };
+ 
++        unsafe { wasm_functype_delete(type_) };
+         FunctionType::new(params, returns)
+     }
+ 
+--- a/src/backend/v8/entities/function/typed.rs
++++ b/src/backend/v8/entities/function/typed.rs
+@@ -17,6 +17,18 @@
+ };
+ use wasmer_types::RawValue;
+ 
++// Disposable numeric-call ownership control. No entity alias deletes.
++struct ResearchValueVec(wasm_val_vec_t);
++impl std::ops::Deref for ResearchValueVec {
++    type Target = wasm_val_vec_t;
++    fn deref(&self) -> &Self::Target { &self.0 }
++}
++impl std::ops::DerefMut for ResearchValueVec {
++    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
++}
++impl Drop for ResearchValueVec {
++    fn drop(&mut self) { unsafe { wasm_val_vec_delete(&mut self.0) } }
++}
+ macro_rules! impl_native_traits {
+     (  $( $x:ident ),* ) => {
+         #[allow(unused_parens, non_snake_case)]
+@@ -41,24 +53,25 @@
+                      } ),* ]
+                  };
+ 
+-                 let mut results = {
++                 let mut results = ResearchValueVec({
+                     unsafe {
+                         let mut ret = std::mem::zeroed();
+                         wasm_val_vec_new_uninitialized(&mut ret, Rets::wasm_types().len());
+                         ret
+                     }
+-                };
++                });
+ 
+ 
+                  let func = unsafe { wasm_extern_as_func(self.func.to_vm_extern().unwrap_v_8()) };
+ 
+                 let mut params = unsafe {std::mem::zeroed()};
+                 unsafe {wasm_val_vec_new(&mut params, params_list.len(), params_list.as_ptr())};
++                let params = ResearchValueVec(params);
+ 
+                  let mut trap;
+ 
+                  loop {
+-                    trap = unsafe { wasm_func_call(func, &params, &mut results) };
++                    trap = unsafe { wasm_func_call(func, &*params, &mut *results) };
+ 
+                     let store_mut = store.as_store_mut();
+                     if let Some(callback) = store_mut.inner.on_called.take() {
+--- a/src/backend/v8/entities/global.rs
++++ b/src/backend/v8/entities/global.rs
+@@ -60,9 +60,10 @@
+         let v8_global_type =
+             unsafe { wasm_globaltype_new(wasm_valtype_new(v8_type), v8_mutability) };
+ 
+-        Ok(Self {
+-            handle: unsafe { wasm_global_new(v8_store.inner, v8_global_type, &v8_value) },
+-        })
++        let handle = unsafe { wasm_global_new(v8_store.inner, v8_global_type, &v8_value) };
++        unsafe { bindings::wasm_globaltype_delete(v8_global_type) };
++        store.inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(unsafe { bindings::wasm_global_as_ref(handle) }));
++        Ok(Self { handle })
+     }
+ 
+     pub fn ty(&self, store: &impl AsStoreRef) -> GlobalType {
+@@ -73,14 +74,16 @@
+         let valtype = unsafe { wasm_globaltype_content(r#type) };
+         let wasmer_type = valtype.into_wt();
+ 
+-        GlobalType::new(
++        let result = GlobalType::new(
+             wasmer_type,
+             if mutability == bindings::wasm_mutability_enum_WASM_VAR as u8 {
+                 Mutability::Var
+             } else {
+                 Mutability::Const
+             },
+-        )
++        );
++        unsafe { bindings::wasm_globaltype_delete(r#type) };
++        result
+     }
+ 
+     pub fn get(&self, store: &mut impl AsStoreMut) -> Value {
+--- a/src/backend/v8/entities/instance.rs
++++ b/src/backend/v8/entities/instance.rs
+@@ -26,20 +26,15 @@
+         let externs: Vec<_> = externs.into_iter().map(|v| v.unwrap_v_8()).collect();
+ 
+         let instance = unsafe {
+-            let mut imports = unsafe {
+-                let mut vec = Default::default();
+-                wasm_extern_vec_new(&mut vec, externs.len(), externs.as_ptr());
+-                vec
+-            };
+-
+-            std::mem::forget(externs);
+-
+-            wasm_instance_new(
+-                store,
+-                wasm_module_obtain(store, module),
+-                &mut imports,
+-                &mut trap,
+-            )
++            // The vector consumes C wrappers: copy borrowed reusable imports.
++            let copied: Vec<_> = externs.iter().map(|p| wasm_extern_copy(*p)).collect();
++            let mut imports = wasm_extern_vec_t::default();
++            wasm_extern_vec_new(&mut imports, copied.len(), copied.as_ptr());
++            let local_module = wasm_module_obtain(store, module);
++            let instance = wasm_instance_new(store, local_module, &imports, &mut trap);
++            wasm_module_delete(local_module);
++            wasm_extern_vec_delete(&mut imports);
++            instance
+         };
+ 
+         if instance.is_null() {
+@@ -65,7 +60,7 @@
+         };
+ 
+         let exports_ty = module.exports().collect::<Vec<_>>();
+-        exports_ty
++        let result = exports_ty
+             .iter()
+             .zip(wasm_exports.iter())
+             .map(|(export_type, wasm_export)| {
+@@ -77,14 +72,14 @@
+                 let extern_ = Extern::from_vm_extern(&mut store, VMExtern::V8(*wasm_export));
+                 (name.to_string(), extern_)
+             })
+-            .collect::<Exports>()
++            .collect::<Exports>();
++        store.as_store_mut().inner.store.as_v8_mut().research_exports
++            .push(super::store::ResearchExports(exports));
++        result
+     }
+ }
+-impl Drop for InstanceHandle {
+-    fn drop(&mut self) {
+-        unsafe { wasm_instance_delete(self.0) }
+-    }
+-}
++// Store owns the C wrapper; a Rust alias may outlive its Store.
++
+ 
+ #[derive(Clone, PartialEq, Eq)]
+ /// A WebAssembly `instance` in the `v8` runtime.
+@@ -126,6 +121,9 @@
+             module.as_v8().handle.v8_shared_module_handle,
+             externs,
+         )?;
++        // C instance wrappers belong to the Store, like their export aliases.
++        let owned = unsafe { wasm_instance_as_ref(instance.0) };
++        store.as_store_mut().inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(owned));
+         let exports = instance.get_exports(store, module);
+ 
+         Ok((
+--- a/src/backend/v8/entities/memory/mod.rs
++++ b/src/backend/v8/entities/memory/mod.rs
+@@ -53,14 +53,12 @@
+             });
+         }
+ 
+-        let limits = Box::into_raw(Box::new(wasm_limits_t {
+-            min,
+-            max,
+-            shared: ty.shared,
+-        }));
+-
+-        let memorytype = unsafe { wasm_memorytype_new(limits) };
++        let limits = wasm_limits_t { min, max, shared: ty.shared };
++
++        let memorytype = unsafe { wasm_memorytype_new(&limits) };
+         let c_memory = unsafe { wasm_memory_new(v8_store.inner, memorytype) };
++        unsafe { wasm_memorytype_delete(memorytype) };
++        store_mut.inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(unsafe { wasm_memory_as_ref(c_memory) }));
+ 
+         Ok(Self {
+             handle: VMMemory(c_memory),
+@@ -84,7 +82,7 @@
+         let memory_type: *mut wasm_memorytype_t = unsafe { wasm_memory_type(self.handle.0) };
+         let limits: *const wasm_limits_t = unsafe { wasm_memorytype_limits(memory_type) };
+ 
+-        MemoryType {
++        let result = MemoryType {
+             shared: unsafe { (*limits).shared },
+             minimum: unsafe { wasmer_types::Pages((*limits).min) },
+             maximum: unsafe {
+@@ -94,7 +92,9 @@
+                     Some(wasmer_types::Pages((*limits).max))
+                 }
+             },
+-        }
++        };
++        unsafe { wasm_memorytype_delete(memory_type) };
++        result
+     }
+ 
+     pub fn size(&self, store: &impl AsStoreRef) -> Pages {
+@@ -190,7 +190,7 @@
+         let memorytype = unsafe { wasm_memorytype_new(&limits) };
+         let copied_memory = unsafe { wasm_memory_new(v8_store.inner, memorytype) };
+         unsafe {
+-            wasm_memorytype_delete(memorytype);
++            wasm_memorytype_delete(memorytype);
+         }
+         if copied_memory.is_null() {
+             return Err(MemoryError::Generic(
+--- a/src/backend/v8/entities/module.rs
++++ b/src/backend/v8/entities/module.rs
+@@ -18,19 +18,21 @@
+ #[derive(Debug)]
+ pub(crate) struct ModuleHandle {
+     pub(crate) v8_shared_module_handle: *mut wasm_shared_module_t,
+-    pub(crate) orig_store: Store,
++    pub(crate) engine: crate::Engine,
+ }
+ 
+ impl PartialEq for ModuleHandle {
+     fn eq(&self, other: &Self) -> bool {
++        // Compare in one isolate; each obtained wrapper is unique.
+         unsafe {
+-            wasm_module_same(
+-                wasm_module_obtain(self.orig_store.as_v8().inner, self.v8_shared_module_handle),
+-                wasm_module_obtain(
+-                    other.orig_store.as_v8().inner,
+-                    other.v8_shared_module_handle,
+-                ),
+-            )
++            let transient = Store::new(self.engine.clone());
++            let store = transient.as_v8().inner;
++            let left = wasm_module_obtain(store, self.v8_shared_module_handle);
++            let right = wasm_module_obtain(store, other.v8_shared_module_handle);
++            let same = wasm_module_same(left, right);
++            wasm_module_delete(right);
++            wasm_module_delete(left);
++            same
+         }
+     }
+ }
+@@ -46,7 +48,7 @@
+ 
+         let engine = engine.as_engine_ref().engine().clone();
+         let store = Store::new(engine.clone());
+-        let engine = engine.as_v8().inner.engine;
++
+ 
+         let inner = unsafe { wasm_module_new(store.as_v8().inner, &bytes as *const _) };
+ 
+@@ -56,7 +58,11 @@
+             ));
+         }
+ 
+-        let inner = unsafe { wasm_module_share(inner) };
++        let inner = unsafe {
++            let shared = wasm_module_share(inner);
++            wasm_module_delete(inner);
++            shared
++        };
+ 
+         if inner.is_null() {
+             return Err(CompileError::Validate(
+@@ -66,7 +72,7 @@
+ 
+         Ok(Self {
+             v8_shared_module_handle: inner,
+-            orig_store: store,
++            engine,
+         })
+     }
+ 
+@@ -86,7 +92,11 @@
+             ));
+         }
+ 
+-        let inner = unsafe { wasm_module_share(inner) };
++        let inner = unsafe {
++            let shared = wasm_module_share(inner);
++            wasm_module_delete(inner);
++            shared
++        };
+ 
+         if inner.is_null() {
+             return Err(CompileError::Validate(
+@@ -96,15 +106,16 @@
+ 
+         Ok(Self {
+             v8_shared_module_handle: inner,
+-            orig_store: store,
++            engine,
+         })
+     }
+ 
+     #[tracing::instrument(skip(self))]
+     pub fn serialize(&self) -> Result<Vec<u8>, SerializeError> {
++        let transient = Store::new(self.engine.clone());
+         let handle = unsafe {
+             wasm_module_obtain(
+-                self.orig_store.as_v8().inner,
++                transient.as_v8().inner,
+                 self.v8_shared_module_handle as *const _,
+             )
+         };
+@@ -117,7 +128,7 @@
+         let bytes = unsafe {
+             wasm_module_serialize(handle, &mut bytes as *mut _);
+             if bytes.data.is_null() {
+-                wasm_module_delete(handle);
++                wasm_module_delete(handle);
+                 return Err(SerializeError::Generic(String::from(
+                     "V8 returned an empty vector as serialized module",
+                 )));
+@@ -125,7 +136,7 @@
+             let serialized_bytes =
+                 std::slice::from_raw_parts(bytes.data as *mut u8, bytes.size).to_vec();
+             wasm_byte_vec_delete(&mut bytes);
+-            wasm_module_delete(handle);
++            wasm_module_delete(handle);
+             serialized_bytes
+         };
+ 
+@@ -135,7 +146,7 @@
+ 
+ impl Drop for ModuleHandle {
+     fn drop(&mut self) {
+-        unsafe { wasm_shared_module_delete(self.v8_shared_module_handle) }
++        unsafe { wasm_shared_module_delete(self.v8_shared_module_handle) }
+     }
+ }
+ 
+--- a/src/backend/v8/entities/store/mod.rs
++++ b/src/backend/v8/entities/store/mod.rs
+@@ -3,18 +3,35 @@
+ 
+ use crate::{
+     AsStoreRef, BackendStore, StoreRef,
+-    backend::v8::bindings::{wasm_store_delete, wasm_store_new, wasm_store_t},
++    backend::v8::bindings::{wasm_store_delete, wasm_store_new, wasm_store_t},
+     engine::{AsEngineRef, Engine, EngineRef},
+ };
+ 
+ mod obj;
+ pub use obj::*;
+ 
++#[derive(Debug)]
++pub(crate) struct ResearchExports(pub(crate) crate::backend::v8::bindings::wasm_extern_vec_t);
++
++impl Drop for ResearchExports {
++    fn drop(&mut self) {
++        unsafe { crate::backend::v8::bindings::wasm_extern_vec_delete(&mut self.0) };
++    }
++}
++
++#[derive(Debug)]
++pub(crate) struct ResearchRef(pub(crate) *mut crate::backend::v8::bindings::wasm_ref_t);
++impl Drop for ResearchRef {
++    fn drop(&mut self) { unsafe { crate::backend::v8::bindings::wasm_ref_delete(self.0) }; }
++}
++
+ /// A WebAssembly `store` in the `v8` runtime.
+ pub struct Store {
+     pub(crate) engine: Engine,
+     pub(crate) inner: *mut wasm_store_t,
+     pub(crate) thread_id: ThreadId,
++    pub(crate) research_exports: Vec<ResearchExports>,
++    pub(crate) research_refs: Vec<ResearchRef>,
+ }
+ 
+ impl std::fmt::Debug for Store {
+@@ -33,6 +50,8 @@
+             inner,
+             engine,
+             thread_id,
++            research_exports: Vec::new(),
++            research_refs: Vec::new(),
+         }
+     }
+ 
+@@ -47,7 +66,11 @@
+ 
+ impl Drop for Store {
+     fn drop(&mut self) {
+-        unsafe { wasm_store_delete(self.inner) }
++        // These vectors uniquely own the export wrappers. Rust export clones
++        // borrow them through their Store, so retain them until Store teardown.
++        self.research_exports.clear();
++        self.research_refs.clear();
++        unsafe { wasm_store_delete(self.inner) }
+     }
+ }
+ 
+--- a/src/backend/v8/entities/table.rs
++++ b/src/backend/v8/entities/table.rs
+@@ -26,13 +26,12 @@
+     pub(crate) fn type_to_v8(ty: TableType) -> *mut wasm_tabletype_t {
+         let valtype = unsafe { wasm_valtype_new(ty.ty.into_ct()) };
+ 
+-        let limits = Box::into_raw(Box::new(wasm_limits_t {
++        let limits = wasm_limits_t {
+             min: ty.minimum,
+             max: ty.maximum.unwrap_or(wasm_limits_max_default),
+             shared: false,
+-        }));
+-
+-        unsafe { wasm_tabletype_new(valtype, limits) }
++        };
++        unsafe { wasm_tabletype_new(valtype, &limits) }
+     }
+ 
+     pub fn new(
+@@ -49,9 +48,10 @@
+         let wasm_tablety = Self::type_to_v8(ty);
+         let init: wasm_val_t = init.into_cv();
+ 
+-        Ok(Self {
+-            handle: unsafe { wasm_table_new(v8_store.inner, wasm_tablety, init.of.ref_) },
+-        })
++        let handle = unsafe { wasm_table_new(v8_store.inner, wasm_tablety, init.of.ref_) };
++        unsafe { wasm_tabletype_delete(wasm_tablety) };
++        store_mut.inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(unsafe { wasm_table_as_ref(handle) }));
++        Ok(Self { handle })
+     }
+ 
+     pub fn to_vm_extern(&self) -> VMExtern {
+@@ -65,10 +65,10 @@
+ 
+         let table_type: *mut wasm_tabletype_t = unsafe { wasm_table_type(self.handle) };
+         let table_limits = unsafe { wasm_tabletype_limits(table_type) };
+-        let table_type = unsafe { wasm_tabletype_element(table_type) };
+-
+-        TableType {
+-            ty: table_type.into_wt(),
++        let element_type = unsafe { wasm_tabletype_element(table_type) };
++
++        let result = TableType {
++            ty: element_type.into_wt(),
+             minimum: unsafe { (*table_limits).min },
+             maximum: unsafe {
+                 if (*table_limits).max == wasm_limits_max_default {
+@@ -78,7 +78,9 @@
+                 }
+             },
+             readonly: false,
+-        }
++        };
++        unsafe { wasm_tabletype_delete(table_type) };
++        result
+     }
+ 
+     pub fn get(&self, store: &mut impl AsStoreMut, index: u32) -> Option<Value> {
+--- a/src/backend/v8/entities/tag.rs
++++ b/src/backend/v8/entities/tag.rs
+@@ -21,6 +21,9 @@
+ 
+ unsafe impl Send for Tag {}
+ unsafe impl Sync for Tag {}
++
++// Research C bridge uses ExternType's virtual implementation destructor.
++unsafe extern "C" { fn research_externtype_delete(type_: *mut wasm_tagtype_t); }
+ 
+ impl Tag {
+     pub fn new<P: Into<Box<[Type]>>>(store: &mut impl AsStoreMut, params: P) -> Self {
+@@ -49,6 +52,8 @@
+         }
+ 
+         let handle = unsafe { wasm_tag_new(v8_store.inner, tag_type) };
++        unsafe { research_externtype_delete(tag_type) };
++        store_mut.inner.store.as_v8_mut().research_refs.push(super::store::ResearchRef(unsafe { wasm_tag_as_ref(handle) }));
+         if handle.is_null() {
+             panic!("failed to create new tag: returned tag is null");
+         }
+@@ -69,6 +74,7 @@
+             res
+         };
+ 
++        unsafe { research_externtype_delete(type_) };
+         TagType::new(wasmer_types::TagKind::Exception, params)
+     }
+ 

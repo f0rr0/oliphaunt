@@ -1,4 +1,4 @@
-name: Windows V8 expanded ownership control
+name: Windows V8 DLL expanded ownership control
 'on':
   workflow_dispatch: null
 permissions:
@@ -6,7 +6,7 @@ permissions:
   actions: read
 jobs:
   expanded-ownership:
-    name: Expanded ownership (${{ matrix.runner }})
+    name: DLL expanded ownership (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -14,6 +14,7 @@ jobs:
       matrix:
         runner:
         - windows-2022
+        - windows-2025-vs2026
     defaults:
       run:
         shell: bash
@@ -29,12 +30,20 @@ jobs:
       with:
         arch: x64
         vsversion: '2022'
+      if: ${{ matrix.runner == 'windows-2022' }}
+    - name: Set up current MSVC host
+      if: ${{ matrix.runner == 'windows-2025-vs2026' }}
+      uses: ./.github/actions/setup-msvc
     - name: Pin research linker under Git Bash
       shell: pwsh
-      run: |
-        $linker = Join-Path $env:VCToolsInstallDir 'bin/HostX64/x64/link.exe'
+      run: '$linker = Join-Path $env:VCToolsInstallDir ''bin/HostX64/x64/link.exe''
+
         if (!(Test-Path -LiteralPath $linker -PathType Leaf)) { throw "missing MSVC linker $linker" }
-        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
+
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding
+        utf8 # zizmor: ignore[github-env] validated runner-owned MSVC linker path.
+
+        '
     - name: Compile Windows V8 serializer
       run: cargo check --locked -p xtask --features aot-serializer
     - name: Download immutable diagnostic portable runtime
@@ -48,11 +57,15 @@ jobs:
     - name: Verify diagnostic PostgreSQL fixture identity
       env:
         GH_TOKEN: ${{ github.token }}
-      run: |
-        set -euo pipefail
+      run: 'set -euo pipefail
+
         mkdir -p target/windows-v8-diagnostic
+
         gh api repos/f0rr0/oliphaunt/actions/artifacts/11312707536 > target/windows-v8-diagnostic/guest-artifact.json
+
         python tools/experiments/wasmer-v8/verify_guest.py . target/windows-v8-diagnostic
+
+        '
     - name: Generate diagnostic Windows V8 artifacts
       run: bash src/wasix/runtime/tools/build-aot-target.sh
     - name: Download immutable diagnostic extension compiler outputs
@@ -74,48 +87,54 @@ jobs:
     - name: Record extension and tools provenance and generate Windows AOT
       env:
         GH_TOKEN: ${{ github.token }}
-      run: |
-        set -euo pipefail
+      run: 'set -euo pipefail
+
         gh api repos/f0rr0/oliphaunt/actions/artifacts/11318826010 > target/windows-v8-diagnostic/extension-artifact.json
+
         gh api repos/f0rr0/oliphaunt/actions/artifacts/11318277384 > target/windows-v8-diagnostic/tools-artifact.json
+
         cp target/extensions/wasix/assets/manifest.json target/windows-v8-diagnostic/extension-manifest.json
+
         cp target/postgres-tools/wasix/assets/manifest.json target/windows-v8-diagnostic/tools-manifest.json
+
         bash src/extensions/artifacts/wasix/tools/build-aot.sh
+
         bash src/wasix/postgres-tools/tools/build-aot.sh
+
+        '
     - name: Materialize the immutable vector extension package
       env:
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
         OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
-      run: |
-        set -euo pipefail
-        OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$PWD/target/extensions/wasix/assets" \
-        OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$PWD/target/extensions/wasix/aot-artifacts" \
-          bash tools/dev/bun.sh src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \
-            --output-root target/windows-v8-ownership/vector-artifacts --family wasix --require-wasix oliphaunt-extension-vector
-    - name: Apply the pinned private ownership control
-      run: python tools/experiments/wasmer-v8/expanded-ownership/prepare.py target/windows-v8-ownership/control
-    - name: Exercise runtime, dynamic extension loading and logical tools
-      run: |-
-        set -euo pipefail
-        bash src/wasix/sdks/rust/tools/test-aot.sh 2>&1 | tee target/windows-v8-ownership/control/runtime-extension-tools.log
-    - name: Measure 100 completely closed vector databases
+      run: "set -euo pipefail\nOLIPHAUNT_WASIX_GENERATED_ASSET_ROOT=\"$PWD/target/extensions/wasix/assets\" \\\n\
+        OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT=\"$PWD/target/extensions/wasix/aot-artifacts\" \\\n  bash tools/dev/bun.sh\
+        \ src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts \\\n    --output-root target/windows-v8-ownership/vector-artifacts\
+        \ --family wasix --require-wasix oliphaunt-extension-vector\n"
+    - name: Apply the pinned private DLL ownership control
+      run: python tools/experiments/wasmer-v8/expanded-ownership/prepare-dll.py target/windows-v8-ownership/control
+    - name: Test actual SDK without consumer engine build tools
       env:
         OLIPHAUNT_RESEARCH_LIFECYCLE_CYCLES: '100'
         OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
         OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
-      run: |-
-        set -euo pipefail
+      run: 'set -euo pipefail
+
         export OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT="$PWD/target/windows-v8-ownership/vector-artifacts"
-        python tools/experiments/wasmer-v8/lifecycle_check.py target/windows-v8-ownership/control
+
+        python tools/experiments/wasmer-v8/expanded-ownership/sdk-dll-check.py target/windows-v8-ownership/control'
     - name: Retain ownership receipts
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: windows-v8-expanded-ownership-${{ matrix.runner }}
-        path: |-
-          target/windows-v8-ownership/control
+        name: windows-v8-dll-expanded-ownership-${{ matrix.runner }}
+        path: 'target/windows-v8-ownership/control
+
           target/windows-v8-diagnostic/guest-artifact.json
+
           target/windows-v8-diagnostic/extension-manifest.json
+
           target/windows-v8-diagnostic/tools-manifest.json
+
+          !target/windows-v8-ownership/control/engine/dependency'
         if-no-files-found: warn
         retention-days: 90
