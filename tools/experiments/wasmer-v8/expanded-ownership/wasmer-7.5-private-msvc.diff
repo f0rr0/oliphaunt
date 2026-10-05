@@ -1,37 +1,3 @@
---- a/src/backend/v8/bindings.rs
-+++ b/src/backend/v8/bindings.rs
-@@ -5,3 +5,31 @@
- 
- // This matches bindgen::Builder output
- include!(concat!(env!("OUT_DIR"), "/v8_bindings.rs"));
-+
-+// Private MSVC owner control against the immutable Wee8 11.9.7 ABI.
-+unsafe extern "C" {
-+    #[link_name = "?destroy@Store@wasm@@AEAAXXZ"]
-+    pub fn research_owned_store_destroy(value: *mut wasm_store_t);
-+    #[link_name = "?destroy@?$Shared@VMemory@wasm@@@wasm@@AEAAXXZ"]
-+    pub fn research_owned_shared_memory_destroy(value: *mut wasm_shared_memory_t);
-+    #[link_name = "?destroy@?$Shared@VModule@wasm@@@wasm@@AEAAXXZ"]
-+    pub fn research_owned_shared_module_destroy(value: *mut wasm_shared_module_t);
-+    #[link_name = "?destroy@FuncType@wasm@@AEAAXXZ"]
-+    pub fn research_owned_functype_destroy(value: *mut wasm_functype_t);
-+    #[link_name = "?destroy@Module@wasm@@AEAAXXZ"]
-+    pub fn research_owned_module_destroy(value: *mut wasm_module_t);
-+    #[link_name = "?destroy@Ref@wasm@@AEAAXXZ"]
-+    pub fn research_owned_ref_destroy(value: *mut wasm_ref_t);
-+    #[link_name = "?destroy@Extern@wasm@@AEAAXXZ"]
-+    pub fn research_owned_extern_destroy(value: *mut wasm_extern_t);
-+    #[link_name = "?destroy@ValType@wasm@@AEAAXXZ"]
-+    pub fn research_owned_valtype_destroy(value: *mut wasm_valtype_t);
-+    #[link_name = "?destroy@MemoryType@wasm@@AEAAXXZ"]
-+    pub fn research_owned_memorytype_destroy(value: *mut wasm_memorytype_t);
-+    #[link_name = "?destroy@GlobalType@wasm@@AEAAXXZ"]
-+    pub fn research_owned_globaltype_destroy(value: *mut wasm_globaltype_t);
-+    #[link_name = "?destroy@TableType@wasm@@AEAAXXZ"]
-+    pub fn research_owned_tabletype_destroy(value: *mut wasm_tabletype_t);
-+    #[link_name = "?destroy@Trap@wasm@@AEAAXXZ"]
-+    pub fn research_owned_trap_destroy(value: *mut wasm_trap_t);
-+}
 --- a/src/backend/v8/entities/function/mod.rs
 +++ b/src/backend/v8/entities/function/mod.rs
 @@ -59,6 +59,12 @@
@@ -585,3 +551,37 @@
          TagType::new(wasmer_types::TagKind::Exception, params)
      }
  
+--- a/src/backend/v8/bindings.rs
++++ b/src/backend/v8/bindings.rs
+@@ -5,3 +5,31 @@
+ 
+ // This matches bindgen::Builder output
+ include!(concat!(env!("OUT_DIR"), "/v8_bindings.rs"));
++
++// Private MSVC owner control against the immutable Wee8 11.9.7 ABI.
++unsafe extern "C" {
++    #[link_name = "?destroy@Store@wasm@@AEAAXXZ"]
++    pub fn research_owned_store_destroy(value: *mut wasm_store_t);
++    #[link_name = "?destroy@?$Shared@VMemory@wasm@@@wasm@@AEAAXXZ"]
++    pub fn research_owned_shared_memory_destroy(value: *mut wasm_shared_memory_t);
++    #[link_name = "?destroy@?$Shared@VModule@wasm@@@wasm@@AEAAXXZ"]
++    pub fn research_owned_shared_module_destroy(value: *mut wasm_shared_module_t);
++    #[link_name = "?destroy@FuncType@wasm@@AEAAXXZ"]
++    pub fn research_owned_functype_destroy(value: *mut wasm_functype_t);
++    #[link_name = "?destroy@Module@wasm@@AEAAXXZ"]
++    pub fn research_owned_module_destroy(value: *mut wasm_module_t);
++    #[link_name = "?destroy@Ref@wasm@@AEAAXXZ"]
++    pub fn research_owned_ref_destroy(value: *mut wasm_ref_t);
++    #[link_name = "?destroy@Extern@wasm@@AEAAXXZ"]
++    pub fn research_owned_extern_destroy(value: *mut wasm_extern_t);
++    #[link_name = "?destroy@ValType@wasm@@AEAAXXZ"]
++    pub fn research_owned_valtype_destroy(value: *mut wasm_valtype_t);
++    #[link_name = "?destroy@MemoryType@wasm@@AEAAXXZ"]
++    pub fn research_owned_memorytype_destroy(value: *mut wasm_memorytype_t);
++    #[link_name = "?destroy@GlobalType@wasm@@AEAAXXZ"]
++    pub fn research_owned_globaltype_destroy(value: *mut wasm_globaltype_t);
++    #[link_name = "?destroy@TableType@wasm@@AEAAXXZ"]
++    pub fn research_owned_tabletype_destroy(value: *mut wasm_tabletype_t);
++    #[link_name = "?destroy@Trap@wasm@@AEAAXXZ"]
++    pub fn research_owned_trap_destroy(value: *mut wasm_trap_t);
++}
