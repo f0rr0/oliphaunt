@@ -269,9 +269,17 @@ for _attempt in 1 2; do
 done
 for fsync in on off; do
   durability_args=()
+  [ "$fsync" != off ] || durability_args=(fsync=off)
+  ICU_DATA=/ambient/unverified-icu OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY=1 \
+    "$bin_dir/liboliphaunt_cluster_seed_smoke$exe_suffix" "$(native_path "$cluster_root/standard-icu-import/pgdata")" "$(native_path "$install_dir")" \
+    "SELECT 'native-settings-' || current_setting('fsync') || ':' || current_setting('full_page_writes') || ':' || current_setting('synchronous_commit')" "native-settings-$fsync:on:on" ${durability_args[@]+"${durability_args[@]}"}
+done
+printf '\nfsync = off\n' >> "$cluster_root/standard-icu-import/pgdata/postgresql.conf"
+for fsync in off on; do
+  durability_args=()
   [ "$fsync" != on ] || durability_args=(fsync=on)
   ICU_DATA=/ambient/unverified-icu OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY=1 \
     "$bin_dir/liboliphaunt_cluster_seed_smoke$exe_suffix" "$(native_path "$cluster_root/standard-icu-import/pgdata")" "$(native_path "$install_dir")" \
-    "SELECT 'native-fsync-' || current_setting('fsync')" "native-fsync-$fsync" ${durability_args[@]+"${durability_args[@]}"}
+    "SELECT 'native-config-fsync-' || current_setting('fsync')" "native-config-fsync-$fsync" ${durability_args[@]+"${durability_args[@]}"}
 done
 printf 'native standard and ICU cluster seeds passed open, catalog, close, and reopen qualification\n' >&2
