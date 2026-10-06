@@ -1488,9 +1488,26 @@ export function buildPlan(graph, files, prefix = 'release-graph') {
 export function buildPlanFromProductTags(
   graph,
   headRef,
-  { includeCurrentTags = false, prefix = 'release-graph', root = ROOT } = {},
+  {
+    includeCurrentTags = false,
+    selectedProducts = Object.keys(graph.products),
+    prefix = 'release-graph',
+    root = ROOT,
+  } = {},
 ) {
   const products = graph.products;
+  if (
+    !Array.isArray(selectedProducts) ||
+    selectedProducts.length === 0 ||
+    new Set(selectedProducts).size !== selectedProducts.length ||
+    selectedProducts.some(
+      (product) => typeof product !== 'string' || !Object.hasOwn(products, product),
+    )
+  ) {
+    throw new Error(
+      `${prefix}: selected products must be a non-empty list of unique known products`,
+    );
+  }
   const direct = new Set();
   const changed = new Set();
   const currentTaggedProducts = new Set();
@@ -1500,7 +1517,8 @@ export function buildPlanFromProductTags(
     root,
   });
 
-  for (const [product, config] of Object.entries(products)) {
+  for (const product of selectedProducts) {
+    const config = products[product];
     const baseRef = latestProductTag(config, headRef, prefix, root);
     const transition = productVersionTransitionStatus(product, config, baseRef, headRef, {
       includeCurrentTags,

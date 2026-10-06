@@ -241,6 +241,12 @@ does not use GitHub Search or the Issues API's eventually consistent label
   index. A pending merged PR means publication is unfinished; it is never
   reported as “no releasable changes.”
 
+Publication derives its product scope from the latest verified Release Please
+release commit before checking product tags. Later changes to products outside
+that candidate do not block the pending release or add products to it. Selected
+products still require valid version transitions and exact dependency pins;
+unscoped tag planning continues to reject unversioned release-affecting changes.
+
 ## Qualification contract
 
 Root publication admission accepts only a current-main candidate with one non-cancelled CI run whose `head_sha` is exact and whose `Qualified` gate succeeded. That record covers required checks, tests, builds, policy, selected E2E, and named build artifacts. A successful `Builds` job alone is insufficient. After the root job pins the immutable release transport tag, the rest of that run remains bound to the exact transaction without re-evaluating the moving main branch.

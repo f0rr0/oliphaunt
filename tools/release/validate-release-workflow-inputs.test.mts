@@ -4,6 +4,20 @@ import path from 'node:path';
 import test from 'node:test';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
+test('publication scopes tag planning to the verified Release Please candidate', () => {
+  const { steps } = Bun.YAML.parse(
+    readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
+  ).jobs['plan-candidate'];
+  const identity = steps.findIndex((step) => step.id === 'release_scope');
+  const plan = steps.findIndex((step) => step.id === 'release_plan');
+  assert.ok(identity >= 0 && identity < plan);
+  assert.match(steps[identity].run, /--derive-products/u);
+  assert.equal(steps[plan].env.PRODUCTS_JSON, `\${{ steps.release_scope.outputs.products_json }}`);
+  assert.match(steps[plan].run, /--products-json "\$PRODUCTS_JSON"/u);
+  const proof = steps.findIndex((step) => step.id === 'verify_publication_candidate');
+  assert.ok(proof > plan);
+  assert.equal(steps[proof].env.PRODUCTS_JSON, `\${{ steps.release_plan.outputs.products_json }}`);
+});
 test('registry bootstrap remains eligible when qualification dispatch was skipped', () => {
   const { jobs } = Bun.YAML.parse(
     readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),

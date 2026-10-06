@@ -4,7 +4,6 @@ import { appendFileSync } from 'node:fs';
 
 import { ROOT } from './release-graph.mts';
 import {
-  deriveReleaseProducts,
   latestVerifiedReleaseCommit,
   releaseCommit,
   releaseCommitFile,
@@ -47,7 +46,12 @@ function manifestVersions(repo, commit, products) {
 }
 
 export function derivePublicationProducts({ repo = ROOT, headRef = 'HEAD' } = {}) {
-  return deriveReleaseProducts({ repo, headRef: publicationCommit(repo, headRef) }).products;
+  const commit = publicationCommit(repo, headRef);
+  const verified = latestVerifiedReleaseCommit({ repo, headRef: commit });
+  if (verified === null) {
+    throw error(`no verified release commit is reachable from publication commit ${commit}`);
+  }
+  return verified.products;
 }
 
 export function resolvePublicationPlanningSource({ repo = ROOT, headRef = 'HEAD' } = {}) {
@@ -143,7 +147,7 @@ function parseArgs(argv) {
       throw error(`--products-json must be valid JSON: ${cause.message}`);
     }
   }
-  return { githubOutput, headRef, products, resolvePlanHead };
+  return { githubOutput, headRef, products, resolvePlanHead, deriveProducts };
 }
 
 if (import.meta.main) {
@@ -165,12 +169,15 @@ if (import.meta.main) {
           `mode=${verified.mode}`,
           `publication_sha=${verified.publicationSha}`,
           `release_sha=${verified.releaseSha}`,
+          `products_json=${JSON.stringify(verified.products)}`,
           '',
         ].join('\n'),
       );
     }
     console.log(
-      `verified publication commit ${verified.publicationSha} for ${verified.products.length} product(s)`,
+      args.deriveProducts
+        ? JSON.stringify(verified.products)
+        : `verified publication commit ${verified.publicationSha} for ${verified.products.length} product(s)`,
     );
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause));

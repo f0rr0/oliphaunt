@@ -25,6 +25,7 @@ switch (scenario) {
     break;
   case 'controller':
     assert.notEqual(headRef, release);
+    assert.deepEqual(derivePublicationProducts(options), ['alpha']);
     assert.deepEqual(verifyPublicationCandidate(options), {
       mode: 'release-bump',
       publicationSha: headRef,

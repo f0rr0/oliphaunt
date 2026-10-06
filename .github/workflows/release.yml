@@ -165,12 +165,23 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache: "false"
+      - name: Derive verified release scope
+        id: release_scope
+        timeout-minutes: 2
+        run: |
+          bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "$RELEASE_HEAD_SHA" tools/dev/bun.sh tools/release/verify-publication-candidate.mts \
+            --derive-products \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
       - name: Plan product releases
         id: release_plan
+        env:
+          PRODUCTS_JSON: ${{ steps.release_scope.outputs.products_json }}
         run: |
           release_plan_args=(
             --from-product-tags
             --include-current-tags
+            --products-json "$PRODUCTS_JSON"
             --head-ref "$RELEASE_HEAD_SHA"
             --format github-output
           )

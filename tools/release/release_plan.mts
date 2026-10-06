@@ -85,6 +85,7 @@ function parseArgs(argv) {
     headRef: 'HEAD',
     fromProductTags: false,
     includeCurrentTags: false,
+    products: undefined,
     changedFiles: [],
     format: 'text',
   };
@@ -110,6 +111,12 @@ function parseArgs(argv) {
       args.fromProductTags = true;
     } else if (value === '--include-current-tags') {
       args.includeCurrentTags = true;
+    } else if (value === '--products-json') {
+      try {
+        args.products = JSON.parse(argv[++index]);
+      } catch {
+        fail('--products-json requires a JSON product list');
+      }
     } else if (value === '--changed-file') {
       if (index + 1 >= argv.length) {
         fail('--changed-file requires a value');
@@ -128,7 +135,7 @@ function parseArgs(argv) {
       args.format = value.slice('--format='.length);
     } else if (value === '-h' || value === '--help') {
       console.log(
-        'usage: bash tools/release/release-plan.sh [--base-ref REF] [--head-ref REF] [--from-product-tags] [--include-current-tags] [--changed-file PATH...] [--format text|json|github-output]',
+        'usage: bash tools/release/release-plan.sh [--base-ref REF] [--head-ref REF] [--from-product-tags [--products-json JSON]] [--include-current-tags] [--changed-file PATH...] [--format text|json|github-output]',
       );
       process.exit(0);
     } else {
@@ -137,6 +144,12 @@ function parseArgs(argv) {
   }
   if (!['text', 'json', 'github-output'].includes(args.format)) {
     fail('--format must be one of: text, json, github-output');
+  }
+  if (
+    args.products !== undefined &&
+    (!args.fromProductTags || args.baseRef || args.changedFiles.length)
+  ) {
+    fail('--products-json requires only --from-product-tags planning');
   }
   return args;
 }
@@ -149,6 +162,7 @@ function planForArgs(args) {
   } else if (args.fromProductTags) {
     plan = buildPlanFromProductTags(graph, args.headRef, {
       includeCurrentTags: args.includeCurrentTags,
+      selectedProducts: args.products,
       prefix: TOOL,
     });
   } else if (args.baseRef) {
