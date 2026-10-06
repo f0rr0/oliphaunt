@@ -49,7 +49,7 @@ def main():
         fixture = tests / (name + ".rs")
         receipt["fixture_hashes"][name] = hashlib.sha256(fixture.read_bytes()).hexdigest()
         build = subprocess.run(["cargo", "test", "--locked", "-p", "oliphaunt-wasix",
-            "--no-default-features", "--test", name, "--no-run", "--message-format=json"],
+            "--no-default-features", "--test", name, "--no-run", "--message-format=json-render-diagnostics"],
             capture_output=True, encoding="utf-8", timeout=1200)
         (output / (name + "-build.log")).write_text(build.stdout + build.stderr)
         if build.returncode:

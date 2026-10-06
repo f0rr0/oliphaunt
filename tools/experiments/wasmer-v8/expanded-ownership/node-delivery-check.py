@@ -15,7 +15,7 @@ def main():
     output = pathlib.Path(sys.argv[1]).resolve()
     drivers = pathlib.Path(__file__).resolve().parent
     build = subprocess.run(["cargo", "build", "--locked", "-p", "oliphaunt-wasix-napi",
-        "--no-default-features", "--message-format=json"], capture_output=True, encoding="utf-8", timeout=1200)
+        "--no-default-features", "--message-format=json-render-diagnostics"], capture_output=True, encoding="utf-8", timeout=1200)
     (output / "node-delivery-build.log").write_text(build.stdout + build.stderr)
     if build.returncode:
         print(build.stderr[-16000:], flush=True)

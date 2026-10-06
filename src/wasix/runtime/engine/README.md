@@ -8,7 +8,7 @@ or declare an engine release carrier.
 Apply them after the DLL ownership, retained-error and callback-panic controls
 in `tools/experiments/wasmer-v8/expanded-ownership`. Each `.inputs.json` fixes
 the exact preceding source bytes. The drivers check those digests before
-applying a patch. The WASIX patch targets 0.705.0; its three inputs are unchanged
+applying a patch. The WASIX patches target 0.705.0; their inputs are unchanged
 by the separate cached-loading policy.
 
 | Patch | Purpose |

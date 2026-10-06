@@ -26,6 +26,15 @@ retains returned reference wrappers in the Store before deleting result vectors.
 Null function references remain null. This prevents vector cleanup from
 invalidating a still-usable function; a 1,000-cycle regression covers both
 reference directions, null values and Store teardown.
+The same regression crashes the earlier terminal proposal immediately after
+consuming a borrowed function parameter. Copying the wrapper before the native
+vector adopts it fixes that ownership cause; retaining returned wrappers fixes
+the corresponding result lifetime.
+Wasmer's typed `Option<Function>` calls still reach its pre-existing
+unimplemented V8 `vm_funcref` conversion. A supplemental Linux control rejects
+that broader parity claim. The consumer SDK exposes no Wasmer function-reference
+API; this change qualifies dynamic reference cleanup rather than implementing
+all upstream reference operations.
 
 ## Delivery contract
 
@@ -64,8 +73,8 @@ compares resolved identities, checksums and edges; unrelated changes still fail.
 Both archived Windows lock transitions and offline rejection controls pass.
 
 Native qualification was dispatched from private candidate
-`db1d4df8b27300ed923db566703db13ca3728162` in
-[run 37403581019](https://github.com/f0rr0/oliphaunt/actions/runs/37403581019).
+`4efe4e881172ce4b94978fb558e071c3e351c109` in
+[run 37405280098](https://github.com/f0rr0/oliphaunt/actions/runs/37405280098).
 It selects Windows 2022 and Windows 2025 VS2026, terminal/shutdown controls,
 frozen-family consumption and full strict catalog/server/tools coverage.
 Current results will be recorded here after completion.

@@ -20,9 +20,8 @@ hashes and preserve patch/lock provenance.
   diagnostic fixture compilation is separate from the product AOT contract.
 - `embed-dll.py`, `embedded-engine.rs` and `embedded-check.py` generate prepared
   Rust dispatch and test automatic internal DLL delivery. The preceding lazy
-  C dispatch passed three concurrent cold
-  executable-only starts, warm starts and 500 real vector database lifecycles
-  pass on both Windows toolchains.
+  C dispatch passed three concurrent cold executable-only starts, warm starts
+  and 500 real vector database lifecycles on both Windows toolchains.
 - `trap-ownership.diff` and `trap-ownership.rs` test native errors retained
   after Store destruction, discarded retry traps and typed host-error owners.
   The original Linux control crashes; the owned-message correction passes
@@ -89,6 +88,10 @@ hashes and preserve patch/lock provenance.
   `0008` through `0011`, applied by the existing candidate drivers. The
   [root-cause review](../../../../src/docs/maintainers/windows-v8-root-cause-review.md)
   records the staged negative/positive controls.
+- `dynamic-reference.rs` verifies that cleaning up call vectors preserves
+  borrowed and returned functions, null references and Store teardown over
+  1,000 cycles. The earlier terminal proposal crashes the borrowed-argument
+  control; patch `0008` owns copies rather than deleting borrowed wrappers.
 - `delivery-check.py` and `loader-faults.rs` exercise the actual loader source
   against Windows permissions, competing writes, file locks, invalid DLLs and
   missing exports. Separate blocking/async SDK subprocesses verify typed errors

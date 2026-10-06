@@ -83,7 +83,7 @@
 +}
 +// C vectors adopt reference wrappers; borrow a Function only through a copy.
 +pub(super) fn own_call_parameter(value: wasm_val_t) -> wasm_val_t {
-+    if value.kind as u32 == wasm_valkind_enum_WASM_FUNCREF {
++    if value.kind == wasm_valkind_enum_WASM_FUNCREF as _ {
 +        let mut owned = value;
 +        unsafe { wasm_val_copy(&mut owned, &value) };
 +        owned
