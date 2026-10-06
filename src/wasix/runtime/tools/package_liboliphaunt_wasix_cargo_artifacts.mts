@@ -407,7 +407,7 @@ function rewriteRuntimeCoreManifest(root) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-function runtimeCorePayload(runtimeRoot, extractRoot) {
+export function runtimeCorePayload(runtimeRoot, extractRoot) {
   const coreRoot = path.join(extractRoot, 'runtime-core-payload');
   rmSync(coreRoot, { recursive: true, force: true });
   cpSync(runtimeRoot, coreRoot, { recursive: true });

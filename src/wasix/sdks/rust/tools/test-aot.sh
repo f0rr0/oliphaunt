@@ -28,6 +28,10 @@ fi
 # producer tasks only serialize/package/check payload bytes.
 bash src/wasix/runtime/tools/runtime-smoke.sh core-smoke
 
+if [ "$host" = x86_64-pc-windows-msvc ]; then
+  tools/dev/bun.sh src/wasix/sdks/rust/tools/test-packaged-aot.mts
+fi
+
 # The portable/Linux regression exercises every catalogued extension. Each host
 # must also deserialize and execute machine code produced for that exact host,
 # including a side module and the split pg_dump/psql tool artifacts.  Keep this
