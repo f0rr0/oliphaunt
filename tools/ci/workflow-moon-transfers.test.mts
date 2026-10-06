@@ -365,7 +365,7 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
       ],
       [
         'wasix-release-regression',
-        ['oliphaunt-wasix-rust:test-integration'],
+        ['oliphaunt-wasix-rust:test-integration', 'oliphaunt-wasix-rust:test-regression'],
         [
           'liboliphaunt-wasix:compiler-output',
           'liboliphaunt-wasix:runtime-aot',
@@ -389,6 +389,12 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         );
         assert(execution.targets.includes(root));
         const executed = [...execution.targets, ...execution.localDependencies];
+        if (job === 'wasix-release-regression') {
+          assert(
+            executed.includes('liboliphaunt-wasix:engine-sources'),
+            `${root} must prepare patched engine sources despite the transferred AOT boundary`,
+          );
+        }
         for (const target of forbidden)
           assert(!executed.includes(target), `${root} rebuilds ${target}`);
         assert.equal(

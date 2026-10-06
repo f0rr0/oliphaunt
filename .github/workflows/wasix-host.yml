@@ -31,7 +31,7 @@ jobs:
   windows-engine:
     name: WASIX Windows engine
     if: ${{ contains(inputs.matrix, 'windows-x64-msvc') }}
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -155,6 +155,13 @@ jobs:
         with:
           name: liboliphaunt-wasix-windows-baseline-caches
           path: target/oliphaunt-wasix/engine/windows-x64-msvc/cache/sse41
+      - name: Set up macOS acquisition and smoke timeout
+        if: ${{ runner.os == 'macOS' }}
+        run: |
+          command -v bash
+          bash --version
+          brew list coreutils >/dev/null 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
+
       - name: Prepare engine source
         run: moon run liboliphaunt-wasix:engine-sources
 
@@ -251,11 +258,6 @@ jobs:
           pattern: liboliphaunt-wasix-extension-artifacts-*
           path: target/extensions/wasix/release-assets
           merge-multiple: true
-
-      - name: Set up macOS smoke timeout
-        if: ${{ contains(fromJson(inputs.napi-targets), matrix.target_id) && runner.os == 'macOS' }}
-        shell: bash
-        run: brew list coreutils >/dev/null 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
 
       - name: Build WASIX Node-API release assets
         if: ${{ contains(fromJson(inputs.napi-targets), matrix.target_id) }}

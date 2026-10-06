@@ -50,7 +50,7 @@ tasks:
   test-regression:
     tags: ["regression", "runtime", "requires-rust", "ci-wasix-release-regression"]
     command: "bash src/wasix/runtime/tools/runtime-smoke.sh regression"
-    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "postgres-tools-wasix:build-aot"]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:engine-sources", "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "postgres-tools-wasix:build-aot"]
     inputs: ["@group(code)", "@group(cargo-workspace)", "/src/wasix/runtime/tools/{runtime-smoke,runtime-preflight,cargo-test-filter}.sh", "/src/wasix/runtime/tools/wasix-extension-features.mts", "/src/extensions/artifacts/packages/tools/**/*"]
     options: {runFromWorkspaceRoot: true, cache: false}
   test-integration:
@@ -59,6 +59,7 @@ tasks:
     deps:
       - target: cargo-sources
         cacheStrategy: hash
+      - "liboliphaunt-wasix:engine-sources"
       - "liboliphaunt-wasix:runtime-aot"
       - "database-resources:build-wasix-standard"
       - "database-resources:build-wasix-icu"
