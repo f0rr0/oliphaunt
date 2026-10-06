@@ -49,7 +49,8 @@ function build() {
     statSync(library).size !== pin['member-bytes'] ||
     sha256File(library) !== pin['member-sha256']
   ) {
-    const extracted = Bun.spawnSync(['tar', '-xOf', archive, '--', pin.member], {
+    const extracted = Bun.spawnSync(['tar', '-xOf', path.basename(archive), '--', pin.member], {
+      cwd: inputs,
       stdout: Bun.file(library),
       stderr: 'inherit',
     });
