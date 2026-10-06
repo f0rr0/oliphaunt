@@ -28,6 +28,12 @@ members = [
   "src/native/runtime/packaging",
   "src/native/postgres-tools/tests",
   "src/wasix/runtime/tools/xtask",
+  "src/wasix/runtime/engine/crates/wasmer",
+  "src/wasix/runtime/engine/crates/wasmer-wasix-types",
+  "src/wasix/runtime/engine/crates/wasmer-journal",
+  "src/wasix/runtime/engine/crates/wasmer-wasix",
+  "src/wasix/runtime/engine/crates/v8-windows-x64-msvc",
+
 ]
 resolver = "3"
 

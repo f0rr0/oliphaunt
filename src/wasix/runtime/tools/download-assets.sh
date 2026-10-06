@@ -70,5 +70,8 @@ else
     bash .github/scripts/download-build-artifacts.sh CI "$sha" "$payload/target/oliphaunt-wasix/aot/$triple" "${download_args[@]}" --artifact "$artifact"
     install_args+=(--target-triple "$triple")
   done <<<"$rows"
+  if [[ "$rows" = *x86_64-pc-windows-msvc* ]]; then
+    bash .github/scripts/download-build-artifacts.sh CI "$sha" "$root" "${download_args[@]}" --artifact liboliphaunt-wasix-windows-engine
+  fi
 fi
 cargo run --quiet --locked -p xtask -- assets import-download "${install_args[@]}"

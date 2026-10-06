@@ -138,7 +138,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
             let Some(file_name) = file.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            let Some(stem) = file_name.strip_suffix("-llvm-opta.bin.zst") else {
+            let Some(stem) = file_name.strip_suffix("-v8.bin.zst") else {
                 continue;
             };
             let artifact_name = artifact_name_from_file_stem(stem);
@@ -156,7 +156,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = \"v8\";\n\
          pub const HAS_EMBEDDED_AOT: bool = true;\n\
          pub const MANIFEST_JSON: &str = include_str!({});\n\
          #[rustfmt::skip]\n\
@@ -182,11 +182,11 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
 fn write_source_only_aot(out: &Path, target: &str) {
     let manifest = format!(
-        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.5.0\",\"wasmer-wasix-version\":\"0.705.0\",\"artifacts\":[]}}"
+        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"v8\",\"wasmer-version\":\"7.5.0\",\"wasmer-wasix-version\":\"0.705.0\",\"artifacts\":[]}}"
     );
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {target:?};\n\
-         pub const ENGINE: &str = \"llvm-opta\";\n\
+         pub const ENGINE: &str = \"v8\";\n\
          pub const HAS_EMBEDDED_AOT: bool = false;\n\
          pub const MANIFEST_JSON: &str = r#\"{manifest}\"#;\n\
          pub fn artifact_bytes(_name: &str) -> Option<&'static [u8]> {{ None }}\n"
@@ -227,7 +227,7 @@ fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
         serde_json::from_str(&text).expect("parse generated WASIX AOT manifest");
     assert_eq!(
         manifest.get("engine").and_then(serde_json::Value::as_str),
-        Some("llvm-opta"),
+        Some("v8"),
         "stale WASIX AOT profile; rebuild artifacts before compiling the carrier"
     );
     let artifacts = manifest

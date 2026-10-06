@@ -35,6 +35,9 @@ import {
 } from './wasix-extension-cargo-artifact-inventory.mts';
 import { packWasixRuntimeNpmCarrier } from './wasix-runtime-npm-carrier.mts';
 
+import { ENGINE_PAYLOAD_PACKAGE } from '../engine/contract.mts';
+import { isEnginePayloadPart } from '../engine/package.mts';
+
 export const WASIX_PRODUCT = 'liboliphaunt-wasix';
 
 function hasWasixReleaseArchive(assetDir) {
@@ -109,6 +112,7 @@ export function validateWasixCargoArtifacts(outputDir) {
   }
   const packages = [];
   const allowedKinds = new Set([
+    'wasix-engine',
     'wasix-runtime',
     'wasix-aot',
     'wasix-extension',
@@ -138,6 +142,7 @@ export function validateWasixCargoArtifacts(outputDir) {
     }
     if (
       !expectedBaseCrates.has(name) &&
+      !(kind === 'wasix-engine' && isEnginePayloadPart(name)) &&
       !isExpectedWasixExtensionPackage(name, kind, expectedExtensionInventory)
     ) {
       fail(`unexpected ${WASIX_PRODUCT} Cargo artifact crate ${name}`);
@@ -166,6 +171,18 @@ export function validateWasixCargoArtifacts(outputDir) {
       `generated ${WASIX_PRODUCT} Cargo artifacts are missing configured runtime crates: ${missingBaseCrates.join(', ')}`,
     );
   }
+  const engine = packages.find((row) => row.name === ENGINE_PAYLOAD_PACKAGE);
+  const engineManifest = Bun.TOML.parse(readFileSync(engine.manifestPath, 'utf8'));
+  const engineParts = Object.keys(engineManifest['build-dependencies'] ?? {}).filter(
+    isEnginePayloadPart,
+  );
+  if (engineParts.length === 0)
+    fail('Windows engine carrier must declare its frozen payload parts');
+  assertSameStringSet(
+    'Windows engine payload parts must match the facade dependency closure',
+    new Set(packages.map((row) => row.name).filter(isEnginePayloadPart)),
+    new Set(engineParts),
+  );
   const unexpected = readdirSync(outputDir)
     .filter((name) => name.endsWith('.crate'))
     .map((name) => path.join(outputDir, name))

@@ -78,6 +78,16 @@ export function packagedCargoManifestText(source) {
   text = text
     .replace(/(\{\s*)path\s*=\s*"[^"]+",\s*/gu, '$1')
     .replace(/,\s*path\s*=\s*"[^"]+"/gu, '');
+  let dependencyTable = false;
+  text = text
+    .split('\n')
+    .filter((line) => {
+      const section = line.match(/^\s*\[{1,2}([^\]]+)\]{1,2}\s*$/u);
+      if (section)
+        dependencyTable = /(?:^|\.)(?:build-|dev-)?dependencies(?:\.|$)/u.test(section[1]);
+      return !(dependencyTable && /^\s*path\s*=/u.test(line));
+    })
+    .join('\n');
   if (!text.includes('\n[workspace]')) {
     text = `${text.trimEnd()}\n\n[workspace]\n`;
   }

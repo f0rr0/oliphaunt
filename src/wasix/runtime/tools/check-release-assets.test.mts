@@ -38,7 +38,7 @@ function archiveStage(stage, archive, archiveRoot) {
 }
 
 function stageAotPayload(stage, target, profile = 'wasix-aot') {
-  const canonical = canonicalWasixAotMetadata();
+  const canonical = canonicalWasixAotMetadata(undefined, target);
   const raw = Buffer.from(`aot-payload:${target}\n`);
   const compressed = zstdCompressSync(raw);
   const manifest = {

@@ -28,9 +28,93 @@ defaults:
   run:
     shell: bash
 jobs:
+  windows-engine:
+    name: WASIX Windows engine
+    if: ${{ contains(inputs.matrix, 'windows-x64-msvc') }}
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: wasix-windows-engine
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ inputs.cache-save-if }}
+      - uses: ./.github/actions/setup-msvc
+      - name: Produce pinned Windows engine
+        run: moon run liboliphaunt-wasix:engine-build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-windows-engine
+          include-hidden-files: true
+          path: |
+            target/oliphaunt-wasix/engine/windows-x64-msvc/oliphaunt_wee8.dll
+            target/oliphaunt-wasix/engine/windows-x64-msvc/cache-*.exe
+            target/oliphaunt-wasix/engine/windows-x64-msvc/source.json
+            target/oliphaunt-wasix/engine/windows-x64-msvc/LICENSE.v8
+            src/wasix/runtime/engine/crates/*/upstream/**
+            src/wasix/runtime/engine/crates/wasmer/prebuilt/embedded_bindings.rs
+          if-no-files-found: error
+  windows-caches:
+    name: WASIX Windows baseline caches
+    needs: windows-engine
+    if: ${{ contains(inputs.matrix, 'windows-x64-msvc') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-moon
+        with:
+          cache-partition: wasix-windows-caches
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ inputs.cache-save-if }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-windows-engine
+          path: .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-runtime-portable
+          path: .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:build-aot') }}
+        with:
+          name: postgres-tools-wasix-compiler-output
+          path: target/postgres-tools/wasix/assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'extension-artifacts-wasix:build-aot') }}
+        with:
+          name: extensions-wasix-compiler-output
+          path: target/extensions/wasix/assets
+      - name: Set up CPU profile producer
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y wine64 libz-mingw-w64 qemu-user
+      - name: Produce and read genuine SSE4.1 native caches
+        env:
+          BUILD_TOOLS: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'postgres-tools-wasix:build-aot') }}
+          BUILD_EXTENSIONS: ${{ contains(fromJson(inputs.job-targets)['liboliphaunt-wasix-aot'], 'extension-artifacts-wasix:build-aot') }}
+        run: |
+          products=(runtime)
+          if [ "$BUILD_TOOLS" = true ]; then products+=(tools); fi
+          if [ "$BUILD_EXTENSIONS" = true ]; then products+=(extensions); fi
+          bun src/wasix/runtime/engine/windows/build-caches.mts "${products[@]}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-windows-baseline-caches
+          path: target/oliphaunt-wasix/engine/windows-x64-msvc/cache/sse41
+          if-no-files-found: error
   build:
     name: WASIX host (${{ matrix.target_id }})
     runs-on: ${{ matrix.os }}
+    needs: [windows-engine, windows-caches]
+    if: ${{ !cancelled() }}
     timeout-minutes: 240
     strategy:
       fail-fast: false
@@ -57,6 +141,21 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
         uses: ./.github/actions/setup-msvc
 
+      - name: Download same-run Windows engine
+        if: ${{ runner.os == 'Windows' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-windows-engine
+          path: .
+      - name: Download same-run Windows baseline caches
+        if: ${{ runner.os == 'Windows' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-windows-baseline-caches
+          path: target/oliphaunt-wasix/engine/windows-x64-msvc/cache/sse41
+      - name: Prepare engine source
+        run: moon run liboliphaunt-wasix:engine-sources
+
       - name: Download portable WASIX build outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -78,6 +177,7 @@ jobs:
           path: target/extensions/wasix/assets
 
       - name: Install Wasmer LLVM 22.1 for AOT generation
+        if: ${{ runner.os != 'Windows' }}
         uses: ./.github/actions/setup-wasmer-llvm
         with:
           cache-save-if: ${{ inputs.cache-save-if }}
@@ -89,7 +189,7 @@ jobs:
       - name: Build, validate, and smoke target AOT artifacts
         env:
           AOT_TARGET: ${{ matrix.target }}
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "postgres-tools-wasix:compiler-output", "extension-artifacts-wasix:compiler-output"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "postgres-tools-wasix:compiler-output", "extension-artifacts-wasix:compiler-output", "liboliphaunt-wasix:engine-build"]'
         run: .github/scripts/run-planned-moon-job.sh liboliphaunt-wasix-aot
 
       - name: Upload target PostgreSQL WASIX tools
@@ -165,7 +265,7 @@ jobs:
           OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
           OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
           OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "liboliphaunt-wasix:runtime-aot"]'
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:engine-build", "extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "liboliphaunt-wasix:runtime-aot"]'
         run: .github/scripts/run-planned-moon-job.sh wasix-napi
 
       - name: Upload WASIX Node-API release assets

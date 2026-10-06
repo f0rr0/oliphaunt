@@ -66,6 +66,8 @@ import {
   wasixExtensionPackageName,
 } from './wasix-cargo-artifact-contract.mts';
 
+import { packageEngine } from '../engine/package.mts';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const PRODUCT = 'liboliphaunt-wasix';
 const PREFIX = 'package_liboliphaunt_wasix_cargo_artifacts.mts';
@@ -1766,6 +1768,7 @@ export function packageWasixCargoArtifacts(argv) {
   );
   const specs = args.extensionsOnly ? [] : packageSpecs(assetDir, extractRoot, args.version);
   const packages = [
+    ...(args.extensionsOnly ? [] : packageEngine({ sourceRoot, outputDir, version: args.version })),
     ...extensionSources.flatMap((source) =>
       packageExtensionSource(source, { outputDir, cargoTargetDir }),
     ),

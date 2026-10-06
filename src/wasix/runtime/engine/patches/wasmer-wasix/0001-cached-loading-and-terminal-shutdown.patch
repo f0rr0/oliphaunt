@@ -1,0 +1,187 @@
+--- a/src/os/task/process.rs
++++ b/src/os/task/process.rs
+@@ -925,9 +925,9 @@
+     };
+ 
+     if signal == Signal::Sigkill {
+-        // On kill, disable atomics to prevent threads from resuming.
+-        // NOTE: disable_atomics also wakes all current waiters.
+-        if let Err(err) = memory.disable_atomics() {
++        // Terminal cancellation: V8 interrupts whole execution contexts;
++        // Sys keeps its existing memory-specific atomics shutdown.
++        if let Err(err) = memory.terminate_execution_contexts() {
+             tracing::trace!(
+                 pid=%process.pid,
+                 error = &err as &dyn std::error::Error,
+--- a/src/runners/wasi.rs
++++ b/src/runners/wasi.rs
+@@ -13,10 +13,11 @@
+     Runtime, WasiEnvBuilder, WasiError, WasiRuntimeError,
+     bin_factory::BinaryPackage,
+     capabilities::Capabilities,
+-    journal::{DynJournal, DynReadableJournal, SnapshotTrigger},
+     runners::{MappedDirectory, MountedDirectory, wasi_common::CommonWasiOptions},
+     runtime::task_manager::VirtualTaskManagerExt,
+ };
++#[cfg(feature = "journal")]
++use crate::journal::{DynJournal, DynReadableJournal, SnapshotTrigger};
+ 
+ use super::wasi_common::{
+     ExistingMountConflictBehavior, MAPPED_CURRENT_DIR_DEFAULT_PATH, MappedCommand,
+@@ -364,13 +365,16 @@
+ 
+         let wasi = webc::metadata::annotations::Wasi::new(program_name);
+ 
+-        let mut builder = runner.prepare_webc_env(
++        let builder = runner.prepare_webc_env(
+             program_name,
+             &wasi,
+             PackageOrHash::Hash(module_hash),
+             runtime_or_engine,
+             None,
+         )?;
++
++        #[cfg(any(feature = "ctrlc", feature = "journal"))]
++        let mut builder = builder;
+ 
+         #[cfg(feature = "ctrlc")]
+         {
+--- a/src/runners/wasi_common.rs
++++ b/src/runners/wasi_common.rs
+@@ -6,6 +6,7 @@
+ };
+ 
+ use anyhow::{Context, Error};
++#[cfg(feature = "host-fs")]
+ use tokio::runtime::Handle;
+ use virtual_fs::{
+     ArcFileSystem, ExactMountConflictMode, FileSystem, MountFileSystem, OverlayFileSystem,
+@@ -18,8 +19,9 @@
+     bin_factory::{BinaryPackage, BinaryPackageMounts},
+     capabilities::Capabilities,
+     fs::WasiFsRoot,
+-    journal::{DynJournal, DynReadableJournal, SnapshotTrigger},
+ };
++#[cfg(feature = "journal")]
++use crate::journal::{DynJournal, DynReadableJournal, SnapshotTrigger};
+ 
+ pub const MAPPED_CURRENT_DIR_DEFAULT_PATH: &str = "/home";
+ 
+@@ -49,10 +51,15 @@
+     pub(crate) is_home_mapped: bool,
+     pub(crate) injected_packages: Vec<BinaryPackage>,
+     pub(crate) capabilities: Capabilities,
++    #[cfg(feature = "journal")]
+     pub(crate) read_only_journals: Vec<Arc<DynReadableJournal>>,
++    #[cfg(feature = "journal")]
+     pub(crate) writable_journals: Vec<Arc<DynJournal>>,
++    #[cfg(feature = "journal")]
+     pub(crate) snapshot_on: Vec<SnapshotTrigger>,
++    #[cfg(feature = "journal")]
+     pub(crate) snapshot_interval: Option<std::time::Duration>,
++    #[cfg(feature = "journal")]
+     pub(crate) stop_running_after_snapshot: bool,
+     pub(crate) skip_stdio_during_bootstrap: bool,
+     pub(crate) current_dir: Option<PathBuf>,
+--- a/src/runtime/mod.rs
++++ b/src/runtime/mod.rs
+@@ -353,6 +353,9 @@
+         Arc::new(UnsupportedPackageLoader)
+     }
+ 
++    /// Require cached modules instead of compiling on cache misses.
++    fn module_cache_only(&self) -> bool { false }
++
+     /// A cache for compiled modules.
+     fn module_cache(&self) -> Arc<dyn ModuleCache + Send + Sync> {
+         // Return a cache that uses a thread-local variable. This isn't ideal
+@@ -471,7 +474,19 @@
+ 
+         let module_cache = self.module_cache();
+ 
+-        let task = async move { load_module(&engine, &module_cache, input, on_progress).await };
++        let cache_only = self.module_cache_only();
++        let task = async move {
++            if cache_only {
++                let result = if let Some(progress) = on_progress {
++                    module_cache.load_with_progress(input.hash(), &engine, progress).await
++                } else {
++                    module_cache.load(input.hash(), &engine).await
++                };
++                result.map_err(SpawnError::CacheError)
++            } else {
++                load_module(&engine, &module_cache, input, on_progress).await
++            }
++        };
+         Box::pin(task)
+     }
+ 
+@@ -674,6 +689,7 @@
+     pub source: Arc<dyn Source + Send + Sync>,
+     pub engine: Engine,
+     pub module_cache: Arc<dyn ModuleCache + Send + Sync>,
++    pub module_cache_only: bool,
+     pub tty: Option<Arc<dyn TtyBridge + Send + Sync>>,
+     #[cfg(feature = "journal")]
+     pub read_only_journals: Vec<Arc<DynReadableJournal>>,
+@@ -715,6 +731,7 @@
+             source: Arc::new(source),
+             package_loader: Arc::new(loader),
+             module_cache: Arc::new(module_cache::in_memory()),
++            module_cache_only: false,
+             #[cfg(feature = "journal")]
+             read_only_journals: Vec::new(),
+             #[cfg(feature = "journal")]
+@@ -878,6 +895,8 @@
+ }
+ 
+ impl Runtime for PluggableRuntime {
++    fn module_cache_only(&self) -> bool { self.module_cache_only }
++
+     fn networking(&self) -> &DynVirtualNetworking {
+         &self.networking
+     }
+@@ -1111,6 +1130,8 @@
+ }
+ 
+ impl Runtime for OverriddenRuntime {
++    fn module_cache_only(&self) -> bool { self.inner.module_cache_only() }
++
+     fn networking(&self) -> &DynVirtualNetworking {
+         if let Some(net) = self.networking.as_ref() {
+             net
+--- a/src/runtime/task_manager/mod.rs
++++ b/src/runtime/task_manager/mod.rs
+@@ -206,7 +206,8 @@
+                 })?;
+                 Ok(Some(mem))
+             }
+-            SpawnType::AttachMemory(mem) => Ok(Some(mem.attach(store))),
++            SpawnType::AttachMemory(mem) => mem.try_attach(store)
++                .map(Some).map_err(WasiThreadError::MemoryCreateFailed),
+             SpawnType::CreateMemory | SpawnType::NewLinkerInstanceGroup(..) => Ok(None),
+         }
+     }
+--- a/src/runtime/task_manager/tokio.rs
++++ b/src/runtime/task_manager/tokio.rs
+@@ -150,7 +150,8 @@
+                 SpawnType::CreateMemoryOfType(t) => (SpawnMemoryTypeOrStore::Type(t), None),
+                 SpawnType::AttachMemory(mem) => {
+                     let mut store = task.env.runtime().new_store();
+-                    let memory = mem.attach(&mut store);
++                    let memory = mem.try_attach(&mut store)
++                        .map_err(WasiThreadError::MemoryCreateFailed)?;
+                     (SpawnMemoryTypeOrStore::StoreAndMemory(store, memory), None)
+                 }
+             };
+--- a/src/state/linker/mod.rs
++++ b/src/state/linker/mod.rs
+@@ -692,7 +692,7 @@
+ 
+         let mut imports = import_object_for_all_wasi_versions(&main_module, store, &func_env.env);
+ 
+-        let memory = memory.attach(store);
++        let memory = memory.try_attach(store)?;
+ 
+         let indirect_function_table = create_indirect_function_table(
+             store,

@@ -20,9 +20,22 @@ import {
   createDeterministicTar,
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
+  packagedCargoManifestText,
 } from './cargo-source-package.mts';
 import { readPortableArchiveEntries } from './portable-archive.mts';
 import { assertReleaseNoticesInArchive } from './release-notices.mts';
+
+test('published manifests remove dependency paths while retaining library and build paths', () => {
+  const text = packagedCargoManifestText(
+    '[package]\nname = "example"\nversion = "1.0.0"\nbuild = "build.rs"\n[lib]\npath = "upstream/src/lib.rs"\n[dependencies.peer]\npackage = "private-peer"\npath = "../peer"\nversion = "=1.0.0"\n[target.\'cfg(windows)\'.build-dependencies]\nengine = { path = "../engine", version = "=1.0.0" }\n[[bin]]\nname = "example-tool"\npath = "src/tool.rs"\n',
+  );
+  const cargo = Bun.TOML.parse(text);
+  assert.equal(cargo.lib.path, 'upstream/src/lib.rs');
+  assert.equal(cargo.package.build, 'build.rs');
+  assert.equal(cargo.bin[0].path, 'src/tool.rs');
+  assert.equal(cargo.dependencies.peer.path, undefined);
+  assert.equal(cargo.target['cfg(windows)']['build-dependencies'].engine.path, undefined);
+});
 
 function fixture(t, name) {
   const root = mkdtempSync(path.join(os.tmpdir(), `oliphaunt-${name}-`));

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ENGINE_SOURCE_CRATES } from '../engine/contract.mts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const CARGO_DEPENDENCY_SOURCE_KEYS = Object.freeze([
@@ -34,10 +35,14 @@ const REQUIRED_WASIX_TOOLCHAIN_PACKAGES = new Map([
 
 const REQUIRED_CONSUMER_PIN_POLICIES = new Map(
   [...REQUIRED_WASIX_TOOLCHAIN_PACKAGES]
-    .filter(([, versionKey]) => versionKey === 'wasmerWasix')
+    .filter(([name, versionKey]) => versionKey === 'wasmerWasix' || name === 'wasmer')
     .map(([name, versionKey]) => [
       name,
-      Object.freeze({ versionKey, defaultFeaturesDisabled: true }),
+      Object.freeze({
+        versionKey: ENGINE_SOURCE_CRATES.includes(name) ? 'engine' : versionKey,
+        packageName: ENGINE_SOURCE_CRATES.includes(name) ? `oliphaunt-${name}` : name,
+        defaultFeaturesDisabled: true,
+      }),
     ]),
 );
 REQUIRED_CONSUMER_PIN_POLICIES.set(
@@ -70,6 +75,7 @@ export function canonicalWasixCargoToolchainVersions(root = ROOT) {
   }
   const toolchain = objectTable(data.toolchain);
   return Object.freeze({
+    engine: readFileSync(path.join(root, 'src/wasix/runtime/VERSION'), 'utf8').trim(),
     wasmer: requiredString(toolchain.wasmer, `${WASIX_TOOLCHAIN_PATH} toolchain.wasmer`),
     wasmerWasix: requiredString(
       toolchain['wasmer-wasix'],
@@ -95,6 +101,7 @@ export function validateWasixConsumerDependencyPins(
   const failures = [];
   const dependencies = objectTable(manifest?.dependencies);
   for (const [name, policy] of REQUIRED_CONSUMER_PIN_POLICIES) {
+    const packageName = policy.packageName ?? name;
     const expectedVersion = toolchainVersions?.[policy.versionKey];
     if (typeof expectedVersion !== 'string' || expectedVersion.length === 0) {
       failures.push(
@@ -103,7 +110,7 @@ export function validateWasixConsumerDependencyPins(
       continue;
     }
     const matches = Object.entries(dependencies).filter(
-      ([key, spec]) => dependencyName(key, spec) === name,
+      ([key, spec]) => dependencyName(key, spec) === packageName,
     );
     if (matches.length !== 1) {
       failures.push(

@@ -2327,6 +2327,12 @@ jobs:
             rsync -a "$raw_target_dir/" "$destination/"
           done
 
+      - name: Download qualified Windows engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-windows-engine
+          path: .
+
       - name: Package WASIX release assets
         env:
           OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "liboliphaunt-wasix:runtime-aot"]'

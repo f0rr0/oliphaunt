@@ -38,6 +38,8 @@ fileGroups:
 
 tasks:
   cargo-sources:
+    deps:
+      - liboliphaunt-wasix:engine-build
     inputs:
       - project: "liboliphaunt-wasix"
         group: "cargo-carrier-sources"
@@ -188,6 +190,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   package:
+    deps: ["liboliphaunt-wasix:engine-sources"]
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
     script: |
       set -eu

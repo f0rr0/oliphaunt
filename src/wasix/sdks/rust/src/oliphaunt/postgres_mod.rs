@@ -1207,6 +1207,7 @@ fn build_wasix_runtime(
     let task_manager = guest_wasm_tasks.apply(task_manager);
     let mut wasix_runtime = PluggableRuntime::new(task_manager);
     wasix_runtime.set_engine(engine.clone());
+    wasix_runtime.module_cache_only = true;
     wasix_runtime.set_module_cache(module_cache);
     Arc::new(wasix_runtime)
 }
