@@ -5,7 +5,7 @@ import json
 import pathlib
 import sys
 import subprocess
-import tomllib
+import runpy
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("output", type=pathlib.Path)
@@ -35,16 +35,8 @@ before = lock.read_bytes()
 (output / "original-Cargo.lock").write_bytes(before)
 subprocess.run(["cargo", "metadata", "--offline", "--format-version=1", "--filter-platform", "x86_64-pc-windows-msvc"], check=True, stdout=subprocess.DEVNULL)
 after = lock.read_bytes()
-records = []
-for raw in (before, after):
-    packages = tomllib.loads(raw.decode())["package"]
-    for package in packages:
-        if package["name"] == "wasmer" and package["version"] == "7.5.0":
-            package.pop("source", None)
-            package.pop("checksum", None)
-    records.append(sorted(json.dumps(p, sort_keys=True) for p in packages))
-if records[0] != records[1]:
-    raise RuntimeError("unexpected dependency resolution change")
+check_lock = runpy.run_path(str(pathlib.Path(__file__).with_name("consumer-lock.py")))["check_lock"]
+records = check_lock(before, after, removed={"bindgen", "which", "ureq", "tar", "xz", "tempfile"})
 (output / "cargo-resolution-before.json").write_text(json.dumps(records[0], indent=2) + "\n")
 (output / "cargo-resolution-after.json").write_text(json.dumps(records[1], indent=2) + "\n")
 receipt = {"method": "private C engine DLL owner cleanup and Store-scoped roots; source control only", "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(), "input_hashes": expected, "output_hashes": {path: hashlib.sha256((dependency / path).read_bytes()).hexdigest() for path in expected}, "cargo_config": config.read_text()}

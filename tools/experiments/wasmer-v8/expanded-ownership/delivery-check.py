@@ -12,13 +12,14 @@ def main():
     root = pathlib.Path(__file__).resolve().parents[4]
     drivers = pathlib.Path(__file__).resolve().parent
     tests = root / "src/wasix/sdks/rust/tests"
-    for name in ("terminal-entry", "terminal-contract", "terminal-copy"):
+    for name in ("terminal-entry", "terminal-contract", "terminal-copy", "dynamic-reference"):
         source = (drivers / (name + ".rs")).read_text()
         assert source.count("fn main() {") == 1
         source = source.replace("fn main() {", "#[test]\nfn terminal_regression() {")
         (tests / ("research_v8_" + name.replace("-", "_") + ".rs")).write_text(source)
     for fixture in drivers.glob("terminal-*.wasm"):
         (tests / fixture.name).write_bytes(fixture.read_bytes())
+    (tests / "dynamic-reference.wasm").write_bytes((drivers / "dynamic-reference.wasm").read_bytes())
 
     bindings = output / "engine/dependency/wasmer-7.5.0/prebuilt/embedded_bindings.rs"
     generated = bindings.read_text()
@@ -36,6 +37,7 @@ def main():
         "terminal_entry": [("terminal_regression", "terminal_entry_review=PASS", 7)],
         "terminal_contract": [("terminal_regression", "terminal_contract_review=PASS", 1)],
         "terminal_copy": [("terminal_regression", "terminal_copy=PASS", 1)],
+        "dynamic_reference": [("terminal_regression", "dynamic_reference=PASS", 1)],
         "delivery": [("faults::native_delivery_faults", "native_delivery_faults=PASS", 1),
                      ("faults::blocking_open_failure_then_retry", "blocking_loader_open=PASS", 1),
                      ("faults::async_open_failure_then_retry", "async_loader_open=PASS", 1)],

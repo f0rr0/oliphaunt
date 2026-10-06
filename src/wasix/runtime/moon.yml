@@ -93,6 +93,7 @@ tasks:
       - /tools/experiments/wasmer-v8/expanded-ownership/control-checks.test.py
       - /tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py
       - /tools/experiments/wasmer-v8/expanded-ownership/embedded-engine.rs
+      - /tools/experiments/wasmer-v8/expanded-ownership/consumer-lock.py
     options:
       runFromWorkspaceRoot: true
   build-orchestration-test:

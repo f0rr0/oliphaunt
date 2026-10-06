@@ -112,7 +112,7 @@ assert hashlib.sha256(dll.read_bytes()).hexdigest() == receipt['dll_sha256']
 receipt.update({'consumer_from_frozen_archives': True, 'consumer_exit_code': 0,
                 'upstream_api_family_in_graph': False,
                 'platform': sys.platform, 'consumer_overrides': 'unpublished private names only',
-                'native_v8_host_call_and_retired_memory': sys.platform == 'win32',
+                'native_v8_host_call_and_shared_memory_teardown': sys.platform == 'win32',
                 'executable_only_before_cold_launch': True, 'cold_and_warm_exit_codes': [0, 0],
                 'engine_in_normal_imports': False if sys.platform == 'win32' else None})
 (output / 'family-consumer-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')

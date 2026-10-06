@@ -1,6 +1,6 @@
 --- a/src/backend/v8/entities/function/mod.rs
 +++ b/src/backend/v8/entities/function/mod.rs
-@@ -403,7 +403,7 @@
+@@ -403,31 +403,32 @@
  
          // let wasm_func_param_arity(self.handle)
  
@@ -8,8 +8,10 @@
 +        let mut args = typed::ResearchValueVec(unsafe {
              let mut wasm_params = params
                  .iter()
-                 .map(|v| IntoCApiValue::into_cv(v.clone()))
-@@ -412,22 +412,23 @@
+-                .map(|v| IntoCApiValue::into_cv(v.clone()))
++                .map(|v| typed::own_call_parameter(IntoCApiValue::into_cv(v.clone())))
+                 .collect::<Vec<_>>()
+                 .into_boxed_slice();
              let mut vec = Default::default();
              wasm_val_vec_new(&mut vec, wasm_params.len(), wasm_params.as_ptr());
              vec
@@ -45,6 +47,16 @@
          if let Some(trap) = trap {
              return Err(trap.into());
          }
+@@ -455,7 +457,8 @@
+             let results = std::ptr::slice_from_raw_parts(results.data, results.size);
+             (*results)
+                 .iter()
+-                .map(|v| IntoWasmerValue::into_wv(*v))
++                .zip(signature.results())
++                .map(|(v, expected)| typed::into_call_value(*v, *expected, store))
+                 .collect::<Vec<_>>()
+                 .into_boxed_slice()
+         };
 --- a/src/backend/v8/entities/function/typed.rs
 +++ b/src/backend/v8/entities/function/typed.rs
 @@ -11,14 +11,14 @@
@@ -64,7 +76,46 @@
  impl std::ops::Deref for ResearchValueVec {
      type Target = wasm_val_vec_t;
      fn deref(&self) -> &Self::Target { &self.0 }
-@@ -71,6 +71,7 @@
+@@ -28,6 +28,29 @@
+ }
+ impl Drop for ResearchValueVec {
+     fn drop(&mut self) { unsafe { wasm_val_vec_delete(&mut self.0) } }
++}
++// C vectors adopt reference wrappers; borrow a Function only through a copy.
++pub(super) fn own_call_parameter(value: wasm_val_t) -> wasm_val_t {
++    if value.kind as u32 == wasm_valkind_enum_WASM_FUNCREF {
++        let mut owned = value;
++        unsafe { wasm_val_copy(&mut owned, &value) };
++        owned
++    } else { value }
++}
++
++// Returned Function aliases must outlive the temporary native result vector.
++pub(super) fn into_call_value(mut value: wasm_val_t, expected: wasmer_types::Type, store: &mut impl AsStoreMut) -> Value {
++    // The pinned C API reports returned function references as generic refs.
++    if expected == wasmer_types::Type::FuncRef {
++        value.kind = wasm_valkind_enum_WASM_FUNCREF as _;
++        let pointer = unsafe { value.of.ref_ };
++        if pointer.is_null() { return Value::FuncRef(None); }
++        let owned = unsafe { wasm_ref_copy(pointer) };
++        store.as_store_mut().inner.store.as_v8_mut().research_refs
++            .push(super::super::store::ResearchRef(owned));
++        value.of.ref_ = owned;
++    }
++    value.into_wv()
+ }
+ macro_rules! impl_native_traits {
+     (  $( $x:ident ),* ) => {
+@@ -49,7 +72,7 @@
+                      vec![ $( {
+                          let raw = $x.to_native().into_raw(store);
+                          let value = Value::from_raw(&mut store, <$x::Native as NativeWasmType>::WASM_TYPE, raw);
+-                         value.into_cv()
++                         own_call_parameter(value.into_cv())
+                      } ),* ]
+                  };
+ 
+@@ -71,6 +94,7 @@
                   let mut trap;
  
                   loop {
@@ -72,7 +123,7 @@
                      let raw_trap = unsafe { wasm_func_call(func, &*params, &mut *results) };
                      trap = (!raw_trap.is_null()).then(|| Trap::from(raw_trap));
  
-@@ -88,6 +89,7 @@
+@@ -88,6 +112,7 @@
  
  
  
@@ -80,6 +131,22 @@
                   if let Some(trap) = trap {
                       return Err(RuntimeError::from(trap));
                   }
+@@ -100,13 +125,13 @@
+                         0 => {},
+                         1 => {
+                             let val = (*results.data.wrapping_add(0)).clone();
+-                            let val = val.into_wv();
++                            let val = into_call_value(val, Rets::wasm_types()[0], &mut store);
+                             *mut_rets = val.as_raw(&mut store);
+                         }
+                         _n => {
+                             for (i, ret_type) in Rets::wasm_types().iter().enumerate() {
+                                     let val = (*results.data.wrapping_add(i)).clone();
+-                                    let val = val.into_wv();
++                                    let val = into_call_value(val, *ret_type, &mut store);
+                                     let slot = mut_rets.add(i);
+                                     *slot = val.as_raw(&mut store);
+                             }
 --- a/src/backend/v8/entities/instance.rs
 +++ b/src/backend/v8/entities/instance.rs
 @@ -112,6 +112,7 @@

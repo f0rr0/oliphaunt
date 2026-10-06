@@ -3,6 +3,7 @@ import hashlib
 import json
 import pathlib
 import re
+import runpy
 import subprocess
 import sys
 
@@ -104,8 +105,12 @@ def main():
     text += '\n[target.\'cfg(windows)\'.dependencies.tempfile]\nversion = "3"\n'
     manifest.write_text(text)
     # Runtime tempfile is already in the SDK lock; refresh only Wasmer's edge.
+    lock = root / "Cargo.lock"
+    before = lock.read_bytes()
     subprocess.run(["cargo", "metadata", "--offline", "--format-version=1"],
                     check=True, stdout=subprocess.DEVNULL)
+    check_lock = runpy.run_path(str(pathlib.Path(__file__).with_name("consumer-lock.py")))["check_lock"]
+    check_lock(before, lock.read_bytes(), added={"tempfile"})
     (dependency / "build.rs").write_text('''fn main() {
     if std::env::var_os("CARGO_FEATURE_V8").is_none() { return; }
     let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());

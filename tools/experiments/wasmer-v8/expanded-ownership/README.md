@@ -18,8 +18,9 @@ hashes and preserve patch/lock provenance.
 - `call-ownership.rs` checks argument-bearing calls, retries, finish, guest
   traps and callback errors. The driver stages it as an isolated SDK test;
   diagnostic fixture compilation is separate from the product AOT contract.
-- `embed-dll.py`, `embedded-engine.rs` and `embedded-check.py` generate lazy
-  C dispatch and test automatic internal DLL delivery. Three concurrent cold
+- `embed-dll.py`, `embedded-engine.rs` and `embedded-check.py` generate prepared
+  Rust dispatch and test automatic internal DLL delivery. The preceding lazy
+  C dispatch passed three concurrent cold
   executable-only starts, warm starts and 500 real vector database lifecycles
   pass on both Windows toolchains.
 - `trap-ownership.diff` and `trap-ownership.rs` test native errors retained
@@ -82,13 +83,21 @@ hashes and preserve patch/lock provenance.
   cancellation cases print observations, not parity passes. The
   [API review](../../../../src/docs/maintainers/windows-v8-api-review.md)
   records reproduced Linux limits and the engine delivery error-handling blocker.
-- `terminal-entry-review.rs`, `terminal-contract-review.rs` and
-  `loader-boundary-review.rs` trace those limits to entry admission, memory
-  participants and the generated C ABI. The two
-  `terminal-cancellation*-proposal.diff` files and their input hashes are
-  unactivated proposals against the clean research candidate. The
+- `terminal-entry.rs`, `terminal-contract.rs`, `terminal-copy.rs` and
+  `loader-boundary-review.rs` cover entry admission, memory participants and
+  the preceding generated C ABI. The corrections are maintained patches
+  `0008` through `0011`, applied by the existing candidate drivers. The
   [root-cause review](../../../../src/docs/maintainers/windows-v8-root-cause-review.md)
-  records the staged negative/positive controls and the proposed loader fix.
+  records the staged negative/positive controls.
+- `delivery-check.py` and `loader-faults.rs` exercise the actual loader source
+  against Windows permissions, competing writes, file locks, invalid DLLs and
+  missing exports. Separate blocking/async SDK subprocesses verify typed errors
+  and successful retry in the same process. `node-delivery-check.py` and
+  `node-delivery.mjs` exercise the actual direct/actor Node addon after activating
+  the cached-loading policy and compilation sentinel. No consumer fault options
+  are added. See the
+  [implementation record](../../../../src/docs/maintainers/windows-v8-implementation.md)
+  for current qualification status.
 
 The lifetime patches and their exact input digests live under
 `src/wasix/runtime/engine/patches`. Package generation deliberately removes the

@@ -16,6 +16,10 @@ by the separate cached-loading policy.
 | `0005-automatic-shared-memory-interruption` | Capture the Store isolate before creating a guest module; connect existing memory operations to WASIX cancellation; preserve the shutdown state through aliases and attachments. |
 | `0006-fallible-shared-memory-attachment` | Add `try_attach`, returning a memory error after shutdown instead of unwinding through task creation. Preserve the existing `attach` API. |
 | `0007-wasix-fallible-shared-memory-attachment` | Use that result in all three WASIX attachment callers, including the task manager and dynamic linker. |
+| `0008-terminal-execution-and-detached-copy` | Reject guest reentry, retries and successful completion after terminal cancellation; keep detached copies independent and own their temporary native wrapper. |
+| `0009-wasix-terminal-execution` | Route SIGKILL through explicit execution-context cancellation. Sys retains its existing shutdown; V8 leaves general `disable_atomics` unsupported. |
+| `0010-fallible-v8-engine` | Prepare native delivery before initialization; add `V8::try_new` while preserving existing constructors. |
+| `0011-sdk-fallible-v8-engine` | Select that constructor in the candidate SDK's shared fallible engine loader, covering direct/async open, prepared sessions, split initdb and tools. |
 
 Each Store owns a capability containing its isolate pointer. A mutex serializes
 termination with retirement: Store destruction clears the pointer before
@@ -37,14 +41,16 @@ materialization and tools with consumer guest compilation blocked. Exact source,
 run and artifact identities belong in the
 [decision ledger](../../../docs/maintainers/windows-v8-decision-log.md).
 
-The shutdown state rejects new attachments and interrupts current execution.
-The [public API review](../../../docs/maintainers/windows-v8-api-review.md)
-found that this alone does not prevent guest reentry and that copied-memory
-cancellation can interrupt its source Store. Treat this as terminal WASIX
-shutdown machinery, not general memory-level atomics parity; resolve the
-contract before activation. Generic host atomic wait/notify and resumable
-wake-all remain unsupported. Published engine notices, CPU-profile artifacts
-and installed SDK carrier qualification remain separate production work.
+The terminal Store latch rejects typed/dynamic calls and instance starts,
+including WASIX retries and completed-call results. Detached copies start with
+no cancellation participants; only actual attachments register a Store.
+The explicit execution-context hook replaces the earlier `disable_atomics`
+override. Generic host atomic wait/notify and resumable wake-all remain
+unsupported. See the
+[implementation record](../../../docs/maintainers/windows-v8-implementation.md)
+for delivery semantics and exact native qualification. Published engine notices,
+CPU-profile artifacts and installed SDK carrier qualification remain separate
+production work.
 
 The [code and CI review](../../../docs/maintainers/windows-v8-review.md)
 records the checked design, tooling corrections and SDK boundaries. Run offline

@@ -7,6 +7,7 @@ drivers = pathlib.Path(__file__).resolve().parent
 check_log = runpy.run_path(str(drivers / "automatic-interrupt-check.py"))["check_log"]
 fixture_source = runpy.run_path(str(drivers / "fallible-attachment.py"))["fixture_source"]
 render = runpy.run_path(str(drivers / "embed-dll.py"))["render"]
+check_lock = runpy.run_path(str(drivers / "consumer-lock.py"))["check_lock"]
 
 
 def log(fallible):
@@ -27,6 +28,52 @@ def log(fallible):
 
 
 class ControlChecks(unittest.TestCase):
+    def test_consumer_lock_allows_only_declared_producer_pruning(self):
+        before = b'''[[package]]
+name="sdk"
+version="1.0.0"
+dependencies=["wasmer","tempfile"]
+[[package]]
+name="wasmer"
+version="7.5.0"
+source="registry+immutable"
+checksum="wasmer"
+dependencies=["bindgen","runtime"]
+[[package]]
+name="bindgen"
+version="1.0.0"
+source="registry+immutable"
+checksum="bindgen"
+dependencies=["clang"]
+[[package]]
+name="clang"
+version="1.0.0"
+source="registry+immutable"
+checksum="clang"
+[[package]]
+name="runtime"
+version="1.0.0"
+source="registry+immutable"
+checksum="runtime"
+[[package]]
+name="tempfile"
+version="3.0.0"
+source="registry+immutable"
+checksum="tempfile"
+'''
+        after = before.replace(b'source="registry+immutable"\nchecksum="wasmer"\n', b'')
+        after = after.replace(b'dependencies=["bindgen","runtime"]', b'dependencies=["runtime"]')
+        begin = after.index(b'[[package]]\nname="bindgen"')
+        end = after.index(b'[[package]]\nname="runtime"')
+        after = after[:begin] + after[end:]
+        check_lock(before, after, removed={"bindgen"})
+        with self.assertRaises(AssertionError):
+            check_lock(before, after)
+        with self.assertRaises(AssertionError):
+            check_lock(before, after.replace(b'checksum="runtime"', b'checksum="changed"'), removed={"bindgen"})
+        added = after.replace(b'dependencies=["runtime"]', b'dependencies=["runtime","tempfile"]')
+        check_lock(after, added, added={"tempfile"})
+
     def test_dispatch_resolves_all_used_entries_before_rust_calls(self):
         unsupported = ["wasm_tag_get", "wasm_tag_set", "wasm_tagtype_as_externtype",
                        "wasm_tagtype_as_externtype_const"]

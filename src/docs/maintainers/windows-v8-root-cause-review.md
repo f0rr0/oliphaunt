@@ -3,6 +3,11 @@
 Re-review of `8e67bb940e9c974d3c93e2de3d3be2b9650f6c3b`, October 6, 2026.
 This follows the [public API review](windows-v8-api-review.md).
 
+The prototypes below have since been promoted to maintained candidate patches;
+the loader correction is implemented. The
+[implementation record](windows-v8-implementation.md) owns current status.
+This review records the preceding candidate and its diagnostic evidence.
+
 **The findings are real, but they need more precise causes and scope.** The
 loader failure is worse than previously described: its generated C ABI can
 abort the process. Cancellation needs a terminal execution contract, rather
@@ -162,11 +167,12 @@ our interruption patch, rather than evidence that V8 termination is broken.
 
 ## Reviewable prototypes and evidence
 
-The combined [Wasmer proposal](../../../tools/experiments/wasmer-v8/expanded-ownership/terminal-cancellation-proposal.diff)
-and [WASIX proposal](../../../tools/experiments/wasmer-v8/expanded-ownership/terminal-cancellation-wasix-proposal.diff)
+The combined [Wasmer correction](../../wasix/runtime/engine/patches/0008-terminal-execution-and-detached-copy.patch)
+and [WASIX correction](../../wasix/runtime/engine/patches/0009-wasix-terminal-execution.patch)
 apply to the clean previously qualified research candidate. Their
-[input hashes](../../../tools/experiments/wasmer-v8/expanded-ownership/terminal-cancellation-proposal.inputs.json)
-identify every touched source. They are not activated producer patches.
+[Wasmer input hashes](../../wasix/runtime/engine/patches/0008-terminal-execution-and-detached-copy.inputs.json)
+and [WASIX input hashes](../../wasix/runtime/engine/patches/0009-wasix-terminal-execution.inputs.json)
+identify every touched source. They were unactivated proposals at review time.
 Relative to that candidate, the combined Wasmer change adds 58 and removes
 24 lines across nine files; WASIX changes three lines in one file. These
 measurements exclude the proposed loader correction and test fixtures.
@@ -181,8 +187,8 @@ measurements exclude the proposed loader correction and test fixtures.
 | Existing call/ownership controls | 100,000 ordinary calls and 1,000 retry/finish/trap/callback-error cycles pass; shared growth/copy and retained typed-error controls pass. |
 
 The three new fixture files are
-[terminal entry](../../../tools/experiments/wasmer-v8/expanded-ownership/terminal-entry-review.rs),
-[terminal contract](../../../tools/experiments/wasmer-v8/expanded-ownership/terminal-contract-review.rs)
+[terminal entry](../../../tools/experiments/wasmer-v8/expanded-ownership/terminal-entry.rs),
+[terminal contract](../../../tools/experiments/wasmer-v8/expanded-ownership/terminal-contract.rs)
 and the ABI diagnostic linked above. For the final hook proposal, the entry
 fixture's `disable_atomics()` calls are changed to `terminate_execution_contexts()`
 in its isolated harness copy. The stress control similarly changes its direct
