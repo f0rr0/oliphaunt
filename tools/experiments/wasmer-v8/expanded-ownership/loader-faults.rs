@@ -14,7 +14,9 @@ mod faults {
                 std::process::Command::new("icacls")
                     .arg(path)
                     .arg("/deny")
-                    .arg(format!("{account}:(OI)(CI)(W,D)"))
+                    // Generic write denial also denies synchronization and
+                    // therefore reads. Deny only actual mutation rights.
+                    .arg(format!("{account}:(OI)(CI)(WD,AD,WEA,WA,DE,DC)"))
                     .status()
                     .unwrap()
                     .success()
@@ -52,7 +54,9 @@ mod faults {
             assert!(valid_payload(&path).unwrap());
         }
         let denied = DenyWrites::new(root.path());
+        assert_eq!(std::fs::read(&path).unwrap(), DLL);
         install(&path).unwrap();
+        drop(load(&path, REQUIRED_SYMBOLS).unwrap());
         let cold = root.path().join("missing.dll");
         assert!(install(&cold).is_err());
         drop(denied);
