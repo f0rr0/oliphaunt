@@ -13,9 +13,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { EXTENSION_PORTABLE_TARGET } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
 import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
 import { validateRegistryReceiptEvidence } from './registry-integrity.mts';
+import { DESKTOP_TARGETS } from './release-artifact-targets.mts';
 import { compareText, loadProducts, ROOT } from './release-graph.mts';
 import { validateGithubAttestationReceipt } from './verify_github_release_attestations.mts';
 
@@ -915,6 +917,28 @@ export function validateNpmResolution(packageLock, carriers, requiredEntryIds, n
   return { resolved, installedCarrierIds };
 }
 
+function npmEntryPlatform(carrier) {
+  if (
+    carrier.target == null ||
+    carrier.target === 'portable' ||
+    carrier.target === EXTENSION_PORTABLE_TARGET
+  )
+    return null;
+  const target =
+    { 'darwin-arm64': 'macos-arm64', 'win32-x64-msvc': 'windows-x64-msvc' }[carrier.target] ??
+    carrier.target;
+  const profile = DESKTOP_TARGETS[target];
+  if (!profile?.npmOs || !profile.npmCpu)
+    throw error(
+      `${carrier.id} has unsupported npm consumer target ${JSON.stringify(carrier.target)}`,
+    );
+  return {
+    os: profile.npmOs,
+    cpu: profile.npmCpu,
+    ...(profile.npmLibc ? { libc: profile.npmLibc } : {}),
+  };
+}
+
 function npmSurface({ lock, surface, root }, prepare) {
   const directory = path.join(root, 'npm');
   const home = path.join(root, 'npm-home');
@@ -934,13 +958,25 @@ function npmSurface({ lock, surface, root }, prepare) {
     NPM_CONFIG_USERCONFIG: userConfig,
   });
   const entries = [];
+  const entryPlatforms = [];
   const rows = [];
   const installed = new Set();
   for (const [index, entryCarrierId] of surface.entryCarrierIds.entries()) {
     const carrier = byId.get(entryCarrierId);
+    const platform = npmEntryPlatform(carrier);
+    entryPlatforms.push({ entryCarrierId, platform });
     const consumer = path.join(directory, `entry-${String(index).padStart(3, '0')}`);
     if (prepare) {
       mkdirSync(consumer, { recursive: true });
+      // npm honors platform overrides for optional dependencies. The exact
+      // entry must still be installed below; --ignore-scripts avoids execution.
+      if (platform !== null)
+        writeFileSync(
+          path.join(consumer, '.npmrc'),
+          Object.entries(platform)
+            .map(([key, value]) => `${key}=${value}\n`)
+            .join(''),
+        );
       writeFileSync(
         path.join(consumer, 'package.json'),
         `${JSON.stringify(
@@ -948,7 +984,9 @@ function npmSurface({ lock, surface, root }, prepare) {
             name: `oliphaunt-public-consumer-smoke-${String(index).padStart(3, '0')}`,
             version: '0.0.0',
             private: true,
-            dependencies: { [carrier.name]: carrier.version },
+            [platform === null ? 'dependencies' : 'optionalDependencies']: {
+              [carrier.name]: carrier.version,
+            },
           },
           null,
           2,
@@ -965,9 +1003,10 @@ function npmSurface({ lock, surface, root }, prepare) {
   if (prepare) return env;
   return {
     surface: 'npm',
-    mode: 'anonymous-public-independent-entry-host-install-and-lock-resolution',
+    mode: 'anonymous-public-independent-entry-platform-install-and-lock-resolution',
     registry: 'https://registry.npmjs.org',
     host: `${process.platform}-${process.arch}`,
+    entryPlatforms,
     ...resolvedSurfaceCoverage(surface, entries, rows),
     installedCarrierIds: [...installed].sort(compareText),
     receiptCoveredNotHostInstalledCarrierIds: surface.carrierIds
@@ -1268,6 +1307,13 @@ export function validatePublicConsumerEvidence(evidence, lock, plan) {
       }
     }
     if (surface.ecosystem === 'npm') {
+      const byId = new Map(lock.carriers.map((carrier) => [carrier.id, carrier]));
+      const platforms = surface.entryCarrierIds.map((entryCarrierId) => ({
+        entryCarrierId,
+        platform: npmEntryPlatform(byId.get(entryCarrierId)),
+      }));
+      if (stableJson(observed.entryPlatforms) !== stableJson(platforms))
+        throw error('npm entry platforms differ from the frozen carrier targets');
       const installed = sortedUniqueStrings(
         observed?.installedCarrierIds ?? [],
         'npm installedCarrierIds',
