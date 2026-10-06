@@ -1,17 +1,16 @@
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { ENGINE_SOURCE_CRATES } from './contract.mts';
 import {
   archiveTreeDigest,
   promotePathTransactional,
   sha256File,
 } from '../../../third-party/tools/source-fetch-core.mts';
+import { ENGINE_SOURCE_CRATES } from './contract.mts';
 
 const root = path.resolve(import.meta.dir, '../../../..');
 const owner = path.join(root, 'src/wasix/runtime/engine');
 const pins = Bun.TOML.parse(readFileSync(path.join(owner, 'source.toml'), 'utf8'));
-const crates = ENGINE_SOURCE_CRATES;
 
 function inputs(name) {
   const directory = path.join(owner, 'patches', name);
@@ -35,8 +34,8 @@ function prepare(name) {
   }
   const stage = path.join(directory, `.upstream-${process.pid}`);
   rmSync(stage, { recursive: true, force: true });
-  cpSync(source, stage, { recursive: true });
   try {
+    cpSync(source, stage, { recursive: true });
     rmSync(path.join(stage, '.oliphaunt-source-pin'));
     for (const patch of inputs(name)) {
       const result = Bun.spawnSync(['git', 'apply', '--check', patch], { cwd: stage });
@@ -54,7 +53,7 @@ function prepare(name) {
 const [operation, plan] = Bun.argv.slice(2);
 if (operation === 'plan' && plan) {
   mkdirSync(plan, { recursive: true });
-  for (const name of crates) {
+  for (const name of ENGINE_SOURCE_CRATES) {
     const pin = pins[name];
     writeFileSync(
       path.join(plan, `${name}.json`),
@@ -69,8 +68,12 @@ if (operation === 'plan' && plan) {
       }),
     );
   }
+  writeFileSync(
+    path.join(plan, 'pins'),
+    ENGINE_SOURCE_CRATES.map((name) => path.resolve(plan, `${name}.json`) + '\0').join(''),
+  );
 } else if (operation === 'prepare' && !plan) {
-  for (const name of crates) prepare(name);
+  for (const name of ENGINE_SOURCE_CRATES) prepare(name);
 } else {
   throw new Error('usage: prepare-sources.mts plan DIRECTORY | prepare');
 }

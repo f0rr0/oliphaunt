@@ -99,8 +99,7 @@ tasks:
       set -eu
       case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*)
-          cargo nextest run -p oliphaunt-wasmer --locked --profile ci --no-default-features --features v8 --lib -E 'test(oliphaunt_contract)' --no-tests=fail --test-threads=1
-          bun test ./src/wasix/runtime/engine/package.test.mts -t 'qualified Windows engine'
+          bun src/wasix/runtime/engine/test-packaged.mts
           ;;
       esac
     inputs: ["@group(engine-source)", "@group(cargo-workspace)", "/.config/nextest.toml"]
