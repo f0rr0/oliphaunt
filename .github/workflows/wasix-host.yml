@@ -44,9 +44,10 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-save-if: ${{ inputs.cache-save-if }}
+          tools: cargo-nextest@0.9.137
       - uses: ./.github/actions/setup-msvc
-      - name: Produce pinned Windows engine
-        run: moon run liboliphaunt-wasix:engine-build
+      - name: Produce and test pinned Windows engine
+        run: moon run liboliphaunt-wasix:engine-test
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: liboliphaunt-wasix-windows-engine
@@ -136,6 +137,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-save-if: ${{ inputs.cache-save-if }}
+          tools: ${{ runner.os == 'Windows' && 'cargo-nextest@0.9.137' || '' }}
 
       - name: Set up MSVC
         if: ${{ runner.os == 'Windows' }}
