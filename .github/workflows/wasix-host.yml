@@ -47,7 +47,7 @@ jobs:
           tools: cargo-nextest@0.9.137
       - uses: ./.github/actions/setup-msvc
       - name: Produce and test pinned Windows engine
-        run: moon run liboliphaunt-wasix:engine-test
+        run: .github/scripts/run-moon-targets.sh liboliphaunt-wasix:engine-test
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: liboliphaunt-wasix-windows-engine
@@ -163,7 +163,7 @@ jobs:
           brew list coreutils >/dev/null 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
 
       - name: Prepare engine source
-        run: moon run liboliphaunt-wasix:engine-sources
+        run: .github/scripts/run-moon-targets.sh liboliphaunt-wasix:engine-sources
 
       - name: Download portable WASIX build outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
