@@ -15,7 +15,7 @@ engine flags, compile no guests and place no runtime DLLs themselves. WASIX and
 PostgreSQL side-module loading remain required. A failure rejects the tested
 implementation, not every possible maintained engine fork.
 
-The October 6 [public API review](windows-v8-api-review.md) adds a delivery
+The October 6 [public API review](windows-v8-api-review.md) identified a delivery
 error-handling blocker and two reproduced general memory API limits. Engine
 cache failures can abort inside generated C dispatch. Linux diagnostics show that a second wait can
 reenter after interruption and that disabling a detached copy interrupts the
@@ -24,9 +24,10 @@ path, not permanent guest-entry prevention or memory-level atomics parity.
 Resolve these findings alongside the remaining carrier/profile work.
 The [root-cause re-review](windows-v8-root-cause-review.md) verifies the loader
 ABI in the frozen Windows crate, corrects the earlier async-recovery claim,
-and records small unactivated copy/terminal-contract prototypes. Linux
-negative/positive controls pass; loader implementation and fresh native Windows
-qualification remain required.
+and records the initial copy/terminal-contract prototypes. The subsequent
+[implementation record](windows-v8-implementation.md) promotes maintained
+patches, implements fallible delivery and records the fresh native qualification.
+Earlier passes in this ledger qualify their recorded candidate bytes.
 
 ## Decisions
 

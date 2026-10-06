@@ -31,16 +31,17 @@ def main():
     loader, count = re.subn(r'include_bytes!\(concat!\(env!\("OUT_DIR"\), "/oliphaunt_wee8.dll"\)\)',
         lambda _: "include_bytes!(" + json.dumps(dll.as_posix()) + ")", loader)
     assert count == 1
-    (tests / "research_v8_delivery.rs").write_text(loader + (drivers / "loader-faults.rs").read_text())
+    (tests / "research_v8_delivery.rs").write_text("mod research_embedded_engine {\n" +
+        loader + (drivers / "loader-faults.rs").read_text() + "\n}\n")
 
     suites = {
         "terminal_entry": [("terminal_regression", "terminal_entry_review=PASS", 7)],
         "terminal_contract": [("terminal_regression", "terminal_contract_review=PASS", 1)],
         "terminal_copy": [("terminal_regression", "terminal_copy=PASS", 1)],
         "dynamic_reference": [("terminal_regression", "dynamic_reference=PASS", 1)],
-        "delivery": [("faults::native_delivery_faults", "native_delivery_faults=PASS", 1),
-                     ("faults::blocking_open_failure_then_retry", "blocking_loader_open=PASS", 1),
-                     ("faults::async_open_failure_then_retry", "async_loader_open=PASS", 1)],
+        "delivery": [("research_embedded_engine::faults::native_delivery_faults", "native_delivery_faults=PASS", 1),
+                     ("research_embedded_engine::faults::blocking_open_failure_then_retry", "blocking_loader_open=PASS", 1),
+                     ("research_embedded_engine::faults::async_open_failure_then_retry", "async_loader_open=PASS", 1)],
     }
     receipt = {"scope": "native Windows terminal contract and actual DLL/SDK delivery faults",
                "fixture_hashes": {}, "checks": []}

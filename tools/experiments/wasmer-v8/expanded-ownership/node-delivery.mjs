@@ -17,7 +17,7 @@ assert.equal(failure.name, 'OliphauntWasixError');
 assert.equal(failure.oliphauntWasixError, 'runtime');
 assert.equal(failure.code, 'runtime-error');
 assert.match(failure.message, /prepare Windows V8 engine/u);
-assert(failure.message.includes(cachePath), failure.message);
+assert(failure.message.replaceAll('\\', '/').includes(cachePath.replaceAll('\\', '/')), failure.message);
 process.stdout.write(`node_loader_failure=PASS mode=${mode}\n`);
 await new Promise((resolve) => process.stdin.once('data', resolve));
 process.stdin.pause();

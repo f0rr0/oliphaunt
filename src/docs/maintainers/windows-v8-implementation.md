@@ -63,6 +63,8 @@ dispatch and unsupported-declaration rejection.
 Local root SDK formatting, lint and package creation pass. Its two doctests,
 eight public API tests and 176 unit tests pass. Offline driver/generator checks
 pass; canonical patch replay verifies every exact preceding source digest.
+The patched Wasmer/WASIX sources also pass a combined Sys/V8 feature compile
+check. The root SDK tests exercise the unchanged non-Windows dependency.
 These are source and Linux checks, not Windows runtime evidence.
 
 The first native attempt, run `37403581019`, stopped before runtime tests at
@@ -72,9 +74,14 @@ dependency versions. The corrected check computes that exact pruned graph and
 compares resolved identities, checksums and edges; unrelated changes still fail.
 Both archived Windows lock transitions and offline rejection controls pass.
 
+Run `37405280098` reached native compilation and exposed different signedness
+for the value-kind constants in Linux/MSVC bindings. The reference helper now
+compares using the C API's value-kind type. That candidate was cancelled after
+preserving the compiler error; it supplies no runtime qualification.
+
 Native qualification was dispatched from private candidate
-`4efe4e881172ce4b94978fb558e071c3e351c109` in
-[run 37405280098](https://github.com/f0rr0/oliphaunt/actions/runs/37405280098).
+`1f92c1fe500a55f8734c1732a9a25a2d8bd80d1b` in
+[run 37406006030](https://github.com/f0rr0/oliphaunt/actions/runs/37406006030).
 It selects Windows 2022 and Windows 2025 VS2026, terminal/shutdown controls,
 frozen-family consumption and full strict catalog/server/tools coverage.
 Current results will be recorded here after completion.
