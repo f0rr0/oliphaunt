@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -147,4 +155,38 @@ test('freezes a closed engine family, rejects mixed inputs, and reconstructs eve
     );
   assert.ok(build, 'the extracted carrier must reconstruct its own DLL');
   assert.deepEqual(readFileSync(path.join(build.out_dir, 'oliphaunt_wee8.dll')), dll);
+
+  const wasix = packages.find((row) => row.name === 'oliphaunt-wasmer-wasix');
+  const wasixConsumer = path.join(root, 'wasix-consumer');
+  const wasixManifest = preparePackagedCargoTestClosure({
+    cratePath: wasix.cratePath,
+    scratch: wasixConsumer,
+    dependencyCrates: packages.filter((row) => row !== wasix).map((row) => row.cratePath),
+  });
+  const resolved = Bun.spawnSync(
+    [
+      'cargo',
+      '--config',
+      'net.offline=false',
+      'metadata',
+      '--manifest-path',
+      wasixManifest,
+      '--format-version=1',
+      '--filter-platform=x86_64-pc-windows-msvc',
+      '--no-default-features',
+      '--features',
+      'sys-minimal,sys-poll,host-vnet,time,v8,wasmer/headless',
+    ],
+    { cwd: wasixConsumer, env, timeout: 300_000 },
+  );
+  assert.equal(resolved.exitCode, 0, resolved.stderr.toString());
+  const family = JSON.parse(resolved.stdout.toString()).packages.filter((row) =>
+    ENGINE_CARGO_PACKAGES.includes(row.name),
+  );
+  assert.deepEqual(family.map((row) => row.name).sort(), [...ENGINE_CARGO_PACKAGES].sort());
+  for (const row of family) {
+    assert.equal(row.version, '9.8.7');
+    assert.equal(row.source, null, `${row.name} must come from the extracted engine family`);
+    assert.ok(realpathSync(row.manifest_path).startsWith(realpathSync(wasixConsumer) + path.sep));
+  }
 });

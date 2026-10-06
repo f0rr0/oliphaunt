@@ -17,12 +17,19 @@ try {
     version,
   });
   const consumer = path.join(root, 'consumer');
-  const wasmer = packages.find((row) => row.name === 'oliphaunt-wasmer');
-  const manifest = preparePackagedCargoTestClosure({
-    cratePath: wasmer.cratePath,
+  // Root the closure at WASIX so its Wasmer dependency is patched locally.
+  const wasix = packages.find((row) => row.name === 'oliphaunt-wasmer-wasix');
+  const wasixManifest = preparePackagedCargoTestClosure({
+    cratePath: wasix.cratePath,
     scratch: consumer,
-    dependencyCrates: packages.filter((row) => row !== wasmer).map((row) => row.cratePath),
+    dependencyCrates: packages.filter((row) => row !== wasix).map((row) => row.cratePath),
   });
+  const wasmerManifest = path.join(
+    consumer,
+    'dependencies',
+    `oliphaunt-wasmer-${version}`,
+    'Cargo.toml',
+  );
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith('OLIPHAUNT_')),
   );
@@ -39,13 +46,13 @@ try {
   }
   // Only the extracted archives supply private dependencies. No workspace
   // producer, source archive, native library, or compiler build is consulted.
-  run(['cargo', '--config', 'net.offline=false', 'fetch', '--manifest-path', manifest]);
+  run(['cargo', '--config', 'net.offline=false', 'fetch', '--manifest-path', wasmerManifest]);
   run([
     'cargo',
     'nextest',
     'run',
     '--manifest-path',
-    manifest,
+    wasmerManifest,
     '--locked',
     '--offline',
     '--no-default-features',
@@ -57,18 +64,12 @@ try {
     '--no-tests=fail',
     '--test-threads=1',
   ]);
-  const wasix = path.join(
-    consumer,
-    'dependencies',
-    `oliphaunt-wasmer-wasix-${version}`,
-    'Cargo.toml',
-  );
-  run(['cargo', '--config', 'net.offline=false', 'fetch', '--manifest-path', wasix]);
+  run(['cargo', '--config', 'net.offline=false', 'fetch', '--manifest-path', wasixManifest]);
   run([
     'cargo',
     'check',
     '--manifest-path',
-    wasix,
+    wasixManifest,
     '--locked',
     '--offline',
     '--no-default-features',
