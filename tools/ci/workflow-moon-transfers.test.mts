@@ -128,6 +128,13 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
       if (sourceJobs.has(id) || !dependencies.has('affected')) continue;
       assert(dependencies.has('checks'), `${id} can start before source checks`);
       assert(dependencies.has('tests'), `${id} can start before source tests`);
+      // Optional source matrices can be skipped even when both source gates pass.
+      // Without a status function, GitHub applies success() to the ancestor chain.
+      assert.match(
+        job.if ?? '',
+        /\b(?:always|cancelled|failure)\s*\(/u,
+        `${id} inherits skipped optional source jobs through implicit success()`,
+      );
       const direct = [job.needs ?? []].flat();
       if (direct.includes('checks') && direct.includes('tests') && direct.length === 3) {
         // Optional source matrices may be skipped; require the aggregate gate results.
