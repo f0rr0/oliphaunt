@@ -296,6 +296,9 @@ function wasixHostTargetMatrixRow(target) {
   if (!target.triple) {
     fail(PREFIX, `${target.id} must declare triple`);
   }
+  if (target.kind === 'wasix-aot-runtime' && target.target === 'windows-x64-msvc') {
+    return { os: target.runner, target: target.triple, target_id: target.target };
+  }
   if (!target.llvmUrl) {
     fail(PREFIX, `${target.id} must declare llvm_url`);
   }
