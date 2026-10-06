@@ -26,17 +26,23 @@ fi
 
 # Compiling and running the SDK consumes the host's actual AOT carrier crate;
 # producer tasks only serialize/package/check payload bytes.
-bash src/wasix/runtime/tools/runtime-smoke.sh core-smoke
+if [ "$host" = x86_64-pc-windows-msvc ]; then
+  # V8 has different import, memory, and terminal handling from the LLVM hosts.
+  # Qualify the same full catalog lifecycle against this backend as on Linux.
+  bash src/wasix/runtime/tools/runtime-smoke.sh regression
+else
+  bash src/wasix/runtime/tools/runtime-smoke.sh core-smoke
+fi
 
 if [ "$host" = x86_64-pc-windows-msvc ]; then
   tools/dev/bun.sh src/wasix/sdks/rust/tools/test-packaged-aot.mts
 fi
 
-# The portable/Linux regression exercises every catalogued extension. Each host
+# The Linux regression and Windows V8 lane exercise every catalogued extension. Each host
 # must also deserialize and execute machine code produced for that exact host,
 # including a side module and the split pg_dump/psql tool artifacts.  Keep this
-# bounded representative lane on all four AOT builders so cross-host coverage
-# does not multiply the exhaustive 39-extension lifecycle suite by four.
+# bounded representative lane on the LLVM builders so cross-host coverage
+# does not repeat the exhaustive lifecycle suite on every LLVM host.
 proof_root="$root/target/wasix-target-aot-smoke"
 rm -rf "$proof_root"
 OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$root/target/extensions/wasix/assets" \
