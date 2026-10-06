@@ -155,7 +155,7 @@ const LICENSE_COMPONENT_ROWS = Object.freeze({
     sourceManifest: path.join(ROOT, 'src/wasix/runtime/engine/source.toml'),
     archiveSourceKey: 'wee8-windows',
     sourceVersion: '11.9.7',
-    sha256: '31bb1be82772ab89d94bbd99dbc6f4a804f6b94533f27903237cee5987da7829',
+    sha256: '11b776696544c9ed9d11dc02b0f929cee703cfdb68d4895aaf2af1eb78e0116b',
     sourceUrl:
       'https://github.com/wasmerio/wee8-custom-builds/releases/download/11.9.7/v8-windows-amd64.tar.xz',
     sourceIdentity: 'sha256:2aee8b6c3e8cecae2ce0325ac01b9bcaea4bef49e8f2aac599e1729d60c17285',
