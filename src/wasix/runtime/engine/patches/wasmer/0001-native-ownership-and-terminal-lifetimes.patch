@@ -47,7 +47,7 @@
      }
 +}
 +
-+// Research only: each constructor transfers one unique Box to V8.
++// Each constructor transfers one unique callback environment to V8.
 +// V8's existing host-info finalizer releases it when its isolate is disposed.
 +unsafe extern "C" fn drop_callback_env<F>(ptr: *mut c_void) {
 +    unsafe { drop(Box::from_raw(ptr.cast::<FunctionCallbackEnv<'_, F>>())) };
@@ -118,7 +118,7 @@
          // let wasm_func_param_arity(self.handle)
  
 -        let mut args = unsafe {
-+        let mut args = typed::ResearchValueVec(unsafe {
++        let mut args = typed::OwnedValueVec(unsafe {
              let mut wasm_params = params
                  .iter()
 -                .map(|v| IntoCApiValue::into_cv(v.clone()))
@@ -134,7 +134,7 @@
          let size = unsafe { wasm_func_result_arity(self.handle) };
  
 -        let mut results = {
-+        let mut results = typed::ResearchValueVec({
++        let mut results = typed::OwnedValueVec({
              unsafe {
                  let mut vec = Default::default();
                  wasm_val_vec_new_uninitialized(&mut vec, size);
@@ -223,16 +223,16 @@
  };
  use wasmer_types::RawValue;
  
-+// Disposable numeric-call ownership control. No entity alias deletes.
-+pub(super) struct ResearchValueVec(pub(super) wasm_val_vec_t);
-+impl std::ops::Deref for ResearchValueVec {
++// Delete owned argument and result vectors on every return path.
++pub(super) struct OwnedValueVec(pub(super) wasm_val_vec_t);
++impl std::ops::Deref for OwnedValueVec {
 +    type Target = wasm_val_vec_t;
 +    fn deref(&self) -> &Self::Target { &self.0 }
 +}
-+impl std::ops::DerefMut for ResearchValueVec {
++impl std::ops::DerefMut for OwnedValueVec {
 +    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 +}
-+impl Drop for ResearchValueVec {
++impl Drop for OwnedValueVec {
 +    fn drop(&mut self) { unsafe { wasm_val_vec_delete(&mut self.0) } }
 +}
 +// C vectors adopt reference wrappers; borrow a Function only through a copy.
@@ -271,7 +271,7 @@
                   };
  
 -                 let mut results = {
-+                 let mut results = ResearchValueVec({
++                 let mut results = OwnedValueVec({
                      unsafe {
                          let mut ret = std::mem::zeroed();
                          wasm_val_vec_new_uninitialized(&mut ret, Rets::wasm_types().len());
@@ -285,7 +285,7 @@
  
                  let mut params = unsafe {std::mem::zeroed()};
                  unsafe {wasm_val_vec_new(&mut params, params_list.len(), params_list.as_ptr())};
-+                let params = ResearchValueVec(params);
++                let params = OwnedValueVec(params);
  
                   let mut trap;
  
