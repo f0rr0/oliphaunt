@@ -4,29 +4,42 @@ Research snapshot: **October 5, 2026**. This record narrows the
 [alternatives survey](windows-runtime-alternatives.md) to the existing WASIX
 architecture. Execution coverage and release blockers remain in the
 [integration ledger](windows-v8-integration.md).
+The resumed [decision ledger](windows-v8-decision-log.md) supersedes the
+historical controls below with current acceptance/rejection evidence and patch
+sizing. It includes expanded ownership and natural V8 code collection on
+Linux, the diagnosed native double-free, its corrected Windows DLL combination,
+and automatic executable-only delivery with 500 database cycles per toolset.
+Maintaining patches is authorized; absence of a published fix is not an
+engineering rejection criterion.
 
 ## Conclusion
 
-**Wasmer/V8 retains the required WASIX behavior, but the stock integration is
-not ready to ship.** Windows SQL recovery, dynamic extension loading, tools,
-async APIs and 25 database lifecycles pass. The lifecycle measurement exposes
-roughly 330 MiB of additional private memory per cycle, peaking at 8.59 GiB.
-Ordinary native-library linking, consumer build tools and exact CPU-cache
-matching also remain blockers. No examined upstream fix supplies a complete
-portable, tool-free Windows AOT package yet.
+**Wasmer/V8 retains the required WASIX behavior. The stock dependency is
+rejected for the required DX; focused downstream fixes remain feasible.** The
+corrected private integration passes Windows SQL recovery, dynamic vector and
+UUID extension loading, tools, async APIs and **500 database lifecycles on each
+of two Windows toolsets**. It also passes three concurrent cold executable-only
+launches and a warm launch, without consumer compiler tools, flags, DLL
+placement or path setup.
 
-The memory investigation identifies a concrete C API ownership defect: Store,
-shared-memory and shared-module deletes miss their implementation cleanup.
-Correcting those existing owners sharply reduces retention in bounded Linux
-controls. The paired Windows experiment also passes ordinary database,
-extension and tool tests: peak private memory falls from **8.59 to 0.80 GiB**,
-and sampled growth from **334.2 to 2.9 MiB per cycle**. This validates a feasible
-small ownership remedy. It remains a private research override, with residual
-growth still unresolved and no published dependency fix installed.
+Correct designated C++ owner cleanup, Store-scoped roots and borrowed call
+arguments fix the major retention and native crash. Late closed-database private
+memory is roughly **249–252 MiB**, with sampled transient peaks near **0.80 GiB**.
+The last 250 endpoint changes are 1.27 and 14.73 KiB/cycle; this is strong bounded
+evidence, not proof of zero leakage or an indefinite bound. The earlier 8.59 GiB
+and 2.9 MiB/cycle controls below are historical steps, superseded by the current
+decision ledger. The separately reproduced trap-after-Store crash and callback-panic abort
+now have scoped corrections that pass on both Windows toolsets. The combined
+WASIX kill registry also passes there, including simultaneous waiters and
+late signals. The full native Windows catalog passes all 195 extension/mode
+records and the tools round-trip, including strict cached loading with the
+guest-compilation entry point blocked. Exact source/run identities are in the
+decision ledger.
 
-The remaining work is a maintainer-owned V8 flag bridge, prebuilt bindings and
-engine packaging, with a bounded family of matching caches if necessary, plus
-a cache-only WASIX resolver and complete engine notices. A single portable cache profile would need
+The remaining production work is a maintainer-owned V8 flag bridge, published
+patched bindings/engine carriers, a qualified bounded family of matching caches,
+plus integrating the tested cache-only WASIX policy, automatic interrupt
+lifecycle hooks and complete engine notices. A single portable cache profile would need
 additional engine work. These changes preserve the WASIX dynamic loader.
 Repairing Windows Sys is a larger, separate unwinder and code-generation
 project; removing its build prohibition is insufficient.
@@ -99,7 +112,7 @@ matching this V8 header alone does not establish OS/ABI compatibility.
 | QEMU 8.2.2, Skylake-Client CPU | Produces/reloads mask `0x800e` with the same flag hash; EH/SIMD pass | The JCC mitigation bit is real remaining variability. |
 | Native Linux reads the Skylake cache | Rejected | Disabling optional ISA features alone cannot produce one universal cache. |
 | QEMU Nehalem, actual PostgreSQL | 41,602,108 serialized bytes; deserializes and instantiates through WASIX, 92 imports/1,245 exports | The profile handles the real dynamic-main module; this check does not execute SQL. |
-| QEMU Conroe, EH/SIMD fixture | Module creation rejected | The tested profile does not extend support below its SSE4.1 CPU floor. No product support floor has been changed. |
+| QEMU Conroe, EH/SIMD fixture | Module creation rejected | The tested profile does not extend support below its SSE4.1 CPU floor. The user later approved an SSE4.1 minimum for x64 desktop SDKs; SSE2-only support is no longer required. |
 | Wasmer build with libclang unavailable | Build-script panic: `Unable to find libclang` | The current Rust consumer dependency still needs an extra tool. |
 | Wasmer build with libclang present but all objcopy candidates absent from PATH | Build-script panic: `No program akin to objcopy found` | Precompiled guest artifacts alone do not remove consumer build-tool requirements. |
 

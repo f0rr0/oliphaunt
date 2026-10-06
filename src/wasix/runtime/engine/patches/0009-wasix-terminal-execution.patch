@@ -1,0 +1,15 @@
+--- a/src/os/task/process.rs
++++ b/src/os/task/process.rs
+@@ -925,9 +925,9 @@
+     };
+ 
+     if signal == Signal::Sigkill {
+-        // On kill, disable atomics to prevent threads from resuming.
+-        // NOTE: disable_atomics also wakes all current waiters.
+-        if let Err(err) = memory.disable_atomics() {
++        // Terminal cancellation: V8 interrupts whole execution contexts;
++        // Sys keeps its existing memory-specific atomics shutdown.
++        if let Err(err) = memory.terminate_execution_contexts() {
+             tracing::trace!(
+                 pid=%process.pid,
+                 error = &err as &dyn std::error::Error,

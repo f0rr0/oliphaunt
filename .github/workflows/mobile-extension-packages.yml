@@ -68,4 +68,3 @@ jobs:
           name: oliphaunt-mobile-extension-package-artifacts-${{ inputs.family }}
           path: target/mobile-extension-artifacts
           if-no-files-found: error
-

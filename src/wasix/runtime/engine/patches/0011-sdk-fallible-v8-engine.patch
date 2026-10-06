@@ -1,0 +1,16 @@
+--- a/src/wasix/sdks/rust/src/oliphaunt/aot.rs
++++ b/src/wasix/sdks/rust/src/oliphaunt/aot.rs
+@@ -53,7 +53,12 @@
+         return Ok(engine.clone());
+     }
+     #[cfg(windows)]
+-    let engine: Engine = wasmer::v8::V8::new().into();
++    let engine: Engine = wasmer::v8::V8::try_new()
++        .map_err(|error| {
++            let message = format!("prepare Windows V8 engine: {error}");
++            anyhow::Error::new(error).context(message)
++        })?
++        .into();
+     #[cfg(not(windows))]
+     let engine: Engine = {
+         let mut features = Features::new();

@@ -1,6 +1,6 @@
 fn main() {
     #[cfg(windows)]
-    let engine: wasmer::Engine = wasmer::v8::V8::new().into();
+    let engine: wasmer::Engine = wasmer::v8::V8::try_new().unwrap().into();
     #[cfg(not(windows))]
     let engine: wasmer::Engine = wasmer::sys::EngineBuilder::headless().engine().into();
     #[cfg(windows)]
@@ -39,7 +39,7 @@ fn main() {
         let _memory = shared.clone().attach(&mut attached);
         drop(attached);
         drop(store);
-        shared.disable_atomics().unwrap();
+        drop(shared);
     }
     #[cfg(not(windows))]
     assert!(store.engine().is_sys());

@@ -16,6 +16,10 @@ export const paths = {
   wasixRustReadme: 'src/wasix/sdks/rust/README.md',
   nativeRustReadme: 'src/native/sdks/rust/README.md',
   wasixDockerTest: 'src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh',
+  wasixEngineControlChecker:
+    'tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt-check.py',
+  wasixEngineControlFixture:
+    'tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt.rs',
   nativeExtensionFixture: 'src/extensions/artifacts/native/tools/create-artifact.test.mts',
   windowsVcRuntimePolicy: 'tools/packaging/windows-vc-runtime-policy.json',
   wasixRuntimeCarrierSource: 'src/wasix/runtime/crates/assets/src/lib.rs',
@@ -110,6 +114,7 @@ export const paths = {
     'src/wasix/postmaster/lib/process-supervision.sh',
 };
 export const taskRoots = {
+  wasixEngineControlTest: 'liboliphaunt-wasix:engine-control-test',
   oliphauntWasixRustTestAot: 'oliphaunt-wasix-rust:test-aot',
   liboliphauntWasixRuntimeAot: 'liboliphaunt-wasix:runtime-aot',
   oliphauntSwiftPackageBindings: 'oliphaunt-swift:package-bindings',

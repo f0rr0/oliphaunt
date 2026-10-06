@@ -651,6 +651,12 @@ jobs:
       run: python tools/experiments/wasmer-v8/expanded-ownership/fallible-attachment.py target/windows-v8-ownership/control
     - name: Embed the private engine and generate C function dispatch
       run: python tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py target/windows-v8-ownership/control
+    - name: Verify terminal entry, copied memories and fallible DLL delivery
+      if: ${{ inputs.scope == 'fallible-and-catalog' || inputs.scope == 'fallible-family-only' }}
+      run: python tools/experiments/wasmer-v8/expanded-ownership/delivery-check.py target/windows-v8-ownership/control
+      env:
+        OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+        OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
     - name: Exercise automatic WASIX interruption and Store teardown races
       if: ${{ inputs.scope != 'fallible-and-catalog' && inputs.scope != 'fallible-family-only' }}
       run: python tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt-check.py target/windows-v8-ownership/control
@@ -666,6 +672,12 @@ jobs:
       run: |
         python tools/experiments/wasmer-v8/expanded-ownership/cache-only-prepare.py target/windows-v8-ownership/control
         python tools/experiments/wasmer-v8/expanded-ownership/stage-family.py target/windows-v8-ownership/control
+    - name: Verify actual Node open failures and successful retry without compilation
+      if: ${{ inputs.scope == 'fallible-and-catalog' || inputs.scope == 'fallible-family-only' }}
+      run: python tools/experiments/wasmer-v8/expanded-ownership/node-delivery-check.py target/windows-v8-ownership/control
+      env:
+        OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+        OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
     - name: Build and run the family consumer from extracted crate contents
       if: ${{ inputs.scope == 'family-only' || (inputs.scope == 'fallible-and-catalog' || inputs.scope == 'fallible-family-only') }}
       run: python tools/experiments/wasmer-v8/expanded-ownership/family-check.py target/windows-v8-ownership/control

@@ -153,6 +153,21 @@ function effects(paths) {
   };
 }
 
+test('Windows engine control checks run without scheduling artifact producers', () => {
+  for (const file of [paths.wasixEngineControlChecker, paths.wasixEngineControlFixture]) {
+    const result = effects(file);
+    assert(result.directTasks.includes('liboliphaunt-wasix:engine-control-test'), file);
+    assert.deepEqual(result.jobs, ['affected'], file);
+    assert.deepEqual(result.releaseProducts, [], file);
+  }
+  // Ordinary unit tasks execute through Test / Unit, independently of builder jobs.
+  const task = taskRecord(taskRoots.wasixEngineControlTest);
+  assert(task.tags.includes('quality') && task.tags.includes('unit'));
+  assert.equal(task.options.runInCI, true);
+  assert.deepEqual(task.deps ?? [], []);
+  assert.deepEqual(task.toolchains, ['system']);
+});
+
 test('shared packaging tests and release controllers run checks without scheduling product builds', () => {
   for (const file of [
     paths.sharedPackagingTest,

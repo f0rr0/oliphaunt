@@ -9,9 +9,14 @@ import tomllib
 
 
 def fixture_source(source):
-    source = source.replace('panic::AssertUnwindSafe, ', '')
-    source = source.replace('use wasmer::{Function,', 'use wasmer::{AsStoreMut, Function,')
-    source = source.replace('use wasmer_wasix::{WasiEnv,',
+    def replace(old, new):
+        nonlocal source
+        assert source.count(old) == 1, f"fixture input changed: {old}"
+        source = source.replace(old, new)
+
+    replace('panic::AssertUnwindSafe, ', '')
+    replace('use wasmer::{Function,', 'use wasmer::{AsStoreMut, Function,')
+    replace('use wasmer_wasix::{WasiEnv,',
         'use wasmer_wasix::runtime::task_manager::{SpawnType, VirtualTaskManager, tokio::TokioTaskManager};\nuse wasmer_wasix::{WasiEnv,')
     old = '''    let late = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut late_store = Store::new(engine.clone());
@@ -25,8 +30,8 @@ def fixture_source(source):
     let task_late = tasks.build_memory(&mut late_store.as_store_mut(), SpawnType::AttachMemory(shared.clone()));
     assert!(task_late.is_err(), "WASIX accepted attachment after shutdown");
     drop(late_store);'''
-    assert source.count(old) == 1
-    source = source.replace(old, new).replace('late_attach=REJECTED', 'late_attach=ERROR task_attach=ERROR')
+    replace(old, new)
+    replace('late_attach=REJECTED', 'late_attach=ERROR task_attach=ERROR')
     race = '''fn attachment_race(engine: &wasmer::Engine, index: usize) {
     let mut owner = Store::new(engine.clone());
     let memory = Memory::new(&mut owner, MemoryType::new(1, Some(1), true)).unwrap();
@@ -54,27 +59,19 @@ def fixture_source(source):
 }
 
 '''
-    source = source.replace('fn main() {', race + 'fn main() {')
-    source = source.replace('    for index in 1..=32 { teardown_race(&engine, index); }',
+    replace('fn main() {', race + 'fn main() {')
+    replace('    for index in 1..=32 { teardown_race(&engine, index); }',
         '    for index in 1..=32 { teardown_race(&engine, index); attachment_race(&engine, index); }')
-    return source.replace('teardown_races=32 race_stores=288"',
+    replace('teardown_races=32 race_stores=288"',
         'teardown_races=32 race_stores=288 late_attach_errors=25 task_attach_errors=25 attachment_races=32 race_attachments=256"')
+    return source
 
 
 def main():
     output = pathlib.Path(sys.argv[1]).resolve()
     if len(sys.argv) == 3 and sys.argv[2] == '--check':
         subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name('automatic-interrupt-check.py')),
-                        str(output)], check=True)
-        log = (output / 'automatic-interrupt.log').read_text()
-        assert log.count('late_attach=ERROR task_attach=ERROR') == 25
-        assert 'late_attach_errors=25 task_attach_errors=25' in log
-        assert log.count('attachment_teardown_race=') == 32
-        receipt = json.loads((output / 'automatic-interrupt-receipt.json').read_text())
-        receipt.update({'late_attach_errors': 25, 'wasix_task_attachment_errors': 25,
-                        'expected_attachment_panics': 0, 'attachment_races': 32,
-                        'race_attachments': 256})
-        (output / 'fallible-attachment-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+                        str(output), '--fallible'], check=True)
         return
     root = pathlib.Path(__file__).resolve().parents[4]
     wasmer = output / 'engine/dependency/wasmer-7.5.0'
@@ -103,6 +100,8 @@ def main():
     for dependency, name in (
         (wasmer, '0006-fallible-shared-memory-attachment'),
         (wasix, '0007-wasix-fallible-shared-memory-attachment'),
+        (wasmer, '0008-terminal-execution-and-detached-copy'),
+        (wasix, '0009-wasix-terminal-execution'),
     ):
         patch = root / 'src/wasix/runtime/engine/patches' / (name + '.patch')
         inputs = json.loads(patch.with_suffix('.inputs.json').read_text())
@@ -115,6 +114,7 @@ def main():
                                                       for path in inputs}}
     fixture = root / 'src/wasix/sdks/rust/tests/research_v8_automatic_interrupt.rs'
     source = fixture_source(pathlib.Path(__file__).with_name('automatic-interrupt.rs').read_text())
+    source = source.replace('.disable_atomics()', '.terminate_execution_contexts()')
     fixture.write_text(source.replace('fn main() {', '#[test]\nfn automatic_store_interrupt() {'))
     (output / 'fallible-attachment-source-receipt.json').write_text(json.dumps(
         {'patches': patches, 'test_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest()}, indent=2) + '\n')

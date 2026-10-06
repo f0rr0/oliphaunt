@@ -11,8 +11,9 @@ exclude = { glob = [
 [[repos]]
 repo = "builtin"
 hooks = [
-  { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], exclude = "\\.patch$", stages = ["pre-commit"], types = ["text"] },
-  { id = "end-of-file-fixer", stages = ["pre-commit"], types = ["text"] },
+  # Patch context and final-newline markers are significant source bytes.
+  { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], exclude = "\\.(patch|diff)$", stages = ["pre-commit"], types = ["text"] },
+  { id = "end-of-file-fixer", exclude = "\\.(patch|diff)$", stages = ["pre-commit"], types = ["text"] },
   { id = "check-toml", stages = ["pre-commit"] },
   { id = "check-yaml", args = ["--allow-multiple-documents"], stages = ["pre-commit"] },
   { id = "check-json", stages = ["pre-commit"], exclude = "(^|/)tsconfig\\.json$" },

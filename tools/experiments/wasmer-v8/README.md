@@ -4,19 +4,39 @@ This is a standalone Rust embedding probe for [Windows issue #208](https://githu
 
 ## Decision status
 
-**Native V8 passes the bounded Windows feasibility gate. Continue with an isolated Windows SDK integration prototype, retaining LLVM on Linux/macOS.** This establishes a supported engine candidate, not a completed Windows database fix.
+**The bounded native V8 feasibility gate passes. The stock integration still
+does not meet the consumer contract, while a maintained patch series is an
+acceptable engineering approach.** DLL, cache-only resolver, ownership,
+numeric-call and interruption controls have executed evidence. The
+[current decision ledger](../../../src/docs/maintainers/windows-v8-decision-log.md)
+records sizing, failed combinations and exact scope. The
+[private expanded ownership drivers](expanded-ownership/README.md) preserve
+native source patches separately from production dependencies.
 
 On October 4, 2026, the [final hosted run](https://github.com/f0rr0/oliphaunt/actions/runs/37237089766) passed all **22 required cases on Windows MSVC and Linux**. This includes guest exception handling, continued use after errors/traps, panic containment, typed Rust error ownership/destruction, module caching, shared memory, WASIX I/O/exit codes and instantiation of the existing PostgreSQL guest. The [earlier baseline run](https://github.com/f0rr0/oliphaunt/actions/runs/37235925649) independently passed its 16 required cases on both platforms.
 
 **Six diagnostic cases fail on both platforms:** typed and dynamic uncontained callback panics, host-created exceptions, host atomic control, typed uncaught-exception metadata and Wasmer async invocation. These are recorded as failures even when the required suite passes. The separate V8-only Store `Send` compilation diagnostic also fails on both platforms, as expected from the thread ownership boundary.
 
+Later private downstream controls correct the stock callback-panic handlers
+on all four constructor styles and qualify the real WASIX kill registry on
+both native Windows toolsets. They also qualify retained errors after Store
+destruction and automatic engine delivery. The full Windows extension catalog
+and strict cached-loading combination each pass all 195 extension/mode records,
+server tests and the tools round-trip. Early host-only interrupt capture also
+passes on both native Windows toolsets. These
+results do not change the historical stock-probe results below. The historical
+probe workflow is manually dispatched; ordinary branch pushes do not repeat
+these expensive diagnostics. Offline lifetime-checker regressions run through
+the product-owned `liboliphaunt-wasix:engine-control-test` Moon task.
+
 Do not interpret a green experiment workflow as Windows PostgreSQL qualification. The workflow distinguishes required capability probes from deliberately exercised diagnostics. The evidence files preserve both categories.
 
-Later SDK integration at `034012d0` passed 21 real Windows runtime tests and
-7 PostgreSQL regression tests using the existing public API. However, V8's
-exact CPU/flag cache restriction and consumer-side libclang/objcopy requirements
-remain blockers for the requested identical cross-platform installation and
-precompiled-artifact experience. See the
+SDK integration at `034012d0` passed 21 real Windows runtime tests and
+7 PostgreSQL regression tests using the existing public API. At that commit,
+V8's exact CPU/flag cache restriction and consumer-side libclang/objcopy
+requirements blocked identical cross-platform installation. Later private
+controls validate matching caches and tool-free engine delivery; normal SDK
+release integration remains. See the
 [integration ledger](../../../src/docs/maintainers/windows-v8-integration.md).
 The later `cache-header-compatibility` probe adds a 23rd required capability
 check; the recorded 22-case run above predates it.
@@ -81,19 +101,31 @@ The core PostgreSQL loading case covers all 92 declared imports and 1,245 export
 
 | Failed diagnostic(s) | Consequence | Criticality for Oliphaunt and way forward |
 | --- | --- | --- |
-| `host-panic`, `host-panic-dynamic` | A Rust callback panic escaping into the engine aborts the entire process. | **Critical to contain; a workaround is proven.** Both callback styles passed when the panic was caught inside the callback and converted to `RuntimeError`. Audit the callbacks and upstream WASIX imports reached by the product. The SDK's outer `catch_unwind` around database operations cannot catch this abort. |
+| `host-panic`, `host-panic-dynamic` | A Rust callback panic escaping into the engine aborts the entire process. | **Critical in stock; a scoped backend correction passes.** The upstream handlers already catch panics, but panic again in the catch arm. Returning a runtime error there passes all four constructors on both Windows toolsets, without consumer callback wrappers. The SDK's outer `catch_unwind` alone cannot catch the original abort. |
 | `host-exception` | Rust cannot construct a Wasmer exception object using `Exception::new`. | **No identified requirement in the current database path.** Guest throw/catch/rethrow and ordinary host error returns passed. Host-created exception *tags* also work: the diagnostic creates its tag successfully and fails at exception-object construction. The SDK and inspected WASIX source do not call `Exception::new`; we can avoid that API. |
 | `uncaught-eh-metadata` | An escaping guest exception reaches Rust as an error, but the host cannot inspect its exception object through `is_exception`/`to_exception`. | **Manageable if the error boundary is preserved.** Expected SQL errors should recover inside PostgreSQL and return through its protocol; arbitrary escaping traps must close the backend. Do not guess recoverability from the error text. Real SQL errors, savepoints, PL/pgSQL and successful reuse still need execution tests. |
-| `host-atomics` | Host memory wait/notify/wake-all/disable APIs are unimplemented, although the tested guest atomic operations and shared memory work. | **Conditional blocker for interruption or shutdown.** The database runtime denies additional guest execution contexts, reducing the need. However, WASIX's `Sigkill` path does call `disable_atomics`; an indefinitely blocked guest atomic waiter cannot be assumed stoppable. Qualify actual waiting and teardown paths before shipping. |
+| `host-atomics` | Host wait/notify/wake-all/disable APIs are unimplemented, although guest atomics and shared memory work. | **Stock native-wait cancellation is rejected.** A delivered WASIX `Sigkill` does not interrupt an indefinite native waiter. The combined private WASIX registry passes single and simultaneous waiters, late attachments and post-teardown signals on both native Windows toolsets. Automatic Store/memory lifecycle hooks remain integration work. |
 | `async-call` | Wasmer's coroutine-based `Function::call_async` is Sys-only. | **No direct blocker for ordinary SDK async queries.** The SDK already opens and runs the database on an owner thread and delivers results asynchronously to callers; its database engine calls are synchronous. WASIX context switching and initialization paths that create guest tasks need separate qualification. |
 
 This assessment combines the executed probes with a source audit; it is not an executed SDK integration result. The relevant SDK sources are [the async owner-thread implementation](../../../src/wasix/sdks/rust/src/async_api.rs) and [the single-backend task policy](../../../src/wasix/sdks/rust/src/oliphaunt/postgres_mod/task_policy.rs). The upgrade's terminal-error handling was inspected at [PR #247 source `b7c707a`](https://github.com/f0rr0/oliphaunt/blob/b7c707a22e5547908efc70706041a24fa804fd9d/src/wasix/sdks/rust/src/oliphaunt/postgres_mod.rs): it closes a failed backend and retires host descriptors after synchronous guest entry has returned, without re-entering the failed guest. That design does not establish cancellation of a guest call that has not returned.
 
-WASIX `futex_wait`/`futex_wake` use their own host-managed waiter state; they are not the failed `SharedMemory::wait`/`notify` APIs. Conversely, [WASIX process signals](https://github.com/wasmerio/wasmer/blob/v7.5.0/lib/wasix/src/os/task/process.rs) do reach host `disable_atomics` on `Sigkill`. Therefore neither “all futexes are broken” nor “atomic shutdown is irrelevant” follows from this diagnostic. The guest's real futex paths have not been exercised.
+WASIX `futex_wait`/`futex_wake` use host-managed waiter state; they are not the
+failed `SharedMemory::wait`/`notify` APIs. Conversely,
+[WASIX process signals](https://github.com/wasmerio/wasmer/blob/v7.5.0/lib/wasix/src/os/task/process.rs)
+reach host `disable_atomics` on `Sigkill`. The resumed live wait control confirms
+that this stock path fails. Static parsing finds an indefinite memory-initializer
+wait in PostgreSQL and the executable extension modules, plus libc's native
+futex wait in the PostGIS support library. This does not reproduce a SQL
+deadlock, but a guest-task denial policy alone cannot prove those instructions
+absent. The current decision ledger records the interrupt remedy and its scope.
 
 The separate Store `Send` failure is an integration constraint rather than one of these six cases: create, use and destroy the V8 store on its owner thread. Existing owner-thread structure is promising, but the complete SDK must compile and run with that ownership enforced. The split `initdb` path also allows guest tasks and executes child PostgreSQL commands; the single-backend policy does not qualify it automatically.
 
-The next decision gate is a real PostgreSQL session on Windows: initialize/open the database, exercise SQL error recovery and continued use, then verify shutdown and directory reopen/durability. We can ship without unused exception-object and engine-async APIs if that qualification passes. We cannot waive callback process-abort risk or required interruption/teardown behavior merely because these tests were classified as diagnostics.
+The real PostgreSQL Windows gate subsequently passes initialization/open,
+SQL error recovery, continued use, shutdown and directory reopen/durability.
+Those results support avoiding the unused exception-object and engine-async
+APIs. They do not waive the consumer, CPU, lifetime and cancellation criteria
+in the current decision ledger.
 
 The subsequent integration run at `91acf30d` passes real SQL recovery,
 callback-panic recovery, async ownership and normal/terminal close paths, plus
@@ -245,6 +277,23 @@ Artifact `11326071452` has verified digest
 `sha256:9e8075025b1d9fe9158c07b01ac4b0fce82a225c7370173bbd04f67cad3046b9`.
 This validates a feasible ownership remedy, not a shipped engine fix or complete
 memory/AOT/consumer qualification.
+
+The later private expanded-ownership candidate diagnoses and fixes pinned V8's
+adoption of borrowed call arguments. It then passes automatic embedded-DLL
+delivery and **500 closed vector databases per Windows toolset** at `08ddac8a`
+([run 37341683321](https://github.com/f0rr0/oliphaunt/actions/runs/37341683321)).
+Three concurrent cold launches and a warm launch need only the executable in
+the app directory. Late closed private memory is 249–252 MiB, with roughly
+0.80 GiB transient peaks. Earlier memory measurements above are historical
+controls; the current decision ledger contains the verified artifacts, late
+growth and remaining qualification scope.
+
+`expanded-ownership/` retains the source-pinned ownership/DLL drivers, the
+argument/reentry regression, `embed-dll.py` and `embedded-engine.rs`, the scoped
+`trap-ownership.diff` and runnable error-lifetime regression, and the genuine
+CPU-profile producer/native-reader controls. These are research inputs. Their
+manual diagnostic workflow lives only on the isolated research branch; they
+are not a published engine dependency or supported Windows release.
 
 Additional fresh-process Linux GDB controls observe zero guest function body
 compilations and zero C API module constructions when loading the PostgreSQL

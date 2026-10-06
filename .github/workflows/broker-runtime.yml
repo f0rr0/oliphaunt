@@ -60,4 +60,3 @@ jobs:
           name: oliphaunt-broker-release-assets-${{ matrix.target }}
           path: target/oliphaunt-broker/release-assets
           if-no-files-found: error
-

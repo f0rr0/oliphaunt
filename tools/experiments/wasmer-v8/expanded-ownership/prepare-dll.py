@@ -25,7 +25,6 @@ expected = json.loads(patch.with_suffix(".inputs.json").read_text(encoding="utf-
 for path, digest in expected.items():
     if hashlib.sha256((source / path).read_bytes()).hexdigest() != digest:
         raise RuntimeError(f"pinned source changed: {path}")
-dependency = output / "dependency/wasmer-7.5.0"
 subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("dll-prepare.py")), str(output / "engine")], check=True)
 dependency = output / "engine/dependency/wasmer-7.5.0"
 subprocess.run(["git", "apply", "--unsafe-paths", "--directory=" + dependency.as_posix(), str(patch)], check=True)
@@ -44,6 +43,8 @@ for raw in (before, after):
             package.pop("source", None)
             package.pop("checksum", None)
     records.append(sorted(json.dumps(p, sort_keys=True) for p in packages))
+if records[0] != records[1]:
+    raise RuntimeError("unexpected dependency resolution change")
 (output / "cargo-resolution-before.json").write_text(json.dumps(records[0], indent=2) + "\n")
 (output / "cargo-resolution-after.json").write_text(json.dumps(records[1], indent=2) + "\n")
 receipt = {"method": "private C engine DLL owner cleanup and Store-scoped roots; source control only", "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(), "input_hashes": expected, "output_hashes": {path: hashlib.sha256((dependency / path).read_bytes()).hexdigest() for path in expected}, "cargo_config": config.read_text()}

@@ -48,28 +48,27 @@ enum AotVerifyMode {
     Full,
 }
 
-pub(crate) fn headless_engine() -> Engine {
-    HEADLESS_ENGINE
-        .get_or_init(|| {
-            #[cfg(windows)]
-            {
-                wasmer::v8::V8::new().into()
-            }
-            #[cfg(not(windows))]
-            {
-                let mut features = Features::new();
-                features.exceptions(true);
-                EngineBuilder::headless()
-                    .set_features(Some(features))
-                    .engine()
-                    .into()
-            }
-        })
-        .clone()
+pub(crate) fn headless_engine() -> Result<Engine> {
+    if let Some(engine) = HEADLESS_ENGINE.get() {
+        return Ok(engine.clone());
+    }
+    #[cfg(windows)]
+    let engine: Engine = wasmer::v8::V8::new().into();
+    #[cfg(not(windows))]
+    let engine: Engine = {
+        let mut features = Features::new();
+        features.exceptions(true);
+        EngineBuilder::headless()
+            .set_features(Some(features))
+            .engine()
+            .into()
+    };
+    // Cache successful construction only so delivery failures can be retried.
+    Ok(HEADLESS_ENGINE.get_or_init(|| engine).clone())
 }
 
 pub(crate) fn load_runtime_module() -> Result<(Engine, Module)> {
-    let engine = headless_engine();
+    let engine = headless_engine()?;
     let module = load_artifact_module(&engine, RUNTIME_ARTIFACT)?;
     Ok((engine, module))
 }

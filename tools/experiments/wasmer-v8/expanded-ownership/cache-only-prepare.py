@@ -66,7 +66,7 @@ subprocess.run(["git", "apply", "--unsafe-paths", "--directory=" + wasmer.as_pos
 # the full regression. The producer has already generated the tested AOT assets.
 bindings = wasmer / "prebuilt/embedded_bindings.rs"
 text = bindings.read_text()
-pattern = r'(pub unsafe extern "C" fn wasm_module_new\([\s\S]*?\)\s*->[^\{]+\{)'
+pattern = r'(pub unsafe fn wasm_module_new\([\s\S]*?\)\s*->[^\{]+\{)'
 text, count = re.subn(pattern, r'\1\n    eprintln!("research_guest_compilation_reached=true");\n    std::process::abort();', text)
 assert count == 1, count
 bindings.write_text(text)

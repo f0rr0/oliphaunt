@@ -82,6 +82,19 @@ fileGroups:
     - /src/wasix/runtime/tools/wasix-cargo-toolchain-policy.mts
     - /tools/dev/bun.sh
 tasks:
+  engine-control-test:
+    tags: [quality, unit]
+    toolchains: [system]
+    command: python3 tools/experiments/wasmer-v8/expanded-ownership/control-checks.test.py
+    inputs:
+      - /tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt-check.py
+      - /tools/experiments/wasmer-v8/expanded-ownership/automatic-interrupt.rs
+      - /tools/experiments/wasmer-v8/expanded-ownership/fallible-attachment.py
+      - /tools/experiments/wasmer-v8/expanded-ownership/control-checks.test.py
+      - /tools/experiments/wasmer-v8/expanded-ownership/embed-dll.py
+      - /tools/experiments/wasmer-v8/expanded-ownership/embedded-engine.rs
+    options:
+      runFromWorkspaceRoot: true
   build-orchestration-test:
     tags:
       - quality

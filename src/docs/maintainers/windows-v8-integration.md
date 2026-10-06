@@ -1,16 +1,38 @@
 # Automatic Windows V8 integration
 
-Closing snapshot, **October 5, 2026**: all four desktop host jobs, including
-Windows installed consumers, and the TypeScript/browser consumer job pass at
-`2654aa260a31b71ceb31d019770408ad20151e16`. The full Linux/portable WASIX
-lifecycle receipt independently verifies 39 extensions across five modes.
-Android packaging also passes after the CI fix. Native iOS production and
-the final qualification gates remain pending in
-[run 37267345495](https://github.com/f0rr0/oliphaunt/actions/runs/37267345495),
-which is left running at the user's request. These notes close the investigation
-without claiming release readiness; see the
-[feasibility conclusion](windows-wasmer-feasibility.md#conclusion) for the
-remaining Windows consumer requirements.
+October 6 continuation: product-owned Store/memory lifetime hooks now pass
+on both native Windows toolsets and in the full strict extension regression.
+Follow-up attachment errors and an aligned extracted-package consumer also
+pass on both Windows toolsets, including executable-only cold/warm launches.
+The full strict catalog passes with the clean attachment patches. The
+[engine patch record](../../wasix/runtime/engine/README.md) describes ownership,
+shutdown ordering and the remaining release boundary. Exact results below are
+historical snapshots; the [decision ledger](windows-v8-decision-log.md) records
+the continuation.
+
+Decision update, **October 5, 2026**: the stock integration does not meet the
+requested consumer contract. A maintained patch series is acceptable and has
+bounded DLL, cache-only loading, ownership and interruption controls. The
+[decision ledger](windows-v8-decision-log.md) assesses patch size and current
+native results; it distinguishes engineering feasibility from release readiness.
+The private combined DLL/borrowed-argument candidate subsequently passes
+automatic executable-only cold/warm delivery and **500 vector database cycles
+on each of two Windows toolsets** in
+[run 37341683321](https://github.com/f0rr0/oliphaunt/actions/runs/37341683321).
+The later combined error/panic candidate also passes on both toolsets, and
+the native WASIX kill registry passes simultaneous waiters and late signals.
+The full native Windows catalog passes all 195 extension/mode records and
+the tools round-trip, including the strict cached-loading combination with
+the guest-compilation entry point blocked.
+These supply native mechanism evidence without installing the private fork in
+the production dependency closure.
+The full selected-product [qualification run 37277184644](https://github.com/f0rr0/oliphaunt/actions/runs/37277184644)
+at `6d28440f0f9227de5c76d8ce1af03e7063d2eb17` passes **Builds, Required and
+Qualified**, including all 39 portable extension lifecycles and installed consumers.
+Those regression checks qualify that integration revision; they do not qualify
+the subsequent private patch combination or complete published carrier and CPU
+profile qualification. The current decision ledger records those separate
+controls and their limits.
 
 ## Consumer contract
 
@@ -26,8 +48,10 @@ installation or first-run guest compilation. Maintainers produce and package
 the PostgreSQL, extension and tools AOT artifacts. Consumers load them. An
 automatic fallback to `Module::new` on an incompatible Windows cache would
 violate this contract. The SDK's direct artifact loader has no such fallback;
-WASIX's default resolver can still compile on module-cache misses. A strict
-cache-only resolver and native-payload checks remain qualification work; see
+WASIX's stock resolver can still compile on module-cache misses. The private
+existing-runtime cache-only policy and native-payload checks pass the complete
+Windows catalog/server/tools suite; integrating and delivering them remains
+production work. See
 the [feasibility follow-up](windows-wasmer-feasibility.md#engine-packaging-and-static-link-isolation).
 
 This branch builds on [Wasmer upgrade PR #247](https://github.com/f0rr0/oliphaunt/pull/247)
@@ -113,6 +137,12 @@ still records CET shadow-stack support directly from hardware, without an
 SSE4.1/SSSE3 support for Wasm SIMD. The PostgreSQL guest and supported CPU floor
 must be tested against the chosen baseline. Do not patch cache headers to
 bypass validation or depend on private C++ symbols from the SDK.
+
+The user approved **SSE4.1 as the common x64 desktop minimum** on October 5.
+SSE2-only processors are outside that policy; a scalar fallback is optional.
+All engine flags and compatible artifact selection remain internal to the SDK.
+This decision does not resolve the independent CET cache-mask difference or
+mean that the production serializer's existing SSE2 metadata is already aligned.
 
 The additional `cache-header-compatibility` probe executes the original tiny
 EH artifact, changes only its native CPU/flag compatibility fields separately,
@@ -322,10 +352,12 @@ The receipt matches the exact candidate and all 39 planned catalog names:
 **195 passed mode statuses**, with no missing current WASIX claims. This is
 Linux/portable lifecycle execution, not exhaustive Windows V8 qualification.
 
-Native iOS extension production, final extension package assembly and the
-Required/Qualified gates are still pending. CI continues without cancellation
-or a new dispatch. The closing documentation commit follows the tested source;
-this run tests `2654aa26`, not the later documentation commit. Raw logs and the
+Native iOS extension production and final extension package assembly also
+finish successfully in that run. The selected WASIX runtime package is skipped,
+so Builds, Required and Qualified finish failing. Explicit named producer-status
+checks repair the skip in the resumed branch; the follow-up run and additional
+acceptance controls are recorded in the decision ledger. This older run tests
+`2654aa26`, not the later documentation or experiment commits. Raw logs and the
 verified receipt are retained locally under the ignored
 `tools/experiments/wasmer-v8/results/validation-2026-10-05/` directory; durable
 run and artifact identities above allow the evidence to be retrieved again.
