@@ -61,6 +61,17 @@ function graph(products) {
   };
 }
 
+const npmPlatformFixtures = [
+  { target: null, platform: null },
+  { target: 'portable', platform: null },
+  { target: 'linux-arm64-gnu', platform: { os: 'linux', cpu: 'arm64', libc: 'glibc' } },
+  { target: 'linux-x64-gnu', platform: { os: 'linux', cpu: 'x64', libc: 'glibc' } },
+  { target: 'macos-arm64', platform: { os: 'darwin', cpu: 'arm64' } },
+  { target: 'darwin-arm64', platform: { os: 'darwin', cpu: 'arm64' } },
+  { target: 'windows-x64-msvc', platform: { os: 'win32', cpu: 'x64' } },
+  { target: 'win32-x64-msvc', platform: { os: 'win32', cpu: 'x64' } },
+];
+
 const [fixtureMode, fixtureRoot, scenario] = process.argv.slice(2);
 if (fixtureMode === 'prepare-cargo') {
   const environment = publicCargoEnvironment(fixtureRoot, {
@@ -94,7 +105,17 @@ if (fixtureMode === 'prepare-cargo') {
 }
 if (fixtureMode === 'prepare-npm') {
   const products = [product('sdk', ['npm'])];
-  const frozen = lock(products, [carrier('npm:@example/sdk', 'sdk', 0)]);
+  const carriers =
+    scenario === 'platforms'
+      ? npmPlatformFixtures.map(({ target }, index) => ({
+          ...carrier(`npm:@example/platform-${index}`, 'sdk', index),
+          target,
+        }))
+      : scenario === 'missing-entry'
+        ? [{ ...carrier('npm:@example/platform-5', 'sdk', 0), target: 'darwin-arm64' }]
+        : [carrier('npm:@example/sdk', 'sdk', 0)];
+  if (scenario === 'unknown-platform') carriers[0].target = 'unknown-platform';
+  const frozen = lock(products, carriers);
   writeFileSync(
     path.join(fixtureRoot, 'context.json'),
     JSON.stringify({
@@ -107,9 +128,23 @@ if (fixtureMode === 'prepare-npm') {
 }
 if (fixtureMode === 'install-npm') {
   const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
-  const [[name, version]] = Object.entries(manifest.dependencies);
-  mkdirSync(`node_modules/${name}`, { recursive: true });
-  writeFileSync(`node_modules/${name}/package.json`, JSON.stringify({ name, version }));
+  const [[name, version]] = Object.entries(manifest.dependencies ?? manifest.optionalDependencies);
+  if (name.startsWith('@example/platform-')) {
+    const { platform } = npmPlatformFixtures[Number(name.split('-').at(-1))];
+    assert.equal(manifest.optionalDependencies !== undefined, platform !== null);
+    if (platform === null) assert.equal(existsSync('.npmrc'), false);
+    else
+      assert.equal(
+        readFileSync('.npmrc', 'utf8'),
+        Object.entries(platform)
+          .map(([key, value]) => `${key}=${value}\n`)
+          .join(''),
+      );
+  }
+  if (!process.env.OMIT_PUBLIC_PROBE) {
+    mkdirSync(`node_modules/${name}`, { recursive: true });
+    writeFileSync(`node_modules/${name}/package.json`, JSON.stringify({ name, version }));
+  }
   writeFileSync(
     'package-lock.json',
     JSON.stringify({
@@ -126,12 +161,43 @@ if (fixtureMode === 'install-npm') {
   process.exit(0);
 }
 if (fixtureMode === 'assert-npm') {
-  if (scenario === 'success') {
+  if (scenario === 'success' || scenario === 'platforms') {
     const result = JSON.parse(readFileSync(path.join(fixtureRoot, 'npm.json'), 'utf8'));
-    assert.deepEqual(result.installedCarrierIds, ['npm:@example/sdk']);
+    const context = JSON.parse(readFileSync(path.join(fixtureRoot, 'context.json'), 'utf8'));
+    const ids = context.lock.carriers.map(({ id }) => id);
+    assert.equal(
+      result.mode,
+      'anonymous-public-independent-entry-platform-install-and-lock-resolution',
+    );
+    assert.deepEqual(result.installedCarrierIds, ids);
     assert.deepEqual(
       result.resolved.map(({ id }) => id),
-      ['npm:@example/sdk'],
+      ids,
+    );
+    assert.deepEqual(
+      result.entryPlatforms,
+      ids.map((entryCarrierId, index) => ({
+        entryCarrierId,
+        platform: scenario === 'platforms' ? npmPlatformFixtures[index].platform : null,
+      })),
+    );
+    const evidence = publicConsumerEvidence({
+      ...context,
+      registryReceiptSha256: 'e'.repeat(64),
+      githubReceiptDigest: 'f'.repeat(64),
+      surfaces: [
+        result,
+        { surface: 'github', productTags: context.plan.github.productTags, swift: null },
+      ],
+    });
+    validatePublicConsumerEvidence(evidence, context.lock, context.plan);
+    evidence.surfaces.find(({ surface }) => surface === 'npm').entryPlatforms[0].platform = {
+      os: 'linux',
+      cpu: 'x64',
+    };
+    assert.throws(
+      () => validatePublicConsumerEvidence(evidence, context.lock, context.plan),
+      /npm entry platforms differ from the frozen carrier targets/u,
     );
   } else assert.equal(existsSync(path.join(fixtureRoot, 'npm.json')), false);
   process.exit(0);
@@ -667,10 +733,11 @@ test('builds canonical lock/receipt-bound evidence and writes it immutably', () 
   const surfaces = [
     {
       surface: 'npm',
-      mode: 'anonymous-public-independent-entry-host-install-and-lock-resolution',
+      mode: 'anonymous-public-independent-entry-platform-install-and-lock-resolution',
       carrierIds: ['npm:@example/alpha'],
       dependencyScopes: ['optional', 'peer', 'runtime'],
       entryCarrierIds: ['npm:@example/alpha'],
+      entryPlatforms: [{ entryCarrierId: 'npm:@example/alpha', platform: null }],
       plannedEntryClosures: [
         { entryCarrierId: 'npm:@example/alpha', carrierIds: ['npm:@example/alpha'] },
       ],
@@ -735,10 +802,11 @@ test('cannot silently relabel a frozen entry dependency as receipt-only', () => 
     surfaces: [
       {
         surface: 'npm',
-        mode: 'anonymous-public-independent-entry-host-install-and-lock-resolution',
+        mode: 'anonymous-public-independent-entry-platform-install-and-lock-resolution',
         carrierIds: ['npm:@example/alpha', 'npm:@example/leaf'],
         dependencyScopes: ['optional', 'peer', 'runtime'],
         entryCarrierIds: ['npm:@example/alpha'],
+        entryPlatforms: [{ entryCarrierId: 'npm:@example/alpha', platform: null }],
         plannedEntryClosures: [
           {
             entryCarrierId: 'npm:@example/alpha',
