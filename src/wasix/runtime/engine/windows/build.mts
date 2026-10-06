@@ -95,36 +95,30 @@ function build() {
     path.join(output, 'profile.h'),
     `#define OLIPHAUNT_V8_FLAGS ${JSON.stringify(V8_FLAGS)}\n`,
   );
-  for (const [name, defines] of [
-    ['cache-producer', ['/DOLIPHAUNT_EMULATED_PRODUCER']],
-    ['cache-reader', []],
-  ] as const) {
-    run([
-      compiler,
-      '/nologo',
-      '/c',
-      '/O2',
-      '/GS-',
-      '/Zl',
-      `/I${output}`,
-      ...defines,
-      path.join(import.meta.dir, 'cache-producer.c'),
-      `/Fo${path.join(output, `${name}.obj`)}`,
-    ]);
-    run([
-      linker,
-      '/nologo',
-      '/nodefaultlib',
-      '/machine:x64',
-      '/entry:mainCRTStartup',
-      '/subsystem:console',
-      '/Brepro',
-      path.join(output, `${name}.obj`),
-      'kernel32.lib',
-      path.join(output, 'oliphaunt_wee8.lib'),
-      `/out:${path.join(output, `${name}.exe`)}`,
-    ]);
-  }
+  run([
+    compiler,
+    '/nologo',
+    '/c',
+    '/O2',
+    '/GS-',
+    '/Zl',
+    `/I${output}`,
+    path.join(import.meta.dir, 'cache-producer.c'),
+    `/Fo${path.join(output, 'cache-producer.obj')}`,
+  ]);
+  run([
+    linker,
+    '/nologo',
+    '/nodefaultlib',
+    '/machine:x64',
+    '/entry:mainCRTStartup',
+    '/subsystem:console',
+    '/Brepro',
+    path.join(output, 'cache-producer.obj'),
+    'kernel32.lib',
+    path.join(output, 'oliphaunt_wee8.lib'),
+    `/out:${path.join(output, 'cache-producer.exe')}`,
+  ]);
   const dll = path.join(output, 'oliphaunt_wee8.dll');
   const digest = sha256File(dll);
   const prebuilt = path.join(owner, 'crates/wasmer/prebuilt');

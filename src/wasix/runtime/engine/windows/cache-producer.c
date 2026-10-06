@@ -1,25 +1,11 @@
 #include "profile.h"
-/* Producer-only Windows V8 cache control. No CRT or Windows SDK needed. */
-typedef unsigned long long usize;
-typedef unsigned int DWORD;
-typedef unsigned short WCHAR;
-typedef void *HANDLE;
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <intrin.h>
+/* Producer-only Windows V8 cache control, linked without the CRT. */
+typedef SIZE_T usize;
 typedef struct { usize size; unsigned char *data; } Vec;
-void __cpuidex(int[4], int, int);
-#pragma intrinsic(__cpuidex)
 #define IMP __declspec(dllimport)
-IMP HANDLE __stdcall GetStdHandle(DWORD);
-IMP HANDLE __stdcall CreateFileW(const WCHAR *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
-IMP int __stdcall ReadFile(HANDLE, void *, DWORD, DWORD *, void *);
-IMP int __stdcall WriteFile(HANDLE, const void *, DWORD, DWORD *, void *);
-IMP int __stdcall GetFileSizeEx(HANDLE, long long *);
-IMP int __stdcall CloseHandle(HANDLE);
-IMP WCHAR *__stdcall GetCommandLineW(void);
-IMP void __stdcall ExitProcess(DWORD);
-#ifdef OLIPHAUNT_EMULATED_PRODUCER
-IMP HANDLE __stdcall GetCurrentProcess(void);
-IMP int __stdcall TerminateProcess(HANDLE, DWORD);
-#endif
 IMP void oliphaunt_set_v8_flags(const char *, usize);
 IMP void *wee8_wasm_engine_new(void);
 IMP void *wee8_wasm_store_new(void *);
@@ -43,23 +29,24 @@ static void number(usize value, int hex) {
   for(unsigned i=0;i<n/2;i++) { char c=out[i]; out[i]=out[n-1-i]; out[n-1-i]=c; }
   out[n]=0; print(out);
 }
+static DWORD word(const unsigned char *bytes) {
+  DWORD value;
+  CopyMemory(&value,bytes,sizeof(value));
+  return value;
+}
 static void finish(DWORD code) {
-#ifdef OLIPHAUNT_EMULATED_PRODUCER
-  /* Only the emulated helper avoids Wine/QEMU's process-detach failure.
+  /* This emulated producer avoids Wine/QEMU's process-detach failure.
      Preserve the requested success or rejection status. */
   TerminateProcess(GetCurrentProcess(),code);
   ExitProcess(31);
-#else
-  ExitProcess(code);
-#endif
 }
 static void fail(const char *s, DWORD code) { print(s); print("\n"); finish(code); }
 static Vec read(const WCHAR *path) {
   HANDLE f=CreateFileW(path,0x80000000,1,0,3,0,0);
-  long long size=0; DWORD got=0; Vec v;
-  if(f==(HANDLE)-1 || !GetFileSizeEx(f,&size) || size<=0 || size>0x7fffffff) fail("read open/size failed",10);
-  wee8_wasm_byte_vec_new_uninitialized(&v,(usize)size);
-  if(!ReadFile(f,v.data,(DWORD)size,&got,0) || got!=size) fail("read bytes failed",11);
+  LARGE_INTEGER size; DWORD got=0; Vec v;
+  if(f==INVALID_HANDLE_VALUE || !GetFileSizeEx(f,&size) || size.QuadPart<=0 || size.QuadPart>0x7fffffff) fail("read open/size failed",10);
+  wee8_wasm_byte_vec_new_uninitialized(&v,(usize)size.QuadPart);
+  if(!ReadFile(f,v.data,(DWORD)size.QuadPart,&got,0) || got!=size.QuadPart) fail("read bytes failed",11);
   CloseHandle(f); return v;
 }
 static void write(const WCHAR *path, const Vec *v) {
@@ -93,8 +80,8 @@ void mainCRTStartup(void) {
   if(wire>data.size-p || data.size-p-wire<20) fail("missing native cache",23);
   usize offset=p+wire;
   print("native_bytes="); number(data.size-offset,0);
-  print(" cpu_mask="); number(*(DWORD*)(data.data+offset+8),1);
-  print(" flag_hash="); number(*(DWORD*)(data.data+offset+12),1); print("\n");
+  print(" cpu_mask="); number(word(data.data+offset+8),1);
+  print(" flag_hash="); number(word(data.data+offset+12),1); print("\n");
   void *module=wee8_wasm_module_deserialize(store,&data);
   if(!module) fail("native_deserialize=REJECT",24);
   print("native_deserialize=PASS (no compilation fallback)\n");
@@ -102,11 +89,8 @@ void mainCRTStartup(void) {
   print("stage=module_deleted\n");
   wee8_wasm_store_delete(store); print("stage=store_deleted\n");
   wee8_wasm_engine_delete(engine); print("stage=engine_deleted\n");
-#ifdef OLIPHAUNT_EMULATED_PRODUCER
   /* Wine/QEMU crashes in process detach after all the above cleanup returns.
-     Only this internal producer avoids that detach path. Native readers and
      SDK applications retain ordinary Windows process shutdown. */
   print("stage=emulated_producer_completed\n");
-#endif
   finish(0);
 }

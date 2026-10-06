@@ -54,7 +54,7 @@ jobs:
           include-hidden-files: true
           path: |
             target/oliphaunt-wasix/engine/windows-x64-msvc/oliphaunt_wee8.dll
-            target/oliphaunt-wasix/engine/windows-x64-msvc/cache-*.exe
+            target/oliphaunt-wasix/engine/windows-x64-msvc/cache-producer.exe
             target/oliphaunt-wasix/engine/windows-x64-msvc/source.json
             target/oliphaunt-wasix/engine/windows-x64-msvc/LICENSE.v8
             src/wasix/runtime/engine/crates/*/upstream/**
