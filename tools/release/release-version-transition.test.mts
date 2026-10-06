@@ -170,20 +170,41 @@ if (phase === 'write') {
   }
   writeFileSync(graphPath, JSON.stringify(releaseGraph));
 } else if (phase === 'assert') {
-  const plan = (includeCurrentTags = false) =>
+  const plan = (includeCurrentTags = false, selectedProducts = undefined) =>
     buildPlanFromProductTags(releaseGraph, 'HEAD', {
       prefix: 'transition-test',
       root,
       includeCurrentTags,
+      selectedProducts,
     });
   switch (scenario) {
     case 'compatible': {
       const result = plan();
       assert.deepEqual(result.releaseProducts, [native, wasix]);
       assert.equal(result.changedFiles.includes('packages/vector/release.toml'), true);
+      assert.throws(
+        () =>
+          buildPlanFromProductTags(
+            {
+              ...releaseGraph,
+              shared_release_sources: [
+                { files: [`${PRODUCTS[native]}/VERSION`], products: [vector] },
+              ],
+            },
+            'HEAD',
+            { root, selectedProducts: [vector] },
+          ),
+        /manifest version remains 1[.]0[.]0/u,
+        'shared inputs outside the publication scope still affect selected products',
+      );
       break;
     }
     case 'inline-source':
+      assert.deepEqual(plan(false, [native, wasix]).releaseProducts, [native, wasix]);
+      assert.throws(() => plan(false, [vector]), /manifest version remains 1[.]0[.]0/u);
+      for (const invalid of [[], [native, native], ['unknown'], null]) {
+        assert.throws(() => plan(false, invalid), /unique known products/u);
+      }
       assert.throws(
         () => plan(),
         /oliphaunt-extension-vector has release-affecting changes .* manifest version remains 1[.]0[.]0.*packages\/vector\/release[.]toml/u,
