@@ -59,7 +59,7 @@ for mode in success platforms unknown-platform missing-entry fail timeout expire
   if [[ "$mode" == missing-entry ]]; then grep -q "entry package was not installed from the public registry" "$scratch/$mode/output"; fi
   bun tools/release/public-consumer-smoke.test.mts assert-npm "$scratch/$mode" "$mode"
 done
-[[ "$(wc -l < "$scratch/attempts")" -eq 12 ]]
+[[ "$(wc -l < "$scratch/attempts")" -eq 13 ]]
 pid="$(cat "$scratch/child-pid")"
 status=0
 state="$(ps -o stat= -p "$pid")" || status=$?

@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { EXTENSION_PORTABLE_TARGET } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
 import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
 import { validateRegistryReceiptEvidence } from './registry-integrity.mts';
@@ -917,7 +918,12 @@ export function validateNpmResolution(packageLock, carriers, requiredEntryIds, n
 }
 
 function npmEntryPlatform(carrier) {
-  if (carrier.target == null || carrier.target === 'portable') return null;
+  if (
+    carrier.target == null ||
+    carrier.target === 'portable' ||
+    carrier.target === EXTENSION_PORTABLE_TARGET
+  )
+    return null;
   const target =
     { 'darwin-arm64': 'macos-arm64', 'win32-x64-msvc': 'windows-x64-msvc' }[carrier.target] ??
     carrier.target;

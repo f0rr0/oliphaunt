@@ -70,6 +70,7 @@ const npmPlatformFixtures = [
   { target: 'darwin-arm64', platform: { os: 'darwin', cpu: 'arm64' } },
   { target: 'windows-x64-msvc', platform: { os: 'win32', cpu: 'x64' } },
   { target: 'win32-x64-msvc', platform: { os: 'win32', cpu: 'x64' } },
+  { target: 'wasix-portable', platform: null },
 ];
 
 const [fixtureMode, fixtureRoot, scenario] = process.argv.slice(2);
