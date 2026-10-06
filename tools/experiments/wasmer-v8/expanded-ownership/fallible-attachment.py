@@ -64,6 +64,14 @@ def fixture_source(source):
         '    for index in 1..=32 { teardown_race(&engine, index); attachment_race(&engine, index); }')
     replace('teardown_races=32 race_stores=288"',
         'teardown_races=32 race_stores=288 late_attach_errors=25 task_attach_errors=25 attachment_races=32 race_attachments=256"')
+    for receiver, count, operation in (
+        ('reshare', 1, 'ops().terminate_execution_contexts'),
+        ('shared', 3, 'ops().terminate_execution_contexts'),
+        ('ops', 3, 'terminate_execution_contexts'),
+    ):
+        old = receiver + '.disable_atomics()'
+        assert source.count(old) == count, old
+        source = source.replace(old, receiver + '.' + operation + '()')
     return source
 
 
@@ -114,7 +122,6 @@ def main():
                                                       for path in inputs}}
     fixture = root / 'src/wasix/sdks/rust/tests/research_v8_automatic_interrupt.rs'
     source = fixture_source(pathlib.Path(__file__).with_name('automatic-interrupt.rs').read_text())
-    source = source.replace('.disable_atomics()', '.terminate_execution_contexts()')
     fixture.write_text(source.replace('fn main() {', '#[test]\nfn automatic_store_interrupt() {'))
     (output / 'fallible-attachment-source-receipt.json').write_text(json.dumps(
         {'patches': patches, 'test_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest()}, indent=2) + '\n')

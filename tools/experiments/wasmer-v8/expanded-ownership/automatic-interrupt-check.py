@@ -43,7 +43,7 @@ def main():
     fallible = len(sys.argv) == 3
     output = pathlib.Path(sys.argv[1]).resolve()
     command = ["cargo", "test", "--locked", "-p", "oliphaunt-wasix", "--no-default-features",
-               "--test", "research_v8_automatic_interrupt", "--no-run", "--message-format=json"]
+               "--test", "research_v8_automatic_interrupt", "--no-run", "--message-format=json-render-diagnostics"]
     build = subprocess.run(command, capture_output=True, encoding="utf-8", timeout=1200)
     (output / "automatic-interrupt-build.log").write_text(build.stdout + build.stderr)
     if build.returncode:
