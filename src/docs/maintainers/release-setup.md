@@ -418,6 +418,15 @@ publish before their aggregator, and are not independent release products.
    change to the approved candidate. After a partial release, rerun the
    original Release workflow; it proves and skips matching published bytes.
 
+   npm can accept a signed upload and keep processing it for more than fifteen
+   minutes. Post-upload reconciliation polls the exact version and frozen SRI
+   until publication is visible or the shared registry mutation deadline is
+   reached. It keeps the job's public-consumer and promotion reserve intact.
+   A delayed accepted upload is never success based on the CLI exit code, and
+   an immutable SRI mismatch stops immediately. If the shared deadline expires,
+   preserve the candidate and rerun the original Release workflow after the
+   accepted version becomes public; the rerun verifies and skips those bytes.
+
    Run every npm `--audit` and `--apply` command directly in an interactive
    terminal. npm can require web or classic OTP even for `npm trust list`.
    Before the initial and final classification passes, the helper therefore
