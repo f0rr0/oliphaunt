@@ -20,8 +20,9 @@ function history(root) {
 export function historyCommit(root, ref, { check = true } = {}) {
   const { directory } = history(root);
   const refs = pairs(path.join(directory, 'refs'));
-  if (!refs.has(ref)) throw new Error('product history does not include ref ' + ref);
-  const commit = refs.get(ref);
+  const key = refs.has(ref) ? ref : `refs/tags/${ref}`;
+  if (!refs.has(key)) throw new Error('product history does not include ref ' + ref);
+  const commit = refs.get(key);
   if (!commit && check) throw new Error('could not resolve product ref ' + ref);
   return commit || null;
 }

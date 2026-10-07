@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DESKTOP_TARGETS } from './release-artifact-targets.mts';
 
 import {
   cargoEntryFeatureNames,
@@ -424,6 +425,99 @@ test('fails closed on product, target, carrier, and dependency-closure omissions
     () => publicConsumerPlan(cycle, ['cycle'], graph(cycleProducts)),
     /no public consumer entry root/u,
   );
+});
+
+test('clean WASIX SDK installs reject older N-API runtimes outside the selected publication lock', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-public-wasix-test-'));
+  try {
+    const target = Object.values(DESKTOP_TARGETS).find(
+      ({ npmOs, npmCpu }) => npmOs === process.platform && npmCpu === process.arch,
+    );
+    const name = target.wasixNapiPackage;
+    const sdk = {
+      ...JSON.parse(readFileSync('src/wasix/sdks/ts/package.json', 'utf8')),
+      version: '0.2.1',
+      oliphaunt: {
+        runtimeProduct: 'liboliphaunt-wasix',
+        runtimeVersion: '0.3.1',
+        wasixNapiProduct: 'oliphaunt-wasix-napi',
+        wasixNapiVersion: '0.2.0',
+        wasixAddonAbiVersion: 3,
+        nodeApiVersion: 8,
+        browserHost: 'wasmer-js-patched',
+        serverHost: 'wasix-rust-napi',
+      },
+    };
+    delete sdk.scripts;
+    delete sdk.devDependencies;
+    sdk.dependencies['@oliphaunt/liboliphaunt-wasix'] = '0.3.1';
+    sdk.optionalDependencies = Object.fromEntries(
+      Object.keys(sdk.optionalDependencies).map((name) => [name, '0.2.0']),
+    );
+    const sdkRoot = path.join(root, 'node_modules/@oliphaunt/wasix-ts');
+    // npm may nest the carrier under the SDK rather than hoisting it.
+    const nativeRoot = path.join(sdkRoot, 'node_modules', name);
+    mkdirSync(nativeRoot, { recursive: true });
+    writeFileSync(path.join(sdkRoot, 'package.json'), JSON.stringify(sdk));
+    const native = {
+      name,
+      version: '0.2.0',
+      exports: { './package.json': './package.json' },
+      oliphaunt: {
+        runtimeProduct: 'liboliphaunt-wasix',
+        runtimeVersion: '0.3.0',
+        addonAbiVersion: 3,
+        nodeApiVersion: 8,
+        profiles: ['standard', 'icu'],
+      },
+    };
+    const nativeFile = path.join(nativeRoot, 'package.json');
+    writeFileSync(nativeFile, JSON.stringify(native));
+    const entry = {
+      ...carrier('npm:@oliphaunt/wasix-ts', 'oliphaunt-wasix-ts', 0),
+      version: sdk.version,
+    };
+    const packageLock = {
+      lockfileVersion: 3,
+      packages: {
+        'node_modules/@oliphaunt/wasix-ts': {
+          version: sdk.version,
+          resolved: 'https://registry.npmjs.org/@oliphaunt/wasix-ts/-/wasix-ts-0.2.1.tgz',
+          integrity: 'sha512-exact',
+        },
+      },
+    };
+    const validate = () => validateNpmResolution(packageLock, [entry], [entry.id], root);
+    assert.throws(
+      validate,
+      /SDK requires N-API 0\.2\.0 embedding runtime 0\.3\.1, carrier embeds runtime 0\.3\.0/u,
+    );
+    const tools = carrier('npm:@oliphaunt/wasix-tools', 'postgres-tools-wasix', 0);
+    const toolsRoot = path.join(root, 'node_modules', '@oliphaunt', 'wasix-tools');
+    mkdirSync(toolsRoot, { recursive: true });
+    writeFileSync(
+      path.join(toolsRoot, 'package.json'),
+      JSON.stringify({ name: tools.name, version: tools.version }),
+    );
+    packageLock.packages['node_modules/@oliphaunt/wasix-tools'] = {
+      version: tools.version,
+      resolved: 'https://registry.npmjs.org/@oliphaunt/wasix-tools/-/wasix-tools.tgz',
+      integrity: 'sha512-exact',
+    };
+    const validateTools = () => validateNpmResolution(packageLock, [tools], [tools.id], root);
+    assert.throws(validateTools, /carrier embeds runtime 0\.3\.0/u);
+    native.oliphaunt.runtimeVersion = '0.3.1';
+    writeFileSync(nativeFile, JSON.stringify(native));
+    assert.doesNotThrow(validate);
+    assert.doesNotThrow(validateTools);
+    native.version = '0.2.2';
+    writeFileSync(nativeFile, JSON.stringify(native));
+    assert.throws(validate, /incompatible with @oliphaunt\/wasix-ts@0\.2\.1/u);
+    rmSync(nativeFile);
+    assert.throws(validate, /Cannot find module|ModuleNotFound|ENOENT/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('validates exact public Cargo, npm, and Maven resolution records', () => {

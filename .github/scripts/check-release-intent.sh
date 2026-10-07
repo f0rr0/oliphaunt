@@ -131,6 +131,7 @@ EOF
   exit 1
 fi
 
+consumer_products_json=''
 if [[ "${is_release_pr}" == true ]]; then
   base_commit="$(git rev-parse "${base_ref}^{commit}")"
   head_parent="$(git rev-parse "${head_ref}^{commit}^")"
@@ -147,6 +148,12 @@ if [[ "${is_release_pr}" == true ]]; then
   bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" "${head_ref}" tools/dev/bun.sh tools/release/verify-release-commit.mts \
     --products-json "${release_products_json}" \
     --head-ref "${head_ref}"
+  consumer_products_json="${release_products_json}"
+elif [[ "${event_name}" == workflow_dispatch && "${full_ref}" == refs/heads/main && "${CI_RELEASE_PRODUCTS_JSON:-[]}" != '[]' ]]; then
+  consumer_products_json="${CI_RELEASE_PRODUCTS_JSON}"
+fi
+if [[ -n "${consumer_products_json}" ]]; then
+  bash tools/release/with-product-history.sh "$PWD" "${head_ref}" '' @workspace bash tools/dev/bun.sh tools/release/consumer-compatibility.mts "${consumer_products_json}"
 fi
 
 release_plan="$(bash tools/release/release-plan.sh --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"

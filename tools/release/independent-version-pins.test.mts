@@ -32,6 +32,7 @@ import {
 import { assertWasixNapiCarrierManifest } from '../../src/wasix/node-addon/tools/check-release-assets.mts';
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import { workspaceBindingManifest } from '../../src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts';
+import { prepareWasixToolsTypescriptPackage } from '../../src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts';
 
 if (process.env.OLIPHAUNT_INDEPENDENT_VERSION_TEST !== '1' || existsSync(path.join(ROOT, '.git'))) {
   throw new Error('Run bash tools/release/independent-version-pins.test.sh');
@@ -154,6 +155,24 @@ test('WASIX TypeScript npm staging uses its portable runtime and Node-API pins',
   );
   for (const version of Object.values(staged.optionalDependencies)) {
     assert.equal(version, original.oliphaunt.wasixNapiVersion);
+  }
+});
+
+test('WASIX tools staging retains its explicit SDK pin after that SDK advances', () => {
+  const source = 'src/wasix/postgres-tools/ts/package.json';
+  const original = json(source);
+  const sdkFile = 'src/wasix/sdks/ts/package.json';
+  const sdk = read(sdkFile);
+  try {
+    write(sdkFile, JSON.stringify({ ...JSON.parse(sdk), version: '99.0.0' }));
+    const staged = prepareWasixToolsTypescriptPackage(stageManifest('wasix-tools', source));
+    assert.equal(
+      staged.peerDependencies['@oliphaunt/wasix-ts'],
+      original.oliphaunt.wasixSdkVersion,
+    );
+    assert.deepEqual(staged.oliphaunt, original.oliphaunt);
+  } finally {
+    write(sdkFile, sdk);
   }
 });
 

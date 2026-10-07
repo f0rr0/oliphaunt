@@ -3,10 +3,14 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-export TEST_BUN_VERSION="$(bun --version)" CALL_LOG="$scratch/calls"
+export TEST_BUN_VERSION="$(bun --version)" CALL_LOG="$scratch/calls" REAL_BUN="$(command -v bun)"
 cat > "$scratch/bun" <<'SH'
 #!/usr/bin/env bash
 if [[ "${1:-}" == --version ]]; then echo "$TEST_BUN_VERSION"; exit 0; fi
+# Materialize real historical product inputs; only publication gates are mocked.
+case "${1:-}:${2:-}" in
+  */release-graph.mts:--history-inputs|*/release-history.mts:files) exec "$REAL_BUN" "$@" ;;
+esac
 printf '%s\0' "$@" >> "$CALL_LOG"
 printf '\n' >> "$CALL_LOG"
 [[ "$1" != "${FAIL_GATE:-}" ]] || exit 9

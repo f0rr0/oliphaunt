@@ -122,6 +122,11 @@ tasks:
       - requires-rust
     command: bash tools/release/release-check.sh --mutation-tests-only
     inputs:
+      - /src/wasix/sdks/ts/package.json
+      - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
+      - /src/wasix/sdks/ts/tools/package.mts
+      - /src/wasix/postgres-tools/ts/tools/package.mts
+      - /src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts
       - /src/wasix/runtime/tools/download-assets.sh
       - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
       - /tools/packaging/**/*
@@ -171,6 +176,8 @@ tasks:
       - /src/wasix/sdks/ts/tools/package.mts
       - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
       - /src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts
+      - /src/wasix/postgres-tools/ts/tools/package.mts
+      - /src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts
       - /src/wasix/node-addon/tools/workspace-runtime-contract.mts
       - /src/wasix/node-addon/tools/native-build-data.mts
       - /src/wasix/node-addon/tools/check-release-assets.mts

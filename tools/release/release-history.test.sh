@@ -14,6 +14,13 @@ printf 1.0.0 > blue/VERSION
 printf 0.5.0 > blue/PIN
 printf 8.0.0 > red/VERSION
 printf 9.0.0 > red/PIN
+printf 7.0.0 > red/VERSION
+printf '%s' '{"blue":"1.0.0","red":"7.0.0"}' > .release-please-manifest.json
+git add .
+git commit -qm fixture
+git tag beta-v7.0.0
+printf 8.0.0 > red/VERSION
+printf '%s' '{"blue":"1.0.0","red":"8.0.0"}' > .release-please-manifest.json
 git add .
 git commit -qm fixture
 git tag alpha-v1.0.0
@@ -24,7 +31,7 @@ mv temp red
 printf '%s' '{"packages":{"red":{"component":"alpha"},"blue":{"component":"beta"}}}' > release-please-config.json
 printf '%s' '{"red":"1.1.0","blue":"8.0.0"}' > .release-please-manifest.json
 printf 1.1.0 > red/VERSION
-printf 0.6.0 > red/PIN
+printf 7.0.0 > red/PIN
 printf 0.6.0 > red/NEW_PIN
 git add .
 git commit -qm fixture

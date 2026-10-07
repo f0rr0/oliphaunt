@@ -13,6 +13,8 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { createRequire } from 'node:module';
+import { assertWasixTypescriptNativeCarrier } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
 import { EXTENSION_PORTABLE_TARGET } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
 import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
@@ -900,6 +902,24 @@ export function validateNpmResolution(packageLock, carriers, requiredEntryIds, n
       }
     }
     resolved.push({ id: carrier.id, version: carrier.version, integrity: row.integrity });
+  }
+  // Historical SDK dependencies are also consumers, even when not being published.
+  for (const key of Object.keys(packages)) {
+    if (!/(^|\/)node_modules\/@oliphaunt\/wasix-ts$/u.test(key)) continue;
+    if (path.isAbsolute(key) || key.split('/').includes('..')) {
+      throw error('installed WASIX SDK path escapes the clean npm consumer');
+    }
+    const manifestFile = path.join(nodeModules, key, 'package.json');
+    const installed = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    const target = Object.values(DESKTOP_TARGETS).find(
+      ({ npmOs, npmCpu }) => npmOs === process.platform && npmCpu === process.arch,
+    );
+    if (!target?.wasixNapiPackage) {
+      throw error(`no WASIX N-API public consumer target for ${process.platform}/${process.arch}`);
+    }
+    const require = createRequire(manifestFile);
+    const nativeFile = require.resolve(`${target.wasixNapiPackage}/package.json`);
+    assertWasixTypescriptNativeCarrier(installed, JSON.parse(readFileSync(nativeFile, 'utf8')));
   }
   resolved.sort((left, right) => compareText(left.id, right.id));
   const installedCarrierIds = carriers

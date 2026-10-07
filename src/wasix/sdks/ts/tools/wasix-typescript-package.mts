@@ -97,6 +97,36 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   return manifest;
 }
 
+export function assertWasixTypescriptNativeCarrier(manifest, carrier) {
+  const sdk = manifest.oliphaunt;
+  const native = carrier.oliphaunt;
+  if (
+    manifest.name !== PACKAGE_NAME ||
+    sdk?.runtimeProduct !== 'liboliphaunt-wasix' ||
+    sdk?.wasixNapiProduct !== NATIVE_PRODUCT ||
+    !/^\d+\.\d+\.\d+$/u.test(sdk?.runtimeVersion ?? '') ||
+    !/^\d+\.\d+\.\d+$/u.test(sdk?.wasixNapiVersion ?? '') ||
+    !Number.isSafeInteger(sdk?.wasixAddonAbiVersion) ||
+    sdk.wasixAddonAbiVersion < 1 ||
+    !Number.isSafeInteger(sdk?.nodeApiVersion) ||
+    sdk.nodeApiVersion < 1 ||
+    Object.hasOwn(sdk, 'qualificationOnly') ||
+    Object.hasOwn(native ?? {}, 'qualificationOnly') ||
+    !NATIVE_PACKAGES.includes(carrier.name) ||
+    carrier.version !== sdk?.wasixNapiVersion ||
+    manifest.optionalDependencies?.[carrier.name] !== carrier.version ||
+    native?.runtimeProduct !== sdk?.runtimeProduct ||
+    native?.runtimeVersion !== sdk?.runtimeVersion ||
+    native?.addonAbiVersion !== sdk?.wasixAddonAbiVersion ||
+    native?.nodeApiVersion !== sdk?.nodeApiVersion ||
+    JSON.stringify(native?.profiles) !== JSON.stringify(['standard', 'icu'])
+  ) {
+    fail(
+      `${carrier.name}@${carrier.version} is incompatible with ${PACKAGE_NAME}@${manifest.version}: SDK requires N-API ${sdk?.wasixNapiVersion} embedding runtime ${sdk?.runtimeVersion}, carrier embeds runtime ${native?.runtimeVersion}`,
+    );
+  }
+}
+
 export function prepareWasixTypescriptPackage(packageDir) {
   const root = path.resolve(packageDir);
   const manifest = prepareProductPackage(root);

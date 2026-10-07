@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -9,6 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { packagedCargoManifestText } from '../../../../../tools/packaging/cargo-source-package.mts';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -49,22 +51,37 @@ if (['prepare-compiler', 'verify-compiler'].includes(process.argv[2])) {
       'package-extension-cargo-facades.test',
     );
     const products = ['oliphaunt-extension-contrib-pg18', 'oliphaunt-extension-vector'];
+    const helperSource = path.resolve(
+      import.meta.dir,
+      '../../../../native/sdks/rust/crates/oliphaunt-build',
+    );
+    const helper = path.join(root, 'build-helper');
+    cpSync(helperSource, helper, { recursive: true });
+    const nextPatch = (version) => {
+      const parts = version.split('.');
+      parts[2] = String(Number(parts[2]) + 1);
+      return parts.join('.');
+    };
+    writeFileSync(
+      path.join(helper, 'Cargo.toml'),
+      packagedCargoManifestText(readFileSync(path.join(helper, 'Cargo.toml'), 'utf8')).replace(
+        /^version = "[^"]+"/mu,
+        `version = "${nextPatch(currentProductVersionSync('oliphaunt-rust'))}"`,
+      ),
+    );
     const dependencyPaths = {
       'liboliphaunt-native-bindings': path.resolve(
         import.meta.dir,
         '../../../../native/rust-bindings',
       ),
-      'oliphaunt-build': path.resolve(
-        import.meta.dir,
-        '../../../../native/sdks/rust/crates/oliphaunt-build',
-      ),
+      'oliphaunt-build': helper,
     };
     // The native consumer does not enable WASIX, but Cargo resolves optional coordinates.
     const wasixStub = path.join(root, 'wasix-sdk');
     mkdirSync(path.join(wasixStub, 'src'), { recursive: true });
     writeFileSync(
       path.join(wasixStub, 'Cargo.toml'),
-      `[package]\nname = "oliphaunt-wasix"\nversion = "${currentProductVersionSync('oliphaunt-wasix-rust')}"\nedition = "2024"\n[features]\nextensions = []\n[workspace]\n`,
+      `[package]\nname = "oliphaunt-wasix"\nversion = "${nextPatch(currentProductVersionSync('oliphaunt-wasix-rust'))}"\nedition = "2024"\n[features]\nextensions = []\n[workspace]\n`,
     );
     writeFileSync(path.join(wasixStub, 'src/lib.rs'), '');
     dependencyPaths['oliphaunt-wasix'] = wasixStub;
@@ -180,7 +197,7 @@ fixture-native-tools = { path = ${JSON.stringify(tools)} }
 fixture-broker = { path = ${JSON.stringify(broker)} }
 
 [build-dependencies]
-oliphaunt-build = { path = ${JSON.stringify(path.resolve(import.meta.dir, '../../../../native/sdks/rust/crates/oliphaunt-build'))} }
+oliphaunt-build = { path = ${JSON.stringify(helper)} }
 
 [workspace]
 `,
@@ -294,6 +311,18 @@ describe('exact extension Cargo facade', () => {
       'dep:oliphaunt-extension-pgtap-wasix',
     ]);
     expect(pkg.cratePath.endsWith('.crate')).toBe(true);
+    expect(manifest.dependencies['oliphaunt-wasix'].version).toBe(
+      `^${currentProductVersionSync('oliphaunt-wasix-rust')}`,
+    );
+    expect(manifest.dependencies['liboliphaunt-native-bindings'].version).toBe(
+      `^${currentProductVersionSync('liboliphaunt-native-bindings')}`,
+    );
+    expect(manifest['build-dependencies']['oliphaunt-build'].version).toBe(
+      `^${currentProductVersionSync('oliphaunt-rust')}`,
+    );
+    expect(manifest.dependencies['oliphaunt-extension-pgtap-wasix'].version).toBe(
+      `=${pkg.version}`,
+    );
   });
 
   test('the native-owned contrib facade has no WASIX carrier dependency', () => {

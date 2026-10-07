@@ -383,6 +383,40 @@ assembles release packages; the retired dry-run wrapper did not assemble them
 either. Use the selected products' package and artifact/consumer test tasks for
 local package rehearsal.
 
+Release admission checks consumer combinations before uploading registry bytes.
+The CI release-intent job runs the same compatibility gate on generated release
+PRs, their main release commits and explicitly selected main qualification
+dispatches; ordinary source PRs and feature diagnostics keep source qualification.
+`consumer-compatibility.mts` reads selected consumers' declared pins and reads
+unselected dependencies from their immutable product tags. It compares the WASIX
+SDK runtime with the runtime embedded by its exact N-API dependency, follows
+declared SDK dependencies through tools and React Native, checks consumers'
+own runtime pins against those SDKs, and checks every
+external extension against consumers that enforce exact runtime identity.
+Cargo SDK admission also checks published, unselected extension facades' API
+requirements. A workspace `qualificationOnly` fixture cannot satisfy these
+release contracts. A new runtime SDK must declare its extension compatibility
+policy before metadata admission.
+
+Cargo extension facades use compatible SemVer requirements for SDK, build-helper
+and binding APIs; extension payload and AOT carrier versions remain exact.
+The shared facade generator is a release source of every external extension and
+the native runtime product that owns the contrib facade, so Release Please
+includes those products when its shipped output changes. WASIX tools declare
+their SDK pin explicitly instead of deriving it from the current workspace SDK.
+These rules preserve independent packaging versions; they do not establish
+cross-runtime extension compatibility or waive ABI, AOT, export or integrity
+checks. Incompatible combinations require a fresh matching release candidate.
+
+Freezing the publication candidate additionally checks the unmodified WASIX SDK
+tarball's declared pins and every selected N-API tarball, including macOS carriers
+on a Linux preparation host. Packing and atomically installing a frozen candidate
+repeat that check, so approval-run reuse and bootstrap retries cannot bypass it.
+The post-publication npm check validates the actual
+installed carrier for every installed WASIX SDK, including unselected historical
+SDKs and nested dependency installations. Source qualification and installed
+release compatibility remain separate requirements.
+
 For a release packaging failure, download the failed candidate's inputs from its
 exact CI run into an isolated checkout and run the same assembly entrypoint:
 

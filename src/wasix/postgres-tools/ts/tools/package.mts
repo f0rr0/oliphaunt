@@ -16,10 +16,11 @@ const SOURCE = path.join(ROOT, 'src/wasix/postgres-tools/ts');
 const CARRIER = '@oliphaunt/liboliphaunt-wasix-tools';
 const BINDING = '@oliphaunt/wasix-ts';
 
-export function prepareWasixToolsTypescriptPackage(packageDir, bindingVersion) {
-  if (!/^\d+\.\d+\.\d+$/u.test(bindingVersion)) throw new Error('binding version must be exact');
+export function prepareWasixToolsTypescriptPackage(packageDir) {
   const manifestFile = path.join(packageDir, 'package.json');
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+  const bindingVersion = manifest.oliphaunt?.wasixSdkVersion;
+  if (!/^\d+\.\d+\.\d+$/u.test(bindingVersion)) throw new Error('binding version must be exact');
   const runtimeVersion = manifest.oliphaunt?.runtimeVersion;
   if (!/^\d+\.\d+\.\d+$/u.test(runtimeVersion)) throw new Error('runtime version must be exact');
   manifest.dependencies = { [CARRIER]: manifest.version };
@@ -31,7 +32,7 @@ export function prepareWasixToolsTypescriptPackage(packageDir, bindingVersion) {
   return manifest;
 }
 
-export function stageWasixToolsTypescriptPackage(outputDir, bindingVersion) {
+export function stageWasixToolsTypescriptPackage(outputDir) {
   const destination = path.resolve(ROOT, outputDir);
   const relative = path.relative(ROOT, destination);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -49,13 +50,10 @@ export function stageWasixToolsTypescriptPackage(outputDir, bindingVersion) {
     path.join(ROOT, 'src/wasix/postgres-tools/CHANGELOG.md'),
     path.join(destination, 'CHANGELOG.md'),
   );
-  return prepareWasixToolsTypescriptPackage(destination, bindingVersion);
+  return prepareWasixToolsTypescriptPackage(destination);
 }
 
 if (import.meta.main) {
   const output = process.argv[2] ?? 'target/oliphaunt-wasix-tools-ts/package';
-  const binding = JSON.parse(
-    readFileSync(path.join(ROOT, 'src/wasix/sdks/ts/package.json'), 'utf8'),
-  );
-  stageWasixToolsTypescriptPackage(output, binding.version);
+  stageWasixToolsTypescriptPackage(output);
 }

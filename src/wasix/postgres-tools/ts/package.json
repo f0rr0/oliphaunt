@@ -20,7 +20,8 @@
   },
   "oliphaunt": {
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.3.1"
+    "runtimeVersion": "0.3.1",
+    "wasixSdkVersion": "0.2.1"
   },
   "exports": {
     ".": {
