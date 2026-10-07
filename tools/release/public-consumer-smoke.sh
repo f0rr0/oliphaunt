@@ -99,7 +99,10 @@ scratch="$(mktemp -d)"
 pids=()
 # shellcheck disable=SC2317
 cleanup() {
-  status=$?
+  local status=$?
+  # A child signalled before exec can run this inherited EXIT trap. Only the
+  # coordinator owns the other process groups and shared scratch directory.
+  [ "$BASH_SUBSHELL" -eq 0 ] || return "$status"
   trap - EXIT
   for pid in ${pids[@]+"${pids[@]}"}; do kill -TERM -- "-$pid" 2>/dev/null || true; done
   if [ "${#pids[@]}" -gt 0 ]; then sleep 2; fi

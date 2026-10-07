@@ -79,6 +79,7 @@ case "$2" in
     [[ "${4:-}" != --help ]] || exit 0
     printf '{"deadlineMilliseconds":%s,"plan":{"surfaces":[{"ecosystem":"cargo"},{"ecosystem":"npm"},{"ecosystem":"maven"}]}}\n' "$(( ($(date +%s) + 60) * 1000 ))" > "$3/context.json" ;;
   --report)
+    [[ -f "$3/context.json" ]]
     for surface in cargo npm maven github; do [[ -f "$PUBLIC_PROBE_COORDINATOR/$surface" ]]; done
     touch "$PUBLIC_PROBE_COORDINATOR/report" ;;
   *) exit 99 ;;
@@ -105,3 +106,22 @@ status=0
 FAIL_PUBLIC_PROBE=npm PATH="$coordinator/bin:$PATH" "$PUBLIC_PROBE_BASH" "$coordinator/tools/release/public-consumer-smoke.sh" || status=$?
 [[ "$status" == 7 && ! -f "$coordinator/report" ]]
 echo 'Public consumer coordinator: help, all probes drained, report after success, and failed probe blocks report passed'
+
+# Bash can receive a signal before a background launch resets its inherited
+# EXIT trap. Keep that trap active in a wrapper to force the ownership case
+# without relying on runner load or signal timing.
+gtimeout() {
+  local status=0
+  "$PUBLIC_PROBE_TIMEOUT" "$@" || status=$?
+  trap cleanup EXIT
+  exit "$status"
+}
+export -f gtimeout
+PATH="$coordinator/bin:$PATH" "$PUBLIC_PROBE_BASH" "$coordinator/tools/release/public-consumer-smoke.sh"
+[[ -f "$coordinator/report" ]]
+status=0
+rm "$coordinator/report"
+FAIL_PUBLIC_PROBE=npm PATH="$coordinator/bin:$PATH" "$PUBLIC_PROBE_BASH" "$coordinator/tools/release/public-consumer-smoke.sh" || status=$?
+[[ "$status" == 7 && ! -f "$coordinator/report" ]]
+unset -f gtimeout
+echo 'Public consumer coordinator: inherited child EXIT traps preserve shared state and the original failure passed'
