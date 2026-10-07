@@ -21,9 +21,9 @@ function fail(message) {
   throw new Error(`${TOOL}: ${message}`);
 }
 
-export function prepareWasixToolsTypescriptPackage(packageDir, bindingVersion) {
+export function prepareWasixToolsTypescriptPackage(packageDir) {
   const root = path.resolve(packageDir);
-  const manifest = prepareProductPackage(root, bindingVersion);
+  const manifest = prepareProductPackage(root);
   assertReleaseNoticesInDirectory(root, NOTICE_OPTIONS);
   assertWasixToolsTypescriptManifest(manifest, `${PACKAGE_NAME} staged package`);
   return manifest;
@@ -49,6 +49,7 @@ export function assertWasixToolsTypescriptManifest(manifest, label = PACKAGE_NAM
     dependencies[TOOLS_CARRIER] !== manifest.version ||
     JSON.stringify(Object.keys(peerDependencies)) !== JSON.stringify([WASIX_BINDING]) ||
     !EXACT_VERSION.test(peerDependencies[WASIX_BINDING]) ||
+    manifest.oliphaunt?.wasixSdkVersion !== peerDependencies[WASIX_BINDING] ||
     manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix' ||
     !EXACT_VERSION.test(manifest.oliphaunt?.runtimeVersion) ||
     Object.keys(manifest.optionalDependencies ?? {}).length > 0

@@ -15,6 +15,10 @@ import {
   ROOT,
 } from './release-graph.mts';
 import {
+  validatePublishedCargoExtensionConsumers,
+  validateReleaseConsumerCompatibility,
+} from './consumer-compatibility.mts';
+import {
   checkRegistryPublication,
   queryProductPublication,
 } from './check_registry_publication.mts';
@@ -308,6 +312,7 @@ export function selectedDependencySatisfiesPin(
 }
 
 async function validateReleaseDependencies(products, graph) {
+  validateReleaseConsumerCompatibility(products, { products: graph.products, prefix: TOOL });
   const selected = new Set(products);
   const entries = compatibilityVersionEntries(graph.products, {
     requireSourceProduct: true,
@@ -405,6 +410,8 @@ async function main(argv) {
     );
   }
   await validateReleaseDependencies(selected, graph);
+  if (args.checkRegistries)
+    await validatePublishedCargoExtensionConsumers(selected, { products: graph.products });
   if (args.checkRegistries) {
     const inventory = await validateRegistryPublication(
       selected,

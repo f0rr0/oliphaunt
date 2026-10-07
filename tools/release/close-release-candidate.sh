@@ -18,4 +18,5 @@ if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
 fi
 products="$(bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" HEAD tools/dev/bun.sh tools/release/verify-release-commit.mts --derive-products --head-ref HEAD)"
 bash tools/release/release-please-state.sh "$PWD" HEAD bash tools/release/with-release-history.sh "$PWD" HEAD tools/dev/bun.sh tools/release/verify-release-commit.mts --products-json "$products" --head-ref HEAD
+bash tools/release/with-product-history.sh "$PWD" HEAD '' @workspace bash tools/dev/bun.sh tools/release/consumer-compatibility.mts "$products"
 bash tools/release/release-metadata-check.sh --publication

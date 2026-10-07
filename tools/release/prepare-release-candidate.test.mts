@@ -27,6 +27,17 @@ const first = 'a'.repeat(40);
 const second = 'b'.repeat(40);
 const head = 'c'.repeat(40);
 
+test('extension facade generator changes select every product shipping its output', () => {
+  const products = Object.entries(graph.products)
+    .filter(([, product]) => product.extension?.class === 'external')
+    .map(([id]) => id);
+  expect(
+    buildPlan(graph, [
+      'src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts',
+    ]).releaseProducts.sort(),
+  ).toEqual(['liboliphaunt-native', ...products].sort());
+});
+
 test('every binary release includes its compiled sources across product boundaries', () => {
   const mobile = ['oliphaunt-swift', 'oliphaunt-kotlin'];
   for (const [file, products] of [

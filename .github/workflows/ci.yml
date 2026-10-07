@@ -260,6 +260,7 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
           CI_EVENT_NAME: ${{ github.event_name }}
           CI_FULL_REF: ${{ github.ref }}
+          CI_RELEASE_PRODUCTS_JSON: ${{ inputs.release_products_json || '[]' }}
         run: |
           subject="${PR_TITLE:-}"
           if [ -z "$subject" ]; then

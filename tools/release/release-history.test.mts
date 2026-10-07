@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { compatibilityVersionValue, productVersionTransitionStatus } from './release-graph.mts';
-import { historyFile, historyManifest } from './release-history.mts';
+import { historyCommit, historyFile, historyManifest } from './release-history.mts';
 
 const [mode, repo] = process.argv.slice(2);
 if (mode === 'prepare') {
@@ -32,6 +32,8 @@ if (mode === 'prepare') {
 } else if (mode === 'assert') {
   const root = repo;
   const config = JSON.parse(readFileSync(path.join(repo, 'graph.json'), 'utf8')).products.alpha;
+  assert.equal(historyCommit(root, 'beta-v7.0.0'), historyCommit(root, 'refs/tags/beta-v7.0.0'));
+  assert.equal(historyFile(root, 'beta-v7.0.0', 'blue/VERSION'), '7.0.0');
   assert.equal(historyFile(root, 'alpha-v1.0.0', 'red/VERSION'), '1.0.0');
   assert.deepEqual(historyManifest(root, 'alpha-v1.0.0'), { red: '1.0.0', blue: '8.0.0' });
   assert.equal(

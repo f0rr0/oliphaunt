@@ -1,6 +1,7 @@
 id = "oliphaunt-extension-pgtap"
 owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
+shared_source_paths = ["src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts"]
 publish_targets = [
   "github-release-assets",
   "npm",

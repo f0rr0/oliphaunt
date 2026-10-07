@@ -30,10 +30,21 @@ git mv extensions src/extensions
 git commit -qm 'move source under src'
 git tag liboliphaunt-native-v0.3.0
 cp "$source_root/tools/release/with-release-tags.sh" tools/release/
+cp "$source_root/tools/release/with-product-history.sh" tools/release/
 cp "$source_root/tools/release/check-release-versions.sh" check.sh
 cat > tools/dev/bun.sh <<'SH'
 #!/usr/bin/env bash
 set -eu
+# This tag-only repository has no products or historical product files.
+case "$1:${2:-}" in
+  */release-graph.mts:--history-inputs)
+    : > "$OLIPHAUNT_PRODUCT_HISTORY/prefixes"
+    : > "$OLIPHAUNT_PRODUCT_HISTORY/current-tags"
+    exit 0 ;;
+  */release-history.mts:files)
+    for directory in "$OLIPHAUNT_PRODUCT_HISTORY"/trees/*; do : > "$directory/selected"; done
+    exit 0 ;;
+esac
 printf '%s' "$RELEASE_HEAD_COMMIT" > head
 cp "$RELEASE_TAG_REFS" refs
 cp "$RELEASE_TAG_COMMITS" commits

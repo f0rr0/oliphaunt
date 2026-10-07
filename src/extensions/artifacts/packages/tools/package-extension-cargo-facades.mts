@@ -139,8 +139,8 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
       `[target.'cfg(${cfg})'.dependencies]\n${name} = { version = "=${version}", optional = true${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ''} }`,
     );
   }
-  const dependency = (name, version, optional = true) =>
-    `${name} = { version = "=${version}"${optional ? ', optional = true' : ''}, default-features = false${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ''} }`;
+  const dependency = (name, version, exact = true, optional = true) =>
+    `${name} = { version = "${exact ? '=' : '^'}${version}"${optional ? ', optional = true' : ''}, default-features = false${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ''} }`;
   const cfgForTriple = (triple) =>
     rustNativeTargetCfg(
       {
@@ -162,12 +162,16 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
   const sdkVersion = currentProductVersionSync('oliphaunt-rust');
   const bindingVersion = currentProductVersionSync('liboliphaunt-native-bindings');
   const optionalDependencies = [
-    dependency('liboliphaunt-native-bindings', bindingVersion),
+    dependency('liboliphaunt-native-bindings', bindingVersion, false),
     ...(wasixName === null
       ? []
       : [
           dependency(wasixName, version),
-          dependency('oliphaunt-wasix', currentProductVersionSync('oliphaunt-wasix-rust')).replace(
+          dependency(
+            'oliphaunt-wasix',
+            currentProductVersionSync('oliphaunt-wasix-rust'),
+            false,
+          ).replace(
             'default-features = false',
             'default-features = false, features = ["extensions"]',
           ),
@@ -206,7 +210,7 @@ ${features.join('\n')}
 ${optionalDependencies}
 
 [build-dependencies]
-${dependency('oliphaunt-build', sdkVersion)}
+${dependency('oliphaunt-build', sdkVersion, false)}
 
 ${targetDependencies.join('\n\n')}
 

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
-import { assertWasixTypescriptManifest } from './wasix-typescript-package.mts';
+import {
+  assertWasixTypescriptManifest,
+  assertWasixTypescriptNativeCarrier,
+} from './wasix-typescript-package.mts';
 
 function manifest() {
   return {
@@ -40,6 +43,28 @@ function manifest() {
 }
 
 describe('WASIX TypeScript package dependency contract', () => {
+  test('checks the embedded runtime of every independently versioned native carrier', () => {
+    const sdk = manifest();
+    for (const [name, version] of Object.entries(sdk.optionalDependencies)) {
+      const carrier = {
+        name,
+        version,
+        oliphaunt: {
+          runtimeProduct: sdk.oliphaunt.runtimeProduct,
+          runtimeVersion: sdk.oliphaunt.runtimeVersion,
+          addonAbiVersion: sdk.oliphaunt.wasixAddonAbiVersion,
+          nodeApiVersion: sdk.oliphaunt.nodeApiVersion,
+          profiles: ['standard', 'icu'],
+        },
+      };
+      expect(() => assertWasixTypescriptNativeCarrier(sdk, carrier)).not.toThrow();
+      carrier.oliphaunt.runtimeVersion = '1.0.0';
+      expect(() => assertWasixTypescriptNativeCarrier(sdk, carrier)).toThrow(
+        /carrier embeds runtime 1\.0\.0/u,
+      );
+    }
+  });
+
   test('accepts the portable browser runtime and exact native platform carriers', () => {
     expect(() => assertWasixTypescriptManifest(manifest())).not.toThrow();
   });

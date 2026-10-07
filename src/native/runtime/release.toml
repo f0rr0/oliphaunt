@@ -1,6 +1,7 @@
 id = "liboliphaunt-native"
 owner = "@oliphaunt/core"
 kind = "native-core"
+shared_source_paths = ["src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts"]
 publish_targets = ["github-release-assets", "npm", "maven-central", "crates-io"]
 registry_packages = [
   "crates:liboliphaunt-native-linux-arm64-gnu",

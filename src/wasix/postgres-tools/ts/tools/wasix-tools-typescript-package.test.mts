@@ -17,6 +17,7 @@ function manifest() {
     oliphaunt: {
       runtimeProduct: 'liboliphaunt-wasix',
       runtimeVersion: '4.5.6',
+      wasixSdkVersion: '7.8.9',
     },
     dependencies: {
       '@oliphaunt/liboliphaunt-wasix-tools': '1.2.3',
@@ -43,5 +44,8 @@ describe('WASIX TypeScript tools package contract', () => {
     const extra = manifest();
     extra.dependencies.other = '1.0.0';
     expect(() => assertWasixToolsTypescriptManifest(extra)).toThrow(/exact WASIX binding/);
+    const mismatch = manifest();
+    mismatch.oliphaunt.wasixSdkVersion = '7.8.10';
+    expect(() => assertWasixToolsTypescriptManifest(mismatch)).toThrow(/exact WASIX binding/);
   });
 });

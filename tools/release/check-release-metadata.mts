@@ -12,6 +12,7 @@ import {
   requireCompatibilityVersionBounds,
   requireMatchingWasixRuntime,
 } from './compatibility-version-policy.mts';
+import { validateConsumerContractCoverage } from './consumer-compatibility.mts';
 import {
   declaredCarrierMap,
   loadPublicationCatalog,
@@ -289,6 +290,7 @@ function validateReleasePleaseVersions(graph) {
 }
 
 function validateCompatibility(graph, { publication = false } = {}) {
+  validateConsumerContractCoverage(graph.products);
   const entries = compatibilityVersionEntries(graph.products, {
     requireSourceProduct: true,
     prefix: TOOL,

@@ -32,11 +32,13 @@ import {
   assertLockedArtifactSet,
   assertLockedProductArtifacts,
   assertPublicationLockSource,
+  assertWasixPublicationPackages,
   buildPublicationCandidate,
   discoverProductArtifacts,
   discoverPublicationArtifacts,
   freezePublicationCandidate,
   lockedCarrierFile,
+  lockedPublicationFiles,
   projectInternalDependencyIds,
   validateCargoPayloadPartSets,
   validatePublicationCandidate,
@@ -51,7 +53,7 @@ import {
   extensionSourceIdentity,
   extensionSqlNames,
 } from './release-artifact-targets.mts';
-import { productCompatibilityVersion } from './release-graph.mts';
+import { productCompatibilityVersion, ROOT } from './release-graph.mts';
 
 const temporaryDirectories = [];
 
@@ -236,6 +238,89 @@ function npmFixture(root, name, version, overrides = {}, bundledManifest = null)
   tarGzip(output, path.dirname(stage), 'package');
   return output;
 }
+
+test('freezing pristine WASIX npm bytes checks all four carriers and historical pins', () => {
+  const root = temporaryDirectory();
+  const sdk = JSON.parse(
+    readFileSync(new URL('../../src/wasix/sdks/ts/package.json', import.meta.url), 'utf8'),
+  );
+  delete sdk.scripts;
+  delete sdk.devDependencies;
+  sdk.dependencies['@oliphaunt/liboliphaunt-wasix'] = sdk.oliphaunt.runtimeVersion;
+  sdk.dependencies['@oliphaunt/ts-query'] = productCompatibilityVersion(
+    'oliphaunt-wasix-ts',
+    'oliphaunt-query-ts',
+  );
+  for (const name of Object.keys(sdk.optionalDependencies))
+    sdk.optionalDependencies[name] = sdk.oliphaunt.wasixNapiVersion;
+  const options = {
+    readCompatibility: (_product, source) =>
+      source === 'liboliphaunt-wasix'
+        ? sdk.oliphaunt.runtimeVersion
+        : sdk.oliphaunt.wasixNapiVersion,
+    readDependencyCompatibility: () => sdk.oliphaunt.runtimeVersion,
+  };
+  npmFixture(path.join(root, 'sdk'), sdk.name, sdk.version, sdk);
+  for (const name of Object.keys(sdk.optionalDependencies)) {
+    npmFixture(path.join(root, name.split('/')[1]), name, sdk.oliphaunt.wasixNapiVersion, {
+      oliphaunt: {
+        runtimeProduct: sdk.oliphaunt.runtimeProduct,
+        runtimeVersion: sdk.oliphaunt.runtimeVersion,
+        addonAbiVersion: sdk.oliphaunt.wasixAddonAbiVersion,
+        nodeApiVersion: sdk.oliphaunt.nodeApiVersion,
+        profiles: ['standard', 'icu'],
+      },
+    });
+  }
+  const artifacts = () => discoverPublicationArtifacts([root]);
+  expect(() => assertWasixPublicationPackages(artifacts(), options)).not.toThrow();
+  expect(() =>
+    assertWasixPublicationPackages(artifacts(), {
+      ...options,
+      readDependencyCompatibility: () => '99.0.0',
+    }),
+  ).toThrow('select a new addon release');
+  const name = '@oliphaunt/wasix-napi-darwin-arm64';
+  npmFixture(path.join(root, name.split('/')[1]), name, sdk.oliphaunt.wasixNapiVersion, {
+    oliphaunt: {
+      runtimeProduct: sdk.oliphaunt.runtimeProduct,
+      runtimeVersion: '99.0.0',
+      addonAbiVersion: 3,
+      nodeApiVersion: 8,
+      profiles: ['standard', 'icu'],
+    },
+  });
+  expect(() => assertWasixPublicationPackages(artifacts(), options)).toThrow(
+    'carrier embeds runtime 99.0.0',
+  );
+  // A checksum-consistent historical capsule still needs consumer validation.
+  // The staged root differs from ROOT during atomic candidate extraction.
+  const reused = {
+    products: [{ id: 'oliphaunt-wasix-ts' }, { id: 'oliphaunt-wasix-napi' }],
+    carriers: artifacts().map((carrier) => ({
+      ...carrier,
+      product: carrier.name === sdk.name ? 'oliphaunt-wasix-ts' : 'oliphaunt-wasix-napi',
+      artifacts: carrier.artifacts.map((artifact) => ({
+        ...artifact,
+        path: path.relative(root, path.resolve(ROOT, artifact.path)),
+      })),
+    })),
+    productArtifacts: [],
+  };
+  expect(() => lockedPublicationFiles(reused, { workspaceRoot: root })).toThrow(
+    /runtime .*differs|carrier embeds runtime 99.0.0/u,
+  );
+  sdk.oliphaunt.runtimeVersion = '98.0.0';
+  sdk.dependencies['@oliphaunt/liboliphaunt-wasix'] = '98.0.0';
+  npmFixture(path.join(root, 'sdk'), sdk.name, sdk.version, sdk);
+  expect(() =>
+    assertWasixPublicationPackages(artifacts(), {
+      ...options,
+      readCompatibility: (_product, source) =>
+        source === 'liboliphaunt-wasix' ? '97.0.0' : sdk.oliphaunt.wasixNapiVersion,
+    }),
+  ).toThrow('differs from its declared release dependency pins');
+});
 
 function cargoFixture(root, name, version, { manifestSuffix = '' } = {}) {
   const directoryName = `${name}-${version}`;

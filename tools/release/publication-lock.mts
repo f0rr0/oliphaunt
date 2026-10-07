@@ -25,6 +25,11 @@ import {
   validateSwiftSourceReleaseContract,
 } from '../../src/native/sdks/swift/tools/swift-source-carrier-contract.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
+import {
+  assertWasixTypescriptManifest,
+  assertWasixTypescriptNativeCarrier,
+} from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
+import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import { parseMavenArtifactManifest } from '../packaging/maven-artifact-manifest.mts';
 import { validateMavenCentralPublication } from '../packaging/maven-central-contract.mts';
 import { validateNpmTrustedPublishingManifest } from '../packaging/npm-trusted-publishing.mts';
@@ -47,7 +52,12 @@ import {
   extensionSourceIdentity,
   extensionSqlNames,
 } from './release-artifact-targets.mts';
-import { compareText, productCompatibilityVersion, ROOT } from './release-graph.mts';
+import {
+  compareText,
+  productCompatibilityVersion,
+  productDependencyCompatibilityVersion,
+  ROOT,
+} from './release-graph.mts';
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 
@@ -2035,6 +2045,7 @@ export function buildPublicationCandidate({
     fullCatalog,
     selectedProducts,
   );
+  assertWasixPublicationPackages(artifacts);
   const productArtifacts = discoverProductArtifacts(artifactRoots, catalog.products);
   const carriers = [];
   const seenStableIds = new Set();
@@ -2101,6 +2112,58 @@ export function buildPublicationCandidate({
     missing,
     packageEnvelopeDigest,
   };
+}
+
+export function assertWasixPublicationPackages(
+  artifacts,
+  {
+    workspaceRoot = ROOT,
+    readCompatibility = productCompatibilityVersion,
+    readDependencyCompatibility = productDependencyCompatibilityVersion,
+  } = {},
+) {
+  const sdkArtifact = artifacts.find(
+    ({ ecosystem, name }) => ecosystem === 'npm' && name === '@oliphaunt/wasix-ts',
+  );
+  if (sdkArtifact === undefined) return;
+  const manifest = (artifact) =>
+    JSON.parse(
+      archiveMemberText(
+        path.resolve(workspaceRoot, artifact.artifacts[0].path),
+        'package/package.json',
+        {
+          exact: true,
+        },
+      ),
+    );
+  const sdk = assertWasixTypescriptManifest(manifest(sdkArtifact));
+  const runtimeVersion = readCompatibility('oliphaunt-wasix-ts', 'liboliphaunt-wasix');
+  const napiVersion = readCompatibility('oliphaunt-wasix-ts', 'oliphaunt-wasix-napi');
+  if (
+    sdk.oliphaunt.runtimeVersion !== runtimeVersion ||
+    sdk.oliphaunt.wasixNapiVersion !== napiVersion
+  ) {
+    throw error(
+      'frozen WASIX TypeScript package differs from its declared release dependency pins',
+    );
+  }
+  requireMatchingWasixRuntime({
+    runtimeVersion,
+    napiVersion,
+    napiRuntimeVersion: readDependencyCompatibility(
+      'oliphaunt-wasix-ts',
+      'oliphaunt-wasix-napi',
+      'liboliphaunt-wasix',
+    ),
+  });
+  for (const artifact of artifacts) {
+    if (
+      artifact.ecosystem !== 'npm' ||
+      sdk.optionalDependencies[artifact.name] !== artifact.version
+    )
+      continue;
+    assertWasixTypescriptNativeCarrier(sdk, manifest(artifact));
+  }
 }
 
 function withoutDigest(value) {
@@ -2858,6 +2921,7 @@ export function lockedPublicationFiles(lock, { products, workspaceRoot = ROOT } 
       files.set(filePath, envelope);
     }
   }
+  assertWasixPublicationPackages(lockedCarriers(lock, { products: selected }), { workspaceRoot });
   return [...files.values()].sort((left, right) => compareText(left.path, right.path));
 }
 

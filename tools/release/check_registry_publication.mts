@@ -373,7 +373,11 @@ export async function productRegistryPackages(
   return filtered;
 }
 
-async function requestJson(url, label, { fetchImpl = fetch } = {}) {
+async function requestJson(
+  url,
+  label,
+  { fetchImpl = fetch, retryDelayImpl = registryRetryDelaySeconds } = {},
+) {
   let lastError;
   for (let attempt = 0; attempt < REQUEST_ATTEMPTS; attempt += 1) {
     let retryHeaders;
@@ -410,7 +414,7 @@ async function requestJson(url, label, { fetchImpl = fetch } = {}) {
     }
     if (attempt + 1 < REQUEST_ATTEMPTS) {
       await boundedRegistrySleep(
-        registryRetryDelaySeconds({
+        retryDelayImpl({
           headers: retryHeaders,
           attempt,
           baseSeconds: REQUEST_RETRY_DELAY_SECONDS,
@@ -604,6 +608,28 @@ async function npmPackageMetadata(packageName) {
 export async function npmPublishedVersion(packageName, version) {
   const data = await npmPackageMetadata(packageName);
   return data?.versions?.[version];
+}
+
+export async function cargoPublishedDependencies(packageName, version) {
+  await boundedRegistrySleep(
+    CRATES_IO_READ_INTERVAL_SECONDS,
+    'published Cargo consumer dependencies',
+  );
+  const url = `${CRATES_IO_API.replace(/\/+$/u, '')}/crates/${encodeURIComponent(packageName)}/${encodeURIComponent(version)}/dependencies`;
+  const data = await requestJson(url, `${packageName}@${version} dependencies`, {
+    retryDelayImpl: cratesIoReadRetryDelaySeconds,
+  });
+  if (
+    !Array.isArray(data?.dependencies) ||
+    data.dependencies.some(
+      (dependency) => typeof dependency.crate_id !== 'string' || typeof dependency.req !== 'string',
+    )
+  ) {
+    throw new RegistryResponseError(
+      `${packageName}@${version} returned invalid Cargo dependencies`,
+    );
+  }
+  return data.dependencies;
 }
 
 async function npmVersionExists(packageName, version) {

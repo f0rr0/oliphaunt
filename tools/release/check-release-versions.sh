@@ -13,4 +13,4 @@ for ((index=0; index<${#args[@]}; index++)); do
 done
 RELEASE_HEAD_COMMIT=$(git rev-parse --verify --end-of-options "$head_ref^{commit}")
 export RELEASE_HEAD_COMMIT
-bash tools/release/with-release-tags.sh bash tools/dev/bun.sh tools/release/check_release_versions.mts "$@"
+bash tools/release/with-release-tags.sh bash tools/release/with-product-history.sh "$PWD" "$head_ref" '' @workspace bash tools/dev/bun.sh tools/release/check_release_versions.mts "$@"
