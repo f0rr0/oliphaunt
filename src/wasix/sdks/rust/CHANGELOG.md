@@ -54,6 +54,19 @@
 - Keep the direct server handle after `close(&mut self)`, add `is_closed()`,
   and replay the first terminal close result on repeated calls.
 
+## [0.3.2]() (2026-10-07)
+
+
+### Bug Fixes
+
+* **build:** scope package-test inputs and honor compiler caching ([#254](https://github.com/f0rr0/oliphaunt/issues/254)) ([b0e90b2](https://github.com/f0rr0/oliphaunt/commit/b0e90b279077f0d40e9270512a11ada156818f87))
+* **packaging:** preserve independent SDK compatibility pins ([#251](https://github.com/f0rr0/oliphaunt/issues/251)) ([dabb453](https://github.com/f0rr0/oliphaunt/commit/dabb45393b209d99bcc9c18eb40daca828de68e2))
+
+
+### Performance Improvements
+
+* **wasix:** reduce initdb latency with private initialization ([#246](https://github.com/f0rr0/oliphaunt/issues/246)) ([410e5dc](https://github.com/f0rr0/oliphaunt/commit/410e5dcb861b7a4110520a115e9e5d0262284ad3))
+
 ## [0.3.1]() (2026-10-05)
 
 

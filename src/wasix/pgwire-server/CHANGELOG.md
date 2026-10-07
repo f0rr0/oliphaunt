@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1]() (2026-10-07)
+
+
+### Bug Fixes
+
+* **build:** scope package-test inputs and honor compiler caching ([#254](https://github.com/f0rr0/oliphaunt/issues/254)) ([b0e90b2](https://github.com/f0rr0/oliphaunt/commit/b0e90b279077f0d40e9270512a11ada156818f87))
+
 ## [0.2.0]() (2026-09-29)
 
 

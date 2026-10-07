@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-napi-win32-x64-msvc",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Windows x64 MSVC prebuilt Oliphaunt WASIX Node-API runtime.",
   "license": "MIT AND PostgreSQL AND Unicode-3.0 AND Apache-2.0",
   "type": "commonjs",
@@ -19,7 +19,7 @@
   "oliphaunt": {
     "target": "windows-x64-msvc",
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.3.0",
+    "runtimeVersion": "0.3.2",
     "addonAbiVersion": 3,
     "nodeApiVersion": 8,
     "profiles": [

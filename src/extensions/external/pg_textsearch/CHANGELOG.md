@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1]() (2026-10-07)
+
+
+### Bug Fixes
+
+* **release:** validate published consumer compatibility ([#259](https://github.com/f0rr0/oliphaunt/issues/259)) ([e918d6a](https://github.com/f0rr0/oliphaunt/commit/e918d6adf3deeafb38205ce61402e40896d2f3c1))
+
 ## [0.3.0]() (2026-09-29)
 
 

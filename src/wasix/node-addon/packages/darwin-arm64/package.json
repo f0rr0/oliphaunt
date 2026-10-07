@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-napi-darwin-arm64",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "macOS arm64 prebuilt Oliphaunt WASIX Node-API runtime.",
   "license": "MIT AND PostgreSQL AND Unicode-3.0 AND Apache-2.0",
   "type": "commonjs",
@@ -19,7 +19,7 @@
   "oliphaunt": {
     "target": "macos-arm64",
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.3.0",
+    "runtimeVersion": "0.3.2",
     "addonAbiVersion": 3,
     "nodeApiVersion": 8,
     "profiles": [

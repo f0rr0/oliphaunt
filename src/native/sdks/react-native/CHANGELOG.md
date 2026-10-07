@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1]() (2026-10-07)
+
+
+### Bug Fixes
+
+* **release:** preserve dependency identity across SDK stages ([#253](https://github.com/f0rr0/oliphaunt/issues/253)) ([207fcfa](https://github.com/f0rr0/oliphaunt/commit/207fcfa5cb0cccad89545b84e95356692ee12cd9))
+
 ## [0.3.0]() (2026-09-29)
 
 
