@@ -1379,6 +1379,13 @@ jobs:
             --publication-lock "$PUBLICATION_LOCK_PATH" \
             --products-json "$PRODUCTS_JSON" \
             --release-commit "$RELEASE_HEAD_SHA"
+      - name: Verify npm trusted authorization for every pending frozen package
+        id: verify_npm_trusted_authorization
+        if: ${{ fromJSON(needs.plan-candidate.outputs.registry_needs).needs_npm == 'true' }}
+        timeout-minutes: 7
+        env:
+          RELEASE_OPERATION: publish
+        run: tools/dev/bun.sh tools/release/npm-trusted-publisher-readiness.mts --publication-lock "$PUBLICATION_LOCK_PATH"
       - name: Prove the exact SwiftPM source tag is remotely collision-free
         id: preflight_swift_source_tag
         if: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') }}

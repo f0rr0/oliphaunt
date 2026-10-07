@@ -14,9 +14,8 @@ const MINIMUM_PUBLISH_ATTEMPT_MS = 30_000;
 const DEADLINE_RESERVE_MS = 5_000;
 const MAX_METADATA_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_READ_RETRY_DELAY_SECONDS = 30;
-// npm may accept an upload before processing makes it public. Allow 15 minutes,
-// while every read and sleep remains bounded by the shared mutation deadline.
-const VISIBILITY_ATTEMPTS = 91;
+// npm may accept an upload long before processing makes it public. The shared
+// mutation deadline bounds visibility waits, preserving the finalization reserve.
 const VISIBILITY_DELAY_MS = 10_000;
 
 function compareText(left, right) {
@@ -408,12 +407,12 @@ export async function waitForNpmExactVersion({
   fetchImpl = fetch,
   sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   nowImpl = () => Date.now(),
-  attempts = VISIBILITY_ATTEMPTS,
+  attempts = undefined,
   delayMilliseconds = VISIBILITY_DELAY_MS,
 }) {
-  if (!Number.isSafeInteger(attempts) || attempts < 1)
+  if (attempts !== undefined && (!Number.isSafeInteger(attempts) || attempts < 1))
     throw error('npm visibility attempts must be positive');
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  for (let attempt = 0; attempts === undefined || attempt < attempts; attempt += 1) {
     const state = await inspectNpmExactVersion({
       packageName,
       version,
@@ -425,7 +424,7 @@ export async function waitForNpmExactVersion({
       nowImpl,
     });
     if (state.published) return state;
-    if (attempt + 1 < attempts) {
+    if (attempts === undefined || attempt + 1 < attempts) {
       await boundedSleep(delayMilliseconds, {
         deadlineEpochSeconds,
         nowImpl,
