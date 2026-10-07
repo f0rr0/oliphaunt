@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1]() (2026-10-07)
+
+
+### Bug Fixes
+
+* **packaging:** restore WASIX initdb and isolate Android C++ runtime ([#245](https://github.com/f0rr0/oliphaunt/issues/245)) ([96c566a](https://github.com/f0rr0/oliphaunt/commit/96c566a7251aae09e441cc0fc4479c58c8809f58))
+* **release:** preserve dependency identity across SDK stages ([#253](https://github.com/f0rr0/oliphaunt/issues/253)) ([207fcfa](https://github.com/f0rr0/oliphaunt/commit/207fcfa5cb0cccad89545b84e95356692ee12cd9))
+* **release:** validate published consumer compatibility ([#259](https://github.com/f0rr0/oliphaunt/issues/259)) ([e918d6a](https://github.com/f0rr0/oliphaunt/commit/e918d6adf3deeafb38205ce61402e40896d2f3c1))
+
+
+### Performance Improvements
+
+* **wasix:** reduce initdb latency with private initialization ([#246](https://github.com/f0rr0/oliphaunt/issues/246)) ([410e5dc](https://github.com/f0rr0/oliphaunt/commit/410e5dcb861b7a4110520a115e9e5d0262284ad3))
+
 ## [0.2.0]() (2026-09-29)
 
 

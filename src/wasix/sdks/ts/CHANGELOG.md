@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.2]() (2026-10-07)
+
+
+### Bug Fixes
+
+* **packaging:** preserve independent SDK compatibility pins ([#251](https://github.com/f0rr0/oliphaunt/issues/251)) ([dabb453](https://github.com/f0rr0/oliphaunt/commit/dabb45393b209d99bcc9c18eb40daca828de68e2))
+* **packaging:** restore WASIX initdb and isolate Android C++ runtime ([#245](https://github.com/f0rr0/oliphaunt/issues/245)) ([96c566a](https://github.com/f0rr0/oliphaunt/commit/96c566a7251aae09e441cc0fc4479c58c8809f58))
+* **release:** preserve dependency identity across SDK stages ([#253](https://github.com/f0rr0/oliphaunt/issues/253)) ([207fcfa](https://github.com/f0rr0/oliphaunt/commit/207fcfa5cb0cccad89545b84e95356692ee12cd9))
+* **release:** validate published consumer compatibility ([#259](https://github.com/f0rr0/oliphaunt/issues/259)) ([e918d6a](https://github.com/f0rr0/oliphaunt/commit/e918d6adf3deeafb38205ce61402e40896d2f3c1))
+
 ## [0.2.1]() (2026-10-05)
 
 
