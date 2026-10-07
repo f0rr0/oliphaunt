@@ -130,8 +130,15 @@ function portablePackagePath(value, manifest, { fail, rel }) {
   }
 }
 
-function parseCargoPackageFiles(text, manifest, { fail, rel }) {
-  const files = text.split(/\r?\n/u).filter(Boolean);
+export function parseCargoPackageFiles(
+  text,
+  manifest,
+  { fail = null, rel = String, platform = process.platform } = {},
+) {
+  const files = text
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((file) => (platform === 'win32' ? file.replaceAll('\\', '/') : file));
   if (files.length === 0) {
     abort(fail, `cargo package --list returned no files for ${rel(manifest)}`);
   }
@@ -415,12 +422,12 @@ if (import.meta.main) {
   const [phase, stateFile, ...args] = process.argv.slice(2);
   if (phase === 'prepare' && args.length === 3) {
     const [manifest, outputDir, listing] = args;
-    const state = prepareCargoPackageSource(
-      manifest,
-      outputDir,
-      parseCargoPackageFiles(readFileSync(listing, 'utf8'), manifest, { fail: null, rel: String }),
-      { noticeProfile: process.env.OLIPHAUNT_CARGO_NOTICE_PROFILE ?? null },
-    );
+    const files = parseCargoPackageFiles(readFileSync(listing, 'utf8'), manifest);
+    const state = prepareCargoPackageSource(manifest, outputDir, files, {
+      noticeProfile: process.env.OLIPHAUNT_CARGO_NOTICE_PROFILE ?? null,
+    });
+    // The caller retains this listing for cross-platform archive validation.
+    writeFileSync(listing, files.join('\n') + '\n');
     writeFileSync(stateFile, JSON.stringify(state));
     console.log(state.stagedManifest);
   } else if (phase === 'finish' && args.length === 1) {
