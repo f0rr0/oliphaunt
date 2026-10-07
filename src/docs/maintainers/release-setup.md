@@ -150,9 +150,14 @@ reference](https://docs.github.com/en/actions/reference/security/oidc), the
 and npm's [trusted-publisher fields](https://docs.npmjs.com/trusted-publishers/).
 Registry settings are external state: the OIDC preflight proves what GitHub
 emits, not what a registry operator entered. Audit the table after bootstrap.
-The crates.io exchange then proves its matching configuration before normal
-registry mutation; npm has no non-publishing trusted-auth probe, so its package
-settings must be checked directly.
+The crates.io exchange proves its matching configuration before normal registry
+mutation. npm's package-scoped OIDC exchange also runs before release mutation
+for every still-unpublished package in the frozen lock. It requests and discards
+temporary credentials without publishing. Matching immutable versions are
+verified against the frozen tarball and need no new publishing authorization.
+The exchange proves npm accepts the workflow identity; the operator's settings
+audit remains necessary to check direct-publish permission and reject extra
+configurations.
 npm now permits `npm stage publish` for every trusted publisher. The audit
 accepts that implicit permission while requiring direct `npm publish` and
 rejecting extra permissions such as dist-tag management.
@@ -397,6 +402,21 @@ publish before their aggregator, and are not independent release products.
    staging permission is accepted; extra permissions such as dist-tag management
    are rejected. After all batches, rerun `--audit` for every batch and retain
    the zero-missing, zero-conflict reports.
+
+   A newly created npm trusted publisher must make its first successful OIDC
+   publish within [two days](https://docs.npmjs.com/trusted-publishers/#trusted-publisher-configuration-expiry).
+   A token-based bootstrap publish made before the rule was created does not
+   activate that rule. Configure a new rule when a qualified candidate has an
+   unpublished version ready to publish; creating one after bootstrap and
+   waiting until a later release can leave it expired despite matching settings.
+   The settings audit proves configuration fields, not activation or expiry.
+   If a rule remained unused past two days, preserve its ID and creation date,
+   verify its fields and publication history, delete only that expired rule,
+   and recreate it with the same repository, workflow, environment and direct
+   publishing permission. Publish the pending frozen version within two days.
+   Renewing a publisher never requires a sacrificial package version or a
+   change to the approved candidate. After a partial release, rerun the
+   original Release workflow; it proves and skips matching published bytes.
 
    Run every npm `--audit` and `--apply` command directly in an interactive
    terminal. npm can require web or classic OTP even for `npm trust list`.

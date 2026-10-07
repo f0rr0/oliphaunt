@@ -32,6 +32,7 @@ const CONTROL_FILES = new Set([
   'tools/release/upload_github_release_assets.mts',
   'tools/release/publish-registries.sh',
   'tools/release/publish-frozen-npm.sh',
+  'tools/release/npm-trusted-publisher-readiness.mts',
   'tools/release/trusted-publisher-config.sh',
   'tools/release/trusted-publisher-config.mts',
   'tools/release/github-release-asset-upload-plan.mts',
