@@ -37,6 +37,7 @@ import {
 import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../tools/packaging/rust-build-script-sha256.mts';
 import {
   cargoPackage,
+  packageAotSpec,
   packageSpec,
   validateCrateSize,
 } from '../../../../tools/packaging/wasix-cargo-payload.mts';
@@ -1775,8 +1776,8 @@ export function packageWasixCargoArtifacts(argv) {
     ...extensionAotSources.flatMap((source) =>
       packageExtensionAotSource(source, { outputDir, cargoTargetDir }),
     ),
-    ...specs.map((spec) =>
-      packageSpec(spec, {
+    ...specs.flatMap((spec) => {
+      const options = {
         version: args.version,
         sourceRoot,
         outputDir,
@@ -1786,8 +1787,11 @@ export function packageWasixCargoArtifacts(argv) {
             ? (text) =>
                 injectRuntimeExtensionDependencies(text, extensionSources, extensionAotSources)
             : undefined,
-      }),
-    ),
+      };
+      return spec.kind === 'wasix-aot'
+        ? packageAotSpec(spec, options)
+        : [packageSpec(spec, options)];
+    }),
   ];
   writePackagesManifest(packages, outputDir);
   console.log(

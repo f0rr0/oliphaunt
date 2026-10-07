@@ -15,6 +15,7 @@ import {
   TOOL,
 } from '../../../../tools/packaging/release-carrier.mts';
 import { writeChecksumManifest } from '../../../../tools/packaging/write-checksum-manifest.mts';
+import { aotPayloadPartParent } from '../../../../tools/packaging/wasix-cargo-payload.mts';
 import {
   compareText,
   contribCarrierDescriptor,
@@ -143,6 +144,7 @@ export function validateWasixCargoArtifacts(outputDir) {
     if (
       !expectedBaseCrates.has(name) &&
       !(kind === 'wasix-engine' && isEnginePayloadPart(name)) &&
+      !(kind === 'wasix-aot' && expectedBaseCrates.has(aotPayloadPartParent(name))) &&
       !isExpectedWasixExtensionPackage(name, kind, expectedExtensionInventory)
     ) {
       fail(`unexpected ${WASIX_PRODUCT} Cargo artifact crate ${name}`);
@@ -183,6 +185,20 @@ export function validateWasixCargoArtifacts(outputDir) {
     new Set(packages.map((row) => row.name).filter(isEnginePayloadPart)),
     new Set(engineParts),
   );
+  for (const parentName of expectedBaseCrates) {
+    if (!parentName.startsWith('liboliphaunt-wasix-aot-')) continue;
+    const parent = packages.find((row) => row.name === parentName);
+    const manifest = Bun.TOML.parse(readFileSync(parent.manifestPath, 'utf8'));
+    const declaredParts = Object.keys(manifest['build-dependencies'] ?? {}).filter(
+      (name) => aotPayloadPartParent(name) === parentName,
+    );
+    const generatedParts = packages.filter((row) => aotPayloadPartParent(row.name) === parentName);
+    assertSameStringSet(
+      `${parentName} AOT payload parts must match the facade dependency closure`,
+      new Set(generatedParts.map((row) => row.name)),
+      new Set(declaredParts),
+    );
+  }
   const unexpected = readdirSync(outputDir)
     .filter((name) => name.endsWith('.crate'))
     .map((name) => path.join(outputDir, name))

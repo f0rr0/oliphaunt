@@ -32,6 +32,9 @@ fn main() {
 }
 
 fn emit_expected_artifact_inputs(target: &str) {
+    if PACKAGE_LOCAL {
+        return;
+    }
     if let Some(path) = env::var_os("OLIPHAUNT_WASM_GENERATED_AOT_DIR") {
         let path = PathBuf::from(path);
         let candidate = if path.ends_with(target) {
@@ -69,6 +72,11 @@ fn find_artifact_dir(target: &str) -> Option<PathBuf> {
     }
 
     if PACKAGE_LOCAL {
+        let reconstructed = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"))
+            .join("artifacts");
+        if reconstructed.join("manifest.json").is_file() {
+            return Some(reconstructed);
+        }
         panic!("published WASIX carrier requires package-local artifacts");
     }
 
@@ -102,6 +110,10 @@ fn repo_root_from_manifest_dir(manifest_dir: &Path) -> Option<&Path> {
 }
 
 fn emit_rerun_directives(artifact_dir: &Path) {
+    // Reconstructed payloads are build outputs; their part crates are Cargo inputs.
+    if artifact_dir.starts_with(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo")) {
+        return;
+    }
     println!("cargo:rerun-if-changed={}", artifact_dir.display());
     if let Ok(entries) = fs::read_dir(artifact_dir) {
         for entry in entries.flatten() {

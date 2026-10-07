@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { preparePackagedCargoTestClosure } from '../../../../../tools/packaging/cargo-package-test-closure.mts';
-import { packageSpec } from '../../../../../tools/packaging/wasix-cargo-payload.mts';
+import {
+  packageAotSpec,
+  packageSpec,
+} from '../../../../../tools/packaging/wasix-cargo-payload.mts';
 import {
   currentProductVersionSync,
   ROOT,
@@ -54,7 +57,10 @@ try {
       payloadDirName: 'artifacts',
     },
   ]) {
-    packages.push(packageSpec(spec, { version, sourceRoot, outputDir, cargoTargetDir: scratch }));
+    const options = { version, sourceRoot, outputDir, cargoTargetDir: scratch };
+    packages.push(
+      ...(spec.kind === 'wasix-aot' ? packageAotSpec(spec, options) : [packageSpec(spec, options)]),
+    );
   }
   const sdkVersion = currentProductVersionSync('oliphaunt-wasix-rust');
   const queryVersion = currentProductVersionSync('oliphaunt-query');
