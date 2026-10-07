@@ -15,7 +15,7 @@ assert_history() {
   bash "$root/tools/release/with-release-history.sh" "$repo" "$head" \
     bash "$root/tools/dev/bun.sh" "$fixture" assert "$repo" "$family" "$1" "$head" "${release:-}"
 }
-for family in bootstrap basic cargo wildcard wasix example; do
+for family in bootstrap basic cargo wildcard wasix example compatibility; do
   repo="$scratch/$family"
   git init -q "$repo"
   git -C "$repo" config user.name 'Release Test'
@@ -31,6 +31,7 @@ for family in bootstrap basic cargo wildcard wasix example; do
     wildcard) scenarios=(workspace-wildcard local-version wrong-version changed-path removed-path changed-features) ;;
     wasix) scenarios=(workspace-links) ;;
     example) scenarios=(exact wrong-registry-version wrong-runtime-version unrelated-registry-version missing-native-transition) ;;
+    compatibility) scenarios=(with-producer consumer-only unselected-consumer wrong-toml-pin wrong-json-pin wrong-raw-pin wrong-rust-const non-version-edit) ;;
   esac
   for scenario in "${scenarios[@]}"; do
     start="$base"

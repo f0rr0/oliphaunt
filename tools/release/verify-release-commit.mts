@@ -247,16 +247,26 @@ function derivedVersionRules() {
   const products = loadProducts(TOOL);
   const structured = new Map();
   const text = new Map();
-  const addStructured = (type, file, parts, sourceProduct, wrapped = false) => {
+  const addStructured = (
+    type,
+    file,
+    parts,
+    sourceProduct,
+    wrapped = false,
+    consumerProduct = undefined,
+  ) => {
     const key = structuredRuleKey(type, file, parts);
     const prior = structured.get(key);
     if (
       prior !== undefined &&
-      (prior.sourceProduct !== sourceProduct || prior.wrapped !== wrapped)
+      (prior.sourceProduct !== sourceProduct ||
+        prior.wrapped !== wrapped ||
+        prior.consumerProduct !== consumerProduct)
     ) {
       throw error(`conflicting derived version rules for ${file}:${parts.join('.')}`);
     }
-    structured.set(key, { sourceProduct, wrapped });
+    const rule = { sourceProduct, wrapped, consumerProduct };
+    structured.set(key, rule);
     if (
       type === 'json' &&
       file.endsWith('/package.json') &&
@@ -270,7 +280,7 @@ function derivedVersionRules() {
     ) {
       structured.set(
         structuredRuleKey('jsonc', 'bun.lock', ['workspaces', path.posix.dirname(file), ...parts]),
-        { sourceProduct, wrapped },
+        rule,
       );
     }
   };
@@ -290,14 +300,26 @@ function derivedVersionRules() {
     const parser = separator === -1 ? entry.parser : entry.parser.slice(0, separator);
     const expression = separator === -1 ? '' : entry.parser.slice(separator + 1);
     if (parser === 'json' || parser === 'toml') {
-      addStructured(parser, entry.path, expression.split('.'), entry.sourceProduct);
+      addStructured(
+        parser,
+        entry.path,
+        expression.split('.'),
+        entry.sourceProduct,
+        false,
+        entry.product,
+      );
     } else if (parser === 'raw') {
-      addText(entry.path, { type: 'raw', sourceProduct: entry.sourceProduct });
+      addText(entry.path, {
+        type: 'raw',
+        sourceProduct: entry.sourceProduct,
+        consumerProduct: entry.product,
+      });
     } else if (parser === 'rust-const') {
       addText(entry.path, {
         type: 'rust-const',
         name: expression,
         sourceProduct: entry.sourceProduct,
+        consumerProduct: entry.product,
       });
     } else {
       throw error(
@@ -350,7 +372,19 @@ function derivedVersionRules() {
   return cachedDerivedRules;
 }
 
-function productTransition(rule, before, after, transitions) {
+function productTransition(rule, before, after, transitions, productVersions) {
+  // Selected consumers may catch up from older pins without a producer release.
+  if (rule.consumerProduct !== undefined) {
+    return (
+      transitions.some(({ product }) => product === rule.consumerProduct) &&
+      typeof before === 'string' &&
+      SEMVER.test(before) &&
+      typeof after === 'string' &&
+      SEMVER.test(after) &&
+      after === productVersions.get(rule.sourceProduct) &&
+      Bun.semver.order(after, before) > 0
+    );
+  }
   const transition = transitions.find(({ product }) => product === rule.sourceProduct);
   if (transition === undefined) return false;
   return rule.wrapped
@@ -530,7 +564,13 @@ function authorizedDerivedStructuredChange(context, rules) {
   }
   const rule = rules.structured.get(structuredRuleKey(context.type, context.file, context.parts));
   if (rule !== undefined)
-    return productTransition(rule, context.before, context.after, context.transitions);
+    return productTransition(
+      rule,
+      context.before,
+      context.after,
+      context.transitions,
+      context.productVersions,
+    );
   if (context.type !== 'toml') return false;
   return cargoDependencyVersionChange(context) || cargoLockVersionChange(context);
 }
@@ -577,6 +617,7 @@ function validateTextSemanticDiff({
   derived,
   transitions,
   derivedRules,
+  productVersions,
 }) {
   const before = show(repo, parent, file);
   const after = show(repo, commit, file);
@@ -612,7 +653,7 @@ function validateTextSemanticDiff({
     if (
       prior === null ||
       next === null ||
-      !productTransition(derivedRule, prior[2], next[2], transitions) ||
+      !productTransition(derivedRule, prior[2], next[2], transitions, productVersions) ||
       before.replace(pattern, '$1<release-version>$3') !==
         after.replace(pattern, '$1<release-version>$3')
     ) {
@@ -622,7 +663,7 @@ function validateTextSemanticDiff({
   }
   if (
     derivedRule?.type === 'raw' &&
-    productTransition(derivedRule, before.trim(), after.trim(), transitions) &&
+    productTransition(derivedRule, before.trim(), after.trim(), transitions, productVersions) &&
     before.replace(before.trim(), '<release-version>') ===
       after.replace(after.trim(), '<release-version>')
   ) {
@@ -642,6 +683,7 @@ function validateAllowedFileSemantics({
   fieldsByFile,
   derivedFiles,
   transitions,
+  productVersions,
 }) {
   const derivedRules = derivedVersionRules();
   const cargoVersions = new Map();
@@ -660,6 +702,7 @@ function validateAllowedFileSemantics({
         derived,
         transitions,
         derivedRules,
+        productVersions,
       });
       continue;
     }
@@ -696,6 +739,7 @@ function validateAllowedFileSemantics({
             after: difference.after,
             transitions,
             cargoVersions,
+            productVersions,
           },
           derivedRules,
         )
@@ -981,6 +1025,9 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
     fieldsByFile,
     derivedFiles,
     transitions,
+    productVersions: new Map(
+      [...byProduct].map(([product, { packagePath }]) => [product, after[packagePath]]),
+    ),
   });
 
   return {

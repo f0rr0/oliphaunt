@@ -81,7 +81,7 @@ function writeBase(repo, versions) {
   write(repo, VECTOR_SOURCE, 'commit = "vector-v1"\n');
 }
 
-function writeRuntimeRelease(repo, versions, options = {}) {
+function writeRuntimeRelease(repo, versions) {
   write(repo, '.release-please-manifest.json', manifest(versions));
   for (const product of [NATIVE, WASIX]) {
     const packagePath = PRODUCT_PATHS[product];
@@ -92,7 +92,6 @@ function writeRuntimeRelease(repo, versions, options = {}) {
       `# Changelog\n\n## ${versions[product]} (2026-07-15)\n`,
     );
   }
-  write(repo, VECTOR_RELEASE, vectorMetadata(versions[NATIVE], versions[WASIX], options));
 }
 
 function graph(versions) {
@@ -137,12 +136,14 @@ const v2 = { ...v1, [NATIVE]: '2.0.0', [WASIX]: '2.0.0' };
 if (phase === 'base') {
   writeBase(repo, v1);
 } else if (phase === 'release') {
-  writeRuntimeRelease(repo, v2, scenario === 'config' ? { sqlName: 'not-vector' } : {});
+  writeRuntimeRelease(repo, v2);
+  if (scenario === 'config')
+    write(repo, VECTOR_RELEASE, vectorMetadata(v1[NATIVE], v1[WASIX], { sqlName: 'not-vector' }));
   if (scenario === 'source') write(repo, VECTOR_SOURCE, 'commit = "vector-v2"\n');
 } else if (phase === 'assert') {
   const verify = () => verifyReleaseCommit({ repo, headRef, products: [NATIVE, WASIX] });
   if (scenario === 'compatible') {
-    assert.deepEqual(verify().verifiedDerivedPaths, [VECTOR_RELEASE]);
+    assert.deepEqual(verify().verifiedDerivedPaths, []);
     assert.deepEqual(
       buildPlan(graph(v2), [VECTOR_SOURCE], 'release-coverage-test').releaseProducts,
       [VECTOR],
