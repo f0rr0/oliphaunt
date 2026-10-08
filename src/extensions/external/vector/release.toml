@@ -47,7 +47,7 @@ path = "src/extensions/external/vector/source.toml"
 postgres_major = "18"
 extension_runtime_contract = "src/extensions/contracts/contract.toml"
 native_runtime_product = "liboliphaunt-native"
-native_runtime_version = "0.3.2"
+native_runtime_version = "0.3.3"
 wasix_runtime_product = "liboliphaunt-wasix"
 wasix_runtime_version = "0.3.2"
 [compatibility_versions.oliphaunt-extension-vector-liboliphaunt-native]
