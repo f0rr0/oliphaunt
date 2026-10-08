@@ -57,15 +57,19 @@ import { productCompatibilityVersion, ROOT } from './release-graph.mts';
 
 const temporaryDirectories = [];
 
-if (process.argv[2] === 'prepare-handoff') {
+if (['prepare-handoff', 'prepare-npm-preflight'].includes(process.argv[2])) {
   const root = process.argv[3];
   const catalog = loadPublicationCatalog('publication-lock.test', { products: ['oliphaunt-js'] });
   const npm = npmFixture(root, '@oliphaunt/ts', catalog.products[0].version);
   const lock = freezePublicationCandidate(
-    buildPublicationCandidate({ products: ['oliphaunt-js'], artifactRoots: [root] }),
+    buildPublicationCandidate({
+      products: ['oliphaunt-js'],
+      artifactRoots: [root],
+      headRef: process.argv[4] ?? 'HEAD',
+    }),
   );
   writeFileSync(path.join(root, 'publication-lock.json'), `${JSON.stringify(lock, null, 2)}\n`);
-  rmSync(npm);
+  if (process.argv[2] === 'prepare-handoff') rmSync(npm);
   process.exit(0);
 }
 if (process.argv[2] === 'assert-source') {
