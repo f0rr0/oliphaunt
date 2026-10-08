@@ -32,6 +32,7 @@ try {
     extensions.push(pgUuidv7);
   }
   if (smoke) {
+    console.debug(`browser smoke host: ${navigator.userAgent}`);
     expectOwnedMemoryCopyAcrossGrowth();
     smokePhase('direct startup recovery');
     await expectFailedDirectOpenRecovery();
@@ -103,6 +104,7 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
+    smokePhase('configured identity');
     await expectConfiguredIdentity();
     smokePhase('OPFS persistence');
     const opfsAnswers = await expectOpfsPersistence(extensions);
@@ -156,8 +158,9 @@ try {
 
 function smokePhase(phase: string): void {
   if (!smoke) return;
-  document.documentElement.dataset.oliphauntSmokePhase = phase;
-  console.debug(`browser smoke phase: ${phase}`);
+  const progress = `${phase} (${Math.round(performance.now())}ms elapsed)`;
+  document.documentElement.dataset.oliphauntSmokePhase = progress;
+  console.debug(`browser smoke phase: ${progress}`);
 }
 
 function simpleQuery(sql: string): Uint8Array {
@@ -410,18 +413,25 @@ async function expectOpfsPersistence(
   extensions: readonly WasixExtensionDescriptor[],
 ): Promise<string> {
   const storage = opfs('browser-smoke');
+  smokePhase('OPFS Window open');
   let database = await Oliphaunt.open({ seed: standardSeed, storage, extensions });
+  smokePhase('OPFS exclusive ownership');
   await expectExclusiveOwnership(storage, extensions, 'OPFS');
+  smokePhase('OPFS Window writes');
   await database.queryRaw('CREATE TABLE opfs_reopen_probe (answer integer NOT NULL)');
   await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (1)');
   // PostgreSQL normally retains the relation and WAL descriptors. This second
   // operation proves that the host journal observes writes after initial open.
   await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (2)');
+  smokePhase('OPFS Window close');
   await database.close();
 
+  smokePhase('OPFS Worker open');
   database = await WorkerOliphaunt.open({ storage, extensions });
   try {
+    smokePhase('OPFS synchronous transport');
     await expectSynchronousOpfsTransport('browser-smoke');
+    smokePhase('OPFS Worker read');
     const reopened = await database.queryRaw(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
       [','],
@@ -430,16 +440,20 @@ async function expectOpfsPersistence(
     if (answers !== '1,2') {
       throw new Error(`browser smoke did not reopen OPFS state: ${answers}`);
     }
+    smokePhase('OPFS Worker writes');
     await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (3)');
     await database.queryRaw('CREATE TABLE opfs_sync_create_probe (answer integer NOT NULL)');
     await database.queryRaw('INSERT INTO opfs_sync_create_probe VALUES (99)');
     await database.execute('CHECKPOINT');
   } finally {
+    smokePhase('OPFS Worker close');
     await database.close();
   }
 
+  smokePhase('OPFS Window reopen');
   database = await Oliphaunt.open({ storage, extensions });
   try {
+    smokePhase('OPFS Window read');
     const reopened = await database.queryRaw(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
       [','],
@@ -454,6 +468,7 @@ async function expectOpfsPersistence(
     }
     return answers;
   } finally {
+    smokePhase('OPFS Window final close');
     await database.close();
   }
 }
