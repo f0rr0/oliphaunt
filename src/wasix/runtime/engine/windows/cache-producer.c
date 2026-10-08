@@ -55,10 +55,12 @@ static DWORD word(const unsigned char *bytes) {
 }
 
 static void finish(DWORD code) {
-    /* Wine/QEMU fails in process detach after all engine cleanup returns.
-       SDK applications retain ordinary Windows process shutdown. */
-    TerminateProcess(GetCurrentProcess(), code);
-    ExitProcess(31);
+    /* The Linux producer supervisor owns shutdown: Wine/QEMU can crash even
+       during TerminateProcess. SDK applications do not use this helper. */
+    print("producer_exit=");
+    number(code, 0);
+    print("\n");
+    for (;;) Sleep(INFINITE);
 }
 
 static void fail(const char *message, DWORD code) {

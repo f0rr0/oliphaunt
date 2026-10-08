@@ -178,7 +178,7 @@ fn main() {
       .replace(/^publish = false\n/gmu, '')
       .replace(/^version = "[^"]+"$/mu, `version = "${version}"`);
     text = text.replace(
-      /(package = "oliphaunt-wasmer[^"\n]*"\nversion = ")[^"]+/gu,
+      /(package = "oliphaunt-(?:wasmer[^"\n]*|virtual-fs)"\nversion = ")[^"]+/gu,
       `$1=${version}`,
     );
     text = text.replace(

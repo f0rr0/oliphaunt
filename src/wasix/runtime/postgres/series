@@ -30,3 +30,4 @@ src/wasix/runtime/assets/build/postgres/patches/0041-oliphaunt-wasix-honor-nonin
 src/wasix/runtime/assets/build/postgres/patches/0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch
 src/wasix/runtime/assets/build/postgres/patches/0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch
 src/wasix/runtime/assets/build/postgres/patches/0044-oliphaunt-wasix-initialize-trusted-session-identity.patch
+src/third-party/postgres/patches/common/embedded-fsync-default.patch

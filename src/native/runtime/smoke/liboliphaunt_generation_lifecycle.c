@@ -113,10 +113,12 @@ static int verify_backend_durability_arguments(void) {
         handle.startup_arg_count = count;
         OliphauntBackendArgv args = {0};
         CHECK(oliphaunt_build_backend_argv(&handle, &args) == 0, "build durability argv");
-        /* The embedded default disables fsync; later caller GUCs override it. */
-        bool fsync_enabled = true;
+        /* Leave the boot default and saved configuration to PostgreSQL. */
+        bool fsync_enabled = false;
         for (int i = 1; i < args.argc; i++) {
-            if (strcmp(args.argv[i], "-F") == 0) fsync_enabled = false;
+            CHECK(strcmp(args.argv[i], "-F") != 0, "do not override saved fsync configuration");
+            CHECK(count != 0 || strncmp(args.argv[i], "fsync=", 6) != 0,
+                  "do not force a default fsync startup GUC");
             if (strcmp(args.argv[i], "fsync=off") == 0) fsync_enabled = false;
             if (strcmp(args.argv[i], "fsync=on") == 0) fsync_enabled = true;
         }

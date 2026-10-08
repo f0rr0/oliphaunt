@@ -116,7 +116,6 @@ function compareDirectoryDepth(left: string, right: string): number {
 /** @internal PostgreSQL argv shared by both execution surfaces. */
 export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
   const args = ['--single'];
-  if (options.storage.kind === 'memory') args.push('-F');
   args.push('-O', '-j');
   const startupGUCs = normalizeWasixStartupGUCs(options.startupGUCs);
   for (const [configuredName, configuredValue] of Object.entries(startupGUCs)) {

@@ -948,8 +948,8 @@ static int oliphaunt_read_small_file(
     return 0;
 }
 
+int oliphaunt_sync_directory(OliphauntHandle *handle, const char *path) {
 #ifndef _WIN32
-static int oliphaunt_sync_directory(OliphauntHandle *handle, const char *path) {
     int flags = O_RDONLY | O_CLOEXEC;
 #ifdef O_DIRECTORY
     flags |= O_DIRECTORY;
@@ -973,9 +973,67 @@ static int oliphaunt_sync_directory(OliphauntHandle *handle, const char *path) {
         set_error(handle, message);
         return -1;
     }
+#else
+    /* Windows publication uses MOVEFILE_WRITE_THROUGH; directory FileHandles
+     * do not provide the POSIX fsync contract. */
+    (void)handle;
+    (void)path;
+#endif
     return 0;
 }
+
+/* Extracted regular files were already synced. Publish their directory entries
+ * bottom-up before the staged restore becomes visible. */
+int oliphaunt_sync_directory_tree(OliphauntHandle *handle, const char *path) {
+#ifndef _WIN32
+    DIR *directory = opendir(path);
+    if (directory == NULL) {
+        char message[1024];
+        snprintf(message, sizeof(message), "open restored directory %s for sync: %s", path, strerror(errno));
+        set_error(handle, message);
+        return -1;
+    }
+    int rc = 0;
+    struct dirent *entry;
+    errno = 0;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        char *child = oliphaunt_join_path(path, entry->d_name);
+        struct stat st;
+        if (child == NULL) {
+            set_error(handle, "out of memory resolving restored directory entry");
+            rc = -1;
+        } else if (lstat(child, &st) != 0) {
+            char message[1024];
+            snprintf(message, sizeof(message), "inspect restored directory entry %s: %s", child, strerror(errno));
+            set_error(handle, message);
+            rc = -1;
+        } else if (S_ISDIR(st.st_mode)) {
+            rc = oliphaunt_sync_directory_tree(handle, child);
+        } else if (!S_ISREG(st.st_mode)) {
+            set_error(handle, "restored directory contains a non-regular file");
+            rc = -1;
+        }
+        free(child);
+        if (rc != 0) break;
+        errno = 0;
+    }
+    if (rc == 0 && errno != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "read restored directory %s for sync: %s", path, strerror(errno));
+        set_error(handle, message);
+        rc = -1;
+    }
+    if (closedir(directory) != 0 && rc == 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "close restored directory %s after sync: %s", path, strerror(errno));
+        set_error(handle, message);
+        rc = -1;
+    }
+    if (rc != 0) return rc;
 #endif
+    return oliphaunt_sync_directory(handle, path);
+}
 
 static int oliphaunt_write_native_root_descriptor(
     OliphauntHandle *handle,

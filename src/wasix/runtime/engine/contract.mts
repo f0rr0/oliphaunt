@@ -3,6 +3,7 @@ export const ENGINE_SOURCE_CRATES = Object.freeze([
   'wasmer-wasix-types',
   'wasmer-journal',
   'wasmer-wasix',
+  'virtual-fs',
 ]);
 
 export const ENGINE_PAYLOAD_PACKAGE = 'oliphaunt-wasmer-v8-windows-x64-msvc';

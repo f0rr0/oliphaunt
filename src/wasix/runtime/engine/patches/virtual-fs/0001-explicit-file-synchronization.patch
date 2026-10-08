@@ -1,0 +1,291 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Thu, 8 Oct 2026 00:00:00 +0000
+Subject: [PATCH] virtual-fs: separate write flushing from explicit synchronization
+
+AsyncWrite::flush drains pending writes; it is not a disk durability contract.
+Add data-only and full sync operations without changing existing provider flush
+behavior, and forward them through file wrappers and mounted files. Host files
+finish pending writes before the checked operating-system sync. Memory files
+retain their no-disk behavior.
+---
+diff --git a/src/arc_box_file.rs b/src/arc_box_file.rs
+index ba28b080..96bfc445 100644
+--- a/src/arc_box_file.rs
++++ b/src/arc_box_file.rs
+@@ -87,6 +87,16 @@ impl AsyncRead for ArcBoxFile {
+ }
+ 
+ impl VirtualFile for ArcBoxFile {
++    fn poll_sync_data(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let mut inner = self.inner.lock().unwrap();
++        Pin::new(inner.as_mut()).poll_sync_data(cx)
++    }
++
++    fn poll_sync_all(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let mut inner = self.inner.lock().unwrap();
++        Pin::new(inner.as_mut()).poll_sync_all(cx)
++    }
++
+     fn last_accessed(&self) -> u64 {
+         let inner = self.inner.lock().unwrap();
+         inner.last_accessed()
+diff --git a/src/arc_file.rs b/src/arc_file.rs
+index c3b0fa97..723b4244 100644
+--- a/src/arc_file.rs
++++ b/src/arc_file.rs
+@@ -103,6 +103,16 @@ impl<T> VirtualFile for ArcFile<T>
+ where
+     T: VirtualFile + Send + Sync + 'static,
+ {
++    fn poll_sync_data(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let mut inner = self.inner.lock().unwrap();
++        Pin::new(inner.as_mut()).poll_sync_data(cx)
++    }
++
++    fn poll_sync_all(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let mut inner = self.inner.lock().unwrap();
++        Pin::new(inner.as_mut()).poll_sync_all(cx)
++    }
++
+     fn last_accessed(&self) -> u64 {
+         let inner = self.inner.lock().unwrap();
+         inner.last_accessed()
+diff --git a/src/combine_file.rs b/src/combine_file.rs
+index 8c12b83c..2a846199 100644
+--- a/src/combine_file.rs
++++ b/src/combine_file.rs
+@@ -18,6 +18,14 @@ impl CombineFile {
+ }
+ 
+ impl VirtualFile for CombineFile {
++    fn poll_sync_data(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(self.tx.as_mut()).poll_sync_data(cx)
++    }
++
++    fn poll_sync_all(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(self.tx.as_mut()).poll_sync_all(cx)
++    }
++
+     fn last_accessed(&self) -> u64 {
+         self.rx.last_accessed()
+     }
+diff --git a/src/cow_file.rs b/src/cow_file.rs
+index b3f31b86..d688c69e 100644
+--- a/src/cow_file.rs
++++ b/src/cow_file.rs
+@@ -202,6 +202,20 @@ impl AsyncRead for CopyOnWriteFile {
+ }
+ 
+ impl VirtualFile for CopyOnWriteFile {
++    fn poll_sync_data(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        match self.poll_copy_start_and_progress(cx) {
++            Poll::Ready(Ok(())) => Pin::new(self.state.inner_mut()).poll_sync_data(cx),
++            result => result,
++        }
++    }
++
++    fn poll_sync_all(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        match self.poll_copy_start_and_progress(cx) {
++            Poll::Ready(Ok(())) => Pin::new(self.state.inner_mut()).poll_sync_all(cx),
++            result => result,
++        }
++    }
++
+     fn last_accessed(&self) -> u64 {
+         self.last_accessed
+     }
+diff --git a/src/dual_write_file.rs b/src/dual_write_file.rs
+index b6f590a1..b02c4dee 100644
+--- a/src/dual_write_file.rs
++++ b/src/dual_write_file.rs
+@@ -26,6 +26,14 @@ impl DualWriteFile {
+ }
+ 
+ impl VirtualFile for DualWriteFile {
++    fn poll_sync_data(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(self.inner.as_mut()).poll_sync_data(cx)
++    }
++
++    fn poll_sync_all(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(self.inner.as_mut()).poll_sync_all(cx)
++    }
++
+     fn last_accessed(&self) -> u64 {
+         self.inner.last_accessed()
+     }
+diff --git a/src/host_fs.rs b/src/host_fs.rs
+index c765c4d3..f2ef546d 100644
+--- a/src/host_fs.rs
++++ b/src/host_fs.rs
+@@ -417,6 +417,20 @@ impl File {
+ 
+ #[async_trait::async_trait]
+ impl VirtualFile for File {
++    fn poll_sync_data(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        match self.as_mut().poll_flush(cx) {
++            Poll::Ready(Ok(())) => Poll::Ready(self.inner_std.sync_data()),
++            result => result,
++        }
++    }
++
++    fn poll_sync_all(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        match self.as_mut().poll_flush(cx) {
++            Poll::Ready(Ok(())) => Poll::Ready(self.inner_std.sync_all()),
++            result => result,
++        }
++    }
++
+     fn last_accessed(&self) -> u64 {
+         self.metadata()
+             .accessed()
+diff --git a/src/lib.rs b/src/lib.rs
+index e0987244..63fba5d1 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -345,6 +345,18 @@ impl<'a> OpenOptions<'a> {
+ pub trait VirtualFile:
+     fmt::Debug + AsyncRead + AsyncWrite + AsyncSeek + Unpin + Upcastable + Send
+ {
++    /// Synchronize data to the backing store, separately from draining writes.
++    /// Memory files and existing providers retain their flush contract; durable
++    /// host files must override this with a checked data synchronization.
++    fn poll_sync_data(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        self.poll_flush(cx)
++    }
++
++    /// Synchronize data and metadata to the backing store.
++    fn poll_sync_all(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        self.poll_flush(cx)
++    }
++
+     /// the last time the file was accessed in nanoseconds as a UNIX timestamp
+     fn last_accessed(&self) -> u64;
+ 
+diff --git a/src/mem_fs/file.rs b/src/mem_fs/file.rs
+index 311d65a5..800d41d7 100644
+--- a/src/mem_fs/file.rs
++++ b/src/mem_fs/file.rs
+@@ -54,6 +54,37 @@ impl Clone for FileHandle {
+ }
+ 
+ impl FileHandle {
++    fn poll_sync(&mut self, cx: &mut Context<'_>, data_only: bool) -> Poll<io::Result<()>> {
++        let fs = self
++            .filesystem
++            .inner
++            .read()
++            .map_err(|_| io::Error::other("failed to acquire a read lock"))?;
++        let file = match fs.storage.get(self.inode) {
++            Some(Node::CustomFile(node)) => {
++                let mut file = node.file.lock().unwrap();
++                return if data_only {
++                    Pin::new(file.as_mut()).poll_sync_data(cx)
++                } else {
++                    Pin::new(file.as_mut()).poll_sync_all(cx)
++                };
++            }
++            Some(Node::ArcFile(_)) => {
++                drop(fs);
++                self.lazy_load_arc_file_mut().map_err(io::Error::from)?
++            }
++            Some(Node::File(_) | Node::OffloadedFile(_) | Node::ReadOnlyFile(_)) => {
++                return Poll::Ready(Ok(()));
++            }
++            _ => return Poll::Ready(Err(io::ErrorKind::NotFound.into())),
++        };
++        if data_only {
++            Pin::new(file).poll_sync_data(cx)
++        } else {
++            Pin::new(file).poll_sync_all(cx)
++        }
++    }
++
+     pub(super) fn new_opened(
+         inode: Inode,
+         filesystem: FileSystem,
+@@ -116,6 +147,14 @@ impl FileHandle {
+ }
+ 
+ impl VirtualFile for FileHandle {
++    fn poll_sync_data(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        self.get_mut().poll_sync(cx, true)
++    }
++
++    fn poll_sync_all(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        self.get_mut().poll_sync(cx, false)
++    }
++
+     fn last_accessed(&self) -> u64 {
+         let fs = match self.filesystem.inner.read() {
+             Ok(fs) => fs,
+diff --git a/src/overlay_fs.rs b/src/overlay_fs.rs
+index de9366bf..5292a9c0 100644
+--- a/src/overlay_fs.rs
++++ b/src/overlay_fs.rs
+@@ -57,6 +57,14 @@ impl<P> VirtualFile for SecondaryFile<P>
+ where
+     P: FileSystem + 'static,
+ {
++    fn poll_sync_data(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(self.inner.as_mut()).poll_sync_data(cx)
++    }
++
++    fn poll_sync_all(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(self.inner.as_mut()).poll_sync_all(cx)
++    }
++
+     fn last_accessed(&self) -> u64 {
+         self.inner.last_accessed()
+     }
+@@ -1049,6 +1057,30 @@ where
+     where
+         P: FileSystem + 'static,
+     {
++        fn poll_sync_data(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++            let copy = if self.new_size.is_some() {
++                self.poll_copy_start_and_progress(cx)
++            } else {
++                self.poll_copy_progress(cx)
++            };
++            match copy {
++                Poll::Ready(Ok(())) => Pin::new(self.state.as_mut()).poll_sync_data(cx),
++                result => result,
++            }
++        }
++
++        fn poll_sync_all(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++            let copy = if self.new_size.is_some() {
++                self.poll_copy_start_and_progress(cx)
++            } else {
++                self.poll_copy_progress(cx)
++            };
++            match copy {
++                Poll::Ready(Ok(())) => Pin::new(self.state.as_mut()).poll_sync_all(cx),
++                result => result,
++            }
++        }
++
+         fn last_accessed(&self) -> u64 {
+             self.state.as_ref().last_accessed()
+         }
+diff --git a/src/trace_fs.rs b/src/trace_fs.rs
+index 667bc84c..2b6115f0 100644
+--- a/src/trace_fs.rs
++++ b/src/trace_fs.rs
+@@ -114,6 +114,14 @@ struct TraceFile {
+ }
+ 
+ impl VirtualFile for TraceFile {
++    fn poll_sync_data(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
++        Pin::new(self.file.as_mut()).poll_sync_data(cx)
++    }
++
++    fn poll_sync_all(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
++        Pin::new(self.file.as_mut()).poll_sync_all(cx)
++    }
++
+     #[tracing::instrument(level = "trace", skip(self), fields(path=%self.path.display()))]
+     fn last_accessed(&self) -> u64 {
+         self.file.last_accessed()
+-- 
+2.51.0
