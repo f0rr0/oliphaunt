@@ -1385,7 +1385,7 @@ jobs:
         timeout-minutes: 7
         env:
           RELEASE_OPERATION: publish
-        run: tools/dev/bun.sh tools/release/npm-trusted-publisher-readiness.mts --publication-lock "$PUBLICATION_LOCK_PATH"
+        run: bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/npm-trusted-publisher-readiness.mts --publication-lock "$PUBLICATION_LOCK_PATH"
       - name: Prove the exact SwiftPM source tag is remotely collision-free
         id: preflight_swift_source_tag
         if: ${{ contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'oliphaunt-swift') }}
