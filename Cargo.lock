@@ -1256,6 +1256,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3329,6 +3335,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-virtual-fs"
+version = "0.3.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "dashmap",
+ "derive_more",
+ "dunce",
+ "filetime",
+ "fs_extra",
+ "futures",
+ "getrandom 0.4.2",
+ "libc",
+ "pin-project-lite",
+ "pretty_assertions",
+ "replace_with",
+ "serde",
+ "shared-buffer",
+ "slab",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-test",
+ "virtual-mio",
+ "wasmer-package",
+ "web-time",
+ "webc",
+]
+
+[[package]]
 name = "oliphaunt-wasix"
 version = "0.3.1"
 dependencies = [
@@ -3347,6 +3384,7 @@ dependencies = [
  "liboliphaunt-wasix-portable",
  "oliphaunt-icu",
  "oliphaunt-query",
+ "oliphaunt-virtual-fs",
  "oliphaunt-wasix-tools",
  "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
  "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
@@ -3364,7 +3402,6 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
- "virtual-fs",
  "virtual-mio",
  "virtual-net",
  "wasmer-config",
@@ -3495,6 +3532,7 @@ dependencies = [
  "derive_more",
  "lz4_flex",
  "num_enum",
+ "oliphaunt-virtual-fs",
  "oliphaunt-wasmer",
  "oliphaunt-wasmer-wasix-types",
  "rkyv",
@@ -3503,7 +3541,6 @@ dependencies = [
  "shared-buffer",
  "thiserror",
  "tracing",
- "virtual-fs",
  "virtual-net",
  "wasmer-config",
 ]
@@ -3548,6 +3585,7 @@ dependencies = [
  "linked_hash_set",
  "lz4_flex",
  "num_enum",
+ "oliphaunt-virtual-fs",
  "oliphaunt-wasmer",
  "oliphaunt-wasmer-journal",
  "oliphaunt-wasmer-wasix-types",
@@ -3579,7 +3617,6 @@ dependencies = [
  "tracing",
  "url",
  "urlencoding",
- "virtual-fs",
  "virtual-mio",
  "virtual-net",
  "waker-fn",
@@ -3942,6 +3979,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "pretty_assertions"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ae130e2f271fbc2ac3a40fb1d07180839cdbbe443c7a27e1e3c13c5cac0116d"
+dependencies = [
+ "diff",
+ "yansi",
 ]
 
 [[package]]
@@ -5700,6 +5747,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+ "valuable",
+]
+
+[[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
 ]
 
 [[package]]
@@ -5713,9 +5772,32 @@ dependencies = [
  "once_cell",
  "regex-automata",
  "sharded-slab",
+ "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
+ "tracing-log",
+]
+
+[[package]]
+name = "tracing-test"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19a4c448db514d4f24c5ddb9f73f2ee71bfb24c526cf0c570ba142d1119e0051"
+dependencies = [
+ "tracing-core",
+ "tracing-subscriber",
+ "tracing-test-macro",
+]
+
+[[package]]
+name = "tracing-test-macro"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad06847b7afb65c7866a36664b75c40b895e318cea4f71299f013fb22965329d"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5973,6 +6055,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "valuable"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6009,7 +6097,6 @@ dependencies = [
  "tracing",
  "virtual-mio",
  "wasmer-package",
- "web-time",
  "webc",
 ]
 
@@ -7330,6 +7417,12 @@ name = "xxhash-rust"
 version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yoke"

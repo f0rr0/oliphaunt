@@ -22,6 +22,12 @@ url = "https://static.crates.io/crates/wasmer-journal/wasmer-journal-0.705.0.cra
 sha256 = "d1ba6aab53ebc49f540787f2daf9a8865b0933de8a8d081b22a78b19259d279c"
 bytes = 73753
 
+[virtual-fs]
+version = "0.705.0"
+url = "https://static.crates.io/crates/virtual-fs/virtual-fs-0.705.0.crate"
+sha256 = "412131c1369d812684470f44c4803d7447f36676bce6c265b5d0af2f9b1e7d9a"
+bytes = 105056
+
 [wee8-windows]
 version = "11.9.7"
 v8-version = "13.6.233.17"

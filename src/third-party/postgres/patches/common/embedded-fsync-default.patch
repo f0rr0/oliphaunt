@@ -1,0 +1,47 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Thu, 8 Oct 2026 00:00:00 +0000
+Subject: [PATCH] postgres: default embedded fsync off without overriding configuration
+
+Embedded applications opt into crash-safe disk synchronization through the
+ordinary PostgreSQL fsync setting. Use a boot default, rather than -F on the
+command line, so saved configuration, ALTER SYSTEM and caller startup settings
+keep PostgreSQL's normal precedence and reload behavior.
+
+Keep the global initializer and GUC boot value aligned. Ordinary PostgreSQL
+and the separate WASIX Postmaster retain the upstream fsync=on default.
+---
+ src/backend/utils/init/globals.c    | 4 ++++
+ src/backend/utils/misc/guc_tables.c | 4 ++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/src/backend/utils/init/globals.c b/src/backend/utils/init/globals.c
+--- a/src/backend/utils/init/globals.c
++++ b/src/backend/utils/init/globals.c
+@@ -126,7 +126,11 @@
+ int			DateOrder = DATEORDER_MDY;
+ int			IntervalStyle = INTSTYLE_POSTGRES;
+ 
++#if defined(OLIPHAUNT_EMBEDDED) || defined(OLIPHAUNT_WASM_SINGLE_USER)
++bool		enableFsync = false;
++#else
+ bool		enableFsync = true;
++#endif
+ bool		allowSystemTableMods = false;
+ int			work_mem = 4096;
+ double		hash_mem_multiplier = 2.0;
+diff --git a/src/backend/utils/misc/guc_tables.c b/src/backend/utils/misc/guc_tables.c
+--- a/src/backend/utils/misc/guc_tables.c
++++ b/src/backend/utils/misc/guc_tables.c
+@@ -1166,6 +1166,10 @@
+ 		},
+ 		&enableFsync,
++#if defined(OLIPHAUNT_EMBEDDED) || defined(OLIPHAUNT_WASM_SINGLE_USER)
++		false,
++#else
+ 		true,
++#endif
+ 		NULL, NULL, NULL
+ 	},
+ 	{
+-- 
+2.51.0

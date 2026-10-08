@@ -160,6 +160,7 @@ tasks:
       - /src/native/runtime/include/oliphaunt.h
       - /src/native/runtime/src/liboliphaunt_internal.h
       - /src/native/runtime/src/liboliphaunt_platform.h
+      - /src/native/runtime/src/liboliphaunt_archive.c
       - /src/native/runtime/src/liboliphaunt_archive_tar.c
       - /src/native/runtime/src/liboliphaunt_fs.c
       - /src/native/runtime/src/liboliphaunt_error.c

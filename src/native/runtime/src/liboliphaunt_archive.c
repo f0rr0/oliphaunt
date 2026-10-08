@@ -758,7 +758,10 @@ static int validate_restored_pgdata(OliphauntHandle *handle, const char *staging
         set_error(handle, "out of memory resolving restored PGDATA");
         return -1;
     }
-    int rc = oliphaunt_publish_native_root_descriptor(handle, pgdata);
+    int rc = oliphaunt_sync_directory_tree(handle, pgdata);
+    if (rc == 0) {
+        rc = oliphaunt_publish_native_root_descriptor(handle, pgdata);
+    }
     if (rc == 0) {
         rc = oliphaunt_validate_managed_root(handle, pgdata);
     }
@@ -851,13 +854,36 @@ static int publish_restore_without_replacement(OliphauntHandle *handle, const ch
         set_error(handle, message);
         return -1;
     }
+#ifdef _WIN32
+    if (!MoveFileExA(staging_root, target_root, MOVEFILE_WRITE_THROUGH)) {
+        set_error(handle, "publish restored root failed");
+        return -1;
+    }
+#else
     if (rename(staging_root, target_root) != 0) {
         char message[1024];
         snprintf(message, sizeof(message), "publish restored root %s: %s", target_root, strerror(errno));
         set_error(handle, message);
         return -1;
     }
-    return 0;
+#endif
+    char *parent = oliphaunt_path_parent_dup(target_root);
+    if (parent == NULL) {
+        set_error(handle, "restore published; destination retained, but final durability is unconfirmed: out of memory resolving restore parent");
+        return -1;
+    }
+    int rc = oliphaunt_sync_directory(handle, parent);
+    free(parent);
+    if (rc != 0) {
+        const char prefix[] = "restore published; destination retained, but final durability is unconfirmed: ";
+        char cause[OLIPHAUNT_ERROR_CAPTURE_CAPACITY];
+        char message[OLIPHAUNT_ERROR_CAPTURE_CAPACITY];
+        oliphaunt_copy_last_error(handle, cause, sizeof(cause));
+        snprintf(message, sizeof(message), "%s%.*s", prefix,
+                 (int)(sizeof(message) - sizeof(prefix)), cause);
+        set_error(handle, message);
+    }
+    return rc;
 }
 
 static int32_t oliphaunt_restore_impl(const OliphauntRestoreStreamOptions *options) {

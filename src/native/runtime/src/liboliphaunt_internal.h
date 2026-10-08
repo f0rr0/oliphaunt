@@ -363,6 +363,8 @@ char *oliphaunt_path_file_name_dup(const char *path);
 int oliphaunt_mkdir_p(const char *path, mode_t mode);
 int oliphaunt_remove_tree(const char *path);
 int oliphaunt_directory_is_empty(const char *path);
+int oliphaunt_sync_directory(OliphauntHandle *handle, const char *path);
+int oliphaunt_sync_directory_tree(OliphauntHandle *handle, const char *path);
 int oliphaunt_acquire_stable_root_lock(OliphauntHandle *handle, const char *root, int *out_fd, char **out_path);
 void oliphaunt_release_file_lock(int *fd, char **path);
 int oliphaunt_acquire_root_lock(OliphauntHandle *handle, const char *pgdata);

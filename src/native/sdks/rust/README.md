@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Default storage is a disposable temporary directory. Direct mode stays bound to its first root and configuration for the lifetime of the process, even after closing a handle. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
-Direct and broker modes retain the native `fsync=off` default. Persistent storage alone does not provide crash safety; set `.startup_guc("fsync", "on")` when it is required. Changing the default is tracked separately from patch consolidation.
+Direct and broker modes default to `fsync=off` unless saved PostgreSQL configuration or caller startup settings select otherwise. Persistent storage alone does not provide crash safety; set `.startup_guc("fsync", "on")` when disk synchronization is required. Full-server mode retains PostgreSQL's `fsync=on` default.
 
 ## Build your integration
 

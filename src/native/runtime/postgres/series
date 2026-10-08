@@ -21,3 +21,4 @@ src/native/runtime/patches/postgresql-18.4/0019-liboliphaunt-link-windows-embedd
 src/native/runtime/patches/postgresql-18.4/0020-liboliphaunt-enforce-embedded-signal-boundary.patch
 src/native/runtime/patches/postgresql-18.4/0021-liboliphaunt-model-trusted-embedded-sessions.patch
 src/native/runtime/patches/postgresql-18.4/0022-liboliphaunt-preserve-host-process-boundaries.patch
+src/third-party/postgres/patches/common/embedded-fsync-default.patch

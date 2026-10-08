@@ -19,6 +19,8 @@ The ordered Wasmer patches cover engine delivery, C API ownership, native cache
 profiles, and shared memory/terminal lifetimes. The WASIX patches cover optional
 runner features, cached module loading, and terminal shutdown. The complete
 ordered series is the build and qualification unit.
+The virtual filesystem patch separates write flushing from explicit data/full
+sync requests, including through file wrappers and memory mounts.
 These are internal compatibility patches, not a promise to support every V8
 backend API exposed upstream.
 

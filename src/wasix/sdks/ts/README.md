@@ -28,6 +28,8 @@ try {
 
 Default storage is a memory filesystem and is discarded on close. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
+Embedded execution defaults to `fsync=off`; saved PostgreSQL configuration and `startupGUCs` can override it. Use `startupGUCs: { fsync: 'on' }` to request disk synchronization. Browser storage still completes its provider publication boundary before an operation settles; its crash guarantees depend on IndexedDB or OPFS, not this PostgreSQL setting alone.
+
 ## Build your integration
 
 - [Guide](https://oliphaunt.dev/docs/sdk/wasix-typescript/guide): parameters, transactions, extensions, backups, and shutdown.
