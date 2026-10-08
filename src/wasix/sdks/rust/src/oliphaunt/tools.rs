@@ -603,7 +603,7 @@ where
         stdin,
         args,
     } = invocation;
-    let engine = aot::headless_engine();
+    let engine = aot::headless_engine()?;
     let module = match assets {
         // SAFETY: ToolAssets construction requires trusted compiler output.
         Some(assets) => unsafe {

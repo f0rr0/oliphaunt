@@ -156,11 +156,53 @@ test('Cargo owns transitive, inherited, renamed, build, target and custom source
 });
 
 test('embedded generated payloads follow private producer ownership for source-pin changes', () => {
-  for (const file of ['src/third-party/postgres/source.toml', 'src/third-party/icu/source.toml']) {
+  for (const file of [
+    'src/third-party/postgres/source.toml',
+    'src/third-party/icu/source.toml',
+    'src/wasix/runtime/engine/source.toml',
+    'src/wasix/runtime/engine/patches/wasmer/series',
+  ]) {
     expect(existsSync(path.join(ROOT, file))).toBe(true);
     const plan = buildPlan(graph, [file]);
     expect(plan.releaseProducts).toContain('liboliphaunt-wasix');
     expect(plan.releaseProducts).toContain('oliphaunt-wasix-napi');
+  }
+});
+
+test('release planning does not require generated sources owned by an embedded payload', () => {
+  const scratch = mkdtempSync(path.join(ROOT, 'target/embedded-payload-'));
+  const relative = path.relative(ROOT, scratch).split(path.sep).join('/');
+  try {
+    mkdirSync(path.join(scratch, 'consumer/src'), { recursive: true });
+    mkdirSync(path.join(scratch, 'producer'), { recursive: true });
+    writeFileSync(
+      path.join(scratch, 'Cargo.toml'),
+      '[workspace]\nmembers = ["consumer", "producer"]\n',
+    );
+    writeFileSync(path.join(scratch, 'consumer/src/lib.rs'), 'pub fn consumer() {}\n');
+    writeFileSync(
+      path.join(scratch, 'consumer/Cargo.toml'),
+      '[package]\nname = "consumer"\nversion = "1.0.0"\n[dependencies]\nproducer = { path = "../producer" }\n',
+    );
+    writeFileSync(
+      path.join(scratch, 'producer/Cargo.toml'),
+      '[package]\nname = "producer"\nversion = "1.0.0"\n[lib]\npath = "upstream/src/lib.rs"\n',
+    );
+    const impacts = declaredSharedSourceImpacts({
+      'oliphaunt-wasix-napi': {
+        embedded_cargo_manifests: [`${relative}/consumer/Cargo.toml`],
+        embedded_payload_products: ['liboliphaunt-wasix'],
+      },
+      'liboliphaunt-wasix': { path: `${relative}/producer` },
+    });
+    expect(impacts.some((row) => row.source_paths.includes(`${relative}/consumer/src`))).toBe(true);
+    expect(impacts.some((row) => row.source_paths.some((file) => file.includes('/upstream')))).toBe(
+      false,
+    );
+    expect(existsSync(path.join(scratch, 'producer/upstream'))).toBe(false);
+    expect(existsSync(path.join(scratch, 'Cargo.lock'))).toBe(false);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });
 

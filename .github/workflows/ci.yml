@@ -543,7 +543,7 @@ jobs:
   extension-artifacts-native-android:
     name: Native Extensions (Android Packaging)
     needs: [affected, extension-artifacts-native-android-static, extension-artifacts-native-linux]
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-native-android-static.result == 'success' && needs.extension-artifacts-native-linux.result == 'success' && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-native-android-static.result == 'success' && needs.extension-artifacts-native-linux.result == 'success' && fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] != null }}
     uses: ./.github/workflows/extension-artifacts-native.yml
     with:
       phase: android-package
@@ -591,7 +591,7 @@ jobs:
     needs:
       - affected
       - liboliphaunt-wasix-runtime
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-wasix') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-wasix') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.extension_artifacts_wasix_matrix) }}
@@ -704,7 +704,7 @@ jobs:
   mobile-extension-packages-android:
     name: Extension Packages (Android)
     needs: [affected, extension-artifacts-native-android]
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-native-android.result == 'success' && needs.affected.outputs.mobile_extension_package_native_targets_android_csv != '' }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-native-android.result == 'success' && needs.affected.outputs.mobile_extension_package_native_targets_android_csv != '' }}
     uses: ./.github/workflows/mobile-extension-packages.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -716,7 +716,7 @@ jobs:
   mobile-extension-packages-ios:
     name: Extension Packages (iOS)
     needs: [affected, extension-artifacts-native-ios]
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-native-ios.result == 'success' && needs.affected.outputs.mobile_extension_package_native_targets_ios_csv != '' }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.extension-artifacts-native-ios.result == 'success' && needs.affected.outputs.mobile_extension_package_native_targets_ios_csv != '' }}
     uses: ./.github/workflows/mobile-extension-packages.yml
     with:
       cache-save-if: ${{ needs.affected.outputs.cache_save_if == 'true' }}
@@ -1102,7 +1102,7 @@ jobs:
       - liboliphaunt-native-desktop
       - liboliphaunt-native-ios
       - liboliphaunt-native-ios-abi
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && needs.liboliphaunt-native-android-abi.result == 'success' && needs.liboliphaunt-native-desktop.result == 'success' && needs.liboliphaunt-native-ios.result == 'success' && needs.liboliphaunt-native-ios-abi.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-release-assets') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && needs.liboliphaunt-native-android-abi.result == 'success' && needs.liboliphaunt-native-desktop.result == 'success' && needs.liboliphaunt-native-ios.result == 'success' && needs.liboliphaunt-native-ios-abi.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-release-assets') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -1515,7 +1515,7 @@ jobs:
       - affected
       - liboliphaunt-native-ios-abi
       - swift-bindings
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-native-ios-abi.result == 'success' && needs.swift-bindings.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'swift-sdk-package') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-native-ios-abi.result == 'success' && needs.swift-bindings.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'swift-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -2274,7 +2274,7 @@ jobs:
       - affected
       - liboliphaunt-wasix-runtime
       - liboliphaunt-wasix-aot
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-release-assets') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-release-assets') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -2326,6 +2326,12 @@ jobs:
             mkdir -p "$destination"
             rsync -a "$raw_target_dir/" "$destination/"
           done
+
+      - name: Download qualified Windows engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-windows-engine
+          path: .
 
       - name: Package WASIX release assets
         env:
@@ -3018,7 +3024,7 @@ jobs:
       - liboliphaunt-native-ios-abi
       - react-native-sdk-package
       - swift-sdk-package
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.js-sdk-package.result == 'success' && needs.mobile-extension-packages-ios.result == 'success' && needs.liboliphaunt-native-ios.result == 'success' && needs.liboliphaunt-native-ios-abi.result == 'success' && needs.react-native-sdk-package.result == 'success' && needs.swift-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.js-sdk-package.result == 'success' && needs.mobile-extension-packages-ios.result == 'success' && needs.liboliphaunt-native-ios.result == 'success' && needs.liboliphaunt-native-ios-abi.result == 'success' && needs.react-native-sdk-package.result == 'success' && needs.swift-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
     runs-on: macos-26
     timeout-minutes: 180
     env:
@@ -3344,7 +3350,7 @@ jobs:
     needs:
       - affected
       - mobile-build-ios
-    if: ${{ !cancelled() && needs.affected.result == 'success' && needs.mobile-build-ios.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && needs.mobile-build-ios.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
     runs-on: macos-26
     timeout-minutes: 45
     steps:

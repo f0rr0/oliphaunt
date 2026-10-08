@@ -1,0 +1,787 @@
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt,
+    io::{self, SeekFrom},
+    path::{Path, PathBuf},
+    pin::Pin,
+    rc::Rc,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
+    task::{Context, Poll},
+};
+
+use futures::future::BoxFuture;
+use js_sys::{Array, Function, Uint8Array};
+use virtual_fs::{
+    AsyncRead, AsyncSeek, AsyncWrite, DirEntry, FileOpener, FileSystem, FileType, FsError,
+    Metadata, OpenOptions, OpenOptionsConfig, ReadBuf, ReadDir, VirtualFile,
+};
+use wasm_bindgen::{JsCast, JsValue};
+
+const OP_METADATA: i32 = 1;
+const OP_READ_DIR: i32 = 2;
+const OP_CREATE_DIR: i32 = 3;
+const OP_REMOVE_DIR: i32 = 4;
+const OP_RENAME: i32 = 5;
+const OP_REMOVE_FILE: i32 = 6;
+const OP_OPEN: i32 = 7;
+const OP_CLOSE: i32 = 8;
+const OP_READ: i32 = 9;
+const OP_WRITE: i32 = 10;
+const OP_FLUSH: i32 = 11;
+const OP_TRUNCATE: i32 = 12;
+const OP_UNLINK: i32 = 13;
+const OP_FILE_SIZE: i32 = 14;
+const READ_DIR_PAGE_CAPACITY: usize = 64 * 1024;
+
+const RESULT_OK: i32 = 0;
+const RESULT_NOT_FOUND: i32 = 1;
+const RESULT_EXISTS: i32 = 2;
+const RESULT_NOT_DIR: i32 = 3;
+const RESULT_NOT_FILE: i32 = 4;
+const RESULT_DIR_NOT_EMPTY: i32 = 5;
+const RESULT_PERMISSION: i32 = 6;
+const RESULT_INVALID: i32 = 7;
+const RESULT_STORAGE_FULL: i32 = 8;
+const RESULT_UNSUPPORTED: i32 = 9;
+const RESULT_TIMEOUT: i32 = 10;
+
+const TYPE_FILE: u64 = 1;
+const TYPE_DIRECTORY: u64 = 2;
+
+const FLAG_READ: i32 = 1 << 0;
+const FLAG_WRITE: i32 = 1 << 1;
+const FLAG_CREATE_NEW: i32 = 1 << 2;
+const FLAG_CREATE: i32 = 1 << 3;
+const FLAG_APPEND: i32 = 1 << 4;
+const FLAG_TRUNCATE: i32 = 1 << 5;
+
+static NEXT_BACKEND_ID: AtomicU32 = AtomicU32::new(1);
+
+thread_local! {
+    /// JavaScript references must remain in the realm that created them.
+    /// Rust filesystem objects carry only the corresponding numeric key.
+    static REALM_BACKENDS: RefCell<HashMap<u32, Rc<RealmBackend>>> =
+        RefCell::new(HashMap::new());
+}
+
+struct RealmBackend {
+    backend: JsValue,
+    request: Function,
+}
+
+/// A synchronous virtual filesystem delegated to a JavaScript object in the
+/// caller realm. The backend owns OPFS access handles while Rust owns the
+/// syscall-facing filesystem. Calls are deliberately single-flight because
+/// Oliphaunt's PostgreSQL runtime is single-backend.
+pub(crate) struct SyncBridgeFileSystem {
+    backend: Arc<Backend>,
+}
+
+impl fmt::Debug for SyncBridgeFileSystem {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SyncBridgeFileSystem")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SyncBridgeFileSystem {
+    pub(crate) fn new(backend: JsValue, capacity: usize) -> virtual_fs::Result<Self> {
+        Ok(Self {
+            backend: Arc::new(Backend::new(backend, capacity)?),
+        })
+    }
+
+    fn metadata_inner(&self, path: &Path) -> virtual_fs::Result<Metadata> {
+        let path = normalize_path(path)?;
+        let response = self.backend.request(OP_METADATA, &path, &[], 0, 0, 0)?;
+        metadata(response.value0, response.value1)
+    }
+}
+
+impl FileSystem for SyncBridgeFileSystem {
+    fn readlink(&self, _path: &Path) -> virtual_fs::Result<PathBuf> {
+        Err(FsError::Unsupported)
+    }
+
+    fn read_dir(&self, path: &Path) -> virtual_fs::Result<ReadDir> {
+        let path = normalize_path(path)?;
+        let mut cursor = 0;
+        let mut entries = Vec::new();
+        loop {
+            let response = self
+                .backend
+                .request(OP_READ_DIR, &path, &[], cursor, 0, 0)?;
+            entries.extend(decode_directory_entries(&path, &response.bytes)?);
+            match response.value1 {
+                1 => break,
+                0 if response.value0 > cursor => cursor = response.value0,
+                _ => return Err(FsError::InvalidData),
+            }
+        }
+        Ok(ReadDir::new(entries))
+    }
+
+    fn create_dir(&self, path: &Path) -> virtual_fs::Result<()> {
+        let path = normalize_path(path)?;
+        self.backend.request(OP_CREATE_DIR, &path, &[], 0, 0, 0)?;
+        Ok(())
+    }
+
+    fn remove_dir(&self, path: &Path) -> virtual_fs::Result<()> {
+        let path = normalize_path(path)?;
+        self.backend.request(OP_REMOVE_DIR, &path, &[], 0, 0, 0)?;
+        Ok(())
+    }
+
+    fn rename<'a>(&'a self, from: &'a Path, to: &'a Path) -> BoxFuture<'a, virtual_fs::Result<()>> {
+        let result = (|| {
+            let from = normalize_path(from)?;
+            let to = normalize_path(to)?;
+            self.backend
+                .request(OP_RENAME, &from, to.as_bytes(), 0, 0, 0)?;
+            Ok(())
+        })();
+        Box::pin(async move { result })
+    }
+
+    fn metadata(&self, path: &Path) -> virtual_fs::Result<Metadata> {
+        self.metadata_inner(path)
+    }
+
+    fn symlink_metadata(&self, path: &Path) -> virtual_fs::Result<Metadata> {
+        self.metadata_inner(path)
+    }
+
+    fn remove_file(&self, path: &Path) -> virtual_fs::Result<()> {
+        let path = normalize_path(path)?;
+        self.backend.request(OP_REMOVE_FILE, &path, &[], 0, 0, 0)?;
+        Ok(())
+    }
+
+    fn new_open_options(&self) -> OpenOptions<'_> {
+        OpenOptions::new(self)
+    }
+}
+
+impl FileOpener for SyncBridgeFileSystem {
+    fn open(
+        &self,
+        path: &Path,
+        configuration: &OpenOptionsConfig,
+    ) -> virtual_fs::Result<Box<dyn VirtualFile + Send + Sync + 'static>> {
+        let path = normalize_path(path)?;
+        let flags = (if configuration.read { FLAG_READ } else { 0 })
+            | (if configuration.write { FLAG_WRITE } else { 0 })
+            | (if configuration.create_new {
+                FLAG_CREATE_NEW
+            } else {
+                0
+            })
+            | (if configuration.create { FLAG_CREATE } else { 0 })
+            | (if configuration.append { FLAG_APPEND } else { 0 })
+            | (if configuration.truncate {
+                FLAG_TRUNCATE
+            } else {
+                0
+            });
+        let response = self.backend.request(OP_OPEN, &path, &[], 0, 0, flags)?;
+        let cursor = if configuration.append {
+            response.value1
+        } else {
+            0
+        };
+        Ok(Box::new(SyncBridgeFile {
+            backend: self.backend.clone(),
+            descriptor: u32::try_from(response.value0).map_err(|_| FsError::InvalidFd)?,
+            readable: configuration.read,
+            writable: configuration.write || configuration.append,
+            cursor,
+        }))
+    }
+}
+
+struct Backend {
+    id: u32,
+    origin_thread: u32,
+    capacity: usize,
+    gate: Mutex<()>,
+}
+
+impl fmt::Debug for Backend {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Backend")
+            .field("id", &self.id)
+            .field("origin_thread", &self.origin_thread)
+            .field("capacity", &self.capacity())
+            .finish()
+    }
+}
+
+impl Backend {
+    fn new(backend: JsValue, capacity: usize) -> virtual_fs::Result<Self> {
+        if capacity < 8 * 1024 || capacity > 4 * 1024 * 1024 {
+            return Err(FsError::InvalidInput);
+        }
+        let request = js_sys::Reflect::get(&backend, &JsValue::from_str("request"))
+            .map_err(|_| FsError::InvalidInput)?
+            .dyn_into::<Function>()
+            .map_err(|_| FsError::InvalidInput)?;
+        let origin_thread = wasmer::js::current_thread_id();
+        let id = REALM_BACKENDS
+            .try_with(|backends| {
+                let mut backends = backends.try_borrow_mut().map_err(|_| FsError::Lock)?;
+                let id = loop {
+                    let candidate = NEXT_BACKEND_ID.fetch_add(1, Ordering::Relaxed);
+                    if candidate != 0 && !backends.contains_key(&candidate) {
+                        break candidate;
+                    }
+                };
+                backends.insert(id, Rc::new(RealmBackend { backend, request }));
+                Ok::<u32, FsError>(id)
+            })
+            .map_err(|_| FsError::Lock)??;
+        Ok(Self {
+            id,
+            origin_thread,
+            capacity,
+            gate: Mutex::new(()),
+        })
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn realm_backend(&self) -> virtual_fs::Result<Rc<RealmBackend>> {
+        if wasmer::js::current_thread_id() != self.origin_thread {
+            return Err(FsError::Lock);
+        }
+        REALM_BACKENDS
+            .try_with(|backends| {
+                let backends = backends.try_borrow().map_err(|_| FsError::Lock)?;
+                backends
+                    .get(&self.id)
+                    .map(Rc::clone)
+                    .ok_or(FsError::InvalidFd)
+            })
+            .map_err(|_| FsError::Lock)?
+    }
+
+    fn request(
+        &self,
+        opcode: i32,
+        path: &str,
+        payload: &[u8],
+        arg0: u64,
+        arg1: u64,
+        flags: i32,
+    ) -> virtual_fs::Result<Response> {
+        let response_capacity = match opcode {
+            OP_READ_DIR => self.capacity().min(READ_DIR_PAGE_CAPACITY),
+            _ => 0,
+        };
+        let mut bytes = vec![0; response_capacity];
+        let response = self.request_into(opcode, path, payload, &mut bytes, arg0, arg1, flags)?;
+        bytes.truncate(response.length);
+        Ok(Response {
+            bytes,
+            value0: response.value0,
+            value1: response.value1,
+        })
+    }
+
+    fn read(&self, descriptor: u32, offset: u64, output: &mut [u8]) -> virtual_fs::Result<usize> {
+        let response = self.request_into(
+            OP_READ,
+            "",
+            &[],
+            output,
+            descriptor.into(),
+            offset,
+            i32::try_from(output.len()).map_err(|_| FsError::StorageFull)?,
+        )?;
+        Ok(response.length)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn request_into(
+        &self,
+        opcode: i32,
+        path: &str,
+        payload: &[u8],
+        output: &mut [u8],
+        arg0: u64,
+        arg1: u64,
+        flags: i32,
+    ) -> virtual_fs::Result<ResponseHead> {
+        // A JavaScript callback can synchronously reenter this filesystem.
+        // Never wait for a lock that the current call already holds.
+        let _guard = self.gate.try_lock().map_err(|_| FsError::Lock)?;
+        if payload.len() > self.capacity() || output.len() > self.capacity() {
+            return Err(FsError::StorageFull);
+        }
+        if !payload.is_empty() && !output.is_empty() {
+            return Err(FsError::InvalidInput);
+        }
+        let realm_backend = self.realm_backend()?;
+        let transfer_length = payload.len().max(output.len());
+        let transfer = Uint8Array::new_with_length(
+            u32::try_from(transfer_length).map_err(|_| FsError::StorageFull)?,
+        );
+        if !payload.is_empty() {
+            transfer.copy_from(payload);
+        }
+        let arguments = Array::new();
+        arguments.push(&JsValue::from(opcode));
+        arguments.push(&JsValue::from_str(path));
+        // Each callback receives an exact-sized JavaScript-owned allocation.
+        // It may synchronously mutate, retain, or transfer the bytes without
+        // aliasing Rust memory or observing storage from another request.
+        arguments.push(transfer.as_ref());
+        arguments.push(&JsValue::from_f64(arg0 as f64));
+        arguments.push(&JsValue::from_f64(arg1 as f64));
+        arguments.push(&JsValue::from(flags));
+        let raw = realm_backend
+            .request
+            .apply(&realm_backend.backend, &arguments)
+            .map_err(|_| FsError::IOError)?;
+        let values = Array::from(&raw);
+        if values.length() != 4 {
+            return Err(FsError::InvalidData);
+        }
+        let result = js_i32(&values.get(0))?;
+        let response_len = js_usize(&values.get(1))?;
+        let value0 = js_u64(&values.get(2))?;
+        let value1 = js_u64(&values.get(3))?;
+        decode_result(result)?;
+        if response_len > output.len() {
+            return Err(FsError::InvalidData);
+        }
+        if response_len > 0 {
+            // A callback may transfer the allocation after performing a
+            // side-effecting operation. Detachment is only an error when a
+            // successful response still has bytes that Rust must copy.
+            if transfer.length() as usize != transfer_length {
+                return Err(FsError::InvalidData);
+            }
+            transfer
+                .subarray(
+                    0,
+                    u32::try_from(response_len).map_err(|_| FsError::InvalidData)?,
+                )
+                .copy_to(&mut output[..response_len]);
+        }
+        Ok(ResponseHead {
+            length: response_len,
+            value0,
+            value1,
+        })
+    }
+}
+
+impl Drop for Backend {
+    fn drop(&mut self) {
+        // A filesystem may be released on a different worker because the
+        // virtual-fs traits require Send + Sync. Never touch foreign-realm JS
+        // references; in that exceptional case the realm-local entry leaks.
+        if wasmer::js::current_thread_id() != self.origin_thread {
+            return;
+        }
+        let _ = REALM_BACKENDS.try_with(|backends| {
+            if let Ok(mut backends) = backends.try_borrow_mut() {
+                backends.remove(&self.id);
+            }
+        });
+    }
+}
+
+struct ResponseHead {
+    length: usize,
+    value0: u64,
+    value1: u64,
+}
+
+struct Response {
+    bytes: Vec<u8>,
+    value0: u64,
+    value1: u64,
+}
+
+struct SyncBridgeFile {
+    backend: Arc<Backend>,
+    descriptor: u32,
+    readable: bool,
+    writable: bool,
+    cursor: u64,
+}
+
+impl fmt::Debug for SyncBridgeFile {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SyncBridgeFile")
+            .field("descriptor", &self.descriptor)
+            .field("cursor", &self.cursor)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SyncBridgeFile {
+    fn seek_from_end_sync(&mut self, offset: i64) -> io::Result<u64> {
+        let size = self
+            .backend
+            .request(OP_FILE_SIZE, "", &[], self.descriptor.into(), 0, 0)
+            .map(|response| response.value0);
+        update_cursor_from_end(&mut self.cursor, size, offset)
+    }
+}
+
+impl Drop for SyncBridgeFile {
+    fn drop(&mut self) {
+        let _ = self
+            .backend
+            .request(OP_CLOSE, "", &[], self.descriptor.into(), 0, 0);
+    }
+}
+
+impl VirtualFile for SyncBridgeFile {
+    fn last_accessed(&self) -> u64 {
+        0
+    }
+
+    fn last_modified(&self) -> u64 {
+        0
+    }
+
+    fn created_time(&self) -> u64 {
+        0
+    }
+
+    fn size(&self) -> u64 {
+        self.backend
+            .request(OP_FILE_SIZE, "", &[], self.descriptor.into(), 0, 0)
+            .map(|response| response.value0)
+            .unwrap_or(0)
+    }
+
+    fn set_len(&mut self, new_size: u64) -> virtual_fs::Result<()> {
+        if !self.writable {
+            return Err(FsError::PermissionDenied);
+        }
+        self.backend
+            .request(OP_TRUNCATE, "", &[], self.descriptor.into(), new_size, 0)?;
+        self.cursor = self.cursor.min(new_size);
+        Ok(())
+    }
+
+    fn unlink(&mut self) -> virtual_fs::Result<()> {
+        self.backend
+            .request(OP_UNLINK, "", &[], self.descriptor.into(), 0, 0)?;
+        Ok(())
+    }
+
+    fn poll_read_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+        Poll::Ready(Ok(self.backend.capacity()))
+    }
+
+    fn poll_write_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+        Poll::Ready(Ok(self.backend.capacity()))
+    }
+}
+
+impl AsyncRead for SyncBridgeFile {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if !self.readable {
+            return Poll::Ready(Err(FsError::PermissionDenied.into()));
+        }
+        let requested = buffer.remaining().min(self.backend.capacity());
+        if requested == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let read = {
+            let output = buffer.initialize_unfilled_to(requested);
+            match self.backend.read(self.descriptor, self.cursor, output) {
+                Ok(read) => read,
+                Err(error) => return Poll::Ready(Err(error.into())),
+            }
+        };
+        if read > requested {
+            return Poll::Ready(Err(FsError::InvalidData.into()));
+        }
+        buffer.advance(read);
+        self.cursor = self.cursor.saturating_add(read as u64);
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for SyncBridgeFile {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if !self.writable {
+            return Poll::Ready(Err(FsError::PermissionDenied.into()));
+        }
+        let length = buffer.len().min(self.backend.capacity());
+        if length == 0 {
+            return Poll::Ready(Ok(0));
+        }
+        let response = match self.backend.request(
+            OP_WRITE,
+            "",
+            &buffer[..length],
+            self.descriptor.into(),
+            self.cursor,
+            0,
+        ) {
+            Ok(response) => response,
+            Err(error) => return Poll::Ready(Err(error.into())),
+        };
+        let written = match usize::try_from(response.value0) {
+            Ok(written) if written <= length => written,
+            _ => return Poll::Ready(Err(FsError::InvalidData.into())),
+        };
+        self.cursor = response.value1;
+        Poll::Ready(Ok(written))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let result = self
+            .backend
+            .request(OP_FLUSH, "", &[], self.descriptor.into(), 0, 0)
+            .map(|_| ())
+            .map_err(Into::into);
+        Poll::Ready(result)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncSeek for SyncBridgeFile {
+    fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
+        let next = match position {
+            SeekFrom::Start(offset) => offset,
+            SeekFrom::Current(delta) => checked_offset(self.cursor, delta)?,
+            SeekFrom::End(delta) => return self.seek_from_end_sync(delta).map(|_| ()),
+        };
+        self.cursor = next;
+        Ok(())
+    }
+
+    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        Poll::Ready(Ok(self.cursor))
+    }
+}
+
+fn update_cursor_from_end(
+    cursor: &mut u64,
+    size: virtual_fs::Result<u64>,
+    offset: i64,
+) -> io::Result<u64> {
+    let next = checked_offset(size.map_err(io::Error::from)?, offset)?;
+    *cursor = next;
+    Ok(next)
+}
+
+fn checked_offset(base: u64, delta: i64) -> io::Result<u64> {
+    if delta >= 0 {
+        base.checked_add(delta as u64)
+    } else {
+        base.checked_sub(delta.unsigned_abs())
+    }
+    .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))
+}
+
+#[cfg(test)]
+mod seek_tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn seek_from_end_preserves_bridge_arithmetic_and_cursor() {
+        let mut cursor = 3;
+        assert_eq!(update_cursor_from_end(&mut cursor, Ok(6), 5).unwrap(), 11);
+        assert_eq!(cursor, 11);
+        assert_eq!(update_cursor_from_end(&mut cursor, Ok(6), -5).unwrap(), 1);
+        assert_eq!(cursor, 1);
+    }
+
+    #[wasm_bindgen_test]
+    fn seek_from_end_preserves_cursor_on_arithmetic_error() {
+        let mut cursor = 3;
+        let error = update_cursor_from_end(&mut cursor, Ok(6), -7).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(cursor, 3);
+    }
+
+    #[wasm_bindgen_test]
+    fn seek_from_end_propagates_provider_error_without_moving_cursor() {
+        let backend = js_sys::Object::new();
+        let request = Function::new_with_args(
+            "opcode, _path, _payload, _arg0, _arg1, _flags",
+            r#"
+                switch (opcode) {
+                    case 8: return [0, 0, 0, 0];
+                    case 14: return [6, 0, 0, 0];
+                    default: throw new Error(`unexpected filesystem opcode ${opcode}`);
+                }
+            "#,
+        );
+        js_sys::Reflect::set(&backend, &JsValue::from_str("request"), request.as_ref()).unwrap();
+        let mut file = SyncBridgeFile {
+            backend: Arc::new(Backend::new(backend.into(), 8 * 1024).unwrap()),
+            descriptor: 7,
+            readable: true,
+            writable: false,
+            cursor: 3,
+        };
+
+        let error = Pin::new(&mut file)
+            .start_seek(SeekFrom::End(0))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(file.cursor, 3);
+    }
+}
+
+fn normalize_path(path: &Path) -> virtual_fs::Result<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {}
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop().ok_or(FsError::InvalidInput)?;
+            }
+            std::path::Component::Normal(value) => {
+                let value = value.to_str().ok_or(FsError::InvalidInput)?;
+                if value.is_empty() || value.contains('\0') {
+                    return Err(FsError::InvalidInput);
+                }
+                parts.push(value);
+            }
+        }
+    }
+    Ok(parts.join("/"))
+}
+
+fn metadata(kind: u64, size: u64) -> virtual_fs::Result<Metadata> {
+    let ft = match kind {
+        TYPE_FILE => FileType::new_file(),
+        TYPE_DIRECTORY => FileType::new_dir(),
+        _ => return Err(FsError::InvalidData),
+    };
+    Ok(Metadata {
+        ft,
+        len: size,
+        ..Default::default()
+    })
+}
+
+fn decode_directory_entries(parent: &str, bytes: &[u8]) -> virtual_fs::Result<Vec<DirEntry>> {
+    let mut cursor = 0;
+    let count = read_u32(bytes, &mut cursor)? as usize;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let kind = u64::from(read_u8(bytes, &mut cursor)?);
+        let length = read_u32(bytes, &mut cursor)? as usize;
+        let end = cursor.checked_add(length).ok_or(FsError::InvalidData)?;
+        let name = std::str::from_utf8(bytes.get(cursor..end).ok_or(FsError::InvalidData)?)
+            .map_err(|_| FsError::InvalidData)?;
+        if name.is_empty() || name.contains('/') || name.contains('\0') {
+            return Err(FsError::InvalidData);
+        }
+        cursor = end;
+        let path = if parent.is_empty() {
+            PathBuf::from("/").join(name)
+        } else {
+            PathBuf::from("/").join(parent).join(name)
+        };
+        entries.push(DirEntry {
+            path,
+            metadata: metadata(kind, 0),
+        });
+    }
+    if cursor != bytes.len() {
+        return Err(FsError::InvalidData);
+    }
+    Ok(entries)
+}
+
+fn read_u8(bytes: &[u8], cursor: &mut usize) -> virtual_fs::Result<u8> {
+    let value = *bytes.get(*cursor).ok_or(FsError::InvalidData)?;
+    *cursor += 1;
+    Ok(value)
+}
+
+fn read_u32(bytes: &[u8], cursor: &mut usize) -> virtual_fs::Result<u32> {
+    let end = cursor.checked_add(4).ok_or(FsError::InvalidData)?;
+    let raw: [u8; 4] = bytes
+        .get(*cursor..end)
+        .ok_or(FsError::InvalidData)?
+        .try_into()
+        .map_err(|_| FsError::InvalidData)?;
+    *cursor = end;
+    Ok(u32::from_le_bytes(raw))
+}
+
+fn decode_result(result: i32) -> virtual_fs::Result<()> {
+    let error = match result {
+        RESULT_OK => return Ok(()),
+        RESULT_NOT_FOUND => FsError::EntryNotFound,
+        RESULT_EXISTS => FsError::AlreadyExists,
+        RESULT_NOT_DIR => FsError::BaseNotDirectory,
+        RESULT_NOT_FILE => FsError::NotAFile,
+        RESULT_DIR_NOT_EMPTY => FsError::DirectoryNotEmpty,
+        RESULT_PERMISSION => FsError::PermissionDenied,
+        RESULT_INVALID => FsError::InvalidInput,
+        RESULT_STORAGE_FULL => FsError::StorageFull,
+        RESULT_UNSUPPORTED => FsError::Unsupported,
+        RESULT_TIMEOUT => FsError::TimedOut,
+        _ => FsError::IOError,
+    };
+    Err(error)
+}
+
+fn js_number(value: &JsValue) -> virtual_fs::Result<f64> {
+    value
+        .as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0 && value.fract() == 0.0)
+        .ok_or(FsError::InvalidData)
+}
+
+fn js_i32(value: &JsValue) -> virtual_fs::Result<i32> {
+    let value = value.as_f64().ok_or(FsError::InvalidData)?;
+    if !value.is_finite() || value.fract() != 0.0 {
+        return Err(FsError::InvalidData);
+    }
+    i32::try_from(value as i64).map_err(|_| FsError::InvalidData)
+}
+
+fn js_usize(value: &JsValue) -> virtual_fs::Result<usize> {
+    let value = js_number(value)?;
+    if value > usize::MAX as f64 {
+        return Err(FsError::InvalidData);
+    }
+    Ok(value as usize)
+}
+
+fn js_u64(value: &JsValue) -> virtual_fs::Result<u64> {
+    let value = js_number(value)?;
+    if value > 9_007_199_254_740_991.0 {
+        return Err(FsError::InvalidData);
+    }
+    Ok(value as u64)
+}

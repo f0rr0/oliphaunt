@@ -21,7 +21,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const PREFIX = 'release-notices.mts';
 
 export const RELEASE_NOTICE_PRODUCTS = Object.freeze(['native', 'wasix']);
-export const RELEASE_LICENSE_COMPONENTS = Object.freeze(['postgresql', 'icu', 'openssl']);
+export const RELEASE_LICENSE_COMPONENTS = Object.freeze([
+  'postgresql',
+  'icu',
+  'openssl',
+  'wasmer',
+  'v8',
+]);
 export const RELEASE_CARRIER_PROFILES = Object.freeze({
   'source-sdk': Object.freeze({ products: Object.freeze([]), components: Object.freeze([]) }),
   'code-facade': Object.freeze({ products: Object.freeze([]), components: Object.freeze([]) }),
@@ -31,7 +37,19 @@ export const RELEASE_CARRIER_PROFILES = Object.freeze({
   }),
   'wasix-napi-addon': Object.freeze({
     products: Object.freeze(['wasix']),
-    components: Object.freeze(['postgresql', 'icu', 'openssl']),
+    components: Object.freeze(['postgresql', 'icu', 'openssl', 'wasmer']),
+  }),
+  'wasix-engine-source': Object.freeze({
+    products: Object.freeze([]),
+    components: Object.freeze(['wasmer']),
+  }),
+  'wasix-engine-windows': Object.freeze({
+    products: Object.freeze([]),
+    components: Object.freeze(['v8']),
+  }),
+  'wasix-napi-addon-windows': Object.freeze({
+    products: Object.freeze(['wasix']),
+    components: Object.freeze(['postgresql', 'icu', 'openssl', 'wasmer', 'v8']),
   }),
   broker: Object.freeze({ products: Object.freeze([]), components: Object.freeze([]) }),
   'native-runtime': Object.freeze({
@@ -113,6 +131,36 @@ const PRODUCT_NOTICE_ROWS = Object.freeze({
 });
 
 const LICENSE_COMPONENT_ROWS = Object.freeze({
+  wasmer: Object.freeze({
+    id: 'wasmer',
+    spdx: 'MIT',
+    name: 'Wasmer / WASIX License',
+    member: 'THIRD_PARTY_LICENSES/Wasmer-LICENSE',
+    source: path.join(ROOT, 'src/wasix/runtime/engine/licenses/Wasmer-LICENSE'),
+    sourceManifest: path.join(ROOT, 'src/wasix/runtime/engine/source.toml'),
+    archiveSourceKey: 'wasmer',
+    sourceVersion: '7.5.0',
+    sha256: '76dc7d305458d07478bc62669fe53dbfd3b94b95c5e00fbb45af1f492cbd7284',
+    sourceUrl: 'https://static.crates.io/crates/wasmer/wasmer-7.5.0.crate',
+    sourceIdentity: 'sha256:ddfde3972691f1082774c71c42e21add1d1838cb6482a6921a0ba8a993e0046a',
+    licenseUrl:
+      'https://github.com/wasmerio/wasmer/blob/82ff099e082da586b38af79986abbb8b677f8baf/LICENSE',
+  }),
+  v8: Object.freeze({
+    id: 'v8',
+    spdx: 'BSD-3-Clause AND BSD-2-Clause AND Apache-2.0 AND Unicode-3.0 AND SunPro AND CC0-1.0 AND Zlib AND MIT AND Python-2.0',
+    name: 'V8 / wee8 Windows runtime licenses',
+    member: 'THIRD_PARTY_LICENSES/V8-LICENSES.txt',
+    source: path.join(ROOT, 'src/wasix/runtime/engine/licenses/V8-LICENSES.txt'),
+    sourceManifest: path.join(ROOT, 'src/wasix/runtime/engine/source.toml'),
+    archiveSourceKey: 'wee8-windows',
+    sourceVersion: '11.9.7',
+    sha256: '11b776696544c9ed9d11dc02b0f929cee703cfdb68d4895aaf2af1eb78e0116b',
+    sourceUrl:
+      'https://github.com/wasmerio/wee8-custom-builds/releases/download/11.9.7/v8-windows-amd64.tar.xz',
+    sourceIdentity: 'sha256:2aee8b6c3e8cecae2ce0325ac01b9bcaea4bef49e8f2aac599e1729d60c17285',
+    licenseUrl: 'https://github.com/v8/v8/blob/b0a55a7dad7f536cce1f9aaddba89894c8533946/LICENSE',
+  }),
   postgresql: Object.freeze({
     id: 'postgresql',
     spdx: 'PostgreSQL',
@@ -269,16 +317,14 @@ function validateRuntimeLicenseSource(row) {
       `runtime license source manifest ${row.sourceManifest} cannot be parsed: ${cause.message}`,
     );
   }
-  if (row.id === 'postgresql') {
-    const source = manifest?.postgresql;
+  if (row.id === 'postgresql' || row.archiveSourceKey) {
+    const source = manifest?.[row.archiveSourceKey ?? 'postgresql'];
     if (
       source?.version !== row.sourceVersion ||
       source?.url !== row.sourceUrl ||
       `sha256:${source?.sha256}` !== row.sourceIdentity
     ) {
-      throw new Error(
-        `PostgreSQL runtime license snapshot no longer matches ${row.sourceManifest}`,
-      );
+      throw new Error(`${row.id} runtime license snapshot no longer matches ${row.sourceManifest}`);
     }
   } else {
     if (
@@ -471,7 +517,7 @@ export function releasePackageLicense({ components = [], includeOliphaunt = true
   }
   entries.push(...releaseLicenseComponents(components));
   return Object.freeze({
-    spdx: entries.map((entry) => entry.spdx).join(' AND '),
+    spdx: [...new Set(entries.flatMap((entry) => entry.spdx.split(' AND ')))].join(' AND '),
     entries: Object.freeze(entries),
   });
 }

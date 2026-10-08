@@ -2,7 +2,7 @@
 name = "oliphaunt-broker-linux-arm64-gnu"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "Cargo artifact crate for the linux-arm64-gnu oliphaunt-broker helper binary."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"

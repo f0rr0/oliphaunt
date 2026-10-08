@@ -1,0 +1,120 @@
+[package]
+edition = "2024"
+rust-version = "1.96"
+name = "oliphaunt-wasmer-journal"
+version = "0.3.1"
+authors = ["Wasmer Engineering Team <engineering@wasmer.io>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Journaling functionality used by Wasmer to save and restore WASM state"
+homepage = "https://wasmer.io/"
+readme = false
+license = "MIT"
+repository = "https://github.com/wasmerio/wasmer"
+
+[package.metadata.docs.rs]
+features = [
+    "wasmer/sys",
+    "wasmer/compiler",
+]
+rustc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[features]
+default = [
+    "log-file",
+    "wasmer/sys-default",
+]
+log-file = ["shared-buffer"]
+
+[lib]
+name = "wasmer_journal"
+path = "upstream/src/lib.rs"
+
+[dependencies.anyhow]
+version = "1.0"
+
+[dependencies.async-trait]
+version = "0.1.68"
+
+[dependencies.base64]
+version = "0.23.0"
+
+[dependencies.bincode]
+version = "=2.0.1"
+
+[dependencies.bytecheck]
+version = "0.8.2"
+
+[dependencies.bytes]
+version = "1.11.1"
+
+[dependencies.derive_more]
+version = "2.0.1"
+features = [
+    "debug",
+    "display",
+]
+
+[dependencies.lz4_flex]
+version = "0.14.0"
+
+[dependencies.num_enum]
+version = "0.7.3"
+
+[dependencies.rkyv]
+version = "0.8.13"
+features = [
+    "indexmap-2",
+    "bytes-1",
+]
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+default-features = false
+
+[dependencies.serde_json]
+version = "1"
+
+[dependencies.shared-buffer]
+version = "0.1.4"
+optional = true
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.tracing]
+version = "0.1"
+default-features = false
+
+[dependencies.virtual-fs]
+version = "0.705.0"
+default-features = false
+
+[dependencies.virtual-net]
+version = "0.705.0"
+features = ["rkyv"]
+default-features = false
+
+[dependencies.wasmer]
+package = "oliphaunt-wasmer"
+path = "../wasmer"
+version = "*"
+default-features = false
+
+[dependencies.wasmer-config]
+version = "=0.705.0"
+default-features = false
+
+[dependencies.wasmer-wasix-types]
+package = "oliphaunt-wasmer-wasix-types"
+path = "../wasmer-wasix-types"
+version = "*"
+features = ["enable-serde"]

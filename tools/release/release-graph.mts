@@ -426,6 +426,15 @@ export function declaredSharedSourceImpacts(products, prefix = 'release-graph') 
     const visit = (manifestPath) => {
       if (visited.has(manifestPath)) return;
       visited.add(manifestPath);
+      // Independently owned payloads already propagate through
+      // embedded_payload_products. Plan from their checked-in producer inputs,
+      // rather than requiring generated Cargo sources before acquisition.
+      if (
+        (config.embedded_payload_products ?? []).some((owner) =>
+          manifestPath.startsWith(`${products[owner]?.path}/`),
+        )
+      )
+        return;
       const directory = path.posix.dirname(manifestPath);
       const pkg = cargoPackage(manifestPath);
       // Local runtime and build dependencies become part of the shipped binary.

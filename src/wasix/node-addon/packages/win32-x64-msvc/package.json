@@ -2,7 +2,7 @@
   "name": "@oliphaunt/wasix-napi-win32-x64-msvc",
   "version": "0.2.0",
   "description": "Windows x64 MSVC prebuilt Oliphaunt WASIX Node-API runtime.",
-  "license": "MIT AND PostgreSQL AND Unicode-3.0 AND Apache-2.0",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0 AND Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause AND SunPro AND CC0-1.0 AND Zlib AND Python-2.0",
   "type": "commonjs",
   "repository": {
     "type": "git",

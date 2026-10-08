@@ -2,7 +2,7 @@
 name = "oliphaunt-wasix-tools"
 version = "0.2.3"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "WASIX pg_dump and psql assets for oliphaunt-wasix"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"

@@ -880,7 +880,9 @@ fn decode_text_bytea(value: ValueRef<'_>, raw: &[u8]) -> std::result::Result<Vec
             return invalid_value(value, "Vec<u8>", "hex bytea has odd length");
         }
         return hex
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 let digit = |byte: u8| match byte {
                     b'0'..=b'9' => Some(byte - b'0'),

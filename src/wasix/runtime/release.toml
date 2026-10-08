@@ -3,6 +3,12 @@ owner = "@oliphaunt/wasix"
 kind = "wasm-runtime"
 publish_targets = ["github-release-assets", "crates-io", "npm"]
 registry_packages = [
+  "crates:oliphaunt-wasmer",
+  "crates:oliphaunt-wasmer-wasix-types",
+  "crates:oliphaunt-wasmer-journal",
+  "crates:oliphaunt-wasmer-wasix",
+  "crates:oliphaunt-wasmer-v8-windows-x64-msvc",
+
   "crates:liboliphaunt-wasix-portable",
   "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
   "crates:liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",

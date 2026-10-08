@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,6 +33,12 @@ export async function loadHostBuildContract() {
     ...patchSeries.map((patch) => `src/wasix/browser-host/patches/${patch}`),
     buildScriptPath,
     provenanceScriptPath,
+    'src/wasix/browser-host/prepare-sdk.mts',
+    'src/wasix/browser-host/bundle-sdk.mts',
+    'src/wasix/browser-host/index.mts',
+    'src/wasix/browser-host/rust-toolchain.toml',
+    'src/wasix/browser-host/Cargo.lock',
+    ...(await adapterSources('src/wasix/browser-host/adapter')),
     'tools/dev/curl-platform-flags.sh',
     'tools/dev/acquisition.sh',
     'src/third-party/tools/fetch-sources.sh',
@@ -51,9 +57,12 @@ export async function loadHostBuildContract() {
     wasmerJsCommit: tomlString(source, 'wasmer-js', 'commit'),
     wasmerWasixVersion: tomlString(source, 'wasmer-wasix', 'version'),
     virtualFsVersion: tomlString(source, 'virtual-fs', 'version'),
+    rustToolchain: (await readFile(resolve(hostDirectory, 'rust-toolchain.toml'), 'utf8')).match(
+      /^channel\s*=\s*"([^"]+)"/mu,
+    )?.[1],
     inputsSha256: sha256(digests.join('')),
     guestConcurrency: 'typed-single-program-host-policy',
-    clockDispatch: 'server-direct-js-16ms-or-1024-reads-shared-setter-fallback-tools-canonical',
+    clockDispatch: 'adapter-direct-js-16ms-or-1024-reads-shared-setter-fallback-tools-canonical',
     fdClose: 'typed-filesystem-durability-policy',
     syncFilesystemBridge: 'realm-local-fresh-owned-js-transfer',
     toolProtocolWrite: 'owned-js-copy-before-callback',
@@ -76,6 +85,16 @@ export async function loadHostBuildContract() {
     },
   });
   return Object.freeze({ inputs, patchSeries: Object.freeze(patchSeries), provenance });
+}
+
+async function adapterSources(directory: string): Promise<string[]> {
+  const sources = [];
+  for (const entry of await readdir(resolve(repositoryRoot, directory), { withFileTypes: true })) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) sources.push(...(await adapterSources(path)));
+    else if (entry.name.endsWith('.rs')) sources.push(path);
+  }
+  return sources.sort();
 }
 
 function validateProtocolTransportContract(contract) {

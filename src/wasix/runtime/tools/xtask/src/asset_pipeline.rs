@@ -1279,6 +1279,16 @@ fn has_wasm_export(link: &WasmLinkMetadataOut, name: &str) -> bool {
         .any(|export| export.name == name || export.name == format!("_{name}"))
 }
 
+fn aot_file(module: &BuildModuleOutput, target: &str) -> String {
+    module.aot_file.replace(
+        "-llvm-opta.bin.zst",
+        &format!(
+            "-{}.bin.zst",
+            crate::aot_serializer::aot_engine_profile(target)
+        ),
+    )
+}
+
 fn aot_source_dir(product: AssetProduct, target: &str) -> PathBuf {
     // Old producer outputs used a different memory-codegen policy. A fresh
     // profile directory prevents packaging those bytes under the new identity.
@@ -1286,7 +1296,7 @@ fn aot_source_dir(product: AssetProduct, target: &str) -> PathBuf {
         .root()
         .join("aot-source")
         .join(target)
-        .join(crate::aot_serializer::AOT_ENGINE_PROFILE)
+        .join(crate::aot_serializer::aot_engine_profile(target))
 }
 
 pub(crate) fn prepare_aot_artifacts(
@@ -1309,7 +1319,7 @@ pub(crate) fn prepare_aot_artifacts(
         .iter()
         .filter(|module| module.requires_aot && product.owns(&module.name))
     {
-        let output = source_dir.join(&module.aot_file);
+        let output = source_dir.join(aot_file(module, target));
         let input = fs::canonicalize(&module.path)
             .with_context(|| format!("canonicalize {}", module.path.display()))?;
         let input = input.to_str().context("AOT input path is not UTF-8")?;
@@ -1960,7 +1970,8 @@ fn package_aot_artifacts(
         .filter(|module| module.requires_aot && outputs.product.owns(&module.name))
     {
         let name = module.name.as_str();
-        let file = module.aot_file.as_str();
+        let file = aot_file(module, target);
+        let file = file.as_str();
         let source = source_dir.join(file);
         if !source.exists() {
             bail!(
@@ -2000,7 +2011,7 @@ fn package_aot_artifacts(
         source_fingerprint: outputs.source_fingerprint.clone(),
         postgres_version: Some(outputs.postgres_version.clone()),
         target_triple: target.to_owned(),
-        engine: crate::aot_serializer::AOT_ENGINE_PROFILE.to_owned(),
+        engine: crate::aot_serializer::aot_engine_profile(target).to_owned(),
         wasmer_version: sources.toolchain.wasmer.clone(),
         wasmer_wasix_version: sources.toolchain.wasmer_wasix.clone(),
         artifacts: manifest_artifacts,
@@ -2053,7 +2064,7 @@ pub(crate) fn package_extension_aot_artifacts(
         let Some(sql_name) = extension_module_sql_name(&module.name) else {
             bail!("extension AOT module has invalid name {}", module.name);
         };
-        let source = source_dir.join(&module.aot_file);
+        let source = source_dir.join(aot_file(module, target));
         if !source.exists() {
             bail!(
                 "missing extension AOT artifact {}; run AOT generation for target {target} before packaging",
@@ -2063,7 +2074,7 @@ pub(crate) fn package_extension_aot_artifacts(
         let extension_dir = artifacts_root.join(sql_name);
         fs::create_dir_all(&extension_dir)
             .with_context(|| format!("create {}", extension_dir.display()))?;
-        let destination = extension_dir.join(&module.aot_file);
+        let destination = extension_dir.join(aot_file(module, target));
         copy_file(&source, &destination)?;
         let raw_artifact = decode_zstd_file(&destination)
             .with_context(|| format!("decode extension AOT artifact {}", destination.display()))?;
@@ -2072,7 +2083,7 @@ pub(crate) fn package_extension_aot_artifacts(
             .or_default()
             .push(AotManifestArtifact {
                 name: module.name.clone(),
-                path: module.aot_file.clone(),
+                path: aot_file(module, target),
                 sha256: sha256_file(&destination)?,
                 raw_sha256: sha256_bytes(&raw_artifact),
                 raw_size: raw_artifact.len() as u64,
@@ -2094,7 +2105,7 @@ pub(crate) fn package_extension_aot_artifacts(
             source_fingerprint: outputs.source_fingerprint.clone(),
             postgres_version: Some(outputs.postgres_version.clone()),
             target_triple: target.to_owned(),
-            engine: crate::aot_serializer::AOT_ENGINE_PROFILE.to_owned(),
+            engine: crate::aot_serializer::aot_engine_profile(target).to_owned(),
             wasmer_version: sources.toolchain.wasmer.clone(),
             wasmer_wasix_version: sources.toolchain.wasmer_wasix.clone(),
             artifacts,
@@ -2161,7 +2172,7 @@ pub(crate) fn check_aot_product_manifest(
     )?;
     ensure_eq(
         &manifest.engine,
-        crate::aot_serializer::AOT_ENGINE_PROFILE,
+        crate::aot_serializer::aot_engine_profile(target),
         "AOT manifest engine",
     )?;
     ensure_eq(
@@ -2586,7 +2597,7 @@ mod tests {
             let legacy = product.root().join("aot-source").join(target);
             assert_eq!(
                 aot_source_dir(product, target),
-                legacy.join(crate::aot_serializer::AOT_ENGINE_PROFILE)
+                legacy.join(crate::aot_serializer::aot_engine_profile(target))
             );
             assert_ne!(aot_source_dir(product, target), legacy);
         }
@@ -2716,15 +2727,18 @@ mod tests {
         source_fingerprint: Option<&str>,
         postgres_version: Option<&str>,
     ) {
+        let toolchain = load_wasix_toolchain_manifest()
+            .expect("WASIX toolchain manifest")
+            .toolchain;
         let manifest = AotManifest {
             format_version: AOT_MANIFEST_FORMAT_VERSION,
             source_lane: source_lane.map(str::to_owned),
             source_fingerprint: source_fingerprint.map(str::to_owned),
             postgres_version: postgres_version.map(str::to_owned),
             target_triple: "aarch64-apple-darwin".to_owned(),
-            engine: crate::aot_serializer::AOT_ENGINE_PROFILE.to_owned(),
-            wasmer_version: "7.2.1".to_owned(),
-            wasmer_wasix_version: "0.702.1".to_owned(),
+            engine: crate::aot_serializer::aot_engine_profile("aarch64-apple-darwin").to_owned(),
+            wasmer_version: toolchain.wasmer,
+            wasmer_wasix_version: toolchain.wasmer_wasix,
             artifacts: vec![AotManifestArtifact {
                 name: "runtime:oliphaunt".to_owned(),
                 path: "oliphaunt.aot.zst".to_owned(),
