@@ -11,6 +11,13 @@ const status = requireElement<HTMLParagraphElement>('status');
 const output = requireElement<HTMLPreElement>('output');
 
 try {
+  const freshWorker = await WorkerOliphaunt.open();
+  try {
+    await expectAnswer(freshWorker);
+  } finally {
+    await freshWorker.close();
+  }
+
   const storage = indexedDB('packed-browser-smoke');
   let database = await Oliphaunt.open({
     storage,
