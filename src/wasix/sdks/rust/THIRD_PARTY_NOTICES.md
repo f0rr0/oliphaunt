@@ -11,8 +11,8 @@ runtime and extension carriers also embed ICU 76.1 and OpenSSL 3.5.6.
 Every carrier that embeds these components includes their exact pinned license
 bytes under `THIRD_PARTY_LICENSES/`:
 
-- `PostgreSQL-COPYRIGHT` — PostgreSQL 18.4, source SHA-256
-  `81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094`.
+- `PostgreSQL-COPYRIGHT` — PostgreSQL 18.6, source SHA-256
+  `555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f`.
 - `ICU-LICENSE` — ICU commit `8eca245c7484ac6cc179e3e5f7c1ea7680810f39`.
 - `OpenSSL-LICENSE.txt` — OpenSSL commit
   `286ddeaac037533bbdce65b3c689e3f7ffebf0f6`.

@@ -13,5 +13,5 @@ dependsOn:
 
 project:
   title: "PostgreSQL 18 Contrib Extensions"
-  description: "PostgreSQL contrib extension definitions tied to the active PostgreSQL 18.4 source baseline."
+  description: "PostgreSQL contrib extension definitions tied to the active PostgreSQL 18.6 source baseline."
   owner: "oliphaunt"
