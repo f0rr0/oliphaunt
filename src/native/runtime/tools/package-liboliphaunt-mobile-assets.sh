@@ -91,7 +91,7 @@ package_android() {
   [ -d "$host_runtime" ] || fail "missing native host runtime at $host_runtime"
 
   tools/dev/bun.sh src/native/runtime/tools/native-mobile-abi-contract.mts write \
-    --build-root "$work_root/postgresql-18.4" \
+    --build-root "$work_root/postgresql-18.6" \
     --target "$target_id" \
     --output "$work_root/out/native-mobile-abi.properties"
 
@@ -144,15 +144,15 @@ package_ios() {
     fail "base iOS release runtime must not ship optional extension assets; selected extensions belong in exact extension artifacts"
 
   tools/dev/bun.sh src/native/runtime/tools/native-mobile-abi-contract.mts write \
-    --build-root "${OLIPHAUNT_IOS_DEVICE_ROOT:-$root/target/liboliphaunt-ios-device}/postgresql-18.4" \
+    --build-root "${OLIPHAUNT_IOS_DEVICE_ROOT:-$root/target/liboliphaunt-ios-device}/postgresql-18.6" \
     --target ios-arm64 \
     --output "$ios_device_receipt"
   tools/dev/bun.sh src/native/runtime/tools/native-mobile-abi-contract.mts write \
-    --build-root "${OLIPHAUNT_IOS_SIMULATOR_ROOT:-$root/target/liboliphaunt-ios-simulator}/postgresql-18.4" \
+    --build-root "${OLIPHAUNT_IOS_SIMULATOR_ROOT:-$root/target/liboliphaunt-ios-simulator}/postgresql-18.6" \
     --target ios-arm64-simulator \
     --output "$ios_simulator_receipt"
   tools/dev/bun.sh src/native/runtime/tools/native-mobile-abi-contract.mts write \
-    --build-root "$macos_work_root/postgresql-18.4" \
+    --build-root "$macos_work_root/postgresql-18.6" \
     --target macos-arm64 \
     --output "$macos_producer_receipt"
   tools/dev/bun.sh src/native/runtime/tools/native-mobile-abi-contract.mts compare \

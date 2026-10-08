@@ -1,5 +1,5 @@
 format-version = 1
-postgres-version = "18.4"
+postgres-version = "18.6"
 source-kind = "postgres-contrib"
 source-root = "src/third-party/postgres/contrib"
 
