@@ -394,6 +394,7 @@ XLogReaderFree
 XLogRecGetBlockRefInfo
 XLogRecGetBlockTagExtended
 XLogRecStoreStats
+XLogRegisterBuffer
 XLogRegisterData
 XactIsoLevel
 XidInMVCCSnapshot
@@ -823,7 +824,6 @@ list_member_oid
 list_sort
 llround
 log
-log_newpage_buffer
 log_newpage_range
 lookup_rowtype_tupdesc
 lookup_rowtype_tupdesc_domain
@@ -1224,7 +1224,7 @@ varstr_cmp
 varstr_levenshtein
 varstr_levenshtein_less_equal
 vfprintf
-visibilitymap_clear
+visibilitymap_clear_locked
 visibilitymap_get_status
 visibilitymap_pin
 visibilitymap_prepare_truncate

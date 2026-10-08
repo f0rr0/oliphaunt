@@ -91,9 +91,6 @@ export function validateSelectionNeutralSwiftSourceCarrier(
       'must be empty for a selection-neutral source carrier',
     );
   }
-  if (JSON.stringify(legal.base) !== JSON.stringify(iosBaseLegalMetadata())) {
-    throw error(`${label}.legal.base`, 'must match the canonical native Apple legal locators');
-  }
 
   const base = exactKeys(root.base, ['assets', 'product', 'tag', 'version'], `${label}.base`);
   if (base.product !== 'liboliphaunt-native') {
@@ -105,6 +102,10 @@ export function validateSelectionNeutralSwiftSourceCarrier(
   const expectedTag = `${base.product}-v${base.version}`;
   if (base.tag !== expectedTag) {
     throw error(`${label}.base.tag`, `must be ${expectedTag}`);
+  }
+
+  if (JSON.stringify(legal.base) !== JSON.stringify(iosBaseLegalMetadata(base.version))) {
+    throw error(`${label}.legal.base`, 'must match the canonical native Apple legal locators');
   }
 
   const assetContracts = [

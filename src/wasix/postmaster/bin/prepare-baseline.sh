@@ -198,7 +198,7 @@ fresh_write_report_header "$report" "Clean PostgreSQL Baseline"
   printf -- '- Local deterministic baseline commit: `%s`\n\n' "$baseline_head"
   printf -- '- Local deterministic baseline tree: `%s`\n\n' "$baseline_tree"
   printf '## Lineage Rule\n\n'
-  printf 'This checkout is the clean canonical PostgreSQL 18.4 archive oracle. Do not apply runtime patches here.\n'
+  printf 'This checkout is the clean canonical PostgreSQL 18.6 archive oracle. Do not apply runtime patches here.\n'
 } >>"$report"
 
 if [ "$print_path" -eq 1 ]; then
