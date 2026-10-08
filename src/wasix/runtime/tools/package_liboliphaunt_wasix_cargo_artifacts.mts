@@ -37,6 +37,7 @@ import {
 import { RUST_BUILD_SCRIPT_SHA256 } from '../../../../tools/packaging/rust-build-script-sha256.mts';
 import {
   cargoPackage,
+  packageAotSpec,
   packageSpec,
   validateCrateSize,
 } from '../../../../tools/packaging/wasix-cargo-payload.mts';
@@ -65,6 +66,8 @@ import {
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
 } from './wasix-cargo-artifact-contract.mts';
+
+import { packageEngine } from '../engine/package.mts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const PRODUCT = 'liboliphaunt-wasix';
@@ -405,7 +408,7 @@ function rewriteRuntimeCoreManifest(root) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-function runtimeCorePayload(runtimeRoot, extractRoot) {
+export function runtimeCorePayload(runtimeRoot, extractRoot) {
   const coreRoot = path.join(extractRoot, 'runtime-core-payload');
   rmSync(coreRoot, { recursive: true, force: true });
   cpSync(runtimeRoot, coreRoot, { recursive: true });
@@ -722,7 +725,7 @@ function writeExtensionPayloadPartSources({
         `name = ${JSON.stringify(part.name)}`,
         `version = ${JSON.stringify(version)}`,
         'edition = "2024"',
-        'rust-version = "1.93"',
+        'rust-version = "1.96"',
         `description = ${JSON.stringify(`Cargo payload part for the ${subject} on ${target}`)}`,
         'repository = "https://github.com/f0rr0/oliphaunt"',
         'homepage = "https://oliphaunt.dev"',
@@ -1262,7 +1265,7 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
       `name = "${spec.name}"`,
       `version = "${spec.version}"`,
       'edition = "2024"',
-      'rust-version = "1.93"',
+      'rust-version = "1.96"',
       `description = "Oliphaunt WASIX artifact package for the ${subject}"`,
       'repository = "https://github.com/f0rr0/oliphaunt"',
       'homepage = "https://oliphaunt.dev"',
@@ -1421,7 +1424,7 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
       `name = "${spec.name}"`,
       `version = "${spec.version}"`,
       'edition = "2024"',
-      'rust-version = "1.93"',
+      'rust-version = "1.96"',
       `description = "Oliphaunt WASIX AOT artifact package for the ${subject} on ${spec.target}"`,
       'repository = "https://github.com/f0rr0/oliphaunt"',
       'homepage = "https://oliphaunt.dev"',
@@ -1766,14 +1769,15 @@ export function packageWasixCargoArtifacts(argv) {
   );
   const specs = args.extensionsOnly ? [] : packageSpecs(assetDir, extractRoot, args.version);
   const packages = [
+    ...(args.extensionsOnly ? [] : packageEngine({ sourceRoot, outputDir, version: args.version })),
     ...extensionSources.flatMap((source) =>
       packageExtensionSource(source, { outputDir, cargoTargetDir }),
     ),
     ...extensionAotSources.flatMap((source) =>
       packageExtensionAotSource(source, { outputDir, cargoTargetDir }),
     ),
-    ...specs.map((spec) =>
-      packageSpec(spec, {
+    ...specs.flatMap((spec) => {
+      const options = {
         version: args.version,
         sourceRoot,
         outputDir,
@@ -1783,8 +1787,11 @@ export function packageWasixCargoArtifacts(argv) {
             ? (text) =>
                 injectRuntimeExtensionDependencies(text, extensionSources, extensionAotSources)
             : undefined,
-      }),
-    ),
+      };
+      return spec.kind === 'wasix-aot'
+        ? packageAotSpec(spec, options)
+        : [packageSpec(spec, options)];
+    }),
   ];
   writePackagesManifest(packages, outputDir);
   console.log(

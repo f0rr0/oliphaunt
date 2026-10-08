@@ -172,8 +172,8 @@ function aggregateFixture(root, { nestedOwner = false } = {}) {
       2,
     )}\n`,
   );
-  const canonicalAot = canonicalWasixAotMetadata();
   for (const [targetId, targetTriple] of Object.entries(AOT_TARGET_TRIPLES)) {
+    const canonicalAot = canonicalWasixAotMetadata(undefined, targetTriple);
     for (const sqlName of ['cube', 'earthdistance']) {
       const directory = path.join(productRoot, 'wasix-aot', targetId, sqlName);
       const artifactName = `${sqlName}.bin.zst`;
@@ -464,8 +464,8 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, 'src/was
 
   test('runtime Cargo packaging rejects an AOT carrier that cannot initialize fresh databases', () => {
     const root = mkdtempSync(path.join(scratch, 'runtime-aot-closure-'));
-    const canonical = canonicalWasixAotMetadata();
     const target = supportedRustcHostTriple();
+    const canonical = canonicalWasixAotMetadata(undefined, target);
     const raw = Buffer.from('core AOT fixture');
     const bytes = zstdCompressSync(raw);
     const manifest = {

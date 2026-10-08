@@ -190,7 +190,7 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
 name = ${JSON.stringify(product)}
 version = ${JSON.stringify(version)}
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = ${JSON.stringify(`Target-selecting Cargo facade for ${sqlNames.length} Oliphaunt PostgreSQL extension member${sqlNames.length === 1 ? '' : 's'}.`)}
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"

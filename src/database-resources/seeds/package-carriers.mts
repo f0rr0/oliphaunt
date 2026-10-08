@@ -186,7 +186,7 @@ export function packageSeedCarriers(argv = [], { assetDir, outputDir, sourceDir 
     );
     writeFileSync(
       path.join(stage, 'Cargo.toml'),
-      `[package]\nname = ${JSON.stringify(identity.cargo)}\nversion = ${JSON.stringify(version)}\nedition = "2024"\nrust-version = "1.93"\ndescription = ${JSON.stringify(npm.description)}\nlicense = ${JSON.stringify(license)}\nrepository = "https://github.com/f0rr0/oliphaunt"\ninclude = ["src/**", "seed.tar.zst", "manifest.json", "README.md", "LICENSE", "THIRD_PARTY*"]\n${identity.profile === 'icu' ? `\n[dependencies]\noliphaunt-icu = "=${version}"\n` : ''}\n[workspace]\n`,
+      `[package]\nname = ${JSON.stringify(identity.cargo)}\nversion = ${JSON.stringify(version)}\nedition = "2024"\nrust-version = "1.96"\ndescription = ${JSON.stringify(npm.description)}\nlicense = ${JSON.stringify(license)}\nrepository = "https://github.com/f0rr0/oliphaunt"\ninclude = ["src/**", "seed.tar.zst", "manifest.json", "README.md", "LICENSE", "THIRD_PARTY*"]\n${identity.profile === 'icu' ? `\n[dependencies]\noliphaunt-icu = "=${version}"\n` : ''}\n[workspace]\n`,
     );
     const crate = packageGeneratedCargoSource(
       path.join(stage, 'Cargo.toml'),

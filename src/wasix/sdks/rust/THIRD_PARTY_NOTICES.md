@@ -16,9 +16,14 @@ bytes under `THIRD_PARTY_LICENSES/`:
 - `ICU-LICENSE` — ICU commit `8eca245c7484ac6cc179e3e5f7c1ea7680810f39`.
 - `OpenSSL-LICENSE.txt` — OpenSSL commit
   `286ddeaac037533bbdce65b3c689e3f7ffebf0f6`.
+- `Wasmer-LICENSE` — Wasmer 7.5.0 and WASIX 0.705.0, with the compatibility
+  patches owned by `src/wasix/runtime/engine/`.
+- `V8-LICENSES.txt` — Windows wee8 11.9.7 / V8 13.6.233.17, including the
+  licenses of the libraries bundled into that engine.
 
 Third-party source pins for optional external extensions are maintained in
 `src/third-party/`, and WASIX toolchain inputs are maintained in
-`tools/dev/`. Exact SQL extension selection is modeled in
-`extensions/`; generated WASM assets must include only the
+`src/wasix/runtime/toolchain.toml` and `src/wasix/runtime/engine/source.toml`.
+Exact SQL extension selection is modeled in
+`src/extensions/`; generated WASM assets must include only the
 extension artifacts explicitly selected for the release payload.

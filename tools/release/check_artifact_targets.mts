@@ -210,6 +210,13 @@ export function validateMatrixCoverage(targets, extensions, matrices) {
   for (const row of matrices.wasixAot.include) {
     const target = wasixAotTargets.get(row.target_id);
     invariant(target !== undefined, `WASIX AOT CI matrix has unknown target ${row.target_id}`);
+    if (row.target_id === 'windows-x64-msvc') {
+      invariant(
+        row.llvm_url === undefined && row.llvm_sha256 === undefined && row.llvm_bytes === undefined,
+        'Windows WASIX AOT uses the owned V8 producer',
+      );
+      continue;
+    }
     invariant(
       row.llvm_url === target.llvmUrl,
       `WASIX AOT CI matrix ${row.target_id} must bind its declared LLVM URL`,

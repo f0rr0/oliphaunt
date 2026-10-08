@@ -13,6 +13,9 @@ node_modules/
 /src/docs/out/
 /src/wasix/runtime/crates/assets/assets/
 /src/wasix/runtime/crates/aot/*/artifacts/
+/src/wasix/runtime/engine/crates/*/upstream/
+/src/wasix/runtime/engine/crates/*/.prepared.json
+/src/wasix/runtime/engine/crates/*/prebuilt/
 /src/native/sdks/react-native/ios/vendor/oliphaunt-swift/
 /src/native/sdks/react-native/ios/vendor/liboliphaunt.xcframework/
 **/.DS_Store

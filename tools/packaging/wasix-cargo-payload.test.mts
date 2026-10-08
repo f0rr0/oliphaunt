@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict';
+import { createHash, randomBytes } from 'node:crypto';
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -6,7 +8,8 @@ import {
 } from '../../src/database-resources/contracts/native-manifest.mts';
 import { createDeterministicTar } from './cargo-source-package.mts';
 import { extractPortableArchiveTree, releaseZstdCompressSync } from './portable-archive.mts';
-import { packageSpec } from './wasix-cargo-payload.mts';
+import { packageAotSpec, packageSpec } from './wasix-cargo-payload.mts';
+import { preparePackagedCargoTestClosure } from './cargo-package-test-closure.mts';
 import { WASIX_AOT_ENGINE } from '../../src/wasix/runtime/tools/wasix-aot-manifest.mts';
 
 const root = path.resolve(import.meta.dir, '../..');
@@ -149,3 +152,80 @@ for (const [id, template, kind, payloadDirName, ancestorAssets, variable, expres
   rows.push([crate, payloadDirName, variable, external].join('\t'));
 }
 writeFileSync(path.join(scratch, 'cases.tsv'), `${rows.join('\n')}\n`);
+
+const splitRows = [];
+for (const [owner, kind, artifact] of [
+  ['runtime', 'wasix-aot', 'runtime:oliphaunt'],
+  ['postgres-tools', 'wasix-tools-aot', 'tool:pg_dump'],
+]) {
+  const target = 'x86_64-pc-windows-msvc';
+  const templateDir = path.join(root, `src/wasix/${owner}/crates/aot/${target}`);
+  const { name, version } = Bun.TOML.parse(
+    readFileSync(path.join(templateDir, 'Cargo.toml'), 'utf8'),
+  ).package;
+  const base = path.join(scratch, `split-${owner}`);
+  const payloadRoot = path.join(base, 'payload');
+  mkdirSync(payloadRoot, { recursive: true });
+  const bytes = randomBytes(11 * 1024 * 1024);
+  const file = owner === 'runtime' ? 'oliphaunt-v8.bin.zst' : 'pg_dump-v8.bin.zst';
+  writeFileSync(path.join(payloadRoot, file), bytes);
+  writeFileSync(
+    path.join(payloadRoot, 'manifest.json'),
+    JSON.stringify({
+      engine: 'v8',
+      artifacts: [{ name: artifact, path: file }],
+    }),
+  );
+  const spec = { name, kind, target, templateDir, payloadRoot, payloadDirName: 'artifacts' };
+  const options = {
+    version,
+    sourceRoot: path.join(base, 'source'),
+    outputDir: path.join(base, 'packages'),
+    cargoTargetDir: path.join(base, 'package-target'),
+  };
+  mkdirSync(options.outputDir);
+  assert.throws(
+    () => packageSpec(spec, { ...options, sourceRoot: path.join(base, 'unsplit') }),
+    /10 MiB/u,
+  );
+  const packages = packageAotSpec(spec, options);
+  assert.equal(packages.length, 3);
+  assert(packages.every(({ size }) => size < 10 * 1024 * 1024));
+  assert.deepEqual(
+    packages.map(({ name }) => name),
+    [`${name}-part-001`, `${name}-part-002`, name],
+  );
+  const parent = packages.at(-1);
+  const buildDependencies = Bun.TOML.parse(readFileSync(parent.manifestPath, 'utf8'))[
+    'build-dependencies'
+  ];
+  for (const part of packages.slice(0, -1))
+    assert.equal(buildDependencies[part.name], `=${version}`);
+  const manifest = preparePackagedCargoTestClosure({
+    cratePath: parent.cratePath,
+    dependencyCrates: packages.slice(0, -1).map(({ cratePath }) => cratePath),
+    scratch: path.join(base, 'consumer'),
+  });
+  const crate = path.dirname(manifest);
+  mkdirSync(path.join(crate, 'examples'));
+  writeFileSync(manifest, readFileSync(manifest, 'utf8') + '\n[dev-dependencies]\nsha2 = "0.10"\n');
+  writeFileSync(
+    path.join(crate, 'examples/probe.rs'),
+    `use sha2::{Digest, Sha256};
+fn main() {
+    let bytes = ${name.replaceAll('-', '_')}::artifact_bytes(${JSON.stringify(artifact)}).unwrap();
+    assert_eq!(format!("{:x}", Sha256::digest(bytes)), ${JSON.stringify(createHash('sha256').update(bytes).digest('hex'))});
+    assert!(${name.replaceAll('-', '_')}::HAS_EMBEDDED_AOT);
+    assert_eq!(${name.replaceAll('-', '_')}::ENGINE, "v8");
+}
+`,
+  );
+  const part = path.join(
+    base,
+    'consumer/dependencies',
+    `${packages[0].name}-${version}`,
+    'payload.part',
+  );
+  splitRows.push([crate, part].join('\t'));
+}
+writeFileSync(path.join(scratch, 'split-cases.tsv'), `${splitRows.join('\n')}\n`);

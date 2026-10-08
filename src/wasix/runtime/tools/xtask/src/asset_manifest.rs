@@ -398,7 +398,7 @@ pub(super) fn read_wasm_link_metadata(path: &Path) -> Result<WasmLinkMetadataOut
                                     flags: export.flags.bits(),
                                 }));
                         }
-                        Dylink0Subsection::Unknown { .. } => {}
+                        Dylink0Subsection::TargetArch(_) | Dylink0Subsection::Unknown { .. } => {}
                     }
                 }
             }

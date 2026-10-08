@@ -15,10 +15,11 @@ if (mode === 'targets') {
     assert.match(commands, /import-download/);
   } else {
     const sha = 'b'.repeat(40);
-    assert.equal(commands.split(`CI\n${sha}\n`).length - 1, count);
+    assert.equal(commands.split(`CI\n${sha}\n`).length - 1, count + 1);
     assert.ok(!commands.includes('a'.repeat(40)));
     const run = mode === 'selected' ? '777' : '30358387218';
-    assert.equal(commands.split(`--run-id\n${run}\n--job\nBuilds\n`).length - 1, count);
+    assert.equal(commands.split(`--run-id\n${run}\n--job\nBuilds\n`).length - 1, count + 1);
+    assert.ok(commands.includes('--artifact\nliboliphaunt-wasix-windows-engine\n'));
     if (mode === 'selected') assert.ok(commands.includes(`--commit\n${sha}\n--status\nsuccess`));
     const install = commands.slice(commands.indexOf('import-download\n'));
     for (const [id, triple] of Object.entries(AOT_TARGET_TRIPLES)) {

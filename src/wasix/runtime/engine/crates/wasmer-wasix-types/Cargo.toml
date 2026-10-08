@@ -1,0 +1,107 @@
+[package]
+edition = "2024"
+rust-version = "1.96"
+name = "oliphaunt-wasmer-wasix-types"
+version = "0.3.1"
+authors = ["Wasmer Engineering Team <engineering@wasmer.io>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "WASI and WASIX types for Wasmer WebAssembly runtime"
+homepage = "https://wasmer.io/"
+readme = "upstream/README.md"
+keywords = [
+    "wasm",
+    "webassembly",
+    "wasi",
+    "sandbox",
+    "ABI",
+]
+categories = [
+    "wasm",
+    "os",
+]
+license = "MIT"
+repository = "https://github.com/wasmerio/wasmer"
+
+[package.metadata.docs.rs]
+features = [
+    "wasmer/sys",
+    "wasmer/cranelift",
+]
+rustc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[features]
+enable-serde = [
+    "serde",
+    "wasmer-types/serde",
+]
+
+[lib]
+name = "wasmer_wasix_types"
+path = "upstream/src/lib.rs"
+
+[dependencies.anyhow]
+version = "1.0"
+
+[dependencies.bitflags]
+version = "2.13.2"
+
+[dependencies.byteorder]
+version = "1.3"
+
+[dependencies.num_enum]
+version = "0.7.3"
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+optional = true
+default-features = false
+
+[dependencies.time]
+version = "0.3.47"
+features = ["formatting"]
+default-features = false
+
+[dependencies.tracing]
+version = "0.1"
+default-features = false
+
+[dependencies.wai-bindgen-gen-core]
+version = "0.2.1"
+default-features = false
+
+[dependencies.wai-bindgen-gen-rust]
+version = "0.2.1"
+default-features = false
+
+[dependencies.wai-bindgen-gen-rust-wasm]
+version = "0.2.1"
+default-features = false
+
+[dependencies.wai-bindgen-rust]
+version = "0.2.1"
+features = ["macros"]
+default-features = false
+
+[dependencies.wai-parser]
+version = "0.2.1"
+
+[dependencies.wasmer]
+package = "oliphaunt-wasmer"
+path = "../wasmer"
+version = "*"
+default-features = false
+
+[dependencies.wasmer-derive]
+version = "=7.5.0"
+
+[dependencies.wasmer-types]
+version = "=7.5.0"
