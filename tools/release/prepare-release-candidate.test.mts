@@ -1,12 +1,14 @@
 import { test, expect } from 'bun:test';
 import { Manifest } from 'release-please';
 import { Version } from 'release-please/build/src/version.js';
+import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
 import { buildPlan, declaredSharedSourceImpacts, loadGraph, ROOT } from './release-graph.mts';
 import {
   includeOwnedSourceCommits,
   useSourceDate,
   applyCandidate,
 } from './prepare-release-candidate.mts';
+import { validateReleaseConsumerCompatibility } from './consumer-compatibility.mts';
 import {
   appendFileSync,
   existsSync,
@@ -300,24 +302,16 @@ test('shared source qualification respects each owner release boundary and ignor
   ).toEqual([`${native}/VERSION`]);
 });
 
-test('actual Rust, npm, Swift and Gradle strategy updates apply to one local candidate', async () => {
+async function generateProductCandidate(commits, readCompatibility) {
   const root = path.resolve(import.meta.dir, '../..');
-  const selected = [
-    'src/native/sdks/rust',
-    'src/native/sdks/ts',
-    'src/native/sdks/swift',
-    'src/native/sdks/kotlin',
-  ];
   const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
   const versions = JSON.parse(
     readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
   );
-  config.packages = Object.fromEntries(selected.map((owner) => [owner, config.packages[owner]]));
-  const current = Object.fromEntries(selected.map((owner) => [owner, versions[owner]]));
   const github = {
     repository: { owner: 'f0rr0', repo: 'oliphaunt', defaultBranch: 'main' },
     async *releaseIterator() {
-      for (const owner of selected)
+      for (const owner of Object.keys(config.packages))
         yield {
           tagName: `${config.packages[owner].component}-v${versions[owner]}`,
           sha: first,
@@ -325,11 +319,7 @@ test('actual Rust, npm, Swift and Gradle strategy updates apply to one local can
         };
     },
     async *mergeCommitIterator() {
-      yield {
-        sha: head,
-        message: 'fix: correct the selected SDK behavior',
-        files: selected.map((owner) => `${owner}/src/implementation`),
-      };
+      yield* commits;
       yield { sha: first, message: 'chore(release): previous versions', files: [] };
     },
     async getFileContentsOnBranch(file) {
@@ -338,7 +328,7 @@ test('actual Rust, npm, Swift and Gradle strategy updates apply to one local can
         file === 'release-please-config.json'
           ? JSON.stringify(config)
           : file === '.release-please-manifest.json'
-            ? JSON.stringify(current)
+            ? JSON.stringify(versions)
             : existsSync(local)
               ? readFileSync(local, 'utf8')
               : undefined;
@@ -355,8 +345,26 @@ test('actual Rust, npm, Swift and Gradle strategy updates apply to one local can
   };
   const manifest = await Manifest.fromManifest(github, 'main');
   useSourceDate('2026-09-11');
-  includeOwnedSourceCommits(manifest, github, graph);
+  includeOwnedSourceCommits(manifest, github, graph, readCompatibility);
   const [candidate] = await manifest.buildPullRequests();
+  return { candidate, versions };
+}
+
+test('actual Rust, npm, Swift and Gradle strategy updates apply to one local candidate', async () => {
+  const root = path.resolve(import.meta.dir, '../..');
+  const selected = [
+    'src/native/sdks/rust',
+    'src/native/sdks/ts',
+    'src/native/sdks/swift',
+    'src/native/sdks/kotlin',
+  ];
+  const { candidate, versions } = await generateProductCandidate([
+    {
+      sha: head,
+      message: 'fix: correct the selected SDK behavior',
+      files: selected.map((owner) => `${owner}/src/implementation`),
+    },
+  ]);
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'release-please-ecosystems-'));
   try {
     for (const update of candidate.updates) {
@@ -391,5 +399,90 @@ test('actual Rust, npm, Swift and Gradle strategy updates apply to one local can
     for (const owner of selected) expect(after[owner]).not.toBe(versions[owner]);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('SDK runtime advances select independently versioned extension repackaging before admission', async () => {
+  const extensions = Object.entries(graph.products).filter(
+    ([, product]) => product.extension?.class === 'external',
+  );
+  for (const runtime of ['liboliphaunt-native', 'liboliphaunt-wasix']) {
+    const sdk = runtime === 'liboliphaunt-native' ? 'oliphaunt-kotlin' : 'oliphaunt-wasix-rust';
+    const { candidate, versions } = await generateProductCandidate([
+      {
+        sha: head,
+        message: 'fix: correct runtime packaging',
+        files: [`${graph.products[runtime].path}/tools/package.sh`],
+      },
+      {
+        sha: second,
+        message: 'fix: correct SDK integration',
+        files: [`${graph.products[sdk].path}/src/implementation`],
+      },
+    ]);
+    const manifestUpdate = mergeUpdates(candidate.updates).find(
+      ({ path: file }) => file === '.release-please-manifest.json',
+    );
+    const after = JSON.parse(manifestUpdate.updater.updateContent(JSON.stringify(versions)));
+    const products = structuredClone(graph.products);
+    const selected = Object.keys(products).filter((id) => {
+      products[id].version = after[products[id].path];
+      return products[id].version !== graph.products[id].version;
+    });
+    for (const [id, product] of extensions) {
+      expect(selected).toContain(id);
+      const [major, minor, patch] = product.version.split('.').map(Number);
+      expect(products[id].version).toBe(`${major}.${minor}.${patch + 1}`);
+      const changelog = candidate.updates.find(({ path: file }) => file === product.changelog_path);
+      expect(changelog.updater.updateContent('# Changelog\n')).toContain(
+        `support ${runtime}@${products[runtime].version}`,
+      );
+    }
+    const readCompatibility = (product, source) =>
+      selected.includes(product)
+        ? products[source].version
+        : graph.products[product].extension.compatibility[
+            source === 'liboliphaunt-native' ? 'native_runtime_version' : 'wasix_runtime_version'
+          ];
+    expect(() =>
+      validateReleaseConsumerCompatibility(selected, { products, readCompatibility }),
+    ).not.toThrow();
+  }
+});
+
+test('runtime-only and compatible SDK-only candidates retain independent extension releases', async () => {
+  for (const id of ['liboliphaunt-native', 'oliphaunt-kotlin']) {
+    const { candidate } = await generateProductCandidate([
+      {
+        sha: head,
+        message: 'fix: correct product behavior',
+        files: [`${graph.products[id].path}/src/implementation`],
+      },
+    ]);
+    expect(
+      candidate.updates.some(({ path: file }) => file.startsWith('src/extensions/external/')),
+    ).toBe(false);
+  }
+});
+
+test('React Native repackages extensions for its pinned SDK even without a new runtime candidate', async () => {
+  const readCompatibility = (product, source) =>
+    product.startsWith('oliphaunt-extension-') ? '0.1.0' : graph.products[source].version;
+  const { candidate } = await generateProductCandidate(
+    [
+      {
+        sha: head,
+        message: 'fix: correct mobile integration',
+        files: ['src/native/sdks/react-native/ios/OliphauntAdapter.swift'],
+      },
+    ],
+    readCompatibility,
+  );
+  expect(candidate.updates.some(({ path: file }) => file === `${native}/VERSION`)).toBe(false);
+  for (const product of Object.values(graph.products)) {
+    if (product.extension?.class === 'external')
+      expect(candidate.updates.some(({ path: file }) => file === `${product.path}/VERSION`)).toBe(
+        true,
+      );
   }
 });

@@ -5,11 +5,19 @@ import { GitHub, Manifest, registerChangelogNotes } from 'release-please';
 import { ManifestPlugin } from 'release-please/build/src/plugin.js';
 import { DefaultChangelogNotes } from 'release-please/build/src/changelog-notes/default.js';
 import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
-import { buildPlan, loadGraph } from './release-graph.mts';
+import { ReleasePleaseManifest } from 'release-please/build/src/updaters/release-please-manifest.js';
+import { parseConventionalCommits } from 'release-please/build/src/commit.js';
+import { buildPlan, loadGraph, productCompatibilityVersion } from './release-graph.mts';
+import { extensionConsumers } from './consumer-compatibility.mts';
 
-// Only ownership is supplied here. Release Please remains responsible for
-// conventional commits, version policy, changelog text and ecosystem updaters.
-export function includeOwnedSourceCommits(manifest, github, graph) {
+// Supply source ownership and required extension repackaging. Release Please
+// owns version policy, changelog text and ecosystem updaters in both cases.
+export function includeOwnedSourceCommits(
+  manifest,
+  github,
+  graph,
+  readCompatibility = productCompatibilityVersion,
+) {
   const observed = [];
   const iterate = github.mergeCommitIterator.bind(github);
   github.mergeCommitIterator = async function* (...args) {
@@ -18,9 +26,11 @@ export function includeOwnedSourceCommits(manifest, github, graph) {
       yield commit;
     }
   };
-  manifest.plugins.unshift(
+  manifest.plugins.push(
     new (class extends ManifestPlugin {
       async preconfigure(strategies, commitsByPath, releasesByPath) {
+        this.strategies = strategies;
+        this.releasesByPath = releasesByPath;
         const owners = new Map(
           observed.map((commit) => [
             commit.sha,
@@ -41,6 +51,59 @@ export function includeOwnedSourceCommits(manifest, github, graph) {
           commitsByPath[ownerPath] = observed.filter((commit) => selected.has(commit.sha));
         }
         return strategies;
+      }
+
+      async run(candidates) {
+        const products = structuredClone(graph.products);
+        const selected = new Set();
+        for (const candidate of candidates) {
+          const product = this.repositoryConfig[candidate.path].component;
+          products[product].version = candidate.pullRequest.version.toString();
+          selected.add(product);
+        }
+        const required = new Map();
+        for (const { product, runtime } of extensionConsumers(selected, products)) {
+          required.set(
+            runtime,
+            selected.has(product) ? products[runtime].version : readCompatibility(product, runtime),
+          );
+        }
+        for (const [product, config] of Object.entries(products)) {
+          if (config.extension?.class !== 'external' || selected.has(product)) continue;
+          const changes = [...required].filter(
+            ([runtime, version]) => readCompatibility(product, runtime) !== version,
+          );
+          if (changes.length === 0) continue;
+          const ownerPath = config.path;
+          const commits = parseConventionalCommits([
+            {
+              sha: observed[0].sha,
+              message: `fix: support ${changes.map(([runtime, version]) => `${runtime}@${version}`).join(', ')}`,
+              files: [],
+            },
+          ]);
+          const pullRequest = await this.strategies[ownerPath].buildReleasePullRequest(
+            commits,
+            this.releasesByPath[ownerPath],
+            manifest.draftPullRequest,
+            manifest.labels,
+          );
+          if (!pullRequest) throw new Error(`could not prepare compatible extension ${product}`);
+          pullRequest.updates.push({
+            path: manifest.manifestPath,
+            createIfMissing: false,
+            updater: new ReleasePleaseManifest({
+              version: pullRequest.version,
+              versionsMap: new Map([[ownerPath, pullRequest.version]]),
+            }),
+          });
+          candidates.push({
+            path: ownerPath,
+            config: this.repositoryConfig[ownerPath],
+            pullRequest,
+          });
+        }
+        return candidates;
       }
     })(github, 'main', manifest.repositoryConfig),
   );
