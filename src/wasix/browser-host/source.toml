@@ -1,13 +1,13 @@
 [wasmer-js]
-# SDK 0.19.0 is Modified MIT, not plain MIT. See the pinned upstream LICENSE
+# SDK 0.19.1 is Modified MIT, not plain MIT. See the pinned upstream LICENSE
 # for its commercial-product UI attribution threshold before adoption.
 name = "@wasmer/sdk"
-version = "0.19.0"
+version = "0.19.1"
 url = "https://github.com/wasmerio/wasmer-sdk.git"
-commit = "7e69332b7f65dbc5584d64bb79f547eaf4302b69"
+commit = "0ba1eadc55daff2f1005e5c44eb5d246199187bd"
 
 [wasmer]
-# The coherent engine revision used by SDK 0.19.0, including WASIX and virtual IO.
+# The coherent engine revision used by SDK 0.19.1, including WASIX and virtual IO.
 name = "wasmer"
 version = "7.4.0"
 url = "https://github.com/wasmerio/wasmer.git"
