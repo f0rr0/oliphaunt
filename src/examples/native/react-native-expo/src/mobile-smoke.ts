@@ -51,11 +51,16 @@ export async function runMobileBindingProof(
     checks,
     'raw protocol stream',
     async () => {
-      const autoExplainLogMinDuration = await scalar(
-        db,
-        "SELECT current_setting('auto_explain.log_min_duration')::text AS value",
+      const autoExplainSetting = await db.query(
+        "SELECT current_setting('auto_explain.log_min_duration', true)::text AS value",
       );
-      await db.execute("SET auto_explain.log_min_duration = '-1'");
+      const autoExplainLogMinDuration = autoExplainSetting.rows[0]?.value;
+      if (autoExplainLogMinDuration !== null && typeof autoExplainLogMinDuration !== 'string') {
+        throw new Error('auto_explain setting probe returned an invalid value');
+      }
+      if (autoExplainLogMinDuration !== null) {
+        await db.execute("SET auto_explain.log_min_duration = '-1'");
+      }
       try {
         const request = simpleQuery("SELECT repeat('x', 2048) FROM generate_series(1, 1024)");
         const expected = await db.execProtocolRaw(request);
@@ -112,9 +117,11 @@ export async function runMobileBindingProof(
         );
         return `${chunkCount} acknowledged chunks, ${streamed.byteLength} complete raw bytes, callback exception preserved`;
       } finally {
-        await db.query("SELECT set_config('auto_explain.log_min_duration', $1, false) AS value", [
-          autoExplainLogMinDuration,
-        ]);
+        if (autoExplainLogMinDuration !== null) {
+          await db.query("SELECT set_config('auto_explain.log_min_duration', $1, false) AS value", [
+            autoExplainLogMinDuration,
+          ]);
+        }
       }
     },
     onCheckStage,

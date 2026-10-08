@@ -1281,7 +1281,7 @@ func bundleResourceURLs(
     // not guaranteed to appear in Bundle.allBundles until explicitly loaded.
     // Discover immediate child bundles so app-owned runtime payloads are
     // visible before the first database open.
-    if let resourceRoot,
+    if let resourceRoot = resourceRoot?.resolvingSymlinksInPath(),
        let children = try? FileManager.default.contentsOfDirectory(
            at: resourceRoot,
            includingPropertiesForKeys: [.isDirectoryKey],
@@ -1289,7 +1289,9 @@ func bundleResourceURLs(
        )
     {
         discovered.append(contentsOf: children.compactMap { child in
-            guard child.pathExtension == "bundle" else { return nil }
+            guard child.pathExtension == "bundle" || child.pathExtension == "framework" else {
+                return nil
+            }
             return Bundle(url: child)
         })
     }

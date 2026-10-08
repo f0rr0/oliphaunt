@@ -17,6 +17,8 @@ const EXCLUDED = [
 export function reactNativePackageInputFingerprint({ root, rnDir, examplePackage }) {
   const files = [
     ...walk(rnDir),
+    ...walk(path.join(root, 'src/native/sdks/swift/Templates/OliphauntBroker')),
+    path.join(root, 'tools/packaging/portable-archive.mts'),
     path.join(root, 'src/extensions/generated/sdk/extensions.json'),
     path.join(root, 'src/extensions/generated/sdk/ios-static-dependencies.json'),
     ...(examplePackage ? [examplePackage] : []),

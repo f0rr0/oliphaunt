@@ -1,7 +1,14 @@
 import * as fs from 'node:fs';
 import * as crypto from 'node:crypto';
 import assert from 'node:assert/strict';
-function extensionReceipt(reportFile, metadataFile, platform, candidateSha, candidateTree) {
+function extensionReceipt(
+  reportFile,
+  metadataFile,
+  platform,
+  candidateSha,
+  candidateTree,
+  selectedExtensions,
+) {
   const payload = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
   const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
   if (!/^[0-9a-f]{40}$/.test(candidateSha) || !/^[0-9a-f]{40}$/.test(candidateTree)) {
@@ -61,11 +68,24 @@ function extensionReceipt(reportFile, metadataFile, platform, candidateSha, cand
       `${platform} app PASS receipt exceeds the 768-byte unified-log-safe event budget: ${passEventBytes}`,
     );
   }
-  const expected = (metadata.extensions ?? []).map((row) => row['sql-name']).sort();
-  if (expected.length === 0 || new Set(expected).size !== expected.length) {
+  const available = (metadata.extensions ?? []).map((row) => row['sql-name']).sort();
+  if (available.length === 0 || new Set(available).size !== available.length) {
     throw new Error(
       `${platform} generated mobile catalog must contain a nonempty unique release extension set`,
     );
+  }
+  const expected = selectedExtensions
+    .split(',')
+    .map((extension) => extension.trim())
+    .filter(Boolean)
+    .sort();
+  if (new Set(expected).size !== expected.length) {
+    throw new Error(`${platform} selected mobile extension set must be unique`);
+  }
+  const availableSet = new Set(available);
+  const unknown = expected.filter((extension) => !availableSet.has(extension));
+  if (unknown.length > 0) {
+    throw new Error(`${platform} selected mobile extensions are unknown: ${unknown.join(',')}`);
   }
   if (
     payload.extensionCount !== expected.length ||

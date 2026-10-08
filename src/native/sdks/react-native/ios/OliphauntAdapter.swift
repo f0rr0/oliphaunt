@@ -133,10 +133,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         completion: @escaping (NSData?, NSError?) -> Void
     ) {
         let completionBox = CompletionBox(completion)
-        let instant = Self.operationDeadline(deadline)
         Task(priority: .userInitiated) { [database] in
             do {
-                let response = try await OliphauntBridge.$deadline.withValue(instant) {
+                let response = try await Self.withOperationDeadline(deadline) {
                     try await database.execProtocolRaw(request)
                 }
                 completionBox.value(response as NSData, nil)
@@ -155,10 +154,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
     ) {
         let completionBox = CompletionBox(completion)
         let chunkBox = CompletionBox(onChunk)
-        let instant = Self.operationDeadline(deadline)
         Task(priority: .userInitiated) { [database] in
             do {
-                try await OliphauntBridge.$deadline.withValue(instant) {
+                try await Self.withOperationDeadline(deadline) {
                     try await database.execProtocolRawStream(request) { chunk in
                         if let error = chunkBox.value(chunk as NSData) {
                             throw ProtocolStreamCallbackFailure(error)
@@ -186,10 +184,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         completion: @escaping (NSData?, NSError?) -> Void
     ) {
         let completionBox = CompletionBox(completion)
-        let instant = Self.operationDeadline(deadline)
         Task(priority: .userInitiated) { [database] in
             do {
-                let backup = try await OliphauntBridge.$deadline.withValue(instant) {
+                let backup = try await Self.withOperationDeadline(deadline) {
                     try await database.reactNativeBackup()
                 }
                 completionBox.value(backup.value as NSData, nil)
@@ -242,6 +239,20 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         mach_timebase_info(&scale)
         let now = Double(mach_continuous_time()) * Double(scale.numer) / Double(scale.denom) / 1_000_000
         return ContinuousClock.now.advanced(by: .milliseconds(max(0, milliseconds - now)))
+    }
+
+    private static func withOperationDeadline<Result>(
+        _ milliseconds: Double,
+        operation: () async throws -> Result
+    ) async rethrows -> Result {
+        #if OLIPHAUNT_BROKER
+            return try await OliphauntBridge.$deadline.withValue(
+                operationDeadline(milliseconds),
+                operation: operation
+            )
+        #else
+            return try await operation()
+        #endif
     }
 
     private struct ParsedOpenConfig {

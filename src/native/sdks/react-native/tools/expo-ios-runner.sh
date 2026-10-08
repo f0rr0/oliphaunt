@@ -415,9 +415,7 @@ pack_react_native_sdk() {
     [ -f "$package_stamp" ] &&
     [ "$(tr -d '\r\n' <"$package_stamp")" = "$package_fingerprint" ]; then
     echo "Reusing React Native SDK package: $tarball" >&2
-    if [ ! -f "$example_dir/node_modules/@oliphaunt/react-native/package.json" ]; then
-      install_react_native_sdk_tarball
-    fi
+    install_react_native_sdk_tarball
     local installed_package="$example_dir/node_modules/@oliphaunt/react-native"
     verify_installed_ios_package "$installed_package"
     return
@@ -437,15 +435,40 @@ pack_react_native_sdk() {
   printf '%s\n' "$package_fingerprint" >"$package_stamp"
 }
 
-prepare_swift_sdk_artifact_git_repo_if_required() {
+commit_local_swift_sdk_repo() {
+  local repository="$1"
+  local branch="$2"
+  (
+    cd "$repository"
+    git init -q
+    git config user.name "Oliphaunt CI"
+    git config user.email "ci@oliphaunt.dev"
+    git checkout -q -b "$branch"
+    git add .
+    git commit -q -m "build: stage swift sdk source"
+  )
+}
+
+prepare_swift_sdk_git_repo() {
+  need_cmd git
   if ! expo_requires_sdk_artifacts; then
-    return 0
+    local source_repo="$scratch_root/swift-sdk-source-repo"
+    local source_root="$source_repo/src/sdks/swift"
+    need_cmd rsync
+    rm -rf "$source_repo"
+    mkdir -p "$source_root/Sources"
+    rsync -a --delete "$root/src/native/sdks/swift/Sources/" "$source_root/Sources/"
+    commit_local_swift_sdk_repo "$source_repo" source
+    export OLIPHAUNT_SWIFT_SDK_GIT_URL="file://$source_repo"
+    export OLIPHAUNT_SWIFT_SDK_BRANCH=source
+    unset OLIPHAUNT_SWIFT_SDK_COMMIT
+    unset OLIPHAUNT_SWIFT_SDK_TAG
+    return
   fi
 
   local archive artifact_repo extract_root package_archive_root source_root
   need_cmd unzip
   need_cmd node
-  need_cmd git
   archive="$(expo_single_sdk_artifact_file oliphaunt-swift 'Oliphaunt-source.zip')"
   artifact_repo="$scratch_root/swift-sdk-artifact-repo"
   extract_root="$scratch_root/swift-sdk-artifact-extract"
@@ -484,15 +507,7 @@ prepare_swift_sdk_artifact_git_repo_if_required() {
   cp "$(expo_sdk_artifact_product_root oliphaunt-swift)/Package.swift.release" "$artifact_repo/Package.swift"
   [ -s "$source_root/Sources/OliphauntNativeBindings/OliphauntNativeBindings.swift" ] ||
     fail "Swift SDK source artifact is missing generated native bindings"
-  (
-    cd "$artifact_repo"
-    git init -q
-    git config user.name "Oliphaunt CI"
-    git config user.email "ci@oliphaunt.dev"
-    git checkout -q -b artifact
-    git add .
-    git commit -q -m "artifact: stage swift sdk source"
-  )
+  commit_local_swift_sdk_repo "$artifact_repo" artifact
   export OLIPHAUNT_SWIFT_SDK_GIT_URL="file://$artifact_repo"
   export OLIPHAUNT_SWIFT_SDK_BRANCH="artifact"
   unset OLIPHAUNT_SWIFT_SDK_COMMIT
@@ -855,6 +870,9 @@ cleanup_ios_runner() {
 }
 
 main() {
+  local selected_extensions
+  selected_extensions="$(normalize_mobile_extensions)"
+  export EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS="$selected_extensions"
   need_cmd node
   need_cmd xcrun
   if is_truthy "$e2e_only"; then
@@ -903,15 +921,13 @@ main() {
   pack_react_native_sdk
   configure_ios_carrier_inputs
   ensure_ios_project
-  prepare_swift_sdk_artifact_git_repo_if_required
+  prepare_swift_sdk_git_repo
   patch_expo_modules_jsi_for_host_toolchain
   install_pods
   validate_app_owned_payload_pod_source
   stamp_expo_modules_jsi_prebuilt
   app="$(build_ios_app)"
   export_mobile_e2e_icu_expectation_from_ios_app "$app"
-  local selected_extensions
-  selected_extensions="$(normalize_mobile_extensions)"
   write_ios_build_artifact_report "$app" "$selected_extensions"
   if is_ios_build_only; then
     printf '\niOS build-only mobile artifact complete: %s\n' "$app"

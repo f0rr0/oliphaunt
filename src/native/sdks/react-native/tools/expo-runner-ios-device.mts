@@ -53,9 +53,17 @@ switch (command) {
     break;
   }
   case 'booted-simulator': {
+    const preferredName = process.env.OLIPHAUNT_EXPO_IOS_DEVICE_NAME || '';
+    const preferredRuntime = process.env.OLIPHAUNT_EXPO_IOS_SIMULATOR_RUNTIME || '';
     const data = JSON.parse(fs.readFileSync(0, 'utf8'));
-    for (const devices of Object.values(data.devices || {})) {
-      const found = devices.find((device) => device.isAvailable && device.state === 'Booted');
+    for (const [runtime, devices] of Object.entries(data.devices || {})) {
+      if (preferredRuntime && !runtime.includes(preferredRuntime)) continue;
+      const found = devices.find(
+        (device) =>
+          device.isAvailable &&
+          device.state === 'Booted' &&
+          (!preferredName || device.name === preferredName),
+      );
       if (found) {
         process.stdout.write(found.udid);
         process.exit(0);
@@ -66,11 +74,14 @@ switch (command) {
   }
   case 'available-simulator': {
     const preferredName = process.env.OLIPHAUNT_EXPO_IOS_DEVICE_NAME || 'iPhone 15 Pro';
-    const preferredRuntime = process.env.OLIPHAUNT_EXPO_IOS_RUNTIME || '';
+    const preferredRuntime = process.env.OLIPHAUNT_EXPO_IOS_SIMULATOR_RUNTIME || '';
     const data = JSON.parse(fs.readFileSync(0, 'utf8'));
     const candidates = [];
     for (const [runtime, devices] of Object.entries(data.devices || {})) {
       if (!runtime.includes('iOS')) {
+        continue;
+      }
+      if (preferredRuntime && !runtime.includes(preferredRuntime)) {
         continue;
       }
       const versionMatch = runtime.match(/iOS-(\d+)-(\d+)/);
@@ -82,13 +93,11 @@ switch (command) {
         }
         const exactName = device.name === preferredName ? 1 : 0;
         const iphone = device.name.startsWith('iPhone') ? 1 : 0;
-        const runtimeMatch = preferredRuntime && runtime.includes(preferredRuntime) ? 1 : 0;
-        candidates.push({ device, exactName, iphone, runtimeMatch, major, minor });
+        candidates.push({ device, exactName, iphone, major, minor });
       }
     }
     candidates.sort(
       (left, right) =>
-        right.runtimeMatch - left.runtimeMatch ||
         right.exactName - left.exactName ||
         right.iphone - left.iphone ||
         right.major - left.major ||
@@ -96,6 +105,9 @@ switch (command) {
         (left.device.name < right.device.name ? -1 : left.device.name > right.device.name ? 1 : 0),
     );
     if (!candidates.length) {
+      console.error(
+        `error: no available iOS simulator matches runtime=${preferredRuntime || 'any'}, device=${preferredName}`,
+      );
       process.exit(1);
     }
     process.stdout.write(candidates[0].device.udid);

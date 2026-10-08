@@ -113,6 +113,7 @@ const packagedCatalogProfile = process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE
 const packagedCatalogProfileProbeSql = process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL;
 const packagedCatalogProfileProbeExpected =
   process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED;
+const packagedExtensions = process.env.EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS;
 let initialLaunchUrlPromise: Promise<string | null> | undefined;
 
 function smokeGlobalState(): SmokeGlobalState {
@@ -528,7 +529,26 @@ function requiredPublicEnvironment(name: string, value: string | undefined): str
 }
 
 function mobileReleaseExtensionProofPlan() {
-  return GENERATED_MOBILE_EXTENSION_PLAN.map((extension) => {
+  if (packagedExtensions === undefined) {
+    throw new Error('installed mobile qualification requires EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS');
+  }
+  const requested = packagedExtensions
+    .split(',')
+    .map((extension) => extension.trim())
+    .filter(Boolean);
+  const selected = new Set(requested);
+  if (selected.size !== requested.length) {
+    throw new Error('EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS contains duplicate extensions');
+  }
+  const plan = GENERATED_MOBILE_EXTENSION_PLAN.filter((extension) =>
+    selected.has(extension.sqlName),
+  );
+  if (plan.length !== selected.size) {
+    const known = new Set(GENERATED_MOBILE_EXTENSION_PLAN.map((extension) => extension.sqlName));
+    const unknown = requested.filter((extension) => !known.has(extension));
+    throw new Error(`unknown packaged mobile extensions: ${unknown.join(',')}`);
+  }
+  return plan.map((extension) => {
     const smokeStatements = (
       GENERATED_MOBILE_EXTENSION_SMOKE as Readonly<Record<string, readonly string[]>>
     )[extension.sqlName];

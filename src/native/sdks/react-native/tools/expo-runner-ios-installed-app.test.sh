@@ -13,6 +13,9 @@ trap 'rm -rf "$test_root"' EXIT
 app="$test_root/fixture.app"
 for profile in standard icu; do
   rm -rf "$app"
+  runtime_manifest="$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties"
+  mkdir -p "$(dirname "$runtime_manifest")"
+  printf 'selectedExtensions=vector\n' >"$runtime_manifest"
   seed_name=Standard
   seed_resource=cluster-seed
   expected_icu=0
@@ -31,6 +34,7 @@ for profile in standard icu; do
   export_mobile_e2e_icu_expectation_from_ios_app "$app"
   [ "$OLIPHAUNT_MOBILE_E2E_EXPECT_ICU" = "$expected_icu" ]
   [ "$OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE" = "$profile" ]
+  [ "$OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS" = vector ]
   other=ICU
   [ "$seed_name" != ICU ] || other=Standard
   mkdir "$app/OliphauntSeedNativeIOS$other.bundle"
@@ -66,6 +70,10 @@ success_tag=OLIPHAUNT_EXPO_SMOKE_PASS
 export CI_HEAD_SHA="$(git rev-parse HEAD)"
 export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
 export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE=standard
+export OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS="$(
+  bun -e 'const metadata = await Bun.file(process.argv[1]).json(); console.log(metadata.extensions.map((row) => row["sql-name"]).join(","));' \
+    "$root/src/extensions/generated/sdk/extensions.json"
+)"
 receipt_json="$(
   bun "$root/src/native/sdks/react-native/tools/expo-runner-ios-installed-app.fixture.mts" receipt "$root/src/extensions/generated/sdk/extensions.json"
 )"

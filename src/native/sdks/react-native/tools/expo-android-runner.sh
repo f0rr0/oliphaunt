@@ -408,7 +408,7 @@ prepare_runtime_resources() {
   local runtime_source="${OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR:-}"
   if [ -z "$runtime_source" ]; then
     local android_runtime_source
-    android_runtime_source="$(android_build_root_for_abi)/install"
+    android_runtime_source="$root/target/liboliphaunt-mobile-host/android-$android_abi/install"
     if [ -f "$root/target/liboliphaunt-android-runtime-smoke/share/postgresql/postgres.bki" ]; then
       runtime_source="$root/target/liboliphaunt-android-runtime-smoke"
     else
@@ -738,6 +738,9 @@ write_android_build_artifact_report() {
 }
 
 main() {
+  local selected_extensions
+  selected_extensions="$(normalize_mobile_extensions)"
+  export EXPO_PUBLIC_OLIPHAUNT_EXTENSIONS="$selected_extensions"
   if ! is_truthy "$e2e_only"; then
     need_cmd rg
   fi
@@ -786,8 +789,6 @@ JS
   publish_local_kotlin_sdk "$runtime_resources" "$jni_libs"
   build_apk "$runtime_resources" "$jni_libs"
   export_mobile_e2e_icu_expectation_from_android_apk "$apk" "Android APK"
-  local selected_extensions
-  selected_extensions="$(normalize_mobile_extensions)"
   write_android_build_artifact_report "$selected_extensions"
   if is_truthy "$build_only"; then
     printf '\nAndroid build-only mobile artifact complete: %s\n' "$apk"
