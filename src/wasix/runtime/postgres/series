@@ -1,4 +1,4 @@
-# PostgreSQL 18.4. Ordered repository-relative patch paths.
+# PostgreSQL 18.6. Ordered repository-relative patch paths.
 src/wasix/runtime/assets/build/postgres/patches/0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch
 src/wasix/runtime/assets/build/postgres/patches/0002-oliphaunt-wasix-add-backend-host-io-hooks.patch
 src/wasix/runtime/assets/build/postgres/patches/0003-oliphaunt-wasix-export-startup-packet-parser.patch
