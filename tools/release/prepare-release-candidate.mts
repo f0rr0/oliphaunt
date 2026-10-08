@@ -8,7 +8,7 @@ import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
 import { ReleasePleaseManifest } from 'release-please/build/src/updaters/release-please-manifest.js';
 import { parseConventionalCommits } from 'release-please/build/src/commit.js';
 import { buildPlan, loadGraph, productCompatibilityVersion } from './release-graph.mts';
-import { extensionConsumers } from './consumer-compatibility.mts';
+import { extensionConsumerRequirements } from './consumer-compatibility.mts';
 
 // Supply source ownership and required extension repackaging. Release Please
 // owns version policy, changelog text and ecosystem updaters in both cases.
@@ -61,23 +61,44 @@ export function includeOwnedSourceCommits(
           products[product].version = candidate.pullRequest.version.toString();
           selected.add(product);
         }
+        // Selected products follow the versions sync will write. Every other
+        // product is its immutable released package, including transitive SDKs.
+        const pin = (product, source, version = products[product].version) =>
+          selected.has(product) && version === products[product].version
+            ? products[source].version
+            : readCompatibility(product, source, 'prepare-release-candidate', {
+                ref: version === '0.0.0' ? null : products[product].tag_prefix + version,
+              });
         const required = new Map();
-        for (const { product, runtime } of extensionConsumers(selected, products)) {
-          required.set(
-            runtime,
-            selected.has(product) ? products[runtime].version : readCompatibility(product, runtime),
-          );
+        for (const { runtime, runtimeVersion } of extensionConsumerRequirements(
+          selected,
+          products,
+          pin,
+        )) {
+          const previous = required.get(runtime);
+          if (previous !== undefined && previous !== runtimeVersion)
+            throw new Error(
+              `prepare-release-candidate: conflicting ${runtime} requirements ${previous} and ${runtimeVersion}`,
+            );
+          required.set(runtime, runtimeVersion);
         }
         for (const [product, config] of Object.entries(products)) {
           if (config.extension?.class !== 'external' || selected.has(product)) continue;
           const changes = [...required].filter(
-            ([runtime, version]) => readCompatibility(product, runtime) !== version,
+            ([runtime, version]) => pin(product, runtime) !== version,
           );
           if (changes.length === 0) continue;
+          for (const [runtime, version] of changes) {
+            if (version !== products[runtime].version)
+              throw new Error(
+                `prepare-release-candidate: cannot repackage ${product} for ${runtime}@${version}; selected extension pins would target ${products[runtime].version}`,
+              );
+          }
           const ownerPath = config.path;
           const commits = parseConventionalCommits([
             {
-              sha: observed[0].sha,
+              // This is a generated dependency update, not a source commit.
+              sha: '',
               message: `fix: support ${changes.map(([runtime, version]) => `${runtime}@${version}`).join(', ')}`,
               files: [],
             },

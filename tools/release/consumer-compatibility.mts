@@ -12,7 +12,7 @@ const EXTENSION_CONSUMERS = [
   ['oliphaunt-wasix-ts', 'liboliphaunt-wasix'],
 ];
 
-export function extensionConsumers(selected, products) {
+export function extensionConsumerRequirements(selected, products, pin) {
   const consumers = EXTENSION_CONSUMERS.filter(([id]) => selected.has(id)).map(
     ([product, runtime]) => ({ product, runtime }),
   );
@@ -26,7 +26,16 @@ export function extensionConsumers(selected, products) {
       if (dependencies.has(product)) consumers.push({ product, runtime, owner });
     }
   }
-  return consumers;
+  return consumers.map((consumer) => {
+    const version = consumer.owner
+      ? pin(consumer.owner, consumer.product)
+      : products[consumer.product].version;
+    return {
+      ...consumer,
+      version,
+      runtimeVersion: pin(consumer.product, consumer.runtime, version),
+    };
+  });
 }
 
 export function validateConsumerContractCoverage(products) {
@@ -71,15 +80,9 @@ export function validateReleaseConsumerCompatibility(
   const extensions = Object.entries(products).filter(
     ([, product]) => product.extension?.class === 'external',
   );
-  const consumers = extensionConsumers(selected, products).map((consumer) => ({
-    ...consumer,
-    version: consumer.owner
-      ? pin(consumer.owner, consumer.product)
-      : products[consumer.product].version,
-  }));
+  const consumers = extensionConsumerRequirements(selected, products, pin);
   const failures = [];
-  for (const { product, runtime, version, owner } of consumers) {
-    const runtimeVersion = pin(product, runtime, version);
+  for (const { product, runtime, version, owner, runtimeVersion } of consumers) {
     const label = `${owner ? `${owner} through ` : ''}${product}@${version}`;
     if (
       owner &&

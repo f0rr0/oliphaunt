@@ -228,6 +228,7 @@ tasks:
       - /tools/release/release-artifact-targets.mts
       - /tools/release/prepare-release-candidate.mts
       - /tools/release/prepare-release-candidate.test.mts
+      - /tools/release/consumer-compatibility.mts
       - "@group(release-archive-contract)"
       - /tools/release/release-graph.mts
       - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts
