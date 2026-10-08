@@ -155,6 +155,16 @@ contrib inputs may select both runtime owners because those source files are
 physically bundled into both products. No Moon dependency edge creates another
 release candidate.
 
+Candidate preparation also checks the exact runtime required by selected
+extension consumers. If a published external extension targets a different
+runtime, Release Please prepares its next independent packaging release before
+sync closes the pins. Unselected extensions and transitive SDKs are read from
+their immutable product tags. This selection runs after workspace plugins,
+preserves existing extension candidates, and rejects conflicting consumer
+requirements or repackaging that would target the wrong current producer.
+A runtime-only release or an SDK release whose extensions already match adds
+no extension releases. Ordinary dependency edges still do not select consumers.
+
 Binary products declare `embedded_cargo_manifests` in their `release.toml`.
 Release planning reads Cargo's versioned `metadata --no-deps --frozen` output
 and follows local runtime, build, and target dependencies through independent

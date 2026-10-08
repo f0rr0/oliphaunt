@@ -12,6 +12,32 @@ const EXTENSION_CONSUMERS = [
   ['oliphaunt-wasix-ts', 'liboliphaunt-wasix'],
 ];
 
+export function extensionConsumerRequirements(selected, products, pin) {
+  const consumers = EXTENSION_CONSUMERS.filter(([id]) => selected.has(id)).map(
+    ([product, runtime]) => ({ product, runtime }),
+  );
+  for (const owner of selected) {
+    const dependencies = new Set(
+      Object.values(products[owner].compatibility_versions ?? {}).map(
+        ({ source_product }) => source_product,
+      ),
+    );
+    for (const [product, runtime] of EXTENSION_CONSUMERS) {
+      if (dependencies.has(product)) consumers.push({ product, runtime, owner });
+    }
+  }
+  return consumers.map((consumer) => {
+    const version = consumer.owner
+      ? pin(consumer.owner, consumer.product)
+      : products[consumer.product].version;
+    return {
+      ...consumer,
+      version,
+      runtimeVersion: pin(consumer.product, consumer.runtime, version),
+    };
+  });
+}
+
 export function validateConsumerContractCoverage(products) {
   const known = new Set([...EXTENSION_CONSUMERS.map(([id]) => id), 'oliphaunt-rust']);
   for (const [id, product] of Object.entries(products)) {
@@ -54,24 +80,9 @@ export function validateReleaseConsumerCompatibility(
   const extensions = Object.entries(products).filter(
     ([, product]) => product.extension?.class === 'external',
   );
-  const consumers = EXTENSION_CONSUMERS.filter(([id]) => selected.has(id)).map(
-    ([product, runtime]) => ({ product, runtime, version: products[product].version }),
-  );
-  for (const owner of selected) {
-    const dependencies = new Set(
-      Object.values(products[owner].compatibility_versions ?? {}).map(
-        ({ source_product }) => source_product,
-      ),
-    );
-    for (const [dependency, runtime] of EXTENSION_CONSUMERS) {
-      if (dependencies.has(dependency)) {
-        consumers.push({ product: dependency, runtime, version: pin(owner, dependency), owner });
-      }
-    }
-  }
+  const consumers = extensionConsumerRequirements(selected, products, pin);
   const failures = [];
-  for (const { product, runtime, version, owner } of consumers) {
-    const runtimeVersion = pin(product, runtime, version);
+  for (const { product, runtime, version, owner, runtimeVersion } of consumers) {
     const label = `${owner ? `${owner} through ` : ''}${product}@${version}`;
     if (
       owner &&

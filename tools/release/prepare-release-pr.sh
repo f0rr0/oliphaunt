@@ -14,7 +14,9 @@ export RELEASE_SOURCE_SHA RELEASE_SOURCE_DATE
 RELEASE_SOURCE_SHA="$(git rev-parse HEAD)"
 RELEASE_SOURCE_DATE="$(git show -s --format=%cs HEAD)"
 bash tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mts assert-clean --base main
-bash tools/ci/with-projects.sh tools/release/prepare-release-candidate.mts "$1"
+bash tools/ci/with-projects.sh --exec \
+  bash tools/release/with-product-history.sh "$PWD" HEAD '' @workspace \
+  bash tools/dev/bun.sh tools/release/prepare-release-candidate.mts "$1"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   printf 'required=%s\n' "$(cat "$1/required")" >>"$GITHUB_OUTPUT"
 fi
