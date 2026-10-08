@@ -15,7 +15,8 @@ reject() {
 }
 gate selected '{}' '[]'
 gate selected '{"android":{"result":"success"},"ios":{"result":"success"}}' '["ios","android","ios"]'
-for result in skipped failure cancelled; do
+gate selected '{"android":{"result":"success"},"ios":{"result":"skipped"}}' '["android"]'
+for result in skipped failure cancelled abandoned unknown; do
   reject "ios=$result" selected "{\"ios\":{\"result\":\"$result\"}}" '["ios"]'
 done
 reject 'ios=missing' selected '{}' '["ios"]'
