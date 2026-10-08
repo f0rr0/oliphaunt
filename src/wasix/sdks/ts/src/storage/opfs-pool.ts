@@ -145,6 +145,7 @@ export class DirectOpfsPool {
   #initializationComplete: boolean;
   #nextDescriptor = 1;
   #namespaceDirty = false;
+  #publishedNamespace = '';
   #closed = false;
 
   private constructor(
@@ -200,6 +201,9 @@ export class DirectOpfsPool {
     const pool = new DirectOpfsPool(name, database, data, selectedIdentity, state);
     try {
       await pool.#hydrate(stored);
+      pool.#publishedNamespace = JSON.stringify(
+        serializePoolState(name, selectedIdentity, pool.#entries, stored.phase),
+      );
       await pool.#restoreSpares();
       await pool.#removeVolatileEntries();
       await pool.#maintainSpares();
@@ -223,18 +227,20 @@ export class DirectOpfsPool {
     await this.#materializeStagedFiles();
     const completesInitialization = !this.#initializationComplete && boundary === 'full';
     if (this.#namespaceDirty || completesInitialization) {
-      // A namespace publication makes newly mapped bytes reachable. Reuse the
-      // complete PostgreSQL order instead of depending on map insertion order.
-      this.#flushAll();
-      await writePoolState(
-        this.#database,
-        serializePoolState(
-          this.#name,
-          this.#physicalIdentity,
-          this.#entries,
-          this.#initializationComplete || completesInitialization ? 'ready' : 'initializing',
-        ),
+      const state = serializePoolState(
+        this.#name,
+        this.#physicalIdentity,
+        this.#entries,
+        this.#initializationComplete || completesInitialization ? 'ready' : 'initializing',
       );
+      const namespace = JSON.stringify(state);
+      // Creation and deletion within one operation can leave the published
+      // mapping unchanged. Only a real publication needs the complete barrier.
+      if (namespace !== this.#publishedNamespace) {
+        this.#flushAll();
+        await writePoolState(this.#database, state);
+        this.#publishedNamespace = namespace;
+      }
       this.#namespaceDirty = false;
       if (completesInitialization) this.#initializationComplete = true;
     }
