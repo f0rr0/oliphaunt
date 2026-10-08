@@ -15,11 +15,17 @@ caches for CPUs with and without CET, compiled with the same pinned DLL and
 flags. V8 validates the original cache headers and selects a compatible profile;
 we do not rewrite CPU masks or fall back to compilation.
 
-The Wasmer patch owns C API handles, preserves borrowed call arguments, copies
-memory views across growth, and coordinates terminal interrupts with store
-lifetimes. The WASIX patch enforces cached module loading and terminal shutdown.
+The ordered Wasmer patches cover engine delivery, C API ownership, native cache
+profiles, and shared memory/terminal lifetimes. The WASIX patches cover optional
+runner features, cached module loading, and terminal shutdown. The complete
+ordered series is the build and qualification unit.
 These are internal compatibility patches, not a promise to support every V8
 backend API exposed upstream.
+
+`windows/bindings.rs` retains the generated C ABI for the pinned Wasmer header;
+the producer verifies that header's digest before generating DLL dispatch.
+Consumers use the frozen bindings and need no binding generator or native
+engine build.
 
 Use `moon run liboliphaunt-wasix:engine-sources` to replay the pinned source
 patches. The Windows host workflow produces the DLL and baseline caches before

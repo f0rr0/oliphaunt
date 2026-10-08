@@ -14,6 +14,7 @@ import {
   ENGINE_CARGO_PACKAGES,
   ENGINE_PAYLOAD_PACKAGE,
   ENGINE_SOURCE_CRATES,
+  isEnginePayloadPart,
 } from './contract.mts';
 import { packageEngine } from './package.mts';
 
@@ -68,6 +69,7 @@ test('freezes a closed engine family, rejects mixed inputs, and reconstructs eve
   save();
   const packages = packageEngine(options);
   const partNames = [`${ENGINE_PAYLOAD_PACKAGE}-part-001`, `${ENGINE_PAYLOAD_PACKAGE}-part-002`];
+  assert(!isEnginePayloadPart(`${ENGINE_PAYLOAD_PACKAGE}-part-000`));
   assert.deepEqual(
     packages.map((row) => row.name).sort(),
     [...ENGINE_CARGO_PACKAGES, ...partNames].sort(),

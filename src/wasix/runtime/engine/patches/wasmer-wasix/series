@@ -1,1 +1,3 @@
-0001-cached-loading-and-terminal-shutdown.patch
+0001-optional-runner-features.patch
+0002-cached-module-loading.patch
+0003-terminal-memory-attachment.patch

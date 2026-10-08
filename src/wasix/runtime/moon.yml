@@ -64,10 +64,10 @@ fileGroups:
     - engine/crates/**/Cargo.toml
     - "!engine/crates/*/upstream/**"
   engine-source:
-    - engine/**/*
-    - "!engine/crates/*/upstream/**"
-    - "!engine/crates/*/prebuilt/**"
-    - "!engine/crates/*/.prepared.json"
+    - engine/source.toml
+    - engine/contract.mts
+    - engine/prepare-sources.{mts,sh}
+    - engine/patches/**/*
   extension-smoke-inputs:
     - /src/wasix/pgwire-server/Cargo.toml
     - /src/wasix/pgwire-server/tests/extensions.rs
@@ -102,7 +102,19 @@ tasks:
           bun src/wasix/runtime/engine/test-packaged.mts
           ;;
       esac
-    inputs: ["@group(engine-source)", "@group(cargo-workspace)", "/.config/nextest.toml"]
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(packaging-source)"
+      - "@group(legal-files)"
+      - "@group(upstream-licenses)"
+      - engine/package.mts
+      - engine/test-packaged.mts
+      - engine/crates/**/Cargo.toml
+      - engine/crates/**/*.rs
+      - "!engine/crates/*/upstream/**"
+      - "!engine/crates/*/prebuilt/**"
+      - /src/third-party/tools/source-fetch-core.mts
+      - /tools/release/release-artifact-targets.mts
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -113,6 +125,9 @@ tasks:
       - liboliphaunt-wasix:engine-sources
     inputs:
       - "@group(engine-source)"
+      - engine/windows/*.{cpp,c,mts,rs,sh}
+      - "!engine/windows/*.test.mts"
+      - "!engine/windows/build-caches.mts"
       - /tools/dev/acquisition.sh
     outputs:
       - /target/oliphaunt-wasix/engine/windows-x64-msvc/oliphaunt_wee8.dll

@@ -16,10 +16,6 @@ import { ENGINE_PAYLOAD_PACKAGE, ENGINE_SOURCE_CRATES } from './contract.mts';
 const OWNER = path.join(ROOT, 'src/wasix/runtime/engine');
 const DLL = 'oliphaunt_wee8.dll';
 
-export function isEnginePayloadPart(name: string): boolean {
-  return new RegExp(`^${ENGINE_PAYLOAD_PACKAGE}-part-[0-9]{3}$`, 'u').test(name);
-}
-
 /** Freeze qualified sources and engine bytes; this step never builds the engine. */
 export function packageEngine({
   sourceRoot,

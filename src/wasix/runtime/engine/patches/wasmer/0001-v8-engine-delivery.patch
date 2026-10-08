@@ -1,0 +1,51 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Thu, 8 Oct 2026 00:00:00 +0000
+Subject: [PATCH 1/4] v8: prepare the bundled Windows engine before dispatch
+
+Return retryable Windows delivery errors before creating the process-wide V8
+engine. Configure the pinned flags once, before engine initialization.
+
+The complete ordered series is the build and qualification unit.
+
+diff --git a/src/backend/v8/entities/engine.rs b/src/backend/v8/entities/engine.rs
+--- a/src/backend/v8/entities/engine.rs
++++ b/src/backend/v8/entities/engine.rs
+@@ -1,4 +1,4 @@
+-//! Data types, functions and traits for `sys` runtime's `Engine` implementation.
++//! Data types, functions and traits for `v8` runtime's `Engine` implementation.
+ use crate::{
+     BackendEngine,
+     backend::v8::bindings::{wasm_engine_delete, wasm_engine_new, wasm_engine_t},
+@@ -27,9 +27,15 @@
+ 
+ impl Default for CApiEngine {
+     fn default() -> Self {
+-        let engine = ENGINE
+-            .get_or_init(|| unsafe { std::sync::Mutex::new(EngineCapsule(wasm_engine_new())) });
+-        let engine = unsafe { engine.lock().unwrap().0 };
++        #[cfg(windows)]
++        crate::backend::v8::bindings::oliphaunt_v8_prepare()
++            .expect("prepare Windows V8 engine; use V8::try_new for delivery errors");
++        let engine = ENGINE.get_or_init(|| unsafe {
++            #[cfg(windows)]
++            crate::backend::v8::bindings::oliphaunt_v8_configure();
++            std::sync::Mutex::new(EngineCapsule(wasm_engine_new()))
++        });
++        let engine = engine.lock().unwrap().0;
+         Self { engine }
+     }
+ }
+@@ -48,6 +54,13 @@
+     /// Create a new instance of the `V8` engine.
+     pub fn new() -> Self {
+         Self::default()
++    }
++
++    /// Prepare the embedded native engine, returning retryable delivery errors.
++    pub fn try_new() -> std::io::Result<Self> {
++        #[cfg(windows)]
++        crate::backend::v8::bindings::oliphaunt_v8_prepare()?;
++        Ok(Self::default())
+     }
+ 
+     pub(crate) fn deterministic_id(&self) -> String {

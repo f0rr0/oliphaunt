@@ -22,6 +22,8 @@ fileGroups:
     - "/src/third-party/postgres/COPYRIGHT"
     - "/src/third-party/icu/LICENSE"
     - "/src/third-party/openssl/LICENSE.txt"
+    - "/src/wasix/runtime/engine/licenses/Wasmer-LICENSE"
+    - "/src/wasix/runtime/engine/licenses/V8-LICENSES.txt"
   packaging-source:
     - "/tools/packaging/*.{mjs,mts,sh}"
     - "!/tools/packaging/*.test.{mjs,mts,sh}"
@@ -42,6 +44,8 @@ fileGroups:
     - "/src/extensions/contrib/*.toml"
     - "/src/extensions/external/**/{recipe,source}.toml"
     - "/src/third-party/postgres/source.toml"
+    - "/src/wasix/runtime/engine/source.toml"
+    - "/src/wasix/runtime/engine/contract.mts"
     - "/tools/release/release-graph.mts"
     - "/tools/release/release-history.mts"
     - "/src/extensions/artifacts/packages/tools/contrib-carriers.mts"

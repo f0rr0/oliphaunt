@@ -36,8 +36,7 @@ import {
 } from './wasix-extension-cargo-artifact-inventory.mts';
 import { packWasixRuntimeNpmCarrier } from './wasix-runtime-npm-carrier.mts';
 
-import { ENGINE_PAYLOAD_PACKAGE } from '../engine/contract.mts';
-import { isEnginePayloadPart } from '../engine/package.mts';
+import { ENGINE_PAYLOAD_PACKAGE, isEnginePayloadPart } from '../engine/contract.mts';
 
 export const WASIX_PRODUCT = 'liboliphaunt-wasix';
 
