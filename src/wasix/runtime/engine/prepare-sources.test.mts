@@ -6,6 +6,7 @@ import { applyEnginePatches } from './prepare-sources.mts';
 
 test('ordered Git patches apply inside an ignored directory of the enclosing worktree', (t) => {
   const root = path.resolve(import.meta.dir, '../../../..');
+  mkdirSync(path.join(root, 'target'), { recursive: true });
   const scratch = mkdtempSync(path.join(root, 'target/engine-patch-test-'));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
   const source = path.join(scratch, 'source');
