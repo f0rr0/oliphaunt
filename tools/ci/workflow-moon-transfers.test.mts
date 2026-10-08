@@ -348,6 +348,47 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('WASIX AOT consumers reuse the same-run engine qualification', () => {
+    const host = Bun.YAML.parse(
+      readFileSync(path.join(ROOT, '.github/workflows/wasix-host.yml'), 'utf8'),
+    );
+    const step = host.jobs.build.steps.find((step) =>
+      step.run?.includes('run-planned-moon-job.sh liboliphaunt-wasix-aot'),
+    );
+    const job = 'liboliphaunt-wasix-aot';
+    for (const roots of [['liboliphaunt-wasix:runtime-aot'], CI_JOB_TARGETS[job]]) {
+      const result = Bun.spawnSync(
+        ['bun', '.github/scripts/resolve-planned-moon-execution.mts', job],
+        {
+          cwd: ROOT,
+          env: {
+            ...process.env,
+            ...step.env,
+            OLIPHAUNT_CI_JOB_TARGETS_JSON: JSON.stringify({ [job]: roots }),
+          },
+        },
+      );
+      assert.equal(result.exitCode, 0, result.stderr.toString());
+      const execution = result.stdout
+        .toString()
+        .trim()
+        .split('\n')
+        .map((line) => line.split('\t'));
+      const executed = execution
+        .filter(([kind]) => kind !== 'transferred')
+        .flatMap(([, targets]) => targets.split(' '));
+      for (const root of roots) assert(executed.includes(root), `${root} must still execute`);
+      for (const task of ['liboliphaunt-wasix:engine-test', 'liboliphaunt-wasix:engine-build'])
+        assert(!executed.includes(task), `${task} must consume the producer's qualification`);
+      assert(
+        execution.some(
+          ([kind, target]) => kind === 'transferred' && target === 'liboliphaunt-wasix:engine-test',
+        ),
+      );
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('SDK runtime suites execute in artifact-consuming jobs without rebuilding their producers', () => {
     for (const [job, roots, forbidden] of [
       [

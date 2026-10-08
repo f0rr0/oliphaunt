@@ -30,12 +30,9 @@ if [ "$host" = x86_64-pc-windows-msvc ]; then
   # V8 has different import, memory, and terminal handling from the LLVM hosts.
   # Qualify the same full catalog lifecycle against this backend as on Linux.
   bash src/wasix/runtime/tools/runtime-smoke.sh regression
+  tools/dev/bun.sh src/wasix/sdks/rust/tools/test-packaged-aot.mts
 else
   bash src/wasix/runtime/tools/runtime-smoke.sh core-smoke
-fi
-
-if [ "$host" = x86_64-pc-windows-msvc ]; then
-  tools/dev/bun.sh src/wasix/sdks/rust/tools/test-packaged-aot.mts
 fi
 
 # The Linux regression and Windows V8 lane exercise every catalogued extension. Each host

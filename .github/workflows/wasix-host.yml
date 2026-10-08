@@ -115,6 +115,7 @@ jobs:
     name: WASIX host (${{ matrix.target_id }})
     runs-on: ${{ matrix.os }}
     needs: [windows-engine, windows-caches]
+    # Linux/macOS must still run when Windows producers are skipped or fail.
     if: ${{ !cancelled() }}
     timeout-minutes: 240
     strategy:
@@ -198,7 +199,8 @@ jobs:
       - name: Build, validate, and smoke target AOT artifacts
         env:
           AOT_TARGET: ${{ matrix.target }}
-          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "postgres-tools-wasix:compiler-output", "extension-artifacts-wasix:compiler-output", "liboliphaunt-wasix:engine-build"]'
+          # The uploaded engine already passed engine-test in its producer job.
+          OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON: '["liboliphaunt-wasix:runtime-portable", "postgres-tools-wasix:compiler-output", "extension-artifacts-wasix:compiler-output", "liboliphaunt-wasix:engine-test", "liboliphaunt-wasix:engine-build"]'
         run: .github/scripts/run-planned-moon-job.sh liboliphaunt-wasix-aot
 
       - name: Upload target PostgreSQL WASIX tools

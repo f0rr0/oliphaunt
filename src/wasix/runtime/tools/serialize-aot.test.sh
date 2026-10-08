@@ -12,11 +12,12 @@ printf '%s\n' "$AOT_FIXTURE_ROOT"
 SH
 cat >"$fixture/bin/uname" <<'SH'
 #!/usr/bin/env bash
-printf 'Linux\n'
+printf '%s\n' "${AOT_FIXTURE_UNAME:-Linux}"
 SH
 cat >"$fixture/bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${AOT_FIXTURE_LIB:-}" ]]; then [[ "${LIB:-}" == "$AOT_FIXTURE_LIB" ]]; fi
 if [[ "$1" == build ]]; then exit "${FAIL_BUILD:-0}"; fi
 [[ "$*" == 'run -p xtask --locked -- assets prepare-aot --target-triple fixture' ]]
 printf 'input one.wasm\toutput one.zst\ninput two.wasm\toutput two.zst\n'
@@ -32,6 +33,13 @@ chmod +x "$fixture/bin/"* "$CARGO_TARGET_DIR/release/xtask"
 export PATH="$fixture/bin:$PATH"
 bash "$script" --target-triple fixture
 printf 'input one.wasm\toutput one.zst\ninput two.wasm\toutput two.zst\n' >"$fixture/expected"
+cmp "$fixture/expected" "$fixture/serialized"
+rm "$fixture/serialized"
+cp "$CARGO_TARGET_DIR/release/xtask" "$CARGO_TARGET_DIR/release/xtask.exe"
+mkdir -p "$fixture/llvm/lib"
+AOT_FIXTURE_UNAME=MINGW64_NT LLVM_SYS_221_PREFIX="$fixture/llvm" \
+  LIB='existing MSVC libraries' AOT_FIXTURE_LIB='existing MSVC libraries' \
+  bash "$script" --target-triple fixture
 cmp "$fixture/expected" "$fixture/serialized"
 rm "$fixture/serialized"
 if FAIL_BUILD=1 bash "$script" --target-triple fixture; then exit 1; fi
