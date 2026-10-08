@@ -59,7 +59,7 @@ if [ "${1:-}" = --surface ]; then
       done ;;
     npm)
       for consumer in "$surface"/npm/entry-*; do
-        capture "$consumer/command-output" "$consumer" "$environment" npm install --ignore-scripts --no-audit --no-fund --omit=peer --registry=https://registry.npmjs.org/
+        capture "$consumer/command-output" "$consumer" "$environment" npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
       done ;;
     maven)
       capture "$surface/gradle-output" "$surface/maven" "$environment" "$root/src/native/sdks/kotlin/gradlew" --no-daemon --console=plain --project-dir "$surface/maven" resolveOliphauntPublicConsumers ;;

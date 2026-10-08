@@ -115,7 +115,13 @@ if (fixtureMode === 'prepare-npm') {
         }))
       : scenario === 'missing-entry'
         ? [{ ...carrier('npm:@example/platform-5', 'sdk', 0), target: 'darwin-arm64' }]
-        : [carrier('npm:@example/sdk', 'sdk', 0)];
+        : [
+            carrier(
+              scenario.startsWith('peers') ? 'npm:@oliphaunt/wasix-tools' : 'npm:@example/sdk',
+              'sdk',
+              0,
+            ),
+          ];
   if (scenario === 'unknown-platform') carriers[0].target = 'unknown-platform';
   const frozen = lock(products, carriers);
   writeFileSync(
@@ -147,23 +153,60 @@ if (fixtureMode === 'install-npm') {
     mkdirSync(`node_modules/${name}`, { recursive: true });
     writeFileSync(`node_modules/${name}/package.json`, JSON.stringify({ name, version }));
   }
-  writeFileSync(
-    'package-lock.json',
-    JSON.stringify({
-      lockfileVersion: 3,
-      packages: {
-        [`node_modules/${name}`]: {
-          version,
-          resolved: `https://registry.npmjs.org/${name}/-/sdk.tgz`,
-          integrity: 'sha512-smoke',
-        },
-      },
-    }),
-  );
+  const packages = {
+    [`node_modules/${name}`]: {
+      version,
+      resolved: `https://registry.npmjs.org/${name}/-/sdk.tgz`,
+      integrity: 'sha512-smoke',
+    },
+  };
+  if (name === '@oliphaunt/wasix-tools') {
+    const sdk = JSON.parse(
+      readFileSync(path.join(import.meta.dir, '../../src/wasix/sdks/ts/package.json'), 'utf8'),
+    );
+    packages['node_modules/@oliphaunt/wasix-ts'] = {
+      version: sdk.version,
+      resolved: `https://registry.npmjs.org/@oliphaunt/wasix-ts/-/wasix-ts-${sdk.version}.tgz`,
+      integrity: 'sha512-peer',
+      peer: true,
+    };
+    // npm resolves omitted peers into the lockfile without installing them.
+    if (!process.argv.slice(3).includes('--omit=peer')) {
+      const target = Object.values(DESKTOP_TARGETS).find(
+        ({ npmOs, npmCpu }) => npmOs === process.platform && npmCpu === process.arch,
+      );
+      const nativeName = target.wasixNapiPackage;
+      sdk.dependencies['@oliphaunt/liboliphaunt-wasix'] = sdk.oliphaunt.runtimeVersion;
+      sdk.optionalDependencies = Object.fromEntries(
+        Object.keys(sdk.optionalDependencies).map((name) => [name, sdk.oliphaunt.wasixNapiVersion]),
+      );
+      mkdirSync('node_modules/@oliphaunt/wasix-ts', { recursive: true });
+      writeFileSync('node_modules/@oliphaunt/wasix-ts/package.json', JSON.stringify(sdk));
+      mkdirSync(`node_modules/${nativeName}`, { recursive: true });
+      writeFileSync(
+        `node_modules/${nativeName}/package.json`,
+        JSON.stringify({
+          name: nativeName,
+          version: sdk.oliphaunt.wasixNapiVersion,
+          exports: { './package.json': './package.json' },
+          oliphaunt: {
+            runtimeProduct: sdk.oliphaunt.runtimeProduct,
+            runtimeVersion: process.env.PUBLIC_PROBE_BAD_RUNTIME
+              ? '0.0.0'
+              : sdk.oliphaunt.runtimeVersion,
+            addonAbiVersion: sdk.oliphaunt.wasixAddonAbiVersion,
+            nodeApiVersion: sdk.oliphaunt.nodeApiVersion,
+            profiles: ['standard', 'icu'],
+          },
+        }),
+      );
+    }
+  }
+  writeFileSync('package-lock.json', JSON.stringify({ lockfileVersion: 3, packages }));
   process.exit(0);
 }
 if (fixtureMode === 'assert-npm') {
-  if (scenario === 'success' || scenario === 'platforms') {
+  if (scenario === 'success' || scenario === 'peers' || scenario === 'platforms') {
     const result = JSON.parse(readFileSync(path.join(fixtureRoot, 'npm.json'), 'utf8'));
     const context = JSON.parse(readFileSync(path.join(fixtureRoot, 'context.json'), 'utf8'));
     const ids = context.lock.carriers.map(({ id }) => id);

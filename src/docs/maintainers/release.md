@@ -597,10 +597,10 @@ It derives its products, ecosystem lanes, dependency roots, full carrier
 closure, versions, Maven coordinates, and Git tags from the same frozen lock.
 In parallel clean temporary homes/caches it resolves each Cargo consumer entry
 in an independent scratch manifest without compiling payloads, installs each
-npm dependency root in an independent project, resolves each Maven entry in an
-isolated Gradle configuration without an Android build, and anonymously fetches
-every product tag. Facades, plugins, resources and tool facades are independent
-entries even when another package depends on them; remaining dependency roots
+npm dependency root in an independent project with default peer installation,
+resolves each Maven entry in an isolated Gradle configuration without an Android
+build, and anonymously fetches every product tag. Facades, plugins, resources
+and tool facades are independent entries even when another package depends on them; remaining dependency roots
 are also probed. Each lane requires the combined resolver lock graphs to cover
 every frozen carrier; a missing carrier cannot be silently relabelled as
 receipt-only. Cargo enables each entry's public features and respects the
@@ -608,6 +608,9 @@ features that entry requests from its dependencies, so an individual Cargo
 resolution may omit transitive opt-ins exercised by another entry. npm and Maven
 entries require their complete frozen dependency closures. It never invents one
 all-platform consumer graph.
+Required npm peers are installed so the SDK/N-API compatibility check validates
+the same dependency tree a normal clean install receives, including historical
+SDK peers outside the selected publication lock.
 Evidence separately identifies npm carriers not installed on the publication host
 and Cargo payloads intentionally not fetched/compiled; immutable receipts
 prove those bytes. When Swift is

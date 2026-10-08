@@ -36,19 +36,20 @@ if [[ -n "${HANG_PUBLIC_PROBE:-}" ]]; then
   printf '%s' "$!" > "$PUBLIC_PROBE_CHILD"
   wait "$!"
 fi
-bun "$PUBLIC_PROBE_FIXTURE" install-npm
+bun "$PUBLIC_PROBE_FIXTURE" install-npm "$@"
 SH
 chmod +x "$scratch/bin/npm"
 export PATH="$scratch/bin:$PATH" SENSITIVE_TOKEN=must-not-survive CARGO_REGISTRY_TOKEN=must-not-survive
 export PUBLIC_PROBE_COUNTER="$scratch/attempts" PUBLIC_PROBE_FIXTURE="$source_root/tools/release/public-consumer-smoke.test.mts"
-for mode in success platforms unknown-platform missing-entry fail timeout expired; do
+for mode in success peers peers-bad-runtime platforms unknown-platform missing-entry fail timeout expired; do
   mkdir "$scratch/$mode"
   bun tools/release/public-consumer-smoke.test.mts prepare-npm "$scratch/$mode" "$mode"
-  unset FAIL_PUBLIC_PROBE HANG_PUBLIC_PROBE OMIT_PUBLIC_PROBE PUBLIC_PROBE_CHILD
+  unset FAIL_PUBLIC_PROBE HANG_PUBLIC_PROBE OMIT_PUBLIC_PROBE PUBLIC_PROBE_CHILD PUBLIC_PROBE_BAD_RUNTIME
   expected=0
   if [[ "$mode" == expired ]]; then expected=1; fi
   if [[ "$mode" == unknown-platform ]]; then expected=1; fi
   if [[ "$mode" == missing-entry ]]; then export OMIT_PUBLIC_PROBE=1; expected=1; fi
+  if [[ "$mode" == peers-bad-runtime ]]; then export PUBLIC_PROBE_BAD_RUNTIME=1; expected=1; fi
   if [[ "$mode" == fail ]]; then export FAIL_PUBLIC_PROBE=1; expected=7; fi
   if [[ "$mode" == timeout ]]; then export HANG_PUBLIC_PROBE=1 PUBLIC_PROBE_CHILD="$scratch/child-pid"; expected=124; fi
   status=0
@@ -57,9 +58,10 @@ for mode in success platforms unknown-platform missing-entry fail timeout expire
   if [[ "$mode" == expired ]]; then grep -q "shared public-consumer deadline reached" "$scratch/$mode/output"; fi
   if [[ "$mode" == unknown-platform ]]; then grep -q "unsupported npm consumer target" "$scratch/$mode/output"; fi
   if [[ "$mode" == missing-entry ]]; then grep -q "entry package was not installed from the public registry" "$scratch/$mode/output"; fi
+  if [[ "$mode" == peers-bad-runtime ]]; then grep -q "carrier embeds runtime 0.0.0" "$scratch/$mode/output"; fi
   bun tools/release/public-consumer-smoke.test.mts assert-npm "$scratch/$mode" "$mode"
 done
-[[ "$(wc -l < "$scratch/attempts")" -eq 13 ]]
+[[ "$(wc -l < "$scratch/attempts")" -eq 15 ]]
 pid="$(cat "$scratch/child-pid")"
 status=0
 state="$(ps -o stat= -p "$pid")" || status=$?
