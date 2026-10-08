@@ -37,7 +37,12 @@ function fixture(t) {
 
 function transport(
   carriers,
-  { denied = undefined, published = [], claims = {}, exchanged = {} } = {},
+  {
+    denied = undefined,
+    published = [],
+    claims = {},
+    exchanged = { token: 'npm-issued-secret' },
+  } = {},
 ) {
   const calls = [];
   const fetchImpl = async (input, options) => {
@@ -62,15 +67,7 @@ function transport(
       assert(options.headers.Authorization.startsWith('Bearer header.'));
       const name = decodeURIComponent(url.pathname.split('/').at(-1));
       if (name === denied) return response({ error: 'expired publisher; registry-secret' }, 401);
-      return response(
-        {
-          token_type: 'oidc',
-          token: 'npm-issued-secret',
-          expires: '2026-10-07T13:00:00Z',
-          ...exchanged,
-        },
-        201,
-      );
+      return response(exchanged, 201);
     }
     assert.equal(options.method, undefined);
     const [name, version] = url.pathname.slice(1).split('/').map(decodeURIComponent);
@@ -100,6 +97,27 @@ test('exchanges every pending frozen package and skips byte-matching public vers
   });
   assert.equal(mock.calls.filter(({ options }) => options.method === 'POST').length, 2);
   assert(!JSON.stringify(result).includes('secret'));
+});
+
+// npm 11.18.0's lib/utils/oidc.js consumes only response.token. The preflight
+// discards this credential; npm exchanges a fresh one when it actually publishes.
+test('accepts the npm CLI token contract without depending on descriptive metadata', async (t) => {
+  const carriers = fixture(t).slice(0, 1);
+  for (const exchanged of [
+    { token: 'npm-issued-secret' },
+    { token: 'npm-issued-secret', token_type: 'oidc', expires: '2026-10-07T13:00:00Z' },
+    { token: 'npm-issued-secret', token_type: 'Bearer', expires: now + 3_600_000 },
+  ]) {
+    const mock = transport(carriers, { exchanged });
+    const result = await verifyNpmTrustedPublishers({
+      carriers,
+      environment,
+      fetchImpl: mock.fetchImpl,
+      nowImpl: () => now,
+    });
+    assert.deepEqual(result, { published: [], authorized: [carriers[0].name] });
+    assert(!JSON.stringify(result).includes('secret'));
+  }
 });
 
 test('an expired publisher stops the complete preflight before later packages, without exposing tokens', async (t) => {
@@ -140,13 +158,9 @@ test('rejects a different workflow identity before exchanging an npm credential'
   assert(!mock.calls.some(({ options }) => options.method === 'POST'));
 });
 
-test('rejects unusable credentials and stops at the shared deadline', async (t) => {
+test('rejects missing or invalid tokens and stops at the shared deadline', async (t) => {
   const carriers = fixture(t);
-  for (const exchanged of [
-    { token: '' },
-    { token_type: 'session' },
-    { expires: '2026-10-07T11:59:59Z' },
-  ]) {
+  for (const exchanged of [null, {}, { token: '' }, { token: 123 }]) {
     const mock = transport(carriers, { exchanged });
     await assert.rejects(
       verifyNpmTrustedPublishers({
@@ -155,7 +169,7 @@ test('rejects unusable credentials and stops at the shared deadline', async (t) 
         fetchImpl: mock.fetchImpl,
         nowImpl: () => now,
       }),
-      /did not receive a usable credential/u,
+      /exchange returned no nonempty token/u,
     );
   }
   await assert.rejects(
@@ -179,6 +193,7 @@ test('the workflow CLI verifies an earlier frozen source and rejects source drif
     execFileSync('git', ['rev-parse', ref], { cwd: root, encoding: 'utf8' }).trim();
   const source = commit('HEAD^');
   const cliEnvironment = isolatedGitHubTestEnvironment({
+    ...environment,
     RELEASE_HEAD_SHA: source,
     PUBLICATION_LOCK_PATH: path.join(directory, 'publication-lock.json'),
   });
@@ -206,10 +221,23 @@ test('the workflow CLI verifies an earlier frozen source and rejects source drif
     import assert from 'node:assert/strict';
     import { readFileSync } from 'node:fs';
     import { frozenNpmIntegrity } from ${JSON.stringify(new URL('./frozen-npm-publish.mts', import.meta.url).href)};
+    import { expectedOidcIdentity } from ${JSON.stringify(new URL('../../.github/scripts/verify-github-oidc-identity.mts', import.meta.url).href)};
     const lock = JSON.parse(readFileSync(process.env.PUBLICATION_LOCK_PATH, 'utf8'));
     globalThis.fetch = async (input) => {
       const url = new URL(input);
+      if (url.hostname === 'actions.example') {
+        const claims = { ...expectedOidcIdentity(), aud: 'npm:registry.npmjs.org' };
+        return Response.json({ value: 'header.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.signature' });
+      }
       assert.equal(url.origin, 'https://registry.npmjs.org');
+      if (url.pathname.startsWith('/-/npm/v1/oidc/token/exchange/package/'))
+        return Response.json({ token: 'npm-issued-secret' }, { status: 201 });
+      if (process.env.OLIPHAUNT_TEST_PENDING_NPM === 'true') {
+        const carrier = lock.carriers.find(row => url.pathname === '/' + encodeURIComponent(row.name));
+        if (carrier) return Response.json({ name: carrier.name });
+        assert(lock.carriers.some(row => url.pathname === '/' + encodeURIComponent(row.name) + '/' + row.version), 'unexpected registry request');
+        return Response.json({ error: 'version absent' }, { status: 404 });
+      }
       const carrier = lock.carriers.find(row => url.pathname === '/' + encodeURIComponent(row.name) + '/' + row.version);
       assert(carrier, 'unexpected registry request');
       return Response.json({ dist: { integrity: frozenNpmIntegrity(${JSON.stringify(root)} + carrier.artifacts[0].path) } });
@@ -230,6 +258,10 @@ test('the workflow CLI verifies an earlier frozen source and rejects source drif
   const verified = run(['-c', command]);
   assert.equal(verified.status, 0, verified.stderr);
   assert(verified.stdout.includes('1 immutable matching versions need no publication'));
+  const pending = run(['-c', command], { ...cliEnvironment, OLIPHAUNT_TEST_PENDING_NPM: 'true' });
+  assert.equal(pending.status, 0, pending.stderr);
+  assert(pending.stdout.includes('1 pending packages authorized'));
+  assert(!(pending.stdout + pending.stderr).includes('secret'));
   const drifted = run(['-c', command], { ...cliEnvironment, RELEASE_HEAD_SHA: commit('HEAD') });
   assert.notEqual(drifted.status, 0);
   assert(drifted.stderr.includes('does not match'), drifted.stderr);
