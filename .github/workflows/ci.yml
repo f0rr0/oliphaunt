@@ -574,7 +574,7 @@ jobs:
   extension-artifacts-native:
     name: Builds / Native Extensions
     needs: [affected, extension-artifacts-native-linux, extension-artifacts-native-android, extension-artifacts-native-ios, extension-artifacts-native-other]
-    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') && (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_linux).include[0] == null || needs.extension-artifacts-native-linux.result == 'success') && (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_android).include[0] == null || needs.extension-artifacts-native-android.result == 'success') && (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_ios).include[0] == null || needs.extension-artifacts-native-ios.result == 'success') && (fromJson(needs.affected.outputs.extension_artifacts_native_matrix_other).include[0] == null || needs.extension-artifacts-native-other.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -727,7 +727,7 @@ jobs:
 
   mobile-extension-packages:
     needs: [affected, mobile-extension-packages-android, mobile-extension-packages-ios]
-    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'mobile-extension-packages') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && (needs.affected.outputs.mobile_extension_package_native_targets_android_csv == '' || needs.mobile-extension-packages-android.result == 'success') && (needs.affected.outputs.mobile_extension_package_native_targets_ios_csv == '' || needs.mobile-extension-packages-ios.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'mobile-extension-packages') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -762,7 +762,7 @@ jobs:
   liboliphaunt-native-desktop:
     name: Builds / Native Desktop Runtime
     needs: [affected, liboliphaunt-native-desktop-linux, liboliphaunt-native-desktop-other]
-    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && (fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_linux).include[0] == null || needs.liboliphaunt-native-desktop-linux.result == 'success') && (fromJson(needs.affected.outputs.liboliphaunt_native_desktop_runtime_matrix_other).include[0] == null || needs.liboliphaunt-native-desktop-other.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1279,7 +1279,7 @@ jobs:
   broker-runtime:
     name: Builds / Broker Runtime
     needs: [affected, broker-runtime-linux, broker-runtime-other]
-    if: ${{ !cancelled() && !failure() && contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
+    if: ${{ !cancelled() && !failure() && needs.affected.result == 'success' && (fromJson(needs.affected.outputs.broker_runtime_matrix_linux).include[0] == null || needs.broker-runtime-linux.result == 'success') && (fromJson(needs.affected.outputs.broker_runtime_matrix_other).include[0] == null || needs.broker-runtime-other.result == 'success') && contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

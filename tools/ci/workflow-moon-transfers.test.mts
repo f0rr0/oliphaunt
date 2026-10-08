@@ -167,6 +167,40 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('native aggregates require successful selected platform producers', () => {
+    for (const [id, outputPrefix, platforms] of [
+      [
+        'extension-artifacts-native',
+        'extension_artifacts_native_matrix',
+        ['linux', 'android', 'ios', 'other'],
+      ],
+      [
+        'liboliphaunt-native-desktop',
+        'liboliphaunt_native_desktop_runtime_matrix',
+        ['linux', 'other'],
+      ],
+      ['broker-runtime', 'broker_runtime_matrix', ['linux', 'other']],
+    ]) {
+      for (const platform of platforms) {
+        assert(
+          workflow.jobs[id].if.includes(
+            `(fromJson(needs.affected.outputs.${outputPrefix}_${platform}).include[0] == null || needs.${id}-${platform}.result == 'success')`,
+          ),
+          `${id} accepts an unsuccessful selected ${platform} producer`,
+        );
+      }
+    }
+    for (const platform of ['android', 'ios']) {
+      assert(
+        workflow.jobs['mobile-extension-packages'].if.includes(
+          `(needs.affected.outputs.mobile_extension_package_native_targets_${platform}_csv == '' || needs.mobile-extension-packages-${platform}.result == 'success')`,
+        ),
+        `mobile extension aggregate accepts an unsuccessful selected ${platform} producer`,
+      );
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('WASIX aggregates require successful selected hosts before accepting their artifacts', () => {
     for (const id of ['wasix-napi', 'liboliphaunt-wasix-aot']) {
       for (const host of ['linux', 'other']) {
