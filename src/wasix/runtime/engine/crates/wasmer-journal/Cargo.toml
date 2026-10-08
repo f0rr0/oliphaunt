@@ -95,7 +95,9 @@ version = "0.1"
 default-features = false
 
 [dependencies.virtual-fs]
-version = "0.705.0"
+package = "oliphaunt-virtual-fs"
+path = "../virtual-fs"
+version = "*"
 default-features = false
 
 [dependencies.virtual-net]

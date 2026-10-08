@@ -1,7 +1,7 @@
 import { lstat, open, readdir, readlink, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const UNSUPPORTED_DIRECTORY_SYNC_ERRORS = new Set(['EISDIR', 'EINVAL', 'EPERM', 'ENOTSUP']);
+const UNSUPPORTED_DIRECTORY_SYNC_ERRORS = new Set(['EINVAL', 'ENOTSUP']);
 
 export async function syncDirectory(directory: string): Promise<void> {
   let handle: FileHandle | undefined;
@@ -10,6 +10,15 @@ export async function syncDirectory(directory: string): Promise<void> {
     await handle.sync();
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
+    // Windows may reject opening a directory as a FileHandle. On Unix,
+    // permission failures are real publication failures, not lack of support.
+    if (
+      process.platform === 'win32' &&
+      handle === undefined &&
+      (code === 'EPERM' || code === 'EISDIR')
+    ) {
+      return;
+    }
     if (!UNSUPPORTED_DIRECTORY_SYNC_ERRORS.has(code ?? '')) throw error;
   } finally {
     await handle?.close();

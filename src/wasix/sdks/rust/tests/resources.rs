@@ -117,6 +117,67 @@ fn standard_seed_and_initializer_support_memory_directory_and_reopen() -> Result
 }
 
 #[test]
+#[ignore = "requires compiled WASIX runtime; run test-resources.sh"]
+fn fsync_defaults_do_not_override_saved_configuration() -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let root = workspace.path().join("database");
+    let builder = Oliphaunt::builder().storage(DatabaseStorage::Directory(root.clone()));
+    let mut db = builder.clone().open()?;
+    assert_eq!(db.query("SHOW fsync")?.get_text(0, "fsync")?, Some("off"));
+    assert_eq!(
+        db.query("SELECT boot_val AS value FROM pg_settings WHERE name='fsync'")?
+            .get_text(0, "value")?,
+        Some("off")
+    );
+    db.execute("ALTER SYSTEM SET fsync = on")?;
+    db.close()?;
+    drop(db);
+
+    for method in ["fdatasync", "fsync"] {
+        let mut db = builder
+            .clone()
+            .startup_guc("wal_sync_method", method)
+            .open()?;
+        assert_eq!(db.query("SHOW fsync")?.get_text(0, "fsync")?, Some("on"));
+        db.execute("CREATE TABLE IF NOT EXISTS sync_probe (id int)")?;
+        db.execute("INSERT INTO sync_probe VALUES (1)")?;
+        db.execute("CHECKPOINT")?;
+        db.close()?;
+    }
+
+    let mut db = builder.clone().startup_guc("fsync", "off").open()?;
+    assert_eq!(db.query("SHOW fsync")?.get_text(0, "fsync")?, Some("off"));
+    assert_eq!(
+        db.query("SELECT count(*)::text AS count FROM sync_probe")?
+            .get_text(0, "count")?,
+        Some("2")
+    );
+    db.close()?;
+    drop(db);
+
+    fs::write(root.join("pgdata/postgresql.auto.conf"), "")?;
+    for (value, expected) in [("0", "off"), ("yes", "on")] {
+        let mut db = builder.clone().startup_guc("fsync", value).open()?;
+        assert_eq!(
+            db.query("SHOW fsync")?.get_text(0, "fsync")?,
+            Some(expected)
+        );
+        db.close()?;
+    }
+    assert!(
+        builder
+            .clone()
+            .startup_guc("fsync", "not-a-bool")
+            .open()
+            .is_err()
+    );
+    let mut db = builder.open()?;
+    assert_eq!(db.query("SHOW fsync")?.get_text(0, "fsync")?, Some("off"));
+    db.close()?;
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires compiled WASIX runtime and separately produced resources; run test-resources.sh"]
 fn icu_seed_and_initializer_support_memory_directory_and_reopen() -> Result<()> {
     exercise(CatalogProfile::Icu)

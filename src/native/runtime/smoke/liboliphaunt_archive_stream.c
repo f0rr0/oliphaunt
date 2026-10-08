@@ -75,7 +75,9 @@ int main(int argc, char **argv) {
         .read_callback = read_archive, .context = &output,
     };
     assert(oliphaunt_unpack_physical_archive_stream(NULL, options.read_callback, options.context, destination) == 0);
+    assert(oliphaunt_sync_directory_tree(NULL, destination) == 0);
     char *restored = oliphaunt_join_path(destination, "pgdata/large");
+    assert(oliphaunt_sync_directory(NULL, restored) != 0);
     input = fopen(restored, "rb");
     assert(input != NULL);
     for (size_t block = 0; block < 513; block++) {

@@ -186,8 +186,13 @@ tasks:
       node --test src/wasix/runtime/tools/strong-random.test.mjs src/third-party/postgres/apply-series.test.mjs
       bash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh
       bash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh
+      bun test src/wasix/runtime/engine/prepare-sources.test.mts
     inputs:
       - /tools/dev/acquisition.sh
+      - engine/prepare-sources.mts
+      - engine/prepare-sources.test.mts
+      - engine/contract.mts
+      - engine/source.toml
       - assets/build/docker/**/*
       - assets/build/wasix_shim/**/*
       - tools/check-shim-abi.sh

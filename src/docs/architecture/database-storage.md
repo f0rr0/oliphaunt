@@ -43,6 +43,30 @@ PostgreSQL backend; its SDK-owned temporary directory must remain until that
 backend's physical lifetime ends. It is not durable storage and the operating
 system may reclaim it after process exit.
 
+## Synchronization
+
+Persistent storage selects where files live, not whether every commit is forced
+to disk. Embedded Native and WASIX default PostgreSQL's `fsync` to `off`.
+Caller startup settings take precedence over saved PostgreSQL configuration,
+which takes precedence over this default. No SDK durability flag or environment
+variable duplicates that control. Full native servers and the separate WASIX
+Postmaster retain PostgreSQL's `fsync=on` default.
+
+For disk synchronization, use the existing startup GUC (`fsync: 'on'` in
+TypeScript or `.startup_guc("fsync", "on")` in Rust). With it off, a machine or
+OS crash can lose committed data or corrupt the cluster. Turning it on later
+does not retroactively make earlier unsynchronized writes safe; follow
+PostgreSQL's procedure when changing a running database's durability policy.
+WASIX host directories distinguish ordinary write flushing from explicit
+`fdatasync` (data) and `fsync` (data and metadata); errors from explicit requests
+are not suppressed by the default. Initial installation and physical restore
+keep their checked publication barriers, independently of query settings.
+
+Browser providers still complete their existing publication/flush boundary
+before returning. IndexedDB's transaction guarantees and OPFS's per-file flushes
+are different contracts; `fsync=on` alone does not make either a POSIX disk.
+Memory storage has no durable medium to synchronize.
+
 ## SDK spellings
 
 Each language keeps its native conventions instead of importing a cross-language

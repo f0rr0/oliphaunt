@@ -32,6 +32,7 @@ members = [
   "src/wasix/runtime/engine/crates/wasmer-wasix-types",
   "src/wasix/runtime/engine/crates/wasmer-journal",
   "src/wasix/runtime/engine/crates/wasmer-wasix",
+  "src/wasix/runtime/engine/crates/virtual-fs",
   "src/wasix/runtime/engine/crates/v8-windows-x64-msvc",
 
 ]

@@ -84,6 +84,14 @@ describe('direct WASIX session lifecycle', () => {
     );
   });
 
+  it('leaves the fsync default and saved configuration to PostgreSQL', () => {
+    const options = openOptions();
+    expect(wasixPostgresArgs(options)).not.toContain('-F');
+    expect(wasixPostgresArgs(options).some((arg) => arg.startsWith('fsync='))).toBe(false);
+    options.startupGUCs = { fsync: 'on' };
+    expect(wasixPostgresArgs(options)).toContain('fsync=on');
+  });
+
   it('uses PostgreSQL startup GUC name and value grammar', () => {
     const valid = openOptions();
     valid.startupGUCs = {

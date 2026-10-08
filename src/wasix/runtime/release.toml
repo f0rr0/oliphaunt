@@ -7,6 +7,7 @@ registry_packages = [
   "crates:oliphaunt-wasmer-wasix-types",
   "crates:oliphaunt-wasmer-journal",
   "crates:oliphaunt-wasmer-wasix",
+  "crates:oliphaunt-virtual-fs",
   "crates:oliphaunt-wasmer-v8-windows-x64-msvc",
 
   "crates:liboliphaunt-wasix-portable",
