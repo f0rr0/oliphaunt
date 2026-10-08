@@ -1,0 +1,60 @@
+name: Windows recursion qualification
+on:
+  push:
+    branches: [f0rr0/windows-recursion-qualification-20261008]
+permissions:
+  contents: read
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  recursion:
+    name: Recursion (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025-vs2026
+            target: windows-x64-msvc
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-runtime
+      - name: Verify frozen source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/f0rr0/oliphaunt/actions/runs/37584874208 --jq '.head_sha + " " + .conclusion')" = '8db3bd8885c32a5ca546f9038fc04764ab56610b success'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: '11470787764'
+          path: diagnostic-artifacts/addon
+          run-id: '37584874208'
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: '11466164855'
+          path: diagnostic-artifacts/query
+          run-id: '37584874208'
+          github-token: ${{ github.token }}
+      - name: Extract actual packages and run isolated cases
+        run: |
+          mkdir -p diagnostic-installed/addon diagnostic-installed/query
+          tar -xzf diagnostic-artifacts/addon/*.tgz -C diagnostic-installed/addon
+          tar -xzf diagnostic-artifacts/query/*.tgz -C diagnostic-installed/query
+          node diagnostics/deep-recursion.mjs diagnostic-installed/addon/package/prebuilds/oliphaunt_wasix_napi.node diagnostic-installed/query/package/dist/module/query.js diagnostic-results
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ !cancelled() }}
+        with:
+          name: deep-recursion-${{ matrix.target }}
+          path: |
+            diagnostic-results/*.json
+            diagnostic-results/*.log
+            diagnostic-results/*/result.json
+            diagnostic-results/*/events.jsonl
+          include-hidden-files: true
+          if-no-files-found: error
