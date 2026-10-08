@@ -20,9 +20,12 @@ import {
   createDeterministicTar,
   fitCargoPayloadParts,
   packageGeneratedCargoSource,
+  packagedCargoManifestText,
+  parseCargoPackageFiles,
 } from './cargo-source-package.mts';
 import { readPortableArchiveEntries } from './portable-archive.mts';
 import { assertReleaseNoticesInArchive } from './release-notices.mts';
+import { requireCrateMatchesCargoListing } from './release-carrier.mts';
 
 function fixture(t, name) {
   const root = mkdtempSync(path.join(os.tmpdir(), `oliphaunt-${name}-`));
@@ -85,6 +88,16 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
     const first = readFileSync(path.join(root, 'first.path'), 'utf8').trim();
     const second = readFileSync(path.join(root, 'second.path'), 'utf8').trim();
     assert.deepEqual(readFileSync(first), readFileSync(second));
+    for (const output of ['first', 'second']) {
+      const listing = path.join(root, `${output}-files.txt`);
+      assert.equal(readFileSync(listing, 'utf8').includes('\\'), false);
+      requireCrateMatchesCargoListing(
+        readFileSync(path.join(root, `${output}.path`), 'utf8').trim(),
+        listing,
+        'selected-package',
+        '0.1.0',
+      );
+    }
     assert.equal(
       readFileSync(first).subarray(0, 10).toString('hex'),
       '1f8b0800000000000003',
@@ -121,6 +134,18 @@ if (['prepare', 'verify'].includes(process.argv[2])) {
   } else throw new Error('expected prepare or verify');
   process.exit(0);
 }
+
+test('published manifests remove dependency paths while retaining library and build paths', () => {
+  const text = packagedCargoManifestText(
+    '[package]\nname = "example"\nversion = "1.0.0"\nbuild = "build.rs"\n[lib]\npath = "upstream/src/lib.rs"\n[dependencies.peer]\npackage = "private-peer"\npath = "../peer"\nversion = "=1.0.0"\n[target.\'cfg(windows)\'.build-dependencies]\nengine = { path = "../engine", version = "=1.0.0" }\n[[bin]]\nname = "example-tool"\npath = "src/tool.rs"\n',
+  );
+  const cargo = Bun.TOML.parse(text);
+  assert.equal(cargo.lib.path, 'upstream/src/lib.rs');
+  assert.equal(cargo.package.build, 'build.rs');
+  assert.equal(cargo.bin[0].path, 'src/tool.rs');
+  assert.equal(cargo.dependencies.peer.path, undefined);
+  assert.equal(cargo.target['cfg(windows)']['build-dependencies'].engine.path, undefined);
+});
 
 test('payload splitting follows compressed crate size and preserves every byte', (t) => {
   const { root } = fixture(t, 'compressed-parts');
@@ -217,6 +242,47 @@ test('rejects absolute, parent, backslash, and non-portable Cargo member paths',
   for (const candidate of ['../escape', '/absolute', 'C:/absolute', 'src\\escape', 'bad:name']) {
     assert.throws(() => cargoPackageRelativePathParts(candidate), /Cargo package path/u);
   }
+});
+
+test('normalizes native Cargo listings before validating portable member paths', () => {
+  const expected = ['Cargo.toml', 'src/async_api.rs', 'tests/runtime_smoke.rs'];
+  const manifest = 'fixture/Cargo.toml';
+  assert.deepEqual(parseCargoPackageFiles(expected.join('\n'), manifest), expected);
+  assert.deepEqual(
+    parseCargoPackageFiles(
+      'Cargo.toml\r\nsrc\\async_api.rs\r\ntests\\runtime_smoke.rs\r\n',
+      manifest,
+      {
+        platform: 'win32',
+      },
+    ),
+    expected,
+  );
+  for (const candidate of [
+    '..\\escape',
+    'src\\..\\escape',
+    '\\absolute',
+    'C:\\absolute',
+    '\\\\server\\share',
+    'src\\\\empty',
+    'bad:name',
+  ]) {
+    assert.throws(
+      () => parseCargoPackageFiles(`Cargo.toml\n${candidate}\n`, manifest, { platform: 'win32' }),
+      /Cargo package path/u,
+    );
+  }
+  assert.throws(
+    () =>
+      parseCargoPackageFiles('Cargo.toml\nsrc\\lib.rs\nsrc/lib.rs\n', manifest, {
+        platform: 'win32',
+      }),
+    /repeated src\/lib.rs/u,
+  );
+  assert.throws(
+    () => parseCargoPackageFiles('Cargo.toml\nsrc\\lib.rs\n', manifest, { platform: 'linux' }),
+    /unsafe Cargo package path/u,
+  );
 });
 
 test('generated Cargo carriers match Cargo-selected source bytes and reject links', (t) => {

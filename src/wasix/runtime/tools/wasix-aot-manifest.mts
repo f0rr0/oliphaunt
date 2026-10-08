@@ -8,6 +8,10 @@ export { WASIX_TOOLCHAIN_PATH };
 export const STABLE_WASIX_SOURCE_LANE = 'stable';
 export const WASIX_AOT_ENGINE = 'llvm-opta';
 
+export function wasixAotEngine(target) {
+  return target === 'x86_64-pc-windows-msvc' ? 'v8' : WASIX_AOT_ENGINE;
+}
+
 function requiredString(value, context) {
   if (typeof value !== 'string' || value.length === 0) {
     throw new Error(`${context} must be a non-empty string`);
@@ -15,11 +19,11 @@ function requiredString(value, context) {
   return value;
 }
 
-export function canonicalWasixAotMetadata(root = ROOT) {
+export function canonicalWasixAotMetadata(root = ROOT, target) {
   const toolchain = canonicalWasixCargoToolchainVersions(root);
   return {
     sourceLane: STABLE_WASIX_SOURCE_LANE,
-    engine: WASIX_AOT_ENGINE,
+    engine: wasixAotEngine(target),
     wasmerVersion: toolchain.wasmer,
     wasmerWasixVersion: toolchain.wasmerWasix,
   };
@@ -27,11 +31,12 @@ export function canonicalWasixAotMetadata(root = ROOT) {
 
 export function assertCanonicalWasixAotManifest(
   manifest,
-  { context = 'WASIX AOT manifest', expectedTarget, canonical = canonicalWasixAotMetadata() } = {},
+  { context = 'WASIX AOT manifest', expectedTarget, canonical } = {},
 ) {
   if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
     throw new Error(`${context} must be a JSON object`);
   }
+  canonical ??= canonicalWasixAotMetadata(undefined, expectedTarget ?? manifest['target-triple']);
   const expected = [
     ['format-version', 1],
     ['source-lane', canonical.sourceLane],

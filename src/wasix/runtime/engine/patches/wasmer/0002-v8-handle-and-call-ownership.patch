@@ -1,0 +1,691 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Thu, 8 Oct 2026 00:00:00 +0000
+Subject: [PATCH 2/4] v8: retain C handles and preserve borrowed call values
+
+Give Stores ownership of C wrappers borrowed by Rust aliases. Release temporary
+types and traps while their isolate is live, and copy borrowed call values and
+imports before passing them to owning C API vectors.
+
+The complete ordered series is the build and qualification unit.
+
+diff --git a/src/backend/v8/entities/function/mod.rs b/src/backend/v8/entities/function/mod.rs
+--- a/src/backend/v8/entities/function/mod.rs
++++ b/src/backend/v8/entities/function/mod.rs
+@@ -59,6 +59,12 @@
+             .field("env_is_some", &self.env_handle.is_some())
+             .finish()
+     }
++}
++
++// Each constructor transfers one unique callback environment to V8.
++// V8's existing host-info finalizer releases it when its isolate is disposed.
++unsafe extern "C" fn drop_callback_env<F>(ptr: *mut c_void) {
++    unsafe { drop(Box::from_raw(ptr.cast::<FunctionCallbackEnv<'_, F>>())) };
+ }
+ 
+ impl Function {
+@@ -145,8 +151,21 @@
+                 wasm_functype,
+                 Some(callback),
+                 callback_env as *mut _ as _,
+-                None,
++                Some(drop_callback_env::<F>),
+             )
++        };
++
++        // The callback has a borrowed StoreMut; retain only its unique C root.
++        unsafe {
++            let root = wasm_func_as_ref(wasm_function);
++            (*callback_env)
++                .store
++                .inner
++                .store
++                .as_v8_mut()
++                .owned_refs
++                .push(super::store::OwnedRef(root));
++            wasm_functype_delete(wasm_functype);
+         };
+ 
+         if wasm_function.is_null() {
+@@ -217,8 +236,21 @@
+                 wasm_functype,
+                 Some(callback),
+                 callback_env as _,
+-                None,
++                Some(drop_callback_env::<F>),
+             )
++        };
++
++        // The callback has a borrowed StoreMut; retain only its unique C root.
++        unsafe {
++            let root = wasm_func_as_ref(wasm_function);
++            (*callback_env)
++                .store
++                .inner
++                .store
++                .as_v8_mut()
++                .owned_refs
++                .push(super::store::OwnedRef(root));
++            wasm_functype_delete(wasm_functype);
+         };
+ 
+         if wasm_function.is_null() {
+@@ -297,8 +329,21 @@
+                 wasm_functype,
+                 Some(callback),
+                 callback_env as _,
+-                None,
++                Some(drop_callback_env::<F>),
+             )
++        };
++
++        // The callback has a borrowed StoreMut; retain only its unique C root.
++        unsafe {
++            let root = wasm_func_as_ref(wasm_function);
++            (*callback_env)
++                .store
++                .inner
++                .store
++                .as_v8_mut()
++                .owned_refs
++                .push(super::store::OwnedRef(root));
++            wasm_functype_delete(wasm_functype);
+         };
+ 
+         if wasm_function.is_null() {
+@@ -332,6 +377,7 @@
+             res
+         };
+ 
++        unsafe { wasm_functype_delete(type_) };
+         FunctionType::new(params, returns)
+     }
+ 
+@@ -375,31 +421,34 @@
+ 
+         // let wasm_func_param_arity(self.handle)
+ 
+-        let mut args = unsafe {
++        let mut args = typed::OwnedValueVec(unsafe {
+             let mut wasm_params = params
+                 .iter()
+-                .map(|v| IntoCApiValue::into_cv(v.clone()))
++                .map(|v| typed::own_call_parameter(IntoCApiValue::into_cv(v.clone())))
+                 .collect::<Vec<_>>()
+                 .into_boxed_slice();
+             let mut vec = Default::default();
+             wasm_val_vec_new(&mut vec, wasm_params.len(), wasm_params.as_ptr());
+             vec
+-        };
++        });
+ 
+         let size = unsafe { wasm_func_result_arity(self.handle) };
+ 
+-        let mut results = {
++        let mut results = typed::OwnedValueVec({
+             unsafe {
+                 let mut vec = Default::default();
+                 wasm_val_vec_new_uninitialized(&mut vec, size);
+                 vec
+             }
+-        };
++        });
+ 
+         let mut trap;
+ 
+         loop {
+-            trap = unsafe { wasm_func_call(self.handle, &mut args as _, &mut results as *mut _) };
++            store.as_store_ref().inner.store.as_v8().ensure_running()?;
++            let raw_trap =
++                unsafe { wasm_func_call(self.handle, &mut *args as _, &mut *results as *mut _) };
++            trap = (!raw_trap.is_null()).then(|| Trap::from(raw_trap));
+             let store_mut = store.as_store_mut();
+             if let Some(callback) = store_mut.inner.on_called.take() {
+                 match callback(store_mut) {
+@@ -418,15 +467,17 @@
+             break;
+         }
+ 
+-        if !trap.is_null() {
+-            return Err(Into::<Trap>::into(trap).into());
++        store.as_store_ref().inner.store.as_v8().ensure_running()?;
++        if let Some(trap) = trap {
++            return Err(trap.into());
+         }
+ 
+         let values = unsafe {
+             let results = std::ptr::slice_from_raw_parts(results.data, results.size);
+             (*results)
+                 .iter()
+-                .map(|v| IntoWasmerValue::into_wv(*v))
++                .zip(signature.results())
++                .map(|(v, expected)| typed::into_call_value(*v, *expected, store))
+                 .collect::<Vec<_>>()
+                 .into_boxed_slice()
+         };
+@@ -526,8 +577,9 @@
+                 unsafe { trap.into_wasm_trap(&mut store) }
+             }
+ 
+-            Err(e) => {
+-                unimplemented!("host function panicked");
++            Err(_) => {
++                let trap = Trap::user(Box::new(RuntimeError::new("host function panicked")));
++                unsafe { trap.into_wasm_trap(&mut store) }
+             }
+         }
+     }
+@@ -634,8 +686,9 @@
+                         // unimplemented!("host function panicked");
+                     },
+ 
+-                    Err(e) => {
+-                        unimplemented!("host function panicked");
++                    Err(_) => {
++                        let trap = Trap::user(Box::new(RuntimeError::new("host function panicked")));
++                        unsafe { trap.into_wasm_trap(store) }
+                     }
+                 }
+             }}
+@@ -707,7 +760,10 @@
+                     let trap = crate::backend::v8::error::Trap::user(Box::new(e)); unsafe { trap.into_wasm_trap(store) }
+                 },
+ 
+-                Err(e) => { unimplemented!("host function panicked"); }
++                Err(_) => {
++                    let trap = Trap::user(Box::new(RuntimeError::new("host function panicked")));
++                    unsafe { trap.into_wasm_trap(store) }
++                }
+               }
+             }}
+ 
+diff --git a/src/backend/v8/entities/function/typed.rs b/src/backend/v8/entities/function/typed.rs
+--- a/src/backend/v8/entities/function/typed.rs
++++ b/src/backend/v8/entities/function/typed.rs
+@@ -11,12 +11,66 @@
+ use std::iter::FromIterator;
+ 
+ use crate::{
+-    AsStoreMut, FromToNativeWasmType, NativeWasmType, NativeWasmTypeInto, RuntimeError,
++    AsStoreMut, AsStoreRef, FromToNativeWasmType, NativeWasmType, NativeWasmTypeInto, RuntimeError,
+     TypedFunction, Value, WasmTypeList,
+     backend::v8::{bindings::*, error::Trap, function::Function, utils::convert::*},
+ };
+ use wasmer_types::RawValue;
+ 
++// Delete owned argument and result vectors on every return path.
++pub(super) struct OwnedValueVec(pub(super) wasm_val_vec_t);
++impl std::ops::Deref for OwnedValueVec {
++    type Target = wasm_val_vec_t;
++    fn deref(&self) -> &Self::Target {
++        &self.0
++    }
++}
++impl std::ops::DerefMut for OwnedValueVec {
++    fn deref_mut(&mut self) -> &mut Self::Target {
++        &mut self.0
++    }
++}
++impl Drop for OwnedValueVec {
++    fn drop(&mut self) {
++        unsafe { wasm_val_vec_delete(&mut self.0) }
++    }
++}
++// C vectors adopt reference wrappers; borrow a Function only through a copy.
++pub(super) fn own_call_parameter(value: wasm_val_t) -> wasm_val_t {
++    if value.kind == wasm_valkind_enum_WASM_FUNCREF as _ {
++        let mut owned = value;
++        unsafe { wasm_val_copy(&mut owned, &value) };
++        owned
++    } else {
++        value
++    }
++}
++
++// Returned Function aliases must outlive the temporary native result vector.
++pub(super) fn into_call_value(
++    mut value: wasm_val_t,
++    expected: wasmer_types::Type,
++    store: &mut impl AsStoreMut,
++) -> Value {
++    // The pinned C API reports returned function references as generic refs.
++    if expected == wasmer_types::Type::FuncRef {
++        value.kind = wasm_valkind_enum_WASM_FUNCREF as _;
++        let pointer = unsafe { value.of.ref_ };
++        if pointer.is_null() {
++            return Value::FuncRef(None);
++        }
++        let owned = unsafe { wasm_ref_copy(pointer) };
++        store
++            .as_store_mut()
++            .inner
++            .store
++            .as_v8_mut()
++            .owned_refs
++            .push(super::super::store::OwnedRef(owned));
++        value.of.ref_ = owned;
++    }
++    value.into_wv()
++}
+ macro_rules! impl_native_traits {
+     (  $( $x:ident ),* ) => {
+         #[allow(unused_parens, non_snake_case)]
+@@ -37,28 +91,31 @@
+                      vec![ $( {
+                          let raw = $x.to_native().into_raw(store);
+                          let value = Value::from_raw(&mut store, <$x::Native as NativeWasmType>::WASM_TYPE, raw);
+-                         value.into_cv()
++                         own_call_parameter(value.into_cv())
+                      } ),* ]
+                  };
+ 
+-                 let mut results = {
++                 let mut results = OwnedValueVec({
+                     unsafe {
+                         let mut ret = std::mem::zeroed();
+                         wasm_val_vec_new_uninitialized(&mut ret, Rets::wasm_types().len());
+                         ret
+                     }
+-                };
++                });
+ 
+ 
+                  let func = unsafe { wasm_extern_as_func(self.func.to_vm_extern().unwrap_v_8()) };
+ 
+                 let mut params = unsafe {std::mem::zeroed()};
+                 unsafe {wasm_val_vec_new(&mut params, params_list.len(), params_list.as_ptr())};
++                let params = OwnedValueVec(params);
+ 
+                  let mut trap;
+ 
+                  loop {
+-                    trap = unsafe { wasm_func_call(func, &params, &mut results) };
++                    store.as_store_ref().inner.store.as_v8().ensure_running()?;
++                    let raw_trap = unsafe { wasm_func_call(func, &*params, &mut *results) };
++                    trap = (!raw_trap.is_null()).then(|| Trap::from(raw_trap));
+ 
+                     let store_mut = store.as_store_mut();
+                     if let Some(callback) = store_mut.inner.on_called.take() {
+@@ -74,12 +131,10 @@
+ 
+ 
+ 
+-                 if !trap.is_null() {
+-                     unsafe {
+-                        let trap: Trap = trap.into();
+-                        return Err(RuntimeError::from(trap));
+-                     }
+-                }
++                 store.as_store_ref().inner.store.as_v8().ensure_running()?;
++                 if let Some(trap) = trap {
++                     return Err(RuntimeError::from(trap));
++                 }
+ 
+                 unsafe {
+                     let mut rets_list_array = Rets::empty_array();
+@@ -89,13 +144,13 @@
+                         0 => {},
+                         1 => {
+                             let val = (*results.data.wrapping_add(0)).clone();
+-                            let val = val.into_wv();
++                            let val = into_call_value(val, Rets::wasm_types()[0], &mut store);
+                             *mut_rets = val.as_raw(&mut store);
+                         }
+                         _n => {
+                             for (i, ret_type) in Rets::wasm_types().iter().enumerate() {
+                                     let val = (*results.data.wrapping_add(i)).clone();
+-                                    let val = val.into_wv();
++                                    let val = into_call_value(val, *ret_type, &mut store);
+                                     let slot = mut_rets.add(i);
+                                     *slot = val.as_raw(&mut store);
+                             }
+diff --git a/src/backend/v8/entities/global.rs b/src/backend/v8/entities/global.rs
+--- a/src/backend/v8/entities/global.rs
++++ b/src/backend/v8/entities/global.rs
+@@ -60,9 +60,17 @@
+         let v8_global_type =
+             unsafe { wasm_globaltype_new(wasm_valtype_new(v8_type), v8_mutability) };
+ 
+-        Ok(Self {
+-            handle: unsafe { wasm_global_new(v8_store.inner, v8_global_type, &v8_value) },
+-        })
++        let handle = unsafe { wasm_global_new(v8_store.inner, v8_global_type, &v8_value) };
++        unsafe { bindings::wasm_globaltype_delete(v8_global_type) };
++        store
++            .inner
++            .store
++            .as_v8_mut()
++            .owned_refs
++            .push(super::store::OwnedRef(unsafe {
++                bindings::wasm_global_as_ref(handle)
++            }));
++        Ok(Self { handle })
+     }
+ 
+     pub fn ty(&self, store: &impl AsStoreRef) -> GlobalType {
+@@ -73,14 +81,16 @@
+         let valtype = unsafe { wasm_globaltype_content(r#type) };
+         let wasmer_type = valtype.into_wt();
+ 
+-        GlobalType::new(
++        let result = GlobalType::new(
+             wasmer_type,
+             if mutability == bindings::wasm_mutability_enum_WASM_VAR as u8 {
+                 Mutability::Var
+             } else {
+                 Mutability::Const
+             },
+-        )
++        );
++        unsafe { bindings::wasm_globaltype_delete(r#type) };
++        result
+     }
+ 
+     pub fn get(&self, store: &mut impl AsStoreMut) -> Value {
+diff --git a/src/backend/v8/entities/instance.rs b/src/backend/v8/entities/instance.rs
+--- a/src/backend/v8/entities/instance.rs
++++ b/src/backend/v8/entities/instance.rs
+@@ -26,20 +26,15 @@
+         let externs: Vec<_> = externs.into_iter().map(|v| v.unwrap_v_8()).collect();
+ 
+         let instance = unsafe {
+-            let mut imports = unsafe {
+-                let mut vec = Default::default();
+-                wasm_extern_vec_new(&mut vec, externs.len(), externs.as_ptr());
+-                vec
+-            };
+-
+-            std::mem::forget(externs);
+-
+-            wasm_instance_new(
+-                store,
+-                wasm_module_obtain(store, module),
+-                &mut imports,
+-                &mut trap,
+-            )
++            // The vector consumes C wrappers: copy borrowed reusable imports.
++            let copied: Vec<_> = externs.iter().map(|p| wasm_extern_copy(*p)).collect();
++            let mut imports = wasm_extern_vec_t::default();
++            wasm_extern_vec_new(&mut imports, copied.len(), copied.as_ptr());
++            let local_module = wasm_module_obtain(store, module);
++            let instance = wasm_instance_new(store, local_module, &imports, &mut trap);
++            wasm_module_delete(local_module);
++            wasm_extern_vec_delete(&mut imports);
++            instance
+         };
+ 
+         if instance.is_null() {
+@@ -65,7 +60,7 @@
+         };
+ 
+         let exports_ty = module.exports().collect::<Vec<_>>();
+-        exports_ty
++        let result = exports_ty
+             .iter()
+             .zip(wasm_exports.iter())
+             .map(|(export_type, wasm_export)| {
+@@ -77,14 +72,18 @@
+                 let extern_ = Extern::from_vm_extern(&mut store, VMExtern::V8(*wasm_export));
+                 (name.to_string(), extern_)
+             })
+-            .collect::<Exports>()
++            .collect::<Exports>();
++        store
++            .as_store_mut()
++            .inner
++            .store
++            .as_v8_mut()
++            .owned_exports
++            .push(super::store::OwnedExports(exports));
++        result
+     }
+ }
+-impl Drop for InstanceHandle {
+-    fn drop(&mut self) {
+-        unsafe { wasm_instance_delete(self.0) }
+-    }
+-}
++// Store owns the C wrapper; a Rust alias may outlive its Store.
+ 
+ #[derive(Clone, PartialEq, Eq)]
+ /// A WebAssembly `instance` in the `v8` runtime.
+@@ -117,6 +116,12 @@
+     ) -> Result<(Self, Exports), InstantiationError> {
+         check_isolate(store);
+         let store_ref = store.as_store_ref();
++        store_ref
++            .inner
++            .store
++            .as_v8()
++            .ensure_running()
++            .map_err(InstantiationError::Start)?;
+         let externs: Vec<VMExtern> = externs
+             .iter()
+             .map(|extern_| extern_.to_vm_extern())
+@@ -126,6 +131,22 @@
+             module.as_v8().handle.v8_shared_module_handle,
+             externs,
+         )?;
++        // C instance wrappers belong to the Store, like their export aliases.
++        let owned = unsafe { wasm_instance_as_ref(instance.0) };
++        store
++            .as_store_mut()
++            .inner
++            .store
++            .as_v8_mut()
++            .owned_refs
++            .push(super::store::OwnedRef(owned));
++        store
++            .as_store_ref()
++            .inner
++            .store
++            .as_v8()
++            .ensure_running()
++            .map_err(InstantiationError::Start)?;
+         let exports = instance.get_exports(store, module);
+ 
+         Ok((
+diff --git a/src/backend/v8/entities/table.rs b/src/backend/v8/entities/table.rs
+--- a/src/backend/v8/entities/table.rs
++++ b/src/backend/v8/entities/table.rs
+@@ -26,13 +26,12 @@
+     pub(crate) fn type_to_v8(ty: TableType) -> *mut wasm_tabletype_t {
+         let valtype = unsafe { wasm_valtype_new(ty.ty.into_ct()) };
+ 
+-        let limits = Box::into_raw(Box::new(wasm_limits_t {
++        let limits = wasm_limits_t {
+             min: ty.minimum,
+             max: ty.maximum.unwrap_or(wasm_limits_max_default),
+             shared: false,
+-        }));
+-
+-        unsafe { wasm_tabletype_new(valtype, limits) }
++        };
++        unsafe { wasm_tabletype_new(valtype, &limits) }
+     }
+ 
+     pub fn new(
+@@ -49,9 +48,15 @@
+         let wasm_tablety = Self::type_to_v8(ty);
+         let init: wasm_val_t = init.into_cv();
+ 
+-        Ok(Self {
+-            handle: unsafe { wasm_table_new(v8_store.inner, wasm_tablety, init.of.ref_) },
+-        })
++        let handle = unsafe { wasm_table_new(v8_store.inner, wasm_tablety, init.of.ref_) };
++        unsafe { wasm_tabletype_delete(wasm_tablety) };
++        store_mut
++            .inner
++            .store
++            .as_v8_mut()
++            .owned_refs
++            .push(super::store::OwnedRef(unsafe { wasm_table_as_ref(handle) }));
++        Ok(Self { handle })
+     }
+ 
+     pub fn to_vm_extern(&self) -> VMExtern {
+@@ -65,10 +70,10 @@
+ 
+         let table_type: *mut wasm_tabletype_t = unsafe { wasm_table_type(self.handle) };
+         let table_limits = unsafe { wasm_tabletype_limits(table_type) };
+-        let table_type = unsafe { wasm_tabletype_element(table_type) };
+-
+-        TableType {
+-            ty: table_type.into_wt(),
++        let element_type = unsafe { wasm_tabletype_element(table_type) };
++
++        let result = TableType {
++            ty: element_type.into_wt(),
+             minimum: unsafe { (*table_limits).min },
+             maximum: unsafe {
+                 if (*table_limits).max == wasm_limits_max_default {
+@@ -78,7 +83,9 @@
+                 }
+             },
+             readonly: false,
+-        }
++        };
++        unsafe { wasm_tabletype_delete(table_type) };
++        result
+     }
+ 
+     pub fn get(&self, store: &mut impl AsStoreMut, index: u32) -> Option<Value> {
+diff --git a/src/backend/v8/entities/tag.rs b/src/backend/v8/entities/tag.rs
+--- a/src/backend/v8/entities/tag.rs
++++ b/src/backend/v8/entities/tag.rs
+@@ -21,6 +21,9 @@
+ 
+ unsafe impl Send for Tag {}
+ unsafe impl Sync for Tag {}
++
++// C bridge uses ExternType's virtual implementation destructor.
++use crate::backend::v8::bindings::oliphaunt_externtype_delete;
+ 
+ impl Tag {
+     pub fn new<P: Into<Box<[Type]>>>(store: &mut impl AsStoreMut, params: P) -> Self {
+@@ -49,6 +52,13 @@
+         }
+ 
+         let handle = unsafe { wasm_tag_new(v8_store.inner, tag_type) };
++        unsafe { oliphaunt_externtype_delete(tag_type) };
++        store_mut
++            .inner
++            .store
++            .as_v8_mut()
++            .owned_refs
++            .push(super::store::OwnedRef(unsafe { wasm_tag_as_ref(handle) }));
+         if handle.is_null() {
+             panic!("failed to create new tag: returned tag is null");
+         }
+@@ -69,6 +79,7 @@
+             res
+         };
+ 
++        unsafe { oliphaunt_externtype_delete(type_) };
+         TagType::new(wasmer_types::TagKind::Exception, params)
+     }
+ 
+diff --git a/src/backend/v8/error.rs b/src/backend/v8/error.rs
+--- a/src/backend/v8/error.rs
++++ b/src/backend/v8/error.rs
+@@ -1,7 +1,4 @@
+-use std::{
+-    error::Error,
+-    ffi::{CStr, c_char},
+-};
++use std::error::Error;
+ 
+ use crate::{
+     AsStoreMut,
+@@ -11,7 +8,7 @@
+ #[derive(Debug)]
+ enum InnerTrap {
+     User(Box<dyn Error + Send + Sync>),
+-    CApi(*mut wasm_trap_t),
++    CApi(String),
+ }
+ 
+ /// A struct representing a Trap
+@@ -69,7 +66,14 @@
+     #[allow(clippy::unnecessary_mut_passed)]
+     pub unsafe fn into_wasm_trap(self, store: &mut impl AsStoreMut) -> *mut wasm_trap_t {
+         match self.inner {
+-            InnerTrap::CApi(t) => t,
++            InnerTrap::CApi(message) => {
++                let mut data = wasm_byte_vec_t::default();
++                unsafe { wasm_byte_vec_new(&mut data, message.len(), message.as_ptr() as _) };
++                let store = store.as_store_mut();
++                let trap = unsafe { wasm_trap_new(store.inner.store.as_v8().inner, &data) };
++                unsafe { wasm_byte_vec_delete(&mut data) };
++                trap
++            }
+             InnerTrap::User(err) => {
+                 let err_ptr = Box::leak(Box::new(err));
+                 // UNSAFE: The boxed error is propagated by passing the string
+@@ -90,13 +94,20 @@
+ 
+ impl From<*mut wasm_trap_t> for Trap {
+     fn from(value: *mut wasm_trap_t) -> Self {
++        // Snapshot the message while the Store is live. RuntimeError can outlive
++        // its Store, so it must not retain an isolate-owned C API trap handle.
+         let message = unsafe {
+-            let mut message = unsafe { std::mem::zeroed() };
+-            unsafe { wasm_trap_message(value, &mut message) };
+-
+-            CStr::from_ptr(message.data as *const c_char)
+-                .to_str()
+-                .unwrap()
++            let mut bytes = wasm_byte_vec_t::default();
++            wasm_trap_message(value, &mut bytes);
++            let text = String::from_utf8_lossy(std::slice::from_raw_parts(
++                bytes.data.cast::<u8>(),
++                bytes.size,
++            ))
++            .trim_end_matches('\0')
++            .to_owned();
++            wasm_byte_vec_delete(&mut bytes);
++            wasm_trap_delete(value);
++            text
+         };
+ 
+         // User traps are encoded by `into_wasm_trap` as a leaked `Box` pointer
+@@ -104,8 +115,8 @@
+         if let Some((_, ptr_str)) = message.split_once("🐛") {
+             let ptr: Box<dyn Error + Send + Sync + 'static> = unsafe {
+                 let r = ptr_str.trim_start_matches("0x");
+-                std::ptr::read(usize::from_str_radix(r, 16).unwrap()
+-                    as *const Box<dyn Error + Send + Sync + 'static>)
++                *Box::from_raw(usize::from_str_radix(r, 16).unwrap()
++                    as *mut Box<dyn Error + Send + Sync + 'static>)
+             };
+ 
+             Self {
+@@ -113,7 +124,7 @@
+             }
+         } else {
+             Self {
+-                inner: InnerTrap::CApi(value),
++                inner: InnerTrap::CApi(message),
+             }
+         }
+     }
+@@ -132,18 +143,7 @@
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         match &self.inner {
+             InnerTrap::User(e) => write!(f, "{e}"),
+-            InnerTrap::CApi(value) => {
+-                // let message: wasm_message_t;
+-                // wasm_trap_message(value, &mut message);
+-                let mut out = unsafe {
+-                    let mut vec: wasm_byte_vec_t = Default::default();
+-                    wasm_byte_vec_new_empty(&mut vec);
+-                    &mut vec as *mut _
+-                };
+-                unsafe { wasm_trap_message(*value, out) };
+-                let cstr = unsafe { CStr::from_ptr((*out).data) };
+-                write!(f, "wasm-c-api trap: {}", cstr.to_str().unwrap())
+-            }
++            InnerTrap::CApi(message) => write!(f, "wasm-c-api trap: {message}"),
+         }
+     }
+ }

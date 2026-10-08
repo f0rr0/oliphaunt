@@ -9,7 +9,7 @@ import {
   WASIX_CARGO_ARTIFACT_SCHEMA,
 } from '../../runtime/tools/wasix-cargo-artifact-contract.mts';
 import { extractPortableArchiveTree } from '../../../../tools/packaging/portable-archive.mts';
-import { packageSpec } from '../../../../tools/packaging/wasix-cargo-payload.mts';
+import { packageAotSpec, packageSpec } from '../../../../tools/packaging/wasix-cargo-payload.mts';
 import { currentProductVersionSync } from '../../../../tools/release/release-artifact-targets.mts';
 import {
   fail,
@@ -38,7 +38,7 @@ export function packageWasixToolsCargoArtifacts(argv) {
     mkdirSync(directory, { recursive: true });
   }
   const targets = values.target ?? ['portable', ...Object.keys(AOT_TARGET_TRIPLES)];
-  const packages = targets.map((target) => {
+  const packages = targets.flatMap((target) => {
     const triple = AOT_TARGET_TRIPLES[target];
     if (target !== 'portable' && !triple) fail(`unsupported WASIX tools target ${target}`);
     const payloadRoot = path.join(extracted, target);
@@ -50,26 +50,25 @@ export function packageWasixToolsCargoArtifacts(argv) {
     extractPortableArchiveTree(archive, payloadRoot);
     if (triple) validateToolsAotPayload(payloadRoot, triple);
     else validatePortableToolsPayload(payloadRoot, values.version);
-    return packageSpec(
-      {
-        name: triple ? TOOLS_AOT_PACKAGES[target] : TOOLS_PACKAGE,
-        target: triple ?? 'portable',
-        kind: triple ? 'wasix-tools-aot' : 'wasix-tools',
-        templateDir: path.join(
-          ROOT,
-          'src/wasix/postgres-tools/crates',
-          triple ? `aot/${triple}` : 'tools',
-        ),
-        payloadRoot,
-        payloadDirName: triple ? 'artifacts' : 'payload',
-      },
-      {
-        version: values.version,
-        sourceRoot,
-        outputDir,
-        cargoTargetDir: path.join(work, 'cargo-package-target'),
-      },
-    );
+    const spec = {
+      name: triple ? TOOLS_AOT_PACKAGES[target] : TOOLS_PACKAGE,
+      target: triple ?? 'portable',
+      kind: triple ? 'wasix-tools-aot' : 'wasix-tools',
+      templateDir: path.join(
+        ROOT,
+        'src/wasix/postgres-tools/crates',
+        triple ? `aot/${triple}` : 'tools',
+      ),
+      payloadRoot,
+      payloadDirName: triple ? 'artifacts' : 'payload',
+    };
+    const options = {
+      version: values.version,
+      sourceRoot,
+      outputDir,
+      cargoTargetDir: path.join(work, 'cargo-package-target'),
+    };
+    return triple ? packageAotSpec(spec, options) : [packageSpec(spec, options)];
   });
   const relative = (value) => path.relative(ROOT, value).split(path.sep).join('/');
   writeFileSync(

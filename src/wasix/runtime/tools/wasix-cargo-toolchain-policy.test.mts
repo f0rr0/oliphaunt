@@ -3,15 +3,31 @@ import {
   REQUIRED_WASIX_CONSUMER_PINS,
   validateWasixConsumerDependencyPins,
 } from './wasix-cargo-toolchain-policy.mts';
-const toolchainVersions = { wasmer: '7.2.1', wasmerWasix: '0.702.1', webc: '12.0.0' };
+import { ENGINE_SOURCE_CRATES } from '../engine/contract.mts';
+const toolchainVersions = {
+  engine: '0.3.1',
+  wasmer: '7.2.1',
+  wasmerWasix: '0.702.1',
+  webc: '12.0.0',
+};
 
-test('requires exact non-optional pins for the published WASIX family closure', () => {
-  const dependencies = Object.fromEntries(
+function pinnedDependencies() {
+  return Object.fromEntries(
     REQUIRED_WASIX_CONSUMER_PINS.map((name) => [
       name,
-      name === 'webc' ? '=12.0.0' : { version: '=0.702.1', 'default-features': false },
+      name === 'webc'
+        ? '=12.0.0'
+        : {
+            version: ENGINE_SOURCE_CRATES.includes(name) ? '=0.3.1' : '=0.702.1',
+            'default-features': false,
+            ...(ENGINE_SOURCE_CRATES.includes(name) ? { package: 'oliphaunt-' + name } : {}),
+          },
     ]),
   );
+}
+
+test('requires exact non-optional pins for the published WASIX family closure', () => {
+  const dependencies = pinnedDependencies();
   expect(
     validateWasixConsumerDependencyPins(
       { dependencies },
@@ -39,12 +55,7 @@ test('requires exact non-optional pins for the published WASIX family closure', 
 });
 
 test('rejects default-feature and source substitutions in published WASIX pins', () => {
-  const dependencies = Object.fromEntries(
-    REQUIRED_WASIX_CONSUMER_PINS.map((name) => [
-      name,
-      name === 'webc' ? '=12.0.0' : { version: '=0.702.1', 'default-features': false },
-    ]),
-  );
+  const dependencies = pinnedDependencies();
   delete dependencies['wasmer-config']['default-features'];
   dependencies['wasmer-journal']['default-features'] = true;
   dependencies['wasmer-package'].path = '../../substituted';
@@ -66,12 +77,7 @@ test('rejects default-feature and source substitutions in published WASIX pins',
 });
 
 test('rejects missing, ranged, optional, and source-substituted WebC pins', () => {
-  const dependencies = Object.fromEntries(
-    REQUIRED_WASIX_CONSUMER_PINS.map((name) => [
-      name,
-      name === 'webc' ? '=12.0.0' : { version: '=0.702.1', 'default-features': false },
-    ]),
-  );
+  const dependencies = pinnedDependencies();
 
   delete dependencies.webc;
   expect(

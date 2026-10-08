@@ -1,0 +1,12 @@
+[package]
+name = "oliphaunt-wasmer-v8-windows-x64-msvc"
+version = "0.3.1"
+edition = "2024"
+rust-version = "1.96"
+description = "Bundled Windows V8 engine for the Oliphaunt WASIX runtime"
+repository = "https://github.com/f0rr0/oliphaunt"
+license = "MIT AND BSD-3-Clause AND BSD-2-Clause AND Apache-2.0 AND Unicode-3.0 AND SunPro AND CC0-1.0 AND Zlib AND Python-2.0"
+publish = false
+
+[lib]
+path = "src/lib.rs"
