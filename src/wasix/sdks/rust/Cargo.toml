@@ -118,7 +118,7 @@ wasmer-wasix = { package = "oliphaunt-wasmer-wasix", version = "*", path = "../.
   "time",
 ] }
 wasmer-wasix-types = { package = "oliphaunt-wasmer-wasix-types", version = "*", path = "../../runtime/engine/crates/wasmer-wasix-types", default-features = false }
-virtual-fs = { version = "=0.705.0", default-features = false }
+virtual-fs = { package = "oliphaunt-virtual-fs", path = "../../runtime/engine/crates/virtual-fs", version = "*", default-features = false }
 virtual-mio = { version = "=0.705.0", default-features = false }
 virtual-net = { version = "=0.705.0", default-features = false }
 webc = "=12.0.1"

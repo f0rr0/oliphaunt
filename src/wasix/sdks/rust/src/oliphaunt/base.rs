@@ -950,7 +950,7 @@ fn cluster_seed_publication_staging(pgdata: &Path) -> Result<PathBuf> {
     Ok(parent.join(staging))
 }
 
-fn sync_publication_tree(path: &Path) -> Result<()> {
+pub(super) fn sync_publication_tree(path: &Path) -> Result<()> {
     let mut files = Vec::new();
     let mut directories = Vec::new();
     collect_publication_entries(path, &mut files, &mut directories)?;

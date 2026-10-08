@@ -339,7 +339,9 @@ version = "2.5"
 version = "2"
 
 [dependencies.virtual-fs]
-version = "0.705.0"
+package = "oliphaunt-virtual-fs"
+path = "../virtual-fs"
+version = "*"
 features = ["webc-fs"]
 default-features = false
 

@@ -84,10 +84,6 @@ impl StorageRoot {
         }
     }
 
-    pub(crate) fn is_durable_host_directory(&self) -> bool {
-        matches!(self, Self::HostDirectory(_))
-    }
-
     #[cfg(all(test, feature = "extensions"))]
     pub(crate) fn host_path(&self) -> Option<&Path> {
         match self {
@@ -310,7 +306,6 @@ mod tests {
         let nested = Path::new("/nested");
         let file = Path::new("/nested/file");
 
-        assert!(host.is_durable_host_directory());
         assert!(host.memory_filesystem().is_none());
         host.create_dir_all(nested)?;
         std::fs::write(directory.path().join("nested/file"), b"host")?;
@@ -320,7 +315,6 @@ mod tests {
 
         let memory = StorageRoot::memory();
         let filesystem = memory.memory_filesystem().expect("memory filesystem");
-        assert!(!memory.is_durable_host_directory());
         memory.create_dir_all(nested)?;
         vfs_write(filesystem.as_ref(), file, b"memory")?;
         assert!(memory.is_dir(nested));

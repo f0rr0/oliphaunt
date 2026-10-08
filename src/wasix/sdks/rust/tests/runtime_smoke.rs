@@ -217,7 +217,8 @@ fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
          current_setting('synchronous_commit') AS synchronous_commit",
     )?;
     assert_eq!(settings.get_text(0, "buffers")?, Some("128MB"));
-    for setting in ["fsync", "full_pages", "synchronous_commit"] {
+    assert_eq!(settings.get_text(0, "fsync")?, Some("off"));
+    for setting in ["full_pages", "synchronous_commit"] {
         assert_eq!(settings.get_text(0, setting)?, Some("on"));
     }
     let configuration = std::fs::read_to_string(source_root.join("pgdata/postgresql.conf"))?;

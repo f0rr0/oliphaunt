@@ -1117,12 +1117,7 @@ fn instantiate_wasix_module(
         add_pgdata_preopen(&mut builder)?;
     }
     add_oliphaunt_env(&mut builder, input.startup_config, input.runtime_layout);
-    add_oliphaunt_args(
-        &mut builder,
-        input.postgres_config,
-        input.startup_config,
-        input.pgdata_storage.is_durable_host_directory(),
-    )?;
+    add_oliphaunt_args(&mut builder, input.postgres_config, input.startup_config)?;
     constrain_single_backend_tasks(&mut builder);
 
     {
@@ -2007,9 +2002,8 @@ fn add_oliphaunt_args(
     builder: &mut wasmer_wasix::WasiEnvBuilder,
     postgres_config: &PostgresConfig,
     startup_config: &StartupConfig,
-    durable_host_storage: bool,
 ) -> Result<()> {
-    for arg in oliphaunt_args(postgres_config, startup_config, durable_host_storage)? {
+    for arg in oliphaunt_args(postgres_config, startup_config)? {
         builder.add_arg(arg);
     }
     Ok(())
@@ -2018,14 +2012,10 @@ fn add_oliphaunt_args(
 fn oliphaunt_args(
     postgres_config: &PostgresConfig,
     startup_config: &StartupConfig,
-    durable_host_storage: bool,
 ) -> Result<Vec<String>> {
     postgres_config.validate()?;
     startup_config.validate()?;
     let mut args = vec!["--single".to_owned()];
-    if !durable_host_storage {
-        args.push("-F".to_owned());
-    }
     args.extend(["-O", "-j"].map(str::to_owned));
     for (name, value) in DEFAULT_STARTUP_GUCS {
         args.push("-c".to_owned());
@@ -2623,7 +2613,12 @@ mod tests {
             ..StartupConfig::default()
         };
 
-        let args = oliphaunt_args(&PostgresConfig::default(), &startup, false)?;
+        let args = oliphaunt_args(&PostgresConfig::default(), &startup)?;
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "-F" || arg.starts_with("fsync="))
+        );
 
         assert!(
             args.windows(2)

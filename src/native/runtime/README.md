@@ -113,8 +113,9 @@ need different PostgreSQL settings do not need a new C ABI; they pass validated
 `-c name=value` startup arguments through `OliphauntConfig.startup_args`. Later
 arguments win, so SDKs and benchmark harnesses can apply concrete PostgreSQL
 GUC overrides above the stable C boundary without inventing tuning profiles.
-Direct startup defaults to `-F` (`fsync=off`). Persistent storage
-alone does not provide crash safety: pass `-c fsync=on` when it is required.
+Embedded startup defaults to `fsync=off`, without overriding saved PostgreSQL
+configuration. Persistent storage alone does not provide crash safety: pass
+`-c fsync=on` when disk synchronization is required. Full-server defaults are unchanged.
 
 SDKs must hydrate PGDATA from a packaged cluster seed before calling
 `oliphaunt_init`; the C boundary never runs `initdb` or initializes an empty

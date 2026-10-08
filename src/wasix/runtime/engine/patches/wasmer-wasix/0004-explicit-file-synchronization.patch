@@ -1,0 +1,64 @@
+From: Sid Jain <sid_26@outlook.com>
+Date: Thu, 8 Oct 2026 00:00:00 +0000
+Subject: [PATCH] wasix: dispatch explicit file synchronization to the backing store
+
+Route fd_datasync and fd_sync to separate data-only and full backing-store
+barriers. Ordinary flush/close remains a write-draining operation, so host
+files need not force every close to disk. Preserve rights checks and report
+synchronization failures with their actual errno.
+---
+diff --git a/src/syscalls/wasi/fd_datasync.rs b/src/syscalls/wasi/fd_datasync.rs
+index cc82f357..f2cd715f 100644
+--- a/src/syscalls/wasi/fd_datasync.rs
++++ b/src/syscalls/wasi/fd_datasync.rs
+@@ -1,5 +1,4 @@
+ use super::*;
+-use crate::fs::FlushPoller;
+ use crate::syscalls::*;
+ 
+ /// ### `fd_datasync()`
+@@ -33,6 +32,13 @@ pub fn fd_datasync(mut ctx: FunctionEnvMut<'_, WasiEnv>, fd: WasiFd) -> Result<E
+     drop(fd_entry);
+ 
+     Ok(wasi_try_ok!(__asyncify(&mut ctx, None, async move {
+-        FlushPoller { file }.await.map(|_| Errno::Success)
++        futures::future::poll_fn(|cx| {
++            let mut handle = file.write().unwrap();
++            Pin::new(handle.as_mut())
++                .poll_sync_data(cx)
++                .map_err(map_io_err)
++        })
++        .await
++        .map(|_| Errno::Success)
+     })?))
+ }
+diff --git a/src/syscalls/wasi/fd_sync.rs b/src/syscalls/wasi/fd_sync.rs
+index 3030a5f1..55320b79 100644
+--- a/src/syscalls/wasi/fd_sync.rs
++++ b/src/syscalls/wasi/fd_sync.rs
+@@ -31,15 +31,16 @@ pub fn fd_sync(mut ctx: FunctionEnvMut<'_, WasiEnv>, fd: WasiFd) -> Result<Errno
+                     let handle = handle.clone();
+                     drop(guard);
+ 
+-                    // TODO: remove allow once inodes are refactored (see comments on [`WasiState`])
+-                    #[allow(clippy::await_holding_lock)]
+                     let size = {
+                         wasi_try_ok!(__asyncify(&mut ctx, None, async move {
+-                            // TODO: remove allow once inodes are refactored (see comments on [`WasiState`])
+-                            #[allow(clippy::await_holding_lock)]
+-                            let mut handle = handle.write().unwrap();
+-                            handle.flush().await.map_err(map_io_err)?;
+-                            Ok(handle.size())
++                            futures::future::poll_fn(|cx| {
++                                let mut handle = handle.write().unwrap();
++                                Pin::new(handle.as_mut())
++                                    .poll_sync_all(cx)
++                                    .map_ok(|()| handle.size())
++                                    .map_err(map_io_err)
++                            })
++                            .await
+                         })?)
+                     };
+ 
+-- 
+2.51.0
