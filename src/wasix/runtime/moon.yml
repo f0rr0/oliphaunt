@@ -275,8 +275,7 @@ tasks:
       - "!/src/third-party/postgres/testdata/**/*"
       - tools/build-compiler-output.sh
       - tools/extension-build-scripts.mts
-      - "!assets/generated"
-      - "!assets/generated/**"
+      - assets/generated/wasix-dl.exports
       - /src/wasix/sdks/rust/Cargo.toml
       - /src/wasix/runtime/tools/xtask/**/*
       - "@group(release-archive-contract)"
