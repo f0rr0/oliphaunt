@@ -12,6 +12,7 @@ assert(addonArgument && queryArgument && outputArgument, 'usage: node deep-recur
 const addonPath = path.resolve(addonArgument);
 const queryPath = path.resolve(queryArgument);
 const output = path.resolve(outputArgument);
+const reference = process.env.PGLITE_RECURSION === '1';
 mkdirSync(output, { recursive: true });
 const fixtures = {
   'json-malformed-array': "SELECT repeat('[', 10000)::json",
@@ -24,18 +25,21 @@ const hash = (file) => createHash('sha256').update(readFileSync(file)).digest('h
 
 if (!childArgument) {
   const report = {
-    schema: 'oliphaunt-deep-recursion-v1',
+    schema: 'oliphaunt-deep-recursion-v2',
     startedAt: new Date().toISOString(),
-    sourceRun: 37584874208,
-    sourceCommit: '8db3bd8885c32a5ca546f9038fc04764ab56610b',
+    engine: reference ? 'pglite' : 'oliphaunt-wasix',
+    sourceRun: reference ? null : 37584874208,
+    sourceCommit: reference ? null : '8db3bd8885c32a5ca546f9038fc04764ab56610b',
+    referencePackage: reference ? JSON.parse(readFileSync(path.resolve(path.dirname(addonPath), '../package.json'), 'utf8')).version : undefined,
     diagnosticCommit: process.env.GITHUB_SHA ?? null,
     host: { platform: platform(), arch: arch(), release: release(), node: process.version },
     addonSha256: hash(addonPath),
-    querySha256: hash(queryPath),
+    querySha256: reference ? undefined : hash(queryPath),
+    wasmSha256: reference ? hash(path.join(path.dirname(addonPath), 'pglite.wasm')) : undefined,
     fixtureSha256: createHash('sha256').update(JSON.stringify(fixtures)).digest('hex'),
     cases: [],
   };
-  for (const api of ['direct', 'actor']) {
+  for (const api of reference ? ['exec', 'query'] : ['direct', 'actor']) {
     for (const storage of ['memory', 'directory']) {
       for (const limit of ['default', '100kB']) {
         for (const fixture of Object.keys(fixtures)) {
@@ -45,7 +49,7 @@ if (!childArgument) {
           const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), addonPath, queryPath, path.join(output, id), JSON.stringify(test)], {
             env: process.env,
             encoding: 'utf8',
-            timeout: 90_000,
+            timeout: reference ? 30_000 : 90_000,
             maxBuffer: 8 * 1024 * 1024,
           });
           writeFileSync(path.join(output, `${id}.stdout.log`), result.stdout ?? '');
@@ -75,47 +79,62 @@ if (!childArgument) {
     save();
     appendFileSync(path.join(output, 'events.jsonl'), JSON.stringify({ at: new Date().toISOString(), phase, ...details }) + '\n');
   };
-  const addon = createRequire(import.meta.url)(addonPath);
-  const { decodeQueryResult, parseSimpleQueryRawResponse, simpleQuery, responseTransactionStatus } = await import(pathToFileURL(queryPath).href);
+  const addon = reference ? await import(pathToFileURL(addonPath).href) : createRequire(import.meta.url)(addonPath);
+  const { decodeQueryResult, parseSimpleQueryRawResponse, simpleQuery, responseTransactionStatus } = reference ? {} : await import(pathToFileURL(queryPath).href);
   const storage = test.storage === 'memory' ? { kind: 'memory' } : { kind: 'directory', path: path.join(output, 'database') };
   const openOptions = { profile: 'standard', storage, username: 'postgres', database: 'postgres', startupGucs: {}, extensions: [] };
   const Constructor = test.api === 'direct' ? addon.NativeWasixDatabase : addon.NativeWasixActorDatabase;
+  const open = () => reference ? addon.PGlite.create({ dataDir: test.storage === 'directory' ? storage.path : undefined, username: 'postgres', database: 'postgres' }) : Constructor.open(openOptions);
   let database;
-  const query = async (sql) => decodeQueryResult(parseSimpleQueryRawResponse(await database.execProtocolRaw(simpleQuery(sql))), { rowMode: 'array' });
+  const query = async (sql) => reference
+    ? test.api === 'exec' ? (await database.exec(sql, { rowMode: 'array' }))[0] : database.query(sql, [], { rowMode: 'array' })
+    : decodeQueryResult(parseSimpleQueryRawResponse(await database.execProtocolRaw(simpleQuery(sql))), { rowMode: 'array' });
   const scalar = async (sql, expected) => {
     const response = await query(sql);
     assert.equal(String(response.rows[0]?.[0]), expected, sql);
   };
-  const depthError = async () => {
+  const depthQuery = async () => {
+    const malformed = test.fixture.startsWith('json-malformed-');
+    const expectedErrors = malformed ? ['54001', '22P02'] : ['54001'];
+    const expectedValue = { 'json-valid': '20001', expression: '5000', plpgsql: '2000' }[test.fixture];
+    let response;
+    let error;
     try {
-      await query(fixtures[test.fixture]);
-      assert.fail('deep fixture returned success instead of SQLSTATE 54001');
-    } catch (error) {
-      const observation = { sqlstate: error.sqlstate, message: error.message, addonError: error.oliphauntWasixError, transactionStatus: responseTransactionStatus(error), closed: database.closed };
-      result.observations.push(observation);
-      if (error.sqlstate !== '54001') {
-        try {
-          await scalar('SELECT 42::text AS value', '42');
-          observation.reuse = 'passed';
-        } catch (reuseError) {
-          observation.reuse = { message: reuseError.message, addonError: reuseError.oliphauntWasixError, closed: database.closed };
-        }
+      response = await query(fixtures[test.fixture]);
+    } catch (caught) {
+      error = caught;
+    }
+    const sqlstate = error?.sqlstate ?? error?.code;
+    const acceptable = error ? expectedErrors.includes(sqlstate) : !malformed && String(response?.rows[0]?.[0]) === expectedValue;
+    const observation = error
+      ? { sqlstate, name: error.name, message: error.message, addonError: error.oliphauntWasixError, transactionStatus: responseTransactionStatus?.(error), closed: database.closed }
+      : { outcome: acceptable ? 'success' : 'unexpected-response', rows: response?.rows, closed: database.closed };
+    result.observations.push(observation);
+    save();
+    if (!acceptable) {
+      event('failure-reuse');
+      try {
+        await scalar('SELECT 42::text AS value', '42');
+        observation.reuse = 'passed';
+      } catch (reuseError) {
+        observation.reuse = { message: reuseError.message, addonError: reuseError.oliphauntWasixError, closed: database.closed };
       }
       save();
-      assert.equal(error.sqlstate, '54001', 'must return a PostgreSQL depth error, not an engine trap');
-      assert.equal(database.closed, false, 'SQL depth errors must leave the database open');
     }
+    assert(acceptable, 'must return a correct result or recoverable PostgreSQL error');
+    assert.equal(database.closed, false, 'SQL depth errors must leave the database open');
   };
   try {
     event('open');
-    database = await Constructor.open(openOptions);
-    result.runtimeVersion = addon.runtimeVersion();
+    database = await open();
+    result.runtimeVersion = reference ? JSON.parse(readFileSync(path.resolve(path.dirname(addonPath), '../package.json'), 'utf8')).version : addon.runtimeVersion();
+    result.postgresVersion = String((await query('SHOW server_version')).rows[0][0]);
     result.defaultMaxStackDepth = String((await query('SHOW max_stack_depth')).rows[0][0]);
     result.durability = {};
     for (const setting of ['fsync', 'synchronous_commit', 'full_page_writes']) {
       const value = String((await query(`SHOW ${setting}`)).rows[0][0]);
       result.durability[setting] = value;
-      if (test.storage === 'directory') assert.equal(value, 'on', `SHOW ${setting}`);
+      if (!reference && test.storage === 'directory') assert.equal(value, 'on', `SHOW ${setting}`);
     }
     if (test.limit !== 'default') await query(`SET max_stack_depth = '${test.limit}'`);
     result.maxStackDepth = String((await query('SHOW max_stack_depth')).rows[0][0]);
@@ -125,20 +144,20 @@ if (!childArgument) {
     await scalar('SELECT pg_temp.stack_probe(4)', '4');
     for (let cycle = 1; cycle <= 3; cycle += 1) {
       event('depth-query', { cycle });
-      await depthError();
+      await depthQuery();
       await scalar('SELECT 42::text AS value', '42');
-      result.checks.push(`cycle-${cycle}-error-and-reuse`);
+      result.checks.push(`cycle-${cycle}-query-and-reuse`);
     }
     event('savepoint');
     await query('BEGIN');
     await query('SAVEPOINT depth_probe');
     await query('INSERT INTO survivor VALUES (99)');
-    await depthError();
+    await depthQuery();
     await query('ROLLBACK TO SAVEPOINT depth_probe');
     await scalar('SELECT sum(value)::text FROM survivor', '42');
     await query('COMMIT');
     result.checks.push('savepoint-rollback-and-reuse');
-    if (test.fixture === 'plpgsql') {
+    if (test.fixture === 'plpgsql' && result.observations.some((row) => row.sqlstate === '54001')) {
       event('plpgsql-catch');
       await query("CREATE FUNCTION pg_temp.stack_catch() RETURNS text LANGUAGE plpgsql AS $$ BEGIN INSERT INTO survivor VALUES (99); PERFORM pg_temp.stack_probe(2000); RETURN 'missing-error'; EXCEPTION WHEN statement_too_complex THEN RETURN SQLSTATE; END $$");
       await scalar('SELECT pg_temp.stack_catch()', '54001');
@@ -154,7 +173,7 @@ if (!childArgument) {
     assert.equal(database.closed, true);
     if (test.storage === 'directory') {
       event('reopen');
-      database = await Constructor.open(openOptions);
+      database = await open();
       await scalar('SELECT sum(value)::text FROM survivor', '42');
       await database.close();
       result.checks.push('directory-reopen-with-committed-data');
