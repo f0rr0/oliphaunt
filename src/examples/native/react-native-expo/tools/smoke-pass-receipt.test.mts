@@ -51,6 +51,20 @@ test('the exact mobile catalog produces a bounded authoritative receipt', () => 
   }
 });
 
+test('an extension-free developer smoke emits a non-release receipt', () => {
+  const receipt = JSON.parse(
+    serializeExpoSmokePassReceipt(
+      receiptInput('ios', {
+        extensions: [],
+        activatedExtensions: [],
+        pgTextsearchEnglishBm25: false,
+      }),
+    ),
+  );
+  assert.equal(receipt.extensionCount, 0);
+  assert.equal(receipt.allExtensionsActivated, true);
+});
+
 test('receipt serialization fails closed on proof drift and remains constant-size as catalogs grow', () => {
   const extensions = platformExtensions();
   assert.throws(

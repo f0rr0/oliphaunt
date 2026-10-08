@@ -116,7 +116,10 @@ package struct OliphauntNativeDirectEngine: OliphauntEngine {
             libraryPath: resolvedLibraryPath,
             pgdata: pgdata.path,
             runtimeDirectory: resolvedRuntime.directory?.path,
-            moduleDirectory: nil,
+            moduleDirectory: resolvedRuntime.directory.flatMap { directory in
+                let modules = directory.appendingPathComponent("lib/modules", isDirectory: true)
+                return FileManager.default.fileExists(atPath: modules.path) ? modules.path : nil
+            },
             icuDataDirectory: resolvedRuntime.catalogProfile == .icu
                 ? resolvedRuntime.directory?.appendingPathComponent("share/icu").path : nil,
             username: username,

@@ -393,7 +393,7 @@ function readCarrierSummary(file, label = 'iOS carrier manifest') {
     },
     carriers: manifest.carriers,
     extensions,
-    file: path.resolve(file),
+    file: fs.realpathSync(file),
   };
 }
 
@@ -953,7 +953,7 @@ function iosPodfileBlock(options = {}) {
   }
   if (options.icu) resources.push(['@oliphaunt/icu', 'OliphauntICU']);
   for (const [packageName, podName] of resources) {
-    const projectRoot = options.projectRoot ?? process.cwd();
+    const projectRoot = fs.realpathSync(options.projectRoot ?? process.cwd());
     const packageRoot = path.dirname(
       (options.packageJsonResolver ?? resolvePackageJson)(packageName, [projectRoot]),
     );

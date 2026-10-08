@@ -70,6 +70,38 @@ stage_runtime_resource_closure() {
       --force >/tmp/liboliphaunt-release-mobile-runtime-resources.log
   local closure="$stage/oliphaunt"
   [ -d "$closure/runtime/files" ] || fail "runtime-resource package did not create $closure/runtime/files"
+  if [ "$seed_target" = macos-arm64 ]; then
+    require install_name_tool
+    require otool
+    local embedded_dir="$closure/runtime/files/lib/modules"
+    local runtime_modules="$closure/runtime/files/lib/postgresql"
+    local module rpath rpaths
+    mkdir -p "$embedded_dir"
+    for module in dict_snowball.dylib plpgsql.dylib; do
+      [ -f "$runtime_modules/$module" ] || fail "embedded runtime is missing $module"
+      [ -f "$runtime/lib/postgresql/$module" ] || fail "PostgreSQL runtime is missing $module"
+      cp -p "$runtime_modules/$module" "$embedded_dir/$module"
+      cp -p "$runtime/lib/postgresql/$module" "$runtime_modules/$module"
+      install_name_tool \
+        -change @rpath/liboliphaunt.dylib @rpath/liboliphaunt.framework/liboliphaunt \
+        "$embedded_dir/$module"
+      rpaths="$(
+        otool -l "$embedded_dir/$module" |
+          awk '$1 == "cmd" && $2 == "LC_RPATH" { found = 1; next }
+               found && $1 == "path" {
+                 sub(/^[[:space:]]*path[[:space:]]+/, "")
+                 sub(/[[:space:]]+\(offset [0-9]+\)$/, "")
+                 print
+                 found = 0
+               }'
+      )" || fail "failed to inspect embedded module rpaths: $embedded_dir/$module"
+      while IFS= read -r rpath; do
+        case "$rpath" in
+          /*) install_name_tool -delete_rpath "$rpath" "$embedded_dir/$module" ;;
+        esac
+      done <<<"$rpaths"
+    done
+  fi
   tools/dev/bun.sh src/native/runtime/tools/finalize-native-runtime-carrier.mts \
     --root "$closure" \
     --target "$seed_target"

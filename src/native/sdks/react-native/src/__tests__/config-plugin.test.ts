@@ -185,7 +185,7 @@ test('Expo discovery follows workspace dependencies and supplies the same resour
       assert.equal(discovered.databaseResourcesVersion, '1.2.3');
       assert.equal(
         discovered.packageJsonResolver('@oliphaunt/icu', [app]),
-        path.join(icu, 'package.json'),
+        fs.realpathSync(path.join(icu, 'package.json')),
       );
       assert.throws(
         () => discovered.packageJsonResolver('@oliphaunt/extension-pgtap', [app]),
@@ -199,7 +199,7 @@ test('Expo discovery follows workspace dependencies and supplies the same resour
           basePackageRoot: base,
           env: {},
         }),
-        [baseCarrier, carrier],
+        [fs.realpathSync(baseCarrier), fs.realpathSync(carrier)],
       );
       assert.ok(
         insertIosPodfileBlock('use_expo_modules!\n', {
@@ -277,7 +277,10 @@ test('Expo search paths use upstream precedence and reject conflicting resource 
       writeJson(file, { name: '@oliphaunt/extension-vector', version: '1.2.3' });
     const discovered = await resolveInstalledResources(root, 'ios');
     assert.deepEqual(discovered.extensions, ['vector']);
-    assert.equal(discovered.packageJsonResolver('@oliphaunt/extension-vector', [root]), searched);
+    assert.equal(
+      discovered.packageJsonResolver('@oliphaunt/extension-vector', [root]),
+      fs.realpathSync(searched),
+    );
     writeJson(direct, { name: '@oliphaunt/extension-vector', version: '9.8.7' });
     await assert.rejects(
       resolveInstalledResources(root, 'ios'),
@@ -495,7 +498,7 @@ test('carrier discovery de-duplicates runtime-bound bundle dependencies', () => 
       basePackageRoot: baseRoot,
       env: {},
     });
-    assert.deepEqual(manifests, [baseCarrier, fs.realpathSync(contribCarrier)]);
+    assert.deepEqual(manifests, [fs.realpathSync(baseCarrier), fs.realpathSync(contribCarrier)]);
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
@@ -605,7 +608,9 @@ test('carrier env overrides are exact and stage only into the app ios tree', asy
 
     const staging = iosStageOptions(projectRoot, iosRoot, normalized, { env });
     assert.deepEqual(staging, {
-      carriers: [baseCarrier, cubeCarrier, earthdistanceCarrier],
+      carriers: [baseCarrier, cubeCarrier, earthdistanceCarrier].map((file) =>
+        fs.realpathSync(file),
+      ),
       outputDir: path.join(iosRoot, 'oliphaunt'),
       extensions: ['earthdistance'],
       icu: true,
@@ -656,7 +661,7 @@ test('aggregate CI carrier override supplies base and dependency closure exactly
         env,
         packageJsonResolver,
       }),
-      [aggregateCarrier],
+      [fs.realpathSync(aggregateCarrier)],
     );
     const command = iosStageOptions(
       projectRoot,
@@ -664,7 +669,7 @@ test('aggregate CI carrier override supplies base and dependency closure exactly
       { extensions: ['earthdistance'], icu: false },
       { env, packageJsonResolver },
     );
-    assert.deepEqual(command.carriers, [aggregateCarrier]);
+    assert.deepEqual(command.carriers, [fs.realpathSync(aggregateCarrier)]);
     assert.throws(
       () =>
         resolveIosCarrierManifests(projectRoot, ['earthdistance'], {

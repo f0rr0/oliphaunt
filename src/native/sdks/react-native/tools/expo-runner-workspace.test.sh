@@ -17,10 +17,12 @@ package_work="$scratch_root/src/native/sdks/react-native"
 mkdir -p \
   "$rn_dir/src" \
   "$rn_dir/node_modules" \
+  "$fixture_root/src/native/sdks/swift/Templates/OliphauntBroker" \
   "$source_example_dir" \
   "$fixture_root/src/extensions/generated/sdk"
 printf '{"name":"fixture"}\n' >"$rn_dir/package.json"
 printf 'export const fixture = 1;\n' >"$rn_dir/src/index.ts"
+printf 'fixture broker template\n' >"$fixture_root/src/native/sdks/swift/Templates/OliphauntBroker/README.md"
 printf '{"name":"example"}\n' >"$source_example_dir/package.json"
 printf '{"extensions":[]}\n' >"$fixture_root/src/extensions/generated/sdk/extensions.json"
 printf '{"extensions":[]}\n' >"$fixture_root/src/extensions/generated/sdk/ios-static-dependencies.json"
@@ -34,6 +36,9 @@ write_scratch_bun_workspace() { mkdir -p "$scratch_root"; }
 prepare_react_native_package_worktree
 cmp "$root/src/extensions/generated/sdk/extensions.json" "$package_work/src/generated/extensions.json"
 cmp "$root/src/extensions/generated/sdk/ios-static-dependencies.json" "$package_work/src/generated/ios-static-dependencies.json"
+cmp \
+  "$root/src/native/sdks/swift/Templates/OliphauntBroker/README.md" \
+  "$scratch_root/src/native/sdks/swift/Templates/OliphauntBroker/README.md"
 [ -L "$package_work/node_modules" ]
 
 fingerprint() {
@@ -57,6 +62,7 @@ assert_fingerprint_changes() {
 }
 
 assert_fingerprint_changes "$rn_dir/src/index.ts"
+assert_fingerprint_changes "$root/src/native/sdks/swift/Templates/OliphauntBroker/README.md"
 assert_fingerprint_changes "$root/src/extensions/generated/sdk/extensions.json"
 assert_fingerprint_changes "$root/src/extensions/generated/sdk/ios-static-dependencies.json"
 assert_fingerprint_changes "$source_example_dir/package.json"

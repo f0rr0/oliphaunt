@@ -122,14 +122,19 @@ test('streaming TAR extraction preserves modes and validates the entire archive 
     expect(statSync(path.join(output, 'empty')).size).toBe(0);
     await extractPortableTarGzipTree(archive, output, {}, 'bin/run');
     expect(existsSync(path.join(output, 'empty'))).toBe(false);
-    for (const corrupt of [
-      tarArchive([...rows, { name: '../escape', data: 'bad' }]),
-      tarArchive([...rows, { name: 'bin/run', data: 'duplicate' }]),
-      tarArchive([...rows, { name: 'link', type: '2', linkTarget: '/tmp' }]),
-      tarArchive(rows).subarray(0, -4),
+    for (const [corrupt, expected] of [
+      [tarArchive([...rows, { name: '../escape', data: 'bad' }]), /unsafe archive member/u],
+      [
+        tarArchive([...rows, { name: 'bin/run', data: 'duplicate' }]),
+        /repeats archive member bin\/run/u,
+      ],
+      [tarArchive([...rows, { name: 'link', type: '2', linkTarget: '/tmp' }]), /link or special/u],
+      [tarArchive(rows).subarray(0, -4), /truncated|unexpected end/u],
     ]) {
       writeFileSync(archive, corrupt);
-      await expect(extractPortableTarGzipTree(archive, output, {}, 'bin/run')).rejects.toThrow();
+      await expect(extractPortableTarGzipTree(archive, output, {}, 'bin/run')).rejects.toThrow(
+        expected,
+      );
       expect(readFileSync(path.join(output, 'bin/run'), 'utf8')).toBe(rows[1].data);
       expect(readdirSync(root).sort()).toEqual(['carrier.tar.gz', 'output']);
     }

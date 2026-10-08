@@ -60,6 +60,15 @@ cat > "$scratch/pod/Package.swift" <<EOF
     checksum: "$checksum"
 )
 EOF
+# Source-mode CocoaPods consumes the same release-shaped paths as a published tag.
+(
+  export OLIPHAUNT_EXPO_IOS_SCRATCH="$scratch/source-runner"
+  unset OLIPHAUNT_EXPO_REQUIRE_SDK_ARTIFACTS
+  . "${tool%.mts}.sh"
+  prepare_swift_sdk_git_repo
+  git clone -q --branch "$OLIPHAUNT_SWIFT_SDK_BRANCH" "$OLIPHAUNT_SWIFT_SDK_GIT_URL" "$scratch/source-consumer"
+  diff -r "$root/src/native/sdks/swift/Sources" "$scratch/source-consumer/src/sdks/swift/Sources"
+)
 # Stage the source artifact exactly as the iOS runner does before CocoaPods clones it.
 (
   export OLIPHAUNT_EXPO_IOS_SCRATCH="$scratch/runner"
@@ -77,7 +86,7 @@ EOF
   cp "$scratch/pod/Package.swift" "$swift_artifacts/Package.swift.release"
   bun "$root/tools/packaging/archive-directory.mts" --keep-parent \
     "$scratch/package" "$swift_artifacts/Oliphaunt-source.zip"
-  prepare_swift_sdk_artifact_git_repo_if_required
+  prepare_swift_sdk_git_repo
   git clone -q --branch "$OLIPHAUNT_SWIFT_SDK_BRANCH" "$OLIPHAUNT_SWIFT_SDK_GIT_URL" "$scratch/consumer"
   cd "$scratch/consumer"
   diff -r "$scratch/package/Sources" src/sdks/swift/Sources

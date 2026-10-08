@@ -85,7 +85,8 @@ prepare_expo_example_workspace() {
 prepare_react_native_package_worktree() {
   need_cmd rsync
   write_scratch_bun_workspace
-  rm -rf "$package_work"
+  local swift_package_work="$scratch_root/src/native/sdks/swift"
+  rm -rf "$package_work" "$swift_package_work"
   mkdir -p "$package_work"
   local rsync_args=(
     -a
@@ -109,6 +110,10 @@ prepare_react_native_package_worktree() {
   cp \
     "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
     "$package_work/src/generated/ios-static-dependencies.json"
+  mkdir -p "$swift_package_work/Templates"
+  cp -R \
+    "$root/src/native/sdks/swift/Templates/OliphauntBroker" \
+    "$swift_package_work/Templates/"
   if [ -d "$rn_dir/node_modules" ]; then
     ln -s "$rn_dir/node_modules" "$package_work/node_modules"
   else

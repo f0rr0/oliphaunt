@@ -197,14 +197,76 @@ export function portableMemberName(raw, type, file, { allowRoot = false } = {}) 
   return value;
 }
 
-function checkedEntries(entries, file, archiveLimits, { caseSensitive = false } = {}) {
+function entryPathState() {
+  return {
+    exact: new Set(),
+    portable: new Map(),
+    files: new Map(),
+    directories: new Map(),
+  };
+}
+
+function portablePathKey(value, caseSensitive) {
+  return caseSensitive ? value.normalize('NFC') : value.normalize('NFC').toLowerCase();
+}
+
+function admitEntryPath(entry, file, state, { caseSensitive = false } = {}) {
+  if (state.exact.has(entry.name)) {
+    throw archiveError(file, `repeats archive member ${entry.name}`);
+  }
+  state.exact.add(entry.name);
+
+  // Android resource names are case-sensitive and aapt2 legitimately emits
+  // distinct hashed paths such as res/2F.xml and res/2f.xml. Other carrier
+  // formats retain the cross-filesystem case-folding collision check.
+  const key = portablePathKey(entry.name, caseSensitive);
+  const prior = state.portable.get(key);
+  if (prior !== undefined && prior !== entry.name) {
+    throw archiveError(
+      file,
+      `contains case/NFC-colliding archive members ${prior} and ${entry.name}`,
+    );
+  }
+  state.portable.set(key, entry.name);
+
+  const existingDirectory = state.directories.get(key);
+  if (existingDirectory !== undefined && existingDirectory !== entry.name) {
+    throw archiveError(
+      file,
+      `contains case/NFC-colliding archive members ${existingDirectory} and ${entry.name}`,
+    );
+  }
+  if (entry.type !== 'directory' && existingDirectory !== undefined) {
+    throw archiveError(file, `uses regular file ${entry.name} as an archive directory`);
+  }
+  let separator = entry.name.indexOf('/');
+  while (separator >= 0) {
+    const parent = entry.name.slice(0, separator);
+    const parentKey = portablePathKey(parent, caseSensitive);
+    const parentFile = state.files.get(parentKey);
+    if (parentFile !== undefined) {
+      throw archiveError(file, `uses regular file ${parentFile} as an archive directory`);
+    }
+    const existingParent = state.directories.get(parentKey);
+    if (existingParent !== undefined && existingParent !== parent) {
+      throw archiveError(
+        file,
+        `contains case/NFC-colliding archive members ${existingParent} and ${parent}`,
+      );
+    }
+    state.directories.set(parentKey, parent);
+    separator = entry.name.indexOf('/', separator + 1);
+  }
+  if (entry.type === 'directory') state.directories.set(key, entry.name);
+  else state.files.set(key, entry.name);
+}
+
+function checkedEntries(entries, file, archiveLimits, options = {}) {
   if (entries.length === 0) throw archiveError(file, 'contains no archive members');
   if (entries.length > archiveLimits.maxEntries) {
     throw archiveError(file, `exceeds the ${archiveLimits.maxEntries}-entry limit`);
   }
-  const exact = new Set();
-  const portable = new Map();
-  const files = new Set();
+  const paths = entryPathState();
   let expandedBytes = 0;
   for (const entry of entries) {
     if (!Number.isSafeInteger(entry.size) || entry.size < 0) {
@@ -223,35 +285,7 @@ function checkedEntries(entries, file, archiveLimits, { caseSensitive = false } 
         `exceeds the ${archiveLimits.maxExpandedBytes}-byte expanded-data limit`,
       );
     }
-    if (exact.has(entry.name)) {
-      throw archiveError(file, `repeats archive member ${entry.name}`);
-    }
-    exact.add(entry.name);
-    // Android resource names are case-sensitive and aapt2 legitimately emits
-    // distinct hashed paths such as res/2F.xml and res/2f.xml. Other carrier
-    // formats retain the cross-filesystem case-folding collision check.
-    const portableKey = caseSensitive
-      ? entry.name.normalize('NFC')
-      : entry.name.normalize('NFC').toLowerCase();
-    const prior = portable.get(portableKey);
-    if (prior !== undefined && prior !== entry.name) {
-      throw archiveError(
-        file,
-        `contains case/NFC-colliding archive members ${prior} and ${entry.name}`,
-      );
-    }
-    portable.set(portableKey, entry.name);
-    if (entry.type !== 'directory') files.add(entry.name);
-  }
-  for (const entry of entries) {
-    let separator = entry.name.indexOf('/');
-    while (separator >= 0) {
-      const parent = entry.name.slice(0, separator);
-      if (files.has(parent)) {
-        throw archiveError(file, `uses regular file ${parent} as an archive directory`);
-      }
-      separator = entry.name.indexOf('/', separator + 1);
-    }
+    admitEntryPath(entry, file, paths, options);
   }
   return new Map(entries.map((entry) => [entry.name, Object.freeze(entry)]));
 }
@@ -1384,6 +1418,7 @@ export async function readPortableTarStream(stream, file, options = {}, extracti
   let expanded = 0;
   let rootSeen = false;
   let streamed = 0;
+  const paths = entryPathState();
   try {
     for await (const chunk of stream) {
       streamed += chunk.length;
@@ -1439,6 +1474,7 @@ export async function readPortableTarStream(stream, file, options = {}, extracti
           if (rootSeen) throw archiveError(file, 'repeats its root directory');
           rootSeen = true;
         } else {
+          admitEntryPath(entry, file, paths);
           entries.push(entry);
           if (extraction && (!extraction.member || extraction.member === entry.name)) {
             const output = path.join(extraction.root, entry.name);

@@ -44,8 +44,8 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   }
 
   const extensions = [...input.extensions].sort();
-  if (extensions.length === 0 || new Set(extensions).size !== extensions.length) {
-    throw new Error('installed-app receipt requires a nonempty unique extension set');
+  if (new Set(extensions).size !== extensions.length) {
+    throw new Error('installed-app receipt requires a unique extension set');
   }
   for (const extension of extensions) {
     if (!/^[a-z][a-z0-9_-]*$/u.test(extension)) {
