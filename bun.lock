@@ -149,23 +149,23 @@
     },
     "src/native/runtime/packages/darwin-arm64": {
       "name": "@oliphaunt/liboliphaunt-darwin-arm64",
-      "version": "0.3.2",
+      "version": "0.3.3",
     },
     "src/native/runtime/packages/linux-arm64-gnu": {
       "name": "@oliphaunt/liboliphaunt-linux-arm64-gnu",
-      "version": "0.3.2",
+      "version": "0.3.3",
     },
     "src/native/runtime/packages/linux-x64-gnu": {
       "name": "@oliphaunt/liboliphaunt-linux-x64-gnu",
-      "version": "0.3.2",
+      "version": "0.3.3",
     },
     "src/native/runtime/packages/win32-x64-msvc": {
       "name": "@oliphaunt/liboliphaunt-win32-x64-msvc",
-      "version": "0.3.2",
+      "version": "0.3.3",
     },
     "src/native/sdks/react-native": {
       "name": "@oliphaunt/react-native",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "dependencies": {
         "@oliphaunt/ts-query": "0.1.1",
       },
