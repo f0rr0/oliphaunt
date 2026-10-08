@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { sha256File } from '../../../../third-party/tools/source-fetch-core.mts';
+import { runCacheProducer } from './cache-producer.mts';
 
 const root = path.resolve(import.meta.dir, '../../../../..');
 const engine = path.join(root, 'target/oliphaunt-wasix/engine/windows-x64-msvc');
@@ -16,10 +17,10 @@ for (const file of ['cache-producer.exe', 'oliphaunt_wee8.dll']) {
 }
 
 const env = { ...process.env, WINEPREFIX: path.join(work, 'wine-prefix'), WINEDEBUG: '-all' };
-function run(command: string[], emulated = false) {
+function run(command: string[]) {
   const result = Bun.spawnSync(command, {
     cwd: work,
-    env: emulated ? { ...env, WINELOADERNOEXEC: '1' } : env,
+    env,
     timeout: 900_000,
   });
   assert.equal(result.exitCode, 0, result.stdout.toString() + result.stderr.toString());
@@ -57,7 +58,10 @@ for (const product of products) {
     assert(input && destination, 'incomplete AOT producer input');
     const guest = readFileSync(input);
     copyFileSync(input, path.join(work, 'guest.wasm'));
-    const log = run(['qemu-x86_64', '-cpu', 'Penryn', wine, 'cache-producer.exe', 'write'], true);
+    const log = await runCacheProducer(
+      ['qemu-x86_64', '-cpu', 'Penryn', wine, 'cache-producer.exe', 'write'],
+      { cwd: work, env: { ...env, WINELOADERNOEXEC: '1' } },
+    );
     assert.match(log, /cpu_mask=0xe /, 'the baseline must come from a real emulated SSE4.1 CPU');
     assert.match(log, /native_deserialize=PASS/);
     const cache = readFileSync(path.join(work, 'cache.bin'));
@@ -82,7 +86,10 @@ for (const product of products) {
     const digest = sha256File(input);
     const file = path.join(output, `${digest}.bin`);
     writeFileSync(file, cache);
-    const read = run(['qemu-x86_64', '-cpu', 'Penryn', wine, 'cache-producer.exe', 'read'], true);
+    const read = await runCacheProducer(
+      ['qemu-x86_64', '-cpu', 'Penryn', wine, 'cache-producer.exe', 'read'],
+      { cwd: work, env: { ...env, WINELOADERNOEXEC: '1' } },
+    );
     assert.match(read, /native_deserialize=PASS/, 'fresh-process native cache reader');
     receipts.push({
       product,
