@@ -135,9 +135,13 @@ describe('WASIX pooled OPFS storage', () => {
     write(pool, wal, Uint8Array.of(2));
     write(pool, control, Uint8Array.of(2));
 
+    io.failNextFlush = true;
+    expect(pool.request(OP.flush, '', new Uint8Array(), relation, 0, 0)[0]).not.toBe(0);
     requestOk(pool, OP.flush, '', new Uint8Array(), relation);
     expect(flushes.map(lastPathSegment)).toEqual([backing('base/value')]);
     flushes.length = 0;
+    io.failNextFlush = true;
+    await expect(pool.sync('operation')).rejects.toThrow('injected OPFS flush failure');
     await pool.sync('operation');
     expect(flushes.map(lastPathSegment)).toEqual([backing('pg_wal/0001')]);
     await pool.sync('full');
@@ -147,11 +151,32 @@ describe('WASIX pooled OPFS storage', () => {
       backing('global/pg_control'),
     ]);
 
+    // Without guest file-sync requests (fsync=off), an existing-file operation
+    // is not a full checkpoint barrier. Namespace creation below is different.
+    flushes.length = 0;
+    write(pool, relation, Uint8Array.of(3));
+    write(pool, wal, Uint8Array.of(3));
+    write(pool, control, Uint8Array.of(3));
+    await pool.sync('operation');
+    expect(flushes.map(lastPathSegment)).toEqual([backing('pg_wal/0001')]);
+    for (const descriptor of [relation, ordinary, wal, control]) {
+      requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
+    }
+    expect(flushes.map(lastPathSegment)).toEqual([backing('pg_wal/0001')]);
+    await pool.sync('close');
+    expect(flushes.map(lastPathSegment)).toEqual([
+      backing('pg_wal/0001'),
+      backing('base/value'),
+      backing('global/pg_control'),
+    ]);
+
+    const walAgain = open(pool, 'pg_wal/0001', FLAG_WRITE);
+    const controlAgain = open(pool, 'global/pg_control', FLAG_WRITE);
     flushes.length = 0;
     const created = open(pool, 'base/new-relation', FLAG_WRITE | FLAG_CREATE);
     write(pool, created, Uint8Array.of(3));
-    write(pool, wal, Uint8Array.of(3));
-    write(pool, control, Uint8Array.of(3));
+    write(pool, walAgain, Uint8Array.of(3));
+    write(pool, controlAgain, Uint8Array.of(3));
     await pool.sync('operation');
     const updated = JSON.parse(
       await (await databaseDirectory(root, 'flush-order')).file('state.json').text(),
@@ -166,7 +191,7 @@ describe('WASIX pooled OPFS storage', () => {
       backing('global/pg_control'),
     ]);
 
-    for (const descriptor of [relation, ordinary, wal, control, created]) {
+    for (const descriptor of [walAgain, controlAgain, created]) {
       requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
     }
     await pool.close(false);
@@ -762,6 +787,7 @@ type FakeIo = {
   failNextAccessClose?: boolean;
   failNextStateCommit?: boolean;
   failNextDataCommit?: boolean;
+  failNextFlush?: boolean;
   flushes?: string[];
   lockReleaseFailure?: Error;
   syncAccessErrorName?: string;
@@ -920,6 +946,10 @@ class FakeFile {
         }
       },
       flush: () => {
+        if (this.#io.failNextFlush === true) {
+          this.#io.failNextFlush = false;
+          throw new Error('injected OPFS flush failure');
+        }
         this.#io.flushes?.push(this.#path);
       },
       getSize: () => this.#bytes.byteLength,

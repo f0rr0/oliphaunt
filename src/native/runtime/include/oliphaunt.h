@@ -147,7 +147,10 @@ typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, s
 /* Returns zero and sets read_len (zero at EOF), or nonzero on failure.
  * Read/write callbacks run synchronously and must not reenter this database.
  * A failed backup sink still runs backup-mode cleanup before returning.
- * Restore writes only to private staging until the entire archive validates. */
+ * Restore writes only to private staging until the entire archive validates.
+ * If final durability fails after publication, restore returns an error but
+ * retains the populated destination; retry must not overwrite it. This applies
+ * to both buffered and streamed restore. */
 typedef int32_t (*OliphauntArchiveReadCallback)(
     void *context, uint8_t *data, size_t capacity, size_t *read_len);
 typedef struct OliphauntRestoreStreamOptions {

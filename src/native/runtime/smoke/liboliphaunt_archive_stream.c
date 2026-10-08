@@ -1,7 +1,59 @@
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
+#endif
+
 #include "liboliphaunt_internal.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+
+static int restore_failure;
+static const char *restore_destination;
+
+static int sync_restore_parent(OliphauntHandle *handle, const char *path) {
+    if (restore_failure == 2) {
+        set_error(handle, "injected parent sync I/O failure");
+        return -1;
+    }
+    return oliphaunt_sync_directory(handle, path);
+}
+
+static int sync_restore_tree(OliphauntHandle *handle, const char *path) {
+    if (restore_failure == 1) {
+        set_error(handle, "injected staging sync I/O failure");
+        return -1;
+    }
+    return oliphaunt_sync_directory_tree(handle, path);
+}
+
+static char *restore_parent_dup(const char *path) {
+    if (restore_failure == 3 && oliphaunt_path_exists(restore_destination)) return NULL;
+    return oliphaunt_path_parent_dup(path);
+}
+
+/* Exercise both public restore entry points without a PostgreSQL producer. */
+#define oliphaunt_sync_directory sync_restore_parent
+#define oliphaunt_sync_directory_tree sync_restore_tree
+#define oliphaunt_path_parent_dup restore_parent_dup
+#include "../src/liboliphaunt_archive.c"
+#undef oliphaunt_sync_directory
+#undef oliphaunt_sync_directory_tree
+#undef oliphaunt_path_parent_dup
+
+/* This fixture restores one root at a time and does not test lock-key hashing. */
+void pg_sha256_init(void *ctx) { (void)ctx; }
+void pg_sha256_update(void *ctx, const uint8_t *data, size_t len) {
+    (void)ctx; (void)data; (void)len;
+}
+void pg_sha256_final(void *ctx, uint8_t *dest) { (void)ctx; memset(dest, 0, 32); }
+
+/* Restore errors belong to the operation scope, never a resident database handle. */
+bool oliphaunt_try_begin_handle_call(OliphauntHandle *handle) {
+    (void)handle;
+    assert(!"restore must not use a database handle for error capture");
+    return false;
+}
+void oliphaunt_end_handle_call(void) { assert(!"restore must not lease a database handle"); }
 
 /* Windows portability headers remap read after the public ABI is declared. */
 #ifndef read
@@ -31,6 +83,16 @@ static int32_t read_archive(void *context, uint8_t *data, size_t capacity, size_
     *read_len = fread(data, 1, capacity, archive->file);
     archive->transferred += *read_len;
     return ferror(archive->file) ? -1 : 0;
+}
+
+static void fixture_file(const char *root, const char *name, const char *contents) {
+    char *path = oliphaunt_join_path(root, name);
+    assert(path != NULL);
+    FILE *file = fopen(path, "wb");
+    assert(file != NULL);
+    assert(fwrite(contents, 1, strlen(contents), file) == strlen(contents));
+    assert(fclose(file) == 0);
+    free(path);
 }
 
 int main(int argc, char **argv) {
@@ -106,6 +168,68 @@ int main(int argc, char **argv) {
     assert(oliphaunt_archive_append_pgdata_tree(&streamed, NULL, source) != 0);
     assert(streamed.write_failed && streamed.data == NULL);
     fclose(output.file);
+
+    /* A minimal valid archive exercises real staging, validation and publication. */
+    for (size_t i = 0; i < 3; i++) {
+        const char *directories[] = {"base", "global", "pg_wal"};
+        char *path = oliphaunt_join_path(source, directories[i]);
+        assert(oliphaunt_mkdir_p(path, 0700) == 0);
+        free(path);
+    }
+    fixture_file(source, "PG_VERSION", "18\n");
+    fixture_file(source, "global/pg_control", "control");
+    OliphauntByteBuffer physical = {0};
+    assert(oliphaunt_archive_append_pgdata_tree(&physical, NULL, source) == 0);
+    assert(oliphaunt_archive_append_pg_control(&physical, NULL, source) == 0);
+    const uint8_t label[] = "backup\n";
+    assert(oliphaunt_archive_append_bytes(&physical, NULL, "pgdata/backup_label", label, sizeof(label) - 1) == 0);
+    assert(append_default_backup_manifest(&physical, NULL) == 0);
+    assert(oliphaunt_archive_finish(&physical, NULL) == 0);
+    output = (ArchiveFile){.file = tmpfile()};
+    assert(output.file != NULL);
+    assert(fwrite(physical.data, 1, physical.len, output.file) == physical.len);
+    restore_destination = destination;
+    for (int streaming = 0; streaming <= 1; streaming++) {
+        for (restore_failure = 0; restore_failure <= 3; restore_failure++) {
+            assert(oliphaunt_remove_tree(destination) == 0);
+            rewind(output.file);
+            output.transferred = 0;
+            OliphauntRestoreOptions memory = {
+                .abi_version = OLIPHAUNT_ABI_VERSION, .destination = destination,
+                .data = physical.data, .len = physical.len,
+            };
+            OliphauntErrorCapture error = {0};
+            int rc = streaming ? oliphaunt_restore_stream_with_error(&options, &error)
+                               : oliphaunt_restore_with_error(&memory, &error);
+            if ((rc == 0) != (restore_failure == 0)) fprintf(stderr, "%s\n", error.message);
+            assert((rc == 0) == (restore_failure == 0));
+            assert(oliphaunt_path_exists(destination) == (restore_failure != 1));
+            if (restore_failure == 1) {
+                assert(strcmp(error.message, "injected staging sync I/O failure") == 0);
+                continue;
+            }
+            char *pgdata = oliphaunt_join_path(destination, "pgdata");
+            assert(oliphaunt_validate_managed_root(NULL, pgdata) == 0);
+            free(pgdata);
+            if (restore_failure == 0) {
+                assert(error.message[0] == '\0');
+                continue;
+            }
+            assert(strstr(error.message, "restore published; destination retained") != NULL);
+            assert(strstr(error.message, "final durability is unconfirmed") != NULL);
+            assert(strstr(error.message, restore_failure == 2 ? "injected parent sync I/O failure"
+                                                           : "out of memory") != NULL);
+            rewind(output.file);
+            int previous_failure = restore_failure;
+            restore_failure = 0;
+            rc = streaming ? oliphaunt_restore_stream_with_error(&options, &error)
+                           : oliphaunt_restore_with_error(&memory, &error);
+            restore_failure = previous_failure;
+            assert(rc != 0 && strstr(error.message, "already exists and is not empty") != NULL);
+        }
+    }
+    fclose(output.file);
+    free(physical.data);
     free(source); free(destination); free(file); free(restored);
     return 0;
 }

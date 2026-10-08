@@ -869,11 +869,20 @@ static int publish_restore_without_replacement(OliphauntHandle *handle, const ch
 #endif
     char *parent = oliphaunt_path_parent_dup(target_root);
     if (parent == NULL) {
-        set_error(handle, "out of memory resolving published restore parent");
+        set_error(handle, "restore published; destination retained, but final durability is unconfirmed: out of memory resolving restore parent");
         return -1;
     }
     int rc = oliphaunt_sync_directory(handle, parent);
     free(parent);
+    if (rc != 0) {
+        const char prefix[] = "restore published; destination retained, but final durability is unconfirmed: ";
+        char cause[OLIPHAUNT_ERROR_CAPTURE_CAPACITY];
+        char message[OLIPHAUNT_ERROR_CAPTURE_CAPACITY];
+        oliphaunt_copy_last_error(handle, cause, sizeof(cause));
+        snprintf(message, sizeof(message), "%s%.*s", prefix,
+                 (int)(sizeof(message) - sizeof(prefix)), cause);
+        set_error(handle, message);
+    }
     return rc;
 }
 
