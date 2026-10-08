@@ -2,6 +2,8 @@
 
 Host WebAssembly PostgreSQL in a Rust application. The synchronous handle must be created, used, and dropped on one OS thread. Use `AsyncOliphaunt` for a cloneable `Send + Sync` owner.
 
+Requires Rust 1.96 or newer.
+
 ## Install
 
 ```sh

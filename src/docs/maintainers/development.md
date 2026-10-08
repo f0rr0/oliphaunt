@@ -296,12 +296,19 @@ bash src/wasix/runtime/tools/build-aot-target.sh
 moon run liboliphaunt-wasix:smoke
 ```
 
-Local AOT generation requires the Wasmer LLVM 22.1.x build for the
-maintainer-only serializer. That build includes the LLVM target set Wasmer's
+On Linux and macOS, local AOT generation requires the Wasmer LLVM 22.1.x build
+for the maintainer-only serializer. That build includes the LLVM target set Wasmer's
 LLVM backend expects, including LoongArch and WebAssembly. Set
 `LLVM_SYS_221_PREFIX` to an extracted
 `wasmerio/llvm-custom-builds` 22.x archive, or use downloaded-artifact mode to
 avoid local LLVM setup.
+
+Windows AOT uses the bundled V8 engine and same-commit native cache profiles.
+The [WASIX host workflow](../../../.github/workflows/wasix-host.yml) builds and
+tests the engine on Windows, produces the SSE4.1 baseline cache on Linux, and
+transfers both outputs into Windows AOT generation. Use downloaded-artifact
+mode for local Windows runtime testing; the serialization commands below
+require those producer outputs.
 
 When the portable WASIX assets are already current and only the host AOT crate
 needs to be refreshed, skip the source/Docker build and generate host AOT from

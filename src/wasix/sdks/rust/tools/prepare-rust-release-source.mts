@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { ENGINE_SOURCE_CRATES } from '../../../runtime/engine/contract.mts';
 import {
   canonicalWasixCargoToolchainVersions,
   validateWasixConsumerDependencyPins,
@@ -74,14 +75,26 @@ export function renderOliphauntWasixReleaseCargoToml(
       return `${before}=${version}${after}`;
     });
   }
+  for (const key of ENGINE_SOURCE_CRATES) {
+    text = text.replace(
+      new RegExp(
+        '^(' + escapeRegExp(key) + '\\s*=\\s*\\{[^}\\n]*version\\s*=\\s*")[^"]+(".*)$',
+        'gmu',
+      ),
+      (_, before, after) => before + '=' + runtimeVersion + after,
+    );
+  }
   return text;
 }
 
-function validateGeneratedOliphauntWasixReleaseArtifactCoverage(manifestText) {
+function validateGeneratedOliphauntWasixReleaseArtifactCoverage(manifestText, runtimeVersion) {
   if (/=\s*\{[^}\n]*path\s*=/u.test(manifestText)) {
     fail('generated oliphaunt-wasix release source must not contain local path dependencies');
   }
-  const toolchainVersions = canonicalWasixCargoToolchainVersions(root);
+  const toolchainVersions = {
+    ...canonicalWasixCargoToolchainVersions(root),
+    engine: runtimeVersion,
+  };
   const toolchainFailures = validateWasixConsumerDependencyPins(Bun.TOML.parse(manifestText), {
     manifestPath: 'generated oliphaunt-wasix release source',
     toolchainVersions,
@@ -108,7 +121,7 @@ export async function prepareOliphauntWasixReleaseSource(version) {
   if (generatedPackage.version !== version) {
     fail(`generated oliphaunt-wasix release source must keep SDK version ${version}`);
   }
-  validateGeneratedOliphauntWasixReleaseArtifactCoverage(rendered);
+  validateGeneratedOliphauntWasixReleaseArtifactCoverage(rendered, runtimeVersion);
   await fs.writeFile(cargoToml, rendered);
   stageReleaseNotices(stageDir, SOURCE_NOTICE_OPTIONS);
   assertReleaseNoticesInDirectory(stageDir, SOURCE_NOTICE_OPTIONS);

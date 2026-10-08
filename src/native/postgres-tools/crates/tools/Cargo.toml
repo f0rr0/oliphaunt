@@ -2,7 +2,7 @@
 name = "oliphaunt-tools"
 version = "0.2.2"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "Target-selecting Cargo facade for Oliphaunt native PostgreSQL client tool artifacts."
 readme = "README.md"
 repository.workspace = true

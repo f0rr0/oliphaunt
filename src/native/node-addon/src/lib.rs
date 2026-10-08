@@ -439,7 +439,7 @@ pub fn restore(env: &Env, options: RestoreOptions) -> Result<Object<'_>> {
 }
 
 fn js_bytes(env: &Env, bytes: &[u8]) -> Result<Uint8Array> {
-    // Reuse the current WASIX addon buffer contract, including napi 3.12.2 copy initialization.
+    // As in the WASIX addon, initialize the allocation returned by napi-rs.
     let mut output = Uint8ArraySlice::copy_from(env, bytes)?;
     unsafe { output.as_mut() }.copy_from_slice(bytes);
     output.into_typed_array(env)

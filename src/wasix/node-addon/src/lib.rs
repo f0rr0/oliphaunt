@@ -957,7 +957,7 @@ fn static_object(env: &Env, object: Object<'_>) -> Object<'static> {
 }
 
 fn v8_owned_bytes(env: &Env, bytes: &[u8]) -> Result<Uint8Array> {
-    // napi-rs 3.12.2 allocates here but does not initialize the new
+    // napi-rs allocates here but does not initialize the new
     // ArrayBuffer from `bytes`; fill the V8-owned allocation explicitly.
     let mut output = Uint8ArraySlice::copy_from(env, bytes)?;
     // SAFETY: the new ArrayBuffer is not observable by JavaScript until this

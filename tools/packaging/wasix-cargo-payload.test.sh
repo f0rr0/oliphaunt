@@ -50,4 +50,27 @@ while IFS=$'\t' read -r crate payload variable external; do
   CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
     --manifest-path "$crate/Cargo.toml" --lib
 done < "$scratch/cases.tsv"
+while IFS=$'\t' read -r crate part; do
+  (
+    cd "$crate"
+    cargo --config net.offline=false fetch --manifest-path "$crate/Cargo.toml"
+    CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --example probe
+    CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --example probe --message-format=json > "$scratch/fresh.json"
+    if rg -q '"fresh":false' "$scratch/fresh.json"; then
+      echo "Published V8 carrier rebuilt without input changes: $crate" >&2
+      exit 1
+    fi
+    cp "$part" "$part.saved"
+    printf 'corrupt' >> "$part"
+    if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --lib > "$scratch/corrupt-part.log" 2>&1; then
+      echo "Published V8 carrier accepted a corrupt AOT payload part: $crate" >&2
+      exit 1
+    fi
+    rg -q 'bundled AOT payload digest' "$scratch/corrupt-part.log"
+    mv "$part.saved" "$part"
+  )
+done < "$scratch/split-cases.tsv"
 printf 'WASIX extracted Cargo carrier payload isolation passed\n'

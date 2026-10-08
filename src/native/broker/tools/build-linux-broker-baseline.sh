@@ -28,13 +28,13 @@ case "$(uname -m)" in
   *) fail "unsupported Linux architecture $(uname -m)" ;;
 esac
 
-# Official rust:1.93.1-slim-bookworm, pinned as one multi-architecture OCI index.
+# Official rust:1.96.0-slim-bookworm, pinned as one multi-architecture OCI index.
 # Debian Bookworm links the broker below the repository-wide glibc 2.38 ceiling
 # while retaining the normal linux-*-gnu carrier ABI and the exact workspace
 # Rust release. Never replace this with a moving tag.
-readonly image="rust@sha256:5b9332190bb3b9ece73b810cd1f1e9f06343b294ce184bcb067f0747d7d333ea"
-readonly rust_release="1.93.1"
-readonly rust_commit="01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf"
+readonly image="rust@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950"
+readonly rust_release="1.96.0"
+readonly rust_commit="ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
 readonly rust_toolchain="${rust_release}-${rust_host}"
 
 target_dir="$1"

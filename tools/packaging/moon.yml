@@ -36,7 +36,8 @@ tasks:
       - /src/extensions/tools/extension-upstream-licenses.mts
       - /src/extensions/external/**/upstream-license-data.json
       - "@group(upstream-licenses)"
-      - "/src/{native,wasix}/runtime/THIRD_PARTY_NOTICES.md"
+      - "/src/native/runtime/THIRD_PARTY_NOTICES.md"
+      - "/src/wasix/sdks/rust/THIRD_PARTY_NOTICES.md"
       - "/src/third-party/{icu,openssl}/source.toml"
       - "**/*.mts"
       - "**/*.sh"
