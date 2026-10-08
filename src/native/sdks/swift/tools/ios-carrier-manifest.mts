@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   lstatSync,
@@ -326,13 +327,35 @@ function prefixedMember(prefix, member) {
   return prefix ? `${prefix}/${member}` : member;
 }
 
-function canonicalLegalFileSpecs(profile, memberPrefix = '') {
-  return releaseNoticeRows({ profile }).map((row) => ({
-    bytes: statSync(row.source).size,
-    kind: legalKind(row.member),
-    member: prefixedMember(memberPrefix, row.member),
-    sha256: sha256(row.source),
-  }));
+function canonicalLegalFileSpecs(
+  profile,
+  memberPrefix = '',
+  sourceRef = undefined,
+  sourceRoot = ROOT,
+) {
+  return releaseNoticeRows({ profile }).map((row) => {
+    const relative = path.relative(ROOT, row.source).split(path.sep).join('/');
+    let bytes;
+    try {
+      bytes =
+        sourceRef === undefined
+          ? readFileSync(path.join(sourceRoot, relative))
+          : execFileSync('git', ['--no-pager', 'show', `${sourceRef}:${relative}`], {
+              cwd: sourceRoot,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+    } catch (cause) {
+      throw error(
+        `cannot read canonical legal file ${relative} at ${sourceRef ?? 'current source'}: ${cause.message}`,
+      );
+    }
+    return {
+      bytes: bytes.length,
+      kind: legalKind(row.member),
+      member: prefixedMember(memberPrefix, row.member),
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    };
+  });
 }
 
 function legalGroupShape({ assetRole, files, profile, spdx }) {
@@ -353,11 +376,21 @@ function legalGroupShape({ assetRole, files, profile, spdx }) {
  * locators remain archive-relative; a consumer chooses the applicable groups
  * (the ICU sidecar is optional) and never needs this repository to stage them.
  */
-export function iosBaseLegalMetadata() {
+export function iosBaseLegalMetadata(
+  baseRuntimeVersion = currentProductVersionSync('liboliphaunt-native', 'ios-carrier-manifest'),
+  sourceRoot = ROOT,
+) {
+  const version = stableVersion(baseRuntimeVersion, 'base runtime version');
+  // Independent SDK pins retain the legal bytes from their native source tag.
+  // Missing history is an error; never substitute current producer notices.
+  const sourceRef =
+    version === currentProductVersionSync('liboliphaunt-native', 'ios-carrier-manifest')
+      ? undefined
+      : `refs/tags/${tagPrefix('liboliphaunt-native', 'ios-carrier-manifest')}${version}^{commit}`;
   return BASE_LEGAL_PROFILES.map(({ assetRole, memberPrefix, profile }) =>
     legalGroupShape({
       assetRole,
-      files: canonicalLegalFileSpecs(profile, memberPrefix),
+      files: canonicalLegalFileSpecs(profile, memberPrefix, sourceRef, sourceRoot),
       profile,
       spdx: releaseProfilePackageLicense(profile).spdx,
     }),
@@ -429,9 +462,9 @@ function extensionLegalGroup({ archiveCache, file, format, product, sqlName }) {
   );
 }
 
-function validateFrozenBaseLegalMetadata(value, label) {
+function validateFrozenBaseLegalMetadata(value, label, version) {
   if (!Array.isArray(value)) throw error(`${label} must be an array`);
-  const expected = iosBaseLegalMetadata();
+  const expected = iosBaseLegalMetadata(version);
   if (JSON.stringify(stable(value)) !== JSON.stringify(stable(expected))) {
     throw error(`${label} does not match the canonical native Apple legal locators`);
   }
@@ -505,7 +538,7 @@ function baseCarrier({
       archiveCache,
     }),
   );
-  const legal = iosBaseLegalMetadata().map((group) => {
+  const legal = iosBaseLegalMetadata(version).map((group) => {
     const selected = rows.find(({ role }) => role === group.assetRole);
     if (selected === undefined)
       throw error(`base legal group references unknown asset role ${group.assetRole}`);
@@ -571,7 +604,7 @@ function frozenBaseCarrier(file, baseRuntimeVersion) {
   }
   return {
     base: stable(base),
-    legal: validateFrozenBaseLegalMetadata(legal, `${file} base legal metadata`),
+    legal: validateFrozenBaseLegalMetadata(legal, `${file} base legal metadata`, version),
   };
 }
 

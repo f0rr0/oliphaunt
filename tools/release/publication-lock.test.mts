@@ -160,7 +160,9 @@ function temporaryDirectory() {
   return directory;
 }
 
-function selectionNeutralSwiftSourceCarrier(version = '1.2.3') {
+function selectionNeutralSwiftSourceCarrier(
+  version = currentProductVersionSync('liboliphaunt-native', 'fixture'),
+) {
   const product = 'liboliphaunt-native';
   const tag = `${product}-v${version}`;
   const assets = [
@@ -191,7 +193,7 @@ function selectionNeutralSwiftSourceCarrier(version = '1.2.3') {
     base: { assets, product, tag, version },
     carriers: [],
     extensions: [],
-    legal: { base: iosBaseLegalMetadata(), extensions: [] },
+    legal: { base: iosBaseLegalMetadata(version), extensions: [] },
     schema: 'oliphaunt-react-native-ios-carrier-v1',
   };
 }
