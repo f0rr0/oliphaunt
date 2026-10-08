@@ -67,11 +67,13 @@ export function packageEngine({
   }
 
   const packages = [];
-  function freeze(name: string, profile: string) {
+  function freeze(name: string, profile: string, existingCrate?: string) {
     const manifestPath = path.join(sourceRoot, name, 'Cargo.toml');
-    const cratePath = packageGeneratedCargoSource(manifestPath, outputDir, {
-      noticeProfile: profile,
-    });
+    const cratePath =
+      existingCrate ??
+      packageGeneratedCargoSource(manifestPath, outputDir, {
+        noticeProfile: profile,
+      });
     const row = {
       name,
       manifestPath,
@@ -120,7 +122,8 @@ export function packageEngine({
       }),
     8 * 1024 * 1024,
   );
-  for (const name of parts) freeze(name, 'wasix-engine-windows');
+  for (const name of parts)
+    freeze(name, 'wasix-engine-windows', path.join(outputDir, `${name}-${version}.crate`));
   const directory = manifest(
     ENGINE_PAYLOAD_PACKAGE,
     'wasix-engine-windows',

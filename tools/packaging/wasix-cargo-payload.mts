@@ -134,8 +134,12 @@ export function packageSpec(
   return freezeSpec(spec, crateDir, { version, outputDir, cargoTargetDir });
 }
 
-function freezeSpec(spec, crateDir, { version, outputDir, cargoTargetDir }) {
-  const cratePath = cargoPackage(crateDir, cargoTargetDir);
+function freezeSpec(
+  spec,
+  crateDir,
+  { version, outputDir, cargoTargetDir },
+  cratePath = cargoPackage(crateDir, cargoTargetDir),
+) {
   validateCrateSize(cratePath);
   const output = path.join(outputDir, path.basename(cratePath));
   copyFileSync(cratePath, output);
@@ -174,8 +178,9 @@ export function packageAotSpec(spec, options) {
       path.join(cargoTargetDir, 'size-probe'),
       { packageSizeLimitBytes: Number.MAX_SAFE_INTEGER },
     );
-  if (statSync(probe(crateDir)).size <= CRATES_IO_MAX_BYTES) {
-    return [freezeSpec(spec, crateDir, options)];
+  const candidate = probe(crateDir);
+  if (statSync(candidate).size <= CRATES_IO_MAX_BYTES) {
+    return [freezeSpec(spec, crateDir, options, candidate)];
   }
   const payloadRoot = path.join(crateDir, spec.payloadDirName);
   const files = readdirSync(payloadRoot, { recursive: true })
@@ -255,7 +260,14 @@ ${writes}
   );
   rmSync(payloadRoot, { recursive: true });
   return [
-    ...parts.map((part) => freezeSpec(part, part.directory, options)),
+    ...parts.map((part) =>
+      freezeSpec(
+        part,
+        part.directory,
+        options,
+        path.join(cargoTargetDir, 'size-probe', `${part.name}-${version}.crate`),
+      ),
+    ),
     freezeSpec(spec, crateDir, options),
   ];
 }
