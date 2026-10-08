@@ -27,6 +27,22 @@ configure_mobile_catalog_profile_probe() {
   })"
 }
 
+export_mobile_e2e_extension_expectation_from_manifest() {
+  local manifest="$1"
+  local label="$2"
+  local selected_extension_rows selected_extensions
+  selected_extension_rows="$(grep -c '^selectedExtensions=' "$manifest" || true)"
+  [ "$selected_extension_rows" = "1" ] || {
+    echo "$label runtime manifest must contain exactly one selectedExtensions property" >&2
+    return 1
+  }
+  selected_extensions="$(
+    awk -F= '$1 == "selectedExtensions" { print substr($0, index($0, "=") + 1) }' "$manifest" |
+      tr -d '\r'
+  )"
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS="$selected_extensions"
+}
+
 require_nonempty_json_file() {
   local file="$1"
   local label="$2"
@@ -48,6 +64,12 @@ export_mobile_e2e_icu_expectation_from_ios_app() {
   local app="$1"
   local profile=standard seed_name=Standard seed_resource=cluster-seed
   local icu="$app/OliphauntICU.bundle"
+  local runtime_manifest="$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties"
+  [ -s "$runtime_manifest" ] || {
+    echo "iOS app runtime manifest is missing or empty: $runtime_manifest" >&2
+    return 1
+  }
+  export_mobile_e2e_extension_expectation_from_manifest "$runtime_manifest" "iOS app" || return 1
   if [ -d "$icu" ]; then
     profile=icu
     seed_name=ICU
@@ -81,6 +103,7 @@ export_mobile_e2e_icu_expectation_from_manifest() {
     echo "$label runtime manifest is missing or empty: $manifest" >&2
     return 1
   }
+  export_mobile_e2e_extension_expectation_from_manifest "$manifest" "$label" || return 1
   runtime_feature_rows="$(grep -c '^runtimeFeatures=' "$manifest" || true)"
   [ "$runtime_feature_rows" = "1" ] || {
     echo "$label runtime manifest must contain exactly one runtimeFeatures property" >&2
@@ -231,6 +254,10 @@ verify_mobile_extension_smoke_receipt() {
   local candidate_tree
   local actual_sha
   local receipt_tmp=""
+  if [ "${OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS+x}" != "x" ]; then
+    echo "$platform installed-app receipt requires an exact artifact extension expectation" >&2
+    return 1
+  fi
   if [ -z "$candidate_sha" ]; then
     candidate_sha="$(git rev-parse HEAD)" || {
       echo "failed to resolve mobile installed-app receipt candidate" >&2
@@ -257,7 +284,7 @@ verify_mobile_extension_smoke_receipt() {
     return 1
   fi
   local receipt_status=0
-  bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" extension-receipt "$report" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" >"$receipt_tmp" || receipt_status=$?
+  bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" extension-receipt "$report" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" "$OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS" >"$receipt_tmp" || receipt_status=$?
   if [ "$receipt_status" -ne 0 ]; then
     rm -f "$receipt_tmp" "$receipt" || true
     echo "$platform installed-app extension receipt verification failed" >&2
@@ -283,6 +310,10 @@ verify_mobile_e2e_smoke_receipt() {
   local metadata="$root/src/extensions/generated/sdk/extensions.json"
   local candidate_sha
   local candidate_tree
+  if [ "${OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS+x}" != "x" ]; then
+    echo "$platform mobile E2E receipt requires an exact artifact extension expectation" >&2
+    return 1
+  fi
   candidate_sha="$(git rev-parse HEAD)" || {
     echo "failed to resolve mobile E2E candidate commit" >&2
     return 1
@@ -299,7 +330,7 @@ verify_mobile_e2e_smoke_receipt() {
   fi
 
   local verify_status=0
-  bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" verify-receipt "$report" "$receipt" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" >/dev/null || verify_status=$?
+  bun "$root/src/native/sdks/react-native/tools/expo-runner-reporting.mts" verify-receipt "$report" "$receipt" "$metadata" "$platform" "$candidate_sha" "$candidate_tree" "$OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS" >/dev/null || verify_status=$?
   if [ "$verify_status" -ne 0 ]; then
     echo "$platform mobile E2E extension receipt failed its outer postcondition: $receipt" >&2
     return 1

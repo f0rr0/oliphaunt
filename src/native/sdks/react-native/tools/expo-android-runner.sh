@@ -408,7 +408,7 @@ prepare_runtime_resources() {
   local runtime_source="${OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR:-}"
   if [ -z "$runtime_source" ]; then
     local android_runtime_source
-    android_runtime_source="$(android_build_root_for_abi)/install"
+    android_runtime_source="$root/target/liboliphaunt-mobile-host/android-$android_abi/install"
     if [ -f "$root/target/liboliphaunt-android-runtime-smoke/share/postgresql/postgres.bki" ]; then
       runtime_source="$root/target/liboliphaunt-android-runtime-smoke"
     else

@@ -17,12 +17,13 @@ for profile in standard icu; do
   features=''
   seed=cluster-seed
   if [[ "$profile" == icu ]]; then features=icu; seed=cluster-seed-icu; fi
-  printf 'runtimeFeatures=%s\n' "$features" >"$resources/runtime/manifest.properties"
+  printf 'runtimeFeatures=%s\nselectedExtensions=vector\n' "$features" >"$resources/runtime/manifest.properties"
   # Existing storage requires no seed dependency, with or without ICU data.
   pack
   export_mobile_e2e_icu_expectation_from_android_apk "$scratch/app.apk" fixture
   [[ "$OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE" == "$profile" ]]
   [[ "$OLIPHAUNT_MOBILE_E2E_EXPECT_ICU" == "$([[ "$profile" == icu ]] && echo 1 || echo 0)" ]]
+  [[ "$OLIPHAUNT_MOBILE_E2E_EXPECT_EXTENSIONS" == vector ]]
   mkdir -p "$resources/$seed"
   printf 'catalogProfile=%s\n' "$profile" >"$resources/$seed/manifest.properties"
   pack

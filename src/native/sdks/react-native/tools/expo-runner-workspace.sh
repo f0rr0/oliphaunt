@@ -86,6 +86,7 @@ prepare_react_native_package_worktree() {
   need_cmd rsync
   write_scratch_bun_workspace
   local swift_package_work="$scratch_root/src/native/sdks/swift"
+  local portable_archive_work="$scratch_root/tools/packaging/portable-archive.mts"
   rm -rf "$package_work" "$swift_package_work"
   mkdir -p "$package_work"
   local rsync_args=(
@@ -114,6 +115,8 @@ prepare_react_native_package_worktree() {
   cp -R \
     "$root/src/native/sdks/swift/Templates/OliphauntBroker" \
     "$swift_package_work/Templates/"
+  mkdir -p "$(dirname "$portable_archive_work")"
+  cp "$root/tools/packaging/portable-archive.mts" "$portable_archive_work"
   if [ -d "$rn_dir/node_modules" ]; then
     ln -s "$rn_dir/node_modules" "$package_work/node_modules"
   else

@@ -18,11 +18,13 @@ mkdir -p \
   "$rn_dir/src" \
   "$rn_dir/node_modules" \
   "$fixture_root/src/native/sdks/swift/Templates/OliphauntBroker" \
+  "$fixture_root/tools/packaging" \
   "$source_example_dir" \
   "$fixture_root/src/extensions/generated/sdk"
 printf '{"name":"fixture"}\n' >"$rn_dir/package.json"
 printf 'export const fixture = 1;\n' >"$rn_dir/src/index.ts"
 printf 'fixture broker template\n' >"$fixture_root/src/native/sdks/swift/Templates/OliphauntBroker/README.md"
+printf 'export const fixtureArchive = 1;\n' >"$fixture_root/tools/packaging/portable-archive.mts"
 printf '{"name":"example"}\n' >"$source_example_dir/package.json"
 printf '{"extensions":[]}\n' >"$fixture_root/src/extensions/generated/sdk/extensions.json"
 printf '{"extensions":[]}\n' >"$fixture_root/src/extensions/generated/sdk/ios-static-dependencies.json"
@@ -39,6 +41,9 @@ cmp "$root/src/extensions/generated/sdk/ios-static-dependencies.json" "$package_
 cmp \
   "$root/src/native/sdks/swift/Templates/OliphauntBroker/README.md" \
   "$scratch_root/src/native/sdks/swift/Templates/OliphauntBroker/README.md"
+cmp \
+  "$root/tools/packaging/portable-archive.mts" \
+  "$scratch_root/tools/packaging/portable-archive.mts"
 [ -L "$package_work/node_modules" ]
 
 fingerprint() {
@@ -63,6 +68,7 @@ assert_fingerprint_changes() {
 
 assert_fingerprint_changes "$rn_dir/src/index.ts"
 assert_fingerprint_changes "$root/src/native/sdks/swift/Templates/OliphauntBroker/README.md"
+assert_fingerprint_changes "$root/tools/packaging/portable-archive.mts"
 assert_fingerprint_changes "$root/src/extensions/generated/sdk/extensions.json"
 assert_fingerprint_changes "$root/src/extensions/generated/sdk/ios-static-dependencies.json"
 assert_fingerprint_changes "$source_example_dir/package.json"

@@ -14,6 +14,9 @@ import { readPortableArchiveEntries } from '../../../../../tools/packaging/porta
 import { assertRustDependencyLicensesInEntries } from '../../../mobile-bindings/tools/dependency-license-contract.mts';
 
 const KOTLIN_RELEASE_ABIS = new Set(['arm64-v8a', 'x86_64']);
+const GRADLE_PLUGIN_DESCRIPTOR = 'META-INF/gradle-plugins/dev.oliphaunt.android.properties';
+const GRADLE_PLUGIN_IMPLEMENTATION = 'dev.oliphaunt.android.OliphauntAndroidPlugin';
+const GRADLE_PLUGIN_IMPLEMENTATION_ENTRY = `${GRADLE_PLUGIN_IMPLEMENTATION.replaceAll('.', '/')}.class`;
 
 function validateKotlinAndroidAar(artifact, names) {
   const presentAbis = new Set(
@@ -38,9 +41,35 @@ function validateKotlinAndroidAar(artifact, names) {
   }
 }
 
+export function validateKotlinGradlePluginJar(artifact, entries) {
+  const descriptor = entries.get(GRADLE_PLUGIN_DESCRIPTOR);
+  if (!descriptor) return false;
+
+  const implementations = descriptor
+    .data()
+    .toString('utf8')
+    .split(/\r?\n/u)
+    .map((line) => line.match(/^implementation-class\s*[:=]\s*(\S+)\s*$/u)?.[1])
+    .filter(Boolean);
+  if (implementations.length !== 1 || implementations[0] !== GRADLE_PLUGIN_IMPLEMENTATION) {
+    throw new Error(
+      `Kotlin Android Gradle plugin ${rel(artifact)} must declare exactly ` +
+        `implementation-class=${GRADLE_PLUGIN_IMPLEMENTATION}`,
+    );
+  }
+  if (!entries.has(GRADLE_PLUGIN_IMPLEMENTATION_ENTRY)) {
+    throw new Error(
+      `Kotlin Android Gradle plugin ${rel(artifact)} declares ` +
+        `${GRADLE_PLUGIN_IMPLEMENTATION} but does not contain ${GRADLE_PLUGIN_IMPLEMENTATION_ENTRY}`,
+    );
+  }
+  return true;
+}
+
 export async function checkKotlinPackage(root) {
   const product = 'oliphaunt-kotlin';
   let checked = false;
+  let checkedGradlePlugin = false;
 
   const mavenRoot = path.join(root, 'maven');
   if (!isDirectory(mavenRoot)) {
@@ -50,10 +79,15 @@ export async function checkKotlinPackage(root) {
     .filter((file) => file.endsWith('.aar') || file.endsWith('.jar'))
     .sort(compareText)) {
     const names = archiveZipNames(archive);
+    const entries = readPortableArchiveEntries(archive, { format: 'zip' });
     rejectSdkRuntimePayload(product, archive, names);
+    try {
+      checkedGradlePlugin = validateKotlinGradlePluginJar(archive, entries) || checkedGradlePlugin;
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
     if (archive.endsWith('.aar')) {
       validateKotlinAndroidAar(archive, names);
-      const entries = readPortableArchiveEntries(archive, { format: 'zip' });
       for (const target of ['android-arm64', 'android-x86_64']) {
         assertRustDependencyLicensesInEntries(entries, {
           target,
@@ -63,6 +97,9 @@ export async function checkKotlinPackage(root) {
       }
     }
     checked = true;
+  }
+  if (!checkedGradlePlugin) {
+    fail(`${product} must contain the dev.oliphaunt.android Gradle plugin JAR`);
   }
 
   return checked;
