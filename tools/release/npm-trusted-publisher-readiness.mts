@@ -82,14 +82,12 @@ export async function verifyNpmTrustedPublishers({
       { method: 'POST', headers: { Authorization: `Bearer ${github.value}` } },
       `npm trusted publisher for ${carrier.name}@${carrier.version}`,
     );
-    if (
-      exchanged.token_type !== 'oidc' ||
-      typeof exchanged.token !== 'string' ||
-      exchanged.token.length === 0 ||
-      !(Date.parse(exchanged.expires) > nowImpl())
-    )
+    // Match the pinned npm CLI's exchange contract: it consumes response.token.
+    // This probe discards the credential; publishing obtains a fresh one, so
+    // descriptive token_type/expiry metadata cannot prove that later publish.
+    if (typeof exchanged?.token !== 'string' || exchanged.token.length === 0)
       throw new Error(
-        `npm trust preflight did not receive a usable credential for ${carrier.name}`,
+        `npm trust preflight exchange returned no nonempty token for ${carrier.name}`,
       );
     result.authorized.push(carrier.name);
   }

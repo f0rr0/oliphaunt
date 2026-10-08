@@ -153,8 +153,12 @@ emits, not what a registry operator entered. Audit the table after bootstrap.
 The crates.io exchange proves its matching configuration before normal registry
 mutation. npm's package-scoped OIDC exchange also runs before release mutation
 for every still-unpublished package in the frozen lock. It requests and discards
-temporary credentials without publishing. Matching immutable versions are
-verified against the frozen tarball and need no new publishing authorization.
+temporary credentials without publishing. Like the pinned npm CLI, the probe
+requires a successful exchange with a nonempty token; it does not rely on
+descriptive token-type or expiry metadata. The publisher exchanges a fresh
+credential when it publishes, so the preflight proves current authorization,
+not continued authorization throughout the release. Matching immutable versions
+are verified against the frozen tarball and need no new publishing authorization.
 The exchange proves npm accepts the workflow identity; the operator's settings
 audit remains necessary to check direct-publish permission and reject extra
 configurations.
