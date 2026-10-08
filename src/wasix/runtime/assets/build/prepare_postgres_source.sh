@@ -9,6 +9,7 @@ REPO_ROOT="$(oliphaunt_wasix_repo_root "$SCRIPT_DIR")"
 SOURCE_TOML="$REPO_ROOT/src/third-party/postgres/source.toml"
 PATCH_DIR="$REPO_ROOT"
 PATCH_SERIES="$REPO_ROOT/src/wasix/runtime/postgres/series"
+CONTRACT_HEADER="$SCRIPT_DIR/wasix_shim/oliphaunt_wasix_protocol_contract.generated.h"
 
 read_toml_value() {
   local key="$1"
@@ -78,8 +79,13 @@ fi
 
 series_hash="$(
   {
-    sha256_text_lf "$PATCH_SERIES"
-    while IFS= read -r patch_name; do
+    while IFS= read -r input || [[ -n "$input" ]]; do
+      input="${input%$'\r'}"
+      [[ -z "$input" || "$input" =~ ^# ]] && continue
+      sha256_text_lf "$REPO_ROOT/$input"
+    done < "$REPO_ROOT/src/wasix/runtime/postgres/source-inputs"
+    while IFS= read -r patch_name || [[ -n "$patch_name" ]]; do
+      patch_name="${patch_name%$'\r'}"
       [[ -z "$patch_name" || "$patch_name" =~ ^# ]] && continue
       sha256_text_lf "$PATCH_DIR/$patch_name"
     done < "$PATCH_SERIES"
@@ -88,6 +94,14 @@ series_hash="$(
 new_fingerprint="$PG_VERSION:$PG_SHA256:$series_hash"
 
 if [[ -d "$PATCHED_PGSRC" && -f "$FINGERPRINT" && "$(cat "$FINGERPRINT")" == "$new_fingerprint" ]] && ! source_has_patch_artifacts "$PATCHED_PGSRC"; then
+  # Concurrent tools/extension producers share this immutable prepared tree.
+  header="$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
+  if ! cmp -s "$CONTRACT_HEADER" "$header"; then
+    temporary_header="$(mktemp "$header.XXXXXX")"
+    trap 'rm -f "$temporary_header"' EXIT
+    install -m 0644 "$CONTRACT_HEADER" "$temporary_header"
+    mv -f "$temporary_header" "$header"
+  fi
   if [[ ! -f "$SOURCE_FINGERPRINT_FILE" || "$(cat "$SOURCE_FINGERPRINT_FILE")" != "$new_fingerprint" ]]; then
     printf '%s\n' "$new_fingerprint" > "$SOURCE_FINGERPRINT_FILE"
   fi
@@ -102,7 +116,8 @@ rm -rf "$PATCHED_PGSRC"
 tar -xjf "$TARBALL" -C "$WORK_ROOT/work"
 mv "$WORK_ROOT/work/postgresql-$PG_VERSION" "$PATCHED_PGSRC"
 
-bash "$REPO_ROOT/src/third-party/postgres/apply-series.sh" "$PATCHED_PGSRC" "$PATCH_SERIES" --context-fuzz >&2
+bash "$REPO_ROOT/src/third-party/postgres/apply-series.sh" "$PATCHED_PGSRC" "$PATCH_SERIES" >&2
+install -m 0644 "$CONTRACT_HEADER" "$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
 
 if source_has_patch_artifacts "$PATCHED_PGSRC"; then
   echo "prepare_postgres_source: patch backup/reject files were left in $PATCHED_PGSRC" >&2

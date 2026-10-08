@@ -51,6 +51,12 @@ typedef struct OliphauntStaticExtension {
  * releases a logical direct-mode lease but keeps the resident backend alive;
  * oliphaunt_close is terminal for the process lifetime and restores the caller's
  * previous PGDATA value, or unsets it if it was unset.
+ * Startup temporarily changes process cwd; POSIX restores its directory
+ * identity using a retained descriptor. Host signal handlers/masks and process
+ * timers are not backend-owned. Cancellation is consumed on the backend
+ * thread; deadlines cannot preempt a blocking host streaming callback.
+ * The configured identity is trusted by the host, but PostgreSQL login and
+ * connection eligibility, role/database settings, and login triggers apply.
  *
  * Every successful oliphaunt_init establishes a current
  * logical lease generation. Hosts with independent cleanup owners must capture
@@ -77,7 +83,10 @@ typedef struct OliphauntConfig {
     const char *database;
     /* OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK or zero. */
     uint64_t flags;
-    /* Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected. */
+    /*
+     * Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected.
+     * Embedded startup defaults fsync to off; use fsync=on for crash safety.
+     */
     const char *const *startup_args;
     size_t startup_arg_count;
     /* Optional existing ICU data directory. NULL preserves runtime/env discovery. */
@@ -138,7 +147,10 @@ typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, s
 /* Returns zero and sets read_len (zero at EOF), or nonzero on failure.
  * Read/write callbacks run synchronously and must not reenter this database.
  * A failed backup sink still runs backup-mode cleanup before returning.
- * Restore writes only to private staging until the entire archive validates. */
+ * Restore writes only to private staging until the entire archive validates.
+ * If final durability fails after publication, restore returns an error but
+ * retains the populated destination; retry must not overwrite it. This applies
+ * to both buffered and streamed restore. */
 typedef int32_t (*OliphauntArchiveReadCallback)(
     void *context, uint8_t *data, size_t capacity, size_t *read_len);
 typedef struct OliphauntRestoreStreamOptions {

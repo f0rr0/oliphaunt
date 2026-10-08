@@ -950,7 +950,7 @@ fn cluster_seed_publication_staging(pgdata: &Path) -> Result<PathBuf> {
     Ok(parent.join(staging))
 }
 
-fn sync_publication_tree(path: &Path) -> Result<()> {
+pub(super) fn sync_publication_tree(path: &Path) -> Result<()> {
     let mut files = Vec::new();
     let mut directories = Vec::new();
     collect_publication_entries(path, &mut files, &mut directories)?;
@@ -1113,7 +1113,7 @@ fn logical_tree_sha256(root: &Path) -> Result<String> {
         digest.update(size.to_string().as_bytes());
         digest.update([0]);
         digest.update(fs::read(&file).with_context(|| format!("read {}", file.display()))?);
-        digest.update([b'\n']);
+        digest.update(b"\n");
     }
     Ok(format!("{:x}", digest.finalize()))
 }

@@ -146,7 +146,10 @@ function isSplittableCargoCarrier({ ecosystem, name, product, role }) {
     (SPLITTABLE_CARGO_ROLES.has(role) ||
       (product === 'postgres-tools-native' &&
         role === 'tool-leaf' &&
-        name.startsWith('oliphaunt-tools-')))
+        name.startsWith('oliphaunt-tools-')) ||
+      (product === 'postgres-tools-wasix' &&
+        role === 'tool-leaf' &&
+        name === 'oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc'))
   );
 }
 

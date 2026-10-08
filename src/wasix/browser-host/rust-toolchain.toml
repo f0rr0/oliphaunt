@@ -1,0 +1,6 @@
+[toolchain]
+# Shared-memory browser workers require rebuilding std with atomics.
+channel = "nightly-2026-08-11"
+profile = "minimal"
+components = ["rust-src", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

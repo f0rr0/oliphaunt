@@ -149,6 +149,65 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('mandatory artifact consumers check direct producer success explicitly', () => {
+    for (const id of [
+      'extension-artifacts-native-android',
+      'extension-artifacts-wasix',
+      'mobile-extension-packages-android',
+      'mobile-extension-packages-ios',
+      'liboliphaunt-native-release-assets',
+      'swift-sdk-package',
+      'liboliphaunt-wasix-release-assets',
+      'mobile-build-ios',
+      'mobile-e2e-ios',
+    ]) {
+      const job = workflow.jobs[id];
+      assert(job.if.startsWith('${{ !cancelled() && '), `${id} can inherit skipped ancestors`);
+      for (const dependency of [job.needs].flat()) {
+        assert(
+          job.if.includes(`needs.${dependency}.result == 'success'`),
+          `${id} must require successful ${dependency}`,
+        );
+      }
+      assert(!job.if.includes('needs.*.result'), `${id} relies on wildcard status filtering`);
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('native aggregates require successful selected platform producers', () => {
+    for (const [id, outputPrefix, platforms] of [
+      [
+        'extension-artifacts-native',
+        'extension_artifacts_native_matrix',
+        ['linux', 'android', 'ios', 'other'],
+      ],
+      [
+        'liboliphaunt-native-desktop',
+        'liboliphaunt_native_desktop_runtime_matrix',
+        ['linux', 'other'],
+      ],
+      ['broker-runtime', 'broker_runtime_matrix', ['linux', 'other']],
+    ]) {
+      for (const platform of platforms) {
+        assert(
+          workflow.jobs[id].if.includes(
+            `(fromJson(needs.affected.outputs.${outputPrefix}_${platform}).include[0] == null || needs.${id}-${platform}.result == 'success')`,
+          ),
+          `${id} accepts an unsuccessful selected ${platform} producer`,
+        );
+      }
+    }
+    for (const platform of ['android', 'ios']) {
+      assert(
+        workflow.jobs['mobile-extension-packages'].if.includes(
+          `(needs.affected.outputs.mobile_extension_package_native_targets_${platform}_csv == '' || needs.mobile-extension-packages-${platform}.result == 'success')`,
+        ),
+        `mobile extension aggregate accepts an unsuccessful selected ${platform} producer`,
+      );
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('WASIX aggregates require successful selected hosts before accepting their artifacts', () => {
     for (const id of ['wasix-napi', 'liboliphaunt-wasix-aot']) {
       for (const host of ['linux', 'other']) {
@@ -330,6 +389,47 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   });
 
 if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
+  test('WASIX AOT consumers reuse the same-run engine qualification', () => {
+    const host = Bun.YAML.parse(
+      readFileSync(path.join(ROOT, '.github/workflows/wasix-host.yml'), 'utf8'),
+    );
+    const step = host.jobs.build.steps.find((step) =>
+      step.run?.includes('run-planned-moon-job.sh liboliphaunt-wasix-aot'),
+    );
+    const job = 'liboliphaunt-wasix-aot';
+    for (const roots of [['liboliphaunt-wasix:runtime-aot'], CI_JOB_TARGETS[job]]) {
+      const result = Bun.spawnSync(
+        ['bun', '.github/scripts/resolve-planned-moon-execution.mts', job],
+        {
+          cwd: ROOT,
+          env: {
+            ...process.env,
+            ...step.env,
+            OLIPHAUNT_CI_JOB_TARGETS_JSON: JSON.stringify({ [job]: roots }),
+          },
+        },
+      );
+      assert.equal(result.exitCode, 0, result.stderr.toString());
+      const execution = result.stdout
+        .toString()
+        .trim()
+        .split('\n')
+        .map((line) => line.split('\t'));
+      const executed = execution
+        .filter(([kind]) => kind !== 'transferred')
+        .flatMap(([, targets]) => targets.split(' '));
+      for (const root of roots) assert(executed.includes(root), `${root} must still execute`);
+      for (const task of ['liboliphaunt-wasix:engine-test', 'liboliphaunt-wasix:engine-build'])
+        assert(!executed.includes(task), `${task} must consume the producer's qualification`);
+      assert(
+        execution.some(
+          ([kind, target]) => kind === 'transferred' && target === 'liboliphaunt-wasix:engine-test',
+        ),
+      );
+    }
+  });
+
+if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
   test('SDK runtime suites execute in artifact-consuming jobs without rebuilding their producers', () => {
     for (const [job, roots, forbidden] of [
       [
@@ -347,7 +447,7 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
       ],
       [
         'wasix-release-regression',
-        ['oliphaunt-wasix-rust:test-integration'],
+        ['oliphaunt-wasix-rust:test-integration', 'oliphaunt-wasix-rust:test-regression'],
         [
           'liboliphaunt-wasix:compiler-output',
           'liboliphaunt-wasix:runtime-aot',
@@ -371,6 +471,12 @@ if (!process.env.OLIPHAUNT_TRANSFER_FIXTURE_PHASE)
         );
         assert(execution.targets.includes(root));
         const executed = [...execution.targets, ...execution.localDependencies];
+        if (job === 'wasix-release-regression') {
+          assert(
+            executed.includes('liboliphaunt-wasix:engine-sources'),
+            `${root} must prepare patched engine sources despite the transferred AOT boundary`,
+          );
+        }
         for (const target of forbidden)
           assert(!executed.includes(target), `${root} rebuilds ${target}`);
         assert.equal(

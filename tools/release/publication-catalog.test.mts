@@ -64,8 +64,11 @@ test('native tool target leaves admit exact payload parts while facades remain n
 
   const otherToolLeaves = catalog.carriers
     .filter(
-      ({ ecosystem, product, role }) =>
-        ecosystem === 'cargo' && product !== 'postgres-tools-native' && role === 'tool-leaf',
+      ({ ecosystem, name, product, role }) =>
+        ecosystem === 'cargo' &&
+        product !== 'postgres-tools-native' &&
+        role === 'tool-leaf' &&
+        name !== 'oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc',
     )
     .map(({ name }) => name)
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
@@ -74,6 +77,23 @@ test('native tool target leaves admit exact payload parts while facades remain n
     expect(() =>
       resolveActualCarrier(catalog, 'cargo', `${name}-part-001`, 'publication-catalog.test'),
     ).toThrow(/non-splittable parent role tool-leaf/u);
+  }
+});
+
+test('Windows V8 AOT payload parts retain their declared runtime or tools owner', () => {
+  const catalog = loadPublicationCatalog('publication-catalog.test');
+  for (const [name, product] of [
+    ['liboliphaunt-wasix-aot-x86_64-pc-windows-msvc', 'liboliphaunt-wasix'],
+    ['oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc', 'postgres-tools-wasix'],
+  ]) {
+    expect(resolveActualCarrier(catalog, 'cargo', `${name}-part-001`)).toMatchObject({
+      parentCarrier: `cargo:${name}`,
+      product,
+      part: 1,
+      role: 'payload-part',
+      declared: false,
+    });
+    expect(() => resolveActualCarrier(catalog, 'cargo', `${name}-part-000`)).toThrow(/1-based/u);
   }
 });
 

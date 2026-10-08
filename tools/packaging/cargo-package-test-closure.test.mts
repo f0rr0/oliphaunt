@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -138,6 +145,73 @@ test('package qualification retains exact published pins after a local dependenc
       assert.equal(config.patch, undefined);
     }
   }
+});
+
+test('stages sibling, optional build, and cyclic path dependencies as a closed Cargo graph', (t) => {
+  const root = fixture(t, 'cargo-closure-transitive');
+  const cratePath = closureCrate(root);
+  const source = path.join(root, 'engine');
+  for (const [directory, name, dependencies] of [
+    [
+      'carrier',
+      'carrier',
+      '[features]\nneeded = []\n[dependencies]\npeer = { package = "renamed-peer", version = "*", path = "../peer" }\n',
+    ],
+    [
+      'peer',
+      'renamed-peer',
+      '[features]\nunused = ["dep:build-peer"]\n[build-dependencies]\nbuild-peer = { version = "*", path = "../build-peer", optional = true }\n',
+    ],
+    [
+      'build-peer',
+      'build-peer',
+      '[dependencies]\ncarrier = { version = "*", path = "../carrier", optional = true }\n',
+    ],
+  ]) {
+    const directoryPath = path.join(source, directory);
+    writePackage(directoryPath, name);
+    appendFileSync(path.join(directoryPath, 'Cargo.toml'), dependencies);
+  }
+  const hint = path.join(root, 'Cargo.toml');
+  writeFileSync(hint, '[dependencies]\ncarrier = { version = "*", path = "engine/carrier" }\n');
+  const scratch = path.join(root, 'consumer');
+  const manifest = preparePackagedCargoTestClosure({
+    cratePath,
+    scratch,
+    pathDependencyManifests: [hint],
+  });
+  rmSync(source, { recursive: true });
+  const result = Bun.spawnSync(
+    [
+      'cargo',
+      'metadata',
+      '--offline',
+      '--features',
+      'carrier',
+      '--format-version',
+      '1',
+      '--manifest-path',
+      manifest,
+    ],
+    { cwd: scratch },
+  );
+  assert.equal(result.exitCode, 0, result.stderr.toString());
+  const packages = JSON.parse(result.stdout.toString()).packages;
+  assert.deepEqual(packages.map((row) => row.name).sort(), [
+    'carrier',
+    'closure-fixture',
+    'renamed-peer',
+  ]);
+  for (const row of packages) {
+    assert.ok(row.manifest_path.startsWith(scratch));
+    assert.ok(row.dependencies.every((dependency) => !dependency.path));
+  }
+  const config = Bun.TOML.parse(readFileSync(path.join(scratch, '.cargo/config.toml'), 'utf8'));
+  assert.deepEqual(Object.keys(config.patch['crates-io']), [
+    'build-peer',
+    'carrier',
+    'renamed-peer',
+  ]);
 });
 
 test('rejects unsafe packaged names', (t) => {

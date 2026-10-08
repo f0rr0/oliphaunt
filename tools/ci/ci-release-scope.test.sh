@@ -90,7 +90,7 @@ const assets = [
   url:`https://github.com/f0rr0/oliphaunt/releases/download/${tag}/${name}`}));
 writeFileSync(process.argv[3], JSON.stringify({schema:'oliphaunt-react-native-ios-carrier-v1',
   base:{product:'liboliphaunt-native', version, tag, assets}, carriers:[], extensions:[],
-  legal:{base:iosBaseLegalMetadata(), extensions:[]}}));
+  legal:{base:iosBaseLegalMetadata(version), extensions:[]}}));
 JS
 for scenario in missing same-sha invalid-sha corrupt wrong-pin unchanged-ios changed-ios; do
   expected=false

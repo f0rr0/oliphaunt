@@ -17,8 +17,8 @@ case "$macos_deployment_target" in
     ;;
 esac
 export MACOSX_DEPLOYMENT_TARGET="$macos_deployment_target"
-pg_version="18.4"
-pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+pg_version="18.6"
+pg_sha256="555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f"
 pg_url="https://ftp.postgresql.org/pub/source/v${pg_version}/postgresql-${pg_version}.tar.bz2"
 source_manifest="$repo_root/src/third-party/postgres/source.toml"
 patch_dir="$repo_root"

@@ -47,6 +47,8 @@ owners:
       - "@oliphaunt/wasix"
     tools/**:
       - "@oliphaunt/wasix"
+    engine/**:
+      - "@oliphaunt/wasix"
 fileGroups:
   version:
     - VERSION
@@ -58,6 +60,14 @@ fileGroups:
   cargo-carrier-sources:
     - crates/**/*.rs
     - crates/**/Cargo.toml
+    - engine/crates/**/*.rs
+    - engine/crates/**/Cargo.toml
+    - "!engine/crates/*/upstream/**"
+  engine-source:
+    - engine/source.toml
+    - engine/contract.mts
+    - engine/prepare-sources.{mts,sh}
+    - engine/patches/**/*
   extension-smoke-inputs:
     - /src/wasix/pgwire-server/Cargo.toml
     - /src/wasix/pgwire-server/tests/extensions.rs
@@ -82,13 +92,77 @@ fileGroups:
     - /src/wasix/runtime/tools/wasix-cargo-toolchain-policy.mts
     - /tools/dev/bun.sh
 tasks:
+  engine-test:
+    tags: [runtime, requires-rust]
+    deps: ["liboliphaunt-wasix:engine-build"]
+    script: |
+      set -eu
+      case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+          bun src/wasix/runtime/engine/test-packaged.mts
+          ;;
+      esac
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(packaging-source)"
+      - "@group(legal-files)"
+      - "@group(upstream-licenses)"
+      - engine/package.mts
+      - engine/test-packaged.mts
+      - engine/crates/**/Cargo.toml
+      - engine/crates/**/*.rs
+      - "!engine/crates/*/upstream/**"
+      - "!engine/crates/*/prebuilt/**"
+      - /src/third-party/tools/source-fetch-core.mts
+      - /tools/release/release-artifact-targets.mts
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  engine-build:
+    tags: [runtime, artifact, requires-rust]
+    command: bash src/wasix/runtime/engine/windows/build.sh
+    deps:
+      - liboliphaunt-wasix:engine-sources
+    inputs:
+      - "@group(engine-source)"
+      - engine/windows/*.{cpp,c,mts,rs,sh}
+      - "!engine/windows/*.test.mts"
+      - "!engine/windows/build-caches.mts"
+      - /tools/dev/acquisition.sh
+    outputs:
+      - /target/oliphaunt-wasix/engine/windows-x64-msvc/oliphaunt_wee8.dll
+      - /target/oliphaunt-wasix/engine/windows-x64-msvc/cache-producer.exe
+      - /target/oliphaunt-wasix/engine/windows-x64-msvc/source.json
+      - /target/oliphaunt-wasix/engine/windows-x64-msvc/LICENSE.v8
+      - engine/crates/wasmer/prebuilt/embedded_bindings.rs
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  engine-sources:
+    command: bash src/wasix/runtime/engine/prepare-sources.sh
+    inputs:
+      - "@group(engine-source)"
+      - /src/third-party/tools/fetch-sources.sh
+      - /src/third-party/tools/source-fetch-core.mts
+      - /tools/dev/acquisition.sh
+    outputs:
+      - engine/crates/*/upstream/**/*
+      - engine/crates/*/.prepared.json
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
   build-orchestration-test:
     tags:
       - quality
       - unit
-    script: "set -e\nbash src/wasix/runtime/tools/build-runtime-portable.test.sh\nbash src/wasix/runtime/tools/serialize-aot.test.sh\nbash src/wasix/runtime/assets/build/dependency-prefix.test.sh\n"
+    script: "set -e\nbash src/wasix/runtime/tools/build-runtime-portable.test.sh\nbash src/wasix/runtime/tools/serialize-aot.test.sh\nbash src/wasix/runtime/assets/build/dependency-prefix.test.sh\nbash src/wasix/runtime/assets/build/prepare_postgres_source.test.sh\n"
     inputs:
       - assets/build/dependency-prefix.test.sh
+      - assets/build/prepare_postgres_source.sh
+      - assets/build/prepare_postgres_source.test.sh
+      - assets/build/source_lane.sh
+      - /src/third-party/postgres/{fetch-source,apply-series}.sh
+      - /tools/dev/acquisition.sh
       - assets/build/build_wasix_geos.sh
       - assets/build/build_wasix_proj.sh
       - assets/build/build_wasix_openssl.sh
@@ -107,12 +181,37 @@ tasks:
     tags:
       - quality
       - unit
-    script: "set -e\nbash src/wasix/runtime/tools/check-shim-abi.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh\nbash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh\n"
+    script: |
+      set -e
+      node src/wasix/runtime/protocol-contract/generate.mjs --check
+      node --test src/wasix/runtime/protocol-contract/generate.test.mjs
+      bash src/wasix/runtime/tools/check-shim-abi.sh
+      bash src/wasix/runtime/assets/build/profile_flags.test.sh
+      bash src/wasix/runtime/assets/build/verify_wasix_sjlj_artifact.test.sh
+      node --test src/wasix/runtime/tools/strong-random.test.mjs src/third-party/postgres/apply-series.test.mjs
+      bash src/wasix/runtime/assets/build/docker/install-pinned-apt-packages.test.sh
+      bash src/wasix/runtime/assets/build/docker/install-pinned-wasixcc.test.sh
+      bun test ./src/wasix/runtime/engine/prepare-sources.test.mts ./src/wasix/runtime/engine/windows/cache-producer.test.mts
     inputs:
       - /tools/dev/acquisition.sh
+      - engine/prepare-sources.mts
+      - engine/prepare-sources.test.mts
+      - engine/windows/cache-producer.mts
+      - engine/windows/cache-producer.test.mts
+      - engine/contract.mts
+      - engine/source.toml
       - assets/build/docker/**/*
       - assets/build/wasix_shim/**/*
       - tools/check-shim-abi.sh
+      - tools/strong-random.test.mjs
+      - protocol-contract/**/*
+      - /src/wasix/sdks/ts/src/protocol-limits.generated.ts
+      - /src/wasix/sdks/rust/src/oliphaunt/protocol_limits_generated.rs
+      - /src/wasix/browser-host/protocol-contract.generated.rs
+      - assets/build/profile_flags*
+      - assets/build/verify_wasix_sjlj_artifact*
+      - /src/third-party/postgres/apply-series*
+      - /src/third-party/postgres/patches/wasix/0037-oliphaunt-wasix-use-checked-getrandom.patch
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -176,8 +275,7 @@ tasks:
       - "!/src/third-party/postgres/testdata/**/*"
       - tools/build-compiler-output.sh
       - tools/extension-build-scripts.mts
-      - "!assets/generated"
-      - "!assets/generated/**"
+      - assets/generated/wasix-dl.exports
       - /src/wasix/sdks/rust/Cargo.toml
       - /src/wasix/runtime/tools/xtask/**/*
       - "@group(release-archive-contract)"
@@ -223,6 +321,7 @@ tasks:
     command: bash src/wasix/runtime/tools/build-aot-target.sh
     deps:
       - liboliphaunt-wasix:runtime-portable
+      - liboliphaunt-wasix:engine-test
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
@@ -355,6 +454,7 @@ tasks:
     options:
       runFromWorkspaceRoot: true
   packaging-unit:
+    deps: ["liboliphaunt-wasix:engine-sources"]
     tags:
       - quality
       - unit
@@ -368,7 +468,7 @@ tasks:
       - /src/extensions/external/**/upstream-licenses/**/*
       - /src/database-resources/contracts/*.mts
       - "@group(upstream-licenses)"
-      - THIRD_PARTY_NOTICES.md
+      - /src/wasix/sdks/rust/THIRD_PARTY_NOTICES.md
       - "@group(legal-files)"
       - "@group(release-target-contract)"
       - "@group(package-test-metadata)"

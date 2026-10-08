@@ -43,6 +43,32 @@ PostgreSQL backend; its SDK-owned temporary directory must remain until that
 backend's physical lifetime ends. It is not durable storage and the operating
 system may reclaim it after process exit.
 
+## Synchronization
+
+Persistent storage selects where files live, not whether every commit is forced
+to disk. Embedded Native and WASIX default PostgreSQL's `fsync` to `off`.
+Caller startup settings take precedence over saved PostgreSQL configuration,
+which takes precedence over this default. No SDK durability flag or environment
+variable duplicates that control. Full native servers and the separate WASIX
+Postmaster retain PostgreSQL's `fsync=on` default.
+
+For disk synchronization, use the existing startup GUC (`fsync: 'on'` in
+TypeScript or `.startup_guc("fsync", "on")` in Rust). With it off, a machine or
+OS crash can lose committed data or corrupt the cluster. Turning it on later
+does not retroactively make earlier unsynchronized writes safe; follow
+PostgreSQL's procedure when changing a running database's durability policy.
+WASIX host directories distinguish ordinary write flushing from explicit
+`fdatasync` (data) and `fsync` (data and metadata); errors from explicit requests
+are not suppressed by the default. Initial installation and physical restore
+keep their checked publication barriers, independently of query settings.
+Host directory barriers are checked on Unix; Windows helpers flush regular
+files but do not implement a POSIX directory-sync barrier.
+
+Browser providers still complete their existing publication/flush boundary
+before returning. IndexedDB's transaction guarantees and OPFS's per-file flushes
+are different contracts; `fsync=on` alone does not make either a POSIX disk.
+Memory storage has no durable medium to synchronize.
+
 ## SDK spellings
 
 Each language keeps its native conventions instead of importing a cross-language
@@ -98,6 +124,9 @@ staging generation; it cannot be mistaken for an existing database.
 Restore uses `destination`, not `root`. A restore destination is an external
 filesystem location receiving backup bytes; it is not an open database's
 storage selector. The current API accepts only a new or empty destination.
+If native restore fails its final durability check after publication, it retains
+the populated destination and reports that outcome. Do not blindly retry or
+delete that destination: an error does not always mean nothing was published.
 
 ## WASIX persistence contract
 
@@ -114,15 +143,22 @@ namespace never becomes ready. The initializing/ready phase and full-flush
 selector are provider details, not public operations or configuration.
 Applications that need a PostgreSQL checkpoint call `execute("CHECKPOINT")`;
 that statement completes the same ordinary provider boundary as another
-successful operation.
+successful operation. With the embedded default `fsync=off`, PostgreSQL skips
+its file-sync barriers, so `CHECKPOINT` alone does not guarantee that every
+database file has been flushed to host storage. Set PostgreSQL's `fsync=on` to
+request those barriers; the browser provider's persistence guarantees still
+apply rather than native filesystem guarantees. A checkpoint may also replace
+metadata and trigger a full namespace publication; applications must not rely
+on that incidental flush as a substitute for PostgreSQL's file-sync barriers.
 
 Each logical IndexedDB name owns an independent physical IndexedDB database.
 Compatibility metadata and path rows change in one atomic read-write
 transaction using the browser's default durability policy, so an aborted
 publication leaves the prior generation current. OPFS stores an opaque logical
-namespace over flat backing files. Its direct path honors PostgreSQL file flushes
-and drains WAL at operation boundaries; checkpoint, close, and namespace
-publication flush WAL before ordinary files and `global/pg_control`. Its
+namespace over flat backing files. Its direct path honors explicit PostgreSQL
+file flushes and normally drains only WAL at operation boundaries. Initialization,
+clean close, and namespace publication flush WAL before ordinary files and
+`global/pg_control`, independently of the PostgreSQL `fsync` setting. Its
 portable path uses copy-on-write backing files and publishes the namespace
 state last. The direct path keeps a private preopened fast-path reserve. A larger
 creation burst is staged until the mandatory host boundary, where every staged

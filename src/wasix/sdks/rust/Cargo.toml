@@ -2,7 +2,7 @@
 name = "oliphaunt-wasix"
 version = "0.3.2"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "Embedded PostgreSQL 18 for Rust with synchronous and asynchronous APIs."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
@@ -102,31 +102,37 @@ liboliphaunt-wasix-portable = { version = "*", path = "../../runtime/crates/asse
 oliphaunt-wasix-tools = { version = "*", path = "../../postgres-tools/crates/tools", optional = true }
 oliphaunt-icu = { version = "*", path = "../../../database-resources/icu/cargo", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync"] }
-wasmer = { version = "=7.2.1", default-features = false, features = [
-  "sys",
-  "headless",
-  "compiler",
-  "wasmer-artifact-load",
-] }
+wasmer = { package = "oliphaunt-wasmer", version = "*", path = "../../runtime/engine/crates/wasmer", default-features = false }
 # Wasmer-WASIX 0.x crates use compatible ranges for packages in their own
 # release family. Keep the complete family constrained here so a fresh
 # consumer cannot silently mix a later patch generation with the runtime and
 # AOT artifacts built against this exact toolchain.
-wasmer-config = { version = "=0.702.1", default-features = false }
-wasmer-journal = { version = "=0.702.1", default-features = false }
-wasmer-package = { version = "=0.702.1", default-features = false }
-wasmer-types = "=7.2.1"
-wasmer-wasix = { version = "=0.702.1", default-features = false, features = [
+wasmer-config = { version = "=0.705.0", default-features = false }
+wasmer-journal = { package = "oliphaunt-wasmer-journal", version = "*", path = "../../runtime/engine/crates/wasmer-journal", default-features = false }
+wasmer-package = { version = "=0.705.0", default-features = false }
+wasmer-types = "=7.5.0"
+wasmer-wasix = { package = "oliphaunt-wasmer-wasix", version = "*", path = "../../runtime/engine/crates/wasmer-wasix", default-features = false, features = [
   "sys-minimal",
   "sys-poll",
   "host-vnet",
   "time",
 ] }
-wasmer-wasix-types = { version = "=0.702.1", default-features = false }
-virtual-fs = { version = "=0.702.1", default-features = false }
-virtual-mio = { version = "=0.702.1", default-features = false }
-virtual-net = { version = "=0.702.1", default-features = false }
-webc = "=12.0.0"
+wasmer-wasix-types = { package = "oliphaunt-wasmer-wasix-types", version = "*", path = "../../runtime/engine/crates/wasmer-wasix-types", default-features = false }
+virtual-fs = { package = "oliphaunt-virtual-fs", path = "../../runtime/engine/crates/virtual-fs", version = "*", default-features = false }
+virtual-mio = { version = "=0.705.0", default-features = false }
+virtual-net = { version = "=0.705.0", default-features = false }
+webc = "=12.0.1"
+
+[target.'cfg(not(windows))'.dependencies]
+wasmer = { package = "oliphaunt-wasmer", version = "*", path = "../../runtime/engine/crates/wasmer", default-features = false, features = [
+  "sys", "headless", "compiler", "wasmer-artifact-load",
+] }
+
+[target.'cfg(windows)'.dependencies]
+# WASIX sys-minimal retains Sys types. Headless satisfies that dependency
+# without enabling a Windows compiler; runtime stores explicitly use V8.
+wasmer = { package = "oliphaunt-wasmer", version = "*", path = "../../runtime/engine/crates/wasmer", default-features = false, features = ["v8", "headless"] }
+wasmer-wasix = { package = "oliphaunt-wasmer-wasix", version = "*", path = "../../runtime/engine/crates/wasmer-wasix", default-features = false, features = ["v8"] }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 liboliphaunt-wasix-aot-aarch64-apple-darwin = { version = "*", path = "../../runtime/crates/aot/aarch64-apple-darwin" }

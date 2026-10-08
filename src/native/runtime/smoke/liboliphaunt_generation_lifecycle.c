@@ -103,7 +103,33 @@ static void *claim_and_close_current_generation(void *data) {
     return NULL;
 }
 
+static int verify_backend_durability_arguments(void) {
+    char *overrides[] = {"-c", "fsync=off", "-c", "fsync=on"};
+    OliphauntHandle handle = {0};
+    handle.postgres_path = "/runtime/bin/postgres";
+    handle.pgdata = "/database/pgdata";
+    handle.startup_args = overrides;
+    for (size_t count = 0; count <= 4; count += 2) {
+        handle.startup_arg_count = count;
+        OliphauntBackendArgv args = {0};
+        CHECK(oliphaunt_build_backend_argv(&handle, &args) == 0, "build durability argv");
+        /* Leave the boot default and saved configuration to PostgreSQL. */
+        bool fsync_enabled = false;
+        for (int i = 1; i < args.argc; i++) {
+            CHECK(strcmp(args.argv[i], "-F") != 0, "do not override saved fsync configuration");
+            CHECK(count != 0 || strncmp(args.argv[i], "fsync=", 6) != 0,
+                  "do not force a default fsync startup GUC");
+            if (strcmp(args.argv[i], "fsync=off") == 0) fsync_enabled = false;
+            if (strcmp(args.argv[i], "fsync=on") == 0) fsync_enabled = true;
+        }
+        CHECK(fsync_enabled == (count == 4), "default and explicit fsync override ordering");
+        oliphaunt_free_backend_argv(&args);
+    }
+    return 0;
+}
+
 int main(void) {
+    if (verify_backend_durability_arguments() != 0) return 1;
     char *startup_args[] = {"-c", "search_path=public"};
     OliphauntHandle resident_config;
     memset(&resident_config, 0, sizeof(resident_config));
@@ -127,6 +153,19 @@ int main(void) {
     };
     CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
           "an internally locked resident runtime must accept the same reopen mode");
+    reopen_config.username = "";
+    reopen_config.database = "";
+    CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "empty reopen identities must use the same defaults as initial open");
+    reopen_config.username = NULL;
+    reopen_config.database = NULL;
+    CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "null reopen identities must use the same defaults as initial open");
+    reopen_config.username = "other";
+    CHECK(!oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "explicit non-default reopen identities must still be rejected");
+    reopen_config.username = "postgres";
+    reopen_config.database = "postgres";
     reopen_config.icu_data_dir = "/selected-icu";
     CHECK(!oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
           "a resident runtime must reject changing its selected ICU data");

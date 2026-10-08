@@ -1,9 +1,11 @@
 import { lstat, open, readdir, readlink, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const UNSUPPORTED_DIRECTORY_SYNC_ERRORS = new Set(['EISDIR', 'EINVAL', 'EPERM', 'ENOTSUP']);
+const UNSUPPORTED_DIRECTORY_SYNC_ERRORS = new Set(['EINVAL', 'ENOTSUP']);
 
 export async function syncDirectory(directory: string): Promise<void> {
+  // Match the native Rust/C helpers: Windows has no POSIX directory-sync barrier.
+  if (process.platform === 'win32') return;
   let handle: FileHandle | undefined;
   try {
     handle = await open(directory, 'r');
@@ -43,7 +45,8 @@ async function syncTree(root: string, allowSymlinks: boolean): Promise<void> {
     } else if (entryMetadata.isDirectory()) {
       await syncTree(file, allowSymlinks);
     } else if (entryMetadata.isFile()) {
-      const handle = await open(file, 'r');
+      // FlushFileBuffers requires a write-capable handle on Windows; r+ does not truncate.
+      const handle = await open(file, process.platform === 'win32' ? 'r+' : 'r');
       try {
         await handle.sync();
       } finally {

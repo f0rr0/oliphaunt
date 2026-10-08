@@ -15,7 +15,12 @@ scope.addEventListener('message', (event: MessageEvent<ProbeRequest>) => {
 });
 
 async function prepareDurableState(name: string): Promise<void> {
-  database = await Oliphaunt.open({ seed: standardSeed, storage: opfs(name) });
+  // This probe requires checkpoint file barriers, not the embedded fsync=off default.
+  database = await Oliphaunt.open({
+    seed: standardSeed,
+    storage: opfs(name),
+    startupGUCs: { fsync: 'on' },
+  });
   await database.queryRaw('CREATE TABLE opfs_crash_probe (answer integer NOT NULL)');
   await database.queryRaw('INSERT INTO opfs_crash_probe VALUES (73)');
   await database.queryRaw(`

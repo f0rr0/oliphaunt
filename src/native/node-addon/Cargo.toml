@@ -11,8 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 liboliphaunt-native-bindings = { path = "../rust-bindings" }
-napi = { version = "=3.12.2", default-features = false, features = ["napi8"] }
-napi-derive = { version = "=3.6.3", default-features = false, features = ["strict", "type-def"] }
+napi = { version = "=3.14.0", default-features = false, features = ["napi8"] }
+napi-derive = { version = "=3.6.10", default-features = false, features = ["strict", "type-def"] }
 
 [build-dependencies]
-napi-build = "=2.4.1"
+napi-build = "=2.6.0"

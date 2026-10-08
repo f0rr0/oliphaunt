@@ -769,12 +769,12 @@ Release qualification must inspect the binaries themselves: Mach-O
 requirements must satisfy these floors. Package labels, runner versions, and
 successful builds are not compatibility evidence by themselves.
 
-Rust 1.93.1's Linux `std::process` implementation contains weak
-`pidfd_getpid`/`pidfd_spawnp` references. Linking the broker directly on an
-Ubuntu 24.04 runner binds those otherwise optional references to
-`GLIBC_2.39`, which raises the load-time floor even when the fast path is never
-used. Linux broker release assets are therefore linked from a clean target
-directory in the exact, digest-pinned `rust:1.93.1-slim-bookworm` container.
+Rust's Linux `std::process` implementation can reference optional newer glibc
+symbols. Linking on a newer runner can bind those references at link time,
+raising the load-time floor even when the fast path is never used. Linux
+broker and WASIX addon release assets are therefore linked from clean target
+directories in the same exact, digest-pinned `rust:1.96.0-slim-bookworm`
+container, matching the repository Rust toolchain.
 After any bounded digest-pinned image acquisition, only Cargo's locked
 dependency-fetch phase may use the network inside the container; package code
 and build scripts run in a read-only, networkless, capability-free container.

@@ -8,7 +8,7 @@ tags: ["postgres", "source", "pg18"]
 
 project:
   title: "PostgreSQL 18 Source"
-  description: "Shared PostgreSQL 18.4 source pin and checksum."
+  description: "Shared PostgreSQL 18.6 source pin and checksum."
   owner: "oliphaunt"
 
 owners:

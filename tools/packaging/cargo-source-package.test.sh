@@ -6,7 +6,7 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-cargo-source-XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 bun tools/packaging/cargo-source-package.test.mts prepare "$scratch"
 for output in first second; do
-  bash tools/packaging/package-cargo-source.sh "$scratch/source/Cargo.toml" "$scratch/$output" > "$scratch/$output.path"
+  bash tools/packaging/package-cargo-source.sh "$scratch/source/Cargo.toml" "$scratch/$output" "$scratch/$output-files.txt" > "$scratch/$output.path"
 done
 bash tools/packaging/package-cargo-source.sh "$scratch/generated/Cargo.toml" "$scratch/cargo-generated" > "$scratch/generated.path"
 OLIPHAUNT_CARGO_NOTICE_PROFILE=source-sdk bash tools/packaging/package-cargo-source.sh "$scratch/source/Cargo.toml" "$scratch/notices" > "$scratch/notices.path"

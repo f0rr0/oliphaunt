@@ -2,6 +2,8 @@
 
 Host WebAssembly PostgreSQL in a Rust application. The synchronous handle must be created, used, and dropped on one OS thread. Use `AsyncOliphaunt` for a cloneable `Send + Sync` owner.
 
+Requires Rust 1.96 or newer.
+
 ## Install
 
 ```sh
@@ -26,6 +28,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Default storage is a memory filesystem and is discarded on close. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
+
+Embedded execution defaults to `fsync=off`; saved PostgreSQL configuration and `.startup_guc("fsync", "on")` can override it. A persistent directory alone does not provide crash safety. Memory storage has no disk to synchronize.
+
+SQL `statement_timeout` is not a reliable execution deadline for CPU-bound WASIX queries. Timing out a caller's future does not stop guest work.
+
+The host-selected username is the real PostgreSQL session principal: LOGIN/CONNECT restrictions, role defaults and login triggers apply. `RESET ROLE` and `DISCARD ALL` do not restore the bootstrap superuser. The host authenticates the caller; initialize new storage as `postgres` before selecting an existing application role.
 
 ## Build your integration
 

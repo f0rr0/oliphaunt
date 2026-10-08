@@ -1,67 +1,36 @@
 [wasmer-js]
+# SDK 0.19.1 is Modified MIT, not plain MIT. See the pinned upstream LICENSE
+# for its commercial-product UI attribution threshold before adoption.
 name = "@wasmer/sdk"
-version = "0.8.0"
-url = "https://github.com/wasmerio/wasmer-js.git"
-commit = "93b8b738ebd3ee57e118da0f0eb795b97d5b999e"
-
-[wasmer-wasix]
-# The source commit referenced by the upstream 0.10.0 npm release identifies
-# itself as @wasmer/sdk 0.8.0 and carries a coherent Wasmer 6.1 / wasmer-wasix
-# 0.601 dependency family. wasmer-wasix 0.702.1 requires Wasmer
-# 7.2.1 plus matching virtual-fs/net, config, package, backend, WebC, and
-# wasm-bindgen APIs; it is not a single-crate update for this upstream JS host.
-name = "wasmer-wasix"
-version = "0.601.0"
-url = "https://static.crates.io/crates/wasmer-wasix/wasmer-wasix-0.601.0.crate"
-sha256 = "a9a804fcfbdbbfe5b2d6fb30e741e22a21e88e964dedfea9e609f13a52823bfe"
+version = "0.19.1"
+url = "https://github.com/wasmerio/wasmer-sdk.git"
+commit = "0ba1eadc55daff2f1005e5c44eb5d246199187bd"
 
 [wasmer]
+# The coherent engine revision used by SDK 0.19.1, including WASIX and virtual IO.
 name = "wasmer"
-version = "6.1.0"
-url = "https://static.crates.io/crates/wasmer/wasmer-6.1.0.crate"
-sha256 = "2d85671948f8886a1cc946141c0b688a5617603c103699a5fceeebeb4e75b0b6"
+version = "7.4.0"
+url = "https://github.com/wasmerio/wasmer.git"
+commit = "5bd2b7d3182e816bd0ea330acc88e4e4733e167f"
+
+[wasmer-wasix]
+name = "wasmer-wasix"
+version = "0.704.0"
 
 [virtual-fs]
 name = "virtual-fs"
-version = "0.601.0"
-url = "https://static.crates.io/crates/virtual-fs/virtual-fs-0.601.0.crate"
-sha256 = "8defc513ce70576bdbb4305ee67c0cba647af18c0995de8f1fa1271b724c9859"
+version = "0.704.0"
 
 [virtual-mio]
 name = "virtual-mio"
-version = "0.601.0"
-url = "https://static.crates.io/crates/virtual-mio/virtual-mio-0.601.0.crate"
-sha256 = "a14806a3f25b70315764760c376d9f68937f5467013891bc7497a33d24105097"
+version = "0.704.0"
 
 [patches]
 series = [
-  "0001-wasmer-js-run-configured-wasix-process.patch",
-  "0002-wasmer-wasix-add-0702-compatibility-imports.patch",
-  "0003-wasmer-js-install-browser-runtime-devices.patch",
-  "0005-wasmer-js-use-object-wasm-init.patch",
-  "0006-wasmer-js-reuse-precompiled-wasix-module.patch",
-  "0007-wasmer-js-run-oliphaunt-direct.patch",
-  "0008-wasmer-instantiate-js-modules-async.patch",
-  "0009-wasmer-wasix-instantiate-main-module-async.patch",
-  "0010-wasmer-js-refresh-npm-lock.patch",
-  "0011-wasmer-wasix-deny-single-backend-guest-spawn.patch",
-  "0012-wasmer-js-remove-retired-wasm32-wasi-target.patch",
-  "0013-wasmer-wasix-fast-single-backend-clock.patch",
-  "0014-wasmer-js-track-directory-mutations.patch",
-  "0015-wasmer-js-add-sync-filesystem-bridge.patch",
-  "0016-wasmer-wasix-direct-single-backend-clock.patch",
-  "0017-wasmer-js-direct-pgwire-memory-bridge.patch",
-  "0018-wasmer-js-bound-direct-stderr.patch",
-  "0019-wasmer-parse-exception-reference-types.patch",
-  "0020-wasmer-wasix-preserve-posix-close-durability.patch",
-  "0021-wasmer-js-stream-direct-pgwire.patch",
-  # Independently preserve provider failures and cursor state in the
-  # synchronous JavaScript filesystem bridge.
-  "0034-wasmer-js-preserve-seek-end-errors.patch",
-  # Backport the fd_seek slice of upstream Wasmer 402cbd7ec4772c0b36226f2e5a21c7797614bf1b
-  # before its dependent first-poll fast path.
-  "0035-wasmer-wasix-preserve-shared-seek-offset.patch",
-  "0033-wasmer-wasix-poll-ready-asyncify-work.patch",
-  "0036-virtual-fs-poll-contended-pipe-reads.patch",
-  "0037-virtual-mio-retain-inline-wakes.patch",
+  "0040-wasmer-js-build-oliphaunt-browser-adapter.patch",
+  "0041-wasmer-instantiate-browser-modules-async.patch",
+  "0042-wasmer-wasix-browser-host-policy.patch",
+  "0043-wasmer-virtual-fs-preserve-io-errors-and-wakes.patch",
+  "0044-wasmer-wasix-preserve-handle-and-seek-lifetimes.patch",
+  "0045-wasmer-wasix-correct-browser-clock-domains.patch",
 ]

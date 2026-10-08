@@ -38,6 +38,8 @@ fileGroups:
 
 tasks:
   cargo-sources:
+    deps:
+      - liboliphaunt-wasix:engine-build
     inputs:
       - project: "liboliphaunt-wasix"
         group: "cargo-carrier-sources"
@@ -48,15 +50,20 @@ tasks:
   test-regression:
     tags: ["regression", "runtime", "requires-rust", "ci-wasix-release-regression"]
     command: "bash src/wasix/runtime/tools/runtime-smoke.sh regression"
-    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "postgres-tools-wasix:build-aot"]
+    deps: [{target: "cargo-sources", cacheStrategy: hash}, "liboliphaunt-wasix:engine-sources", "liboliphaunt-wasix:runtime-aot", "extension-artifacts-wasix:build-target", "extension-artifacts-wasix:build-aot", "postgres-tools-wasix:build-aot"]
     inputs: ["@group(code)", "@group(cargo-workspace)", "/src/wasix/runtime/tools/{runtime-smoke,runtime-preflight,cargo-test-filter}.sh", "/src/wasix/runtime/tools/wasix-extension-features.mts", "/src/extensions/artifacts/packages/tools/**/*"]
-    options: {runFromWorkspaceRoot: true, cache: false}
+    options:
+      cache: false
+      # The full lifecycle also builds the pgwire CLI with catalog features.
+      mutex: "oliphaunt-pgwire-server"
+      runFromWorkspaceRoot: true
   test-integration:
     tags: ["runtime", "integration", "requires-rust", "ci-wasix-release-regression", "platform-linux-x64-gnu"]
     command: "bash src/wasix/sdks/rust/tools/test-resources.sh"
     deps:
       - target: cargo-sources
         cacheStrategy: hash
+      - "liboliphaunt-wasix:engine-sources"
       - "liboliphaunt-wasix:runtime-aot"
       - "database-resources:build-wasix-standard"
       - "database-resources:build-wasix-icu"
@@ -82,6 +89,10 @@ tasks:
     deps:
       - target: cargo-sources
         cacheStrategy: hash
+      - target: "oliphaunt-wasix-rust:package"
+        cacheStrategy: ignored
+      - target: "oliphaunt-query:package"
+        cacheStrategy: ignored
       - "liboliphaunt-wasix:runtime-aot"
       - "extension-artifacts-wasix:build-aot"
       - "postgres-tools-wasix:build-aot"
@@ -90,6 +101,7 @@ tasks:
       - "@group(cargo-workspace)"
       - "@group(rust-test-config)"
       - "@group(legal-files)"
+      - "@group(packaging-source)"
       - project: "liboliphaunt-wasix"
         group: "extension-smoke-inputs"
       - project: "liboliphaunt-wasix"
@@ -98,6 +110,7 @@ tasks:
       - "/src/wasix/runtime/tools/xtask/**/*"
     options:
       cache: false
+      mutex: "oliphaunt-pgwire-server"
       runFromWorkspaceRoot: true
 
   build:
@@ -128,7 +141,7 @@ tasks:
       cargo test -p oliphaunt-wasix --doc --locked
       cargo test -p oliphaunt-wasix --doc --locked --features tools
       cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features extensions,tools,extension-vector --test public_api --no-tests=fail --test-threads=1
-      cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1
+      cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features tools-execution --lib --no-tests=fail --test-threads=1
     env:
       # Cargo releases its build lock before rustdoc consumes the compiled libraries.
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/unit"
@@ -188,6 +201,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   package:
+    deps: ["liboliphaunt-wasix:engine-sources"]
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
     script: |
       set -eu

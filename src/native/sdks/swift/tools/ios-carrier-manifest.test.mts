@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -16,7 +16,10 @@ import {
 import path from 'node:path';
 import test from 'node:test';
 import { archiveDirectory } from '../../../../../tools/packaging/archive-directory.mts';
-import { stageReleaseNotices } from '../../../../../tools/packaging/release-notices.mts';
+import {
+  releaseNoticeRows,
+  stageReleaseNotices,
+} from '../../../../../tools/packaging/release-notices.mts';
 import {
   currentProductVersionSync,
   extensionMetadata,
@@ -28,6 +31,7 @@ import {
   buildIosCarrierManifest,
   buildSwiftExtensionCarrierManifest,
   discoveredExtensionManifests,
+  iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
 } from './ios-carrier-manifest.mts';
 
@@ -67,6 +71,23 @@ async function archive(root, name, member, _format, legal = undefined) {
   if (legal !== undefined) {
     const noticeRoot = legal.insideMember ? leaf : staging;
     stageReleaseNotices(noticeRoot, { profile: legal.profile });
+    if (legal.version !== undefined) {
+      for (const row of releaseNoticeRows({ profile: legal.profile })) {
+        const relative = path.relative(ROOT, row.source).split(path.sep).join('/');
+        writeFileSync(
+          path.join(noticeRoot, row.member),
+          execFileSync(
+            'git',
+            [
+              '--no-pager',
+              'show',
+              `refs/tags/liboliphaunt-native-v${legal.version}^{commit}:${relative}`,
+            ],
+            { cwd: ROOT },
+          ),
+        );
+      }
+    }
     if (legal.sqlName !== undefined) {
       stageExtensionUpstreamLicenses(legal.sqlName, path.join(noticeRoot, 'files'));
     }
@@ -136,10 +157,64 @@ function writeManifest(root, product, body) {
   return file;
 }
 
+test('canonical legal metadata retains tagged bytes and fails closed when history is missing', () => {
+  mkdirSync(path.join(ROOT, 'target'), { recursive: true });
+  const root = mkdtempSync(path.join(ROOT, 'target', 'ios-legal-history-test-'));
+  const version = '0.0.0';
+  const git = (...args) =>
+    execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    git('init', '--quiet');
+    for (const row of releaseNoticeRows({ profile: 'native-runtime' })) {
+      const file = path.join(root, path.relative(ROOT, row.source));
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `tagged ${row.member}\n`);
+    }
+    git('add', '.');
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.com',
+      'commit',
+      '--quiet',
+      '-m',
+      'legal fixture',
+    );
+    git('tag', `liboliphaunt-native-v${version}`);
+    const notice = 'src/native/runtime/THIRD_PARTY_NOTICES.md';
+    writeFileSync(path.join(root, notice), 'current producer notice\n');
+    const metadata = iosBaseLegalMetadata(version, root);
+    const expected = Buffer.from('tagged THIRD_PARTY_NOTICES.liboliphaunt-native.md\n');
+    const row = metadata[0].files.find(({ member }) =>
+      member.endsWith('THIRD_PARTY_NOTICES.liboliphaunt-native.md'),
+    );
+    assert.equal(row.bytes, expected.length);
+    assert.equal(row.sha256, createHash('sha256').update(expected).digest('hex'));
+    assert.throws(() => iosBaseLegalMetadata('0.0.1', root), /cannot read canonical legal file/);
+    git('rm', '--force', notice);
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.com',
+      'commit',
+      '--quiet',
+      '-m',
+      'missing notice',
+    );
+    git('tag', 'liboliphaunt-native-v0.0.2');
+    assert.throws(() => iosBaseLegalMetadata('0.0.2', root), /cannot read canonical legal file/);
+    assert.throws(() => iosBaseLegalMetadata('0.0.0:LICENSE', root), /base runtime version/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('an independently pinned base carrier uses the pinned release and rejects current runtime assets', async () => {
   mkdirSync(path.join(ROOT, 'target'), { recursive: true });
   const root = mkdtempSync(path.join(ROOT, 'target', 'ios-pinned-carrier-test-'));
-  const version = '0.1.0';
+  const version = '0.3.0';
   try {
     await archive(
       root,
@@ -149,6 +224,7 @@ test('an independently pinned base carrier uses the pinned release and rejects c
       {
         insideMember: true,
         profile: 'native-runtime',
+        version,
       },
     );
     await archive(
@@ -159,6 +235,7 @@ test('an independently pinned base carrier uses the pinned release and rejects c
       {
         insideMember: false,
         profile: 'native-runtime-resources',
+        version,
       },
     );
     const carrier = buildIosCarrierManifest({
@@ -206,6 +283,22 @@ test('an independently pinned base carrier uses the pinned release and rejects c
     assert.throws(
       () => buildIosCarrierManifest({ baseCarrierManifest: frozen, extensionManifests: [] }),
       /does not freeze/,
+    );
+    const oldNotice = path.join(
+      root,
+      `stage-liboliphaunt-${version}-apple-spm-xcframework.zip`,
+      'liboliphaunt.xcframework',
+      'THIRD_PARTY_NOTICES.liboliphaunt-native.md',
+    );
+    writeFileSync(oldNotice, 'tampered historical notice\n');
+    await archiveDirectory(
+      path.dirname(oldNotice),
+      path.join(root, `liboliphaunt-${version}-apple-spm-xcframework.zip`),
+      { keepParent: true },
+    );
+    assert.throws(
+      () => buildIosCarrierManifest({ baseAssetDir: root, baseRuntimeVersion: version }),
+      /canonical SHA-256/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

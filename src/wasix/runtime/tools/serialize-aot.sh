@@ -10,10 +10,6 @@ suffix=
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)
     suffix=.exe
-    llvm_prefix="${LLVM_SYS_221_PREFIX:-${LLVM_PATH:-}}"
-    if [[ -n "$llvm_prefix" && -d "$llvm_prefix/lib" ]]; then
-      export LIB="$(cygpath -aw "$llvm_prefix/lib")${LIB:+;$LIB}"
-    fi
     ;;
 esac
 

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
+import { wasixNapiNoticeProfile, workspaceCarrierManifest } from './workspace-runtime-contract.mts';
 
 import { archiveDirectory } from '../../../../tools/packaging/archive-directory.mts';
 import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
@@ -129,7 +129,7 @@ async function main() {
     const packagePrebuilds = path.join(packageWork, 'prebuilds');
     mkdirSync(packagePrebuilds, { recursive: true });
     cpSync(path.join(prebuildDirectory, BINARY), path.join(packagePrebuilds, BINARY));
-    stageReleaseNotices(packageWork, { profile: 'wasix-napi-addon' });
+    stageReleaseNotices(packageWork, { profile: wasixNapiNoticeProfile(target) });
     const windowsRuntimeNames =
       target === 'windows-x64-msvc'
         ? stageWindowsVcRuntime({
@@ -175,7 +175,7 @@ async function main() {
     mkdirSync(releaseStage, { recursive: true });
     mkdirSync(releaseAssets, { recursive: true });
     cpSync(path.join(prebuildDirectory, BINARY), path.join(releaseStage, BINARY));
-    stageReleaseNotices(releaseStage, { profile: 'wasix-napi-addon' });
+    stageReleaseNotices(releaseStage, { profile: wasixNapiNoticeProfile(target) });
     cpSync(
       path.join(packageWork, 'artifact-provenance.json'),
       path.join(releaseStage, 'artifact-provenance.json'),

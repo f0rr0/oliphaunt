@@ -13,6 +13,15 @@ while IFS=$'\t' read -r crate payload variable external; do
   CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --locked --offline --quiet \
     --manifest-path "$crate/Cargo.toml" --example probe
   if [[ "$payload" == artifacts ]]; then
+    cp "$crate/$payload/manifest.json" "$crate/current-profile.json"
+    bun -e 'const p = process.argv[1]; const m = await Bun.file(p).json(); m.engine += "-incompatible"; await Bun.write(p, JSON.stringify(m));' "$crate/$payload/manifest.json"
+    if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --lib > "$scratch/stale-profile.log" 2>&1; then
+      echo "Published carrier accepted stale AOT codegen profile: $crate" >&2
+      exit 1
+    fi
+    rg -q 'stale WASIX AOT profile' "$scratch/stale-profile.log"
+    mv "$crate/current-profile.json" "$crate/$payload/manifest.json"
     mkdir "$crate/removed-aot"
     mv "$crate/$payload/"*.zst "$crate/removed-aot/"
     if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
@@ -41,4 +50,27 @@ while IFS=$'\t' read -r crate payload variable external; do
   CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
     --manifest-path "$crate/Cargo.toml" --lib
 done < "$scratch/cases.tsv"
+while IFS=$'\t' read -r crate part; do
+  (
+    cd "$crate"
+    cargo --config net.offline=false fetch --manifest-path "$crate/Cargo.toml"
+    CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --example probe
+    CARGO_TARGET_DIR="$scratch/cargo-target" cargo run --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --example probe --message-format=json > "$scratch/fresh.json"
+    if rg -q '"fresh":false' "$scratch/fresh.json"; then
+      echo "Published V8 carrier rebuilt without input changes: $crate" >&2
+      exit 1
+    fi
+    cp "$part" "$part.saved"
+    printf 'corrupt' >> "$part"
+    if CARGO_TARGET_DIR="$scratch/cargo-target" cargo check --locked --offline --quiet \
+      --manifest-path "$crate/Cargo.toml" --lib > "$scratch/corrupt-part.log" 2>&1; then
+      echo "Published V8 carrier accepted a corrupt AOT payload part: $crate" >&2
+      exit 1
+    fi
+    rg -q 'bundled AOT payload digest' "$scratch/corrupt-part.log"
+    mv "$part.saved" "$part"
+  )
+done < "$scratch/split-cases.tsv"
 printf 'WASIX extracted Cargo carrier payload isolation passed\n'

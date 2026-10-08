@@ -7,7 +7,8 @@ import test from 'node:test';
 import { iosBaseLegalMetadata } from './ios-carrier-manifest.mts';
 import { extensionReleaseConsumerInputs } from './swift-extension-release-consumer-inputs.mts';
 
-const VERSION = '1.2.3';
+import { currentProductVersionSync } from '../../../../../tools/release/release-artifact-targets.mts';
+const VERSION = currentProductVersionSync('liboliphaunt-native', 'fixture');
 const BASE_TAG = `liboliphaunt-native-v${VERSION}`;
 
 function sourceCarrier() {
@@ -44,7 +45,7 @@ function sourceCarrier() {
     },
     carriers: [],
     extensions: [],
-    legal: { base: iosBaseLegalMetadata(), extensions: [] },
+    legal: { base: iosBaseLegalMetadata(VERSION), extensions: [] },
     schema: 'oliphaunt-react-native-ios-carrier-v1',
   };
 }
@@ -177,7 +178,10 @@ test('rejects base skew and repeated owners', (context) => {
         sourceCarrierFile: source,
         extensionCarrierFiles: [skewed],
       }),
-    /requires liboliphaunt-native-v1\.2\.4.*provides liboliphaunt-native-v1\.2\.3/u,
+    new RegExp(
+      `requires liboliphaunt-native-v1[.]2[.]4.*provides liboliphaunt-native-v${VERSION.replaceAll('.', '[.]')}`,
+      'u',
+    ),
   );
 
   const [neutral, first, second] = fixture(context, [
@@ -247,6 +251,6 @@ test('plans native-owned contrib under its logical extension identity', (context
         sourceCarrierFile: source,
         extensionCarrierFiles: [forgedFile],
       }),
-    /must be owned by liboliphaunt-native-v1[.]2[.]3/u,
+    new RegExp(`must be owned by liboliphaunt-native-v${VERSION.replaceAll('.', '[.]')}`, 'u'),
   );
 });

@@ -69,7 +69,7 @@ impl Write for Socket {
 
 type Reply<T> = mpsc::Sender<io::Result<T>>;
 enum Command {
-    Startup(String, Reply<Vec<u8>>),
+    Startup(Option<String>, Reply<Vec<u8>>),
     Execute(Vec<u8>, Socket, Reply<()>),
     Reset(Reply<()>),
     Backup(Reply<Vec<u8>>),
@@ -222,7 +222,7 @@ fn run_backend(
     for command in receiver {
         match command {
             Command::Startup(application, reply) => {
-                let _ = reply.send(startup_parameters(&mut session, &application));
+                let _ = reply.send(startup_parameters(&mut session, application.as_deref()));
             }
             Command::Execute(request, mut socket, reply) => {
                 if shared.closing.load(Ordering::Acquire) {
@@ -281,18 +281,25 @@ fn run_backend(
     session.close_terminal().map_err(other)
 }
 
-fn startup_parameters(session: &mut NativeSession, application: &str) -> io::Result<Vec<u8>> {
-    let request = oliphaunt_query::extended_statement(
-        "SELECT set_config('application_name', $1, false)",
-        &[oliphaunt_query::Parameter::text(application)],
-        0,
-    )
-    .map_err(other)?;
-    parse_query_response(
-        &session.exec_protocol_raw(&request).map_err(other)?,
-        ExpectedProtocol::Extended,
-    )
-    .map_err(other)?;
+fn startup_parameters(
+    session: &mut NativeSession,
+    application: Option<&str>,
+) -> io::Result<Vec<u8>> {
+    // Omission preserves PostgreSQL's configured default; an explicit empty
+    // string is still a client override, just like any other supplied value.
+    if let Some(application) = application {
+        let request = oliphaunt_query::extended_statement(
+            "SELECT set_config('application_name', $1, false)",
+            &[oliphaunt_query::Parameter::text(application)],
+            0,
+        )
+        .map_err(other)?;
+        parse_query_response(
+            &session.exec_protocol_raw(&request).map_err(other)?,
+            ExpectedProtocol::Extended,
+        )
+        .map_err(other)?;
+    }
     let bytes = session.exec_simple_query("SELECT name, setting FROM pg_settings WHERE name IN ('server_version','server_encoding','client_encoding','application_name','DateStyle','IntervalStyle','TimeZone','integer_datetimes','standard_conforming_strings')").map_err(other)?;
     let result = parse_query_response(&bytes, ExpectedProtocol::Simple).map_err(other)?;
     let mut response = backend_frame(b'R', &0_i32.to_be_bytes());
@@ -459,7 +466,7 @@ fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     let result = connected_sql(
         &mut socket,
         shared,
-        parameters.get("application_name").copied().unwrap_or(""),
+        parameters.get("application_name").copied(),
     );
     shared.active.lock().unwrap().take();
     let (reply, done) = mpsc::channel();
@@ -470,11 +477,15 @@ fn sql_client(mut socket: Socket, shared: &Shared) -> io::Result<()> {
     result
 }
 
-fn connected_sql(socket: &mut Socket, shared: &Shared, application: &str) -> io::Result<()> {
+fn connected_sql(
+    socket: &mut Socket,
+    shared: &Shared,
+    application: Option<&str>,
+) -> io::Result<()> {
     let (reply, done) = mpsc::channel();
     shared
         .commands
-        .send(Command::Startup(application.to_owned(), reply))
+        .send(Command::Startup(application.map(str::to_owned), reply))
         .map_err(other)?;
     let mut response = done.recv().map_err(other)??;
     let mut key = [0; 8];

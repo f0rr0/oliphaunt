@@ -25,7 +25,9 @@ export class Directory {
   /** Create a filesystem served synchronously by a caller-realm backend. */
   static createSync(backend: object, capacity: number): Directory;
   free(): void;
+  [Symbol.dispose](): void;
   __getClassname(): string;
+  __cloneForMount(): Directory;
   createDir(path: string): Promise<void>;
   readDir(path: string): Promise<DirectoryEntry[]>;
   readFile(path: string): Promise<Uint8Array>;
@@ -70,6 +72,7 @@ export class OliphauntDirectInstance {
 export class OliphauntPreparedTool {
   private constructor();
   free(): void;
+  [Symbol.dispose](): void;
 }
 
 export type RunWasixOptions = Readonly<{
@@ -113,7 +116,7 @@ export function runOliphauntToolDirect(
   prepared: OliphauntPreparedTool,
   options: RunWasixOptions,
   protocolRead: (maximumBytes: number) => Uint8Array,
-  /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
+  /** Owned bytes: the receiver may retain or mutate this callback-local copy. */
   protocolWrite: (chunk: Uint8Array) => void,
 ): Promise<OliphauntToolOutput>;
 export function instantiateOliphauntDirect(

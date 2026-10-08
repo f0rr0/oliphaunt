@@ -2,7 +2,7 @@
 name = "xtask"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version.workspace = true
 license.workspace = true
 publish = false
 
@@ -10,8 +10,6 @@ publish = false
 default = []
 aot-serializer = [
   "dep:wasmer",
-  "wasmer/llvm",
-  "wasmer/wasmer-artifact-create",
   "dep:wasmer-types",
 ]
 
@@ -24,9 +22,15 @@ sha2 = "0.10"
 tar = "0.4"
 toml = "0.9"
 walkdir = "2"
-wasmer = { version = "=7.2.1", default-features = false, features = [
-  "sys",
-], optional = true }
-wasmer-types = { version = "=7.2.1", optional = true }
-wasmparser = "0.250.0"
+wasmer = { package = "oliphaunt-wasmer", version = "*", path = "../../engine/crates/wasmer", default-features = false, optional = true }
+wasmer-types = { version = "=7.5.0", optional = true }
+wasmparser = "0.261.0"
 zstd = "0.13"
+
+[target.'cfg(not(windows))'.dependencies]
+wasmer = { package = "oliphaunt-wasmer", version = "*", path = "../../engine/crates/wasmer", default-features = false, optional = true, features = [
+  "sys", "llvm", "wasmer-artifact-create",
+] }
+
+[target.'cfg(windows)'.dependencies]
+wasmer = { package = "oliphaunt-wasmer", version = "*", path = "../../engine/crates/wasmer", default-features = false, optional = true, features = ["v8"] }

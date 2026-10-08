@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,10 +8,16 @@ const repositoryRoot = resolve(hostDirectory, '../../..');
 const sourceManifestPath = 'src/wasix/browser-host/source.toml';
 const buildScriptPath = 'src/wasix/browser-host/build-sdk.sh';
 const provenanceScriptPath = 'src/wasix/browser-host/build-provenance.mts';
+const protocolTransportContractPath = 'src/wasix/runtime/protocol-contract/contract.json';
 const safePatchName = /^\d{4}-(?:wasmer-(?:(?:js|wasix)-)?|virtual-(?:fs|mio)-)[a-z0-9-]+\.patch$/u;
 
 export async function loadHostBuildContract() {
   const source = await readFile(resolve(repositoryRoot, sourceManifestPath), 'utf8');
+  const protocolTransportContractBytes = await readFile(
+    resolve(repositoryRoot, protocolTransportContractPath),
+  );
+  const protocolTransportContract = JSON.parse(protocolTransportContractBytes.toString('utf8'));
+  validateProtocolTransportContract(protocolTransportContract);
   const patchSeries = tomlStringArray(source, 'patches', 'series');
   if (patchSeries.length === 0 || new Set(patchSeries).size !== patchSeries.length) {
     throw new Error('WASIX host patch series must be non-empty and unique');
@@ -27,11 +33,19 @@ export async function loadHostBuildContract() {
     ...patchSeries.map((patch) => `src/wasix/browser-host/patches/${patch}`),
     buildScriptPath,
     provenanceScriptPath,
+    'src/wasix/browser-host/prepare-sdk.mts',
+    'src/wasix/browser-host/bundle-sdk.mts',
+    'src/wasix/browser-host/index.mts',
+    'src/wasix/browser-host/rust-toolchain.toml',
+    'src/wasix/browser-host/Cargo.lock',
+    ...(await adapterSources('src/wasix/browser-host/adapter')),
     'tools/dev/curl-platform-flags.sh',
     'tools/dev/acquisition.sh',
     'src/third-party/tools/fetch-sources.sh',
     'src/third-party/tools/source-fetch-core.mts',
     'src/third-party/tools/source-archive.mts',
+    protocolTransportContractPath,
+    'src/wasix/browser-host/protocol-contract.generated.rs',
   ]);
   const digests = [];
   for (const input of inputs) {
@@ -42,8 +56,27 @@ export async function loadHostBuildContract() {
   const provenance = deepFreeze({
     wasmerJsCommit: tomlString(source, 'wasmer-js', 'commit'),
     wasmerWasixVersion: tomlString(source, 'wasmer-wasix', 'version'),
+    virtualFsVersion: tomlString(source, 'virtual-fs', 'version'),
+    rustToolchain: (await readFile(resolve(hostDirectory, 'rust-toolchain.toml'), 'utf8')).match(
+      /^channel\s*=\s*"([^"]+)"/mu,
+    )?.[1],
     inputsSha256: sha256(digests.join('')),
-    guestConcurrency: 'denied-for-oliphaunt-single-backend',
+    guestConcurrency: 'typed-single-program-host-policy',
+    clockDispatch: 'adapter-direct-js-16ms-or-1024-reads-shared-setter-fallback-tools-canonical',
+    fdClose: 'typed-filesystem-durability-policy',
+    syncFilesystemBridge: 'realm-local-fresh-owned-js-transfer',
+    toolProtocolWrite: 'owned-js-copy-before-callback',
+    protocolTransport: {
+      schema: protocolTransportContract.schema,
+      contractSha256: sha256(protocolTransportContractBytes),
+      modes: Object.fromEntries(
+        protocolTransportContract.modes.map(({ name, value }) => [name, value]),
+      ),
+      bufferedOutputLimitBytes: protocolTransportContract.bufferedOutput.limitBytes,
+      callbackChunkMaxBytes: protocolTransportContract.streamedOutput.callbackChunkMaxBytes,
+      flushWasmResult: protocolTransportContract.flush.wasmResult,
+    },
+    randomDevice: 'virtual-fs-checked-getrandom',
     optimization: {
       cargoProfile: 'release',
       rustOptLevel: 3,
@@ -52,6 +85,40 @@ export async function loadHostBuildContract() {
     },
   });
   return Object.freeze({ inputs, patchSeries: Object.freeze(patchSeries), provenance });
+}
+
+async function adapterSources(directory: string): Promise<string[]> {
+  const sources = [];
+  for (const entry of await readdir(resolve(repositoryRoot, directory), { withFileTypes: true })) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) sources.push(...(await adapterSources(path)));
+    else if (entry.name.endsWith('.rs')) sources.push(path);
+  }
+  return sources.sort();
+}
+
+function validateProtocolTransportContract(contract) {
+  const modes = contract?.modes;
+  if (
+    contract?.schema !== 'oliphaunt-wasix-postgres-protocol-transport-contract-v1' ||
+    !Array.isArray(modes) ||
+    modes.length !== 4 ||
+    modes.some(
+      (mode) =>
+        typeof mode?.name !== 'string' || !Number.isSafeInteger(mode.value) || mode.value < 0,
+    ) ||
+    new Set(modes.map(({ name }) => name)).size !== modes.length ||
+    new Set(modes.map(({ value }) => value)).size !== modes.length ||
+    !Number.isSafeInteger(contract.bufferedOutput?.limitBytes) ||
+    contract.bufferedOutput.limitBytes <= 0 ||
+    !Number.isSafeInteger(contract.streamedOutput?.callbackChunkMaxBytes) ||
+    contract.streamedOutput.callbackChunkMaxBytes <= 0 ||
+    contract.flush?.wasmResult !== 'i32'
+  ) {
+    throw new Error(
+      `invalid PostgreSQL protocol transport contract: ${protocolTransportContractPath}`,
+    );
+  }
 }
 
 function tomlString(source, section, key) {

@@ -8,7 +8,12 @@ import assert from 'node:assert/strict';
 import { validateReactNativePackagedCarrier } from './check-package.mts';
 import { productDependencyCompatibilityVersion } from '../../../../../tools/release/release-graph.mts';
 
-function selectionNeutralCarrier(version = '1.2.3') {
+const NATIVE_VERSION = productDependencyCompatibilityVersion(
+  'oliphaunt-react-native',
+  'oliphaunt-swift',
+  'liboliphaunt-native',
+);
+function selectionNeutralCarrier(version = NATIVE_VERSION) {
   const product = 'liboliphaunt-native';
   const tag = `${product}-v${version}`;
   const assets = [
@@ -39,7 +44,7 @@ function selectionNeutralCarrier(version = '1.2.3') {
     base: { assets, product, tag, version },
     carriers: [],
     extensions: [],
-    legal: { base: iosBaseLegalMetadata(), extensions: [] },
+    legal: { base: iosBaseLegalMetadata(version), extensions: [] },
     schema: 'oliphaunt-react-native-ios-carrier-v1',
   };
 }
@@ -51,7 +56,7 @@ test('binds the React Native npm carrier bytes to selection-neutral staged evide
     validateReactNativePackagedCarrier({
       artifact: 'oliphaunt-react-native.tgz',
       evidence: bytes,
-      expectedNativeVersion: '1.2.3',
+      expectedNativeVersion: NATIVE_VERSION,
       memberBytes: bytes,
       names: [member],
     }),
@@ -63,7 +68,7 @@ test('binds the React Native npm carrier bytes to selection-neutral staged evide
       validateReactNativePackagedCarrier({
         artifact: 'missing.tgz',
         evidence: bytes,
-        expectedNativeVersion: '1.2.3',
+        expectedNativeVersion: NATIVE_VERSION,
         memberBytes: Buffer.alloc(0),
         names: [],
       }),
@@ -74,8 +79,8 @@ test('binds the React Native npm carrier bytes to selection-neutral staged evide
       validateReactNativePackagedCarrier({
         artifact: 'skewed.tgz',
         evidence: bytes,
-        expectedNativeVersion: '1.2.3',
-        memberBytes: Buffer.from(`${JSON.stringify(selectionNeutralCarrier('1.2.4'))}\n`),
+        expectedNativeVersion: NATIVE_VERSION,
+        memberBytes: Buffer.from(`${JSON.stringify(selectionNeutralCarrier(), null, 2)}\n\n`),
         names: [member],
       }),
     /byte-for-byte match/u,
@@ -84,12 +89,12 @@ test('binds the React Native npm carrier bytes to selection-neutral staged evide
     () =>
       validateReactNativePackagedCarrier({
         artifact: 'wrong-version.tgz',
-        evidence: Buffer.from(`${JSON.stringify(selectionNeutralCarrier('1.2.4'))}\n`),
-        expectedNativeVersion: '1.2.3',
-        memberBytes: Buffer.from(`${JSON.stringify(selectionNeutralCarrier('1.2.4'))}\n`),
+        evidence: bytes,
+        expectedNativeVersion: '999.0.0',
+        memberBytes: bytes,
         names: [member],
       }),
-    /must match liboliphaunt-native 1\.2\.3/u,
+    /must match liboliphaunt-native 999\.0\.0/u,
   );
 });
 
