@@ -94,7 +94,14 @@ series_hash="$(
 new_fingerprint="$PG_VERSION:$PG_SHA256:$series_hash"
 
 if [[ -d "$PATCHED_PGSRC" && -f "$FINGERPRINT" && "$(cat "$FINGERPRINT")" == "$new_fingerprint" ]] && ! source_has_patch_artifacts "$PATCHED_PGSRC"; then
-  install -m 0644 "$CONTRACT_HEADER" "$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
+  # Concurrent tools/extension producers share this immutable prepared tree.
+  header="$PATCHED_PGSRC/src/include/port/wasix-dl/oliphaunt_wasix_protocol_contract.generated.h"
+  if ! cmp -s "$CONTRACT_HEADER" "$header"; then
+    temporary_header="$(mktemp "$header.XXXXXX")"
+    trap 'rm -f "$temporary_header"' EXIT
+    install -m 0644 "$CONTRACT_HEADER" "$temporary_header"
+    mv -f "$temporary_header" "$header"
+  fi
   if [[ ! -f "$SOURCE_FINGERPRINT_FILE" || "$(cat "$SOURCE_FINGERPRINT_FILE")" != "$new_fingerprint" ]]; then
     printf '%s\n' "$new_fingerprint" > "$SOURCE_FINGERPRINT_FILE"
   fi
