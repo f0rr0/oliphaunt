@@ -1,28 +1,41 @@
-import { loadProducts, productCompatibilityVersion } from './release-graph.mts';
-import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import { cargoPublishedDependencies } from './check_registry_publication.mts';
+import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
+import { compareText, loadProducts, productCompatibilityVersion } from './release-graph.mts';
 
-// These consumers enforce exact runtime identity when loading extension carriers.
-// Independent packaging versions do not establish cross-runtime compatibility.
-const EXTENSION_CONSUMERS = [
-  ['oliphaunt-js', 'liboliphaunt-native'],
-  ['oliphaunt-kotlin', 'liboliphaunt-native'],
-  ['oliphaunt-swift', 'liboliphaunt-native'],
-  ['oliphaunt-wasix-rust', 'liboliphaunt-wasix'],
-  ['oliphaunt-wasix-ts', 'liboliphaunt-wasix'],
-];
+const EXTENSION_RUNTIMES = new Set(['liboliphaunt-native', 'liboliphaunt-wasix']);
+
+function extensionConsumerContracts(products) {
+  const consumers = [];
+  for (const [product, metadata] of Object.entries(products)) {
+    if (metadata.kind !== 'sdk') continue;
+    const runtimeDependencies = new Set(
+      Object.values(metadata.compatibility_versions ?? {})
+        .map(({ source_product }) => source_product)
+        .filter((source) => EXTENSION_RUNTIMES.has(source)),
+    );
+    if (runtimeDependencies.size === 0) continue;
+    const runtime = metadata.exact_extension_runtime;
+    if (runtime === false) continue;
+    if (typeof runtime !== 'string' || !runtimeDependencies.has(runtime)) {
+      throw new Error(
+        `release-consumer-compatibility: ${product} must declare exact_extension_runtime as one of its runtime dependencies or false`,
+      );
+    }
+    consumers.push({ product, runtime });
+  }
+  return consumers.sort((left, right) => compareText(left.product, right.product));
+}
 
 export function extensionConsumerRequirements(selected, products, pin) {
-  const consumers = EXTENSION_CONSUMERS.filter(([id]) => selected.has(id)).map(
-    ([product, runtime]) => ({ product, runtime }),
-  );
+  const contracts = extensionConsumerContracts(products);
+  const consumers = contracts.filter(({ product }) => selected.has(product));
   for (const owner of selected) {
     const dependencies = new Set(
       Object.values(products[owner].compatibility_versions ?? {}).map(
         ({ source_product }) => source_product,
       ),
     );
-    for (const [product, runtime] of EXTENSION_CONSUMERS) {
+    for (const { product, runtime } of contracts) {
       if (dependencies.has(product)) consumers.push({ product, runtime, owner });
     }
   }
@@ -39,20 +52,7 @@ export function extensionConsumerRequirements(selected, products, pin) {
 }
 
 export function validateConsumerContractCoverage(products) {
-  const known = new Set([...EXTENSION_CONSUMERS.map(([id]) => id), 'oliphaunt-rust']);
-  for (const [id, product] of Object.entries(products)) {
-    if (
-      product.kind === 'sdk' &&
-      Object.values(product.compatibility_versions ?? {}).some(({ source_product }) =>
-        ['liboliphaunt-native', 'liboliphaunt-wasix'].includes(source_product),
-      ) &&
-      !known.has(id)
-    ) {
-      throw new Error(
-        `release-consumer-compatibility: ${id} must declare its extension consumer compatibility policy`,
-      );
-    }
-  }
+  extensionConsumerContracts(products);
 }
 
 export function validateReleaseConsumerCompatibility(

@@ -8,6 +8,7 @@ release_artifacts = [
   "node-bun-deno-direct",
   "rust-broker-helper-compatibility",
 ]
+exact_extension_runtime = "liboliphaunt-native"
 
 [compatibility_versions.oliphaunt-js-liboliphaunt]
 source_product = "liboliphaunt-native"

@@ -12,6 +12,7 @@ release_artifacts = [
   "node-bun-deno-electron-native-actor",
   "node-bun-deno-electron-worker",
 ]
+exact_extension_runtime = "liboliphaunt-wasix"
 
 [compatibility_versions.oliphaunt-wasix-ts-runtime]
 source_product = "liboliphaunt-wasix"

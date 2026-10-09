@@ -6,7 +6,7 @@ import {
   contribCarrierDescriptor,
   extensionProductForSqlName,
 } from '../release/release-artifact-targets.mts';
-import { buildPlan, loadGraph, normalizeFiles } from '../release/release-graph.mts';
+import { buildPlan, compareText, loadGraph, normalizeFiles } from '../release/release-graph.mts';
 import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
 import {
   dependencyPlatformTargets,
@@ -45,6 +45,29 @@ test('every released product and resource combination keeps its exact scope and 
     assert.equal(plan.qualification_head_sha, 'a'.repeat(40));
     assert.equal(plan.qualification_mode, 'selected-products');
     assert(plan.tasks.includes('release-tools:version-pins-unit'));
+    assert.deepEqual(
+      plan.package_bindings,
+      [...plan.package_bindings].sort(
+        (left, right) =>
+          compareText(left.consumer, right.consumer) || compareText(left.producer, right.producer),
+      ),
+    );
+    assert.equal(
+      new Set(plan.package_bindings.map(({ consumer, producer }) => `${consumer}\0${producer}`))
+        .size,
+      plan.package_bindings.length,
+    );
+    for (const binding of plan.package_bindings) {
+      assert.equal(
+        binding.origin,
+        selection.includes(binding.producer) &&
+          binding.producerVersion === GRAPH.products[binding.producer].version
+          ? 'candidate'
+          : 'published',
+        `${selection}: ${binding.consumer} -> ${binding.producer}`,
+      );
+    }
+    for (const { task } of plan.qualification_task_modes) assert(plan.tasks.includes(task));
     for (const [job, matrix] of [
       ['liboliphaunt-native-desktop', plan.liboliphaunt_native_desktop_runtime_matrix],
       ['liboliphaunt-native-android', plan.liboliphaunt_native_android_runtime_matrix],
@@ -258,6 +281,20 @@ test('Rust release qualification executes the compiled consumer against shipped 
   const plan = planForReleaseProducts(['oliphaunt-rust'], 'd'.repeat(40));
   assert(plan.job_targets['native-consumers'].includes(consumer));
   assert(plan.job_targets['rust-sdk-package'].includes('oliphaunt-rust:test-consumer'));
+  assert.deepEqual(
+    plan.qualification_task_modes.filter(({ task }) => task.startsWith('oliphaunt-rust:')),
+    [
+      { task: 'oliphaunt-rust:test-consumer', mode: 'installed-pinned' },
+      { task: 'oliphaunt-rust:test-consumer-runtime', mode: 'candidate-override' },
+      { task: 'oliphaunt-rust:test-integration', mode: 'workspace-integration' },
+    ],
+  );
+  const runtimeBinding = plan.package_bindings.find(
+    ({ consumer, producer }) => consumer === 'oliphaunt-rust' && producer === 'liboliphaunt-native',
+  );
+  assert(runtimeBinding, 'missing Rust SDK runtime binding');
+  assert.equal(runtimeBinding.consumerVersion, GRAPH.products['oliphaunt-rust'].version);
+  assert.equal(runtimeBinding.origin, 'published');
   for (const target of [
     'liboliphaunt-native:package-runtime-desktop-target',
     'postgres-tools-native:package-assets',
@@ -271,6 +308,26 @@ test('Rust release qualification executes the compiled consumer against shipped 
   );
   assert.deepEqual([...dependencyPlatformTargets('broker-runtime', roots)], ['linux-x64-gnu']);
   assert(!requiredTasksForAffected(roots).has('native-extension-lifecycle:lifecycle'));
+});
+
+test('native runtime qualification preserves the installed Rust SDK dependency origin', () => {
+  const plan = planForReleaseProducts(['liboliphaunt-native'], 'e'.repeat(40));
+  const binding = plan.package_bindings.find(
+    ({ consumer, producer }) => consumer === 'oliphaunt-rust' && producer === 'liboliphaunt-native',
+  );
+  assert(binding, 'missing installed Rust SDK runtime binding');
+  assert.equal(
+    binding.origin,
+    binding.producerVersion === GRAPH.products['liboliphaunt-native'].version
+      ? 'candidate'
+      : 'published',
+  );
+  assert.deepEqual(
+    plan.qualification_task_modes.find(
+      ({ task }) => task === 'oliphaunt-rust:test-consumer-runtime',
+    ),
+    { task: 'oliphaunt-rust:test-consumer-runtime', mode: 'candidate-override' },
+  );
 });
 
 test('an empty Moon selection requires no product tasks or releases', () => {

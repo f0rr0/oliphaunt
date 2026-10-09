@@ -26,7 +26,7 @@ if (import.meta.main) {
   for (const input of affectedInputs) {
     const id = key(input);
     writeFileSync(path.join(directory, `affected-${id}.input`), input.join('\n') + '\n');
-    requests.push(`affected\t${id}`);
+    requests.push(`affected\t${id}\t-`);
   }
   for (const target of Object.values(taskRoots)) requests.push(`task\t${key(target)}\t${target}`);
   writeFileSync(path.join(directory, 'requests.tsv'), requests.join('\n') + '\n');
