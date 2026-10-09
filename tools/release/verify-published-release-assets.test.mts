@@ -21,9 +21,9 @@ if (process.argv[2] === '--verify-fixture') {
     if (parsed.pathname.endsWith(`/releases/tags/${fixture.product}-v${VERSION}`)) {
       return Response.json({
         id: 1,
-        tag_name: `${fixture.product}-v${VERSION}`,
+        tag_name: fixture.tagName ?? `${fixture.product}-v${VERSION}`,
         draft: fixture.draft ?? false,
-        prerelease: false,
+        prerelease: fixture.prerelease ?? false,
         // Embedded assets are incomplete; the dedicated endpoint is authoritative.
         assets: [],
       });
@@ -57,7 +57,8 @@ if (process.argv[2] === '--verify-fixture') {
       dataFiles: [],
       extensionSqlFileNames: [`${sqlName}--1.0.sql`],
       extensionSqlFilePrefixes: [],
-      nativeModuleStem: null,
+      // WASIX-only carriers have native modules but no iOS registration payload.
+      nativeModuleStem: family === 'wasix' ? sqlName : null,
       iosNativeDependencies: [],
       iosRegistration: null,
       wasixInstall: null,
@@ -241,6 +242,16 @@ if (process.argv[2] === '--verify-fixture') {
     const bytes = Buffer.from(JSON.stringify(manifest));
     row.bytes[name] = bytes.toString('base64');
     row.assets.find((asset) => asset.name === name).size = bytes.length;
+    // Keep checksums valid so semantic failures cannot be masked by a digest mismatch.
+    const checksumName = `${row.stem}-release-assets.sha256`;
+    const checksums = Buffer.from(row.bytes[checksumName], 'base64')
+      .toString()
+      .split('\n')
+      .map((line) => (line.endsWith(`  ./${name}`) ? `${hash(bytes)}  ./${name}` : line))
+      .join('\n');
+    const checksumBytes = Buffer.from(checksums);
+    row.bytes[checksumName] = checksumBytes.toString('base64');
+    row.assets.find((asset) => asset.name === checksumName).size = checksumBytes.length;
   }
 
   for (const [scenario, mutate, error] of [
@@ -250,6 +261,27 @@ if (process.argv[2] === '--verify-fixture') {
         row.draft = true;
       },
       'must be published and stable',
+    ],
+    [
+      'prerelease dependency',
+      (row) => {
+        row.prerelease = true;
+      },
+      'must be published and stable',
+    ],
+    [
+      'wrong release tag',
+      (row) => {
+        row.tagName = 'liboliphaunt-wasix-v9.9.9';
+      },
+      'invalid release identity',
+    ],
+    [
+      'duplicate asset inventory',
+      (row) => {
+        row.assets.push({ ...row.assets[0] });
+      },
+      'declares duplicate asset',
     ],
     [
       'missing payload',
@@ -282,6 +314,39 @@ if (process.argv[2] === '--verify-fixture') {
         row.bytes[row.payloadName] = bytes.toString('base64');
       },
       'checksum mismatch',
+    ],
+    [
+      'payloads from the wrong runtime family',
+      (row) =>
+        changeManifest(row, (manifest) => {
+          manifest.assets[0].family = 'native';
+          for (const member of manifest.extensions) member.assets[0].family = 'native';
+        }),
+      'asset family differs from requested release family',
+    ],
+    [
+      'invalid historical member semantics',
+      (row) =>
+        changeManifest(row, (manifest) => {
+          manifest.extensions[0].dependencies = 'not-an-array';
+        }),
+      'dependencies must be a unique non-empty string list',
+    ],
+    [
+      'invalid historical source digest',
+      (row) =>
+        changeManifest(row, (manifest) => {
+          manifest.sourceIdentity.sha256 = 'not-a-digest';
+        }),
+      'has invalid sha256',
+    ],
+    [
+      'unsorted historical member semantics',
+      (row) =>
+        changeManifest(row, (manifest) => {
+          manifest.extensions[0].dataFiles = ['b.sql', 'a.sql'];
+        }),
+      'dataFiles must be sorted',
     ],
     [
       'wrong version',

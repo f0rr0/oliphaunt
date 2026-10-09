@@ -604,7 +604,16 @@ function validateSha256(value, context) {
   }
 }
 
-function validateExtensionAssets(assets, context, seen) {
+function assertExtensionAssetFamily(asset, family, context) {
+  if (
+    !['native', 'wasix'].includes(asset.family) ||
+    (family !== 'combined' && asset.family !== family)
+  ) {
+    fail(`${context} asset family differs from requested release family ${family}`);
+  }
+}
+
+function validateExtensionAssets(assets, context, seen, family) {
   if (!Array.isArray(assets) || assets.length === 0) {
     fail(`${context} must declare a non-empty assets array`);
   }
@@ -614,6 +623,7 @@ function validateExtensionAssets(assets, context, seen) {
       fail(`${assetContext} must be an object`);
     }
     validateKeySet(asset, PUBLIC_EXTENSION_RELEASE_ASSET_KEYS, assetContext);
+    assertExtensionAssetFamily(asset, family, assetContext);
     for (const key of ['name', 'family', 'target', 'kind', 'sha256']) {
       if (typeof asset[key] !== 'string' || asset[key].length === 0) {
         fail(`${assetContext}.${key} must be a non-empty string`);
@@ -641,7 +651,7 @@ function validateExtensionAssets(assets, context, seen) {
   }
 }
 
-function validateBundleCarrierAssets(assets, context, expectedMemberCount) {
+function validateBundleCarrierAssets(assets, context, expectedMemberCount, family) {
   if (!Array.isArray(assets) || assets.length === 0) {
     fail(`${context} must declare a non-empty aggregate assets array`);
   }
@@ -652,6 +662,7 @@ function validateBundleCarrierAssets(assets, context, expectedMemberCount) {
     if (asset === null || Array.isArray(asset) || typeof asset !== 'object')
       fail(`${assetContext} must be an object`);
     validateKeySet(asset, PUBLIC_EXTENSION_BUNDLE_ASSET_KEYS, assetContext);
+    assertExtensionAssetFamily(asset, family, assetContext);
     for (const key of ['name', 'family', 'target', 'kind', 'sha256']) {
       if (typeof asset[key] !== 'string' || asset[key].length === 0)
         fail(`${assetContext}.${key} must be a non-empty string`);
@@ -774,7 +785,7 @@ function canonicalSortedUniqueStrings(value, context) {
   return [...value].sort(compareText);
 }
 
-function canonicalMemberSemantics(product, sqlName) {
+function canonicalMemberSemantics(product, sqlName, family) {
   if (!extensionSqlNames(product, PREFIX).includes(sqlName)) {
     throw new Error(`${product} does not own extension SQL name ${JSON.stringify(sqlName)}`);
   }
@@ -807,7 +818,9 @@ function canonicalMemberSemantics(product, sqlName) {
     ),
     nativeModuleStem,
     iosNativeDependencies:
-      nativeModuleStem === null ? [] : (canonicalIosDependencies().get(sqlName) ?? []),
+      nativeModuleStem === null || family === 'wasix'
+        ? []
+        : (canonicalIosDependencies().get(sqlName) ?? []),
     sharedPreloadLibraries: canonicalSortedUniqueStrings(
       row['shared-preload-libraries'],
       `${product}/${sqlName}.shared-preload-libraries`,
@@ -815,10 +828,10 @@ function canonicalMemberSemantics(product, sqlName) {
   };
 }
 
-function assertCanonicalIosRegistration(member, expected, context) {
-  if (expected.nativeModuleStem === null) {
+function assertCanonicalIosRegistration(member, expected, context, family) {
+  if (expected.nativeModuleStem === null || family === 'wasix') {
     if (member.iosRegistration !== null)
-      throw new Error(`${context} SQL-only extension fabricates iOS registration metadata`);
+      throw new Error(`${context} fabricates iOS registration metadata without an iOS module`);
     return;
   }
   const registration = member.iosRegistration;
@@ -877,18 +890,49 @@ function assertCanonicalIosRegistration(member, expected, context) {
   }
 }
 
-function assertCanonicalMemberSemantics(product, member, context) {
-  const expected = canonicalMemberSemantics(product, member?.sqlName);
+function assertCanonicalMemberSemantics(product, member, context, family) {
+  const expected = canonicalMemberSemantics(product, member?.sqlName, family);
   for (const key of Object.keys(expected)) {
     if (stableStringify(member?.[key]) !== stableStringify(expected[key])) {
       throw new Error(`${context}.${key} differs from canonical generated extension metadata`);
     }
   }
-  assertCanonicalIosRegistration(member, expected, context);
+  assertCanonicalIosRegistration(member, expected, context, family);
 }
 
 function assertCanonicalWasixInstall(member, context) {
   assertWasixExtensionMemberInstall(member, { label: context });
+}
+
+function validateExtensionMemberShape(member, context, family) {
+  try {
+    if (typeof member.sqlName !== 'string' || !member.sqlName)
+      throw new Error(`${context}.sqlName must be a non-empty string`);
+    if (typeof member.createsExtension !== 'boolean')
+      throw new Error(`${context}.createsExtension must be a boolean`);
+    if (
+      member.nativeModuleStem !== null &&
+      (typeof member.nativeModuleStem !== 'string' || !member.nativeModuleStem)
+    )
+      throw new Error(`${context}.nativeModuleStem must be null or a non-empty string`);
+    for (const key of [
+      'dependencies',
+      'dataFiles',
+      'extensionSqlFileNames',
+      'extensionSqlFilePrefixes',
+      'iosNativeDependencies',
+      'sharedPreloadLibraries',
+    ]) {
+      const sorted = canonicalSortedUniqueStrings(member[key], `${context}.${key}`);
+      if (stableStringify(member[key]) !== stableStringify(sorted))
+        throw new Error(`${context}.${key} must be sorted`);
+    }
+    if (member.iosRegistration !== null || family === 'wasix')
+      assertCanonicalIosRegistration(member, member, context, family);
+    assertCanonicalWasixInstall(member, context);
+  } catch (error) {
+    fail(error.message);
+  }
 }
 
 export function assertCanonicalExtensionReleaseIdentity(
@@ -949,7 +993,7 @@ export function assertCanonicalExtensionReleaseIdentity(
     if (expectedSqlNames.length !== 1 || manifest.sqlName !== expectedSqlNames[0]) {
       throw new Error(`${context}.sqlName differs from its canonical release owner`);
     }
-    assertCanonicalMemberSemantics(product, manifest, context);
+    assertCanonicalMemberSemantics(product, manifest, context, family);
     return manifest;
   }
   if (manifest.schema === 'oliphaunt-extension-release-manifest-v2') {
@@ -960,7 +1004,7 @@ export function assertCanonicalExtensionReleaseIdentity(
       throw new Error(`${context}.extensions differs from its canonical sorted member set`);
     }
     manifest.extensions.forEach((member, index) => {
-      assertCanonicalMemberSemantics(product, member, `${context}.extensions[${index}]`);
+      assertCanonicalMemberSemantics(product, member, `${context}.extensions[${index}]`, family);
     });
     return manifest;
   }
@@ -1049,12 +1093,8 @@ async function validateExtensionManifest(
         : PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS,
       context,
     );
-    validateExtensionAssets(manifest.assets, context, seen);
-    try {
-      assertCanonicalWasixInstall(manifest, context);
-    } catch (error) {
-      fail(error.message);
-    }
+    validateExtensionAssets(manifest.assets, context, seen, family);
+    validateExtensionMemberShape(manifest, context, family);
     return manifest.assets;
   }
   if (manifest.schema !== 'oliphaunt-extension-release-manifest-v2') {
@@ -1082,7 +1122,12 @@ async function validateExtensionManifest(
   if (stableStringify(actualSqlNames) !== stableStringify(expectedSqlNames)) {
     fail(`${context}.extensions must exactly match the sorted release bundle member set`);
   }
-  const carriers = validateBundleCarrierAssets(manifest.assets, context, expectedSqlNames.length);
+  const carriers = validateBundleCarrierAssets(
+    manifest.assets,
+    context,
+    expectedSqlNames.length,
+    family,
+  );
   const seenLocators = new Set();
   for (const [index, member] of manifest.extensions.entries()) {
     const memberContext = `${context}.extensions[${index}]`;
@@ -1091,11 +1136,7 @@ async function validateExtensionManifest(
     }
     validateKeySet(member, PUBLIC_EXTENSION_BUNDLE_MEMBER_KEYS, memberContext);
     validateBundleMemberAssets(member.assets, memberContext, carriers, seenLocators);
-    try {
-      assertCanonicalWasixInstall(member, memberContext);
-    } catch (error) {
-      fail(error.message);
-    }
+    validateExtensionMemberShape(member, memberContext, family);
     for (const asset of member.assets) {
       const expectedMemberPath = `extensions/${member.sqlName}/${asset.name}`;
       if (asset.memberPath !== expectedMemberPath) {
