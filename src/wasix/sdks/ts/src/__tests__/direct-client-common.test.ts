@@ -37,49 +37,6 @@ const pgDumpDescriptor = {
 };
 
 describe('direct WASIX session lifecycle', () => {
-  it('runs initdb for new browser Worker storage without a seed', async () => {
-    const storage: SerializedOpenOptions['storage'][] = [
-      { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' },
-      { schema: 'oliphaunt-wasix-storage-v1', kind: 'indexed-db', name: 'worker-initdb' },
-      { schema: 'oliphaunt-wasix-storage-v1', kind: 'opfs', name: 'worker-initdb' },
-    ];
-    for (const selected of storage) {
-      const options = openOptions();
-      options.storage = selected;
-      const prepared = preparedRuntime();
-      delete prepared.loadClusterSeed;
-      prepared.layout.mounts['/bin'] = { files: { initdb: EMPTY_WASM }, directories: [] };
-      const failure = new Error('initdb execution failed');
-      const runWasix = vi.fn(async () => {
-        throw failure;
-      });
-      const dependencies: DirectWasixDependencies = {
-        ...fakeDependencies(
-          fakeLease(async () => undefined, 'new'),
-          prepared,
-        ),
-        async acquireStorage(_storage, initialize) {
-          await initialize();
-          throw new Error('unreachable');
-        },
-      };
-
-      await expect(
-        DirectWasixSession.open(
-          options,
-          { ...fakeHost({}), runWasix },
-          dependencies,
-          'browser-worker',
-        ),
-      ).rejects.toBe(failure);
-      expect(runWasix).toHaveBeenCalledTimes(1);
-      expect(runWasix).toHaveBeenCalledWith(
-        EMPTY_WASM,
-        expect.objectContaining({ program: '/bin/initdb' }),
-      );
-    }
-  });
-
   it('initializes without a seed and releases all initdb mounts on failure', async () => {
     for (const icuEnabled of [false, true]) {
       const directories: FakeDirectory[] = [];
@@ -1133,9 +1090,6 @@ function fakeHost(options: FakeHostOptions): DirectWasixHost {
   } as OliphauntDirectInstance;
   return {
     Directory: (options.Directory ?? FakeDirectory) as unknown as DirectWasixHost['Directory'],
-    async runWasix() {
-      throw new Error('unexpected initdb execution');
-    },
     async init() {
       await options.init?.();
     },

@@ -102,12 +102,11 @@ smaller qualified side modules remain supported in a direct Window.
    and a temporary Worker for restore.
 2. The binding resolves the default `@oliphaunt/liboliphaunt-wasix` descriptor
    internally and verifies its manifest and runtime bytes. New browser storage
-   runs the runtime's `initdb` by default. An optional seed archive and manifest
-   from `database-resources` skips `initdb`; existing storage needs neither
-   initializer. ICU selection supplies the raw data file and its manifest. Each
-   input retains its own integrity and runtime compatibility checks rather than
-   sharing one product version. Imported extension descriptors add their exact
-   carrier closure.
+   runs `initdb` unless an explicit seed archive and manifest are supplied;
+   existing storage can reopen without a seed. ICU selection supplies the raw
+   data file and its manifest. Each input retains its own integrity and runtime
+   compatibility checks rather than sharing one product version. Imported
+   extension descriptors add their exact carrier closure.
 3. The selected realm safely expands the core artifacts and overlays only each
    extension carrier's install-contract files into separate `/bin`, `/lib`, `/share`,
    writable `/base`, `/home`, and `/tmp` Wasmer memory mounts. Before `/base` is

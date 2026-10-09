@@ -65,7 +65,7 @@ import {
 
 /** @internal Narrow caller-realm host contract. */
 export type DirectWasixHost = Readonly<{
-  runWasix: typeof import('../../host/index.mjs').runWasix;
+  runWasix?: typeof import('../../host/index.mjs').runWasix;
   Directory: typeof Directory;
   init(options?: WasmerInitOptions): Promise<unknown>;
   instantiateOliphauntDirect(
