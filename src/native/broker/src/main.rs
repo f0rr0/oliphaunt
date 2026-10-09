@@ -315,14 +315,19 @@ impl BrokerListener {
     }
 
     fn accept(&self) -> io::Result<server::Socket> {
+        // Client workers require blocking I/O; accepted-socket mode varies by platform.
         match self {
-            Self::Tcp(listener) => listener
-                .accept()
-                .map(|(stream, _)| server::Socket::Tcp(stream)),
+            Self::Tcp(listener) => {
+                let (stream, _) = listener.accept()?;
+                stream.set_nonblocking(false)?;
+                Ok(server::Socket::Tcp(stream))
+            }
             #[cfg(unix)]
-            Self::Unix { listener, .. } => listener
-                .accept()
-                .map(|(stream, _)| server::Socket::Unix(stream)),
+            Self::Unix { listener, .. } => {
+                let (stream, _) = listener.accept()?;
+                stream.set_nonblocking(false)?;
+                Ok(server::Socket::Unix(stream))
+            }
         }
     }
 
@@ -335,14 +340,23 @@ impl BrokerListener {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
+    use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
+    #[cfg(unix)]
     use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    use oliphaunt_broker::ipc::{self, RequestFrame};
 
     use super::*;
 
     #[test]
+    #[cfg(unix)]
     fn broker_arguments_preserve_non_utf8_database_roots() {
         let root = PathBuf::from(OsString::from_vec(
             b"/tmp/oliphaunt-broker-root-\xff".to_vec(),
@@ -353,5 +367,62 @@ mod tests {
             .expect("non-UTF-8 filesystem paths remain valid broker roots");
 
         assert_eq!(parsed.root, root);
+    }
+
+    fn assert_blocking_connection(listener: BrokerListener, mut peer: server::Socket) {
+        listener.nonblocking().unwrap();
+        let mut socket = listener.accept().unwrap();
+        match &socket {
+            server::Socket::Tcp(stream) => {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+            }
+            #[cfg(unix)]
+            server::Socket::Unix(stream) => {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+            }
+        }
+
+        let request = RequestFrame::Authenticate("test-token".into());
+        let mut frame = Vec::new();
+        ipc::write_request(&mut frame, request.clone()).unwrap();
+        peer.write_all(&frame[..13]).unwrap();
+        let (start, ready) = mpsc::channel();
+        let writer = thread::spawn(move || {
+            ready.recv().unwrap();
+            thread::sleep(Duration::from_millis(50));
+            peer.write_all(&frame[13..]).unwrap();
+            thread::sleep(Duration::from_millis(50));
+            ipc::write_request(&mut peer, RequestFrame::Close).unwrap();
+        });
+
+        start.send(()).unwrap();
+        assert_eq!(ipc::read_request(&mut socket).unwrap(), request);
+        assert_eq!(ipc::read_request(&mut socket).unwrap(), RequestFrame::Close);
+        writer.join().unwrap();
+        assert!(
+            matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock)
+        );
+    }
+
+    #[test]
+    fn accepted_tcp_connections_read_fragmented_authentication_and_idle_frames() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        assert_blocking_connection(BrokerListener::Tcp(listener), server::Socket::Tcp(peer));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn accepted_unix_connections_read_fragmented_authentication_and_idle_frames() {
+        let path =
+            std::env::temp_dir().join(format!("oliphaunt-accept-{}.sock", std::process::id()));
+        let listener = BrokerListener::bind(BrokerListenEndpoint::Unix(path.clone())).unwrap();
+        let peer = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        assert_blocking_connection(listener, server::Socket::Unix(peer));
+        std::fs::remove_file(path).unwrap();
     }
 }
