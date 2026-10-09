@@ -1,6 +1,14 @@
 #!/usr/bin/env bun
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  checkRegistryPublication,
+  queryProductPublication,
+} from './check_registry_publication.mts';
+import {
+  validatePublishedCargoExtensionConsumers,
+  validateReleaseConsumerCompatibility,
+} from './consumer-compatibility.mts';
 import { parseTagCommits, parseTagRefs } from './git-tag-state.mts';
 import { currentVersion } from './product-version.mts';
 import {
@@ -14,15 +22,7 @@ import {
   loadProducts,
   ROOT,
 } from './release-graph.mts';
-import {
-  validatePublishedCargoExtensionConsumers,
-  validateReleaseConsumerCompatibility,
-} from './consumer-compatibility.mts';
-import {
-  checkRegistryPublication,
-  queryProductPublication,
-} from './check_registry_publication.mts';
-import { expectedAssets, verifyReleaseAssets } from './verify_github_release_attestations.mts';
+import { verifyReleaseAssets } from './verify_github_release_attestations.mts';
 
 const TOOL = 'check_release_versions.mts';
 const REGISTRY_TARGETS = new Set(['crates-io', 'npm', 'maven-central']);
@@ -261,11 +261,7 @@ async function validateReleasedDependencyArtifacts(consumer, dependency, depende
     ]);
   }
   if (targets.includes('github-release-assets')) {
-    await verifyReleaseAssets(
-      dependency,
-      dependencyVersion,
-      await expectedAssets(dependency, dependencyVersion),
-    );
+    await verifyReleaseAssets(dependency, dependencyVersion);
   }
 }
 
