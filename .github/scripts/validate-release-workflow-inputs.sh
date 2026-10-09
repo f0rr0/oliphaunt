@@ -5,6 +5,7 @@ set -euo pipefail
 : "${RELEASE_OPERATION:?RELEASE_OPERATION is required}"
 release_commit="${RELEASE_COMMIT:-}"
 approval_run_id="${RELEASE_APPROVAL_RUN_ID:-}"
+qualification_run_id="${RELEASE_QUALIFICATION_RUN_ID:-}"
 if [[ ! "$GITHUB_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo 'GITHUB_SHA must be a full 40-character commit SHA' >&2
   exit 2
@@ -19,6 +20,16 @@ if [[ -n "$approval_run_id" ]]; then
     exit 1
   fi
 fi
+if [[ -n "$qualification_run_id" ]]; then
+  if [[ "$RELEASE_OPERATION" != publish || ! "$qualification_run_id" =~ ^[1-9][0-9]*$ || -z "$release_commit" ]]; then
+    echo 'qualification_run_id requires publish, an explicit release_commit and a positive integer' >&2
+    exit 1
+  fi
+  if [[ -n "$approval_run_id" ]]; then
+    echo 'qualification_run_id and approval_run_id are mutually exclusive' >&2
+    exit 1
+  fi
+fi
 if [[ -n "$release_commit" ]]; then
   if [[ ! "$release_commit" =~ ^[0-9a-fA-F]{40}$ ]]; then
     echo 'release_commit must be a full 40-character commit SHA' >&2
@@ -26,8 +37,8 @@ if [[ -n "$release_commit" ]]; then
   fi
   workflow_sha="$(printf '%s' "$GITHUB_SHA" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   source_sha="$(printf '%s' "$release_commit" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
-  if [[ "$source_sha" != "$workflow_sha" && ( "$RELEASE_OPERATION" != publish || -z "$approval_run_id" ) ]]; then
-    echo 'release_commit must equal the exact workflow SHA unless recovering a frozen approved candidate' >&2
+  if [[ "$source_sha" != "$workflow_sha" && ( "$RELEASE_OPERATION" != publish || ( -z "$approval_run_id" && -z "$qualification_run_id" ) ) ]]; then
+    echo 'release_commit must equal the exact workflow SHA unless recovering an explicit frozen or qualified candidate' >&2
     exit 2
   fi
 fi

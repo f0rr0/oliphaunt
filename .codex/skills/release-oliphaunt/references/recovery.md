@@ -38,3 +38,16 @@ Normal recovery is an exact-commit rerun, not a new recovery commit:
    source SHA and candidate run ID. A failed prior run is accepted only if its
    candidate preparation job succeeded; active or cancelled runs are rejected.
    Product, packaging, CI, or lockfile changes require fresh qualification.
+
+### Preparation failure before publication
+
+When no release transport tag exists and preparation has no usable frozen
+candidate, dispatch `publish` on current main with the original full
+`release_commit` and successful CI `qualification_run_id`. Leave
+`approval_run_id` empty. The controller must pass `Required` and the existing
+release-control allowlist. Verify the exact CI run, selected-product coverage,
+artifacts and lifecycle evidence; rerun corrected registry preflight, then
+stage, package and freeze from the original clean source. Restore the controller
+before bootstrap/publication. The new capsule retains the old qualification
+and source identity and records the new Release approval run. Never refreeze
+a partially published candidate or substitute another CI source.

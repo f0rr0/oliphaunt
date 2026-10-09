@@ -10,13 +10,14 @@ if (mode === 'prepare') {
     const products = scenario === 'uncovered' && id === 77 ? ['other-product'] : ['oliphaunt-js'];
     const candidate = {
       schemaVersion: 2,
-      sha,
-      runId: String(id),
-      runAttempt: 3,
-      repository: 'f0rr0/oliphaunt',
+      sha: scenario === 'record-sha' ? 'b'.repeat(40) : sha,
+      runId: String(scenario === 'record-run-id' ? id + 1 : id),
+      runAttempt: scenario === 'record-attempt' ? 2 : 3,
+      repository: scenario === 'record-repository' ? 'other/oliphaunt' : 'f0rr0/oliphaunt',
       workflow: 'CI',
-      ref: 'refs/heads/main',
-      eventName: id === 88 ? 'workflow_dispatch' : 'push',
+      ref: scenario === 'wrong-ref' ? 'refs/pull/123/merge' : 'refs/heads/main',
+      eventName:
+        scenario === 'record-event' ? 'pull_request' : id === 88 ? 'workflow_dispatch' : 'push',
       affectedPlan: {
         digest: `sha256:${'1'.repeat(64)}`,
         jobs: ['affected'],

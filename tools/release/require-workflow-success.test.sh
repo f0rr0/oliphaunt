@@ -24,15 +24,19 @@ chmod +x "$scratch/bin/"*
 prepare() { case_root="$scratch/$1"; mkdir "$case_root"; : > "$case_root/output"; }
 invoke() {
   local mode="$1"; shift
+  local git_env=()
+  if [[ -n "${fixture_git_dir:-}" ]]; then git_env+=(GIT_DIR="$fixture_git_dir" GIT_WORK_TREE="$fixture_git_tree"); fi
   status=0
   env -i PATH="$scratch/bin:$PATH" HOME="$HOME" \
     BUN_OPTIONS="--preload=$source_root/tools/release/testdata/require-workflow-success-github.mts" \
     FAKE_LOG="$case_root/log" FAKE_STATE="$case_root/state" FAKE_MODE="$mode" \
     FAKE_RELEASE="$([[ "$1" == Release ]] && echo 1 || true)" \
+    FAKE_RELEASE_SHA="${fixture_controller:-}" \
     FAKE_DISPATCH="$case_root/dispatch.json" FAKE_ARCHIVE_ROOT="$case_root" \
     GH_REPO=f0rr0/oliphaunt GH_TOKEN=test-token GITHUB_OUTPUT="$case_root/output" \
     OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS=0 OLIPHAUNT_GITHUB_READ_DEADLINE_MS=1000 \
     OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS=1 OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS=0 \
+    ${git_env[@]+"${git_env[@]}"} \
     "$deadline" 15 bash .github/scripts/require-workflow-success.sh "$@" > "$case_root/result" 2>&1 || status=$?
 }
 expect_status() { if [[ "$status" != "$1" ]]; then cat "$case_root/result" >&2; echo "Expected $1, got $status" >&2; exit 1; fi; }
@@ -62,6 +66,24 @@ for mode in reuse active absent failed advanced ambiguous race uncovered; do
       fi ;;
     *) [[ ! -e "$case_root/dispatch.json" ]] ;;
   esac
+done
+for mode in reuse uncovered wrong-ref wrong-workflow expired-artifact record-sha record-run-id record-attempt record-repository record-event; do
+  prepare "explicit-qualification-$mode"
+  bun tools/release/require-workflow-success.test.mts prepare "$case_root" "$mode"
+  invoke "qualification-$mode" CI "$sha" 0 --run-id 77 --job Qualified --artifact oliphaunt-release-candidate --qualification-products '["oliphaunt-js"]'
+  if [[ "$mode" == reuse ]]; then
+    expect_status 0
+    rg -q 'run_id=77' "$case_root/output"
+  else
+    [[ "$status" != 0 && ! -s "$case_root/output" ]]
+  fi
+  [[ ! -e "$case_root/dispatch.json" ]]
+  if rg -q 'actions/workflows/9/runs' "$case_root/log"; then echo 'Explicit qualification searched for a substitute run' >&2; exit 1; fi
+done
+for selection in --plan-qualification --dispatch-qualification; do
+  prepare "explicit-$selection"
+  invoke qualification-reuse CI "$sha" 0 --run-id 77 "$selection" '["oliphaunt-js"]'
+  expect_status 2
 done
 for endpoint in jobs artifacts; do
   prepare "qualification-transient-$endpoint"
@@ -139,6 +161,35 @@ done
 prepare invalid-recovery
 invoke failed-run CI "$sha" 0 --run-id 77 --release-candidate
 expect_status 2
+prepare recovery-controller
+mkdir "$case_root/repo"
+fixture_git_tree="$case_root/repo"
+fixture_git_dir="$fixture_git_tree/.git"
+git -C "$fixture_git_tree" init -q
+git -C "$fixture_git_tree" config user.name Fixture
+git -C "$fixture_git_tree" config user.email fixture@example.invalid
+printf original > "$fixture_git_tree/product"
+git -C "$fixture_git_tree" add .
+git -C "$fixture_git_tree" commit -qm source
+fixture_source="$(git -C "$fixture_git_tree" rev-parse HEAD)"
+mkdir -p "$fixture_git_tree/tools/release"
+printf 'registry fix' > "$fixture_git_tree/tools/release/check_release_versions.mts"
+git -C "$fixture_git_tree" add .
+git -C "$fixture_git_tree" commit -qm controller
+fixture_controller="$(git -C "$fixture_git_tree" rev-parse HEAD)"
+invoke failed-run Release "$fixture_source" 0 --run-id 77 --release-candidate --artifact required-artifact
+expect_status 0
+invoke '' Release "$fixture_source" 0 --run-id 77 --release-candidate --artifact required-artifact
+expect_status 0
+invoke '' CI "$fixture_source" 0 --run-id 77 --artifact required-artifact
+expect_status 1
+printf changed > "$fixture_git_tree/product"
+git -C "$fixture_git_tree" add .
+git -C "$fixture_git_tree" commit -qm product-change
+fixture_controller="$(git -C "$fixture_git_tree" rev-parse HEAD)"
+invoke failed-run Release "$fixture_source" 0 --run-id 77 --release-candidate --artifact required-artifact
+expect_status 1
+unset fixture_git_dir fixture_git_tree fixture_controller
 for mode in metadata-auth metadata-transient; do
   prepare "$mode"
   invoke "$mode" CI "$sha" 0 --run-id 77 --job Qualified

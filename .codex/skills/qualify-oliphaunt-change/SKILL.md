@@ -173,6 +173,11 @@ implementation-source spellings.
   runner or package label.
 - Do not rerun duplicate downstream E2E workflows when the same evidence is already part of the required gate.
 - On failure, inspect the failing job log and earliest causal error. Fix the cause, push a new SHA, and restart qualification; do not reuse artifacts from the failed SHA.
+- A release preparation failure is not failed CI qualification. Before
+  publication starts, an allowlisted release-control fix may consume a prior
+  successful exact-source run through `qualification_run_id`. Require the
+  controller's `Required` gate, preserve the original source/run identity, and
+  never rebuild producers or substitute a different run.
 
 ## Report
 

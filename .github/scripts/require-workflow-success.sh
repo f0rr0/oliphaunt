@@ -76,8 +76,8 @@ if [[ ! "$sha" =~ ^[0-9A-Fa-f]{40}$ ]]; then
   exit 2
 fi
 if [[ -n "$qualification_products" ]]; then
-  [[ "$workflow" == CI && -z "$expected_run_id" ]] || {
-    echo 'qualification selection requires CI without --run-id' >&2
+  [[ "$workflow" == CI && ( -z "$expected_run_id" || ( "$qualification_wait" == true && "$qualification_plan" == false && "$qualification_dispatch" == false && "$expected_run_id" =~ ^[1-9][0-9]*$ ) ) ]] || {
+    echo 'qualification selection requires CI; explicit --run-id is valid only with --qualification-products' >&2
     exit 2
   }
   qualification_scratch="$(mktemp -d)"
@@ -140,8 +140,13 @@ run_matches_request() {
   local run_sha workflow_id run_event run_status run_conclusion run_attempt workflow_name
   IFS=$'\t' read -r run_sha workflow_id run_event run_status run_conclusion run_attempt <<<"$row"
   if [[ "$(printf '%s' "$run_sha" | normalize_sha)" != "$(printf '%s' "$sha" | normalize_sha)" ]]; then
-    echo "$workflow run $run_id belongs to $run_sha, not $sha" >&2
-    return 1
+    # A preparation recovery freezes the original source under a later Release
+    # controller. Its lock/capsule still verify that source and approval run.
+    if [[ "$release_candidate" != true ]] || ! bash tools/release/publication-controller.sh --changes-only \
+      "$(printf '%s' "$sha" | normalize_sha)" "$(printf '%s' "$run_sha" | normalize_sha)"; then
+      echo "$workflow run $run_id belongs to $run_sha, not $sha" >&2
+      return 1
+    fi
   fi
   workflow_name="$(
     github_read "workflow $workflow_id metadata" \
