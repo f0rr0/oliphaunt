@@ -349,7 +349,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use oliphaunt_broker::ipc::{self, RequestFrame};
 
@@ -371,7 +371,18 @@ mod tests {
 
     fn assert_blocking_connection(listener: BrokerListener, mut peer: server::Socket) {
         listener.nonblocking().unwrap();
-        let mut socket = listener.accept().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut socket = loop {
+            match listener.accept() {
+                Ok(socket) => break socket,
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("failed to accept test connection: {error}"),
+            }
+        };
         match &socket {
             server::Socket::Tcp(stream) => {
                 stream
