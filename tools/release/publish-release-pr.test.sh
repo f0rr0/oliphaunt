@@ -58,7 +58,7 @@ if publish >"$scratch/first.log" 2>&1; then
 fi
 first="$(remote_head)"
 publish >"$scratch/recovery.log" 2>&1
-[[ "$(wc -l <"$scratch/creates")" == 1 && "$(remote_head)" == "$first" ]]
+[[ "$(wc -l <"$scratch/creates")" -eq 1 && "$(remote_head)" == "$first" ]]
 
 candidate '2026-09-12T12:00:00Z'
 [[ "$(git rev-parse HEAD)" != "$first" ]]
@@ -73,7 +73,7 @@ git push -q origin main
 GITHUB_SHA="$(git rev-parse HEAD)"
 candidate '2026-09-13T12:00:00Z'
 publish >"$scratch/update.log" 2>&1
-[[ "$(remote_head)" == "$(git rev-parse HEAD)" && "$(wc -l <"$scratch/creates")" == 1 ]]
+[[ "$(remote_head)" == "$(git rev-parse HEAD)" && "$(wc -l <"$scratch/creates")" -eq 1 ]]
 
 # A branch changed outside the inspected PR is never overwritten.
 echo 'unrelated work' >unrelated

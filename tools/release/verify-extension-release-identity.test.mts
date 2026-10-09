@@ -103,6 +103,32 @@ function manifest(product, version = '1.2.3') {
 }
 
 describe('canonical extension release identity', () => {
+  test('WASIX candidates require shared member metadata, not native-only iOS payload metadata', () => {
+    const product = 'oliphaunt-extension-contrib-pg18';
+    const value = manifest(product);
+    value.family = 'wasix';
+    value.releaseProduct = extensionReleaseProduct(product, 'wasix');
+    for (const row of value.extensions) {
+      row.iosNativeDependencies = [];
+      row.iosRegistration = null;
+    }
+    expect(() =>
+      assertCanonicalExtensionReleaseIdentity(product, value.version, value),
+    ).not.toThrow();
+    value.extensions[0].iosRegistration = member(
+      product,
+      value.extensions[0].sqlName,
+    ).iosRegistration;
+    expect(() => assertCanonicalExtensionReleaseIdentity(product, value.version, value)).toThrow(
+      /fabricates iOS registration/u,
+    );
+    value.extensions[0].iosRegistration = null;
+    value.extensions[0].dataFiles.push('foreign.sql');
+    expect(() => assertCanonicalExtensionReleaseIdentity(product, value.version, value)).toThrow(
+      /dataFiles differs/u,
+    );
+  });
+
   for (const product of ['oliphaunt-extension-pgtap', 'oliphaunt-extension-contrib-pg18']) {
     test(`${product} rejects forged root compatibility`, () => {
       const value = manifest(product);

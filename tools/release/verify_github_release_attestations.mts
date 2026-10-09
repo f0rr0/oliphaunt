@@ -6,7 +6,18 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { reserveGitHubCoreRequest } from './github-core-request-journal.mts';
+import {
+  authHeaders,
+  boundedResponseBytes,
+  githubReleaseQueryDeadline,
+  requestBoundedGithubJson,
+  requestGithubJsonWithRetry,
+  requestGithubPages,
+  responseContentLength,
+} from './github-read.mts';
 import { currentVersion } from './product-version.mts';
+import { assertPublicationLockSource, loadPublicationLock } from './publication-lock.mts';
 import {
   contribCarrierDescriptor,
   expectedAssets as expectedDesktopAssets,
@@ -17,21 +28,11 @@ import {
   extensionSqlNames,
   releaseMetadata,
 } from './release-artifact-targets.mts';
-import { reserveGitHubCoreRequest } from './github-core-request-journal.mts';
-import {
-  authHeaders,
-  boundedResponseBytes,
-  githubReleaseQueryDeadline,
-  requestBoundedGithubJson,
-  requestGithubJsonWithRetry,
-  responseContentLength,
-} from './github-read.mts';
-import { assertPublicationLockSource, loadPublicationLock } from './publication-lock.mts';
 
 export { requestBoundedGithubJson, requestGithubJsonWithRetry } from './github-read.mts';
 
-import { swiftExtensionCarrierAssetName } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { assertWasixExtensionMemberInstall } from '../../src/extensions/contracts/wasix-extension-install.mts';
+import { swiftExtensionCarrierAssetName } from '../../src/native/sdks/swift/tools/ios-carrier-manifest.mts';
 import { assertPublicationController } from './publication-controller.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -370,16 +371,19 @@ async function expectedExtensionAssets(product, version, family = 'combined') {
   return [...new Set(names)].sort(compareText);
 }
 
-async function expectedAssets(product, version) {
+async function expectedAssets(product, version, { extensionAssets } = {}) {
   const config = await productConfig(product);
   if (['exact-extension-artifact', 'exact-extension-bundle'].includes(config.kind)) {
-    return expectedExtensionAssets(product, version);
+    return extensionAssets ?? expectedExtensionAssets(product, version);
   }
   if (product === 'liboliphaunt-native') {
     const assets = liboliphauntNativeAssets(version);
     if (await productTagHasContrib(product, version)) {
       const contrib = contribCarrierDescriptor(PREFIX);
-      assets.push(...(await expectedExtensionAssets(contrib.artifactProduct, version, 'native')));
+      assets.push(
+        ...(extensionAssets ??
+          (await expectedExtensionAssets(contrib.artifactProduct, version, 'native'))),
+      );
     }
     return [...new Set(assets)].sort(compareText);
   }
@@ -387,7 +391,10 @@ async function expectedAssets(product, version) {
     const assets = liboliphauntWasixAssets(version);
     if (await productTagHasContrib(product, version)) {
       const contrib = contribCarrierDescriptor(PREFIX);
-      assets.push(...(await expectedExtensionAssets(contrib.artifactProduct, version, 'wasix')));
+      assets.push(
+        ...(extensionAssets ??
+          (await expectedExtensionAssets(contrib.artifactProduct, version, 'wasix'))),
+      );
     }
     return [...new Set(assets)].sort(compareText);
   }
@@ -524,7 +531,7 @@ async function githubJson(url) {
   }
 }
 
-async function releaseAssets(repo, tag) {
+async function releaseAssets(repo, tag, { published = false } = {}) {
   const repoPath = encodeURIComponent(repo).replaceAll('%2F', '/');
   const tagPath = encodeURIComponent(tag);
   const url = `${GITHUB_API.replace(/\/$/u, '')}/repos/${repoPath}/releases/tags/${tagPath}`;
@@ -532,11 +539,17 @@ async function releaseAssets(repo, tag) {
   if (data === null || Array.isArray(data) || typeof data !== 'object') {
     fail(`GitHub release response for ${tag} was not an object`);
   }
-  if (!Array.isArray(data.assets)) {
-    fail(`GitHub release response for ${tag} did not include assets`);
+  if (data.tag_name !== tag || !Number.isSafeInteger(data.id) || data.id <= 0) {
+    fail(`GitHub release response for ${tag} has invalid release identity`);
   }
+  if (published && (data.draft !== false || data.prerelease !== false)) {
+    fail(`GitHub release ${tag} must be published and stable`);
+  }
+  const rows = await requestGithubPages(`repos/${repo}/releases/${data.id}/assets`, {
+    label: `GitHub release ${tag} assets`,
+  });
   const assets = new Map();
-  for (const asset of data.assets) {
+  for (const asset of rows) {
     if (asset === null || typeof asset !== 'object' || typeof asset.name !== 'string') {
       continue;
     }
@@ -591,7 +604,16 @@ function validateSha256(value, context) {
   }
 }
 
-function validateExtensionAssets(assets, context, seen) {
+function assertExtensionAssetFamily(asset, family, context) {
+  if (
+    !['native', 'wasix'].includes(asset.family) ||
+    (family !== 'combined' && asset.family !== family)
+  ) {
+    fail(`${context} asset family differs from requested release family ${family}`);
+  }
+}
+
+function validateExtensionAssets(assets, context, seen, family) {
   if (!Array.isArray(assets) || assets.length === 0) {
     fail(`${context} must declare a non-empty assets array`);
   }
@@ -601,6 +623,7 @@ function validateExtensionAssets(assets, context, seen) {
       fail(`${assetContext} must be an object`);
     }
     validateKeySet(asset, PUBLIC_EXTENSION_RELEASE_ASSET_KEYS, assetContext);
+    assertExtensionAssetFamily(asset, family, assetContext);
     for (const key of ['name', 'family', 'target', 'kind', 'sha256']) {
       if (typeof asset[key] !== 'string' || asset[key].length === 0) {
         fail(`${assetContext}.${key} must be a non-empty string`);
@@ -628,7 +651,7 @@ function validateExtensionAssets(assets, context, seen) {
   }
 }
 
-function validateBundleCarrierAssets(assets, context, expectedMemberCount) {
+function validateBundleCarrierAssets(assets, context, expectedMemberCount, family) {
   if (!Array.isArray(assets) || assets.length === 0) {
     fail(`${context} must declare a non-empty aggregate assets array`);
   }
@@ -639,6 +662,7 @@ function validateBundleCarrierAssets(assets, context, expectedMemberCount) {
     if (asset === null || Array.isArray(asset) || typeof asset !== 'object')
       fail(`${assetContext} must be an object`);
     validateKeySet(asset, PUBLIC_EXTENSION_BUNDLE_ASSET_KEYS, assetContext);
+    assertExtensionAssetFamily(asset, family, assetContext);
     for (const key of ['name', 'family', 'target', 'kind', 'sha256']) {
       if (typeof asset[key] !== 'string' || asset[key].length === 0)
         fail(`${assetContext}.${key} must be a non-empty string`);
@@ -761,7 +785,7 @@ function canonicalSortedUniqueStrings(value, context) {
   return [...value].sort(compareText);
 }
 
-function canonicalMemberSemantics(product, sqlName) {
+function canonicalMemberSemantics(product, sqlName, family) {
   if (!extensionSqlNames(product, PREFIX).includes(sqlName)) {
     throw new Error(`${product} does not own extension SQL name ${JSON.stringify(sqlName)}`);
   }
@@ -794,7 +818,9 @@ function canonicalMemberSemantics(product, sqlName) {
     ),
     nativeModuleStem,
     iosNativeDependencies:
-      nativeModuleStem === null ? [] : (canonicalIosDependencies().get(sqlName) ?? []),
+      nativeModuleStem === null || family === 'wasix'
+        ? []
+        : (canonicalIosDependencies().get(sqlName) ?? []),
     sharedPreloadLibraries: canonicalSortedUniqueStrings(
       row['shared-preload-libraries'],
       `${product}/${sqlName}.shared-preload-libraries`,
@@ -802,10 +828,10 @@ function canonicalMemberSemantics(product, sqlName) {
   };
 }
 
-function assertCanonicalIosRegistration(member, expected, context) {
-  if (expected.nativeModuleStem === null) {
+function assertCanonicalIosRegistration(member, expected, context, family) {
+  if (expected.nativeModuleStem === null || family === 'wasix') {
     if (member.iosRegistration !== null)
-      throw new Error(`${context} SQL-only extension fabricates iOS registration metadata`);
+      throw new Error(`${context} fabricates iOS registration metadata without an iOS module`);
     return;
   }
   const registration = member.iosRegistration;
@@ -864,18 +890,49 @@ function assertCanonicalIosRegistration(member, expected, context) {
   }
 }
 
-function assertCanonicalMemberSemantics(product, member, context) {
-  const expected = canonicalMemberSemantics(product, member?.sqlName);
+function assertCanonicalMemberSemantics(product, member, context, family) {
+  const expected = canonicalMemberSemantics(product, member?.sqlName, family);
   for (const key of Object.keys(expected)) {
     if (stableStringify(member?.[key]) !== stableStringify(expected[key])) {
       throw new Error(`${context}.${key} differs from canonical generated extension metadata`);
     }
   }
-  assertCanonicalIosRegistration(member, expected, context);
+  assertCanonicalIosRegistration(member, expected, context, family);
 }
 
 function assertCanonicalWasixInstall(member, context) {
   assertWasixExtensionMemberInstall(member, { label: context });
+}
+
+function validateExtensionMemberShape(member, context, family) {
+  try {
+    if (typeof member.sqlName !== 'string' || !member.sqlName)
+      throw new Error(`${context}.sqlName must be a non-empty string`);
+    if (typeof member.createsExtension !== 'boolean')
+      throw new Error(`${context}.createsExtension must be a boolean`);
+    if (
+      member.nativeModuleStem !== null &&
+      (typeof member.nativeModuleStem !== 'string' || !member.nativeModuleStem)
+    )
+      throw new Error(`${context}.nativeModuleStem must be null or a non-empty string`);
+    for (const key of [
+      'dependencies',
+      'dataFiles',
+      'extensionSqlFileNames',
+      'extensionSqlFilePrefixes',
+      'iosNativeDependencies',
+      'sharedPreloadLibraries',
+    ]) {
+      const sorted = canonicalSortedUniqueStrings(member[key], `${context}.${key}`);
+      if (stableStringify(member[key]) !== stableStringify(sorted))
+        throw new Error(`${context}.${key} must be sorted`);
+    }
+    if (member.iosRegistration !== null || family === 'wasix')
+      assertCanonicalIosRegistration(member, member, context, family);
+    assertCanonicalWasixInstall(member, context);
+  } catch (error) {
+    fail(error.message);
+  }
 }
 
 export function assertCanonicalExtensionReleaseIdentity(
@@ -936,7 +993,7 @@ export function assertCanonicalExtensionReleaseIdentity(
     if (expectedSqlNames.length !== 1 || manifest.sqlName !== expectedSqlNames[0]) {
       throw new Error(`${context}.sqlName differs from its canonical release owner`);
     }
-    assertCanonicalMemberSemantics(product, manifest, context);
+    assertCanonicalMemberSemantics(product, manifest, context, family);
     return manifest;
   }
   if (manifest.schema === 'oliphaunt-extension-release-manifest-v2') {
@@ -947,7 +1004,7 @@ export function assertCanonicalExtensionReleaseIdentity(
       throw new Error(`${context}.extensions differs from its canonical sorted member set`);
     }
     manifest.extensions.forEach((member, index) => {
-      assertCanonicalMemberSemantics(product, member, `${context}.extensions[${index}]`);
+      assertCanonicalMemberSemantics(product, member, `${context}.extensions[${index}]`, family);
     });
     return manifest;
   }
@@ -961,13 +1018,69 @@ async function validateExtensionManifest(
   version,
   manifest,
   context,
-  { family = manifest?.family, releaseProduct = manifest?.releaseProduct } = {},
+  { family = manifest?.family, releaseProduct = manifest?.releaseProduct, published = false } = {},
 ) {
   try {
-    assertCanonicalExtensionReleaseIdentity(product, version, manifest, context, {
-      family,
-      releaseProduct,
-    });
+    if (published) {
+      const metadata = extensionMetadata(product, PREFIX);
+      for (const [key, expected] of Object.entries({
+        product,
+        version,
+        releaseProduct,
+        family,
+        extensionClass: metadata.class,
+        versioning: metadata.versioning,
+      })) {
+        if (
+          (key === 'releaseProduct' || key === 'family') &&
+          family === 'combined' &&
+          manifest?.[key] === undefined
+        )
+          continue;
+        if (manifest?.[key] !== expected)
+          throw new Error(`${context}.${key} differs from requested release identity`);
+      }
+      const source = extensionSourceIdentity(product, PREFIX);
+      validateKeySet(
+        manifest.sourceIdentity,
+        new Set(Object.keys(source)),
+        `${context}.sourceIdentity`,
+      );
+      validateKeySet(
+        manifest.compatibility,
+        new Set(Object.keys(metadata.compatibility)),
+        `${context}.compatibility`,
+      );
+      for (const [key, value] of Object.entries(manifest.sourceIdentity)) {
+        if (typeof value !== 'string' || !value)
+          throw new Error(`${context}.sourceIdentity.${key} must be a non-empty string`);
+        if (key === 'sha256') validateSha256(value, `${context}.sourceIdentity.sha256`);
+        if (key === 'commit' && !/^[0-9a-f]{40}$/u.test(value))
+          throw new Error(`${context}.sourceIdentity.commit must be a full commit SHA`);
+      }
+      if (manifest.sourceIdentity.kind !== source.kind)
+        throw new Error(`${context}.sourceIdentity.kind differs from requested release identity`);
+      for (const [key, value] of Object.entries(manifest.compatibility)) {
+        if (key.endsWith('Version')) {
+          if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(value))
+            throw new Error(`${context}.compatibility.${key} must be a stable version`);
+        } else if (value !== metadata.compatibility[key]) {
+          throw new Error(
+            `${context}.compatibility.${key} differs from requested release identity`,
+          );
+        }
+      }
+      if (
+        metadata.versioning === 'runtime-bound' &&
+        manifest.compatibility[`${family}RuntimeVersion`] !== version
+      )
+        throw new Error(`${context}.compatibility differs from its runtime owner version`);
+    } else {
+      assertCanonicalExtensionReleaseIdentity(product, version, manifest, context, {
+        family,
+        releaseProduct,
+      });
+    }
   } catch (error) {
     fail(error.message);
   }
@@ -980,12 +1093,8 @@ async function validateExtensionManifest(
         : PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS,
       context,
     );
-    validateExtensionAssets(manifest.assets, context, seen);
-    try {
-      assertCanonicalWasixInstall(manifest, context);
-    } catch (error) {
-      fail(error.message);
-    }
+    validateExtensionAssets(manifest.assets, context, seen, family);
+    validateExtensionMemberShape(manifest, context, family);
     return manifest.assets;
   }
   if (manifest.schema !== 'oliphaunt-extension-release-manifest-v2') {
@@ -1003,12 +1112,22 @@ async function validateExtensionManifest(
   if (!Array.isArray(manifest.extensions) || manifest.extensions.length < 2) {
     fail(`${context}.extensions must be a non-empty bundle member array`);
   }
-  const expectedSqlNames = extensionSqlNames(product, PREFIX);
+  const expectedSqlNames = published
+    ? canonicalSortedUniqueStrings(
+        manifest.extensions.map((member) => member?.sqlName),
+        `${context}.extensions`,
+      )
+    : extensionSqlNames(product, PREFIX);
   const actualSqlNames = manifest.extensions.map((member) => member?.sqlName);
   if (stableStringify(actualSqlNames) !== stableStringify(expectedSqlNames)) {
     fail(`${context}.extensions must exactly match the sorted release bundle member set`);
   }
-  const carriers = validateBundleCarrierAssets(manifest.assets, context, expectedSqlNames.length);
+  const carriers = validateBundleCarrierAssets(
+    manifest.assets,
+    context,
+    expectedSqlNames.length,
+    family,
+  );
   const seenLocators = new Set();
   for (const [index, member] of manifest.extensions.entries()) {
     const memberContext = `${context}.extensions[${index}]`;
@@ -1017,11 +1136,7 @@ async function validateExtensionManifest(
     }
     validateKeySet(member, PUBLIC_EXTENSION_BUNDLE_MEMBER_KEYS, memberContext);
     validateBundleMemberAssets(member.assets, memberContext, carriers, seenLocators);
-    try {
-      assertCanonicalWasixInstall(member, memberContext);
-    } catch (error) {
-      fail(error.message);
-    }
+    validateExtensionMemberShape(member, memberContext, family);
     for (const asset of member.assets) {
       const expectedMemberPath = `extensions/${member.sqlName}/${asset.name}`;
       if (asset.memberPath !== expectedMemberPath) {
@@ -1918,6 +2033,7 @@ async function verifyExtensionReleaseAssets(
   version,
   family,
   actualAssets,
+  { published = false } = {},
 ) {
   const manifestName = `${product}-${version}-manifest.json`;
   const propertiesName = `${product}-${version}-manifest.properties`;
@@ -1931,17 +2047,19 @@ async function verifyExtensionReleaseAssets(
   );
   const localManifestPath = path.join(localReleaseAssetRoot, manifestName);
   const localSwiftCarrierPath = path.join(localReleaseAssetRoot, swiftCarrierName);
-  const localManifest = await readJson(localManifestPath);
+  const localManifest = published ? null : await readJson(localManifestPath);
   const includeSwiftCarrier = family !== 'wasix';
-  const localSwiftCarrier = includeSwiftCarrier ? await readJson(localSwiftCarrierPath) : null;
+  const localSwiftCarrier =
+    includeSwiftCarrier && !published ? await readJson(localSwiftCarrierPath) : null;
   const proofs = new Map();
 
   const manifestAsset = actualAssets.get(manifestName);
+  if (!manifestAsset) fail(`${product} GitHub release is missing ${manifestName}`);
   const manifestSize = expectedAssetSize(manifestAsset.size, manifestName, MAX_CONTROL_ASSET_BYTES);
   const manifestBytes = await requestBytes(manifestAsset.url, manifestName, manifestSize);
   proofs.set(manifestName, { bytes: manifestBytes.byteLength, sha256: sha256Bytes(manifestBytes) });
   const remoteManifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-  if (stableStringify(remoteManifest) !== stableStringify(localManifest)) {
+  if (!published && stableStringify(remoteManifest) !== stableStringify(localManifest)) {
     fail(
       `${product} GitHub release ${await productTag(releaseProduct, version)} public manifest differs from staged manifest`,
     );
@@ -1951,11 +2069,12 @@ async function verifyExtensionReleaseAssets(
     version,
     remoteManifest,
     `${product} ${version} public extension manifest`,
-    { family, releaseProduct },
+    { family, releaseProduct, published },
   );
 
   if (includeSwiftCarrier) {
     const swiftCarrierAsset = actualAssets.get(swiftCarrierName);
+    if (!swiftCarrierAsset) fail(`${product} GitHub release is missing ${swiftCarrierName}`);
     const swiftCarrierSize = expectedAssetSize(
       swiftCarrierAsset.size,
       swiftCarrierName,
@@ -1971,7 +2090,7 @@ async function verifyExtensionReleaseAssets(
       sha256: sha256Bytes(swiftCarrierBytes),
     });
     const remoteSwiftCarrier = JSON.parse(new TextDecoder().decode(swiftCarrierBytes));
-    if (stableStringify(remoteSwiftCarrier) !== stableStringify(localSwiftCarrier)) {
+    if (!published && stableStringify(remoteSwiftCarrier) !== stableStringify(localSwiftCarrier)) {
       fail(
         `${product} GitHub release ${await productTag(releaseProduct, version)} Swift iOS carrier differs from staged carrier`,
       );
@@ -1979,6 +2098,7 @@ async function verifyExtensionReleaseAssets(
   }
 
   const checksumAsset = actualAssets.get(checksumName);
+  if (!checksumAsset) fail(`${product} GitHub release is missing ${checksumName}`);
   const checksumSize = expectedAssetSize(checksumAsset.size, checksumName, MAX_CONTROL_ASSET_BYTES);
   const checksumBytes = await requestBytes(checksumAsset.url, checksumName, checksumSize);
   proofs.set(checksumName, { bytes: checksumBytes.byteLength, sha256: sha256Bytes(checksumBytes) });
@@ -2035,37 +2155,54 @@ async function verifyExtensionReleaseAssets(
       );
     }
   }
+  return [...checksumCoveredNames, checksumName].sort(compareText);
 }
 
 async function verifyReleaseAssets(product, version, assets) {
   const repo = repository();
   const tag = await productTag(product, version);
-  const actualAssets = await releaseAssets(repo, tag);
-  const expectedNames = new Set(assets);
-  try {
-    assertExactReleaseAssetNames({
-      product,
-      tag,
-      expectedNames,
-      actualNames: actualAssets.keys(),
-    });
-  } catch (error) {
-    fail(error.message);
-  }
+  // Historical dependencies are proved from their public metadata; only a
+  // candidate comparison may use the current checkout's staged manifests.
+  const published = assets === undefined;
+  const actualAssets = await releaseAssets(repo, tag, { published });
+  let extensionAssets;
   const config = await productConfig(product);
   if (['exact-extension-artifact', 'exact-extension-bundle'].includes(config.kind)) {
-    await verifyExtensionReleaseAssets(product, product, version, 'combined', actualAssets);
+    extensionAssets = await verifyExtensionReleaseAssets(
+      product,
+      product,
+      version,
+      'combined',
+      actualAssets,
+      { published },
+    );
   } else if (product === 'liboliphaunt-native' || product === 'liboliphaunt-wasix') {
     const contrib = contribCarrierDescriptor(PREFIX);
-    if (assets.includes(`${contrib.artifactProduct}-${version}-manifest.json`)) {
-      await verifyExtensionReleaseAssets(
+    if (
+      published
+        ? await productTagHasContrib(product, version)
+        : assets.includes(`${contrib.artifactProduct}-${version}-manifest.json`)
+    ) {
+      extensionAssets = await verifyExtensionReleaseAssets(
         contrib.artifactProduct,
         product,
         version,
         product === 'liboliphaunt-native' ? 'native' : 'wasix',
         actualAssets,
+        { published },
       );
     }
+  }
+  assets ??= await expectedAssets(product, version, { extensionAssets });
+  try {
+    assertExactReleaseAssetNames({
+      product,
+      tag,
+      expectedNames: assets,
+      actualNames: actualAssets.keys(),
+    });
+  } catch (error) {
+    fail(error.message);
   }
   console.log(`${product} GitHub release assets verified for ${tag}: ${assets.join(', ')}`);
 }
