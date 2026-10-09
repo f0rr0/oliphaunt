@@ -102,7 +102,7 @@ smaller qualified side modules remain supported in a direct Window.
    and a temporary Worker for restore.
 2. The binding resolves the default `@oliphaunt/liboliphaunt-wasix` descriptor
    internally and verifies its manifest and runtime bytes. New browser storage
-   requires an explicit seed archive and manifest from `database-resources`;
+   runs `initdb` unless an explicit seed archive and manifest are supplied;
    existing storage can reopen without a seed. ICU selection supplies the raw
    data file and its manifest. Each input retains its own integrity and runtime
    compatibility checks rather than sharing one product version. Imported
@@ -110,8 +110,8 @@ smaller qualified side modules remain supported in a direct Window.
 3. The selected realm safely expands the core artifacts and overlays only each
    extension carrier's install-contract files into separate `/bin`, `/lib`, `/share`,
    writable `/base`, `/home`, and `/tmp` Wasmer memory mounts. Before `/base` is
-   materialized, a storage provider lease supplies either the packaged cluster
-   seed or an exact-compatible persistent PGDATA. The source-pinned
+   materialized, a storage provider lease supplies either a newly initialized
+   cluster or an exact-compatible persistent PGDATA. The source-pinned
    host adds ephemeral `/dev/shm` and a real Wasmer `RandomFile` at
    `/dev/urandom`. Its narrow `Directory` mutation journal records successful
    writes and truncates through already-open descriptors as well as file,

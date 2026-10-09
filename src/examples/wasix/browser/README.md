@@ -12,8 +12,9 @@ moon run liboliphaunt-wasix:runtime-portable database-resources:build-wasix-stan
 bun run --cwd src/wasix/sdks/ts dev
 ```
 
-`resources.ts` selects the seed served by the local asset middleware. New browser
-storage needs this seed; reopening IndexedDB or OPFS needs only the runtime.
+`resources.ts` selects the seed served by the local asset middleware to speed up
+initialization. Without a seed, new browser storage runs the runtime's `initdb`.
+Reopening IndexedDB or OPFS needs only the runtime.
 
 The browser smoke and benchmark commands in `src/wasix/sdks/ts/package.json`
 use the same example so there is only one browser integration surface to keep

@@ -54,7 +54,7 @@ The four conceptual cases are:
 
 The last case is important for explicit or locally built runtimes. ICU does not
 require a seed. A seed is an optimization; ICU data is a capability.
-Desktop SDKs can initialize without downloading a seed. New browser and mobile
+Desktop and browser SDKs can initialize without downloading a seed. New mobile
 databases require an explicitly selected seed; existing databases do not need one.
 
 ## User-visible behavior
@@ -90,8 +90,8 @@ const db = await Oliphaunt.open({ seed: { archive, manifest } });
 ```
 
 For ICU, select `@oliphaunt/seed-wasix-icu` and pass `icu: { data, manifest }`,
-using `@oliphaunt/icu/data` and `@oliphaunt/icu/manifest`. Node, Bun, and Deno
-can initialize without a seed; new browser storage requires one. Incomplete
+using `@oliphaunt/icu/data` and `@oliphaunt/icu/manifest`. Browsers, Node, Bun, and
+Deno run `initdb` when no seed is selected. Incomplete
 archive/manifest pairs fail closed rather than silently selecting `initdb`.
 
 Other SDKs retain language-native package selection:
@@ -104,7 +104,7 @@ Other SDKs retain language-native package selection:
 | Kotlin | explicit Android standard seed Maven dependency | Android ICU seed and canonical ICU data dependencies |
 | React Native | explicit mobile `seedProfile` and resource package | ICU profile and `@oliphaunt/icu` resource carrier |
 | Rust WASIX | optional `.seed(ClusterSeed::new(archive, manifest))` | `.icu_data(IcuData::new(data_bytes, manifest_bytes)?)` |
-| WASIX TypeScript | explicit `seed: { archive, manifest }` | independent `icu: { data, manifest }` |
+| WASIX TypeScript | optional `seed: { archive, manifest }`; `initdb` when absent | independent `icu: { data, manifest }` |
 
 Rust WASIX memory/directory stores support split `initdb` when no seed is
 selected. Mobile applications still select a seed; this does not imply a
