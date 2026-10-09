@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -39,5 +41,117 @@ test('both npm publication jobs can generate required provenance', () => {
       'write',
       `${job} requires OIDC for npm --provenance even with token authentication`,
     );
+  }
+});
+test('qualified recovery packages the original source and restores its checked controller', () => {
+  const { jobs } = Bun.YAML.parse(
+    readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8'),
+  );
+  const steps = jobs['prepare-candidate'].steps;
+  const checkout = steps.findIndex(
+    (step) => step.name === 'Checkout qualified source for unchanged packaging',
+  );
+  const registry = steps.findIndex((step) => step.id === 'validate_release_registry_state');
+  const pack = steps.findIndex((step) => step.name === 'Package public release carriers');
+  const freeze = steps.findIndex((step) => step.id === 'freeze_publication_candidate');
+  const restore = steps.findIndex((step) => step.name === 'Restore checked publication controller');
+  const credentials = steps.findIndex((step) => step.id === 'bootstrap_credentials');
+  assert.ok(
+    registry < checkout &&
+      checkout < pack &&
+      pack < freeze &&
+      freeze < restore &&
+      restore < credentials,
+  );
+  for (const index of [checkout, restore])
+    assert.equal(steps[index].if, `\${{ inputs.qualification_run_id != '' }}`);
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-qualified-recovery-'));
+  const run = (command, args, env = {}) =>
+    spawnSync(command, args, {
+      cwd: scratch,
+      env: { ...process.env, ...env },
+      encoding: 'utf8',
+    });
+  const git = (...args) => {
+    const result = run('git', args);
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const shell = (script, env) => run('bash', ['-euo', 'pipefail', '-c', script], env);
+  try {
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.name', 'Fixture');
+    git('config', 'user.email', 'fixture@example.invalid');
+    git('remote', 'add', 'origin', scratch);
+    for (const file of [
+      'tools/release/publication-controller.sh',
+      'tools/release/publication-controller.mts',
+      'tools/release/qualified-release-replay.sh',
+      '.github/scripts/require-current-main.sh',
+    ]) {
+      mkdirSync(path.dirname(path.join(scratch, file)), { recursive: true });
+      cpSync(path.join(ROOT, file), path.join(scratch, file));
+    }
+    writeFileSync(path.join(scratch, '.gitignore'), 'target/\n');
+    writeFileSync(path.join(scratch, 'product'), 'qualified product bytes');
+    writeFileSync(
+      path.join(scratch, '.github/scripts/require-workflow-success.sh'),
+      'printf "%s\\n" "$2" > target/checked-controller\nexit "${FIXTURE_CI_STATUS:-0}"\n',
+    );
+    git('add', '.');
+    git('commit', '-qm', 'source');
+    const source = git('rev-parse', 'HEAD');
+    writeFileSync(
+      path.join(scratch, 'tools/release/check_release_versions.mts'),
+      '// corrected registry validation\n',
+    );
+    git('add', '.');
+    git('commit', '-qm', 'controller');
+    const controller = git('rev-parse', 'HEAD');
+    const env = { GITHUB_SHA: controller, GITHUB_REF: 'refs/heads/main', RELEASE_HEAD_SHA: source };
+    mkdirSync(path.join(scratch, 'target'));
+    writeFileSync(path.join(scratch, 'target/producer'), 'qualified binary');
+    const guard = jobs['plan-candidate'].steps.find(
+      (step) => step.name === 'Require unpublished recovery source and checked current controller',
+    );
+    let result = shell(guard.run, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      readFileSync(path.join(scratch, 'target/checked-controller'), 'utf8').trim(),
+      controller,
+    );
+    result = shell(guard.run, { ...env, FIXTURE_CI_STATUS: '1' });
+    assert.notEqual(result.status, 0, 'unchecked controller must be rejected');
+    git('update-ref', 'refs/heads/main', source);
+    result = shell(guard.run, env);
+    assert.notEqual(result.status, 0, 'controller must still be current main');
+    git('update-ref', 'refs/heads/main', controller);
+    git('tag', `oliphaunt-release-transport/${source}`, source);
+    result = shell(guard.run, env);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /recover with approval_run_id/u);
+    git('tag', '-d', `oliphaunt-release-transport/${source}`);
+    git('remote', 'set-url', 'origin', path.join(scratch, 'missing-origin'));
+    result = shell(guard.run, env);
+    assert.notEqual(result.status, 0);
+    git('remote', 'set-url', 'origin', scratch);
+    result = shell(steps[checkout].run, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(git('rev-parse', 'HEAD'), source);
+    assert.equal(readFileSync(path.join(scratch, 'product'), 'utf8'), 'qualified product bytes');
+    assert.equal(readFileSync(path.join(scratch, 'target/producer'), 'utf8'), 'qualified binary');
+    result = shell(steps[restore].run, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(git('rev-parse', 'HEAD'), controller);
+    assert.match(
+      readFileSync(path.join(scratch, 'tools/release/check_release_versions.mts'), 'utf8'),
+      /corrected/u,
+    );
+    writeFileSync(path.join(scratch, 'product'), 'uncommitted source change');
+    result = shell(steps[checkout].run, env);
+    assert.notEqual(result.status, 0);
+    assert.equal(git('rev-parse', 'HEAD'), controller);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });

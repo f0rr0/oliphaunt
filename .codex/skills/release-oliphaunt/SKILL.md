@@ -21,7 +21,9 @@ Publication first reuses covering completed CI or awaits an active main/requeste
 run. If none exists, a separate dispatch-only job requests CI for the selected
 products, provided main still equals the exact candidate SHA. Failed causal
 runs stop with their URL; resume by rerunning that run. An ambiguous dispatch
-is never retried automatically. Cross-commit binary reuse remains pending.
+is never retried automatically. Pre-publication recovery may reuse an explicit
+exact-source CI run after allowlisted release-control fixes; source and binary
+identities remain unchanged.
 
 Local checks use `bash tools/release/release-check.sh` for source
 metadata/release-tool tests and `bash tools/release/release-check-registries.sh
@@ -53,7 +55,7 @@ and do not treat target/ecosystem carriers as additional products.
 4. Record the candidate commit with `git rev-parse HEAD`; keep that SHA
    unchanged through qualification, lock creation, publish, and any retry. A
    product change requires fresh qualification. A narrowly permitted
-   publication-only controller fix may reuse the unchanged approved candidate.
+   release-control fix may reuse the unchanged qualified source or frozen candidate.
 5. Inspect `git status`, product versions, existing product tags/releases, registry identities, and the latest exact-SHA CI run. Report any public collision before attempting a mutation.
 6. Use `bash tools/dev/bun.sh tools/release/audit-github-release-controls.mts`
    for release setup and before public registry/tag/asset mutation, with the
@@ -101,8 +103,9 @@ credential-bearing jobs directly select their protected environments.
 Bootstrap and normal recovery rerun the original failed workflow run at the
 same release commit and frozen candidate.
 
-A root `publish` dispatch must run from the qualified
-current `main` commit. At the mutation boundary the transport helper first
+A root `publish` dispatch must run from current `main`. Normally that is also
+the qualified source; explicit recovery may retain an ancestor source after
+allowlisted release-control fixes. At the mutation boundary the transport helper first
 reads `oliphaunt-release-transport/<full-sha>` and accepts only a lightweight
 direct-commit tag at that exact SHA. When the tag is absent, or the root is on
 its first run attempt, the helper must reverify current `main` before it may
@@ -146,6 +149,13 @@ another repository mutation.
   `release_commit` and `approval_run_id`; the previous run must have completed
   with a successful candidate preparation job (or a successful legacy dry-run). Bootstrap uses the same manual rerun rule and its
   lock-bound checkpoint chain.
+  If preparation failed before publication started, dispatch current-main
+  `publish` with the original `release_commit` and successful CI
+  `qualification_run_id`, not `approval_run_id`. Require the controller's
+  `Required` gate and allowlisted ancestor diff; verify exact-run coverage and
+  artifacts, rerun registry preflight, and package/freeze from the original
+  clean source without rebuilding producers. An existing release transport tag
+  rejects this path; recover the frozen candidate instead.
 
 ## Local gates
 

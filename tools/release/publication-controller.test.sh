@@ -30,11 +30,15 @@ bash "$owner/publication-controller.sh" "$source" "$newer"
 printf 'fixed checkout validation' > tools/release/qualified-release-replay.sh
 checkout_fix="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$checkout_fix"
-for file in .github/scripts/bootstrap-registry-identities.mts .github/scripts/bootstrap-registry-identities.sh tools/release/bootstrap-registry-reconciliation.mts tools/release/release-publish.mts tools/release/publish-registries.sh tools/release/publish-frozen-npm.sh tools/release/trusted-publisher-config.sh tools/release/trusted-publisher-config.mts tools/release/frozen-npm-publish.mts tools/release/cargo-upload-reconciliation.mts tools/release/github-release-asset-upload-plan.mts tools/release/public-consumer-smoke.sh tools/release/public-consumer-smoke.mts tools/release/locked-attestation-subjects.mts; do
+for file in .github/scripts/bootstrap-registry-identities.mts .github/scripts/bootstrap-registry-identities.sh .github/scripts/require-workflow-success.sh tools/release/check_release_versions.mts tools/release/check-release-versions.sh tools/release/release-check-registries.sh tools/release/bootstrap-registry-reconciliation.mts tools/release/release-publish.mts tools/release/publish-registries.sh tools/release/publish-frozen-npm.sh tools/release/trusted-publisher-config.sh tools/release/trusted-publisher-config.mts tools/release/frozen-npm-publish.mts tools/release/cargo-upload-reconciliation.mts tools/release/github-release-asset-upload-plan.mts tools/release/public-consumer-smoke.sh tools/release/public-consumer-smoke.mts tools/release/locked-attestation-subjects.mts; do
   printf 'fixed bootstrap dependencies' > "$file"
 done
 bootstrap_fix="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$bootstrap_fix"
+mkdir -p tools/release/testdata
+printf 'workflow gate fixture' > tools/release/testdata/require-workflow-success-github.mts
+fixture_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$fixture_fix"
 mkdir -p src/docs/maintainers
 printf 'release guidance' > src/docs/maintainers/release.md
 printf 'setup guidance' > src/docs/maintainers/release-setup.md
@@ -42,7 +46,7 @@ documentation="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$documentation"
 bash "$owner/publication-controller.sh" --changes-only "$source" "$controller"
 reject 'checkout|HEAD' "$source" "$controller"
-for file in product src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts Cargo.lock .github/workflows/ci.yml tools/release/moon.yml; do
+for file in product src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts tools/release/package-release-carriers.mts tools/release/publication-lock.mts tools/release/bootstrap-publication-capsule.mts tools/release/testdata/unrelated.mts Cargo.lock .github/workflows/ci.yml tools/release/moon.yml; do
   git checkout --quiet --detach "$controller"
   mkdir -p "$(dirname "$file")"
   printf changed > "$file"

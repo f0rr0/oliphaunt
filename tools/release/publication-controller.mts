@@ -2,12 +2,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Only publication execution may differ. In particular, tools/release also
+// Only release controls may differ. In particular, tools/release also
 // contains packagers: allowing that directory wholesale would change bytes.
 const CONTROL_FILES = new Set([
   '.github/workflows/release.yml',
   '.github/scripts/resolve-release-head.sh',
   '.github/scripts/validate-release-workflow-inputs.sh',
+  '.github/scripts/require-workflow-success.sh',
+  'tools/release/testdata/require-workflow-success-github.mts',
   '.github/scripts/release-transport-ref.mts',
   '.github/scripts/download-bootstrap-ledger.mts',
   '.github/scripts/download-completed-bootstrap.mts',
@@ -17,6 +19,12 @@ const CONTROL_FILES = new Set([
   'tools/release/publication-controller.mts',
   'tools/release/publication-controller.sh',
   'tools/release/qualified-release-replay.sh',
+  'tools/release/check_release_versions.mts',
+  'tools/release/check-release-versions.sh',
+  'tools/release/release-check-registries.sh',
+  '.codex/skills/release-oliphaunt/SKILL.md',
+  '.codex/skills/release-oliphaunt/references/recovery.md',
+  '.codex/skills/qualify-oliphaunt-change/SKILL.md',
   'tools/release/release-bot.json',
   'tools/release/publish_swiftpm_source_tag.mts',
   'tools/release/publish-swiftpm-source-tag.sh',

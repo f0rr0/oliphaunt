@@ -20,9 +20,9 @@ main dispatches can produce publishable qualification; PR checks use the same
 scope but cannot authorize publication. Publication reuses covering successful
 CI, waits for active matching CI, or requests one missing run while main still
 equals the candidate SHA. Failed causal runs require recovery; ambiguous
-dispatches are not automatically repeated. Cross-commit producer reuse remains
-an explicit acceptance item rather than permission to substitute arbitrary
-older artifacts.
+dispatches are not automatically repeated. Pre-publication recovery may reuse
+an explicitly selected exact-source qualification after permitted release-control
+fixes. It never substitutes another source's artifacts or changes their identity.
 
 `Qualified` binds every planned native extension lifecycle aggregate and WASIX
 regression proof to the candidate's source SHA/tree and CI repository/run. A
@@ -259,7 +259,14 @@ unscoped tag planning continues to reject unversioned release-affecting changes.
 
 ## Qualification contract
 
-Root publication admission accepts only a current-main candidate with one non-cancelled CI run whose `head_sha` is exact and whose `Qualified` gate succeeded. That record covers required checks, tests, builds, policy, selected E2E, and named build artifacts. A successful `Builds` job alone is insufficient. After the root job pins the immutable release transport tag, the rest of that run remains bound to the exact transaction without re-evaluating the moving main branch.
+Root publication admission accepts a current-main candidate or an explicit
+ancestor source under an allowlisted current-main recovery controller. Source
+qualification requires one successful, non-cancelled CI run whose `head_sha`
+is exact and whose `Qualified` gate succeeded. That record covers required
+checks, tests, builds, policy, selected E2E, and named build artifacts. A
+successful `Builds` job alone is insufficient. After the root job pins the
+immutable release transport tag, the rest of that run remains bound to the
+exact transaction without re-evaluating the moving main branch.
 
 The qualified source commit owns the artifacts, lock, product tags, and
 registry bytes. Ordinarily it also owns the publishing workflow. A narrowly
@@ -324,6 +331,22 @@ The selected Release run must be completed and either successful (including a
 legacy dry-run) or failed with a successful `Prepare frozen publication
 candidate` job. Active and cancelled runs cannot authorize recovery. The
 normal CI qualification gate still requires a successful complete workflow.
+If preparation recovery froze the source using a later controller, that
+Release run's workflow SHA must also pass the source-to-controller allowlist;
+the capsule retains its original source SHA and its new approval run ID.
+
+If preparation failed before publication started, use `publish` on current main
+with the original full `release_commit` and its successful CI
+`qualification_run_id`, leaving `approval_run_id` empty. These inputs are
+mutually exclusive. Recovery verifies the exact run's product coverage, required
+jobs, artifacts and lifecycle evidence without searching for a substitute or
+requesting CI. The controller must pass `Required` and differ only in permitted
+release controls. Corrected registry preflight runs from that controller;
+artifact staging, packaging and freezing run from the clean original source
+checkout. The new capsule records the original CI/source identity and this
+Release run's approval identity. Publication then uses the restored controller
+and the existing frozen-candidate pipeline. An existing release transport tag
+blocks this path: after publication starts, use frozen-candidate recovery.
 
 Preparation is read-only and uses the existing `release-dry-run` environment.
 It checks visible public releases; the publishing job repeats that preflight
@@ -450,15 +473,18 @@ index entries and a mismatched checkout SHA. This source check runs locally as
 well as in GitHub Actions. Publication rechecks live registry state at its
 mutation boundary, where a race can still change the result.
 
-Preparation binds `release_commit` to the workflow commit. For
-`publish` with `approval_run_id`, it may instead identify an approved ancestor
-candidate after narrowly permitted publication-only fixes. The controller
+Preparation normally binds `release_commit` to the workflow commit. For
+`publish` with `approval_run_id` or `qualification_run_id`, it may instead
+identify an exact ancestor candidate after narrowly permitted release-control
+fixes. The controller
 check requires a clean checkout and rejects changes to product source,
 packagers, build definitions, CI, and lockfiles. The publishing commit requires
 successful CI `Required`; the frozen candidate retains its original full
 qualification, approval run, source SHA/tree, and package hashes. GitHub
 attestations verify the actual publishing workflow SHA and record it separately
-from the candidate source. No build or packaging command is replayed.
+from the candidate source. Frozen-candidate recovery replays no build or
+packaging command; pre-publication qualification recovery assembles once from
+the original source and never rebuilds producers.
 
 Normal publish discovers completed bootstrap evidence by the approved lock,
 independently of the publishing-code commit. Only successful `Release` runs
@@ -827,6 +853,13 @@ dispatch `publish` on current main with the original `release_commit` and
 candidate preparation job, or be a successful legacy dry-run. Changes to
 product source, packaging, builds, CI, or lockfiles require fresh qualification.
 Bootstrap retains its lock-bound checkpointed recovery path.
+
+If no publication transaction has started and preparation never produced a
+usable frozen candidate, use the original source SHA and successful CI
+`qualification_run_id` instead. The same controller restrictions apply; registry
+preflight and exact-source qualification verification run again before the
+original packaging code creates the candidate. Do not use this path to refreeze
+a partially published release.
 
 Ordinary clean-state control-plane workflow, policy, validator,
 registry-transport, test, or documentation changes do not use recovery and do

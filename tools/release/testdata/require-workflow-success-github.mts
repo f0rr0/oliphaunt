@@ -1,5 +1,5 @@
-import fs from 'node:fs';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 
 globalThis.fetch = async (input, options) => {
   const url = new URL(input);
@@ -29,7 +29,11 @@ globalThis.fetch = async (input, options) => {
     });
     if (/actions\/workflows[?]/.test(endpoint))
       return Response.json({ workflows: [{ id: 9, name: 'CI' }] });
-    if (/actions\/workflows\/9$/.test(endpoint)) return Response.json({ id: 9, name: 'CI' });
+    if (/actions\/workflows\/9$/.test(endpoint))
+      return Response.json({
+        id: 9,
+        name: mode === 'qualification-wrong-workflow' ? 'Release' : 'CI',
+      });
     if (/git\/ref\/heads\/main$/.test(endpoint))
       return Response.json({
         object: { sha: (mode === 'qualification-advanced' ? 'b' : 'a').repeat(40) },
@@ -82,7 +86,7 @@ globalThis.fetch = async (input, options) => {
               id,
               name: 'oliphaunt-release-candidate',
               size_in_bytes: bytes.length,
-              expired: false,
+              expired: mode === 'qualification-expired-artifact',
               digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
             },
           ],
@@ -180,11 +184,12 @@ globalThis.fetch = async (input, options) => {
     if (process.env.FAKE_MODE === 'metadata-transient')
       return new Response('unavailable', { status: 503 });
     const sha =
-      process.env.FAKE_MODE === 'wrong-sha'
+      process.env.FAKE_RELEASE_SHA ||
+      (process.env.FAKE_MODE === 'wrong-sha'
         ? 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
         : process.env.FAKE_MODE === 'upper-sha'
           ? 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-          : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+          : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     const status = process.env.FAKE_MODE === 'in-progress-run' ? 'in_progress' : 'completed';
     const conclusion =
       process.env.FAKE_MODE === 'in-progress-run'

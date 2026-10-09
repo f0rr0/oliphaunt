@@ -21,6 +21,11 @@ on:
         required: false
         type: string
         default: ""
+      qualification_run_id:
+        description: Optional successful exact-source CI run for recovery before publication starts
+        required: false
+        type: string
+        default: ""
 permissions:
   contents: read
 env:
@@ -69,6 +74,7 @@ jobs:
           RELEASE_OPERATION: ${{ inputs.operation }}
           RELEASE_COMMIT: ${{ inputs.release_commit }}
           RELEASE_APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+          RELEASE_QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
         run: bash .github/scripts/validate-release-workflow-inputs.sh
   prepare-release-pr:
     name: Prepare release PR
@@ -165,6 +171,22 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache: "false"
+      - name: Require unpublished recovery source and checked current controller
+        if: ${{ inputs.qualification_run_id != '' }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          bash .github/scripts/require-current-main.sh "$GITHUB_SHA"
+          if git ls-remote --exit-code origin "refs/tags/oliphaunt-release-transport/$RELEASE_HEAD_SHA"; then
+            echo 'Publication has started; recover with approval_run_id instead of qualification_run_id.' >&2
+            exit 1
+          else
+            status=$?
+            [[ "$status" == 2 ]] || exit "$status"
+          fi
+          bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
       - name: Derive verified release scope
         id: release_scope
         timeout-minutes: 2
@@ -226,12 +248,12 @@ jobs:
           REQUIRES_WASIX_EVIDENCE: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
           REQUIRES_NATIVE_EVIDENCE: ${{ steps.release_plan.outputs.requires_native_extension_lifecycle_evidence }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
         run: |
           qualification_args=(
             CI
             "$RELEASE_HEAD_SHA"
             0
-            --plan-qualification "$PRODUCTS_JSON"
             --event push
             --event workflow_dispatch
             --job Builds
@@ -240,6 +262,11 @@ jobs:
             --artifact artifact-build-plan
             --artifact oliphaunt-release-candidate
           )
+          if [[ -n "$QUALIFICATION_RUN_ID" ]]; then
+            qualification_args+=(--run-id "$QUALIFICATION_RUN_ID" --qualification-products "$PRODUCTS_JSON")
+          else
+            qualification_args+=(--plan-qualification "$PRODUCTS_JSON")
+          fi
           if [[ "$REQUIRES_NATIVE_EVIDENCE" == true ]]; then
             qualification_args+=(--artifact native-extension-lifecycle-evidence)
           fi
@@ -319,6 +346,7 @@ jobs:
           REQUIRES_WASIX_EVIDENCE: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).requires_wasix_release_regression_evidence }}
           REQUIRES_NATIVE_EVIDENCE: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).requires_native_extension_lifecycle_evidence }}
           PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
+          QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
         run: |
           qualification_args=(
             CI
@@ -333,6 +361,9 @@ jobs:
             --artifact artifact-build-plan
             --artifact oliphaunt-release-candidate
           )
+          if [[ -n "$QUALIFICATION_RUN_ID" ]]; then
+            qualification_args+=(--run-id "$QUALIFICATION_RUN_ID")
+          fi
           if [[ "$REQUIRES_NATIVE_EVIDENCE" == true ]]; then
             qualification_args+=(--artifact native-extension-lifecycle-evidence)
           fi
@@ -472,6 +503,12 @@ jobs:
           bash tools/release/release-check-registries.sh \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
+      - name: Checkout qualified source for unchanged packaging
+        if: ${{ inputs.qualification_run_id != '' }}
+        run: |
+          bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA"
+          git checkout --detach "$RELEASE_HEAD_SHA"
+          bash tools/release/qualified-release-replay.sh "$RELEASE_HEAD_SHA" "$RELEASE_HEAD_SHA"
       - name: Download WASIX runtime build artifacts
         if: ${{ inputs.approval_run_id == '' && contains(fromJson(fromJSON(needs.plan-candidate.outputs.release_plan).products_json), 'liboliphaunt-wasix') }}
         env:
@@ -879,6 +916,12 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 90
+      - name: Restore checked publication controller
+        if: ${{ inputs.qualification_run_id != '' }}
+        run: |
+          bash tools/release/qualified-release-replay.sh "$RELEASE_HEAD_SHA" "$RELEASE_HEAD_SHA"
+          git checkout --detach "$GITHUB_SHA"
+          bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA"
       - name: Check whether first registry identities need credentials
         id: bootstrap_credentials
         timeout-minutes: 15
