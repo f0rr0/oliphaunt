@@ -6,6 +6,13 @@
   and explicitly open a new object for PostgreSQL WAL recovery; the SDK never
   substitutes a new session or replays uncertain work under the old object.
 
+## [0.3.2]() (2026-10-10)
+
+
+### Bug Fixes
+
+* **release:** bind qualification to exact package versions ([#280](https://github.com/f0rr0/oliphaunt/issues/280)) ([cd68c6c](https://github.com/f0rr0/oliphaunt/commit/cd68c6c9655f53c50a3a98d4db36cfc256d26a3c))
+
 ## [0.3.1]() (2026-10-07)
 
 

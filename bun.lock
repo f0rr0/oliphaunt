@@ -87,39 +87,39 @@
     },
     "src/native/broker/packages/darwin-arm64": {
       "name": "@oliphaunt/broker-darwin-arm64",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "src/native/broker/packages/linux-arm64-gnu": {
       "name": "@oliphaunt/broker-linux-arm64-gnu",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "src/native/broker/packages/linux-x64-gnu": {
       "name": "@oliphaunt/broker-linux-x64-gnu",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "src/native/broker/packages/win32-x64-msvc": {
       "name": "@oliphaunt/broker-win32-x64-msvc",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "src/native/node-addon": {
       "name": "@oliphaunt/node-direct",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/native/node-addon/packages/darwin-arm64": {
       "name": "@oliphaunt/node-direct-darwin-arm64",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/native/node-addon/packages/linux-arm64-gnu": {
       "name": "@oliphaunt/node-direct-linux-arm64-gnu",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/native/node-addon/packages/linux-x64-gnu": {
       "name": "@oliphaunt/node-direct-linux-x64-gnu",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/native/node-addon/packages/win32-x64-msvc": {
       "name": "@oliphaunt/node-direct-win32-x64-msvc",
-      "version": "0.2.2",
+      "version": "0.2.3",
     },
     "src/native/postgres-tools/npm": {
       "name": "@oliphaunt/tools",
@@ -149,23 +149,23 @@
     },
     "src/native/runtime/packages/darwin-arm64": {
       "name": "@oliphaunt/liboliphaunt-darwin-arm64",
-      "version": "0.3.3",
+      "version": "0.3.4",
     },
     "src/native/runtime/packages/linux-arm64-gnu": {
       "name": "@oliphaunt/liboliphaunt-linux-arm64-gnu",
-      "version": "0.3.3",
+      "version": "0.3.4",
     },
     "src/native/runtime/packages/linux-x64-gnu": {
       "name": "@oliphaunt/liboliphaunt-linux-x64-gnu",
-      "version": "0.3.3",
+      "version": "0.3.4",
     },
     "src/native/runtime/packages/win32-x64-msvc": {
       "name": "@oliphaunt/liboliphaunt-win32-x64-msvc",
-      "version": "0.3.3",
+      "version": "0.3.4",
     },
     "src/native/sdks/react-native": {
       "name": "@oliphaunt/react-native",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "dependencies": {
         "@oliphaunt/ts-query": "0.1.1",
       },
@@ -189,7 +189,7 @@
     },
     "src/native/sdks/ts": {
       "name": "@oliphaunt/ts",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "dependencies": {
         "@oliphaunt/ts-query": "0.1.1",
       },
@@ -225,23 +225,23 @@
     },
     "src/wasix/node-addon": {
       "name": "@oliphaunt/wasix-napi",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "src/wasix/node-addon/packages/darwin-arm64": {
       "name": "@oliphaunt/wasix-napi-darwin-arm64",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "src/wasix/node-addon/packages/linux-arm64-gnu": {
       "name": "@oliphaunt/wasix-napi-linux-arm64-gnu",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "src/wasix/node-addon/packages/linux-x64-gnu": {
       "name": "@oliphaunt/wasix-napi-linux-x64-gnu",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "src/wasix/node-addon/packages/win32-x64-msvc": {
       "name": "@oliphaunt/wasix-napi-win32-x64-msvc",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
     "src/wasix/postgres-tools/npm": {
       "name": "@oliphaunt/liboliphaunt-wasix-tools",
@@ -287,7 +287,7 @@
     },
     "src/wasix/sdks/ts": {
       "name": "@oliphaunt/wasix-ts",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "dependencies": {
         "@oliphaunt/ts-query": "0.1.1",
         "fzstd": "0.1.1",

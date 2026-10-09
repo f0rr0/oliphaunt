@@ -2445,7 +2445,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-broker"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-build"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "serde",
  "sha2 0.10.9",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-napi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "liboliphaunt-wasix-portable",
  "napi",

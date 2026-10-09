@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3]() (2026-10-10)
+
+
+### Bug Fixes
+
+* **broker:** normalize accepted sockets to blocking mode ([#284](https://github.com/f0rr0/oliphaunt/issues/284)) ([306e2dc](https://github.com/f0rr0/oliphaunt/commit/306e2dc4a57f6165a79f0bbf30337174ba54261e))
+
 ## [0.8.2]() (2026-10-09)
 
 

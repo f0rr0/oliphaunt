@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/react-native",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "React Native New Architecture SDK for Oliphaunt.",
   "license": "MIT",
   "repository": {
@@ -43,8 +43,8 @@
     }
   },
   "oliphaunt": {
-    "swiftSdkVersion": "0.8.2",
-    "kotlinSdkVersion": "0.3.3"
+    "swiftSdkVersion": "0.8.3",
+    "kotlinSdkVersion": "0.3.4"
   },
   "files": [
     "android",

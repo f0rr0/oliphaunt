@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3]() (2026-10-10)
+
+
+### Bug Fixes
+
+* **mobile:** harden Swift, Kotlin, and React Native integration ([#274](https://github.com/f0rr0/oliphaunt/issues/274)) ([8dfbfd2](https://github.com/f0rr0/oliphaunt/commit/8dfbfd288214ee59e5ef6000a492e73fff81c716))
+* **release:** preserve dependency identity across SDK stages ([#253](https://github.com/f0rr0/oliphaunt/issues/253)) ([207fcfa](https://github.com/f0rr0/oliphaunt/commit/207fcfa5cb0cccad89545b84e95356692ee12cd9))
+
 ## [0.3.2]() (2026-10-09)
 
 
