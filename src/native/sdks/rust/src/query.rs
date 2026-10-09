@@ -249,7 +249,15 @@ mod tests {
                             expected["typeOid"].as_u64().unwrap(),
                             "{name}"
                         );
-                        assert_eq!(actual.format, QueryFormat::Text, "{name}");
+                        assert_eq!(
+                            actual.format,
+                            if expected["format"] == "text" {
+                                QueryFormat::Text
+                            } else {
+                                QueryFormat::Binary
+                            },
+                            "{name}"
+                        );
                     }
                     let rows = expected["rows"].as_array().expect("expected rows");
                     assert_eq!(result.rows().len(), rows.len(), "{name}");

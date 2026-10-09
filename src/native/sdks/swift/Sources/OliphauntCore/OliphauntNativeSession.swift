@@ -99,6 +99,8 @@ package final class NativeDirectSession: OliphauntSession, Sendable {
     package func cancel() async throws {
         do { try await database.cancel() } catch { throw nativeError(error) }
     }
+    package func isUsable() -> Bool { !database.isClosed() }
+
     package func close() async throws {
         do { try await database.detach() } catch { throw nativeError(error) }
     }

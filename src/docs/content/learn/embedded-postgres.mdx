@@ -19,7 +19,7 @@ A native persistent database is a managed directory, not a single file. Let the 
 
 ## One handle, one session
 
-Embedded query handles use one PostgreSQL session. Async calls let the application stay responsive, but queries still execute in order on that session. A transaction holds the session until it commits or rolls back.
+Embedded query handles use one PostgreSQL session. Async calls let the application stay responsive, but queries still execute in order on that session. Cancellation targets the active physical operation; it does not cancel every queued call. A transaction holds the session until it commits or rolls back.
 
 Use the transaction object supplied to a callback for every operation inside it. Calling the outer database handle from the callback can wait on the transaction that is already using the session.
 
@@ -31,6 +31,8 @@ PostgreSQL uses write-ahead logging, or WAL, to recover committed changes after 
 
 Await operations and close the database explicitly. Mobile operating systems may terminate an app without calling shutdown code, so closing must not be your only persistence mechanism. Keep transactions short and treat an interrupted operation with an unknown result as uncertain; check application state before retrying it.
 
+A terminal close stops further work, and repeated close calls report the same outcome. A failed teardown can retain the physical runtime and its storage lock until process exit. Do not delete or reuse that storage based only on the handle's closed state. A failure before teardown that leaves the session usable can be retried.
+
 ## Back up a database
 
 Use the SDK's `backup` and `restore` APIs. A live directory copy can miss files or WAL needed for a consistent database. Restore into a new or empty destination, then open that destination with the required extensions available.
@@ -39,6 +41,6 @@ Physical archives belong to their runtime family and require a compatible runtim
 
 ## Use PostgreSQL features
 
-Parameters use PostgreSQL's `$1`, `$2` syntax. Types, casts, constraints, and query planning follow PostgreSQL behavior. [Extensions](/docs/reference/extensions) add features such as vector search; select and package an extension before enabling it with SQL.
+Parameters use PostgreSQL's `$1`, `$2` syntax. Query and describe calls accept at most 32,767 parameters. Types, casts, constraints, and query planning follow PostgreSQL behavior. [Extensions](/docs/reference/extensions) add features such as vector search; select and package an extension before enabling it with SQL.
 
 Use the [SDK guides](/docs/sdk) for concrete storage, transaction, and backup examples.

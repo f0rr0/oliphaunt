@@ -296,12 +296,14 @@ class OliphauntModule(
       return
     }
     scope.launch {
+      var closed = false
       runCatching {
         sessionMutex.withLock {
           val session = sessions[key]
           if (session != null) {
             try { session.close() } finally {
-              if (session.isClosed && sessions.remove(key, session)) {
+              closed = session.isClosed
+              if (closed && sessions.remove(key, session)) {
                 nativeDirectClaim?.let { claim -> nativeDirectProcessOwner.release(claim) }
                 nativeDirectClaim = null
               }
@@ -310,7 +312,7 @@ class OliphauntModule(
         }
       }.fold(
         onSuccess = { promise.resolve(null) },
-        onFailure = { error -> promise.rejectOliphaunt("liboliphaunt_close_failed", error) },
+        onFailure = { error -> promise.rejectOliphaunt("liboliphaunt_close_failed", error, closed) },
       )
     }
   }
@@ -604,13 +606,15 @@ class OliphauntModule(
   }
 }
 
-private fun Promise.rejectOliphaunt(code: String, error: Throwable) {
-  val info = (error as? OliphauntBrokerException)?.let { broker ->
-    Arguments.createMap().apply {
+private fun Promise.rejectOliphaunt(code: String, error: Throwable, closed: Boolean? = null) {
+  val broker = error as? OliphauntBrokerException
+  val info = if (broker != null || closed != null) Arguments.createMap().apply {
+    if (broker != null) {
       putString("reason", broker.reason.name.replaceFirstChar { it.lowercaseChar() })
       putString("execution", broker.execution.name.replaceFirstChar { it.lowercaseChar() })
       putBoolean("requiresReopen", broker.requiresReopen)
     }
-  }
+    closed?.let { putBoolean("oliphauntClosed", it) }
+  } else null
   reject(code, error.message, error, info)
 }

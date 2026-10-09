@@ -10,7 +10,10 @@ import org.json.JSONObject
 import org.junit.Assume.assumeTrue
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class NativeBindingsTest {
@@ -48,6 +51,25 @@ class NativeBindingsTest {
         )
         try {
             assertEquals("42", database.query("SELECT 42").rows.single().text(0))
+            val typed = database.query(
+                "SELECT $1::uuid AS empty, $2::int4 AS same, $3::bytea AS same",
+                listOf(QueryParam.typedNull(PostgresOid.uuid), QueryParam.binary(byteArrayOf(0, 0, 0, 42), PostgresOid.int4), QueryParam.bytes(byteArrayOf(0, -1, 1, 2))),
+            )
+            assertNull(typed.rows.single().raw(0))
+            assertEquals(listOf("empty", "same", "same"), typed.fields.map { it.name })
+            assertEquals(42, typed.rows.single().value(1, PostgresDecoders.int))
+            assertContentEquals(byteArrayOf(0, -1, 1, 2), typed.rows.single().value(2, PostgresDecoders.bytes))
+            assertFailsWith<OliphauntException> { typed.rows.single().raw("same") }
+            database.exec("CREATE TEMP TABLE typed_fixture (value int)")
+            database.exec("CREATE TYPE pg_temp.typed_fixture_enum AS ENUM ('one')")
+            val oid = PostgresOid(database.query("SELECT 'pg_temp.typed_fixture_enum'::regtype::oid::text").rows.single().text(0)!!.toUInt())
+            val custom = database.query("SELECT $1 AS value", listOf(QueryParam.text("one", oid)))
+            assertEquals(oid, custom.fields.single().typeOid)
+            assertEquals("one", custom.rows.single().text(0))
+            val error = runCatching { database.query("SELECT $1", listOf(QueryParam.text("missing", oid))) }.exceptionOrNull()
+            assertTrue(error is PostgresException)
+            assertEquals("22P02", (error as PostgresException).postgresError.sqlstate)
+            assertEquals("9", database.query("SELECT 9").rows.single().text(0))
             val sleeping = launch { runCatching { database.query("SELECT pg_sleep(60)") } }
             delay(100)
             val start = System.nanoTime()

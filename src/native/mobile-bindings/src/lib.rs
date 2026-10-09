@@ -137,6 +137,10 @@ impl NativeDatabase {
     pub async fn detach(&self) -> Result<(), NativeError> {
         Ok(self.database.close().await?)
     }
+
+    pub fn is_closed(&self) -> bool {
+        self.database.is_closed()
+    }
 }
 
 #[derive(uniffi::Object)]
@@ -151,6 +155,7 @@ impl NativeRequest {
             .backup()
             .await
             .map_err(|error| self.failure(error))
+            .and_then(limit_buffered_response)
     }
 
     pub async fn execute(&self, bytes: Vec<u8>) -> Result<Vec<u8>, NativeError> {
@@ -158,6 +163,7 @@ impl NativeRequest {
             .execute(bytes)
             .await
             .map_err(|error| self.failure(error))
+            .and_then(limit_buffered_response)
     }
 
     pub async fn stream(
@@ -213,5 +219,41 @@ impl NativeRequest {
         } else {
             error.into()
         }
+    }
+}
+
+// UniFFI prefixes a byte sequence with i32 length; JNA's ByteBuffer capacity
+// must also fit that prefix. This is a bridge limit, not a native memory quota.
+fn check_buffered_response_length(length: usize) -> Result<(), NativeError> {
+    if length > i32::MAX as usize - size_of::<i32>() {
+        return Err(NativeError::Database {
+            detail: "buffered response exceeds the mobile byte-array limit; use raw streaming or file backup".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn limit_buffered_response(bytes: Vec<u8>) -> Result<Vec<u8>, NativeError> {
+    check_buffered_response_length(bytes.len())?;
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffered_response_limit_includes_uniffi_length_prefix() {
+        let limit = i32::MAX as usize - size_of::<i32>();
+        for length in [0, 1, limit] {
+            check_buffered_response_length(length).unwrap();
+        }
+        for length in [limit + 1, i32::MAX as usize, usize::MAX] {
+            assert!(matches!(
+                check_buffered_response_length(length),
+                Err(NativeError::Database { .. })
+            ));
+        }
+        assert_eq!(limit_buffered_response(vec![1, 2, 3]).unwrap(), [1, 2, 3]);
     }
 }

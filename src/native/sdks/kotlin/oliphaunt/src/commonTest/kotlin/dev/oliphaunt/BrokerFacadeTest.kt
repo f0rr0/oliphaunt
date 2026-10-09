@@ -86,14 +86,37 @@ class BrokerFacadeTest {
 
     @Test
     fun terminalCloseReleasesFacadeEvenWhenReceiptIsLost() = runTest {
+        val failure = OliphauntBrokerException(BrokerFailureReason.WorkerInterrupted, BrokerExecution.Unknown, true, "lost close receipt")
+        var closes = 0
         val database = open(object : FakeBrokerSession() {
             override fun isUsable(): Boolean = false
             override suspend fun execProtocolRaw(request: ByteArray): ByteArray = error("unused")
-            override suspend fun close(): Unit = throw OliphauntBrokerException(BrokerFailureReason.WorkerInterrupted, BrokerExecution.Unknown, true, "lost close receipt")
+            override suspend fun close() {
+                closes++
+                throw failure
+            }
         })
-        assertIs<OliphauntBrokerException>(runCatching { database.close() }.exceptionOrNull())
+        assertTrue(runCatching { database.close() }.exceptionOrNull() === failure)
         assertTrue(database.isClosed)
+        assertTrue(runCatching { database.close() }.exceptionOrNull() === failure)
+        assertEquals(1, closes)
+    }
+
+    @Test
+    fun retryableCloseFailureKeepsSessionUsable() = runTest {
+        var closes = 0
+        val database = open(object : FakeBrokerSession() {
+            override suspend fun execProtocolRaw(request: ByteArray): ByteArray = request
+            override suspend fun close() {
+                if (++closes == 1) throw OliphauntException("reset failed")
+            }
+        })
+        assertIs<OliphauntException>(runCatching { database.close() }.exceptionOrNull())
+        assertFalse(database.isClosed)
+        assertEquals(1, database.execProtocolRaw(byteArrayOf(1))[0].toInt())
         database.close()
+        database.close()
+        assertEquals(2, closes)
     }
 
     private suspend fun open(session: OliphauntSession): OliphauntDatabase = OliphauntDatabase.open(

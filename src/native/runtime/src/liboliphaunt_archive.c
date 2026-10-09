@@ -82,48 +82,6 @@ static int exec_simple_query(OliphauntHandle *handle, const char *sql, Oliphaunt
     return rc;
 }
 
-static void postgres_error_message(const uint8_t *body, size_t len, char *out, size_t out_len) {
-    const char *localized_severity = NULL;
-    size_t localized_severity_len = 0;
-    const char *severity = NULL;
-    size_t severity_len = 0;
-    const char *message = NULL;
-    size_t message_len = 0;
-    size_t off = 0;
-    while (off < len && body[off] != 0) {
-        uint8_t field = body[off++];
-        size_t start = off;
-        while (off < len && body[off] != 0) {
-            off++;
-        }
-        if (off >= len) {
-            break;
-        }
-        if (field == 'V' && severity == NULL) {
-            severity = (const char *)body + start;
-            severity_len = off - start;
-        } else if (field == 'S' && localized_severity == NULL) {
-            localized_severity = (const char *)body + start;
-            localized_severity_len = off - start;
-        } else if (field == 'M') {
-            message = (const char *)body + start;
-            message_len = off - start;
-        }
-        off++;
-    }
-    if (severity == NULL) {
-        severity = localized_severity;
-        severity_len = localized_severity_len;
-    }
-    if (severity != NULL && message != NULL) {
-        snprintf(out, out_len, "%.*s: %.*s", (int)severity_len, severity, (int)message_len, message);
-    } else if (message != NULL) {
-        snprintf(out, out_len, "%.*s", (int)message_len, message);
-    } else {
-        snprintf(out, out_len, "PostgreSQL ErrorResponse");
-    }
-}
-
 static int copy_single_data_row(
     OliphauntHandle *handle,
     const OliphauntResponse *response,
@@ -151,7 +109,7 @@ static int copy_single_data_row(
         if (tag == 'E') {
             char pg_error[512];
             char message[1024];
-            postgres_error_message(body, body_len, pg_error, sizeof(pg_error));
+            oliphaunt_postgres_error_message(body, body_len, pg_error, sizeof(pg_error));
             snprintf(message, sizeof(message), "%s failed: %s", context, pg_error);
             set_error(handle, message);
             goto fail;

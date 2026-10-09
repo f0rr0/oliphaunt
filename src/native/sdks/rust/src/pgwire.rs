@@ -1,49 +1,17 @@
-use std::io::{self, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
+use crate::socket::LocalSocket;
+use std::io::{BufReader, Read, Write};
+use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 
 const PROTOCOL_VERSION_3: i32 = 196_608;
 const POSTGRES_WIRE_READ_BUFFER: usize = 64 * 1024;
 
-trait PostgresStream: Read + Write + Send {
-    fn set_stream_timeouts(
-        &self,
-        read_timeout: Option<Duration>,
-        write_timeout: Option<Duration>,
-    ) -> io::Result<()>;
-}
-
-impl PostgresStream for TcpStream {
-    fn set_stream_timeouts(
-        &self,
-        read_timeout: Option<Duration>,
-        write_timeout: Option<Duration>,
-    ) -> io::Result<()> {
-        self.set_read_timeout(read_timeout)?;
-        self.set_write_timeout(write_timeout)
-    }
-}
-
-#[cfg(unix)]
-impl PostgresStream for UnixStream {
-    fn set_stream_timeouts(
-        &self,
-        read_timeout: Option<Duration>,
-        write_timeout: Option<Duration>,
-    ) -> io::Result<()> {
-        self.set_read_timeout(read_timeout)?;
-        self.set_write_timeout(write_timeout)
-    }
-}
-
 pub(crate) struct PostgresWireClient {
-    stream: BufReader<Box<dyn PostgresStream>>,
+    stream: BufReader<LocalSocket>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,26 +29,30 @@ impl PostgresWireClient {
         connect_timeout: Duration,
         io_timeout: Duration,
     ) -> Result<Self> {
+        let deadline = Instant::now() + io_timeout;
         let mut stream = BufReader::with_capacity(
             POSTGRES_WIRE_READ_BUFFER,
-            connect_stream(&endpoint, connect_timeout, io_timeout)?,
+            connect_stream(&endpoint, (Instant::now() + connect_timeout).min(deadline))?,
         );
-        write_startup_message(stream.get_mut().as_mut(), user, database)?;
-        read_until_ready(&mut stream)?;
         stream
-            .get_ref()
-            .as_ref()
-            .set_stream_timeouts(None, None)
-            .map_err(|err| {
-                Error::Engine(format!(
-                    "clear steady-state native server protocol socket timeouts: {err}"
-                ))
-            })?;
+            .get_mut()
+            .set_deadline(Some(deadline))
+            .map_err(|err| Error::Engine(err.to_string()))?;
+        write_startup_message(stream.get_mut(), user, database)?;
+        read_until_ready(&mut stream)?;
+        stream.get_mut().set_deadline(None).map_err(|err| {
+            Error::Engine(format!(
+                "clear steady-state native server protocol socket timeouts: {err}"
+            ))
+        })?;
         Ok(Self { stream })
     }
 
-    pub(crate) fn terminate(&mut self) -> Result<()> {
+    pub(crate) fn terminate(&mut self, deadline: Instant) -> Result<()> {
         let stream = self.stream.get_mut();
+        stream.set_deadline(Some(deadline)).map_err(|err| {
+            Error::Engine(format!("set native server termination deadline: {err}"))
+        })?;
         stream
             .write_all(&[b'X', 0, 0, 0, 4])
             .and_then(|()| stream.flush())
@@ -88,58 +60,13 @@ impl PostgresWireClient {
     }
 }
 
-fn connect_stream(
-    endpoint: &PostgresEndpoint,
-    connect_timeout: Duration,
-    io_timeout: Duration,
-) -> Result<Box<dyn PostgresStream>> {
-    match endpoint {
-        PostgresEndpoint::Tcp(addr) => {
-            let stream = connect_tcp_stream(*addr, connect_timeout, io_timeout)?;
-            Ok(Box::new(stream))
-        }
+fn connect_stream(endpoint: &PostgresEndpoint, deadline: Instant) -> Result<LocalSocket> {
+    let result = match endpoint {
+        PostgresEndpoint::Tcp(addr) => LocalSocket::tcp(*addr, deadline),
         #[cfg(unix)]
-        PostgresEndpoint::Unix(path) => {
-            let stream = UnixStream::connect(path).map_err(|err| {
-                Error::Engine(format!(
-                    "connect to native server socket {}: {err}",
-                    path.display()
-                ))
-            })?;
-            stream.set_read_timeout(Some(io_timeout)).map_err(|err| {
-                Error::Engine(format!(
-                    "set native server socket read timeout {}: {err}",
-                    path.display()
-                ))
-            })?;
-            stream.set_write_timeout(Some(io_timeout)).map_err(|err| {
-                Error::Engine(format!(
-                    "set native server socket write timeout {}: {err}",
-                    path.display()
-                ))
-            })?;
-            Ok(Box::new(stream))
-        }
-    }
-}
-
-fn connect_tcp_stream(
-    addr: SocketAddr,
-    connect_timeout: Duration,
-    io_timeout: Duration,
-) -> Result<TcpStream> {
-    let stream = TcpStream::connect_timeout(&addr, connect_timeout)
-        .map_err(|err| Error::Engine(format!("connect to native server {addr}: {err}")))?;
-    stream
-        .set_nodelay(true)
-        .map_err(|err| Error::Engine(format!("set TCP_NODELAY on native server: {err}")))?;
-    stream
-        .set_read_timeout(Some(io_timeout))
-        .map_err(|err| Error::Engine(format!("set native server read timeout: {err}")))?;
-    stream
-        .set_write_timeout(Some(io_timeout))
-        .map_err(|err| Error::Engine(format!("set native server write timeout: {err}")))?;
-    Ok(stream)
+        PostgresEndpoint::Unix(path) => LocalSocket::unix(path, deadline),
+    };
+    result.map_err(|err| Error::Engine(format!("connect to native server {endpoint:?}: {err}")))
 }
 
 fn write_startup_message(stream: &mut dyn Write, user: &str, database: &str) -> Result<()> {

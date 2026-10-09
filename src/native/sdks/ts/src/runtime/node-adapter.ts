@@ -147,9 +147,26 @@ export function spawnManagedChild(options: {
     env: options.replaceEnv ? options.env : { ...process.env, ...options.env },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
-  const exited = new Promise<number | null>((resolve) => {
-    child.once('exit', (code) => resolve(code));
+  let resolveWait!: (code: number | null) => void;
+  let resolveExit!: (code: number | null) => void;
+  let rejectExit!: (error: Error) => void;
+  const waited = new Promise<number | null>((resolve) => {
+    resolveWait = resolve;
   });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    resolveExit = resolve;
+    rejectExit = reject;
+  });
+  // Startup observes errors; cleanup releases roots only after confirmed exit.
+  child.on('error', (error) => {
+    rejectExit(error);
+    if (child.pid === undefined) resolveWait(null);
+  });
+  child.once('exit', (code) => {
+    resolveExit(code);
+    resolveWait(code);
+  });
+  void exited.catch(() => {});
 
   return {
     stdout: child.stdout,
@@ -157,7 +174,7 @@ export function spawnManagedChild(options: {
       child.kill(signal);
     },
     wait(): Promise<number | null> {
-      return exited;
+      return waited;
     },
     exited(): Promise<number | null> {
       return exited;

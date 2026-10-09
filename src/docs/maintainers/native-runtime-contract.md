@@ -2,7 +2,9 @@
 
 The native product family shares PostgreSQL 18 through `liboliphaunt`. Rust and
 desktop TypeScript offer direct, broker, and server modes. Swift, Kotlin, and
-React Native currently offer direct mode through their platform bindings.
+React Native offer direct and broker modes through their platform bindings.
+Mobile broker ownership uses Android services or Apple XPC; it does not expose
+a local server API.
 
 ## Modes
 
@@ -29,8 +31,8 @@ Reopening a nonempty incomplete root fails without mutation.
 
 Closing never removes an application-owned root. SDK-owned temporary roots live
 for the physical runtime lifetime; direct logical detach does not imply that
-the resident backend has stopped. Session/root ownership is released only when
-teardown succeeds. After a teardown failure, the native Rust SDK intentionally
+the resident backend has stopped. A terminal facade does not prove that physical session/root ownership has been
+released. Ownership is released only after confirmed teardown. After a teardown failure, the native Rust SDK intentionally
 retains the failed owner until process exit so no destructor repeats an
 unconfirmed destructive operation.
 
@@ -103,7 +105,11 @@ readiness boundary before reuse.
 Direct close is generation guarded so stale async cleanup cannot terminate a
 newer logical reopen. Broker and server owners supervise their child processes
 and surface process exit as a runtime error rather than silently selecting
-another mode.
+another mode. Desktop startup, authentication, cancellation transport, and
+close-control I/O use phase deadlines; successful startup clears these socket
+deadlines before ordinary SQL. PostgreSQL CancelRequest has no acknowledgement.
+Terminal close outcomes are retained for repeated public close calls.
+Pre-teardown failures that leave the underlying session usable remain retryable.
 
 ## Qualification
 

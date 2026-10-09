@@ -1190,6 +1190,7 @@ class MockNative implements Spec {
   onPausedRequest?: () => void;
   pauseCancel?: Promise<void>;
   onCancelStarted?: () => void;
+  closeFailure?: Error;
   pauseClose?: Promise<void>;
   onCloseStarted?: () => void;
   nextReadyStatus?: number;
@@ -1283,6 +1284,7 @@ class MockNative implements Spec {
     this.closedHandles.push(handle);
     this.onCloseStarted?.();
     await this.pauseClose;
+    if (this.closeFailure) throw this.closeFailure;
     this.#activeGenerations.delete(handle);
   }
 
@@ -1805,4 +1807,30 @@ test('native build selects topology for open and restore without runtime overrid
     () => createOliphauntClient(new MockNative('unexpected')),
     /unsupported native database topology/,
   );
+});
+
+test('close retains terminal failures and permits retry only while the native owner remains usable', async () => {
+  for (const topology of ['direct', 'broker']) {
+    for (const closed of [false, true]) {
+      const native = new MockNative(topology);
+      const db = await createOliphauntClient(native).open();
+      const failure = Object.assign(new Error('close failed'), {
+        userInfo: { oliphauntClosed: closed },
+      });
+      native.closeFailure = failure;
+      await assert.rejects(db.close(), (error) => error === failure);
+      assert.equal(db.closed, closed);
+      if (closed) {
+        await assert.rejects(db.close(), (error) => error === failure);
+        await assert.rejects(db.query('SELECT 1'), /closed/);
+        assert.equal(native.closedHandles.length, 1);
+      } else {
+        await db.query('SELECT 1');
+        native.closeFailure = undefined;
+        await db.close();
+        await db.close();
+        assert.equal(native.closedHandles.length, 2);
+      }
+    }
+  }
 });
