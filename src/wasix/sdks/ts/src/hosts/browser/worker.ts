@@ -8,6 +8,7 @@ import { createWorkerSessionDispatcher } from '../../workers/worker-dispatch.js'
 
 const scope = globalThis as unknown as DedicatedWorkerGlobalScope;
 const directHost: DirectWasixHost = {
+  runWasix: host.runWasix,
   Directory: host.Directory,
   init: host.init,
   instantiateOliphauntDirect: host.instantiateOliphauntDirect,

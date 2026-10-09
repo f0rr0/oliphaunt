@@ -10,7 +10,6 @@ export async function initializeWasixStorage(
   host: DirectWasixHost,
   runtime: PreparedWasixRuntime,
 ): Promise<WasixDirectoryMount> {
-  if (host.runWasix === undefined) throw new Error('WASIX host does not provide initdb execution');
   const initdb = runtime.layout.mounts['/bin']?.files.initdb;
   if (initdb === undefined) throw new Error('WASIX runtime archive is missing bin/initdb');
   const { mounts, baseDirectory } = await materializeWasixMounts(host.Directory, runtime.layout, {

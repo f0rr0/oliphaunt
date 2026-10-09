@@ -119,9 +119,9 @@ Extension selection is exact-name only. SDKs accept exact PostgreSQL extension
 names; `vector` means only the SQL extension `vector`, and names like `core`,
 `search`, or `geo` must not resolve to hidden extension sets.
 
-Select seed and ICU carriers explicitly. Browser creation of new storage needs
-a seed; an existing database can reopen without one. Native desktop and native
-WASIX hosts retain their supported `initdb` fallback. Writable PGDATA is separate
+Select seed and ICU carriers explicitly when needed. Browser, native desktop,
+and native WASIX hosts run `initdb` for new storage when no seed is selected;
+an existing database can reopen without one. Writable PGDATA is separate
 from immutable installed resources. Swift, Gradle, and the Expo plugin compose
 the selected mobile carriers during the application build; ordinary applications
 do not run the internal `oliphaunt-resources` maintainer CLI.

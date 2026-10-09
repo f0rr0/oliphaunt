@@ -73,8 +73,8 @@ and provide that runtime code again.
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 
-// Native hosts can initialize without a seed. New browser storage must pass
-// seed: { archive, manifest } from the separate seed-wasix-standard carrier.
+// New storage runs initdb by default on browser and native hosts.
+// An optional seed: { archive, manifest } skips initdb.
 await using database = await Oliphaunt.open();
 const result = await database.query('select $1::int + 1 as answer', [41]);
 ```
