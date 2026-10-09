@@ -380,9 +380,8 @@ private final class OliphauntProtocolStreamCallbackGate: @unchecked Sendable {
     }
 
     func isReentry(databaseID: UUID) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return active || OliphauntProtocolStreamTaskContext.databaseID == databaseID
+        // Callback activity alone cannot identify the calling task.
+        return OliphauntProtocolStreamTaskContext.databaseID == databaseID
     }
 
     static let reentryMessage =

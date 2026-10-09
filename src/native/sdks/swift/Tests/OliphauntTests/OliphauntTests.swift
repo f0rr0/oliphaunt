@@ -1432,6 +1432,7 @@ func rawStreamCallbackRejectsSameHandleReentryButAllowsCancellation() async thro
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
     let outcomes = (0..<6).map { _ in AsyncStringSignal() }
     let cancellation = AsyncStringSignal()
+    let rejected = DispatchSemaphore(value: 0)
 
     try await database.execProtocolRawStream(Data([1])) { _ in
         let forbidden: [@Sendable () async throws -> Void] = [
@@ -1444,6 +1445,7 @@ func rawStreamCallbackRejectsSameHandleReentryButAllowsCancellation() async thro
         ]
         for (operation, outcome) in zip(forbidden, outcomes) {
             Task {
+                defer { rejected.signal() }
                 do {
                     try await operation()
                     await outcome.complete("unexpected success")
@@ -1451,6 +1453,9 @@ func rawStreamCallbackRejectsSameHandleReentryButAllowsCancellation() async thro
                     await outcome.complete(String(describing: error))
                 }
             }
+        }
+        for _ in forbidden {
+            #expect(rejected.wait(timeout: .now() + 2) == .success)
         }
         Task {
             do {
@@ -2532,26 +2537,58 @@ private func makeCompletePgdata(at pgdata: URL) throws {
     try Data("control".utf8).write(to: pgdata.appendingPathComponent("global/pg_control"))
 }
 
+@Test(arguments: [false, true])
+func rawStreamCallbackQueuesIndependentWork(close: Bool) async throws {
+    let session = TestSession(response: commandResponse("OK"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let callbackEntered = AsyncStringSignal()
+    let releaseCallback = DispatchSemaphore(value: 0)
+    let caller = Task {
+        _ = await callbackEntered.wait()
+        do {
+            if close {
+                try await database.close()
+            } else {
+                _ = try await database.execProtocolRaw(Data([2]))
+            }
+        } catch {
+            releaseCallback.signal()
+            throw error
+        }
+    }
+    let queued = Task {
+        await database.waitUntilQueuedOperationCount(atLeast: 1)
+        releaseCallback.signal()
+    }
+
+    try await database.execProtocolRawStream(Data([1])) { _ in
+        Task.detached { await callbackEntered.complete("entered") }
+        #expect(releaseCallback.wait(timeout: .now() + 2) == .success)
+    }
+    try await caller.value
+    await queued.value
+    #expect(await session.requests() == (close ? [Data([1])] : [Data([1]), Data([2])]))
+    #expect(await database.isClosed == close)
+    try await database.close()
+}
+
 @Test
-func rawStreamCallbackRejectsDetachedReentry() async throws {
+func rawStreamCallbackCanScheduleDetachedWorkWithoutWaitingForIt() async throws {
     let session = TestSession(response: commandResponse("OK"))
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
     let outcome = AsyncStringSignal()
     try await database.execProtocolRawStream(Data([1])) { _ in
-        let finished = DispatchSemaphore(value: 0)
         Task.detached {
             do {
                 _ = try await database.execProtocolRaw(Data([2]))
-                await outcome.complete("unexpected success")
+                await outcome.complete("success")
             } catch {
                 await outcome.complete(String(describing: error))
             }
-            finished.signal()
         }
-        #expect(finished.wait(timeout: .now() + 2) == .success)
     }
-    #expect(await outcome.wait().contains("must not reenter the same Oliphaunt database"))
-    #expect(await session.requests().count == 1)
+    #expect(await outcome.wait() == "success")
+    #expect(await session.requests() == [Data([1]), Data([2])])
     try await database.close()
 }
 
