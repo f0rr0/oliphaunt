@@ -315,14 +315,19 @@ impl BrokerListener {
     }
 
     fn accept(&self) -> io::Result<server::Socket> {
+        // Client workers require blocking I/O; accepted-socket mode varies by platform.
         match self {
-            Self::Tcp(listener) => listener
-                .accept()
-                .map(|(stream, _)| server::Socket::Tcp(stream)),
+            Self::Tcp(listener) => {
+                let (stream, _) = listener.accept()?;
+                stream.set_nonblocking(false)?;
+                Ok(server::Socket::Tcp(stream))
+            }
             #[cfg(unix)]
-            Self::Unix { listener, .. } => listener
-                .accept()
-                .map(|(stream, _)| server::Socket::Unix(stream)),
+            Self::Unix { listener, .. } => {
+                let (stream, _) = listener.accept()?;
+                stream.set_nonblocking(false)?;
+                Ok(server::Socket::Unix(stream))
+            }
         }
     }
 
@@ -337,8 +342,11 @@ impl BrokerListener {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStringExt;
     use std::path::PathBuf;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -353,5 +361,58 @@ mod tests {
             .expect("non-UTF-8 filesystem paths remain valid broker roots");
 
         assert_eq!(parsed.root, root);
+    }
+
+    fn assert_blocking_connection(listener: BrokerListener) {
+        listener.nonblocking().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let socket = loop {
+            match listener.accept() {
+                Ok(socket) => break socket,
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("failed to accept test connection: {error}"),
+            }
+        };
+        let fd = match &socket {
+            server::Socket::Tcp(stream) => stream.as_raw_fd(),
+            server::Socket::Unix(stream) => stream.as_raw_fd(),
+        };
+        // SAFETY: socket owns the live descriptor; F_GETFL takes no extra argument.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert_ne!(
+            flags,
+            -1,
+            "read socket flags: {}",
+            io::Error::last_os_error()
+        );
+        assert_eq!(
+            flags & libc::O_NONBLOCK,
+            0,
+            "accepted socket must be blocking"
+        );
+        assert!(
+            matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock)
+        );
+    }
+
+    #[test]
+    fn accepted_tcp_connections_are_blocking() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        assert_blocking_connection(BrokerListener::Tcp(listener));
+    }
+
+    #[test]
+    fn accepted_unix_connections_are_blocking() {
+        let path =
+            std::env::temp_dir().join(format!("oliphaunt-accept-{}.sock", std::process::id()));
+        let listener = BrokerListener::bind(BrokerListenEndpoint::Unix(path.clone())).unwrap();
+        let _peer = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        assert_blocking_connection(listener);
+        std::fs::remove_file(path).unwrap();
     }
 }
