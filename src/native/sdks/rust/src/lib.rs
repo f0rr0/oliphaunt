@@ -27,6 +27,8 @@ pub mod mobile;
 mod pgwire;
 mod protocol;
 mod query;
+#[cfg(feature = "desktop")]
+mod socket;
 pub(crate) use oliphaunt_query as query_core;
 mod reply;
 #[cfg(feature = "desktop")]

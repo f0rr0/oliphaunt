@@ -7,12 +7,14 @@ import { Readable } from 'node:stream';
 import { test } from 'bun:test';
 
 import { normalizeOpenConfig } from '../config.js';
-import { MemoryDuplexStream } from '../runtime/byte-stream.js';
+import { MemoryDuplexStream, withStreamDeadline } from '../runtime/byte-stream.js';
 import { BrokerHandle, createBrokerRuntimeBinding } from '../runtime/broker.js';
 import { encodeBrokerResponse } from '../runtime/broker-frames.js';
 import { createForgottenRuntimeHandleCleanup } from '../runtime/forgotten-handle.js';
 import {
   cleanupFailedManagedLaunch,
+  connectEndpoint,
+  spawnManagedChild,
   parseReadyEndpoint,
   randomHexToken,
   readReadyLine,
@@ -29,6 +31,37 @@ import {
   runSpawnedServerCommand,
   ServerHandle,
 } from '../runtime/server.js';
+import {
+  CONTROL_TIMEOUT_MS_ENV,
+  DEFAULT_CONTROL_TIMEOUT_MS,
+  lifecycleTimeoutMs,
+} from '../runtime/timeouts.js';
+
+test('lifecycle settings reject timer overflow and noncanonical integers', () => {
+  const previous = process.env[CONTROL_TIMEOUT_MS_ENV];
+  try {
+    delete process.env[CONTROL_TIMEOUT_MS_ENV];
+    assert.equal(lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS), 5_000);
+    for (const value of ['0', '-1', '+1', '01', '1.0', '1ms', ' ', '2147483648']) {
+      process.env[CONTROL_TIMEOUT_MS_ENV] = value;
+      assert.throws(() => lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS));
+    }
+    for (const [value, expected] of [
+      ['', 5_000],
+      [' 30 ', 30],
+      ['2147483647', 2_147_483_647],
+    ] as const) {
+      process.env[CONTROL_TIMEOUT_MS_ENV] = value;
+      assert.equal(
+        lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS),
+        expected,
+      );
+    }
+  } finally {
+    if (previous === undefined) delete process.env[CONTROL_TIMEOUT_MS_ENV];
+    else process.env[CONTROL_TIMEOUT_MS_ENV] = previous;
+  }
+});
 
 test('runtime adapters implement the shared internal operation boundary', async () => {
   const broker = createBrokerRuntimeBinding();
@@ -196,7 +229,12 @@ test('broker failure and detach stay bounded when SIGKILL never produces a reap'
   );
   const handle = new BrokerHandle(
     config,
-    { child, stream, client: new PostgresWireClient(new MemoryDuplexStream()), ipcDir },
+    {
+      child,
+      stream,
+      client: new PostgresWireClient(new MemoryDuplexStream()),
+      ipcDir,
+    },
     1,
   );
 
@@ -778,7 +816,10 @@ test('broker drains every PostgreSQL query boundary after callback failure and r
   ]);
   const config = normalizeOpenConfig(
     { topology: 'broker' },
-    { instanceDirectory: '/tmp/unused-broker-fixture', temporaryDirectory: false },
+    {
+      instanceDirectory: '/tmp/unused-broker-fixture',
+      temporaryDirectory: false,
+    },
   );
   const child = {
     stdout: Readable.from([]),
@@ -814,7 +855,10 @@ test('broker transport failure overrides callback failure when recovery is uncon
   const frame = new Uint8Array([0x43, 0, 0, 0, 5, 0]);
   const config = normalizeOpenConfig(
     { topology: 'broker' },
-    { instanceDirectory: '/tmp/unused-broker-fixture', temporaryDirectory: false },
+    {
+      instanceDirectory: '/tmp/unused-broker-fixture',
+      temporaryDirectory: false,
+    },
   );
   const child = {
     stdout: Readable.from([]),
@@ -884,5 +928,117 @@ test('PostgreSQL drains pipelined results while a socket write is backpressured'
   await settleWithin(
     client.execProtocolStream(new Uint8Array([0x51, 0, 0, 0, 5, 0]), () => {}),
     250,
+  );
+});
+
+test('managed child spawn failures reject startup and confirm that no child needs reaping', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'oliphaunt-spawn-failure-'));
+  try {
+    const child = spawnManagedChild({
+      executable: join(directory, 'missing'),
+      args: [],
+    });
+    await assert.rejects(child.exited(), /ENOENT/);
+    assert.equal(await child.wait(), null);
+    const launch = { child, paths: [directory] };
+    assert.deepEqual(await cleanupFailedManagedLaunch(launch, 30, 'fixture'), []);
+    await assert.rejects(stat(directory), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('control deadline interrupts actual socket reads and reaches broker cleanup', async () => {
+  let peer: Socket | undefined;
+  const server = createServer((socket) => {
+    peer = socket;
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const stream = await connectEndpoint({
+    kind: 'tcp',
+    host: '127.0.0.1',
+    port: address.port,
+  });
+  let waits = 0;
+  const child = {
+    stdout: Readable.from([]),
+    kill() {},
+    async wait() {
+      waits++;
+      return 0;
+    },
+    async exited() {
+      return 0;
+    },
+  };
+  const config = normalizeOpenConfig(
+    { topology: 'broker' },
+    { instanceDirectory: '/unused', temporaryDirectory: false },
+  );
+  const handle = new BrokerHandle(
+    config,
+    {
+      child,
+      stream,
+      client: new PostgresWireClient(new MemoryDuplexStream()),
+      ipcDir: undefined,
+    },
+    30,
+  );
+  try {
+    const start = performance.now();
+    await assert.rejects(handle.detach(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.ok(error.errors.some((cause) => String(cause).includes('deadline exceeded')));
+      return true;
+    });
+    assert.ok(performance.now() - start < 1000);
+    assert.equal(waits, 1);
+  } finally {
+    await stream.close();
+    peer?.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('control deadline preserves operation and cleanup failures', async () => {
+  const operationError = new Error('operation interrupted');
+  const cleanupError = new Error('cleanup failed');
+  let rejectRead!: (error: Error) => void;
+  const pending = new Promise<void>((_, reject) => {
+    rejectRead = reject;
+  });
+  const stream = {
+    async readExactly() {
+      return new Uint8Array();
+    },
+    async writeAll() {},
+    async close() {
+      rejectRead(operationError);
+      throw cleanupError;
+    },
+  };
+  await assert.rejects(
+    withStreamDeadline(stream, performance.now() + 10, () => pending, 'fixture'),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.ok(error.errors.some((value) => value === operationError));
+      assert.ok(error.errors.some((value) => value === cleanupError));
+      assert.ok(error.errors.some((value) => String(value).includes('deadline exceeded')));
+      return true;
+    },
+  );
+  await assert.rejects(
+    withStreamDeadline(
+      stream,
+      performance.now() + 100,
+      async () => {
+        throw operationError;
+      },
+      'fixture',
+    ),
+    (error) => error === operationError,
   );
 });

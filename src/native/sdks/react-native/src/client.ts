@@ -476,11 +476,11 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   close(): Promise<void> {
     return this.#capturePromiseFailure(() => {
       this.#assertNotInProtocolStreamCallback();
-      if (this.#closed) {
-        return Promise.resolve();
-      }
       if (this.#closeAttempt !== undefined) {
         return this.#closeAttempt;
+      }
+      if (this.#closed) {
+        return Promise.resolve();
       }
       if (this.#activeTransaction) {
         return Promise.reject(new Error('cannot close Oliphaunt while a transaction is active'));
@@ -507,14 +507,17 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         .catch((error: unknown) => {
           this.#closeTeardownStarted = false;
           this.#closing = false;
-          if (this.#broker && isBrokerFailure(error) && error.requiresReopen) {
+          if (
+            isTerminalCloseFailure(error) ||
+            (this.#broker && isBrokerFailure(error) && error.requiresReopen)
+          ) {
             this.#closed = true;
             this.#forgottenRegistry?.unregister(this);
           }
           throw error;
         })
         .finally(() => {
-          if (this.#closeAttempt === attempt) {
+          if (!this.#closed && this.#closeAttempt === attempt) {
             this.#closeAttempt = undefined;
           }
         });
@@ -1382,4 +1385,11 @@ function rethrowNativeFailure(error: unknown): never {
     }
   }
   throw error;
+}
+
+function isTerminalCloseFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { userInfo?: Record<string, unknown> }).userInfo?.oliphauntClosed === true
+  );
 }

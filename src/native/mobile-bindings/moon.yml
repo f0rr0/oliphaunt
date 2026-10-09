@@ -16,7 +16,10 @@ fileGroups:
 tasks:
   test:
     tags: ["quality", "unit", "requires-rust"]
-    command: "cargo test -p oliphaunt --no-default-features --features mobile-bindings --lib --locked"
+    script: |
+      set -e
+      cargo test -p oliphaunt --no-default-features --features mobile-bindings --lib --locked
+      cargo test -p oliphaunt-mobile-bindings --lib --locked
     deps: [{target: "cargo-sources", cacheStrategy: hash}]
     inputs: ["@group(cargo-workspace)", "src/**/*", "/src/native/sdks/rust/src/**/*", "/src/native/broker/src/**/*"]
     options:

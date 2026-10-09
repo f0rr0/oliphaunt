@@ -1907,6 +1907,7 @@ private actor TestSession: OliphauntSession {
     private let omitBeginReady: Bool
     private let blockBegin: Bool
     private let blockClose: Bool
+    private let failFirstClose: Bool
     private let preserveResponseStatus: Bool
     private var capturedRequests: [Data] = []
     private var cancels = 0
@@ -1933,6 +1934,7 @@ private actor TestSession: OliphauntSession {
         omitBeginReady: Bool = false,
         blockBegin: Bool = false,
         blockClose: Bool = false,
+        failFirstClose: Bool = false,
         preserveResponseStatus: Bool = false
     ) {
         self.response = response
@@ -1948,6 +1950,7 @@ private actor TestSession: OliphauntSession {
         self.omitBeginReady = omitBeginReady
         self.blockBegin = blockBegin
         self.blockClose = blockClose
+        self.failFirstClose = failFirstClose
         self.preserveResponseStatus = preserveResponseStatus
     }
 
@@ -2033,6 +2036,7 @@ private actor TestSession: OliphauntSession {
             }
         }
         closes += 1
+        if failFirstClose && closes == 1 { throw OliphauntError.engine("reset failed") }
     }
     func requests() -> [Data] { capturedRequests }
     func cancelCount() -> Int { cancels }
@@ -2526,4 +2530,39 @@ private func makeCompletePgdata(at pgdata: URL) throws {
     )
     try Data("18\n".utf8).write(to: pgdata.appendingPathComponent("PG_VERSION"))
     try Data("control".utf8).write(to: pgdata.appendingPathComponent("global/pg_control"))
+}
+
+@Test
+func rawStreamCallbackRejectsDetachedReentry() async throws {
+    let session = TestSession(response: commandResponse("OK"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let outcome = AsyncStringSignal()
+    try await database.execProtocolRawStream(Data([1])) { _ in
+        let finished = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                _ = try await database.execProtocolRaw(Data([2]))
+                await outcome.complete("unexpected success")
+            } catch {
+                await outcome.complete(String(describing: error))
+            }
+            finished.signal()
+        }
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+    }
+    #expect(await outcome.wait().contains("must not reenter the same Oliphaunt database"))
+    #expect(await session.requests().count == 1)
+    try await database.close()
+}
+
+@Test
+func retryableCloseFailureKeepsSwiftSessionUsable() async throws {
+    let session = TestSession(response: commandResponse("OK"), failFirstClose: true)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    await #expect(throws: OliphauntError.self) { try await database.close() }
+    #expect(await !database.isClosed)
+    _ = try await database.execProtocolRaw(Data([1]))
+    try await database.close()
+    try await database.close()
+    #expect(await session.closeCount() == 2)
 }

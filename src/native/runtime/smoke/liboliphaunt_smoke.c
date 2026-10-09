@@ -6,6 +6,14 @@
 
 #include "postgres.h"
 #include "fmgr.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#endif
+#include "tcop/utility.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 #include "../include/oliphaunt.h"
 #ifdef _WIN32
@@ -36,8 +44,47 @@ PG_MODULE_MAGIC_EXT(
     .version = "1");
 
 PG_FUNCTION_INFO_V1(liboliphaunt_smoke_static_answer);
+PG_FUNCTION_INFO_V1(liboliphaunt_smoke_fail_reset);
 
 static int liboliphaunt_smoke_static_init_calls = 0;
+static int reset_failure_command = 0;
+static ProcessUtility_hook_type previous_utility_hook = NULL;
+
+static void fail_reset_utility(
+    PlannedStmt *statement,
+    const char *query,
+    bool read_only,
+    ProcessUtilityContext context,
+    ParamListInfo parameters,
+    QueryEnvironment *environment,
+    DestReceiver *destination,
+    QueryCompletion *completion) {
+    Node *command = statement->utilityStmt;
+    bool fail =
+        (reset_failure_command == 1 && IsA(command, TransactionStmt) &&
+         ((TransactionStmt *)command)->kind == TRANS_STMT_ROLLBACK) ||
+        (reset_failure_command == 2 && IsA(command, DiscardStmt) &&
+         ((DiscardStmt *)command)->target == DISCARD_ALL);
+    if (fail) {
+        reset_failure_command = 0;
+        ProcessUtility_hook = previous_utility_hook;
+        ereport(ERROR, (errmsg("injected native session reset failure")));
+    }
+    if (previous_utility_hook != NULL) {
+        previous_utility_hook(statement, query, read_only, context,
+                              parameters, environment, destination, completion);
+    } else {
+        standard_ProcessUtility(statement, query, read_only, context,
+                                parameters, environment, destination, completion);
+    }
+}
+
+Datum liboliphaunt_smoke_fail_reset(PG_FUNCTION_ARGS) {
+    reset_failure_command = PG_GETARG_INT32(0);
+    previous_utility_hook = ProcessUtility_hook;
+    ProcessUtility_hook = fail_reset_utility;
+    PG_RETURN_INT32(reset_failure_command);
+}
 
 #if defined(_MSC_VER)
 #define OLIPHAUNT_SMOKE_THREAD_LOCAL __declspec(thread)
@@ -361,6 +408,14 @@ static int register_static_extension_fixture(void) {
         {
             .name = "pg_finfo_liboliphaunt_smoke_static_answer",
             .address = (void *)pg_finfo_liboliphaunt_smoke_static_answer,
+        },
+        {
+            .name = "liboliphaunt_smoke_fail_reset",
+            .address = (void *)liboliphaunt_smoke_fail_reset,
+        },
+        {
+            .name = "pg_finfo_liboliphaunt_smoke_fail_reset",
+            .address = (void *)pg_finfo_liboliphaunt_smoke_fail_reset,
         },
         {
             .name = long_linker_symbol,
@@ -2842,6 +2897,40 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
+    if (exec_simple_query_expect_bytes(
+            db,
+            "CREATE OR REPLACE FUNCTION public.smoke_fail_reset(integer) RETURNS integer "
+            "AS 'liboliphaunt_smoke_static', 'liboliphaunt_smoke_fail_reset' LANGUAGE C STRICT; "
+            "CREATE TEMP TABLE reset_failure_fixture (value int); SELECT 1",
+            "1") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+    for (int command = 1; command <= 2; command++) {
+        const char *arm = command == 1
+            ? "BEGIN; SELECT public.smoke_fail_reset(1)"
+            : "ROLLBACK; SELECT public.smoke_fail_reset(2)";
+        if (exec_simple_query_expect_bytes(db, arm, command == 1 ? "1" : "2") != 0) {
+            oliphaunt_close(db);
+            return 1;
+        }
+        OliphauntErrorCapture reset_error = {0};
+        if (oliphaunt_detach_with_error(db, &reset_error) == 0 ||
+            strstr(reset_error.message, "injected native session reset failure") == NULL ||
+            oliphaunt_logical_generation(db) != first_generation) {
+            fprintf(stderr, "failed reset lost its error or retired the logical generation: %s\n",
+                    reset_error.message);
+            oliphaunt_close(db);
+            return 1;
+        }
+        /* ERROR can abort the transaction; a query still reaches PostgreSQL
+         * through the retained handle, and ROLLBACK recovers it for retry. */
+        if (exec_simple_query_expect_bytes(db, "ROLLBACK; SELECT 42", "42") != 0) {
+            oliphaunt_close(db);
+            return 1;
+        }
+    }
+
     fprintf(stderr, "detaching logical database handle\n");
     rc = oliphaunt_detach(db);
     if (rc != 0) {
@@ -2898,6 +2987,7 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
     if (exec_incremental_input(reopened) != 0 ||
+        exec_simple_query_expect_bytes(reopened, "SELECT to_regclass('pg_temp.reset_failure_fixture') IS NULL", "t") != 0 ||
         exec_query_expect_tags(reopened, "SELECT 42 AS reopened_after_stale_close", select_tags, sizeof(select_tags)) != 0) {
         oliphaunt_close(reopened);
         return 1;

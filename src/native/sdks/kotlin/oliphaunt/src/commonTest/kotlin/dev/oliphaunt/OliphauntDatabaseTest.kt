@@ -118,6 +118,24 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun presizedEncoderPreservesExactWireBytesAndChecksSizeBeforeAllocation() {
+        val request = extendedQueryProtocol("SELECT $1", listOf(QueryParam.int(42)))
+        val expected = "50000000150053454c45435420243100000100000017" +
+            "4200000016000000010000000100000002343200010000" +
+            "44000000065000450000000900000000005300000004"
+        assertContentEquals(expected.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), request)
+        assertEquals(Int.MAX_VALUE, checkedFrontendPacketSize(Int.MAX_VALUE.toLong()))
+        assertFailsWith<OliphauntException> { checkedFrontendPacketSize(Int.MAX_VALUE.toLong() + 1) }
+        assertFailsWith<OliphauntException> { checkedFrontendPacketSize(-1) }
+        val large = ByteArray(1024 * 1024) { (it % 251).toByte() }
+        val parameter = QueryParam.bytes(large)
+        large.fill(0)
+        val packet = extendedQueryProtocol("SELECT $1", listOf(parameter))
+        assertTrue(packet.size > 1024 * 1024)
+        assertEquals(listOf(PostgresOid.bytea), parseParameterOids(packet))
+    }
+
+    @Test
     fun explicitZeroParameterOidsAreRejectedButOmittedOidsRemainInferable() {
         assertEquals(
             listOf(PostgresOid(0u), PostgresOid(0u)),

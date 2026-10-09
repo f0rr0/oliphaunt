@@ -637,13 +637,31 @@ internal fun extendedQueryProtocol(
             )
         }
     }
-    val packet = mutableListOf<Byte>()
-    packet.addParse(sql, parameters.map { it.typeOid ?: PostgresOid(0u) })
-    packet.addBind(parameters)
-    packet.addDescribe('P')
-    packet.addExecute()
-    packet.addFrontendMessage('S'.code, ByteArray(0))
-    return packet.toByteArray()
+    val sqlBytes = sql.encodeToByteArray()
+    val parseLength = sqlBytes.size.toLong() + 8 + 4L * parameters.size
+    val payloadLength = parameters.sumOf { it.encodedBytes?.size?.toLong() ?: 0L }
+    val bindLength = 14 + 6L * parameters.size + payloadLength
+    val packet = FrontendPacket(checkedFrontendPacketSize(parseLength + bindLength + 24))
+    packet.parse(sqlBytes, parameters.size) { parameters[it].typeOid?.value ?: 0u }
+    packet.message('B', checkedFrontendPacketSize(bindLength))
+    packet.byte(0)
+    packet.byte(0)
+    packet.int16(parameters.size)
+    parameters.forEach { packet.int16(if (it.format == ValueFormat.Binary) 1 else 0) }
+    packet.int16(parameters.size)
+    parameters.forEach { parameter ->
+        val bytes = parameter.encodedBytes
+        packet.int32(bytes?.size ?: -1)
+        if (bytes != null) packet.bytes(bytes)
+    }
+    packet.int16(1)
+    packet.int16(0)
+    packet.describe('P')
+    packet.message('E', 9)
+    packet.byte(0)
+    packet.int32(0)
+    packet.message('S', 4)
+    return packet.finish()
 }
 
 internal fun describeQueryProtocol(
@@ -652,11 +670,13 @@ internal fun describeQueryProtocol(
 ): ByteArray {
     requireParameterCount(parameterTypes.size, "describe")
     requireSqlWithoutNul(sql, "describe")
-    val packet = mutableListOf<Byte>()
-    packet.addParse(sql, parameterTypes)
-    packet.addDescribe('S')
-    packet.addFrontendMessage('S'.code, ByteArray(0))
-    return packet.toByteArray()
+    val sqlBytes = sql.encodeToByteArray()
+    val parseLength = sqlBytes.size.toLong() + 8 + 4L * parameterTypes.size
+    val packet = FrontendPacket(checkedFrontendPacketSize(parseLength + 13))
+    packet.parse(sqlBytes, parameterTypes.size) { parameterTypes[it].value }
+    packet.describe('S')
+    packet.message('S', 4)
+    return packet.finish()
 }
 
 internal enum class ExpectedProtocol {
@@ -1607,79 +1627,62 @@ private fun ByteArray.indexOf(
     return -1
 }
 
-private fun MutableList<Byte>.addParse(
-    sql: String,
-    parameterTypes: List<PostgresOid>,
-) {
-    val body = mutableListOf<Byte>()
-    body.addCString("")
-    body.addCString(sql)
-    body.addInt16(parameterTypes.size)
-    parameterTypes.forEach { body.addUInt32(it.value) }
-    addFrontendMessage('P'.code, body.toByteArray())
-}
-
-private fun MutableList<Byte>.addBind(parameters: List<QueryParam>) {
-    val body = mutableListOf<Byte>()
-    body.addCString("")
-    body.addCString("")
-    body.addInt16(parameters.size)
-    parameters.forEach { body.addInt16(if (it.format == ValueFormat.Binary) 1 else 0) }
-    body.addInt16(parameters.size)
-    parameters.forEach { parameter ->
-        parameter.encodedBytes?.let(body::addSizedValue) ?: body.addInt32(-1)
+internal fun checkedFrontendPacketSize(size: Long): Int {
+    if (size < 0 || size > Int.MAX_VALUE) {
+        throw OliphauntException("frontend protocol packet is too large")
     }
-    body.addInt16(1)
-    body.addInt16(0)
-    addFrontendMessage('B'.code, body.toByteArray())
+    return size.toInt()
 }
 
-private fun MutableList<Byte>.addDescribe(kind: Char) {
-    val body = mutableListOf(kind.code.toByte())
-    body.addCString("")
-    addFrontendMessage('D'.code, body.toByteArray())
-}
+private class FrontendPacket(size: Int) {
+    private val packet = ByteArray(size)
+    private var offset = 0
 
-private fun MutableList<Byte>.addExecute() {
-    val body = mutableListOf<Byte>()
-    body.addCString("")
-    body.addInt32(0)
-    addFrontendMessage('E'.code, body.toByteArray())
-}
+    fun byte(value: Int) {
+        packet[offset++] = value.toByte()
+    }
 
-private fun MutableList<Byte>.addFrontendMessage(
-    tag: Int,
-    body: ByteArray,
-) {
-    add(tag.toByte())
-    addInt32(body.size + 4)
-    addAll(body.asIterable())
-}
+    fun int16(value: Int) {
+        byte(value ushr 8)
+        byte(value)
+    }
 
-private fun MutableList<Byte>.addCString(value: String) {
-    if (value.any { it.code == 0 }) throw OliphauntException("frontend protocol string must not contain NUL bytes")
-    addAll(value.encodeToByteArray().asIterable())
-    add(0)
-}
+    fun int32(value: Int) {
+        byte(value ushr 24)
+        byte(value ushr 16)
+        byte(value ushr 8)
+        byte(value)
+    }
 
-private fun MutableList<Byte>.addSizedValue(value: ByteArray) {
-    addInt32(value.size)
-    addAll(value.asIterable())
-}
+    fun bytes(value: ByteArray) {
+        value.copyInto(packet, offset)
+        offset += value.size
+    }
 
-private fun MutableList<Byte>.addUInt32(value: UInt) {
-    add(((value shr 24) and 0xffu).toByte())
-    add(((value shr 16) and 0xffu).toByte())
-    add(((value shr 8) and 0xffu).toByte())
-    add((value and 0xffu).toByte())
-}
+    fun message(tag: Char, length: Int) {
+        byte(tag.code)
+        int32(length)
+    }
 
-private fun MutableList<Byte>.addInt32(value: Int) = addUInt32(value.toUInt())
+    fun parse(sql: ByteArray, count: Int, typeOid: (Int) -> UInt) {
+        message('P', checkedFrontendPacketSize(sql.size.toLong() + 8 + 4L * count))
+        byte(0)
+        bytes(sql)
+        byte(0)
+        int16(count)
+        repeat(count) { int32(typeOid(it).toInt()) }
+    }
 
-private fun MutableList<Byte>.addInt16(value: Int) {
-    val bits = value and 0xffff
-    add(((bits ushr 8) and 0xff).toByte())
-    add((bits and 0xff).toByte())
+    fun describe(kind: Char) {
+        message('D', 6)
+        byte(kind.code)
+        byte(0)
+    }
+
+    fun finish(): ByteArray {
+        check(offset == packet.size)
+        return packet
+    }
 }
 
 private fun requireParameterCount(

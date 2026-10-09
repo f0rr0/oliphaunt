@@ -24,7 +24,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:oliphaunt-broker", "dep:getrandom"]
+desktop = ["dep:oliphaunt-broker", "dep:getrandom", "dep:libc"]
 mobile-bindings = ["dep:oliphaunt-broker", "dep:libc"]
 
 [package.metadata.oliphaunt]

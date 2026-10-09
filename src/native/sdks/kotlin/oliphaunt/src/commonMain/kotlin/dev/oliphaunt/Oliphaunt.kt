@@ -281,6 +281,8 @@ public class OliphauntDatabase private constructor(
     private var activeCancellationCount = 0
     private var cancellationDrainWaiter: CompletableDeferred<Unit>? = null
 
+    private var terminalCloseFailure: Throwable? = null
+
     @Volatile
     private var closed = false
 
@@ -496,6 +498,7 @@ public class OliphauntDatabase private constructor(
                 ensureNoProtocolStreamCallbackReentry()
                 when {
                     closed -> {
+                        terminalCloseFailure?.let { throw it }
                         null
                     }
 
@@ -536,7 +539,10 @@ public class OliphauntDatabase private constructor(
         } catch (error: Throwable) {
             withContext(NonCancellable) {
                 stateMutex.withLock {
-                    if (!session.isUsable()) closed = true
+                    if (!session.isUsable()) {
+                        terminalCloseFailure = error
+                        closed = true
+                    }
                     closeTeardownStarted = false
                     closing = false
                 }
