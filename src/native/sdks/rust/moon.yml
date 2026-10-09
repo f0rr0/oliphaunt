@@ -96,7 +96,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   test-integration:
-    tags: ["ci-native-consumers", "platform-linux-x64-gnu", "regression", "runtime", "requires-rust"]
+    tags: ["ci-native-consumers", "platform-linux-x64-gnu", "regression", "runtime", "requires-rust", "qualification-mode-workspace-integration"]
     script: |
       set -e
       bash src/native/sdks/tests/with-runtime.sh --tools --broker cargo nextest run -p oliphaunt --locked --test native_smoke --test native_sql_regression --no-tests=fail --test-threads=1
@@ -228,7 +228,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   test-consumer:
-    tags: ["release", "runtime", "ci-rust-sdk-package"]
+    tags: ["release", "runtime", "ci-rust-sdk-package", "qualification-mode-installed-pinned"]
     script: |
       set -eu
       bash tools/dev/bun.sh src/native/sdks/rust/tools/check-package.mts
@@ -252,7 +252,6 @@ tasks:
       - "/rust-toolchain.toml"
       - "/src/native/sdks/rust/tests/release-consumer/**/*"
       - "/src/native/sdks/rust/tools/check-release-consumer.sh"
-      - "/src/native/sdks/rust/tools/artifact-dependencies.mts"
       - "/tools/dev/bun.sh"
     outputs:
       - "/target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer"
@@ -261,8 +260,8 @@ tasks:
       runFromWorkspaceRoot: true
 
   test-consumer-runtime:
-    tags: [consumer, integration, ci-native-consumers, platform-linux-x64-gnu, requires-rust]
-    command: "bash src/native/sdks/rust/tools/check-release-consumer.sh run target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer target/liboliphaunt/desktop-release-assets/linux-x64-gnu target/postgres-tools/native/release-assets target/oliphaunt-broker/release-assets"
+    tags: [consumer, integration, ci-native-consumers, platform-linux-x64-gnu, qualification-mode-candidate-override]
+    command: "bash src/native/sdks/rust/tools/check-release-consumer.sh candidate-override target/oliphaunt-rust/release-consumer/oliphaunt-rust-release-consumer target/liboliphaunt/desktop-release-assets/linux-x64-gnu target/postgres-tools/native/release-assets target/oliphaunt-broker/release-assets"
     deps:
       - "~:test-consumer"
       - "liboliphaunt-native:package-runtime-desktop-target"
@@ -270,9 +269,6 @@ tasks:
       - "oliphaunt-broker:build-release-assets"
     inputs:
       - "tools/check-release-consumer.sh"
-      - "/src/native/runtime/tools/package-liboliphaunt-cargo-artifacts.mts"
-      - "/src/native/broker/tools/package_broker_cargo_artifacts.mts"
-      - "/tools/packaging/native-cargo-payload.mts"
     options:
       cache: false
       runFromWorkspaceRoot: true

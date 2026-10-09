@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -7,8 +7,8 @@ import {
   affectedPlanBinding,
   assertBindingMatches,
   assertCandidateBindingShape,
-  candidateQualificationMode,
   assertQualificationProductCoverage,
+  candidateQualificationMode,
   wasixEvidenceBinding,
 } from '../../.github/scripts/release-candidate-lib.mts';
 
@@ -30,10 +30,22 @@ test('selected-product evidence binds scope and candidate SHA and rejects uncove
         qualification_base_sha: null,
         qualification_head_sha: sha,
         qualification_products: ['oliphaunt-js'],
-        tasks: ['oliphaunt-js:package', 'oliphaunt-query-ts:package'],
+        tasks: ['oliphaunt-js:package', 'oliphaunt-js:test-consumer', 'oliphaunt-query-ts:package'],
         projects: ['oliphaunt-js'],
         jobs: ['affected', 'js-sdk-package'],
         extension_package_products: [],
+        package_bindings: [
+          {
+            consumer: 'oliphaunt-js',
+            consumerVersion: '1.2.3',
+            producer: 'liboliphaunt-native',
+            producerVersion: '2.3.4',
+            origin: 'published',
+          },
+        ],
+        qualification_task_modes: [
+          { task: 'oliphaunt-js:test-consumer', mode: 'installed-pinned' },
+        ],
       }),
     );
     const candidate = {
@@ -44,6 +56,10 @@ test('selected-product evidence binds scope and candidate SHA and rejects uncove
       evidence: { wasixReleaseRegression: null },
     };
     expect(() => assertCandidateBindingShape(candidate)).not.toThrow();
+    expect(candidate.affectedPlan.packageBindings).toHaveLength(1);
+    expect(candidate.affectedPlan.taskModes).toEqual([
+      { task: 'oliphaunt-js:test-consumer', mode: 'installed-pinned' },
+    ]);
     expect(() => assertQualificationProductCoverage(candidate, ['oliphaunt-js'])).not.toThrow();
     expect(() => assertQualificationProductCoverage(candidate, ['liboliphaunt-native'])).toThrow(
       /missing qualification/,
@@ -51,6 +67,90 @@ test('selected-product evidence binds scope and candidate SHA and rejects uncove
     expect(() => assertQualificationProductCoverage(candidate, [])).toThrow(/non-empty/);
     expect(() => assertCandidateBindingShape({ ...candidate, sha: 'b'.repeat(40) })).toThrow(
       /candidate SHA/,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('selected-product evidence rejects contradictory package origins and task modes', () => {
+  const { root, cleanup } = fixture();
+  const sha = 'a'.repeat(40);
+  const base = {
+    qualification_mode: 'selected-products',
+    qualification_base_sha: null,
+    qualification_head_sha: sha,
+    qualification_products: ['oliphaunt-js'],
+    tasks: ['oliphaunt-js:test-consumer'],
+    projects: ['oliphaunt-js'],
+    jobs: ['affected', 'js-sdk-package'],
+    extension_package_products: [],
+    package_bindings: [],
+    qualification_task_modes: [],
+  };
+  try {
+    for (const [name, change, message] of [
+      [
+        'unselected-candidate-producer',
+        {
+          package_bindings: [
+            {
+              consumer: 'oliphaunt-js',
+              consumerVersion: '1.2.3',
+              producer: 'liboliphaunt-native',
+              producerVersion: '2.3.4',
+              origin: 'candidate',
+            },
+          ],
+        },
+        'candidate bindings must name selected qualification products',
+      ],
+      [
+        'unselected-mode-task',
+        {
+          qualification_task_modes: [{ task: 'oliphaunt-js:unselected', mode: 'installed-pinned' }],
+        },
+        'task modes must describe selected qualification tasks',
+      ],
+      [
+        'unknown-mode',
+        {
+          qualification_task_modes: [
+            { task: 'oliphaunt-js:test-consumer', mode: 'current-workspace' },
+          ],
+        },
+        'mode is invalid',
+      ],
+    ]) {
+      const planPath = path.join(root, `${name}.json`);
+      writeFileSync(planPath, JSON.stringify({ ...base, ...change }));
+      expect(() => affectedPlanBinding(planPath, false)).toThrow(message);
+    }
+
+    const candidate = {
+      schemaVersion: 2,
+      sha,
+      affectedPlan: {
+        digest: `sha256:${'b'.repeat(64)}`,
+        jobs: base.jobs,
+        projects: base.projects,
+        extensionPackageProducts: [],
+        packageBindings: [],
+        taskModes: [{ task: 'oliphaunt-js:unselected', mode: 'installed-pinned' }],
+        wasixReleaseRegressionRequired: false,
+        qualification: {
+          mode: 'selected-products',
+          baseSha: null,
+          headSha: sha,
+          products: base.qualification_products,
+          tasks: base.tasks,
+        },
+      },
+      evidenceRequirements: { wasixReleaseRegression: false, artifacts: [] },
+      evidence: { wasixReleaseRegression: null },
+    };
+    expect(() => assertCandidateBindingShape(candidate)).toThrow(
+      'task modes must describe selected qualification tasks',
     );
   } finally {
     cleanup();

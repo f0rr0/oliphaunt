@@ -1,11 +1,20 @@
 import { expect, test } from 'bun:test';
 import {
+  validateConsumerContractCoverage,
   validatePublishedCargoExtensionConsumers,
   validateReleaseConsumerCompatibility,
-  validateConsumerContractCoverage,
 } from './consumer-compatibility.mts';
+import { releasePackageBindings } from './release-graph.mts';
 
 function fixture() {
+  const extensionRuntimes = {
+    'oliphaunt-wasix-ts': 'liboliphaunt-wasix',
+    'oliphaunt-wasix-rust': 'liboliphaunt-wasix',
+    'oliphaunt-js': 'liboliphaunt-native',
+    'oliphaunt-kotlin': 'liboliphaunt-native',
+    'oliphaunt-swift': 'liboliphaunt-native',
+  };
+  const sdks = new Set([...Object.keys(extensionRuntimes), 'oliphaunt-rust']);
   const versions = {
     'oliphaunt-wasix-ts': '0.2.1',
     'oliphaunt-wasix-napi': '0.2.0',
@@ -26,6 +35,12 @@ function fixture() {
       {
         version,
         tag_prefix: `${id}-v`,
+        ...(sdks.has(id) ? { kind: 'sdk' } : {}),
+        ...(extensionRuntimes[id]
+          ? { exact_extension_runtime: extensionRuntimes[id] }
+          : id === 'oliphaunt-rust'
+            ? { exact_extension_runtime: false }
+            : {}),
         ...(id === 'oliphaunt-extension-vector' ? { extension: { class: 'external' } } : {}),
       },
     ]),
@@ -41,6 +56,7 @@ function fixture() {
     'oliphaunt-js': { 'liboliphaunt-native': '0.3.1' },
     'oliphaunt-kotlin': { 'liboliphaunt-native': '0.3.1' },
     'oliphaunt-swift': { 'liboliphaunt-native': '0.3.1' },
+    'oliphaunt-rust': { 'liboliphaunt-native': '0.3.1' },
     'oliphaunt-react-native': { 'oliphaunt-kotlin': '0.3.1', 'oliphaunt-swift': '0.8.0' },
     'oliphaunt-extension-vector': { 'liboliphaunt-wasix': '0.3.1', 'liboliphaunt-native': '0.3.1' },
   };
@@ -195,4 +211,59 @@ test('new runtime SDKs require an explicit consumer contract before metadata adm
     compatibility_versions: { runtime: { source_product: 'liboliphaunt-wasix' } },
   };
   expect(() => validateConsumerContractCoverage(state.products)).toThrow('future-sdk must declare');
+});
+
+test('release bindings preserve an unchanged consumer pin when its runtime advances', () => {
+  const state = fixture();
+  const entries = Object.entries(state.pins).flatMap(([product, pins]) =>
+    Object.keys(pins).map((sourceProduct) => ({ product, sourceProduct })),
+  );
+  const current = releasePackageBindings(['liboliphaunt-native'], {
+    ...state,
+    entries,
+  });
+  expect(
+    current.find(
+      ({ consumer, producer }) =>
+        consumer === 'oliphaunt-rust' && producer === 'liboliphaunt-native',
+    )?.origin,
+  ).toBe('candidate');
+
+  state.products['liboliphaunt-native'].version = '0.3.2';
+  const advanced = releasePackageBindings(['liboliphaunt-native'], {
+    ...state,
+    entries,
+  });
+  expect(
+    advanced.find(
+      ({ consumer, producer }) =>
+        consumer === 'oliphaunt-rust' && producer === 'liboliphaunt-native',
+    ),
+  ).toEqual({
+    consumer: 'oliphaunt-rust',
+    consumerVersion: '0.3.1',
+    producer: 'liboliphaunt-native',
+    producerVersion: '0.3.1',
+    origin: 'published',
+  });
+  expect(state.reads).toContainEqual({
+    product: 'oliphaunt-rust',
+    source: 'liboliphaunt-native',
+    ref: null,
+  });
+});
+
+test('release bindings reject conflicting declarations for one package pair', () => {
+  const state = fixture();
+  let reads = 0;
+  expect(() =>
+    releasePackageBindings(['oliphaunt-rust'], {
+      products: state.products,
+      entries: [
+        { product: 'oliphaunt-rust', sourceProduct: 'liboliphaunt-native' },
+        { product: 'oliphaunt-rust', sourceProduct: 'liboliphaunt-native' },
+      ],
+      readCompatibility: () => (reads++ === 0 ? '0.3.1' : '0.3.0'),
+    }),
+  ).toThrow('declares conflicting liboliphaunt-native versions');
 });

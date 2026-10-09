@@ -73,6 +73,78 @@ function uniqueStrings(value, context) {
   return value;
 }
 
+function packageBindings(value, context) {
+  assert(Array.isArray(value), `${context} must be a list`);
+  const bindings = value.map((binding, index) => {
+    const row = `${context}[${index}]`;
+    assert(
+      binding !== null && !Array.isArray(binding) && typeof binding === 'object',
+      `${row} must be an object`,
+    );
+    assert(
+      JSON.stringify(Object.keys(binding).sort()) ===
+        JSON.stringify(['consumer', 'consumerVersion', 'origin', 'producer', 'producerVersion']),
+      `${row} fields are invalid`,
+    );
+    for (const field of ['consumer', 'consumerVersion', 'producer', 'producerVersion']) {
+      assert(typeof binding[field] === 'string' && binding[field], `${row}.${field} is invalid`);
+    }
+    assert(
+      ['candidate', 'published'].includes(binding.origin),
+      `${row}.origin must be candidate or published`,
+    );
+    return binding;
+  });
+  const keys = bindings.map(({ consumer, producer }) => `${consumer}\0${producer}`);
+  assert(new Set(keys).size === keys.length, `${context} must not contain duplicate bindings`);
+  assert(
+    JSON.stringify(keys) === JSON.stringify([...keys].sort()),
+    `${context} must be canonically sorted`,
+  );
+  return bindings;
+}
+
+function qualificationTaskModes(value, context) {
+  assert(Array.isArray(value), `${context} must be a list`);
+  const rows = value.map((row, index) => {
+    assert(
+      row !== null && !Array.isArray(row) && typeof row === 'object',
+      `${context}[${index}] must be an object`,
+    );
+    assert(
+      JSON.stringify(Object.keys(row).sort()) === JSON.stringify(['mode', 'task']),
+      `${context}[${index}] fields are invalid`,
+    );
+    assert(typeof row.task === 'string' && row.task, `${context}[${index}].task is invalid`);
+    assert(
+      ['candidate-override', 'installed-pinned', 'workspace-integration'].includes(row.mode),
+      `${context}[${index}].mode is invalid`,
+    );
+    return row;
+  });
+  const tasks = rows.map(({ task }) => task);
+  assert(new Set(tasks).size === tasks.length, `${context} must not contain duplicate tasks`);
+  assert(
+    JSON.stringify(tasks) === JSON.stringify([...tasks].sort()),
+    `${context} must be canonically sorted`,
+  );
+  return rows;
+}
+
+function assertSelectedQualificationDetails(qualification, bindings, taskModes, context) {
+  if (qualification?.mode !== PRODUCT_QUALIFICATION_MODE) return;
+  const tasks = new Set(qualification.tasks);
+  const products = new Set(qualification.products);
+  assert(
+    taskModes.every(({ task }) => tasks.has(task)),
+    `${context} task modes must describe selected qualification tasks`,
+  );
+  assert(
+    bindings.every(({ origin, producer }) => origin !== 'candidate' || products.has(producer)),
+    `${context} candidate bindings must name selected qualification products`,
+  );
+}
+
 export const FULL_PAYLOAD_QUALIFICATION_MODE = 'full-payload';
 export const PRODUCT_QUALIFICATION_MODE = 'selected-products';
 
@@ -144,12 +216,23 @@ export function affectedPlanBinding(planPath, wasixReleaseRegressionRequired) {
     `affected CI plan WASIX requirement mismatch: jobs imply ${expectedRequirement}, workflow reported ${wasixReleaseRegressionRequired}`,
   );
   const qualification = qualificationBinding(plan);
+  const bindings = packageBindings(
+    plan.package_bindings ?? [],
+    'affected CI plan package bindings',
+  );
+  const taskModes = qualificationTaskModes(
+    plan.qualification_task_modes ?? [],
+    'affected CI plan qualification task modes',
+  );
+  assertSelectedQualificationDetails(qualification, bindings, taskModes, 'affected CI plan');
   const canonical = JSON.stringify(canonicalValue(plan));
   return {
     digest: sha256(canonical),
     jobs,
     projects,
     extensionPackageProducts,
+    packageBindings: bindings,
+    taskModes,
     wasixReleaseRegressionRequired,
     ...(jobs.includes('native-extension-lifecycle')
       ? {
@@ -369,6 +452,14 @@ export function assertCandidateBindingShape(candidate) {
     candidate.affectedPlan.extensionPackageProducts,
     'release candidate affectedPlan.extensionPackageProducts',
   );
+  const bindings = packageBindings(
+    candidate.affectedPlan.packageBindings ?? [],
+    'release candidate affectedPlan.packageBindings',
+  );
+  const taskModes = qualificationTaskModes(
+    candidate.affectedPlan.taskModes ?? [],
+    'release candidate affectedPlan.taskModes',
+  );
   assert(
     typeof candidate.affectedPlan.wasixReleaseRegressionRequired === 'boolean',
     'release candidate affectedPlan WASIX requirement must be boolean',
@@ -415,6 +506,12 @@ export function assertCandidateBindingShape(candidate) {
         qualification.baseSha === null && qualification.headSha === null,
         'full-payload release candidate must not carry an affected range',
       );
+    assertSelectedQualificationDetails(
+      qualification,
+      bindings,
+      taskModes,
+      'release candidate affectedPlan',
+    );
   }
   const requirements = candidate.evidenceRequirements;
   assert(

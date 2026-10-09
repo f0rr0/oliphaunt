@@ -8,7 +8,8 @@ unset MOON_BASE MOON_HEAD
 export MOON_CACHE=off
 # Each request writes its own file. Four workers bound memory and preserve all
 # graph/affected proofs while avoiding serial workspace startup for every case.
-# NUL records preserve paths and the empty target of an affected query on BSD/GNU xargs.
+# NUL records preserve paths, and affected queries carry an ignored placeholder
+# because BSD xargs does not preserve a trailing empty argument consistently.
 while IFS=$'\t' read -r kind id target; do
   printf '%s\0%s\0%s\0' "$kind" "$id" "$target"
 done < "$directory/requests.tsv" | xargs -0 -n 3 -P 4 bash -eu -c '

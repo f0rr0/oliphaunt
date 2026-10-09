@@ -4,8 +4,8 @@ import {
   copyFileSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -360,12 +360,23 @@ export function preparePackagedCargoTestClosure({
   const crate = path.resolve(cratePath);
   regularFile(crate, 'crate archive');
   const extracted = extractCrate(crate, scratch);
-  const packagedManifests = [extracted.manifest];
+  const dependencies = dependencyCrates.map((archive) => ({
+    archive,
+    ...extractCrate(path.resolve(archive), path.join(scratch, 'dependencies')),
+  }));
+  const packagedManifests = [extracted.manifest, ...dependencies.map(({ manifest }) => manifest)];
   const patches = new Map();
-  for (const archive of dependencyCrates) {
-    const dependency = extractCrate(path.resolve(archive), path.join(scratch, 'dependencies'));
-    packagedManifests.push(dependency.manifest);
-    addPatch(patches, dependency.identity.name, dependency.packageRoot, archive);
+  for (const dependency of dependencies) {
+    const exactRequirements = packagedManifests
+      .flatMap(dependencyRows)
+      .filter(({ name }) => name === dependency.identity.name)
+      .map(({ version }) => version?.match(/^=([0-9A-Za-z][0-9A-Za-z.+-]*)$/u)?.[1])
+      .filter((version) => version !== undefined);
+    // A current workspace archive must not replace an older exact package pin.
+    // Cargo will resolve that immutable version from the registry instead.
+    if (exactRequirements.length > 0 && !exactRequirements.includes(dependency.identity.version))
+      continue;
+    addPatch(patches, dependency.identity.name, dependency.packageRoot, dependency.archive);
   }
   const sources = pathDependencyPatches(
     pathDependencyManifests,

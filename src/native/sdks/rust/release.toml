@@ -4,6 +4,7 @@ kind = "sdk"
 publish_targets = ["crates-io"]
 registry_packages = ["crates:oliphaunt", "crates:oliphaunt-build"]
 release_artifacts = ["cargo-crate", "runtime-resource-cli"]
+exact_extension_runtime = false
 
 [compatibility_versions.native_runtime]
 source_product = "liboliphaunt-native"

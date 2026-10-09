@@ -34,7 +34,11 @@ import {
   extensionSqlNames,
   extensionSqlNamesForProducts,
 } from '../release/release-artifact-targets.mts';
-import { loadProducts, moonProjectsById } from '../release/release-graph.mts';
+import {
+  loadProducts,
+  moonProjectsById,
+  releasePackageBindings,
+} from '../release/release-graph.mts';
 import { affectedNames, triggeringProjectNames, triggeringTaskNames } from './affected.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
@@ -45,6 +49,12 @@ export const ALWAYS_JOBS = new Set(BASE_JOBS);
 export const FULL_PAYLOAD_QUALIFICATION_MODE = 'full-payload';
 export const AFFECTED_QUALIFICATION_MODE = 'affected';
 export const PRODUCT_QUALIFICATION_MODE = 'selected-products';
+const QUALIFICATION_TASK_MODE_PREFIX = 'qualification-mode-';
+const QUALIFICATION_TASK_MODES = new Set([
+  'candidate-override',
+  'installed-pinned',
+  'workspace-integration',
+]);
 const NATIVE_RUNTIME_JOBS = new Set([
   'liboliphaunt-native-android',
   'liboliphaunt-native-desktop',
@@ -117,6 +127,24 @@ function intersects(left, right) {
     }
   }
   return false;
+}
+
+export function qualificationTaskModes(tasks) {
+  const modes = [];
+  for (const target of sorted(tasks)) {
+    const tagged = (TASKS_BY_TARGET.get(target)?.tags ?? [])
+      .filter((tag) => tag.startsWith(QUALIFICATION_TASK_MODE_PREFIX))
+      .map((tag) => tag.slice(QUALIFICATION_TASK_MODE_PREFIX.length));
+    if (tagged.length > 1) {
+      throw new Error(`qualification task ${target} declares multiple execution modes`);
+    }
+    if (tagged.length === 0) continue;
+    if (!QUALIFICATION_TASK_MODES.has(tagged[0])) {
+      throw new Error(`qualification task ${target} declares unknown execution mode ${tagged[0]}`);
+    }
+    modes.push({ task: target, mode: tagged[0] });
+  }
+  return modes;
 }
 
 function sorted(set) {
@@ -557,6 +585,14 @@ export function planForReleaseProducts(
     platformRoots: roots,
     qualificationMode: PRODUCT_QUALIFICATION_MODE,
     qualificationProducts: [...products].sort(compareText),
+    packageBindings: releasePackageBindings(products, {
+      products: catalog,
+      consumerProducts: new Set(
+        [...tasks]
+          .map((target) => target.split(':', 1)[0])
+          .filter((product) => Object.hasOwn(catalog, product)),
+      ),
+    }),
     qualificationHeadSha: headSha,
     excludedTargets,
     reason: `release qualification for products: ${[...products].sort(compareText).join(', ')}`,
@@ -887,6 +923,7 @@ export function renderPlanWithSelection({
   qualificationBaseSha = null,
   qualificationHeadSha = null,
   qualificationProducts = [],
+  packageBindings = [],
   platformRoots = qualificationMode === AFFECTED_QUALIFICATION_MODE ? tasks : null,
   excludedTargets = RELEASE_ONLY_TARGETS,
 }) {
@@ -904,7 +941,11 @@ export function renderPlanWithSelection({
     qualification_base_sha: qualificationBaseSha,
     qualification_head_sha: qualificationHeadSha,
     ...(qualificationMode === PRODUCT_QUALIFICATION_MODE
-      ? { qualification_products: qualificationProducts }
+      ? {
+          qualification_products: qualificationProducts,
+          package_bindings: packageBindings,
+          qualification_task_modes: qualificationTaskModes(tasks),
+        }
       : {}),
     jobs: sorted(jobs),
     builder_jobs: sorted(new Set([...jobs].filter((job) => BUILDER_JOBS.has(job)))),

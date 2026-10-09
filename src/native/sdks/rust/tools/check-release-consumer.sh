@@ -45,90 +45,38 @@ require_linux_x64() {
 build_consumer() {
   local sdk_artifacts="$1"
   local output="$2"
-  local cargo_artifact_dir="${3:-}" artifact_name
-  local real_artifacts=()
-  local crate dependency_crate dependency_source product packed_manifest metadata dependency_rows name version stub
-  local manifests=()
-  local dependency_sources=()
+  local crate dependency_crate product packed_manifest
+  local dependency_args=()
   [ -d "$sdk_artifacts" ] || fail "Rust SDK artifact directory is missing: $sdk_artifacts"
   crate="$(find_one "$sdk_artifacts" 'oliphaunt-[0-9]*.crate')"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-rust-release-consumer-build.XXXXXX")"
-
-  mkdir -p "$scratch/unpacked" "$scratch/packed" "$scratch/consumer/src" "$scratch/consumer/.cargo"
-  tar -xzf "$crate" -C "$scratch/unpacked"
-  while IFS= read -r file; do
-    manifests+=("$file")
-  done < <(find "$scratch/unpacked" -mindepth 2 -maxdepth 2 -type f -name Cargo.toml -print)
-  [ "${#manifests[@]}" -eq 1 ] ||
-    fail "packed crate must contain one root Cargo.toml, found ${#manifests[@]}"
-  packed_manifest="${manifests[0]}"
-  mv "$(dirname "$packed_manifest")" "$scratch/packed/oliphaunt"
-  cp src/native/sdks/rust/tests/release-consumer/Cargo.toml "$scratch/consumer/Cargo.toml"
-  cp src/native/sdks/rust/tests/release-consumer/src/main.rs "$scratch/consumer/src/main.rs"
-  if [ -f "$scratch/packed/oliphaunt/Cargo.lock" ]; then
-    cp "$scratch/packed/oliphaunt/Cargo.lock" "$scratch/consumer/Cargo.lock"
-  else
-    cp Cargo.lock "$scratch/consumer/Cargo.lock"
-  fi
 
   for product in oliphaunt-query liboliphaunt-native-bindings oliphaunt-broker oliphaunt-build; do
     local artifact_dir="target/sdk-artifacts/$product"
     [ "$product" != oliphaunt-build ] || artifact_dir="$sdk_artifacts"
     dependency_crate="$(find_one "$artifact_dir" "$product-*.crate")"
-    mkdir -p "$scratch/dependencies/$product"
-    tar -xzf "$dependency_crate" -C "$scratch/dependencies/$product"
-    dependency_source="$(dirname "$(find_one "$scratch/dependencies/$product" Cargo.toml)")"
-    dependency_sources+=("$product" "$dependency_source")
+    dependency_args+=(--dependency-crate "$dependency_crate")
   done
 
-  if [ -n "$cargo_artifact_dir" ]; then
-    mkdir -p "$scratch/artifacts"
-    while IFS= read -r dependency_crate; do
-      tar -xzf "$dependency_crate" -C "$scratch/artifacts"
-    done < <(find "$cargo_artifact_dir" -type f -name '*.crate' -print)
-    for dependency_source in "$scratch/artifacts"/*; do
-      [ -f "$dependency_source/Cargo.toml" ] || continue
-      artifact_name="$(sed -n 's/^name = "\([^"]*\)"$/\1/p' "$dependency_source/Cargo.toml" | head -1)"
-      dependency_sources+=("$artifact_name" "$dependency_source")
-      real_artifacts+=("$artifact_name")
-    done
-    [ "${#real_artifacts[@]}" -gt 0 ] || fail "no Cargo artifact crates in $cargo_artifact_dir"
-  fi
-
-  metadata="$scratch/metadata.json"
-  dependency_rows="$scratch/artifact-dependencies.tsv"
-  cargo metadata --manifest-path "$scratch/packed/oliphaunt/Cargo.toml" \
-    --format-version 1 --no-deps --offline >"$metadata"
-  OLIPHAUNT_CARGO_METADATA="$metadata" tools/dev/bun.sh src/native/sdks/rust/tools/artifact-dependencies.mts | sort -u >"$dependency_rows"
-  for pattern in '^liboliphaunt-native-' '^oliphaunt-broker-'; do
-    rg -q "$pattern" "$dependency_rows" || fail "packed crate is missing artifact dependency $pattern"
-  done
-
-  {
-    printf '[net]\noffline = true\n\n[patch.crates-io]\n'
-    for ((index=0; index<${#dependency_sources[@]}; index+=2)); do
-      printf '"%s" = { path = "%s" }\n' "${dependency_sources[index]}" "${dependency_sources[index+1]}"
-    done
-    while IFS=$'\t' read -r name version; do
-      local resolved=false artifact
-      for artifact in "${real_artifacts[@]+${real_artifacts[@]}}"; do
-        [ "$artifact" != "$name" ] || resolved=true
-      done
-      [ "$resolved" = false ] || continue
-      stub="$scratch/stubs/$name"
-      mkdir -p "$stub/src"
-      printf '[package]\nname = "%s"\nversion = "%s"\nedition = "2024"\npublish = false\n\n[lib]\npath = "src/lib.rs"\n' \
-        "$name" "$version" >"$stub/Cargo.toml"
-      printf '#![forbid(unsafe_code)]\n' >"$stub/src/lib.rs"
-      printf '"%s" = { path = "%s" }\n' "$name" "$stub"
-    done <"$dependency_rows"
-  } >"$scratch/consumer/.cargo/config.toml"
+  packed_manifest="$(
+    tools/dev/bun.sh tools/packaging/cargo-package-test-closure.mts "$scratch" \
+      --crate "$crate" "${dependency_args[@]}" \
+      --stub-dependency-prefix liboliphaunt-native- \
+      --stub-dependency-prefix oliphaunt-broker-
+  )"
+  mkdir -p "$scratch/packed" "$scratch/consumer/src"
+  mv "$(dirname "$packed_manifest")" "$scratch/packed/oliphaunt"
+  cp src/native/sdks/rust/tests/release-consumer/Cargo.toml "$scratch/consumer/Cargo.toml"
+  cp src/native/sdks/rust/tests/release-consumer/src/main.rs "$scratch/consumer/src/main.rs"
 
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$scratch/target}" \
-    cargo --config "$scratch/consumer/.cargo/config.toml" metadata \
-      --manifest-path "$scratch/consumer/Cargo.toml" --offline --format-version 1 > /dev/null
+    cargo --config "$scratch/.cargo/config.toml" --config net.offline=false fetch \
+      --manifest-path "$scratch/consumer/Cargo.toml"
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$scratch/target}" \
-    cargo --config "$scratch/consumer/.cargo/config.toml" build \
+    cargo --config "$scratch/.cargo/config.toml" metadata \
+      --manifest-path "$scratch/consumer/Cargo.toml" --locked --offline --format-version 1 > /dev/null
+  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$scratch/target}" \
+    cargo --config "$scratch/.cargo/config.toml" build \
       --manifest-path "$scratch/consumer/Cargo.toml" --locked --offline --release
   mkdir -p "$(dirname "$output")"
   install -m 0755 \
@@ -136,7 +84,7 @@ build_consumer() {
   echo "Built packed-crate Rust release consumer: $output"
 }
 
-run_consumer() {
+run_candidate_override() {
   local consumer="$1"
   local native_assets="$2"
   local tools_assets="$3"
@@ -145,37 +93,13 @@ run_consumer() {
   require_linux_x64
   require_file "$consumer"
   [ -x "$consumer" ] || fail "release consumer is not executable: $consumer"
+  # The installed-pinned phase built this executable from the SDK's declared
+  # package closure. This phase may replace runtime resources, never Cargo deps.
   [ -d "$native_assets" ] || fail "native asset directory is missing: $native_assets"
   runtime_archive="$(find_one "$native_assets" 'liboliphaunt-*-linux-x64-gnu.tar.gz')"
   tools_archive="$(find_one "$tools_assets" 'oliphaunt-tools-*-linux-x64-gnu.tar.gz')"
   broker_archive="$(find_one "$broker_assets" 'oliphaunt-broker-*-linux-x64-gnu.tar.gz')"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-rust-release-consumer-run.XXXXXX")"
-
-  # Build the installed SDK against real Cargo carriers, then run the copied
-  # executable after its unpacked crates and Cargo output have been removed.
-  cargo fetch --locked
-  tools/dev/bun.sh src/native/runtime/tools/package-liboliphaunt-cargo-artifacts.mts \
-    --asset-dir "$native_assets" --output-dir "$scratch/cargo/native" \
-    --work-dir "$scratch/cargo-work" --target linux-x64-gnu
-  tools/dev/bun.sh src/native/broker/tools/package_broker_cargo_artifacts.mts \
-    --asset-dir "$broker_assets" --output-dir "$scratch/cargo/broker" --target linux-x64-gnu
-  CARGO_TARGET_DIR="$scratch/consumer-build" bash "$0" build \
-    target/sdk-artifacts/oliphaunt-rust "$scratch/embedded-consumer" "$scratch/cargo"
-  rm -rf "$scratch/cargo" "$scratch/cargo-work" "$scratch/consumer-build"
-  local mode action
-  for mode in direct broker; do
-    for action in "$mode" "$mode-verify"; do
-      (
-      cd "$scratch"
-      env -u LIBOLIPHAUNT_PATH -u OLIPHAUNT_RESOURCES_DIR \
-        -u OLIPHAUNT_CONSUMER_RESOURCES_DIR -u OLIPHAUNT_EXTENSION_RESOURCES_DIR \
-        -u OLIPHAUNT_EMBEDDED_MODULE_DIR -u OLIPHAUNT_BROKER \
-        -u OLIPHAUNT_INSTALL_DIR -u OLIPHAUNT_INITDB -u OLIPHAUNT_POSTGRES -u LD_LIBRARY_PATH \
-        OLIPHAUNT_RUNTIME_CACHE_DIR="$scratch/embedded-cache" \
-        "$scratch/embedded-consumer" "$scratch/embedded-$mode" "$action"
-      )
-    done
-  done
 
   native_dir="$scratch/resources/native-runtime/liboliphaunt-native"
   mkdir -p "$native_dir" "$scratch/tools" "$scratch/broker" "$scratch/runtime-cache"
@@ -203,12 +127,12 @@ run_consumer() {
 
 case "${1:-}" in
   build)
-    [ "$#" -eq 3 ] || [ "$#" -eq 4 ] || fail "usage: $0 build SDK_ARTIFACT_DIR OUTPUT [CARGO_ARTIFACT_DIR]"
-    build_consumer "$2" "$3" "${4:-}"
+    [ "$#" -eq 3 ] || fail "usage: $0 build SDK_ARTIFACT_DIR OUTPUT"
+    build_consumer "$2" "$3"
     ;;
-  run)
-    [ "$#" -eq 5 ] || fail "usage: $0 run CONSUMER NATIVE_ASSET_DIR TOOLS_ASSET_DIR BROKER_ASSET_DIR"
-    run_consumer "$2" "$3" "$4" "$5"
+  candidate-override)
+    [ "$#" -eq 5 ] || fail "usage: $0 candidate-override CONSUMER NATIVE_ASSET_DIR TOOLS_ASSET_DIR BROKER_ASSET_DIR"
+    run_candidate_override "$2" "$3" "$4" "$5"
     ;;
-  *) fail "usage: $0 {build SDK_ARTIFACT_DIR OUTPUT|run CONSUMER NATIVE_ASSET_DIR TOOLS_ASSET_DIR BROKER_ASSET_DIR}" ;;
+  *) fail "usage: $0 {build SDK_ARTIFACT_DIR OUTPUT|candidate-override CONSUMER NATIVE_ASSET_DIR TOOLS_ASSET_DIR BROKER_ASSET_DIR}" ;;
 esac

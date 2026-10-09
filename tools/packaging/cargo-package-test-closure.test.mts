@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -138,6 +138,49 @@ test('package qualification retains exact published pins after a local dependenc
       assert.equal(config.patch, undefined);
     }
   }
+});
+
+test('package qualification does not substitute a newer dependency archive for an exact pin', (t) => {
+  const root = fixture(t, 'cargo-closure-archive-independent');
+  const cratePath = closureCrate(root);
+  const dependency = path.join(root, 'carrier');
+  writePackage(dependency, 'carrier');
+  const manifestFile = path.join(dependency, 'Cargo.toml');
+  const archive = (version) => {
+    writeFileSync(
+      manifestFile,
+      readFileSync(manifestFile, 'utf8').replace(/^version = "[^"]+"/mu, `version = "${version}"`),
+    );
+    return packageGeneratedCargoSource(manifestFile, path.join(root, `crate-${version}`), {
+      root,
+      rel: String,
+      fail: (message) => {
+        throw new Error(message);
+      },
+    });
+  };
+
+  const newerScratch = path.join(root, 'newer-work');
+  preparePackagedCargoTestClosure({
+    cratePath,
+    scratch: newerScratch,
+    dependencyCrates: [archive('0.2.0')],
+  });
+  assert.equal(
+    Bun.TOML.parse(readFileSync(path.join(newerScratch, '.cargo/config.toml'), 'utf8')).patch,
+    undefined,
+  );
+
+  const matchingScratch = path.join(root, 'matching-work');
+  preparePackagedCargoTestClosure({
+    cratePath,
+    scratch: matchingScratch,
+    dependencyCrates: [archive('0.1.0')],
+  });
+  const matchingConfig = Bun.TOML.parse(
+    readFileSync(path.join(matchingScratch, '.cargo/config.toml'), 'utf8'),
+  );
+  assert.match(matchingConfig.patch['crates-io'].carrier.path, /carrier-0[.]1[.]0/u);
 });
 
 test('rejects unsafe packaged names', (t) => {

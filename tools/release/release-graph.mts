@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   CONTRIB_CARRIERS_PATH,
   loadContribCarriers,
@@ -695,6 +695,59 @@ export function productCompatibilityVersion(
     fail(prefix, `${product} declares conflicting compatibility versions for ${sourceProduct}`);
   }
   return [...values][0];
+}
+
+export function releasePackageBindings(
+  selectedProducts,
+  {
+    products = loadProducts(),
+    entries = compatibilityVersionEntries(products, {
+      requireSourceProduct: true,
+      prefix: 'release-package-bindings',
+    }),
+    consumerProducts = null,
+    readCompatibility = null,
+    prefix = 'release-package-bindings',
+  } = {},
+) {
+  const selected = new Set(selectedProducts);
+  for (const product of selected) {
+    if (!products[product]) throw new Error(`${prefix}: unknown release product ${product}`);
+  }
+  const bindings = new Map();
+  for (const entry of entries) {
+    if (consumerProducts && !consumerProducts.has(entry.product)) continue;
+    const consumer = entry.product;
+    const producer = entry.sourceProduct;
+    const consumerVersion = products[consumer].version;
+    // Release qualification runs against the normalized candidate tree. The
+    // release-commit verifier already forbids unselected package metadata from
+    // changing, so these are the exact pins the tested package will ship.
+    const producerVersion = readCompatibility
+      ? readCompatibility(consumer, producer, prefix, { ref: null })
+      : compatibilityVersionValue(entry, { prefix });
+    const key = `${consumer}\0${producer}`;
+    const previous = bindings.get(key);
+    if (previous && previous.producerVersion !== producerVersion) {
+      throw new Error(
+        `${prefix}: ${consumer}@${consumerVersion} declares conflicting ${producer} versions ${previous.producerVersion} and ${producerVersion}`,
+      );
+    }
+    bindings.set(key, {
+      consumer,
+      consumerVersion,
+      producer,
+      producerVersion,
+      origin:
+        selected.has(producer) && producerVersion === products[producer].version
+          ? 'candidate'
+          : 'published',
+    });
+  }
+  return [...bindings.values()].sort(
+    (left, right) =>
+      compareText(left.consumer, right.consumer) || compareText(left.producer, right.producer),
+  );
 }
 
 // Resolve a transitive pin through the dependency version the consumer actually
