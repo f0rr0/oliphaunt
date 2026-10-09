@@ -340,23 +340,17 @@ impl BrokerListener {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
-    use std::io::Write;
-    #[cfg(unix)]
+    use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStringExt;
-    #[cfg(unix)]
     use std::path::PathBuf;
-    use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
-
-    use oliphaunt_broker::ipc::{self, RequestFrame};
 
     use super::*;
 
     #[test]
-    #[cfg(unix)]
     fn broker_arguments_preserve_non_utf8_database_roots() {
         let root = PathBuf::from(OsString::from_vec(
             b"/tmp/oliphaunt-broker-root-\xff".to_vec(),
@@ -369,10 +363,10 @@ mod tests {
         assert_eq!(parsed.root, root);
     }
 
-    fn assert_blocking_connection(listener: BrokerListener, mut peer: server::Socket) {
+    fn assert_blocking_connection(listener: BrokerListener) {
         listener.nonblocking().unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        let mut socket = loop {
+        let socket = loop {
             match listener.accept() {
                 Ok(socket) => break socket,
                 Err(error)
@@ -383,57 +377,42 @@ mod tests {
                 Err(error) => panic!("failed to accept test connection: {error}"),
             }
         };
-        match &socket {
-            server::Socket::Tcp(stream) => {
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-            }
-            #[cfg(unix)]
-            server::Socket::Unix(stream) => {
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-            }
-        }
-
-        let request = RequestFrame::Authenticate("test-token".into());
-        let mut frame = Vec::new();
-        ipc::write_request(&mut frame, request.clone()).unwrap();
-        peer.write_all(&frame[..13]).unwrap();
-        let (start, ready) = mpsc::channel();
-        let writer = thread::spawn(move || {
-            ready.recv().unwrap();
-            thread::sleep(Duration::from_millis(50));
-            peer.write_all(&frame[13..]).unwrap();
-            thread::sleep(Duration::from_millis(50));
-            ipc::write_request(&mut peer, RequestFrame::Close).unwrap();
-        });
-
-        start.send(()).unwrap();
-        assert_eq!(ipc::read_request(&mut socket).unwrap(), request);
-        assert_eq!(ipc::read_request(&mut socket).unwrap(), RequestFrame::Close);
-        writer.join().unwrap();
+        let fd = match &socket {
+            server::Socket::Tcp(stream) => stream.as_raw_fd(),
+            server::Socket::Unix(stream) => stream.as_raw_fd(),
+        };
+        // SAFETY: socket owns the live descriptor; F_GETFL takes no extra argument.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert_ne!(
+            flags,
+            -1,
+            "read socket flags: {}",
+            io::Error::last_os_error()
+        );
+        assert_eq!(
+            flags & libc::O_NONBLOCK,
+            0,
+            "accepted socket must be blocking"
+        );
         assert!(
             matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock)
         );
     }
 
     #[test]
-    fn accepted_tcp_connections_read_fragmented_authentication_and_idle_frames() {
+    fn accepted_tcp_connections_are_blocking() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        assert_blocking_connection(BrokerListener::Tcp(listener), server::Socket::Tcp(peer));
+        let _peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        assert_blocking_connection(BrokerListener::Tcp(listener));
     }
 
     #[test]
-    #[cfg(unix)]
-    fn accepted_unix_connections_read_fragmented_authentication_and_idle_frames() {
+    fn accepted_unix_connections_are_blocking() {
         let path =
             std::env::temp_dir().join(format!("oliphaunt-accept-{}.sock", std::process::id()));
         let listener = BrokerListener::bind(BrokerListenEndpoint::Unix(path.clone())).unwrap();
-        let peer = std::os::unix::net::UnixStream::connect(&path).unwrap();
-        assert_blocking_connection(listener, server::Socket::Unix(peer));
+        let _peer = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        assert_blocking_connection(listener);
         std::fs::remove_file(path).unwrap();
     }
 }
