@@ -13,6 +13,11 @@
    require a new candidate and qualification. For a publication-only fix, the
    controller allowlist may authorize a new current-main workflow to publish
    the original candidate using explicit `release_commit` and `approval_run_id`.
+   Preparation may import that capsule even when its previous consumer run
+   failed or produced no readiness proof. Run the current consumer plan against
+   the imported bytes and obtain a new successful `Publication ready` artifact
+   before any mutation. Never import an older proof as evidence for a changed
+   harness, or substitute workspace builds to make a consumer pass.
 5. For normal publication, use GitHub's rerun on the original Release run; it
    re-inventories the complete lock and publishes only identities still absent
    after byte verification. For bootstrap, use the failed job's reported rerun

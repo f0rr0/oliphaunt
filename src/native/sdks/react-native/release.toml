@@ -1,5 +1,6 @@
 id = "oliphaunt-react-native"
 owner = "@oliphaunt/sdk-react-native"
+shared_source_paths = ["src/native/sdks/swift/tools/ios-carrier-manifest.mts", "tools/packaging/source-only-sdk-package.mts"]
 kind = "sdk"
 publish_targets = ["npm"]
 registry_packages = ["npm:@oliphaunt/react-native"]
@@ -10,16 +11,19 @@ release_artifacts = [
 ]
 
 [compatibility_versions.oliphaunt-react-native-swift-sdk]
+public_support = false
 source_product = "oliphaunt-swift"
 path = "src/native/sdks/react-native/package.json"
 parser = "json:oliphaunt.swiftSdkVersion"
 
 [compatibility_versions.oliphaunt-react-native-kotlin-sdk]
+public_support = false
 source_product = "oliphaunt-kotlin"
 path = "src/native/sdks/react-native/package.json"
 parser = "json:oliphaunt.kotlinSdkVersion"
 
 [compatibility_versions.oliphaunt-react-native-query]
+public_support = false
 source_product = "oliphaunt-query-ts"
 path = "src/native/sdks/react-native/package.json"
 parser = "json:dependencies.@oliphaunt/ts-query"

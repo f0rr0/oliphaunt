@@ -15,7 +15,7 @@ assert_history() {
   bash "$root/tools/release/with-release-history.sh" "$repo" "$head" \
     bash "$root/tools/dev/bun.sh" "$fixture" assert "$repo" "$family" "$1" "$head" "${release:-}"
 }
-for family in bootstrap basic cargo wildcard wasix example compatibility; do
+for family in bootstrap basic cargo wildcard wasix example compatibility public-support; do
   repo="$scratch/$family"
   git init -q "$repo"
   git -C "$repo" config user.name 'Release Test'
@@ -23,6 +23,8 @@ for family in bootstrap basic cargo wildcard wasix example compatibility; do
   bash "$root/tools/dev/bun.sh" "$fixture" write "$repo" "$family" base
   commit 'feat: introduce release fixture'
   base="$(git -C "$repo" rev-parse HEAD)"
+  if [[ "$family" == compatibility ]]; then git -C "$repo" tag oliphaunt-extension-pg-hashids-v0.1.0 "$base"; fi
+  if [[ "$family" == public-support ]]; then git -C "$repo" tag oliphaunt-extension-vector-v0.1.0 "$base"; fi
   release=''
   case "$family" in
     bootstrap) assert_history base; scenarios=(clean mutated) ;;
@@ -32,11 +34,16 @@ for family in bootstrap basic cargo wildcard wasix example compatibility; do
     wasix) scenarios=(workspace-links) ;;
     example) scenarios=(exact wrong-registry-version wrong-runtime-version unrelated-registry-version missing-native-transition) ;;
     compatibility) scenarios=(with-producer consumer-only unselected-consumer wrong-toml-pin wrong-json-pin wrong-raw-pin wrong-rust-const non-version-edit) ;;
+    public-support) scenarios=(authored-patch authored-breaking) ;;
   esac
   for scenario in "${scenarios[@]}"; do
     start="$base"
     if [[ "$scenario" == later-fix || "$scenario" == downgrade ]]; then start="$release"; fi
     git -C "$repo" switch -qc "$scenario" "$start"
+    if [[ "$family" == public-support ]]; then
+      bash "$root/tools/dev/bun.sh" "$fixture" write "$repo" "$family" authored
+      commit 'fix!: retarget the public native host before release generation'
+    fi
     bash "$root/tools/dev/bun.sh" "$fixture" write "$repo" "$family" "$scenario"
     case "$scenario" in
       deletion) git -C "$repo" rm -q src/removable.rs ;;

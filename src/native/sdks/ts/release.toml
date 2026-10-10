@@ -1,5 +1,6 @@
 id = "oliphaunt-js"
 owner = "@oliphaunt/sdk-js"
+shared_source_paths = ["tools/packaging/source-only-sdk-package.mts"]
 kind = "sdk"
 publish_targets = ["npm"]
 registry_packages = ["npm:@oliphaunt/ts"]
@@ -11,21 +12,25 @@ release_artifacts = [
 exact_extension_runtime = "liboliphaunt-native"
 
 [compatibility_versions.oliphaunt-js-liboliphaunt]
+public_support = false
 source_product = "liboliphaunt-native"
 path = "src/native/sdks/ts/package.json"
 parser = "json:oliphaunt.liboliphauntVersion"
 
 [compatibility_versions.oliphaunt-js-broker]
+public_support = false
 source_product = "oliphaunt-broker"
 path = "src/native/sdks/ts/package.json"
 parser = "json:oliphaunt.brokerVersion"
 
 [compatibility_versions.oliphaunt-js-node-direct-runtime]
+public_support = false
 source_product = "oliphaunt-node-direct"
 path = "src/native/sdks/ts/package.json"
 parser = "json:oliphaunt.nodeDirectAddonVersion"
 
 [compatibility_versions.oliphaunt-js-query]
+public_support = false
 source_product = "oliphaunt-query-ts"
 path = "src/native/sdks/ts/package.json"
 parser = "json:dependencies.@oliphaunt/ts-query"

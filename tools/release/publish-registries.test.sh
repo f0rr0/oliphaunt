@@ -15,6 +15,7 @@ set -euo pipefail
 phase="$2"; state="$3"; index="${4:-}"
 event() { echo "$*" >> "$REGISTRY_FIXTURE_LOG"; }
 case "$phase" in
+  admit-npm) event npm-admit; [[ "${REGISTRY_FIXTURE_REJECT_PROOF:-false}" != true ]] || exit 23 ;;
   registry-prepare) cp "$REGISTRY_FIXTURE_ROOT/plan.json" "$state/context.json" ;;
   registry-cargo)
     if [[ "$index" == 0 ]]; then echo '[]' > "$state/operation-0.json"; event cargo-0; else
@@ -26,7 +27,7 @@ case "$phase" in
     fi ;;
   registry-npm-before)
     event "npm-before-$index"
-    jq -n '{packageName:"@fixture/runtime",version:"1.0.0",tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000}' > "$state/npm-$index.json" ;;
+    jq -n --argjson deadline "$(( $(date +%s) + 120 ))" '{packageName:"@fixture/runtime",version:"1.0.0",tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000,deadlineEpochSeconds:$deadline}' > "$state/npm-$index.json" ;;
   registry-npm-after) event "npm-reconciled-$index"; echo '[]' > "$state/operation-$index.json" ;;
   registry-maven)
     [[ -f "$state/operation-1.json" ]]
@@ -62,4 +63,10 @@ for scenario in success failure auth-ENEEDAUTH auth-E401 auth-E403 auth-EOTP; do
   else [[ "$status" != 0 && "$status" != 124 ]]; fi
   bun "$source_root/tools/release/publish-registries.test.mts" assert "$scratch" "$scenario"
 done
+# Exercise the direct shell entry point: failed admission must precede all npm writes.
+jq -n '{tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000}' > "$scratch/rejected.json"
+status=0
+(cd "$scratch"; PATH="$scratch/bin:$PATH" REGISTRY_FIXTURE_LOG="$scratch/rejected-events" REGISTRY_FIXTURE_REJECT_PROOF=true \
+  bash tools/release/publish-frozen-npm.sh "$scratch/rejected.json" "$deadline") > "$scratch/rejected-output" 2>&1 || status=$?
+[[ "$status" == 23 && "$(cat "$scratch/rejected-events")" == npm-admit ]]
 echo 'Registry lanes: dependency ordering, one npm attempt, reconciliation, authorization rejection and peer draining passed'

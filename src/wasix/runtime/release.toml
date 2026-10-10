@@ -1,5 +1,6 @@
 id = "liboliphaunt-wasix"
 owner = "@oliphaunt/wasix"
+shared_source_paths = ["src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts", "src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts"]
 kind = "wasm-runtime"
 publish_targets = ["github-release-assets", "crates-io", "npm"]
 registry_packages = [

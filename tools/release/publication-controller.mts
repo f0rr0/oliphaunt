@@ -5,6 +5,15 @@ import { fileURLToPath } from 'node:url';
 // Only release controls may differ. In particular, tools/release also
 // contains packagers: allowing that directory wholesale would change bytes.
 const CONTROL_FILES = new Set([
+  'tools/release/frozen-consumer.mts',
+  'tools/release/publication-consumer-proof.mts',
+  'src/native/sdks/ts/tools/frozen-consumer.mts',
+  'src/query/ts/tools/frozen-consumer.mts',
+  'src/wasix/sdks/ts/tools/frozen-consumer.mts',
+  'src/wasix/sdks/ts/tools/frozen-browser-consumer.mts',
+  'src/wasix/sdks/ts/tools/browser-cdp.mts',
+  'src/native/runtime/smoke/frozen-consumer.c',
+  'tools/release/testdata/consumer-proof-fixture.mts',
   '.github/workflows/release.yml',
   '.github/scripts/resolve-release-head.sh',
   '.github/scripts/validate-release-workflow-inputs.sh',

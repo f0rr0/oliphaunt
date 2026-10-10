@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
 import {
   deriveReleaseProducts,
   latestVerifiedReleaseCommit,
   verifyReleaseCommit,
 } from './verify-release-commit.mts';
-import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
+
 const [phase, repo, family, scenario, headRef, releaseRef] = process.argv.slice(2);
 const broker = 'oliphaunt-broker';
 const native = 'liboliphaunt-native';
@@ -210,25 +211,38 @@ function prepareWasix(base) {
   });
 }
 function prepareExample(base) {
+  const sdk = 'src/native/sdks/rust';
   json('release-please-config.json', {
-    packages: { [nativePath]: simple(native), 'src/native/broker': simple(broker) },
+    packages: {
+      [nativePath]: simple(native),
+      'src/native/broker': simple(broker),
+      [sdk]: { 'release-type': 'rust', component: 'oliphaunt-rust' },
+    },
   });
   const missing = scenario === 'missing-native-transition';
-  const nativeVersion = base || missing ? '0.1.0' : '0.1.1',
+  const nativeVersion = base || missing ? '0.3.1' : '0.3.2',
     brokerVersion = !base && missing ? '0.1.1' : '0.1.0';
+  const sdkVersion = base || missing ? '0.2.0' : '0.2.1';
   json('.release-please-manifest.json', {
     [nativePath]: nativeVersion,
     'src/native/broker': brokerVersion,
+    [sdk]: sdkVersion,
   });
   write(`${nativePath}/VERSION`, `${nativeVersion}\n`);
   write('src/native/broker/VERSION', `${brokerVersion}\n`);
+  write(
+    `${sdk}/Cargo.toml`,
+    cargo('oliphaunt', sdkVersion) +
+      `\n[package.metadata.oliphaunt]\nnative-version = "${nativeVersion}"\n`,
+  );
+  changelog(sdk, sdkVersion);
   if (base) {
     write(`${nativePath}/CHANGELOG.md`, '# Changelog\n');
     write('src/native/broker/CHANGELOG.md', '# Changelog\n');
   } else
     changelog(missing ? 'src/native/broker' : nativePath, missing ? brokerVersion : nativeVersion);
-  const carrierVersion = base ? '0.1.0' : scenario === 'wrong-registry-version' ? '0.1.2' : '0.1.1';
-  const runtimeVersion = base ? '0.1.0' : scenario === 'wrong-runtime-version' ? '0.1.2' : '0.1.1';
+  const carrierVersion = base ? '0.3.1' : scenario === 'wrong-registry-version' ? '0.3.3' : '0.3.2';
+  const runtimeVersion = base ? '0.3.1' : scenario === 'wrong-runtime-version' ? '0.3.3' : '0.3.2';
   const unrelatedVersion = scenario === 'unrelated-registry-version' ? '9.0.1' : '9.0.0';
   write(
     exampleManifest,
@@ -247,6 +261,7 @@ function prepareCompatibility(base) {
   const producerVersion = base || scenario === 'consumer-only' ? '0.3.1' : '0.3.2';
   const consumerVersion = base || scenario === 'unselected-consumer' ? '0.1.0' : '0.2.0';
   const pin = base ? '0.3.0' : producerVersion;
+  const consumerPin = scenario === 'consumer-only' ? '0.3.0' : pin;
   json('.release-please-manifest.json', {
     ...Object.fromEntries(Object.keys(producers).map((folder) => [folder, producerVersion])),
     ...Object.fromEntries(Object.keys(consumers).map((folder) => [folder, consumerVersion])),
@@ -259,29 +274,44 @@ function prepareCompatibility(base) {
   write('src/extensions/external/pg_hashids/VERSION', `${consumerVersion}\n`);
   write(
     'src/extensions/external/pg_hashids/release.toml',
-    `[extension.compatibility]\npostgres_major = "${scenario === 'non-version-edit' ? '19' : '18'}"\nnative_runtime_version = "${scenario === 'wrong-toml-pin' ? '0.4.0' : pin}"\n`,
+    `[extension.compatibility]\npostgres_major = "${scenario === 'non-version-edit' ? '19' : '18'}"\nnative_runtime_version = "${scenario === 'wrong-toml-pin' ? '0.4.0' : pin}"\nwasix_runtime_version = "0.3.0"\n`,
   );
   json('src/native/sdks/ts/package.json', {
     name: '@oliphaunt/ts',
     version: consumerVersion,
     oliphaunt: {
-      liboliphauntVersion: scenario === 'wrong-json-pin' ? '0.4.0' : pin,
-      brokerVersion: pin,
+      liboliphauntVersion: scenario === 'wrong-json-pin' ? '0.4.0' : consumerPin,
+      brokerVersion: consumerPin,
     },
   });
   write(
     'src/native/sdks/rust/Cargo.toml',
     cargo('oliphaunt', consumerVersion) +
-      `\n[package.metadata.oliphaunt]\nnative-version = "${pin}"\nbroker-version = "${pin}"\n`,
+      `\n[package.metadata.oliphaunt]\nnative-version = "${consumerPin}"\nbroker-version = "${consumerPin}"\n`,
   );
   write(
     'src/native/sdks/rust/src/broker.rs',
-    `const BROKER_RELEASE_VERSION: &str = "${scenario === 'wrong-rust-const' ? '0.4.0' : pin}";\n`,
+    `const BROKER_RELEASE_VERSION: &str = "${scenario === 'wrong-rust-const' ? '0.4.0' : consumerPin}";\n`,
   );
   write('src/native/sdks/swift/VERSION', `${consumerVersion}\n`);
   write(
     'src/native/sdks/swift/LIBOLIPHAUNT_VERSION',
-    `${scenario === 'wrong-raw-pin' ? '0.4.0' : pin}\n`,
+    `${scenario === 'wrong-raw-pin' ? '0.4.0' : consumerPin}\n`,
+  );
+}
+function preparePublicSupport(base) {
+  const owner = 'src/extensions/external/vector';
+  const version =
+    base || scenario === 'authored' ? '0.1.0' : scenario === 'authored-patch' ? '0.1.1' : '0.2.0';
+  json('release-please-config.json', {
+    packages: { [owner]: simple('oliphaunt-extension-vector') },
+  });
+  json('.release-please-manifest.json', { [owner]: version });
+  write(`${owner}/VERSION`, `${version}\n`);
+  changelog(owner, version);
+  write(
+    `${owner}/release.toml`,
+    `[extension.compatibility]\nnative_runtime_version = "${base ? '0.3.2' : '0.3.3'}"\nwasix_runtime_version = "0.3.2"\n`,
   );
 }
 if (phase === 'write') {
@@ -295,33 +325,36 @@ if (phase === 'write') {
       wasix: prepareWasix,
       example: prepareExample,
       compatibility: prepareCompatibility,
+      'public-support': preparePublicSupport,
     }[family];
     if (!prepare) throw new Error('unknown release fixture family');
     prepare(scenario === 'base');
   }
 } else if (phase === 'assert') {
   const products =
-    family === 'compatibility'
-      ? [
-          ...(scenario === 'consumer-only' ? [] : [native, broker]),
-          ...(scenario === 'unselected-consumer'
-            ? []
-            : [
-                'oliphaunt-extension-pg-hashids',
-                'oliphaunt-js',
-                'oliphaunt-rust',
-                'oliphaunt-swift',
-              ]),
-        ].sort()
-      : family === 'cargo'
-        ? [broker, 'oliphaunt-rust'].sort()
-        : family === 'wasix'
-          ? ['liboliphaunt-wasix', 'oliphaunt-wasix-ts']
-          : family === 'example' && scenario !== 'missing-native-transition'
-            ? [native]
-            : scenario === 'hidden-version-config'
-              ? ['beta']
-              : [broker];
+    family === 'public-support'
+      ? ['oliphaunt-extension-vector']
+      : family === 'compatibility'
+        ? [
+            ...(scenario === 'consumer-only' ? [] : [native, broker]),
+            ...(scenario === 'unselected-consumer'
+              ? []
+              : [
+                  'oliphaunt-extension-pg-hashids',
+                  'oliphaunt-js',
+                  'oliphaunt-rust',
+                  'oliphaunt-swift',
+                ]),
+          ].sort()
+        : family === 'cargo'
+          ? [broker, 'oliphaunt-rust'].sort()
+          : family === 'wasix'
+            ? ['liboliphaunt-wasix', 'oliphaunt-wasix-ts']
+            : family === 'example' && scenario !== 'missing-native-transition'
+              ? [native, 'oliphaunt-rust']
+              : scenario === 'hidden-version-config'
+                ? ['beta']
+                : [broker];
   const verify = () => verifyReleaseCommit({ repo, headRef, products });
   if (scenario === 'base') assert.equal(latestVerifiedReleaseCommit({ repo, headRef }), null);
   else if (scenario === 'later-fix') {
@@ -331,6 +364,7 @@ if (phase === 'write') {
     const rejected =
       {
         mutated: /release-please-config[.]json contains a non-version semantic change/u,
+        'authored-patch': /must satisfy.*breaking-version policy/u,
         downgrade: /must advance to a semver version/u,
         tainted: /non-release-derived path.*src\/fix[.]rs/u,
         'kotlin-readme': /non-release-derived path.*kotlin\/README[.]md/u,

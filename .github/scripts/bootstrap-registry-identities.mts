@@ -36,6 +36,7 @@ import {
   REGISTRY_BOOTSTRAP_INTEGRITY_CONCURRENCY,
 } from '../../tools/release/crates-io-bootstrap-capacity.mts';
 import { inspectNpmVersionState } from '../../tools/release/frozen-npm-publish.mts';
+import { requirePublicationConsumerProof } from '../../tools/release/publication-consumer-proof.mts';
 import { loadPublicationLock } from '../../tools/release/publication-lock.mts';
 import { verifyLockedRegistryIntegrity } from '../../tools/release/registry-integrity.mts';
 import {
@@ -124,6 +125,8 @@ try {
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
+
+const consumerAdmission = credentialNeedsOnly ? null : await requirePublicationConsumerProof(lock);
 
 if (args[0] === '--checkpoint' || args[0] === '--finish') {
   try {
@@ -272,6 +275,7 @@ if (args[0] === '--prepare') {
     throw new Error('bootstrap admission contains a carrier outside its exact scope');
   const context = {
     lockDigest: lock.lockDigest,
+    proofDigest: consumerAdmission?.proofDigest,
     headRef,
     admittedPlan,
     scopedPlan,
@@ -302,7 +306,11 @@ function stderrTail(file) {
 
 async function savedBootstrapPhase(phase, directory) {
   const context = JSON.parse(readFileSync(path.join(directory, 'context.json'), 'utf8'));
-  if (context.lockDigest !== lock.lockDigest || context.headRef !== headRef)
+  if (
+    context.lockDigest !== lock.lockDigest ||
+    context.proofDigest !== consumerAdmission.proofDigest ||
+    context.headRef !== headRef
+  )
     throw new Error('bootstrap state does not match the current frozen lock/source');
   const { scopedPlan, capacityAssessment } = context;
   const startingCompletedIds = new Set(context.startingCompletedIds);

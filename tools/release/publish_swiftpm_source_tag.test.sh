@@ -31,7 +31,9 @@ projected="$(git rev-parse "$local_ref")"
 if git ls-tree --name-only "$projected" | rg -q unrelated-monorepo-file; then exit 1; fi
 [[ "$(git show "$projected:oliphaunt-source.json" | jq -r .source.commit)" == "$commit" ]]
 [[ "$(git show "$projected:LICENSE")" == 'fixture license' ]]
-resource --push
+if resource --push; then exit 1; fi
+rg -q "requires a frozen source lock" "$scratch/result"
+git push -q https://github.com/fixture/resources.git "$local_ref:refs/tags/$resource_version"
 [[ "$(git ls-remote --refs --tags https://github.com/fixture/resources.git "refs/tags/$resource_version")" == "$projected"$'\t'"refs/tags/$resource_version" ]]
 resource
 [[ "$(git rev-parse "$local_ref")" == "$projected" ]]
@@ -77,24 +79,11 @@ git tag -d "$version" > /dev/null
 GIT_AUTHOR_DATE='1893456000 +0000' GIT_COMMITTER_DATE='1893456000 +0000' invoke
 [[ "$(git rev-parse "$ref")" == "$first" ]]
 invoke
-mkdir "$scratch/bin"
-export SWIFT_REAL_GIT="$(command -v git)" SWIFT_PUSH_LOG="$scratch/pushes"
-cat > "$scratch/bin/git" <<'SH'
-#!/usr/bin/env bash
-if [[ "$1" == push ]]; then
-  echo push >> "$SWIFT_PUSH_LOG"
-  "$SWIFT_REAL_GIT" "$@"
-  exit 7
-fi
-exec "$SWIFT_REAL_GIT" "$@"
-SH
-chmod +x "$scratch/bin/git"
-if PATH="$scratch/bin:$PATH" REGISTRY_JOB_HARD_DEADLINE_EPOCH="$(( $(date +%s)+90 ))" invoke --push; then exit 1; fi
-rg -q 'requires two complete' "$scratch/result"
+if invoke --push; then exit 1; fi
+rg -q 'requires a frozen source lock' "$scratch/result"
 [[ -z "$(git ls-remote --refs --tags origin "$ref")" ]]
-PATH="$scratch/bin:$PATH" invoke --push
-rg -q 'failure reconciled' "$scratch/result"
-[[ "$(cat "$scratch/pushes")" == push ]]
+# Feed the read-only reconciliation path an already-completed exact remote tag.
+git push -q origin "$ref"
 [[ "$(git ls-remote --refs --tags origin "$ref")" == "$first"$'\t'"$ref" ]]
 git tag -d "$version" > /dev/null
 invoke --preflight
@@ -114,4 +103,4 @@ printf 'invalid ambient identity' > tools/release/release-bot.json
 invoke
 [[ "$(git show -s '--format=%an <%ae>' "$ref")" == "$(jq -r '.name+" <"+.email+">"' "$scratch/release-bot.json")" ]]
 if invoke --preflight --push; then exit 1; fi
-echo 'SwiftPM: isolated resources, deterministic projection, exact tags and lost-response reconciliation passed'
+echo 'SwiftPM: isolated resources, deterministic projection, exact tags and proof-required pushes passed'

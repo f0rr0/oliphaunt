@@ -1,5 +1,6 @@
 id = "postgres-tools-native"
 owner = "@oliphaunt/core"
+shared_source_paths = ["tools/packaging/native-cargo-payload.mts"]
 kind = "postgres-tools"
 publish_targets = ["github-release-assets", "crates-io", "npm"]
 registry_packages = [

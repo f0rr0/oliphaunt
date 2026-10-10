@@ -15,6 +15,7 @@ set -euo pipefail
 phase="$2"; state="$3"; index="${4:-}"
 event() { echo "$*" >> "$BOOT_FIXTURE_LOG"; }
 case "$phase" in
+  admit-npm) event npm-admit ;;
   --prepare) cp "$BOOT_FIXTURE_ROOT/plan.json" "$state/context.json" ;;
   --checkpoint)
     shopt -s nullglob; files=("$state"/operation-*.json); count="${#files[@]}"
@@ -47,7 +48,7 @@ case "$phase" in
     if [[ "$BOOT_FIXTURE_MODE" == authorization-failure ]]; then
       until [[ -f "$state/cargo-start" ]]; do sleep 0.01; done
     fi
-    jq -n '{packageName:"@fixture/runtime",version:"1.0.0",tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000}' > "$state/npm-$index.json" ;;
+    jq -n --argjson deadline "$(( $(date +%s) + 120 ))" '{packageName:"@fixture/runtime",version:"1.0.0",tarball:"frozen.tgz",registry:"https://registry.npmjs.org",timeout:2000,deadlineEpochSeconds:$deadline}' > "$state/npm-$index.json" ;;
   bootstrap-npm-after)
     if [[ "$index" == 1 ]]; then
       until [[ -f "$state/cargo-start" ]]; do sleep 0.01; done

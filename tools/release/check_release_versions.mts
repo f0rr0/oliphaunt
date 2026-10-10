@@ -5,10 +5,7 @@ import {
   checkRegistryPublication,
   queryProductPublication,
 } from './check_registry_publication.mts';
-import {
-  validatePublishedCargoExtensionConsumers,
-  validateReleaseConsumerCompatibility,
-} from './consumer-compatibility.mts';
+import { validateReleaseConsumerCompatibility } from './consumer-compatibility.mts';
 import { parseTagCommits, parseTagRefs } from './git-tag-state.mts';
 import { currentVersion } from './product-version.mts';
 import {
@@ -406,8 +403,6 @@ async function main(argv) {
     );
   }
   await validateReleaseDependencies(selected, graph);
-  if (args.checkRegistries)
-    await validatePublishedCargoExtensionConsumers(selected, { products: graph.products });
   if (args.checkRegistries) {
     const inventory = await validateRegistryPublication(
       selected,

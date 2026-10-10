@@ -377,6 +377,18 @@ async function main(argv, environment = process.env) {
     throw error('usage: release-transport-ref.mts <ensure|verify> <release-commit-sha>');
   }
   const [operation, commit] = argv;
+  if (operation === 'ensure') {
+    const { requirePublicationConsumerProof } = await import(
+      '../../tools/release/publication-consumer-proof.mts'
+    );
+    const { loadPublicationLock } = await import('../../tools/release/publication-lock.mts');
+    const lock = loadPublicationLock(
+      environment.PUBLICATION_LOCK_PATH ?? environment.OLIPHAUNT_PUBLICATION_LOCK,
+    );
+    if (lock.source.commit !== commit)
+      throw error('transport ref differs from the proved publication source');
+    await requirePublicationConsumerProof(lock, { environment });
+  }
   const contentWriteAdmission =
     environment.RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION ?? 'self-paced';
   const result =

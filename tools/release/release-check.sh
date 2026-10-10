@@ -21,7 +21,7 @@ if [ "$metadata" = 1 ]; then bash tools/release/release-metadata-check.sh; fi
 # Synthetic fixtures must not inherit live publication credentials or state.
 while IFS= read -r name; do
   case "$name" in
-    ACTIONS_*|GH_*|GITHUB_*|OLIPHAUNT_GITHUB_*|OLIPHAUNT_RELEASE_*|RELEASE_*|BOOTSTRAP_LEDGER_PATH|CI_RUN_ID|OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL)
+    ACTIONS_*|GH_*|GITHUB_*|OLIPHAUNT_GITHUB_*|OLIPHAUNT_RELEASE_*|RELEASE_*|PUBLICATION_*|BOOTSTRAP_LEDGER_PATH|CI_RUN_ID|OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL)
       unset "$name" ;;
   esac
 done < <(compgen -e)

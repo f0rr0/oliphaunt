@@ -1,5 +1,6 @@
 id = "database-resources"
 owner = "@oliphaunt/core"
+shared_source_paths = ["tools/packaging/build-maven-artifact-manifest.mts", "tools/packaging/maven-artifact-staging.mts"]
 kind = "database-resources"
 publish_targets = ["github-release-assets", "npm", "crates-io", "maven-central"]
 registry_packages = [

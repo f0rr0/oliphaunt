@@ -1,11 +1,11 @@
 import { lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readSelectedRemoteTagMap } from '../../.github/scripts/manage-release-drafts.mts';
-import { currentVersion } from './product-version.mts';
+import { extractPortableArchiveTree } from '../packaging/portable-archive.mts';
 import { reserveGitHubContentWrite } from './github-content-write-pacer.mts';
 import { createGitHubOperationBudget } from './github-release-mutations.mts';
+import { currentVersion } from './product-version.mts';
 import { loadPublicationLock, lockedProductArtifactPaths } from './publication-lock.mts';
-import { extractPortableArchiveTree } from '../packaging/portable-archive.mts';
 
 const SEMVER = /^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$/u;
 const SHA = /^[0-9a-f]{40}$/u;
@@ -79,6 +79,7 @@ async function prepare(scratch, argv) {
     if (args.manifest || args.includeTrees.length || args.sourceArchive)
       throw new Error('locked SwiftPM inputs cannot be overridden');
     const lock = loadPublicationLock(path.resolve(args.lock));
+    args.lockDigest = lock.lockDigest;
     if (lock.products.find((row) => row.id === args.product)?.version !== version)
       throw new Error('SwiftPM version differs from the frozen lock');
     args.source = lock.source;
@@ -185,6 +186,17 @@ async function main([phase, scratch, ...argv]) {
   }
   const context = readJson(path.join(scratch, 'context.json'));
   if (phase === '--admit') {
+    if (!context.source || !context.lockDigest)
+      throw new Error('SwiftPM publication requires a frozen source lock');
+    const { requirePublicationConsumerProof } = await import('./publication-consumer-proof.mts');
+    const lock = loadPublicationLock(path.resolve(context.lock));
+    if (
+      lock.lockDigest !== context.lockDigest ||
+      lock.source.commit !== context.source.commit ||
+      lock.source.tree !== context.source.tree
+    )
+      throw new Error('SwiftPM admission belongs to different frozen inputs');
+    await requirePublicationConsumerProof(lock);
     const budget = createGitHubOperationBudget({
       defaultWindowMs: 5 * 60_000,
       environment: process.env,

@@ -2,15 +2,22 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { GitHub, Manifest, registerChangelogNotes } from 'release-please';
-import { ManifestPlugin } from 'release-please/build/src/plugin.js';
 import { DefaultChangelogNotes } from 'release-please/build/src/changelog-notes/default.js';
-import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
-import { ReleasePleaseManifest } from 'release-please/build/src/updaters/release-please-manifest.js';
 import { parseConventionalCommits } from 'release-please/build/src/commit.js';
-import { buildPlan, loadGraph, productCompatibilityVersion } from './release-graph.mts';
-import { extensionConsumerRequirements } from './consumer-compatibility.mts';
+import { ManifestPlugin } from 'release-please/build/src/plugin.js';
+import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
+import {
+  buildBoundCompatibilityProducts,
+  releaseDependencyPlan,
+} from './release-dependency-plan.mts';
+import {
+  buildPlan,
+  compatibilityVersionEntries,
+  loadGraph,
+  productCompatibilityVersion,
+} from './release-graph.mts';
 
-// Supply source ownership and required extension repackaging. Release Please
+// Supply source ownership and public host support intent. Release Please
 // owns version policy, changelog text and ecosystem updaters in both cases.
 export function includeOwnedSourceCommits(
   manifest,
@@ -29,8 +36,6 @@ export function includeOwnedSourceCommits(
   manifest.plugins.push(
     new (class extends ManifestPlugin {
       async preconfigure(strategies, commitsByPath, releasesByPath) {
-        this.strategies = strategies;
-        this.releasesByPath = releasesByPath;
         const owners = new Map(
           observed.map((commit) => [
             commit.sha,
@@ -50,81 +55,95 @@ export function includeOwnedSourceCommits(
           }
           commitsByPath[ownerPath] = observed.filter((commit) => selected.has(commit.sha));
         }
-        return strategies;
-      }
-
-      async run(candidates) {
-        const products = structuredClone(graph.products);
-        const selected = new Set();
-        for (const candidate of candidates) {
-          const product = this.repositoryConfig[candidate.path].component;
-          products[product].version = candidate.pullRequest.version.toString();
-          selected.add(product);
-        }
-        // Selected products follow the versions sync will write. Every other
-        // product is its immutable released package, including transitive SDKs.
-        const pin = (product, source, version = products[product].version) =>
-          selected.has(product) && version === products[product].version
-            ? products[source].version
-            : readCompatibility(product, source, 'prepare-release-candidate', {
-                ref: version === '0.0.0' ? null : products[product].tag_prefix + version,
-              });
-        const required = new Map();
-        for (const { runtime, runtimeVersion } of extensionConsumerRequirements(
-          selected,
-          products,
-          pin,
-        )) {
-          const previous = required.get(runtime);
-          if (previous !== undefined && previous !== runtimeVersion)
-            throw new Error(
-              `prepare-release-candidate: conflicting ${runtime} requirements ${previous} and ${runtimeVersion}`,
-            );
-          required.set(runtime, runtimeVersion);
-        }
-        for (const [product, config] of Object.entries(products)) {
-          if (config.extension?.class !== 'external' || selected.has(product)) continue;
-          const changes = [...required].filter(
-            ([runtime, version]) => pin(product, runtime) !== version,
+        const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true });
+        const hasReleaseIntent = (ownerPath, config) => {
+          const releaseTypes = new Set(
+            (config.changelogSections ?? [])
+              .filter((section) => !section.hidden)
+              .map((section) => section.type),
           );
-          if (changes.length === 0) continue;
-          for (const [runtime, version] of changes) {
-            if (version !== products[runtime].version)
-              throw new Error(
-                `prepare-release-candidate: cannot repackage ${product} for ${runtime}@${version}; selected extension pins would target ${products[runtime].version}`,
-              );
-          }
-          const ownerPath = config.path;
-          const commits = parseConventionalCommits([
-            {
-              // This is a generated dependency update, not a source commit.
-              sha: '',
-              message: `fix: support ${changes.map(([runtime, version]) => `${runtime}@${version}`).join(', ')}`,
-              files: [],
-            },
-          ]);
-          const pullRequest = await this.strategies[ownerPath].buildReleasePullRequest(
+          return parseConventionalCommits(commitsByPath[ownerPath] ?? []).some(
+            (commit) => commit.notes?.length || releaseTypes.has(commit.type),
+          );
+        };
+        const workspaceIntent = Object.entries(manifest.repositoryConfig).some(
+          ([ownerPath, config]) =>
+            config.releaseType === 'rust' && hasReleaseIntent(ownerPath, config),
+        );
+        const plannedProducts = structuredClone(graph.products);
+        const compiled = buildBoundCompatibilityProducts(graph.products);
+        // Only these source-selected producers determine public exact host retargets.
+        for (const runtime of ['liboliphaunt-native', 'liboliphaunt-wasix']) {
+          const owner = graph.products[runtime]?.path;
+          if (!strategies[owner]) continue;
+          let commits = parseConventionalCommits(commitsByPath[owner] ?? []);
+          for (const plugin of manifest.plugins) commits = plugin.processCommits(commits);
+          const candidate = await strategies[owner].buildReleasePullRequest(
             commits,
-            this.releasesByPath[ownerPath],
+            releasesByPath[owner],
             manifest.draftPullRequest,
             manifest.labels,
           );
-          if (!pullRequest) throw new Error(`could not prepare compatible extension ${product}`);
-          pullRequest.updates.push({
-            path: manifest.manifestPath,
-            createIfMissing: false,
-            updater: new ReleasePleaseManifest({
-              version: pullRequest.version,
-              versionsMap: new Map([[ownerPath, pullRequest.version]]),
-            }),
-          });
-          candidates.push({
-            path: ownerPath,
-            config: this.repositoryConfig[ownerPath],
-            pullRequest,
-          });
+          if (candidate) plannedProducts[runtime].version = candidate.version.toString();
         }
-        return candidates;
+        for (const [ownerPath, config] of Object.entries(manifest.repositoryConfig)) {
+          const product = config.component;
+          if (!graph.products[product] || !releasesByPath[ownerPath]) continue;
+          const releaseIntent = hasReleaseIntent(ownerPath, config);
+          const runtimeChanged = ['liboliphaunt-native', 'liboliphaunt-wasix'].some(
+            (runtime) => plannedProducts[runtime]?.version !== graph.products[runtime]?.version,
+          );
+          if (!releaseIntent && !runtimeChanged && !workspaceIntent) continue;
+          const plan = releaseDependencyPlan(plannedProducts, [product], {
+            entries: entries.filter((entry) => entry.product === product && entry.publicSupport),
+            buildBound: compiled,
+            readValue: (entry) => readCompatibility(entry.product, entry.sourceProduct),
+          });
+          const changes = plan.flatMap((entry) => {
+            const previous = readCompatibility(
+              product,
+              entry.sourceProduct,
+              'prepare-release-candidate',
+              {
+                ref:
+                  graph.products[product].tag_prefix +
+                  releasesByPath[ownerPath].tag.version.toString(),
+              },
+            );
+            return previous === entry.version
+              ? []
+              : [{ producer: entry.sourceProduct, before: previous, after: entry.version }];
+          });
+          if (!changes.length) continue;
+          const intent = parseConventionalCommits([
+            {
+              sha: '',
+              files: [],
+              message: `fix!: replace exact host support ${changes.map(({ producer, before, after }) => `${producer}@${before} with ${producer}@${after}`).join('; ')}`,
+            },
+          ]);
+          const strategy = strategies[ownerPath];
+          const bump = strategy.versioningStrategy.bump.bind(strategy.versioningStrategy);
+          const withIntent = (commits) => [...commits, ...intent];
+          // Workspace-created consumers call the native bump strategy with no commits.
+          strategy.versioningStrategy.bump = (version, commits) =>
+            bump(version, withIntent(commits));
+          const build = strategy.buildReleasePullRequest.bind(strategy);
+          strategy.buildReleasePullRequest = async (commits, latest, draft, labels, options) => {
+            let candidate = await build(commits, latest, draft, labels, options);
+            if (candidate)
+              candidate = await build(withIntent(commits), latest, draft, labels, options);
+            if (candidate && latest) {
+              const floor = await bump(latest.tag.version, intent);
+              if (Bun.semver.order(candidate.version.toString(), floor.toString()) < 0)
+                throw new Error(
+                  `prepare-release-candidate: ${product} version ${candidate.version} is below Release Please public-support floor ${floor}`,
+                );
+            }
+            return candidate;
+          };
+        }
+        return strategies;
       }
     })(github, 'main', manifest.repositoryConfig),
   );

@@ -1,20 +1,4 @@
-import { test, expect } from 'bun:test';
-import { Manifest } from 'release-please';
-import { Version } from 'release-please/build/src/version.js';
-import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
-import {
-  buildPlan,
-  declaredSharedSourceImpacts,
-  loadGraph,
-  ROOT,
-  productCompatibilityVersion,
-} from './release-graph.mts';
-import {
-  includeOwnedSourceCommits,
-  useSourceDate,
-  applyCandidate,
-} from './prepare-release-candidate.mts';
-import { validateReleaseConsumerCompatibility } from './consumer-compatibility.mts';
+import { expect, test } from 'bun:test';
 import {
   appendFileSync,
   existsSync,
@@ -24,8 +8,29 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { Manifest } from 'release-please';
+import { ManifestPlugin } from 'release-please/build/src/plugin.js';
+import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
+import { Version } from 'release-please/build/src/version.js';
+import { frozenConsumerMatrix, frozenConsumerPlan } from './frozen-consumer.mts';
+import {
+  applyCandidate,
+  includeOwnedSourceCommits,
+  useSourceDate,
+} from './prepare-release-candidate.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
+import { releaseDependencyPlan } from './release-dependency-plan.mts';
+import {
+  buildPlan,
+  compatibilityVersionFromText,
+  compatibilityVersionValue,
+  declaredSharedSourceImpacts,
+  loadGraph,
+  productCompatibilityVersion,
+  ROOT,
+} from './release-graph.mts';
 
 const graph = loadGraph('prepare-release-candidate.test');
 const native = 'src/native/runtime';
@@ -311,6 +316,7 @@ test('shared source qualification respects each owner release boundary and ignor
 async function generateProductCandidate(
   commits,
   readCompatibility = (product, source) => productCompatibilityVersion(product, source),
+  configure = () => {},
 ) {
   const root = path.resolve(import.meta.dir, '../..');
   const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
@@ -355,9 +361,145 @@ async function generateProductCandidate(
   const manifest = await Manifest.fromManifest(github, 'main');
   useSourceDate('2026-09-11');
   includeOwnedSourceCommits(manifest, github, graph, readCompatibility);
-  const [candidate] = await manifest.buildPullRequests();
+  configure(manifest, github);
+  const candidates = await manifest.buildPullRequests();
+  expect(candidates.length).toBeLessThanOrEqual(1);
+  const [candidate] = candidates;
   return { candidate, versions };
 }
+
+for (const scenario of [
+  { name: 'documentation only', files: ['src/native/sdks/ts/README.md'], products: [] },
+  {
+    name: 'one source SDK',
+    files: ['src/native/sdks/ts/src/index.ts'],
+    products: ['oliphaunt-js'],
+  },
+  {
+    name: 'query updates and native ecosystem dependency bumps',
+    files: ['src/query/ts/src/query.ts', 'src/query/rust/src/lib.rs'],
+    products: [
+      'oliphaunt-query-ts',
+      'oliphaunt-query',
+      'oliphaunt-broker',
+      'oliphaunt-kotlin',
+      'oliphaunt-swift',
+      'oliphaunt-wasix-napi',
+      'oliphaunt-js',
+      'oliphaunt-react-native',
+      'oliphaunt-wasix-ts',
+    ],
+  },
+  {
+    name: 'runtime and one external extension',
+    files: [`${native}/VERSION`, 'src/extensions/external/vector/source.toml'],
+    products: ['liboliphaunt-native', 'oliphaunt-extension-vector'],
+  },
+  {
+    name: 'shared package writer',
+    files: ['src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts'],
+    products: [
+      'liboliphaunt-native',
+      'oliphaunt-extension-pg-hashids',
+      'oliphaunt-extension-pg-ivm',
+      'oliphaunt-extension-pg-textsearch',
+      'oliphaunt-extension-pg-uuidv7',
+      'oliphaunt-extension-pgtap',
+      'oliphaunt-extension-postgis',
+      'oliphaunt-extension-vector',
+    ],
+  },
+])
+  test(`release scenario: ${scenario.name} produces coherent versions and exact consumer scope`, async () => {
+    const { candidate, versions } = await generateProductCandidate([
+      {
+        sha: head,
+        message: scenario.products.length ? 'fix: repair shipped behavior' : 'docs: clarify usage',
+        files: scenario.files,
+      },
+    ]);
+    if (!scenario.products.length) {
+      expect(candidate).toBeUndefined();
+      return;
+    }
+    const scratch = mkdtempSync(path.join(os.tmpdir(), 'release-scenario-'));
+    try {
+      for (const update of candidate.updates) {
+        const input = path.join(ROOT, update.path);
+        if (existsSync(input)) {
+          const destination = path.join(scratch, update.path);
+          mkdirSync(path.dirname(destination), { recursive: true });
+          writeFileSync(destination, readFileSync(input));
+        }
+      }
+      applyCandidate(scratch, candidate);
+      const after = JSON.parse(
+        readFileSync(path.join(scratch, '.release-please-manifest.json'), 'utf8'),
+      );
+      const changedOwners = Object.keys(after).filter((owner) => after[owner] !== versions[owner]);
+      expect(changedOwners.sort()).toEqual(
+        scenario.products.map((id) => graph.products[id].path).sort(),
+      );
+      const paths = candidate.updates.map((update) => update.path);
+      expect(new Set(paths).size).toBe(paths.length);
+      const products = structuredClone(graph.products);
+      for (const id of scenario.products) {
+        products[id].version = after[products[id].path];
+        const before = Version.parse(versions[products[id].path]);
+        expect(Version.parse(products[id].version).compare(before)).toBeGreaterThan(0);
+        expect(paths).toContain(`${products[id].path}/CHANGELOG.md`);
+      }
+      const readRequirement = (entry) =>
+        existsSync(path.join(scratch, entry.path))
+          ? compatibilityVersionFromText(
+              entry,
+              readFileSync(path.join(scratch, entry.path), 'utf8'),
+            )
+          : compatibilityVersionValue(entry);
+      const requirements = releaseDependencyPlan(products, scenario.products, {
+        readValue: readRequirement,
+      });
+      for (const requirement of requirements) {
+        if (requirement.binding === 'compiled-input')
+          expect(requirement.version).toBe(products[requirement.sourceProduct].version);
+        else expect(requirement.version).toBe(readRequirement(requirement));
+        if (
+          requirement.binding === 'declared-requirement' &&
+          ['liboliphaunt-native', 'liboliphaunt-wasix'].includes(requirement.sourceProduct)
+        )
+          expect(requirement.version).toBe(compatibilityVersionValue(requirement));
+      }
+      const catalog = loadPublicationCatalog('release scenario', { products: scenario.products });
+      const lock = {
+        lockDigest: 'a'.repeat(64),
+        products: catalog.products.map((product) => ({
+          ...product,
+          version: products[product.id].version,
+        })),
+        carriers: catalog.carriers.map((carrier) => ({
+          ...carrier,
+          version: products[carrier.product].version,
+        })),
+      };
+      const plan = frozenConsumerPlan(lock, { configurationDigest: 'b'.repeat(64) });
+      expect([...new Set(plan.cases.map((test) => test.product))].sort()).toEqual(
+        [...scenario.products].sort(),
+      );
+      for (const carrier of lock.carriers)
+        expect(
+          plan.cases.some(
+            (test) =>
+              test.carrierId === carrier.id &&
+              test.id.startsWith(`${carrier.id}@${carrier.version}/`),
+          ),
+        ).toBe(true);
+      expect(new Set(frozenConsumerMatrix(plan).include.map((row) => row.target)).size).toBe(
+        frozenConsumerMatrix(plan).include.length,
+      );
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 
 test('actual Rust, npm, Swift and Gradle strategy updates apply to one local candidate', async () => {
   const root = path.resolve(import.meta.dir, '../..');
@@ -411,61 +553,13 @@ test('actual Rust, npm, Swift and Gradle strategy updates apply to one local can
   }
 });
 
-test('SDK runtime advances select independently versioned extension repackaging before admission', async () => {
-  const extensions = Object.entries(graph.products).filter(
-    ([, product]) => product.extension?.class === 'external',
-  );
-  for (const runtime of ['liboliphaunt-native', 'liboliphaunt-wasix']) {
-    const sdk = runtime === 'liboliphaunt-native' ? 'oliphaunt-kotlin' : 'oliphaunt-wasix-rust';
-    const { candidate, versions } = await generateProductCandidate([
-      {
-        sha: head,
-        message: 'fix: correct runtime packaging',
-        files: [`${graph.products[runtime].path}/tools/package.sh`],
-      },
-      {
-        sha: second,
-        message: 'fix: correct SDK integration',
-        files: [`${graph.products[sdk].path}/src/implementation`],
-      },
-    ]);
-    const manifestUpdate = mergeUpdates(candidate.updates).find(
-      ({ path: file }) => file === '.release-please-manifest.json',
-    );
-    const after = JSON.parse(manifestUpdate.updater.updateContent(JSON.stringify(versions)));
-    const products = structuredClone(graph.products);
-    const selected = Object.keys(products).filter((id) => {
-      products[id].version = after[products[id].path];
-      return products[id].version !== graph.products[id].version;
-    });
-    for (const [id, product] of extensions) {
-      expect(selected).toContain(id);
-      const [major, minor, patch] = product.version.split('.').map(Number);
-      expect(products[id].version).toBe(`${major}.${minor}.${patch + 1}`);
-      const changelog = candidate.updates.find(({ path: file }) => file === product.changelog_path);
-      expect(changelog.updater.updateContent('# Changelog\n')).toContain(
-        `support ${runtime}@${products[runtime].version}`,
-      );
-    }
-    const readCompatibility = (product, source) =>
-      selected.includes(product)
-        ? products[source].version
-        : graph.products[product].extension.compatibility[
-            source === 'liboliphaunt-native' ? 'native_runtime_version' : 'wasix_runtime_version'
-          ];
-    expect(() =>
-      validateReleaseConsumerCompatibility(selected, { products, readCompatibility }),
-    ).not.toThrow();
-  }
-});
-
-test('runtime-only and compatible SDK-only candidates retain independent extension releases', async () => {
-  for (const id of ['liboliphaunt-native', 'oliphaunt-kotlin']) {
+test('runtime and SDK changes retain independent extension releases', async () => {
+  for (const sdk of ['oliphaunt-kotlin', 'oliphaunt-wasix-rust', 'oliphaunt-react-native']) {
     const { candidate } = await generateProductCandidate([
       {
         sha: head,
-        message: 'fix: correct product behavior',
-        files: [`${graph.products[id].path}/src/implementation`],
+        message: 'fix: repair integration',
+        files: [`${native}/tools/package.sh`, `${graph.products[sdk].path}/src/implementation`],
       },
     ]);
     expect(
@@ -474,190 +568,142 @@ test('runtime-only and compatible SDK-only candidates retain independent extensi
   }
 });
 
-test('React Native repackages extensions for its pinned SDK even without a new runtime candidate', async () => {
+test('independent SDK pins do not impose a single global runtime version', async () => {
   const readCompatibility = (product, source) =>
-    product.startsWith('oliphaunt-extension-') ? '0.1.0' : graph.products[source].version;
+    product === 'oliphaunt-react-native' ? '0.2.0' : graph.products[source].version;
   const { candidate } = await generateProductCandidate(
     [
       {
         sha: head,
-        message: 'fix: correct mobile integration',
-        files: ['src/native/sdks/react-native/ios/OliphauntAdapter.swift'],
+        message: 'fix: repair mobile adapters',
+        files: [
+          'src/native/sdks/kotlin/src/implementation',
+          'src/native/sdks/react-native/ios/OliphauntAdapter.swift',
+        ],
       },
     ],
     readCompatibility,
   );
-  expect(candidate.updates.some(({ path: file }) => file === `${native}/VERSION`)).toBe(false);
-  for (const product of Object.values(graph.products)) {
-    if (product.extension?.class === 'external')
-      expect(candidate.updates.some(({ path: file }) => file === `${product.path}/VERSION`)).toBe(
-        true,
-      );
-  }
-});
-
-test('selection reads immutable extension pins even when the workspace already targets the next runtime', async () => {
-  const [major, minor, patch] = graph.products['liboliphaunt-native'].version
-    .split('.')
-    .map(Number);
-  const next = `${major}.${minor}.${patch + 1}`;
-  const reads = [];
-  const readCompatibility = (product, source, _prefix, { ref = null } = {}) => {
-    reads.push({ product, source, ref });
-    return ref === null ? next : graph.products[source].version;
-  };
-  const { candidate } = await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'fix: advance runtime and SDK',
-        files: [`${native}/tools/package.sh`, 'src/native/sdks/kotlin/src/implementation'],
-      },
-    ],
-    readCompatibility,
-  );
-  for (const [id, product] of Object.entries(graph.products)) {
-    if (product.extension?.class !== 'external') continue;
-    expect(candidate.updates.some(({ path: file }) => file === `${product.path}/VERSION`)).toBe(
-      true,
-    );
-    expect(reads).toContainEqual({
-      product: id,
-      source: 'liboliphaunt-native',
-      ref: product.tag_prefix + product.version,
-    });
-  }
-});
-
-test('a selected SDK wrapper follows immutable SDK pins rather than newer workspace metadata', async () => {
-  const readCompatibility = (product, source, _prefix, { ref = null } = {}) =>
-    product.startsWith('oliphaunt-extension-') || ref !== null
-      ? graph.products[source].version
-      : '9.9.9';
-  const { candidate } = await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'fix: correct mobile integration',
-        files: ['src/native/sdks/react-native/ios/OliphauntAdapter.swift'],
-      },
-    ],
-    readCompatibility,
-  );
+  expect(candidate).toBeDefined();
   expect(
     candidate.updates.some(({ path: file }) => file.startsWith('src/extensions/external/')),
   ).toBe(false);
 });
 
-test('conflicting native runtime consumers cannot silently overwrite one another during selection', async () => {
-  const readCompatibility = (_product, source) => graph.products[source].version;
-  await expect(
-    generateProductCandidate(
-      [
-        {
-          sha: head,
-          message: 'fix: advance selected mobile products',
-          files: [
-            `${native}/tools/package.sh`,
-            'src/native/sdks/kotlin/src/implementation',
-            'src/native/sdks/react-native/ios/OliphauntAdapter.swift',
-          ],
-        },
-      ],
-      readCompatibility,
-    ),
-  ).rejects.toThrow(/conflicting.*liboliphaunt-native/u);
-});
-
-test('repackaging cannot promise an older SDK runtime while synchronization targets a newer producer', async () => {
-  const readCompatibility = (product) =>
-    product.startsWith('oliphaunt-extension-') ? '0.1.0' : '0.2.0';
-  await expect(
-    generateProductCandidate(
-      [
-        {
-          sha: head,
-          message: 'fix: correct mobile integration',
-          files: ['src/native/sdks/react-native/ios/OliphauntAdapter.swift'],
-        },
-      ],
-      readCompatibility,
-    ),
-  ).rejects.toThrow(/cannot repackage.*liboliphaunt-native/u);
-});
-
-test('an extension already selected from its own sources retains its Release Please version and changelog', async () => {
+test('removing published exact host support supplies breaking intent before native version selection', async () => {
   const vector = graph.products['oliphaunt-extension-vector'];
-  const { candidate } = await generateProductCandidate([
-    {
-      sha: head,
-      message: 'fix: advance runtime and SDK',
-      files: [`${native}/tools/package.sh`, 'src/native/sdks/kotlin/src/implementation'],
-    },
-    {
-      sha: second,
-      message: 'feat: improve vector behavior',
-      files: [`${vector.path}/source.toml`],
-    },
-  ]);
-  expect(
-    candidate.updates.filter(({ path: file }) => file === `${vector.path}/VERSION`),
-  ).toHaveLength(1);
+  const reads = [];
+  const readCompatibility = (product, source, _prefix, { ref = null } = {}) => {
+    reads.push({ product, source, ref });
+    return ref ? '0.1.0' : graph.products[source].version;
+  };
+  const { candidate, versions } = await generateProductCandidate(
+    [
+      {
+        sha: head,
+        message: 'fix: repair vector packaging',
+        files: [`${vector.path}/source.toml`],
+      },
+    ],
+    readCompatibility,
+  );
+  const update = mergeUpdates(candidate.updates).find(
+    ({ path: file }) => file === '.release-please-manifest.json',
+  );
+  const after = JSON.parse(update.updater.updateContent(JSON.stringify(versions)));
+  const [major, minor] = vector.version.split('.').map(Number);
+  expect(after[vector.path]).toBe(`${major}.${minor + 1}.0`);
   const changelog = candidate.updates
     .find(({ path: file }) => file === vector.changelog_path)
     .updater.updateContent('# Changelog\n');
-  expect(changelog).toContain('improve vector behavior');
-  expect(changelog).not.toContain('support liboliphaunt-native');
+  expect(changelog).toContain('replace exact host support');
+  expect(changelog).toContain('repair vector packaging');
+  expect(
+    reads
+      .filter(({ ref }) => ref !== null)
+      .every(({ product }) => product === vector.id || product === 'oliphaunt-extension-vector'),
+  ).toBe(true);
 });
 
-test('repeated extension repackaging produces the same grouped body and file contents', async () => {
-  const commits = [
+test('unchanged public support permits an ordinary patch release', async () => {
+  const vector = graph.products['oliphaunt-extension-vector'];
+  const { candidate, versions } = await generateProductCandidate([
     {
       sha: head,
-      message: 'fix: advance runtime and SDK',
-      files: [`${native}/tools/package.sh`, 'src/native/sdks/kotlin/src/implementation'],
+      message: 'fix: repair vector SQL',
+      files: [`${vector.path}/source.toml`],
     },
+  ]);
+  const update = mergeUpdates(candidate.updates).find(
+    ({ path: file }) => file === '.release-please-manifest.json',
+  );
+  const after = JSON.parse(update.updater.updateContent(JSON.stringify(versions)));
+  const [major, minor, patch] = vector.version.split('.').map(Number);
+  expect(after[vector.path]).toBe(`${major}.${minor}.${patch + 1}`);
+});
+
+test('workspace-created candidates receive public support intent through native bump selection', async () => {
+  const vector = graph.products['oliphaunt-extension-vector'];
+  let bump;
+  await generateProductCandidate(
+    [
+      {
+        sha: head,
+        message: 'fix: update build helper API',
+        files: ['src/native/sdks/rust/crates/oliphaunt-build/src/lib.rs'],
+      },
+    ],
+    (_product, source, _prefix, { ref = null } = {}) =>
+      ref ? '0.1.0' : graph.products[source].version,
+    (manifest, github) => {
+      manifest.plugins.push(
+        new (class extends ManifestPlugin {
+          async preconfigure(strategies, _commits, releases) {
+            bump = await strategies[vector.path].versioningStrategy.bump(
+              releases[vector.path].tag.version,
+              [],
+            );
+            return strategies;
+          }
+        })(github, 'main', manifest.repositoryConfig),
+      );
+    },
+  );
+  const [major, minor] = vector.version.split('.').map(Number);
+  expect(bump.toString()).toBe(`${major}.${minor + 1}.0`);
+});
+
+test('docs changes do not read compatibility or create candidates', async () => {
+  const { candidate } = await generateProductCandidate(
+    [
+      {
+        sha: head,
+        message: 'docs: clarify preparation',
+        files: ['src/docs/maintainers/release.md'],
+      },
+    ],
+    () => {
+      throw new Error('unexpected compatibility read');
+    },
+  );
+  expect(candidate).toBeUndefined();
+});
+
+test('regeneration preserves the grouped body and complete update set', async () => {
+  const commits = [
+    { sha: head, message: 'fix: repair runtime', files: [`${native}/tools/package.sh`] },
   ];
   const render = ({ candidate }) => ({
     body: candidate.body.toString(),
     updates: mergeUpdates(candidate.updates).map((update) => {
       const file = path.join(ROOT, update.path);
-      const before = existsSync(file) ? readFileSync(file, 'utf8') : undefined;
-      return [update.path, update.updater.updateContent(before)];
+      return [
+        update.path,
+        update.updater.updateContent(existsSync(file) ? readFileSync(file, 'utf8') : undefined),
+      ];
     }),
   });
   expect(render(await generateProductCandidate(commits))).toEqual(
     render(await generateProductCandidate(commits)),
   );
-});
-
-test('docs and external-only changes do not read or release unrelated consumers', async () => {
-  const readCompatibility = () => {
-    throw new Error('unexpected consumer compatibility read');
-  };
-  const { candidate: docs } = await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'docs: clarify release preparation',
-        files: ['src/docs/maintainers/release.md'],
-      },
-    ],
-    readCompatibility,
-  );
-  expect(docs).toBeUndefined();
-  const { candidate } = await generateProductCandidate(
-    [
-      {
-        sha: head,
-        message: 'fix: repair vector behavior',
-        files: ['src/extensions/external/vector/source.toml'],
-      },
-    ],
-    readCompatibility,
-  );
-  const versions = candidate.updates.filter(({ path: file }) => file.endsWith('/VERSION'));
-  expect(versions.map(({ path: file }) => file)).toEqual([
-    'src/extensions/external/vector/VERSION',
-  ]);
 });

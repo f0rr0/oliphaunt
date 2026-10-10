@@ -36,6 +36,7 @@ import {
   normalPublicationSchedule,
 } from './normal-publication-executor.mts';
 import { normalPublicationPlan } from './normal-publication-plan.mts';
+import { requirePublicationConsumerProof } from './publication-consumer-proof.mts';
 import {
   assertLockedArtifactSet,
   assertLockedProductArtifacts,
@@ -58,11 +59,11 @@ import {
   REGISTRY_PUBLICATION_DEFERRAL_EXIT_CODE,
   requirePreMutationRegistryWindow,
 } from './registry-publication-deferral.mts';
+import { createReleaseAppToken } from './release-app-token.mts';
 import { compareText, currentProductVersionSync } from './release-artifact-targets.mts';
 import { ROOT, uniqueValueFlag } from './release-cli-utils.mts';
 import { loadProducts, releaseOrder } from './release-graph.mts';
 import { frozenUploadPlan, uploadFrozenReleaseAssets } from './upload_github_release_assets.mts';
-import { createReleaseAppToken } from './release-app-token.mts';
 
 const TOOL = 'release-publish.mts';
 const REGISTRY_DEADLINE_RESERVE_MS = 5_000;
@@ -185,6 +186,12 @@ try {
   fail(error instanceof Error ? error.message : String(error));
 }
 process.env.OLIPHAUNT_PUBLICATION_LOCK = PUBLICATION_LOCK_PATH;
+const CONSUMER_ADMISSION =
+  command === 'publish' &&
+  flagValue(argv.slice(1), '--step') === 'github-release-assets' &&
+  argv.includes('--check')
+    ? null
+    : await requirePublicationConsumerProof(ACTIVE_PUBLICATION_LOCK);
 
 function flagValue(args, flag) {
   try {
@@ -735,6 +742,7 @@ async function prepareNormalRegistryPlan(products, headRef) {
     products,
     headRef,
     lockDigest: ACTIVE_PUBLICATION_LOCK.lockDigest,
+    proofDigest: CONSUMER_ADMISSION.proofDigest,
     initialReceipts: [...provenReceipts.values()],
     schedule: normalPublicationSchedule(plan, process.env.CRATES_IO_TRUSTED_PUBLISH_BATCH_SIZE),
   };
@@ -771,6 +779,7 @@ async function registryPhase() {
           products,
           headRef,
           lockDigest: ACTIVE_PUBLICATION_LOCK.lockDigest,
+          proofDigest: CONSUMER_ADMISSION.proofDigest,
           initialReceipts: [],
           schedule: { cargoBatches: [], dependencies: [] },
         },
@@ -780,7 +789,10 @@ async function registryPhase() {
     return;
   }
   const context = JSON.parse(readFileSync(contextFile, 'utf8'));
-  if (context.lockDigest !== ACTIVE_PUBLICATION_LOCK.lockDigest)
+  if (
+    context.lockDigest !== ACTIVE_PUBLICATION_LOCK.lockDigest ||
+    context.proofDigest !== CONSUMER_ADMISSION.proofDigest
+  )
     throw new Error('registry state belongs to a different publication lock');
   const { plan, products, headRef } = context;
   const proven = new Map(context.initialReceipts.map((receipt) => [receipt.id, receipt]));
@@ -857,7 +869,11 @@ async function registryPhase() {
         operation,
         await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, carrier.id),
       );
-    else writeFileSync(admissionFile, JSON.stringify(prepared), { flag: 'wx', mode: 0o600 });
+    else
+      writeFileSync(admissionFile, JSON.stringify({ ...prepared, ...CONSUMER_ADMISSION }), {
+        flag: 'wx',
+        mode: 0o600,
+      });
   } else {
     // Reconciliation is mandatory even if npm returned an ambiguous failure.
     const prepared = JSON.parse(readFileSync(admissionFile, 'utf8'));
@@ -885,7 +901,10 @@ async function bootstrapPhase() {
     throw new Error('bootstrap phases require explicit identity bootstrap mode');
   const directory = path.resolve(argv[1]);
   const context = JSON.parse(readFileSync(path.join(directory, 'context.json'), 'utf8'));
-  if (context.lockDigest !== ACTIVE_PUBLICATION_LOCK.lockDigest)
+  if (
+    context.lockDigest !== ACTIVE_PUBLICATION_LOCK.lockDigest ||
+    context.proofDigest !== CONSUMER_ADMISSION.proofDigest
+  )
     throw new Error('bootstrap state belongs to another publication lock');
   const index = Number(argv[2]);
   if (!Number.isSafeInteger(index) || index < 0 || !context.admittedPlan[index])
@@ -921,7 +940,11 @@ async function bootstrapPhase() {
         operation,
         await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, carrier.id),
       );
-    else writeFileSync(admission, JSON.stringify(prepared), { flag: 'wx', mode: 0o600 });
+    else
+      writeFileSync(admission, JSON.stringify({ ...prepared, ...CONSUMER_ADMISSION }), {
+        flag: 'wx',
+        mode: 0o600,
+      });
   } else {
     await reconcileFrozenNpmPublication(JSON.parse(readFileSync(admission, 'utf8')));
     registryOperationResult(

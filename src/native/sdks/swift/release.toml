@@ -1,5 +1,6 @@
 id = "oliphaunt-swift"
 owner = "@oliphaunt/sdk-swift"
+shared_source_paths = ["src/native/sdks/swift/tools/ios-carrier-manifest.mts"]
 kind = "sdk"
 publish_targets = ["swift-package-source-tag", "github-release"]
 release_artifacts = [
@@ -12,6 +13,7 @@ embedded_cargo_manifests = ["src/native/mobile-bindings/Cargo.toml"]
 exact_extension_runtime = "liboliphaunt-native"
 
 [compatibility_versions.oliphaunt-swift-liboliphaunt]
+public_support = false
 source_product = "liboliphaunt-native"
 path = "src/native/sdks/swift/LIBOLIPHAUNT_VERSION"
 parser = "raw"

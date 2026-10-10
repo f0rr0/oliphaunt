@@ -20,7 +20,9 @@
   edges alone do not bump consumers. Correct missing ownership instead of copying
   source or creating repository-meta fingerprints to force selection.
 - The preparation job generates the lock after artifact assembly and freezes
-  every locked file in one candidate. Bootstrap and normal publish install
+  every locked file in one candidate. Installed consumer cases must prove that
+  candidate and Publication ready must succeed before any bootstrap or normal
+  mutation. Bootstrap and normal publish install
   that same candidate; they never rebuild it. Preserve its approval identity,
   lock, and ledger.
 - Publish leaves/parts before aggregators, target carriers before façades, runtime artifacts before SDKs, and packages before public GitHub release promotion.
@@ -34,7 +36,7 @@
   remains absent.
 - Bootstrap writes a genesis checkpoint before any external mutation, executes one sequential lane per immutable-name registry with DAG barriers between them, and serializes canonical completed-ID receipts into a content-addressed hash-chain checkpoint after each bounded batch and final failure drain. Resume manually through the original failed workflow run and only from an intact chain for the same source SHA, approved candidate, lock, catalog, selected products, complete carrier order, and package envelope.
 - An existence check never authorizes an immutable-version skip. Prove crates.io checksums, npm SRI, and Maven payload bytes against the publication lock, and preserve final receipts before release promotion.
-- Before promotion, derive every applicable public consumer surface and dependency closure from the exact lock; probe each anonymous Cargo/npm/Maven entry independently plus Git/Swift in fresh caches under one deadline, require every resolver lock to contain its complete frozen closure, retry only transient visibility failures, and preserve deterministic evidence bound to both immutable receipt sets. Never hide a missing lock dependency in a receipt-only category. A macOS host install does not prove every OS carrier, and a pre-promotion Swift probe proves the public source tag/manifest rather than draft binary-target availability.
+- Before promotion, derive every applicable public consumer surface and dependency closure from the exact lock; probe each anonymous Cargo/npm/Maven entry independently plus Git/Swift in fresh caches under one deadline, require every resolver lock to contain its complete requirement-compatible frozen closure, retry only transient visibility failures, and preserve deterministic evidence bound to both immutable receipt sets. Never hide a missing lock dependency in a receipt-only category. A macOS host install does not prove every OS carrier, and a pre-promotion Swift probe proves the public source tag/manifest rather than draft binary-target availability.
 - Normal npm publication uses GitHub-hosted OIDC. Normal Cargo publication exchanges OIDC for a fresh temporary token per bounded carrier batch and revokes it in `finally`; Maven credentials remain protected environment secrets. Bootstrap credentials are short-lived, isolated, and revoked after exact trusted-publisher configuration is audited; npm bootstrap specifically requires a granular `@oliphaunt` read/write token with 2FA bypass from a 2FA-enabled actor.
 - A pure version/changelog update may change the package envelope and lock, but
   must not alter the existing WASIX runtime or AOT bytes.
@@ -48,3 +50,5 @@
   paths creates no release PR and performs no publication. Compiler, SDK,
   build, source-selection, target, and packaging output changes require
   releases regardless of commit subject.
+
+- Conventional manifests own consumer requirements. Public exact-host removal requires a breaking boundary; private dependency updates do not. Selecting an SDK does not select all external extensions. Frozen consumer proof is independent of capsule preparation and must identify the current tests and actual producing attempts.

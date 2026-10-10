@@ -25,7 +25,7 @@ if (mode === 'prepare') {
     .split('\n');
   assert(events.indexOf('cargo-0') < events.indexOf('npm-before-1'));
   if (scenario.startsWith('auth-')) {
-    assert.deepEqual(events, ['cargo-0', 'npm-before-1', 'npm-push']);
+    assert.deepEqual(events, ['cargo-0', 'npm-before-1', 'npm-admit', 'npm-push']);
     const output = readFileSync(path.join(root, 'result'), 'utf8');
     assert(output.includes(`npm error code ${scenario.slice('auth-'.length)}`));
     assert(output.includes('npm publication authorization failed for @fixture/runtime@1.0.0'));
@@ -40,4 +40,11 @@ if (mode === 'prepare') {
     events.filter((event) => event === 'npm-push').length,
     scenario === 'success' ? 2 : 1,
   );
+  assert.equal(
+    events.filter((event) => event === 'npm-admit').length,
+    events.filter((event) => event === 'npm-push').length,
+  );
+  events.forEach((event, index) => {
+    if (event === 'npm-push') assert.equal(events[index - 1], 'npm-admit');
+  });
 } else throw Error('expected prepare or assert');

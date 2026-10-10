@@ -34,6 +34,7 @@ env:
   CANONICAL_RELEASE_REPOSITORY: f0rr0/oliphaunt
   NPM_VERSION: 11.18.0
   PUBLICATION_LOCK_PATH: target/release/publication-lock.json
+  PUBLICATION_CONSUMER_PROOF_PATH: target/release/publication-consumer-proof.json
   BOOTSTRAP_LEDGER_PATH: target/release/bootstrap-ledger
   RELEASE_JOB_HARD_WINDOW_SECONDS: 21180
   BOOTSTRAP_REGISTRY_MUTATION_WINDOW_SECONDS: 19800
@@ -922,6 +923,18 @@ jobs:
           bash tools/release/qualified-release-replay.sh "$RELEASE_HEAD_SHA" "$RELEASE_HEAD_SHA"
           git checkout --detach "$GITHUB_SHA"
           bash tools/release/publication-controller.sh "$RELEASE_HEAD_SHA" "$GITHUB_SHA"
+      - name: Derive final consumer coverage from the frozen lock
+        id: consumer_plan
+        run: bun tools/release/frozen-consumer.mts plan "$PUBLICATION_LOCK_PATH" target/release/consumer-plan.json
+      - name: Preserve required consumer plan
+        id: preserve_consumer_plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-consumer-plan
+          path: target/release/consumer-plan.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
       - name: Check whether first registry identities need credentials
         id: bootstrap_credentials
         timeout-minutes: 15
@@ -934,15 +947,154 @@ jobs:
       has_release_changes: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).has_release_changes }}
       lock_artifact_id: ${{ steps.preserve_publication_lock.outputs.artifact-id }}
       candidate_artifact_id: ${{ steps.preserve_publication_candidate.outputs.artifact-id }}
+      consumer_plan_artifact_id: ${{ steps.preserve_consumer_plan.outputs.artifact-id }}
+      consumer_matrix: ${{ steps.consumer_plan.outputs.matrix }}
       bootstrap_required: ${{ steps.bootstrap_credentials.outputs.needs_cargo_token == 'true' || steps.bootstrap_credentials.outputs.needs_npm_token == 'true' }}
+  frozen-consumers:
+    name: Frozen consumers (${{ matrix.target }})
+    needs: [plan-candidate, prepare-candidate]
+    if: ${{ needs.prepare-candidate.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-candidate.outputs.consumer_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    env:
+      RELEASE_HEAD_SHA: ${{ fromJSON(needs.plan-candidate.outputs.release_head).sha }}
+    steps:
+      - name: Checkout publication controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Bun consumer harness
+        uses: ./.github/actions/setup-bun
+      - name: Set up Node consumer
+        if: ${{ matrix.npm }}
+        uses: ./.github/actions/setup-node-runtime
+      - name: Set up pinned npm consumer
+        if: ${{ matrix.npm }}
+        id: consumer_npm
+        uses: ./.github/actions/setup-npm-publisher
+        with:
+          npm-version: ${{ env.NPM_VERSION }}
+      - name: Set up Deno consumer
+        if: ${{ matrix.deno }}
+        uses: ./.github/actions/setup-deno
+      - name: Set up Rust
+        if: ${{ matrix.cargo }}
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+      - name: Set up MSVC
+        if: ${{ runner.os == 'Windows' && matrix.native }}
+        uses: ./.github/actions/setup-msvc
+      - name: Select Apple consumer toolchain
+        if: ${{ matrix.apple }}
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+      - name: Set up Android consumer tooling
+        if: ${{ matrix.android }}
+        uses: ./.github/actions/setup-android
+        with:
+          gradle-cache: "false"
+          native-tools: ${{ matrix.expo && 'true' || 'false' }}
+          expo: ${{ matrix.expo && 'true' || 'false' }}
+      - name: Set up Maven consumer Java
+        if: ${{ matrix.maven && !matrix.android }}
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Download frozen inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ format('{0},{1}', needs.prepare-candidate.outputs.lock_artifact_id, needs.prepare-candidate.outputs.candidate_artifact_id) }}
+          path: ${{ runner.temp }}/frozen-inputs
+          merge-multiple: true
+      - name: Install verified frozen candidate
+        env:
+          PRODUCTS_JSON: ${{ fromJSON(needs.plan-candidate.outputs.release_plan).products_json }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id || github.run_id }}
+        run: |
+          bash tools/release/with-source.sh "$RELEASE_HEAD_SHA" bash tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mts verify-extract \
+            --transport "$RUNNER_TEMP/frozen-inputs/oliphaunt-publication-candidate.tar" \
+            --approved-lock "$RUNNER_TEMP/frozen-inputs/publication-lock.json" \
+            --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA" \
+            --approval-run-id "$APPROVAL_RUN_ID" --workspace-root "$GITHUB_WORKSPACE"
+      - name: Execute installed package consumers
+        env:
+          CONSUMER_TARGET: ${{ matrix.target }}
+          FROZEN_CONSUMER_NPM_CLI: ${{ steps.consumer_npm.outputs.npm-cli }}
+        run: bun tools/release/frozen-consumer.mts run "$PUBLICATION_LOCK_PATH" "$CONSUMER_TARGET" "target/consumer-results/$CONSUMER_TARGET.json"
+      - name: Preserve resolver traces and execution logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-consumer-results-${{ matrix.target }}
+          path: target/consumer-results/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+  publication-ready:
+    name: Publication ready
+    needs: [prepare-candidate, frozen-consumers]
+    if: ${{ !cancelled() && needs.prepare-candidate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require every consumer lane
+        env:
+          CONSUMER_RESULT: ${{ needs.frozen-consumers.result }}
+        run: test "$CONSUMER_RESULT" = success
+      - name: Checkout publication controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+      - name: Download required consumer plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.prepare-candidate.outputs.consumer_plan_artifact_id }}
+          path: target/release
+      - name: Download consumer results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: oliphaunt-consumer-results-*
+          path: target/consumer-results
+          merge-multiple: true
+      - name: Bind complete consumer proof
+        run: bun tools/release/publication-consumer-proof.mts aggregate target/release/consumer-plan.json target/consumer-results "$PUBLICATION_CONSUMER_PROOF_PATH"
+      - name: Preserve immutable publication proof
+        id: proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-publication-consumer-proof
+          path: target/release/publication-consumer-proof.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+    outputs:
+      proof_artifact_id: ${{ steps.proof.outputs.artifact-id }}
   publish-bootstrap:
     name: Bootstrap registry identities
     needs:
       - plan-candidate
       - prepare-candidate
+      - publication-ready
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    if: ${{ !cancelled() && needs.prepare-candidate.result == 'success' && needs.prepare-candidate.outputs.bootstrap_required == 'true' }}
+    if: ${{ !cancelled() && needs.prepare-candidate.result == 'success' && needs.publication-ready.result == 'success' && needs.prepare-candidate.outputs.bootstrap_required == 'true' }}
+    env:
+      PUBLICATION_CONSUMER_READ_TOKEN: ${{ github.token }}
     environment: release-bootstrap
     permissions:
       actions: read
@@ -1019,6 +1171,17 @@ jobs:
           bun .github/scripts/manage-release-drafts.mts preflight \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
+      - name: Download immutable consumer proof
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.publication-ready.outputs.proof_artifact_id }}
+          path: ${{ runner.temp }}/consumer-proof
+      - name: Record consumer proof admission
+        env:
+          PROOF_ARTIFACT_ID: ${{ needs.publication-ready.outputs.proof_artifact_id }}
+        run: |
+          echo "PUBLICATION_CONSUMER_PROOF_PATH=$RUNNER_TEMP/consumer-proof/publication-consumer-proof.json" >> "$GITHUB_ENV"
+          echo "PUBLICATION_CONSUMER_PROOF_ARTIFACT_ID=$PROOF_ARTIFACT_ID" >> "$GITHUB_ENV"
       - name: Download the frozen candidate from preparation
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1248,10 +1411,13 @@ jobs:
     needs:
       - plan-candidate
       - prepare-candidate
+      - publication-ready
       - publish-bootstrap
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    if: ${{ always() && !cancelled() && inputs.operation == 'publish' && needs.prepare-candidate.result == 'success' && needs.prepare-candidate.outputs.has_release_changes == 'true' && (needs.publish-bootstrap.result == 'success' || needs.publish-bootstrap.result == 'skipped') }}
+    if: ${{ always() && !cancelled() && inputs.operation == 'publish' && needs.prepare-candidate.result == 'success' && needs.publication-ready.result == 'success' && needs.prepare-candidate.outputs.has_release_changes == 'true' && (needs.publish-bootstrap.result == 'success' || needs.publish-bootstrap.result == 'skipped') }}
+    env:
+      PUBLICATION_CONSUMER_READ_TOKEN: ${{ github.token }}
     environment: release-publish
     outputs:
       promoted: ${{ steps.promote_github_releases.outcome == 'success' }}
@@ -1368,6 +1534,17 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
         run: bash tools/release/verify-maven-signing-readiness.sh
+      - name: Download immutable consumer proof
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.publication-ready.outputs.proof_artifact_id }}
+          path: ${{ runner.temp }}/consumer-proof
+      - name: Record consumer proof admission
+        env:
+          PROOF_ARTIFACT_ID: ${{ needs.publication-ready.outputs.proof_artifact_id }}
+        run: |
+          echo "PUBLICATION_CONSUMER_PROOF_PATH=$RUNNER_TEMP/consumer-proof/publication-consumer-proof.json" >> "$GITHUB_ENV"
+          echo "PUBLICATION_CONSUMER_PROOF_ARTIFACT_ID=$PROOF_ARTIFACT_ID" >> "$GITHUB_ENV"
       - name: Download the frozen candidate from preparation
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
