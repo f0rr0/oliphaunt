@@ -14,7 +14,7 @@ Paths are relative to the repository root. Recheck them when the code moves.
 | `.release-please-manifest.json`, SDK `release.toml` files | Repository versions and publication identities; verify publication separately |
 | `src/docs/src/components/mdx.tsx`, `src/docs/src/app/global.css` | Available content components and site styling |
 | `src/docs/tools/check-docs-snippets.mts` | Strict source type-checks for complete TypeScript quickstarts; does not execute the database |
-| `src/docs/README.md` | Version tokens, build snapshots, generated platform data, authoring commands |
+| `src/docs/README.md` | Package installation policy, build snapshots, generated platform data, authoring commands |
 | `src/docs/source.config.ts` | Fumadocs source and search processing |
 | `src/docs/maintainers/`, other `docs/` records | Authoring/engineering evidence, not public integration instructions |
 

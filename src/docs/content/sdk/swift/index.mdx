@@ -7,15 +7,15 @@ Use `Oliphaunt` from Swift or SwiftUI on iOS 17+ and macOS 14+. The package uses
 
 ## Install
 
-In Xcode, add `https://github.com/f0rr0/oliphaunt.git` as a package dependency and select version **{{release:oliphaunt-swift}}**. Add the `Oliphaunt` product to your app target.
+In Xcode, add `https://github.com/f0rr0/oliphaunt.git` as a package dependency using your application's selected Swift SDK release. Add the `Oliphaunt` product to your app target.
 
-For a Swift package, add this dependency to `Package.swift`:
+For a Swift package, add this dependency to `Package.swift`, replacing `<sdk-version>` with your application's selected release:
 
 ```swift
-.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "{{release:oliphaunt-swift}}")
+.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "<sdk-version>")
 ```
 
-Then add `.product(name: "Oliphaunt", package: "oliphaunt")` to your target's dependencies. For a new iOS database, also download `database-resources-{{release:database-resources}}-swift.zip` from the [database resources release](https://github.com/f0rr0/oliphaunt/releases/tag/database-resources-v{{release:database-resources}}). Extract it, add the directory as a local Swift package, and link `OliphauntSeedNativeIOSStandard` to the app target. This supplies the initial empty database; it is required on iOS. macOS can initialize a new database without a seed.
+Then add `.product(name: "Oliphaunt", package: "oliphaunt")` to your target's dependencies. For a new iOS database, also download the Swift resource archive from a [database resources release](https://github.com/f0rr0/oliphaunt/releases?q=database-resources-v) compatible with the SDK's native runtime. Extract it, add the directory as a local Swift package, and link `OliphauntSeedNativeIOSStandard` to the app target. This supplies the initial empty database; it is required on iOS. macOS can initialize a new database without a seed.
 
 For ICU collations, choose `OliphauntSeedNativeIOSICU` instead; it includes `OliphauntICU`. Keep ICU data linked when reopening an ICU database.
 

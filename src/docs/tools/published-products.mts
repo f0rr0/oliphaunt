@@ -75,24 +75,24 @@ export async function publishedProducts(routes) {
   ]);
 }
 
-// Keep examples paired with the APIs in this source revision. Publication is
-// resolved separately, so a completed older release cannot relabel newer code.
-export function selectDocumentedProducts(config, versions) {
+// Record checkout versions for archived build provenance, independently of
+// completed public releases. These versions are not inserted into examples.
+export function selectSourceProducts(config, versions) {
   return Object.fromEntries(
     Object.entries(config.packages).map(([directory, product]) => {
       const version = versions[directory];
       if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) {
-        throw new Error(`Missing documented version for ${product.component}`);
+        throw new Error(`Missing source version for ${product.component}`);
       }
       return [product.component, { version }];
     }),
   );
 }
 
-export async function documentedProducts() {
+export async function sourceProducts() {
   const [config, versions] = await Promise.all([
     fs.readFile(new URL('../../../release-please-config.json', import.meta.url), 'utf8'),
     fs.readFile(new URL('../../../.release-please-manifest.json', import.meta.url), 'utf8'),
   ]);
-  return selectDocumentedProducts(JSON.parse(config), JSON.parse(versions));
+  return selectSourceProducts(JSON.parse(config), JSON.parse(versions));
 }

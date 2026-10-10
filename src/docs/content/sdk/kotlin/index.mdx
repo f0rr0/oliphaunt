@@ -7,16 +7,16 @@ Use `dev.oliphaunt:oliphaunt-android` in Android apps with API level 24 or later
 
 ## Install
 
-Ensure `mavenCentral()` is available in both plugin and dependency repositories in `settings.gradle.kts`. Apply the Oliphaunt plugin alongside your app's existing Android/Kotlin plugins:
+Ensure `mavenCentral()` is available in both plugin and dependency repositories in `settings.gradle.kts`. Apply the Oliphaunt plugin alongside your app's existing Android/Kotlin plugins. Replace `<sdk-version>` with your application's selected Kotlin SDK version for both the plugin and library:
 
 ```kotlin title="app/build.gradle.kts"
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "{{release:oliphaunt-kotlin}}"
+    id("dev.oliphaunt.android") version "<sdk-version>"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:{{release:oliphaunt-kotlin}}")
+    implementation("dev.oliphaunt:oliphaunt-android:<sdk-version>")
 }
 ```
 

@@ -1,13 +1,13 @@
 ---
 title: Releases and upgrades
-description: Match documentation to your SDK version and plan database or extension upgrades.
+description: Find release notes and plan database or extension upgrades.
 ---
 
-Oliphaunt SDKs and runtimes have independent versions. Use the [version table](/docs/reference/version-matrix) to see the package versions documented by this site, and the package's linked release notes for changes.
+Oliphaunt SDKs and runtimes have independent versions. Use the [published releases](/docs/reference/version-matrix) to find each package's release notes.
 
 ## Match your dependency
 
-Install examples use the versions associated with this documentation build. Pin dependencies in your package manifest or lockfile so an application rebuild uses the versions you tested.
+Install examples name the packages to add. Select and record dependencies in your application's package manifest and lockfile so a rebuild uses the versions you tested.
 
 The SDK package selects compatible runtime dependencies. Keep those dependencies together instead of independently replacing a native library, WebAssembly runtime, or helper executable. React Native also depends on compatible Swift and Kotlin integrations.
 
@@ -26,6 +26,6 @@ Use physical restore only when runtime-family and format compatibility are docum
 
 ## Find the matching reference
 
-Use [Versions](/docs/reference/version-matrix) to compare your dependencies with this documentation. For an older SDK, open its release tag to read the README shipped with that version. When reporting a docs issue, include your SDK version and the page URL.
+These guides follow the current source APIs. Open your SDK's release tag to read the README shipped with your dependency. When reporting a docs issue, include your SDK version and the page URL.
 
 See all [GitHub releases](https://github.com/f0rr0/oliphaunt/releases) for release notes and downloadable artifacts.

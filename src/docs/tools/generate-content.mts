@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const parseToml = Bun.TOML.parse;
 
 import { renderPublicPlatformCompatibilityTable } from '../../../tools/release/platform-compatibility-policy.mts';
-import { documentedProducts, publishedProducts } from './published-products.mts';
+import { publishedProducts, sourceProducts } from './published-products.mts';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const docsRoot = path.resolve(scriptDir, '..');
@@ -47,13 +47,6 @@ function assertInsideRepo(relativePath, label) {
     throw new Error(`${label} escapes the repository: ${relativePath}`);
   }
   return resolved;
-}
-
-function substituteVersions(markdown, products) {
-  return markdown.replace(/\{\{release:([a-z0-9-]+)\}\}/gu, (_match, id) => {
-    if (!(id in products)) throw new Error(`Unknown release product: ${id}`);
-    return products[id]?.version ?? 'NOT-YET-PUBLISHED';
-  });
 }
 
 function normalizeMdxComments(markdown) {
@@ -119,15 +112,12 @@ function routeSourcePagePath(source, page) {
   return null;
 }
 
-function copyMarkdownPage(from, to, context) {
+function copyMarkdownPage(from, to) {
   const markdown = normalizeCodeFenceInfoStrings(
     normalizeMdxComments(
-      substituteVersions(
-        readText(from).replace(
-          '<!-- oliphaunt-platforms -->',
-          renderPublicPlatformCompatibilityTable(),
-        ),
-        context,
+      readText(from).replace(
+        '<!-- oliphaunt-platforms -->',
+        renderPublicPlatformCompatibilityTable(),
       ),
     ),
   );
@@ -136,7 +126,7 @@ function copyMarkdownPage(from, to, context) {
   fs.writeFileSync(to, normalizePageMarkdown(markdown, fallbackTitle));
 }
 
-function copyRoutePages(route, context) {
+function copyRoutePages(route) {
   const source = assertInsideRepo(route.source, `source for ${route.id}`);
   const destination = path.join(siteDocsRoot, route.route);
   ensureDir(destination);
@@ -149,15 +139,7 @@ function copyRoutePages(route, context) {
       continue;
     }
     const to = path.join(destination, `${page}${path.extname(from)}`);
-    copyMarkdownPage(from, to, context);
-    if (route.product_id && !context[route.product_id]) {
-      const warning =
-        '\n> This product has no completed public release yet. Installation examples below are not available for use.\n';
-      fs.writeFileSync(
-        to,
-        readText(to).replace(/^(---\r?\n[\s\S]*?\r?\n---\r?\n)/u, `$1${warning}`),
-      );
-    }
+    copyMarkdownPage(from, to);
   }
 }
 
@@ -506,7 +488,7 @@ export async function generateDocs() {
     path.join(generatedMetaRoot, 'published-products.json'),
     JSON.stringify(products, null, 2) + '\n',
   );
-  const context = await documentedProducts();
+  const sourceVersions = await sourceProducts();
   writeJson(path.join(staticRoot, 'docs-version.json'), {
     sourceRevision: currentGitSha(),
     dirty:
@@ -514,23 +496,22 @@ export async function generateDocs() {
         cwd: repoRoot,
         encoding: 'utf8',
       }).trim().length > 0,
-    products: context,
+    products: sourceVersions,
   });
   for (const route of manifest.routes ?? []) {
-    copyRoutePages(route, context);
+    copyRoutePages(route);
   }
 
   fs.writeFileSync(
     path.join(siteDocsRoot, 'reference', 'extension-catalog.md'),
     generateExtensionCatalog(),
   );
-  const rows = Object.entries(context).map(([id, product]) => {
-    const published = products[id];
-    return `| ${id} | ${product.version} | ${published ? `[${published.version}](${published.url})` : 'No completed release'} |`;
+  const rows = Object.entries(products).map(([id, published]) => {
+    return `| ${id} | ${published ? `[${published.version}](${published.url})` : 'No completed release'} |`;
   });
   fs.writeFileSync(
     path.join(siteDocsRoot, 'reference', 'version-matrix.md'),
-    '---\ntitle: Versions\ndescription: Package versions used by these guides and links to completed releases.\n---\n\nInstall examples and API descriptions use the documented versions below. The last column links to completed public releases; it may lag the documented version.\n\n| Product | Documented version | Latest completed release |\n| --- | --- | --- |\n' +
+    '---\ntitle: Published releases\ndescription: Links to completed public releases and their release notes.\n---\n\nProducts are released independently. These links report completed public releases; they do not recommend a dependency version or establish compatibility between packages.\n\n| Product | Latest completed release |\n| --- | --- |\n' +
       rows.join('\n') +
       '\n',
   );
