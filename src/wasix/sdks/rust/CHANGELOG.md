@@ -54,6 +54,14 @@
 - Keep the direct server handle after `close(&mut self)`, add `is_closed()`,
   and replay the first terminal close result on repeated calls.
 
+## [0.3.3]() (2026-10-10)
+
+
+### Bug Fixes
+
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+* **release:** bind qualification to exact package versions ([#280](https://github.com/f0rr0/oliphaunt/issues/280)) ([cd68c6c](https://github.com/f0rr0/oliphaunt/commit/cd68c6c9655f53c50a3a98d4db36cfc256d26a3c))
+
 ## [0.3.2]() (2026-10-07)
 
 

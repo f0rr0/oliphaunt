@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.4]() (2026-10-10)
+
+
+### Bug Fixes
+
+* **build:** scope package-test inputs and honor compiler caching ([#254](https://github.com/f0rr0/oliphaunt/issues/254)) ([b0e90b2](https://github.com/f0rr0/oliphaunt/commit/b0e90b279077f0d40e9270512a11ada156818f87))
+* **mobile:** harden Swift, Kotlin, and React Native integration ([#274](https://github.com/f0rr0/oliphaunt/issues/274)) ([8dfbfd2](https://github.com/f0rr0/oliphaunt/commit/8dfbfd288214ee59e5ef6000a492e73fff81c716))
+* **packaging:** restore WASIX initdb and isolate Android C++ runtime ([#245](https://github.com/f0rr0/oliphaunt/issues/245)) ([96c566a](https://github.com/f0rr0/oliphaunt/commit/96c566a7251aae09e441cc0fc4479c58c8809f58))
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+* **release:** validate published consumer compatibility ([#259](https://github.com/f0rr0/oliphaunt/issues/259)) ([e918d6a](https://github.com/f0rr0/oliphaunt/commit/e918d6adf3deeafb38205ce61402e40896d2f3c1))
+
 ## [0.3.3]() (2026-10-09)
 
 

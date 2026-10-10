@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.3]() (2026-10-10)
+
+
+### Bug Fixes
+
+* **packaging:** preserve independent SDK compatibility pins ([#251](https://github.com/f0rr0/oliphaunt/issues/251)) ([dabb453](https://github.com/f0rr0/oliphaunt/commit/dabb45393b209d99bcc9c18eb40daca828de68e2))
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+
 ## [0.2.2]() (2026-09-29)
 
 
