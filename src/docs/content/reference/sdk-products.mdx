@@ -1,25 +1,25 @@
 ---
 title: SDKs and platforms
-description: Compare package names, application targets, and default storage.
+description: Compare application targets, PostgreSQL runtimes, package names, and default storage.
 ---
 
-Choose the package for your application's language and runtime. Native and WASIX packages are separate choices.
+Your application's platform and the PostgreSQL runtime are separate choices. Rust desktop and Tauri apps can use either runtime, as can Node.js, Bun, Deno, and Electron. Browsers use [WebAssembly PostgreSQL](/docs/sdk#postgresql-as-webassembly); the mobile SDKs use native PostgreSQL.
 
-| SDK | Package | Application targets | Default storage |
-| --- | --- | --- | --- |
-| [Rust](/docs/sdk/rust) | `oliphaunt` | Native desktop, Tauri | Temporary directory |
-| [Swift](/docs/sdk/swift) | `Oliphaunt` | iOS, macOS | Temporary directory |
-| [Kotlin](/docs/sdk/kotlin) | `dev.oliphaunt:oliphaunt-android` | Android | Temporary directory |
-| [React Native](/docs/sdk/react-native) | `@oliphaunt/react-native` | iOS, Android | Temporary directory |
-| [TypeScript](/docs/sdk/typescript) | `@oliphaunt/ts` | Node.js, Bun, Deno, Electron | Temporary directory |
-| [WASIX Rust](/docs/sdk/wasix-rust) | `oliphaunt-wasix` | Rust hosts | Memory filesystem |
-| [WASIX TypeScript](/docs/sdk/wasix-typescript) | `@oliphaunt/wasix-ts` | Browser, Node.js, Bun, Deno, Electron | Memory filesystem |
-| [C ABI](/docs/sdk/c-abi) | `liboliphaunt` | Custom native bindings | Caller-prepared managed root |
+| SDK | Package | Application targets | PostgreSQL runtime | Default storage |
+| --- | --- | --- | --- | --- |
+| [WASIX TypeScript](/docs/sdk/wasix-typescript) | `@oliphaunt/wasix-ts` | Browser, Node.js, Bun, Deno, Electron | WebAssembly | Memory filesystem |
+| [Swift](/docs/sdk/swift) | `Oliphaunt` | iOS, macOS | Native | Temporary directory |
+| [Kotlin](/docs/sdk/kotlin) | `dev.oliphaunt:oliphaunt-android` | Android | Native | Temporary directory |
+| [React Native](/docs/sdk/react-native) | `@oliphaunt/react-native` | iOS, Android; Expo native builds | Native | Temporary directory |
+| [WASIX Rust](/docs/sdk/wasix-rust) | `oliphaunt-wasix` | Rust desktop, Tauri | WebAssembly | Memory filesystem |
+| [Native Rust](/docs/sdk/rust) | `oliphaunt` | Rust desktop, Tauri | Native | Temporary directory |
+| [Native TypeScript](/docs/sdk/typescript) | `@oliphaunt/ts` | Node.js, Bun, Deno, Electron | Native | Temporary directory |
+| [C ABI](/docs/sdk/c-abi) | `liboliphaunt` | Custom native bindings | Native | Caller-prepared managed root |
 
-## Runtime differences
+## Build for your application
 
-React Native uses the Swift and Kotlin native integrations. A Tauri app normally keeps its database in Rust and exposes application commands to the webview.
+Use Swift for SwiftUI and iOS/macOS integration, Kotlin for Android coroutines, or React Native for TypeScript across iOS and Android. React Native uses the Swift and Kotlin integrations and requires a native app build. See [mobile lifecycle](/docs/learn/mobile-stability) for persistent storage and process isolation.
 
-Choose WASIX TypeScript when the same application needs browser and desktop storage adapters. Choose native TypeScript for native desktop runtime modes.
+WASIX TypeScript provides the same query API across its browser and Node.js/Bun/Deno/Electron hosts, with storage adapters and execution placement selected for each host. Those JavaScript hosts load a platform-specific native addon to execute WebAssembly PostgreSQL. Check [supported hosts](/docs/reference/capabilities#supported-webassembly-hosts) before choosing a deployment target.
 
-Use [Runtime support](/docs/reference/capabilities) to compare persistent storage, local endpoints, and optional tools. Each SDK quickstart describes its platform setup.
+In Tauri, either Rust SDK keeps database work in the Rust backend and exposes application commands to the webview. See [both Tauri integrations](/docs/learn/tauri). Native Rust and native TypeScript also provide server mode for independent driver sessions.

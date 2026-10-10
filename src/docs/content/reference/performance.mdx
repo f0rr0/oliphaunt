@@ -21,7 +21,7 @@ Include storage initialization and extension activation when those happen during
 
 ## Measure a query
 
-With an open native TypeScript database, record the elapsed time around the complete awaited operation:
+With an open native TypeScript, WASIX TypeScript, or React Native database, record the elapsed time around the complete awaited operation:
 
 ```ts
 const started = performance.now();
@@ -47,8 +47,10 @@ Typed queries buffer results. Select only the columns you need and paginate larg
 
 ## Compare runtime modes
 
-Direct, broker, and server modes have different process and connection costs. Measure the mode you will ship. For async integrations, measure UI responsiveness or executor delay separately from SQL latency.
+Native PostgreSQL direct, broker, and server modes have different process and connection costs. WASIX root, direct, and Worker placements have different scheduling costs. Measure the runtime and placement you will ship, and record them with your results. Measure UI responsiveness or executor delay separately from SQL latency; returning a promise does not prove that the caller stays responsive.
 
-Browser persistence includes host-provider work. Compare memory and persistent storage only if you report that difference; an in-memory result does not predict durable write latency.
+For iOS, Android, and React Native, measure startup, memory, installed resources, and sustained writes on a target device. Include native bridge costs in application-level timing.
+
+Browser WASIX measurements include WebAssembly loading and host-provider work. Compare memory and persistent storage only if you report that difference; an in-memory result does not predict durable write latency.
 
 When comparing with SQLite, include installed size and memory as well as query speed. See [Moving from SQLite](/docs/learn/sqlite-upgrade) for the integration differences.

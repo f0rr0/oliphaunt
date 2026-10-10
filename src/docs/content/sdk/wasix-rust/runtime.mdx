@@ -3,7 +3,7 @@ title: WASIX Rust runtime
 description: Understand thread ownership, persistent roots, local endpoints, and shutdown.
 ---
 
-The WASIX Rust SDK owns a WebAssembly host and one PostgreSQL backend. Choose its synchronous or async API according to how your application schedules work.
+The WASIX Rust SDK hosts WebAssembly PostgreSQL inside a native Rust desktop or Tauri application. Each embedded handle owns one PostgreSQL backend. Choose its synchronous or async API according to how your application schedules work.
 
 ## Thread ownership
 
@@ -14,6 +14,8 @@ The WASIX Rust SDK owns a WebAssembly host and one PostgreSQL backend. Choose it
 ## Persistent storage
 
 Only one live owner can open a persistent database. Let the SDK manage its files; do not copy a live directory or delete locks to force a second owner.
+
+The native PostgreSQL direct-mode rule that binds a process to its first root does not apply to this SDK. Separate roots still need separate owners.
 
 Use the backup API for data movement. Physical restore requires matching runtime-family and format compatibility. Logical SQL is the transfer path across native/WASIX families or incompatible versions.
 
@@ -36,7 +38,7 @@ println!("{}", server.connection_string());
 server.close()?;
 ```
 
-The endpoint serves one connected client at a time. Configure pools with a maximum of one connection. Use `AsyncOliphauntServer` for async lifecycle ownership. For independent client sessions, choose the [native server](/docs/learn/native-runtime#server).
+The endpoint serves one connected client at a time. Configure pools with a maximum of one connection. Use `AsyncOliphauntServer` for async lifecycle ownership. For independent client sessions through an SDK server, choose the [native server](/docs/learn/native-runtime#server).
 
 ## Shutdown and failures
 

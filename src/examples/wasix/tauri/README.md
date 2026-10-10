@@ -1,5 +1,9 @@
 # Tauri WASIX Todo
 
+A native Tauri desktop app hosts WebAssembly PostgreSQL in its Rust backend.
+See the [Tauri guide](https://oliphaunt.dev/docs/learn/tauri) for both Rust SDK
+choices, including an async embedded handle without a PostgreSQL driver.
+
 Tauri owns a Rust backend that asynchronously starts
 `AsyncOliphauntServer` from `oliphaunt-pgwire-server`, then uses a one-connection
 SQLx pool against the local

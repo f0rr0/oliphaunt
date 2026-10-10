@@ -1,5 +1,5 @@
 ---
-title: TypeScript API reference
+title: Native TypeScript API reference
 description: Entry points, configuration, query results, errors, and lifecycle for @oliphaunt/ts.
 ---
 

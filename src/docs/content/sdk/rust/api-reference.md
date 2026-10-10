@@ -1,5 +1,5 @@
 ---
-title: Rust API reference
+title: Native Rust API reference
 description: Native Rust entry points, builder options, queries, transactions, and ownership.
 ---
 

@@ -49,7 +49,7 @@ let mut db = Oliphaunt::builder()
 db.execute("CREATE EXTENSION IF NOT EXISTS pgtap")?;
 ```
 
-Reopen persistent databases with the same required extension selection. The [extension catalog](/docs/reference/extension-catalog) lists supported names and targets.
+Reopen persistent databases with the same required extension selection. The [extension catalog](/docs/reference/extension-catalog) lists SQL names and declared packaging targets.
 
 ## Back up and restore
 
@@ -70,6 +70,12 @@ Use the builder's `startup_guc(name, value)`, `username(...)`, and `database(...
 Use `AsyncOliphaunt` to keep blocking guest execution off an async executor. Cloned handles share the same session. Closing any clone closes it for all callers.
 
 The synchronous handle remains on one OS thread for its entire lifetime. Do not move it into a generic blocking pool between calls. See [runtime ownership](/docs/sdk/wasix-rust/runtime).
+
+## Integrate a desktop application
+
+In Rust desktop and Tauri apps, keep an `AsyncOliphaunt` in application state and expose application operations to the UI. The database runs as WebAssembly on its owner thread while your application remains a native executable. Follow the [Tauri recipe](/docs/learn/tauri#webassembly-postgresql) for persistent app storage and commands.
+
+If a driver or ORM expects a PostgreSQL URL, use the [local endpoint](/docs/sdk/wasix-rust/runtime#local-postgresql-endpoint). The [Tauri example](https://github.com/f0rr0/oliphaunt/tree/main/src/examples/wasix/tauri) uses SQLx with a one-connection pool; the [Electron example](https://github.com/f0rr0/oliphaunt/tree/main/src/examples/wasix/electron) hosts the endpoint in a Rust sidecar. Retain its server handle while clients are connected.
 
 ## Errors and shutdown
 

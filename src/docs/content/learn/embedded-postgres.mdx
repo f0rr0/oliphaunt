@@ -15,15 +15,15 @@ Oliphaunt runs PostgreSQL inside your application or a local process it owns. Yo
 
 Choose persistent storage explicitly before saving user data. Native mobile apps normally use an app-private directory. WASIX browser apps choose IndexedDB or OPFS; desktop WASIX apps can use a directory.
 
-A native persistent database is a managed directory, not a single file. Let the SDK manage its contents. Do not delete database files or open the same root through another database instance.
+Native and WASIX directory storage both use a managed root, not a single file. Let the SDK manage its contents. Do not delete database files or open the same root through another database instance.
 
 ## One handle, one session
 
-Embedded query handles use one PostgreSQL session. Async calls let the application stay responsive, but queries still execute in order on that session. A transaction holds the session until it commits or rolls back.
+Embedded query handles use one PostgreSQL session. Queries execute in order on that session. Execution placement determines responsiveness: WASIX Rust's async owner and the mobile SDKs run database work off the caller, while browser WASIX root calls and desktop `/direct` calls can block their calling thread even though they return promises. Use a [browser Worker](/docs/sdk/wasix-typescript/guide#choose-execution-placement) for UI work. A transaction holds the session until it commits or rolls back.
 
 Use the transaction object supplied to a callback for every operation inside it. Calling the outer database handle from the callback can wait on the transaction that is already using the session.
 
-For independent client sessions and a connection pool, use a [native server](/docs/learn/native-runtime#server). WASIX local endpoints accept one connected client at a time.
+For independent client sessions and a connection pool, use a [native server](/docs/learn/native-runtime#server). WASIX SDK local endpoints accept one connected client at a time.
 
 ## Store changes safely
 

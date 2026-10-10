@@ -1,13 +1,13 @@
 ---
 title: WASIX TypeScript SDK
-description: Run PostgreSQL as WebAssembly in browsers and desktop JavaScript runtimes.
+description: Run WebAssembly PostgreSQL in browsers, Node.js, Bun, Deno, and Electron.
 ---
 
-Use `@oliphaunt/wasix-ts` in browsers, Node.js, Bun, Deno, or Electron. It runs the WASIX PostgreSQL runtime. For native desktop PostgreSQL, use the separate [TypeScript SDK](/docs/sdk/typescript).
+Use `@oliphaunt/wasix-ts` in browsers, Node.js, Bun, Deno, or Electron. It hosts [WebAssembly PostgreSQL](/docs/sdk#postgresql-as-webassembly) through the same query API, with storage and execution adapted to each host. Node.js, Bun, and Deno applications can be command-line tools or server processes as well as desktop apps. The [native TypeScript SDK](/docs/sdk/typescript) is another PostgreSQL runtime choice for Node.js, Bun, Deno, and Electron.
 
 ## Install
 
-Desktop requirements are Node.js 22.13 through 24.x, Bun 1.3.14+, or Deno 2.8.1+.
+JavaScript host requirements are Node.js 22.13 through 24.x, Bun 1.3.14+, or Deno 2.8.1+. These hosts load a platform-specific native addon to run WebAssembly PostgreSQL. Supported targets are macOS ARM64, Linux GNU x64/ARM64, and Windows MSVC x64.
 
 ```sh
 npm install @oliphaunt/wasix-ts@{{release:oliphaunt-wasix-ts}}
@@ -15,22 +15,11 @@ npm install @oliphaunt/wasix-ts@{{release:oliphaunt-wasix-ts}}
 
 Deno imports the same package with `npm:@oliphaunt/wasix-ts@{{release:oliphaunt-wasix-ts}}`; see [host setup](/docs/sdk/wasix-typescript/guide#desktop-host-setup).
 
-## Prepare a browser app
-
-Serve the application with these HTTP response headers:
-
-```text
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-Check that `window.crossOriginIsolated` is `true`. Serve all runtime and Worker assets with compatible cross-origin policies. Configure your bundler to preserve the package's module Worker asset when using `/worker`.
-
-Desktop runtimes do not need these browser headers.
-
 ## Run your first query
 
-The root import works across hosts. In a browser it runs in the importing realm; use the Worker import shown below when database execution must stay off the UI thread.
+Save this complete example as `main.mjs` and run `node main.mjs` or `bun main.mjs`. For Deno, use a `main.ts` file with the npm import and [host setup](/docs/sdk/wasix-typescript/guide#desktop-host-setup). The host root import runs database work on a dedicated Rust thread.
+
+The same root import works in browsers after [browser setup](#prepare-a-browser-app), where it executes in the importing realm and can block that thread. Use `/worker` for browser UI work.
 
 <!-- oliphaunt-snippet: oliphaunt-wasix-typescript -->
 
@@ -48,17 +37,54 @@ try {
 
 The default database lives in memory and is discarded on close.
 
-## Keep browser data between sessions
+## Keep host data between runs
 
-Use IndexedDB and run the database in a Worker:
+For Node.js or Electron, replace the disposable open above with:
 
 ```ts
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+
+const db = await Oliphaunt.open({ storage: directory('./data/notes') });
+```
+
+Bun uses `/storage/bun`; Deno uses `/storage/deno` with an `npm:` prefix. Reopen the same directory to use saved data, and close the handle when finished. See the [host adapter table](/docs/sdk/wasix-typescript/guide#choose-persistent-storage).
+
+## Prepare a browser app
+
+Serve the application with these HTTP response headers:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Check that `window.crossOriginIsolated` is `true`. Serve all runtime and Worker assets with compatible cross-origin policies. Configure your bundler to preserve the package's module Worker asset when using `/worker`. Node.js, Bun, Deno, and Electron do not need these browser headers.
+
+## Keep browser data between sessions
+
+Use IndexedDB and keep ordinary database work in a Worker. Initialize storage with the root client, close it, then let the package-owned Worker reopen the same storage:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
-const db = await OliphauntWorker.open({ storage: indexedDB('notes') });
+const storage = indexedDB('notes');
+const initial = await Oliphaunt.open({ storage });
+await initial.close();
+
+const db = await OliphauntWorker.open({ storage });
+try {
+  console.log((await db.query('SELECT $1::int4 AS answer', [42])).rows[0]?.answer);
+} finally {
+  await db.close();
+}
 ```
 
-Reopen the same name from the same origin to access saved data. Browser storage remains subject to browser quotas and user data-clearing policies. Keep the handle in application state and close it when finished.
+Root initialization can block its calling realm. Run it during application setup or in an application-owned Worker when the UI must stay responsive. On subsequent launches, the package-owned Worker can open the existing storage directly.
+
+This recipe works with the published `@oliphaunt/wasix-ts@0.2.2`, whose browser Worker cannot initialize fresh storage without a matching seed. The current source also supports `initdb` directly in the package-owned Worker. See [browser initialization](/docs/sdk/wasix-typescript/guide#initialize-browser-worker-storage) for package and seed compatibility.
+
+Reopen the same name from the same origin to access saved data. Browser storage remains subject to quotas and user data-clearing policies. Keep the handle in application state and close it when finished.
 
 For OPFS, desktop directories, transactions, and data export, continue with the [WASIX TypeScript guide](/docs/sdk/wasix-typescript/guide). Use the [API reference](/docs/sdk/wasix-typescript/api-reference) for import paths and methods.

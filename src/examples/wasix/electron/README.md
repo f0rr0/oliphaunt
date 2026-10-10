@@ -1,5 +1,9 @@
 # Electron WASIX Todo
 
+This native desktop app hosts WebAssembly PostgreSQL in a Rust sidecar.
+Electron apps can also host it directly in the main process through
+[WASIX TypeScript](https://oliphaunt.dev/docs/sdk/wasix-typescript).
+
 Electron keeps WASIX in a Rust sidecar. The sidecar starts
 `oliphaunt-pgwire-server`’s `AsyncOliphauntServer`, prints a local PostgreSQL URL, and stays alive until
 Electron exits. The Electron main process uses `pg` with a single connection

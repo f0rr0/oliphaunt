@@ -3,21 +3,21 @@ title: Runtime support
 description: Compare storage, concurrency, backup, and tool support across Oliphaunt SDKs.
 ---
 
-The SDKs share PostgreSQL semantics but differ in runtime integration. Use this table to check a requirement before choosing a package.
+The SDKs share PostgreSQL semantics but differ in runtime integration. [WebAssembly PostgreSQL](/docs/sdk#postgresql-as-webassembly) runs in browsers and supported Rust and JavaScript hosts. Native PostgreSQL supports desktop and mobile SDKs. Use these tables to check your application requirements.
 
-| Capability | Native SDKs | WASIX Rust | WASIX TypeScript |
-| --- | --- | --- | --- |
-| Default storage | Temporary directory | Memory filesystem | Memory filesystem |
-| Persistent storage | Directory or application-data name, depending on SDK and mode | Managed directory | IndexedDB/OPFS in browsers; directory on desktop |
-| Parameterized queries | Yes | Yes | Yes |
-| Callback transactions | Yes | Yes | Yes |
-| Raw response streaming | Yes | Yes | Yes |
-| Direct-query cancellation | Yes | No public API | No public API |
-| Physical backup and restore | Direct and broker handles | Yes | Yes; restore to persistent storage |
-| Broker process | Rust, desktop TypeScript, iOS 26+, and Android | No | No |
-| Local PostgreSQL endpoint | Rust and desktop TypeScript | One connected client | Desktop `/server`, one connected client |
-| Independent client sessions | Native server only | No | No |
-| Logical dump and SQL import | Optional endpoint tools | Optional `tools` feature | Optional tools package |
+| Capability | Native host SDKs | Native mobile SDKs | WASIX Rust | WASIX TypeScript |
+| --- | --- | --- | --- | --- |
+| Application targets | Rust/Tauri; Node.js/Bun/Deno/Electron; Swift macOS | Swift iOS, Kotlin Android, React Native iOS/Android | Rust desktop, Tauri | Browser, Node.js, Bun, Deno, Electron |
+| Default storage | Temporary directory | Temporary directory | Memory filesystem | Memory filesystem |
+| Persistent storage | Directory; broker/server options depend on SDK | App-private directory or application-data name, depending on mode | Managed directory | IndexedDB/OPFS in browsers; host directory elsewhere |
+| Parameterized queries and callback transactions | Yes | Yes | Yes | Yes |
+| Raw response streaming | Yes | Yes | Yes | Yes |
+| Direct-query cancellation | Yes | Yes | No public API | No public API |
+| Physical backup and restore | Direct and broker handles | Direct and broker handles | Yes | Yes; restore to persistent storage |
+| Broker process | Rust and native TypeScript | iOS 26+; Android API 24+ | No | No |
+| Local PostgreSQL endpoint | Rust and native TypeScript server mode | No | One connected client | `/server` on JavaScript hosts, one connected client |
+| Independent driver sessions | Native server mode | No | No in SDK endpoint | No in SDK endpoint |
+| Logical dump and SQL import | Optional endpoint tools for Rust/TypeScript | No SDK tool runner | Optional `tools` feature | Optional tools package |
 
 The C ABI is a low-level binding interface and does not expose every high-level SDK helper. See its [API reference](/docs/sdk/c-abi/api-reference).
 
@@ -27,11 +27,30 @@ The C ABI is a low-level binding interface and does not expose every high-level 
 
 These are the runtime package requirements. Your language runtime or app framework may impose a higher minimum. Use the [SDK quickstarts](/docs/sdk) for integration requirements.
 
+## Supported WebAssembly hosts
+
+WebAssembly PostgreSQL still needs a compatible host. The SDK package supplies the matching runtime integration; use only the targets below.
+
+| SDK host | Requirements |
+| --- | --- |
+| Browser | Cross-origin isolation, WebAssembly, and module Worker support for `/worker`; IndexedDB or OPFS for persistence |
+| Node.js | 22.13 through 24.x; matching Node-API addon |
+| Bun | 1.3.14+; matching Node-API addon |
+| Deno | 2.8.1+; local npm resolution and native-loading permissions |
+| Electron | Node-API-compatible main process; preserve unpacked native addon files |
+| Rust desktop and Tauri | Rust 1.93+; matching host runtime assets |
+
+The Rust and JavaScript host packages target **macOS ARM64, Linux GNU x64/ARM64, and Windows MSVC x64**. The Node.js/Bun/Deno/Electron SDK uses a native addon to host WebAssembly PostgreSQL; these targets do not imply support for every JavaScript service or edge runtime.
+
+Browser storage can initialize with `initdb` or a matching seed. See [browser initialization](/docs/sdk/wasix-typescript/guide#initialize-browser-worker-storage) for published-package compatibility and the [browser quickstart](/docs/sdk/wasix-typescript#keep-browser-data-between-sessions) for persistent storage. Reopening existing storage does not require a seed. See also [JavaScript host setup](/docs/sdk/wasix-typescript/guide#desktop-host-setup) and [Rust ownership](/docs/sdk/wasix-rust/runtime).
+
 ## Query and transaction behavior
 
 Typed query methods buffer their results. Raw response streaming is a PostgreSQL protocol interface, not a typed row stream or dedicated COPY reader/writer. Use it only when implementing a protocol-aware integration.
 
-Async APIs keep the calling application responsive; they do not give a single embedded database multiple concurrent sessions. Use the native server with a PostgreSQL driver for independent sessions.
+Execution placement determines responsiveness. WASIX TypeScript browser root calls and host `/direct` calls can block their calling thread even though they return promises. Use a browser Worker, a Rust async owner, or the JavaScript host root owner thread for responsive application work. See [execution choices](/docs/learn/native-runtime#webassembly-execution).
+
+One embedded handle still owns one session. Native server mode supports independent driver sessions. The one-client limit above applies to WASIX SDK endpoints; the separate [WASIX postmaster](/docs/learn/native-runtime#wasix-endpoints) has its own concurrency and storage contract.
 
 ## PostgreSQL tools
 
@@ -41,6 +60,6 @@ WASIX Rust enables `pg_dump` and non-interactive `psql` with its `tools` Cargo f
 
 ## Data movement
 
-Physical backups require a compatible runtime within the same family. Use logical PostgreSQL dump/restore to move between native and WASIX. Install required extensions on the destination before importing data that depends on them.
+Physical backups require a compatible runtime within the same family. Use logical PostgreSQL dump/restore to move between native PostgreSQL and WebAssembly PostgreSQL. Install required extensions on the destination before importing data that depends on them.
 
 For persistence and packaging examples, use your [SDK guide](/docs/sdk). For mobile lifecycle decisions, see [Ship a mobile database](/docs/learn/mobile-stability).

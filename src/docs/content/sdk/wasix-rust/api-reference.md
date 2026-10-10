@@ -3,7 +3,7 @@ title: WASIX Rust API reference
 description: Database types, builders, queries, tools, errors, and ownership in oliphaunt-wasix.
 ---
 
-Import from `oliphaunt_wasix`. The crate exports synchronous and async database types. Local server types are in the optional `oliphaunt-pgwire-server` crate.
+Import from `oliphaunt_wasix` in a normal Rust desktop or Tauri application. The SDK hosts [WebAssembly PostgreSQL](/docs/sdk#postgresql-as-webassembly). The crate exports synchronous and async database types. Local server types are in the optional `oliphaunt-pgwire-server` crate.
 
 ## Types and ownership
 

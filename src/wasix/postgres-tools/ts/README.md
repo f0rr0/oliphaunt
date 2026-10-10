@@ -2,9 +2,9 @@
 
 Optional standard PostgreSQL `pg_dump` and non-interactive `psql` runners for
 an open `@oliphaunt/wasix-ts` database. This package remains the public opt-in
-facade on every host. Browsers load separately carried portable tool binaries;
-Node.js, Bun, Deno, and Electron call the copies compiled into the matching Node-API
-platform carrier.
+facade on every supported host. The tools package supplies the selected portable
+and host-AOT tool inputs. Node.js, Bun, Deno, and Electron run them through the
+Node-API host; the base addon does not include the optional PostgreSQL frontends.
 
 `pgDump()` returns PostgreSQL's ordinary plain SQL dump, including normal
 `COPY` data. `psql()` accepts a command or script and can restore that output.
@@ -20,12 +20,26 @@ bun add @oliphaunt/wasix-ts @oliphaunt/wasix-tools
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
 await using source = await Oliphaunt.open();
 const sql = await pgDump(source, { args: ['--schema-only'] });
-await using target = await WorkerOliphaunt.open();
+const storage = indexedDB('import-' + crypto.randomUUID());
+const initial = await Oliphaunt.open({ storage });
+await initial.close();
+await using target = await WorkerOliphaunt.open({ storage });
 await psql(target, { script: sql });
 ```
+
+This browser example initializes fresh storage with the root client, closes it,
+then reopens it in the package-owned Worker. Root initialization can block its
+calling realm. The current SDK source can also initialize directly in the
+package-owned Worker. The example retains compatibility with the published
+SDK 0.2.2; see [browser initialization and seed compatibility](https://oliphaunt.dev/docs/sdk/wasix-typescript/guide#initialize-browser-worker-storage).
+
+On Node.js, Bun, Deno, and Electron, omit the IndexedDB import and storage
+preparation and use `await using target = await Oliphaunt.open()` instead.
+Those hosts can initialize fresh storage and run `psql` directly.
 
 `pgDump()` supports databases from the root, `/direct`, and `/worker` entrypoints.
 In browsers, `psql()` requires `/worker` because COPY restore is full duplex.

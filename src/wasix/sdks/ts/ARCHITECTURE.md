@@ -581,8 +581,9 @@ because the single-backend runtime has not qualified that capability.
 
 The `@oliphaunt/wasix-ts` tarball does not contain PostgreSQL binaries. Browser
 conditions import `@oliphaunt/liboliphaunt-wasix`, whose generated descriptor
-points at package-owned runtime, PGDATA, and manifest assets. There is no public
-raw runtime-source override. Development reads
+points at package-owned runtime and manifest assets. Initialization seeds are
+separate selected resources. There is no public raw runtime-source override.
+Development reads
 `target/oliphaunt-wasix/assets`, produced by
 `liboliphaunt-wasix:runtime-portable`, through the browser example's Vite
 plugin, which models that generated carrier.

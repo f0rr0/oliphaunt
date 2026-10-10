@@ -53,12 +53,12 @@ page_order = [
 ]
 
 [[routes]]
-id = "oliphaunt-rust"
-product_id = "oliphaunt-rust"
-title = "Rust SDK"
+id = "oliphaunt-wasix-typescript"
+product_id = "oliphaunt-wasix-ts"
+title = "WASIX TypeScript SDK"
 kind = "sdk"
-route = "sdk/rust"
-source = "src/docs/content/sdk/rust"
+route = "sdk/wasix-typescript"
+source = "src/docs/content/sdk/wasix-typescript"
 required_pages = [
   "index",
   "guide",
@@ -126,24 +126,6 @@ page_order = [
 ]
 
 [[routes]]
-id = "oliphaunt-js"
-product_id = "oliphaunt-js"
-title = "TypeScript SDK"
-kind = "sdk"
-route = "sdk/typescript"
-source = "src/docs/content/sdk/typescript"
-required_pages = [
-  "index",
-  "guide",
-  "api-reference",
-]
-page_order = [
-  "index",
-  "guide",
-  "api-reference",
-]
-
-[[routes]]
 id = "oliphaunt-wasix-rust"
 product_id = "oliphaunt-wasix-rust"
 title = "WASIX Rust SDK"
@@ -164,12 +146,30 @@ page_order = [
 ]
 
 [[routes]]
-id = "oliphaunt-wasix-typescript"
-product_id = "oliphaunt-wasix-ts"
-title = "WASIX TypeScript SDK"
+id = "oliphaunt-rust"
+product_id = "oliphaunt-rust"
+title = "Native Rust SDK"
 kind = "sdk"
-route = "sdk/wasix-typescript"
-source = "src/docs/content/sdk/wasix-typescript"
+route = "sdk/rust"
+source = "src/docs/content/sdk/rust"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+
+[[routes]]
+id = "oliphaunt-js"
+product_id = "oliphaunt-js"
+title = "Native TypeScript SDK"
+kind = "sdk"
+route = "sdk/typescript"
+source = "src/docs/content/sdk/typescript"
 required_pages = [
   "index",
   "guide",

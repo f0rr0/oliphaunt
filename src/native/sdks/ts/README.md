@@ -1,6 +1,6 @@
-# Oliphaunt TypeScript SDK
+# Oliphaunt native TypeScript SDK
 
-Run native PostgreSQL in Node.js, Bun, Deno, or Electron. For browsers, choose [WASIX TypeScript](https://oliphaunt.dev/docs/sdk/wasix-typescript).
+Run native PostgreSQL in Node.js, Bun, Deno, or Electron. [WASIX TypeScript](https://oliphaunt.dev/docs/sdk/wasix-typescript) also supports these hosts and adds browsers with WebAssembly PostgreSQL.
 
 ## Install
 

@@ -1,6 +1,6 @@
 # Oliphaunt React Native SDK
 
-Embed PostgreSQL in an iOS or Android app using React Native's New Architecture. The package requires React Native 0.85+ and React 19+; Expo integration requires Expo 56+ and a native build.
+Embed native PostgreSQL in an iOS or Android app using React Native's New Architecture. The package requires React Native 0.85+ and React 19+; Expo integration requires Expo 56+ and a native build.
 
 ## Install
 
@@ -8,7 +8,7 @@ Embed PostgreSQL in an iOS or Android app using React Native's New Architecture.
 npm install @oliphaunt/react-native @oliphaunt/seed-native-ios-datum64-standard
 ```
 
-For Expo, add `"@oliphaunt/react-native"` to `expo.plugins` in `app.json`, then build with `npx expo run:ios` or `npx expo run:android`. Expo Go does not include this native module. For bare projects, follow the [native integration guide](https://oliphaunt.dev/docs/sdk/react-native/architecture).
+For Expo, add `"@oliphaunt/react-native"` to `expo.plugins` in `app.json`, then build with `npx expo run:ios` or `npx expo run:android`. Expo Go does not include this native module. For bare projects, follow the [iOS and Android integration guide](https://oliphaunt.dev/docs/sdk/react-native/architecture).
 
 The [quickstart](https://oliphaunt.dev/docs/sdk/react-native) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
 
@@ -33,6 +33,8 @@ export async function firstQuery() {
 Default storage is a disposable temporary directory. Direct mode stays bound to its first root and configuration for the lifetime of the process, even after closing a handle. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
 ## Build your integration
+
+See [Ship a mobile database](https://oliphaunt.dev/docs/learn/mobile-stability) for application-owned persistent storage, local PostgreSQL features, lifecycle, and broker setup.
 
 - [Guide](https://oliphaunt.dev/docs/sdk/react-native/guide): parameters, transactions, extensions, backups, and shutdown.
 - [API reference](https://oliphaunt.dev/docs/sdk/react-native/api-reference): methods, configuration, results, and errors.

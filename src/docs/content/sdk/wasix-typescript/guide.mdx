@@ -3,7 +3,7 @@ title: WASIX TypeScript guide
 description: Choose storage and execution placement, transact, back up, and use PostgreSQL tools.
 ---
 
-These recipes build on the [WASIX TypeScript quickstart](/docs/sdk/wasix-typescript). An open `db` owns one PostgreSQL session.
+These recipes build on the [WASIX TypeScript quickstart](/docs/sdk/wasix-typescript). An open `db` owns one PostgreSQL session on every supported host. See the [WebAssembly explanation](/docs/sdk#postgresql-as-webassembly) for how the runtime fits your application.
 
 ## Choose persistent storage
 
@@ -26,6 +26,8 @@ import { directory } from '@oliphaunt/wasix-ts/storage/node';
 const db = await Oliphaunt.open({ storage: directory('./data/notes') });
 ```
 
+Browser and JavaScript hosts can initialize storage through `initdb` when no seed is selected. For published browser Worker compatibility, follow [browser initialization](#initialize-browser-worker-storage) or the [quickstart](/docs/sdk/wasix-typescript#keep-browser-data-between-sessions). Existing browser storage does not require a seed.
+
 Only one live owner may use a persistent root or browser storage name. Close the current handle before opening it from another Worker, process, or binding.
 
 ## Choose execution placement
@@ -39,6 +41,30 @@ Only one live owner may use a persistent root or browser storage name. Close the
 The available placements return the same promise-based query API. An async signature alone does not mean that execution is off the calling thread. Use `/worker` in a browser UI that must remain responsive.
 
 OPFS uses synchronous file access where the browser provides it in a Dedicated Worker. In a Window or a host without those handles, the adapter uses its portable persistence path automatically.
+
+## Initialize browser Worker storage
+
+The browser root import and the package-owned `/worker` host support `initdb` in the current source. A matching seed is optional and can speed up initialization.
+
+The published `@oliphaunt/wasix-ts@0.2.2` browser Worker predates seed-free initialization. With that package, initialize fresh persistent storage through the root client, close it, then reopen it in the Worker, as shown in the [quickstart](/docs/sdk/wasix-typescript#keep-browser-data-between-sessions). Existing storage reopens without a seed.
+
+For seeded initialization, supply an archive and manifest produced for the installed WASIX runtime. The seed's `runtime.product`, `runtime.version`, and physical compatibility must match the SDK's runtime; the seed package version alone does not establish compatibility. A mismatch fails with `WASIX seed has an incompatible runtime identity`.
+
+The published `@oliphaunt/seed-wasix-standard@0.2.2` manifest targets runtime 0.3.0, while `@oliphaunt/wasix-ts@0.2.2` uses runtime 0.3.2. Use root initialization with those packages. Do not change a seed manifest to bypass validation.
+
+When you have a compatible seed archive and manifest, serve both as application assets with the same cross-origin policies as the runtime. This fragment assumes those files are deployed at the URLs shown:
+
+```ts
+const db = await OliphauntWorker.open({
+  storage: indexedDB('notes'),
+  seed: {
+    archive: '/assets/cluster-seed.tar.zst',
+    manifest: '/assets/cluster-seed.json',
+  },
+});
+```
+
+It uses the Worker and IndexedDB imports from the quickstart. For ICU catalogs, provide the matching ICU seed and canonical ICU data too. Existing storage can reopen without a seed.
 
 ## Query and transact
 
@@ -93,17 +119,24 @@ npm install @oliphaunt/wasix-tools@{{release:postgres-tools-wasix}}
 ```
 
 ```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
 const sql = await pgDump(db);
-const target = await OliphauntWorker.open();
+const storage = indexedDB('import-' + crypto.randomUUID());
+const initial = await Oliphaunt.open({ storage });
+await initial.close();
+const target = await OliphauntWorker.open({ storage });
 try {
   await psql(target, { script: sql });
 } finally {
   await target.close();
 }
 ```
+
+This browser fragment assumes an open source `db`. It initializes a fresh destination through the root client before the Worker imports SQL. On Node.js, Bun, Deno, and Electron, use `Oliphaunt.open()` for the target instead; those hosts support initialization and `psql` directly.
 
 `pgDump` supports root, direct, and Worker handles. `psql` supports all desktop placements; in browsers it requires a Worker handle. A plain dump can contain COPY data and psql commands, so restore it with `psql`, not `execute`.
 
@@ -124,9 +157,11 @@ console.log(server.connectionString);
 // Close the PostgreSQL client before awaiting server.close().
 ```
 
-The endpoint accepts **one connected client at a time**. Configure a client pool with a maximum of one connection. Browser apps cannot use this TCP endpoint. Choose a native server when independent sessions are required.
+The endpoint accepts **one connected client at a time**. Configure a client pool with a maximum of one connection. Browser apps cannot use this TCP endpoint. Choose [native server mode](/docs/learn/native-runtime#server) when independent sessions are required through an SDK. Keep the server handle in application state, close client connections first, then await `server.close()`.
 
 ## Desktop host setup
+
+The JavaScript host packages target macOS ARM64, Linux GNU x64/ARM64, and Windows MSVC x64. These hosts load a matching Node-API addon that runs WebAssembly PostgreSQL. Use the root import for a dedicated Rust owner thread; `/worker` creates a JavaScript Worker instead. This package does not imply support for arbitrary edge or hosted JavaScript environments.
 
 Deno needs local npm module resolution. Set `"nodeModulesDir": "auto"` in `deno.json`, use `npm:` import prefixes, and grant native loading and storage permissions:
 
@@ -134,7 +169,9 @@ Deno needs local npm module resolution. Set `"nodeModulesDir": "auto"` in `deno.
 deno run --allow-ffi --allow-read --allow-write --allow-env main.ts
 ```
 
-The Worker placement does not require process-spawn permission. Electron packaging must leave `**/prebuilds/**` unpacked and preserve native loader companions beside the addon in `app.asar.unpacked`.
+The Worker placement does not require process-spawn permission. For Node.js and Bun, use the normal package import and the matching directory adapter.
+
+Electron runs database operations in its main process or an application-owned host Worker. Keep the database in application state and expose focused operations through IPC. Electron packaging must leave `**/prebuilds/**` unpacked and preserve native loader companions beside the addon in `app.asar.unpacked`.
 
 ## Errors and shutdown
 

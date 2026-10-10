@@ -21,45 +21,71 @@ try {
       path.join(generatedRoot, `site-docs/sdk/${slug}/index.mdx`),
       'utf8',
     );
-    const code = markdown.match(/```(?:ts|typescript)\n([\s\S]*?)\n```/u)?.[1];
-    if (!code) throw new Error(`${slug}: quickstart has no TypeScript example`);
-    const file = path.join(scratch, `${slug}.mts`);
-    fs.writeFileSync(file, code);
-    const config = path.join(scratch, `${slug}.json`);
-    fs.writeFileSync(
-      config,
-      JSON.stringify({
-        extends: path.join(sdkRoot, 'tsconfig.json'),
-        compilerOptions: {
-          rootDir: repoRoot,
-          noEmit: true,
-          noUnusedLocals: false,
-          lib: [
-            'ES2023',
-            'ESNext.Disposable',
-            'DOM',
-            'DOM.Iterable',
-            'DOM.AsyncIterable',
-            'WebWorker',
-          ],
-          typeRoots: [path.join(sdkRoot, 'node_modules/@types')],
-          types: ['node', 'bun'],
-          paths: {
-            [packageName]: [path.join(sdkRoot, 'src/index.ts')],
-            '@oliphaunt/ts-query/*': [path.join(repoRoot, 'src/query/ts/src/*.ts')],
-            '@oliphaunt/liboliphaunt-wasix': [
-              path.join(repoRoot, 'src/wasix/sdks/ts/src/runtime-carrier-shim.d.ts'),
-            ],
-          },
-        },
-        include: [file],
-        exclude: [],
-      }),
-    );
-    execFileSync(path.join(docsRoot, 'node_modules/.bin/tsc'), ['-p', config], {
-      stdio: 'inherit',
+    const blocks = [...markdown.matchAll(/```(?:ts|typescript)\n([\s\S]*?)\n```/gu)];
+    if (blocks.length === 0) throw new Error(`${slug}: quickstart has no TypeScript example`);
+    // WASIX also checks host directory storage and browser initialization/Worker recipes.
+    const selected = slug === 'wasix-typescript' ? blocks : blocks.slice(0, 1);
+    const files = selected.map((block, index) => {
+      let code = block[1];
+      if (slug === 'wasix-typescript' && !code.includes('import Oliphaunt')) {
+        code = `import Oliphaunt from '${packageName}';\n${code}`;
+      }
+      const file = path.join(scratch, `${slug}-${index}.mts`);
+      fs.writeFileSync(file, code);
+      return file;
     });
-    console.log(`${slug} quickstart: type-checked against SDK source (not executed)`);
+    for (const [index, file] of files.entries()) {
+      const config = path.join(scratch, `${slug}-${index}.json`);
+      fs.writeFileSync(
+        config,
+        JSON.stringify({
+          extends: path.join(sdkRoot, 'tsconfig.json'),
+          compilerOptions: {
+            rootDir: repoRoot,
+            noEmit: true,
+            noUnusedLocals: false,
+            lib: [
+              'ES2023',
+              'ESNext.Disposable',
+              'DOM',
+              'DOM.Iterable',
+              'DOM.AsyncIterable',
+              'WebWorker',
+            ],
+            typeRoots: [path.join(sdkRoot, 'node_modules/@types')],
+            types: ['node', 'bun'],
+            paths: {
+              [packageName]: [
+                path.join(
+                  sdkRoot,
+                  slug === 'wasix-typescript' && !selected[index][1].includes('/storage/indexed-db')
+                    ? 'src/index.node.ts'
+                    : 'src/index.ts',
+                ),
+              ],
+              ...(slug === 'wasix-typescript'
+                ? {
+                    [`${packageName}/worker`]: [path.join(sdkRoot, 'src/worker-entry.ts')],
+                    [`${packageName}/storage/*`]: [path.join(sdkRoot, 'src/storage/*.ts')],
+                  }
+                : {}),
+              '@oliphaunt/ts-query/*': [path.join(repoRoot, 'src/query/ts/src/*.ts')],
+              '@oliphaunt/liboliphaunt-wasix': [
+                path.join(repoRoot, 'src/wasix/sdks/ts/src/runtime-carrier-shim.d.ts'),
+              ],
+            },
+          },
+          include: [file],
+          exclude: [],
+        }),
+      );
+      execFileSync(path.join(docsRoot, 'node_modules/.bin/tsc'), ['-p', config], {
+        stdio: 'inherit',
+      });
+    }
+    console.log(
+      `${slug} quickstart: ${files.length} examples type-checked against SDK source (not executed)`,
+    );
   }
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true });

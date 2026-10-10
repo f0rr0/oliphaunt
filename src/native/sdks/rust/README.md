@@ -1,6 +1,6 @@
-# Oliphaunt Rust SDK
+# Oliphaunt native Rust SDK
 
-Embed native PostgreSQL in a Rust application. Use `AsyncOliphaunt` to keep an async executor responsive.
+Embed native PostgreSQL in Rust desktop and Tauri applications. [WASIX Rust](https://oliphaunt.dev/docs/sdk/wasix-rust) supports the same app targets using WebAssembly PostgreSQL. Use `AsyncOliphaunt` to keep an async executor responsive.
 
 ## Install
 

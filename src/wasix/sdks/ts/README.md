@@ -1,6 +1,6 @@
 # Oliphaunt WASIX TypeScript SDK
 
-Run PostgreSQL as WebAssembly in browsers, Node.js, Bun, Deno, or Electron. Use the Worker entrypoint in a browser to keep database execution off the UI thread.
+Run [WebAssembly PostgreSQL](https://oliphaunt.dev/docs/sdk#postgresql-as-webassembly) in browsers, Node.js, Bun, Deno, or Electron through the same query API. Use the Worker entrypoint in a browser to keep database execution off the UI thread.
 
 ## Install
 
@@ -8,7 +8,9 @@ Run PostgreSQL as WebAssembly in browsers, Node.js, Bun, Deno, or Electron. Use 
 npm install @oliphaunt/wasix-ts
 ```
 
-Browser Workers require cross-origin isolation. Follow the [quickstart](https://oliphaunt.dev/docs/sdk/wasix-typescript) to configure the required response headers and bundler.
+Node.js, Bun, Deno, and Electron load a platform-specific native addon that hosts WebAssembly PostgreSQL; the root import uses a dedicated Rust owner thread. Check [host requirements](https://oliphaunt.dev/docs/reference/capabilities#supported-webassembly-hosts).
+
+Browser execution requires cross-origin isolation. The current source supports `initdb` in both root and Worker placements. The [quickstart](https://oliphaunt.dev/docs/sdk/wasix-typescript) covers headers, bundling, and an initialization recipe that also works with the published 0.2.2 package.
 
 The [quickstart](https://oliphaunt.dev/docs/sdk/wasix-typescript) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
 
