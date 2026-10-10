@@ -94,7 +94,7 @@ EOF
     echo 'CocoaPods accepted SDK bytes from another declared version' >&2
     exit 1
   fi
-  rg -q 'checksum-pinned bindings target for the selected SDK version' "$scratch/pinned-version-failure.log"
+  grep -Fq 'checksum-pinned bindings target for the selected SDK version' "$scratch/pinned-version-failure.log"
   cp "$rn_dir/package.json" "$scratch/declared-package.json"
   for descriptor in \
     '{"qualificationOnly":false,"product":"oliphaunt-swift"}' \
