@@ -15,16 +15,19 @@ release_artifacts = [
 exact_extension_runtime = "liboliphaunt-wasix"
 
 [compatibility_versions.oliphaunt-wasix-ts-runtime]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/sdks/ts/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-ts-napi]
+public_support = false
 source_product = "oliphaunt-wasix-napi"
 path = "src/wasix/sdks/ts/package.json"
 parser = "json:oliphaunt.wasixNapiVersion"
 
 [compatibility_versions.oliphaunt-wasix-ts-query]
+public_support = false
 source_product = "oliphaunt-query-ts"
 path = "src/wasix/sdks/ts/package.json"
 parser = "json:dependencies.@oliphaunt/ts-query"

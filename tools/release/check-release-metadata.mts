@@ -28,6 +28,7 @@ import {
   registryPackageRows,
   releaseMetadata,
 } from './release-artifact-targets.mts';
+import { releaseDependencyPlan } from './release-dependency-plan.mts';
 import {
   compareText,
   compatibilityVersionEntries,
@@ -299,11 +300,28 @@ function validateCompatibility(graph, { publication = false } = {}) {
     new Set(entries.map((entry) => entry.id)).size === entries.length,
     'compatibility field ids must be globally unique',
   );
+  const dependencyPlan = new Map(
+    (publication ? releaseDependencyPlan(graph.products, Object.keys(graph.products)) : []).map(
+      (entry) => [entry.id, entry.version],
+    ),
+  );
   let pendingRelease;
   let checkedPendingRelease = false;
   let pendingVersions = new Map();
   const versionSources = new Map();
   for (const entry of entries) {
+    assert(
+      typeof entry.publicSupport === 'boolean',
+      `${entry.id} must explicitly declare public_support`,
+    );
+    if (
+      graph.products[entry.product].extension?.class === 'external' &&
+      ['liboliphaunt-native', 'liboliphaunt-wasix'].includes(entry.sourceProduct)
+    )
+      assert(
+        entry.publicSupport,
+        `${entry.id} is an external extension's public exact host contract`,
+      );
     const value = compatibilityVersionValue(entry, { prefix: TOOL });
     if (!publication) {
       requireCompatibilityVersionBounds(
@@ -351,11 +369,11 @@ function validateCompatibility(graph, { publication = false } = {}) {
             // release. Once published, its immutable tag supplies this value.
             missingValue: value,
           })
-        : graph.products[entry.sourceProduct].version;
+        : dependencyPlan.get(entry.id);
     const provenance =
       source.kind === 'tagged-sink'
         ? `immutable ${entry.product} tag ${source.tag}`
-        : `${entry.sourceProduct} ${expected}`;
+        : `planned ${entry.sourceProduct} binding ${expected}`;
     requireCompatibilityVersionBinding(
       {
         id: entry.id,

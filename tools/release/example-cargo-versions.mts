@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { ROOT } from './release-graph.mts';
-import { cargoManifestPaths } from './release-please-transition.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
+import { productCompatibilityVersion, ROOT } from './release-graph.mts';
+import { cargoManifestPaths } from './release-please-transition.mts';
 
 const TOOL = 'example-cargo-versions';
 const TABLES = ['dependencies', 'dev-dependencies', 'build-dependencies'];
@@ -63,8 +63,25 @@ export function exampleCargoReleaseVersionBindings() {
   const bindings = [];
   for (const policy of exampleCargoPolicies()) {
     const file = `${policy.crateDir}/Cargo.toml`;
+    const sdk = policy.dependencyBindings
+      .map(({ packageName }) => resolveActualCarrier(catalog, 'cargo', packageName, TOOL))
+      .find(({ product }) => ['oliphaunt-rust', 'oliphaunt-wasix-rust'].includes(product))?.product;
+    const runtimeVersion =
+      policy.runtime && sdk
+        ? productCompatibilityVersion(sdk, policy.runtime.product, TOOL)
+        : undefined;
     for (const { name, packageName, entryParts } of policy.dependencyBindings) {
       const carrier = resolveActualCarrier(catalog, 'cargo', packageName, TOOL);
+      const followsRuntime =
+        runtimeVersion &&
+        (carrier.product === policy.runtime.product ||
+          carrier.product === 'oliphaunt-extension-contrib-pg18');
+      const followsBroker = sdk === 'oliphaunt-rust' && carrier.product === 'oliphaunt-broker';
+      const version = followsRuntime
+        ? runtimeVersion
+        : followsBroker
+          ? productCompatibilityVersion(sdk, 'oliphaunt-broker', TOOL)
+          : carrier.version;
       bindings.push({
         kind: 'dependency',
         policyId: policy.id,
@@ -72,8 +89,9 @@ export function exampleCargoReleaseVersionBindings() {
         name,
         entryParts,
         versionPaths: [entryParts, [...entryParts, 'version']],
-        sourceProduct: carrier.product,
-        expected: `=${effectiveVersion(carrier.version)}`,
+        sourceProduct: followsRuntime || followsBroker ? sdk : carrier.product,
+        projection: Boolean(followsRuntime || followsBroker),
+        expected: `=${effectiveVersion(version)}`,
         wrapped: true,
       });
     }
@@ -89,8 +107,9 @@ export function exampleCargoReleaseVersionBindings() {
         name: 'runtime-version',
         entryParts,
         versionPaths: [entryParts],
-        sourceProduct: policy.runtime.product,
-        expected: effectiveVersion(products[0].version),
+        sourceProduct: runtimeVersion ? sdk : policy.runtime.product,
+        projection: Boolean(runtimeVersion),
+        expected: effectiveVersion(runtimeVersion ?? products[0].version),
         wrapped: false,
       });
     }

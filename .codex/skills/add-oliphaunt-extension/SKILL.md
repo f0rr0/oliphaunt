@@ -82,3 +82,22 @@ the durable origin and every transport must resolve to the same immutable pin.
 ## Review
 
 Reject the change if a declared target lacks a produced artifact, an actual package lacks a declared identity, an external extension is runtime-version-coupled, or generated SDK metadata disagrees. Reject any promotion, blocker, deferred, planned, or unsupported extension state on main. Report upstream source identity separately from Oliphaunt package version.
+
+## Declared requirements and frozen consumers
+
+Preserve authored conventional manifest requirements for source consumers. Only
+actual compiled inputs or Release Please ecosystem updates justify generated
+retargets. External extension host references declare `public_support = true`;
+private dependency/provider references declare `false`. A removed public host
+requires breaking intent before native version selection and verification against
+the previous immutable product tag. SDK changes do not select all extensions.
+
+Source `Qualified` and capsule preparation precede final installed consumer
+checks. Require `Frozen consumers` and `Publication ready` before bootstrap or
+normal mutation. The immutable consumer proof binds the lock, expected cases,
+test configuration, producing run/attempt and resolver/log evidence. Recovery
+imports prepared bytes and reruns these cases; an old missing/failed proof does
+not invalidate the bytes. Record installation, compilation/link and execution
+levels honestly. npm staging preserves full manifests and historical pins;
+Cargo path patches are staging evidence, not registry provenance. Keep the
+postpublication public checks and reconciliation.

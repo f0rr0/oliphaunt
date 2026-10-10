@@ -2,9 +2,16 @@
 set -euo pipefail
 admission="$1"
 transport_timeout="$2"
+bash tools/dev/bun.sh tools/release/publication-consumer-proof.mts admit-npm "$admission"
 tarball="$(jq -r .tarball "$admission")"
 registry="$(jq -r .registry "$admission")"
 seconds="$(jq -r '.timeout / 1000 | floor' "$admission")"
+remaining="$(( $(jq -er .deadlineEpochSeconds "$admission") - $(date +%s) - 5 ))"
+if [[ "$remaining" -lt 30 || "$seconds" -lt 1 ]]; then
+  echo 'npm publication has insufficient time remaining after proof admission' >&2
+  exit 1
+fi
+if [[ "$seconds" -gt "$remaining" ]]; then seconds="$remaining"; fi
 status=0
 NPM_CONFIG_FETCH_RETRIES=0 "$transport_timeout" --kill-after=5s "${seconds}s" \
   npm publish "$tarball" --access public --provenance --registry "$registry" 2>&1 | tee "$admission.log" || status=$?

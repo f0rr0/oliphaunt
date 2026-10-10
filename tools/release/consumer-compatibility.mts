@@ -1,4 +1,3 @@
-import { cargoPublishedDependencies } from './check_registry_publication.mts';
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import { compareText, loadProducts, productCompatibilityVersion } from './release-graph.mts';
 
@@ -77,9 +76,6 @@ export function validateReleaseConsumerCompatibility(
           ? null
           : products[product].tag_prefix + version,
     });
-  const extensions = Object.entries(products).filter(
-    ([, product]) => product.extension?.class === 'external',
-  );
   const consumers = extensionConsumerRequirements(selected, products, pin);
   const failures = [];
   for (const { product, runtime, version, owner, runtimeVersion } of consumers) {
@@ -112,51 +108,10 @@ export function validateReleaseConsumerCompatibility(
         failures.push(cause.message);
       }
     }
-    for (const [extension, metadata] of extensions) {
-      const extensionRuntime = pin(extension, runtime);
-      if (extensionRuntime !== runtimeVersion) {
-        failures.push(
-          `${label} requires ${runtime}@${runtimeVersion}, but ${extension}@${metadata.version} targets ${runtime}@${extensionRuntime}`,
-        );
-      }
-    }
   }
   if (failures.length > 0) {
     throw new Error(
       `${prefix}: release consumers are incompatible:\n${[...new Set(failures)].join('\n')}\nPrepare matching independently versioned packages; workspace qualification fixtures cannot prove this release combination.`,
-    );
-  }
-}
-
-export async function validatePublishedCargoExtensionConsumers(
-  selectedProducts,
-  { products = loadProducts(), readDependencies = cargoPublishedDependencies } = {},
-) {
-  const selected = new Set(selectedProducts);
-  const requirements = [];
-  if (selected.has('oliphaunt-rust')) {
-    requirements.push(['oliphaunt-build', products['oliphaunt-rust'].version]);
-  }
-  if (selected.has('oliphaunt-wasix-rust')) {
-    requirements.push(['oliphaunt-wasix', products['oliphaunt-wasix-rust'].version]);
-  }
-  if (requirements.length === 0) return;
-  const failures = [];
-  for (const [extension, metadata] of Object.entries(products)) {
-    if (metadata.extension?.class !== 'external' || selected.has(extension)) continue;
-    const dependencies = await readDependencies(extension, metadata.version);
-    for (const [name, version] of requirements) {
-      const matches = dependencies.filter(({ crate_id }) => crate_id === name);
-      if (matches.length === 0 || matches.some(({ req }) => !Bun.semver.satisfies(version, req))) {
-        failures.push(
-          `${extension}@${metadata.version} requires ${name} ${matches.map(({ req }) => req).join(', ') || '<missing>'}, incompatible with the selected SDK API ${name}@${version}`,
-        );
-      }
-    }
-  }
-  if (failures.length > 0) {
-    throw new Error(
-      `release-consumer-compatibility: published Cargo extensions cannot resolve with the selected SDK:\n${failures.join('\n')}`,
     );
   }
 }
@@ -167,5 +122,4 @@ if (import.meta.main) {
     throw new Error('usage: consumer-compatibility.mts PRODUCTS_JSON');
   }
   validateReleaseConsumerCompatibility(selected);
-  await validatePublishedCargoExtensionConsumers(selected);
 }

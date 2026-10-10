@@ -12,6 +12,7 @@ release_artifacts = ["node-api-prebuilds", "npm-optional-platform-packages"]
 embedded_cargo_manifests = ["src/native/node-addon/Cargo.toml"]
 
 [compatibility_versions.oliphaunt-node-direct-liboliphaunt]
+public_support = false
 source_product = "liboliphaunt-native"
 path = "src/native/node-addon/package.json"
 parser = "json:oliphaunt.liboliphauntVersion"

@@ -3,7 +3,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as sleepAsync } from 'node:timers/promises';
-import { loadProducts } from '../../tools/release/release-graph.mts';
 import { redactGitHubReadDetail, requestGithubGraphql } from '../../tools/release/github-read.mts';
 import {
   assertResumableReleaseMetadata,
@@ -27,6 +26,7 @@ import {
   DEFAULT_PUBLICATION_LOCK,
   loadPublicationLock,
 } from '../../tools/release/publication-lock.mts';
+import { loadProducts } from '../../tools/release/release-graph.mts';
 import {
   RELEASE_PLEASE_ASSERT_MARKABLE_WINDOW_MS,
   RELEASE_PLEASE_MARK_TAGGED_WINDOW_MS,
@@ -910,6 +910,12 @@ export async function main(argv, { environment = process.env, now = Date.now } =
   }
 
   const selected = selectedReleases(command, products, headRef, environment);
+  if (command === 'stage' || command === 'promote') {
+    const { requirePublicationConsumerProof } = await import(
+      '../../tools/release/publication-consumer-proof.mts'
+    );
+    await requirePublicationConsumerProof(undefined, { environment });
+  }
   const budget = createReleaseDraftOperationBudget(command, { environment, now });
   await reconcileSelectedReleases({
     budget,

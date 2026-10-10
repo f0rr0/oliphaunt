@@ -26,7 +26,21 @@ for directory in "$state"/*/; do
   if git -C "$repo" cat-file -e "$commit:release-please-config.json" 2>/dev/null; then
     git -C "$repo" show "$commit:release-please-config.json" > "$directory/config.json"
   fi
+  if git -C "$repo" cat-file -e "$commit:.release-please-manifest.json" 2>/dev/null; then
+    git -C "$repo" show "$commit:.release-please-manifest.json" > "$directory/manifest.json"
+  fi
 done
+bash "$owner/../dev/bun.sh" "$owner/verify-release-commit.mts" --snapshot-support-tags
+: > "$state/support-refs"
+while IFS= read -r -d '' tag; do
+  commit="$(git -C "$repo" rev-parse --verify "refs/tags/$tag^{commit}")"
+  printf '%s\0%s\0' "$tag" "$commit" >> "$state/support-refs"
+  if [[ ! -f "$state/$commit/files" ]]; then
+    mkdir -p "$state/$commit"
+    git -C "$repo" ls-tree -r -z --name-only "$commit" > "$state/$commit/files"
+    git -C "$repo" show "$commit:release-please-config.json" > "$state/$commit/config.json"
+  fi
+done < "$state/support-tags"
 bash "$owner/../dev/bun.sh" "$owner/verify-release-commit.mts" --snapshot-paths
 for directory in "$state"/*/; do
   commit="$(basename "$directory")"

@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
   validateConsumerContractCoverage,
-  validatePublishedCargoExtensionConsumers,
   validateReleaseConsumerCompatibility,
 } from './consumer-compatibility.mts';
 import { releasePackageBindings } from './release-graph.mts';
@@ -93,40 +92,43 @@ test('source qualification cannot substitute a newer workspace addon for a publi
   ).not.toThrow();
 });
 
-test('historical extension metadata must load with every selected consumer runtime', () => {
-  for (const product of [
-    'oliphaunt-wasix-ts',
-    'oliphaunt-wasix-rust',
-    'oliphaunt-js',
-    'oliphaunt-kotlin',
-    'oliphaunt-swift',
-  ]) {
-    const state = fixture();
-    state.published['oliphaunt-extension-vector'] = {
-      'liboliphaunt-wasix': '0.3.0',
-      'liboliphaunt-native': '0.3.0',
-    };
-    expect(() => validateReleaseConsumerCompatibility([product], state)).toThrow(
-      'vector@9.8.7 targets',
-    );
-    expect(() =>
-      validateReleaseConsumerCompatibility([product, 'oliphaunt-extension-vector'], state),
-    ).not.toThrow();
-  }
+test('SDK releases do not require every latest extension to follow their runtime', () => {
+  const state = fixture();
+  state.published['oliphaunt-extension-vector'] = {
+    'liboliphaunt-wasix': '0.3.0',
+    'liboliphaunt-native': '0.3.0',
+  };
+  expect(() =>
+    validateReleaseConsumerCompatibility(
+      [
+        'oliphaunt-wasix-ts',
+        'oliphaunt-wasix-rust',
+        'oliphaunt-rust',
+        'oliphaunt-js',
+        'oliphaunt-kotlin',
+        'oliphaunt-swift',
+      ],
+      state,
+    ),
+  ).not.toThrow();
+  expect(state.reads.some(({ product }) => product === 'oliphaunt-extension-vector')).toBe(false);
 });
 
-test('tools and React Native validate the historical SDKs they actually pin', () => {
-  for (const [owner, dependency, source] of [
-    ['postgres-tools-wasix', 'oliphaunt-wasix-ts', 'liboliphaunt-wasix'],
-    ['oliphaunt-react-native', 'oliphaunt-kotlin', 'liboliphaunt-native'],
-    ['oliphaunt-react-native', 'oliphaunt-swift', 'liboliphaunt-native'],
-  ]) {
-    const state = fixture();
-    state.published[dependency][source] = '0.3.0';
-    expect(() => validateReleaseConsumerCompatibility([owner], state)).toThrow(
-      `${owner} through ${dependency}`,
-    );
+test('React Native validates the historical SDKs it actually pins', () => {
+  const state = fixture();
+  for (const dependency of ['oliphaunt-kotlin', 'oliphaunt-swift']) {
+    state.products[dependency].version = '1.0.0';
+    state.pins[dependency]['liboliphaunt-native'] = '0.4.0';
   }
+  expect(() =>
+    validateReleaseConsumerCompatibility(['oliphaunt-react-native'], state),
+  ).not.toThrow();
+  for (const dependency of ['oliphaunt-kotlin', 'oliphaunt-swift'])
+    expect(state.reads).toContainEqual({
+      product: dependency,
+      source: 'liboliphaunt-native',
+      ref: `${dependency}-v${dependency === 'oliphaunt-kotlin' ? '0.3.1' : '0.8.0'}`,
+    });
 });
 
 test('an unrelated runtime or extension release retains independent consumer boundaries', () => {
@@ -159,49 +161,6 @@ test('tools and embedded SDK consumers must agree with their pinned SDK runtime'
   expect(() => validateReleaseConsumerCompatibility(['postgres-tools-wasix'], state)).toThrow(
     'postgres-tools-wasix targets liboliphaunt-wasix@0.3.2',
   );
-});
-
-test('Cargo SDK release admission rejects exact historical facade API pins and accepts compatible ranges', async () => {
-  const state = fixture();
-  const dependencies = [
-    { crate_id: 'oliphaunt-build', req: '=0.3.0' },
-    { crate_id: 'oliphaunt-wasix', req: '=0.3.0' },
-  ];
-  const options = { products: state.products, readDependencies: async () => dependencies };
-  await expect(
-    validatePublishedCargoExtensionConsumers(['oliphaunt-rust', 'oliphaunt-wasix-rust'], options),
-  ).rejects.toThrow('cannot resolve');
-  for (const row of dependencies) row.req = '^0.3.0';
-  await expect(
-    validatePublishedCargoExtensionConsumers(['oliphaunt-rust', 'oliphaunt-wasix-rust'], options),
-  ).resolves.toBeUndefined();
-  dependencies[0].req = '^0.4.0';
-  await expect(
-    validatePublishedCargoExtensionConsumers(['oliphaunt-rust'], options),
-  ).rejects.toThrow('incompatible');
-  await expect(
-    validatePublishedCargoExtensionConsumers(
-      ['oliphaunt-rust', 'oliphaunt-extension-vector'],
-      options,
-    ),
-  ).resolves.toBeUndefined();
-});
-
-test('missing facade APIs fail closed and unrelated releases make no Cargo requests', async () => {
-  const state = fixture();
-  let calls = 0;
-  const options = {
-    products: state.products,
-    readDependencies: async () => {
-      calls += 1;
-      return [];
-    },
-  };
-  await expect(
-    validatePublishedCargoExtensionConsumers(['oliphaunt-rust'], options),
-  ).rejects.toThrow('<missing>');
-  await validatePublishedCargoExtensionConsumers(['oliphaunt-js'], options);
-  expect(calls).toBe(1);
 });
 
 test('new runtime SDKs require an explicit consumer contract before metadata admission', () => {

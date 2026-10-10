@@ -198,8 +198,12 @@ immutable release transport tag immediately before its first registry mutation.
 Its draft-collision preflight also uses an App token with Contents write so draft
 releases remain visible; that check performs only reads. Reruns do not create,
 move, or delete repository refs.
-Candidate preparation, conditional bootstrap, and publication are dependent
-jobs in one `publish` run with separate permissions and environments.
+Candidate preparation, frozen package consumers, `Publication ready`, conditional
+bootstrap, and publication are dependent jobs in one `publish` run. Consumer jobs
+use only read permissions and no protected environment. Both mutation jobs
+require the immutable proof artifact and verify its producing jobs through the
+built-in read-only GitHub token; no additional secret is needed. Source
+qualification alone does not authorize a registry or GitHub mutation.
 The read-only dry-run validates every public release visible to its token and
 every selected product tag. `publish` uses its content-write token to require
 the complete live draft/public release set before mutation. A hidden draft is

@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [package.metadata.oliphaunt]
 runtime = "liboliphaunt-native"
-runtime-version = "0.3.3"
+runtime-version = "0.3.2"
 extensions = ["hstore", "pg_trgm", "unaccent"]
 
 [build-dependencies]
@@ -28,6 +28,6 @@ tauri = { version = "2", features = [] }
 thiserror = "2"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
-liboliphaunt-native-linux-x64-gnu = { version = "=0.3.3" }
+liboliphaunt-native-linux-x64-gnu = { version = "=0.3.2" }
 oliphaunt-broker-linux-x64-gnu = { version = "=0.3.1" }
-oliphaunt-extension-contrib-pg18-linux-x64-gnu = { version = "=0.3.3" }
+oliphaunt-extension-contrib-pg18-linux-x64-gnu = { version = "=0.3.2" }

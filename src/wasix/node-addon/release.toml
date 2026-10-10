@@ -13,31 +13,37 @@ embedded_cargo_manifests = ["src/wasix/node-addon/Cargo.toml"]
 embedded_payload_products = ["liboliphaunt-wasix", "postgres-tools-wasix", "database-resources"]
 
 [compatibility_versions.oliphaunt-wasix-napi-runtime]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/node-addon/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-napi-runtime-darwin-arm64]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/node-addon/packages/darwin-arm64/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-napi-runtime-linux-arm64-gnu]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/node-addon/packages/linux-arm64-gnu/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-napi-runtime-linux-x64-gnu]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/node-addon/packages/linux-x64-gnu/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-napi-runtime-win32-x64-msvc]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/node-addon/packages/win32-x64-msvc/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-napi-wasix-rust]
+public_support = false
 source_product = "oliphaunt-wasix-rust"
 path = "src/wasix/node-addon/package.json"
 parser = "json:oliphaunt.rustBindingVersion"

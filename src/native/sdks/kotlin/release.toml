@@ -19,6 +19,7 @@ embedded_cargo_manifests = ["src/native/mobile-bindings/Cargo.toml"]
 exact_extension_runtime = "liboliphaunt-native"
 
 [compatibility_versions.oliphaunt-kotlin-liboliphaunt]
+public_support = false
 source_product = "liboliphaunt-native"
 path = "src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/liboliphaunt.version"
 parser = "raw"

@@ -122,6 +122,10 @@ tasks:
       - requires-rust
     command: bash tools/release/release-check.sh --mutation-tests-only
     inputs:
+      - /src/**/tools/frozen-*.mts
+      - /src/wasix/sdks/ts/tools/browser-cdp.mts
+      - /src/native/runtime/smoke/frozen-consumer.c
+      - /.github/workflows/release.yml
       - /src/wasix/sdks/ts/package.json
       - /src/wasix/sdks/ts/tools/wasix-typescript-package.mts
       - /src/wasix/sdks/ts/tools/package.mts
@@ -228,6 +232,10 @@ tasks:
       - /tools/release/release-artifact-targets.mts
       - /tools/release/prepare-release-candidate.mts
       - /tools/release/prepare-release-candidate.test.mts
+      - /tools/release/release-dependency-plan.mts
+      - /tools/release/frozen-consumer.mts
+      - /tools/release/publication-catalog.mts
+      - /tools/release/publication-consumer-proof.mts
       - /tools/release/consumer-compatibility.mts
       - "@group(release-archive-contract)"
       - /tools/release/release-graph.mts

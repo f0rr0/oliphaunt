@@ -11,11 +11,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import process from 'node:process';
-import { createRequire } from 'node:module';
-import { assertWasixTypescriptNativeCarrier } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
 import { EXTENSION_PORTABLE_TARGET } from '../../src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
+import { assertWasixTypescriptNativeCarrier } from '../../src/wasix/sdks/ts/tools/wasix-typescript-package.mts';
 import { DEFAULT_PUBLICATION_LOCK, loadPublicationLock } from './publication-lock.mts';
 import { registryRetryDelaySeconds, registryStatusRetryable } from './registry-http-retry.mts';
 import { validateRegistryReceiptEvidence } from './registry-integrity.mts';
@@ -165,7 +165,7 @@ function entryCarrierIds(carriers) {
     .sort(compareText);
 }
 
-function consumerDependencyIds(carrier, selectedCarrierIds) {
+function consumerDependencyIds(carrier, selectedCarrierIds, byId) {
   if (!Array.isArray(carrier.packageDependencies)) {
     // Synthetic plan tests and callers predating the frozen artifact envelope
     // can still exercise graph behavior. A validated publication lock always
@@ -180,6 +180,17 @@ function consumerDependencyIds(carrier, selectedCarrierIds) {
     ...new Set(
       carrier.packageDependencies
         .filter((dependency) => scopes.has(dependency.scope))
+        .filter((dependency) => {
+          const candidate = byId.get(`${dependency.ecosystem}:${dependency.name}`);
+          if (!candidate) return false;
+          let requirement = dependency.requirement;
+          if (dependency.ecosystem === 'maven') return requirement === candidate.version;
+          if (dependency.ecosystem === 'cargo') {
+            if (/^\d+(?:\.\d+){0,2}$/u.test(requirement)) requirement = `^${requirement}`;
+            requirement = requirement.replaceAll(',', ' ');
+          }
+          return Bun.semver.satisfies(candidate.version, requirement);
+        })
         .map((dependency) => `${dependency.ecosystem}:${dependency.name}`)
         .filter((id) => selectedCarrierIds.has(id)),
     ),
@@ -309,7 +320,7 @@ export function publicConsumerPlan(
     if (ecosystemCarriers.length === 0) continue;
     const consumerCarriers = ecosystemCarriers.map((carrier) => ({
       ...carrier,
-      dependencies: consumerDependencyIds(carrier, selectedCarrierIds),
+      dependencies: consumerDependencyIds(carrier, selectedCarrierIds, allCarriersById),
     }));
     const entries = entryCarrierIds(consumerCarriers);
     const entryClosures = lockedEntryClosures(consumerCarriers, entries, ecosystem);
@@ -771,11 +782,7 @@ export function validateCargoResolution(
   for (const entry of packages) {
     const carrier = byName.get(entry?.name);
     if (carrier === undefined) continue;
-    if (entry.version !== carrier.version) {
-      throw error(
-        `${carrier.id} resolved substituted Cargo version ${entry.version}, expected exact ${carrier.version}`,
-      );
-    }
+    if (entry.version !== carrier.version) continue;
     if (entry.source !== 'registry+https://github.com/rust-lang/crates.io-index') {
       throw error(
         `${carrier.id}@${carrier.version} resolved through non-public or substituted Cargo source ${JSON.stringify(entry.source)}`,
@@ -861,7 +868,8 @@ export function validateNpmResolution(packageLock, carriers, requiredEntryIds, n
   for (const carrier of carriers) {
     const suffix = `node_modules/${carrier.name}`;
     const matches = Object.entries(packages).filter(
-      ([key]) => key === suffix || key.endsWith(`/${suffix}`),
+      ([key, value]) =>
+        (key === suffix || key.endsWith(`/${suffix}`)) && value?.version === carrier.version,
     );
     if (matches.length === 0) {
       if (entries.has(carrier.id))
@@ -925,9 +933,14 @@ export function validateNpmResolution(packageLock, carriers, requiredEntryIds, n
   const installedCarrierIds = carriers
     .filter((carrier) => {
       try {
-        return statSync(
-          path.join(npmPackagePath(nodeModules, carrier.name), 'package.json'),
-        ).isFile();
+        return (
+          JSON.parse(
+            readFileSync(
+              path.join(npmPackagePath(nodeModules, carrier.name), 'package.json'),
+              'utf8',
+            ),
+          ).version === carrier.version
+        );
       } catch {
         return false;
       }
@@ -1063,11 +1076,7 @@ export function validateMavenResolution(
       throw error(`clean Maven resolution emitted unknown entry root ${entryCarrierId}`);
     const carrier = byName.get(`${group}:${artifact}`);
     if (carrier === undefined) continue;
-    if (version !== carrier.version) {
-      throw error(
-        `${carrier.id} resolved substituted Maven version ${version}, expected exact ${carrier.version}`,
-      );
-    }
+    if (version !== carrier.version) continue;
     entry.set(carrier.id, { id: carrier.id, version: carrier.version });
   }
   const entries = entryCarrierIds.map((entryCarrierId) => {

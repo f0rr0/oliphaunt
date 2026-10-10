@@ -18,16 +18,19 @@ registry_packages = [
 release_artifacts = ["postgres-tools", "npm-package"]
 
 [compatibility_versions.oliphaunt-wasix-tools-runtime]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/postgres-tools/ts/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-tools-carrier-runtime]
+public_support = false
 source_product = "liboliphaunt-wasix"
 path = "src/wasix/postgres-tools/npm/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-tools-sdk]
+public_support = false
 source_product = "oliphaunt-wasix-ts"
 path = "src/wasix/postgres-tools/ts/package.json"
 parser = "json:oliphaunt.wasixSdkVersion"

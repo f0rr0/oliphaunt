@@ -8,7 +8,7 @@ description: Prepare, audit, bootstrap, publish, verify, or recover Oliphaunt re
 Treat a release as a frozen, exact-SHA promotion of already-qualified
 artifacts. Never rebuild binary producer outputs or substitute artifacts.
 The `publish` operation prepares the complete candidate once, conditionally
-bootstraps missing names, and publishes it. Dependent jobs install the same
+runs frozen installed consumers, requires Publication ready, bootstraps missing names, and publishes it. Dependent jobs install the same
 immutable candidate and verify its complete contents against the lock.
 
 Qualification may be exhaustive or selected through CI's
@@ -31,8 +31,7 @@ metadata/release-tool tests and `bash tools/release/release-check-registries.sh
 do not publish or assemble a release candidate; test fixtures may create local
 packages. Product rehearsal uses the selected owners' package and artifact/consumer
 tasks. Candidate preparation runs on Ubuntu, consuming qualified outputs without
-product compilers. Publication uses macOS for its actual public Swift consumer,
-not for portable release metadata. Candidate preparation verifies qualification once,
+product compilers. Frozen consumer jobs use each declared host, including macOS for Swift and iOS integration. Protected publication runs on Ubuntu. Candidate preparation verifies qualification once,
 checks registry state once, and checks that the source is still clean at its
 exact SHA immediately before assembly. Publication retains its live registry
 recheck at the mutation boundary.
@@ -178,9 +177,9 @@ copying source or adding repository-meta fingerprints to force a candidate.
 For a normalized generated release PR, ordinary Moon task dependencies affect
 qualification; declared release ownership controls shared-source candidate
 selection. Native, WASIX, SDKs, bindings, resources, tools and external extensions are
-independently versioned. Sync updates compatibility pins only for consumers
-already selected by Release Please, using the dependency versions qualified at
-that commit; unselected consumers retain their older published pins. A selected
+independently versioned. Sync preserves authored requirements and projects the actual input versions for
+selected compiled payloads. Release Please ecosystem updates remain authoritative;
+unselected consumers retain their older published pins. A selected
 consumer's dependency must be selected at the exact pinned version or already
 published with matching tag and carrier bytes.
 
@@ -208,3 +207,22 @@ State the candidate SHA, immutable release transport tag, selected products and
 versions, exact CI run, lock digest, registry/bootstrap state, completed
 publication phases, and any remaining irreversible action. Distinguish product
 releases from target/ecosystem carrier packages.
+
+## Declared requirements and frozen consumers
+
+Preserve authored conventional manifest requirements for source consumers. Only
+actual compiled inputs or Release Please ecosystem updates justify generated
+retargets. External extension host references declare `public_support = true`;
+private dependency/provider references declare `false`. A removed public host
+requires breaking intent before native version selection and verification against
+the previous immutable product tag. SDK changes do not select all extensions.
+
+Source `Qualified` and capsule preparation precede final installed consumer
+checks. Require `Frozen consumers` and `Publication ready` before bootstrap or
+normal mutation. The immutable consumer proof binds the lock, expected cases,
+test configuration, producing run/attempt and resolver/log evidence. Recovery
+imports prepared bytes and reruns these cases; an old missing/failed proof does
+not invalidate the bytes. Record installation, compilation/link and execution
+levels honestly. npm staging preserves full manifests and historical pins;
+Cargo path patches are staging evidence, not registry provenance. Keep the
+postpublication public checks and reconciliation.

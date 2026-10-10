@@ -28,6 +28,7 @@ import {
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import { buildPublicationCandidate, freezePublicationCandidate } from './publication-lock.mts';
 import { ROOT } from './release-graph.mts';
+import { syntheticConsumerProof } from './testdata/consumer-proof-fixture.mts';
 
 const PRODUCTS = ['oliphaunt-rust', 'oliphaunt-js'];
 const APPROVAL = { approvalRunId: '123', qualificationRunId: '456' };
@@ -277,6 +278,7 @@ globalThis.fetch = async (input, options = {}) => {
   if (${recovery}) return Response.json({});
   return new Response('{}', {status: url.hostname === 'crates.io' && url.pathname.startsWith('/api/v1/crates/oliphaunt-build/') ? 200 : 404});
 };
+${await syntheticConsumerProof(value.root, value.lock)}
 `,
   );
   writeFileSync(

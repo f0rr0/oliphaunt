@@ -9,7 +9,7 @@
     "dev:renderer": "vite"
   },
   "dependencies": {
-    "@oliphaunt/extension-contrib-pg18": "0.3.3",
+    "@oliphaunt/extension-contrib-pg18": "0.3.2",
     "@oliphaunt/tools": "0.2.2",
     "@oliphaunt/ts": "0.3.1",
     "kysely": "^0.29.2",

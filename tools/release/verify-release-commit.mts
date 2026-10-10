@@ -2,14 +2,21 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
+import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
 } from './release-artifact-targets.mts';
-import { compatibilityVersionEntries, loadProducts } from './release-graph.mts';
-import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
+import {
+  buildBoundCompatibilityProducts,
+  requirePublicSupportTransition,
+} from './release-dependency-plan.mts';
+import {
+  compatibilityVersionEntries,
+  compatibilityVersionFromText,
+  loadProducts,
+} from './release-graph.mts';
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from './release-please-bootstrap.mts';
 import { releaseDerivedPathInventory } from './sync-release-pr.mts';
 
@@ -71,6 +78,75 @@ export function releaseCommitFile(repo, commit, file) {
 
 const show = releaseCommitFile;
 
+function publicSupportEntries() {
+  return compatibilityVersionEntries(loadProducts(TOOL), {
+    requireSourceProduct: true,
+    prefix: TOOL,
+  }).filter((entry) => entry.publicSupport);
+}
+
+function supportPathAtConfig(entry, config) {
+  const configured = Object.entries(config.packages ?? {}).find(
+    ([, value]) => value.component === entry.product,
+  )?.[0];
+  // Compatibility paths can be outside their owner's release directory.
+  const ownerPath = Object.entries(
+    JSON.parse(readFileSync(path.join(ROOT, 'release-please-config.json'), 'utf8')).packages,
+  ).find(([, value]) => value.component === entry.product)?.[0];
+  if (configured && ownerPath && entry.path.startsWith(ownerPath + '/'))
+    return configured + entry.path.slice(ownerPath.length);
+  return entry.path;
+}
+
+function snapshotSupportTags() {
+  const directory = process.env.OLIPHAUNT_RELEASE_HISTORY;
+  if (!directory) throw error('missing release history destination');
+  const tags = new Set();
+  const metadata = loadProducts(TOOL);
+  for (const stage of readdirSync(directory, { withFileTypes: true })) {
+    if (!stage.isDirectory()) continue;
+    const folder = path.join(directory, stage.name);
+    if (!existsSync(path.join(folder, 'ancestry'))) continue;
+    const [, parent, extra] = readFileSync(path.join(folder, 'ancestry'), 'utf8')
+      .trim()
+      .split(/\s+/u);
+    if (!parent || extra || !existsSync(path.join(directory, parent, 'manifest.json'))) continue;
+    const before = JSON.parse(readFileSync(path.join(directory, parent, 'manifest.json'), 'utf8'));
+    const afterFile = path.join(folder, 'manifest.json');
+    if (!existsSync(afterFile)) continue;
+    const after = JSON.parse(readFileSync(afterFile, 'utf8'));
+    const config = JSON.parse(readFileSync(path.join(folder, 'config.json'), 'utf8'));
+    for (const entry of publicSupportEntries()) {
+      const packagePath = Object.entries(config.packages ?? {}).find(
+        ([, value]) => value.component === entry.product,
+      )?.[0];
+      const version = before[packagePath];
+      if (version && version !== '0.0.0' && version !== after[packagePath])
+        tags.add(metadata[entry.product].tag_prefix + version);
+    }
+  }
+  writeFileSync(path.join(directory, 'support-tags'), [...tags].map((tag) => tag + '\0').join(''));
+}
+
+function supportValueAtCommit(repo, commit, entry) {
+  const config = showJson(repo, commit, 'release-please-config.json');
+  return compatibilityVersionFromText(
+    entry,
+    show(repo, commit, supportPathAtConfig(entry, config)),
+    { prefix: TOOL },
+  );
+}
+
+function supportValueAtTag(repo, tag, entry) {
+  const fields = readFileSync(
+    path.join(releaseHistory(repo).directory, 'support-refs'),
+    'utf8',
+  ).split('\0');
+  for (let index = 0; index < fields.length - 1; index += 2)
+    if (fields[index] === tag) return supportValueAtCommit(repo, fields[index + 1], entry);
+  throw error('release history does not include previous public support tag ' + tag);
+}
+
 function snapshotPaths() {
   const directory = process.env.OLIPHAUNT_RELEASE_HISTORY;
   if (!directory) throw error('missing release history destination');
@@ -92,6 +168,8 @@ function snapshotPaths() {
     const config = path.join(stage, 'config.json');
     if (existsSync(config)) {
       const packages = JSON.parse(readFileSync(config, 'utf8')).packages ?? {};
+      for (const entry of publicSupportEntries())
+        selected.add(supportPathAtConfig(entry, { packages }));
       for (const [packagePath, value] of Object.entries(packages)) {
         selected.add(canonicalVersionFile(packagePath, value, value.component));
         selected.add(
@@ -283,6 +361,7 @@ function derivedVersionRules() {
         rule,
       );
     }
+    return rule;
   };
   const addText = (file, rule) => {
     const prior = text.get(file);
@@ -292,6 +371,7 @@ function derivedVersionRules() {
     text.set(file, rule);
   };
 
+  const buildBound = buildBoundCompatibilityProducts(products);
   for (const entry of compatibilityVersionEntries(products, {
     requireSourceProduct: true,
     prefix: TOOL,
@@ -333,9 +413,12 @@ function derivedVersionRules() {
     versionPaths,
     sourceProduct,
     wrapped,
+    projection,
+    expected,
   } of exampleCargoReleaseVersionBindings()) {
     for (const parts of versionPaths) {
-      addStructured('toml', file, parts, sourceProduct, wrapped);
+      const rule = addStructured('toml', file, parts, sourceProduct, wrapped);
+      if (projection) rule.projection = expected;
     }
   }
 
@@ -349,7 +432,7 @@ function derivedVersionRules() {
     );
   }
 
-  for (const { packageName } of electronReleaseDependencies(ROOT)) {
+  for (const { packageName, version } of electronReleaseDependencies(ROOT)) {
     const owners = Object.keys(products)
       .flatMap((product) => registryPackageRows({ product, packageKind: 'npm' }, TOOL))
       .filter((row) => row.packageName === packageName)
@@ -360,20 +443,38 @@ function derivedVersionRules() {
           `got ${owners.join(', ') || 'none'}`,
       );
     }
-    addStructured(
+    const rule = addStructured(
       'json',
       'src/examples/native/electron/package.json',
       ['dependencies', packageName],
       owners[0],
     );
+    if (packageName === '@oliphaunt/extension-contrib-pg18') {
+      rule.sourceProduct = 'oliphaunt-js';
+      rule.projection = version;
+    }
   }
 
+  for (const rule of structured.values()) {
+    if (rule.consumerProduct !== undefined)
+      rule.buildBound = buildBound.get(rule.consumerProduct)?.has(rule.sourceProduct) ?? false;
+  }
+  for (const rule of text.values()) {
+    if (rule.consumerProduct !== undefined)
+      rule.buildBound = buildBound.get(rule.consumerProduct)?.has(rule.sourceProduct) ?? false;
+  }
   cachedDerivedRules = { structured, text };
   return cachedDerivedRules;
 }
 
 function productTransition(rule, before, after, transitions, productVersions) {
-  // Selected consumers may catch up from older pins without a producer release.
+  if (rule.projection !== undefined)
+    return (
+      transitions.some(({ product }) => product === rule.sourceProduct) &&
+      typeof before === 'string' &&
+      after === rule.projection
+    );
+  // Generated updates require a producer transition or an actual compiled input.
   if (rule.consumerProduct !== undefined) {
     return (
       transitions.some(({ product }) => product === rule.consumerProduct) &&
@@ -382,6 +483,7 @@ function productTransition(rule, before, after, transitions, productVersions) {
       typeof after === 'string' &&
       SEMVER.test(after) &&
       after === productVersions.get(rule.sourceProduct) &&
+      (rule.buildBound || transitions.some(({ product }) => product === rule.sourceProduct)) &&
       Bun.semver.order(after, before) > 0
     );
   }
@@ -1030,6 +1132,21 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = 'HEAD', products })
     ),
   });
 
+  const metadata = loadProducts(TOOL);
+  for (const entry of publicSupportEntries()) {
+    const transition = transitions.find(({ product }) => product === entry.product);
+    if (!transition || transition.before === '0.0.0') continue;
+    requirePublicSupportTransition({
+      ...transition,
+      previousSupport: supportValueAtTag(
+        repo,
+        metadata[entry.product].tag_prefix + transition.before,
+        entry,
+      ),
+      nextSupport: supportValueAtCommit(repo, commit, entry),
+    });
+  }
+
   return {
     commit,
     parent,
@@ -1100,6 +1217,10 @@ if (import.meta.main) {
     }
     if (process.argv[2] === '--snapshot-paths') {
       snapshotPaths();
+      process.exit(0);
+    }
+    if (process.argv[2] === '--snapshot-support-tags') {
+      snapshotSupportTags();
       process.exit(0);
     }
     const args = parseArgs(Bun.argv.slice(2));

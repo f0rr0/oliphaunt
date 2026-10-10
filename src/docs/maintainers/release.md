@@ -115,7 +115,7 @@ and participates in the same carrier checks as other public products.
   manifest bytes, while independently versioned extension products retain
   their own WASIX install metadata and payloads.
 - `feat`, `fix`, `perf`, `refactor`, and `revert` are release-impacting types because the Release Please `changelog-sections` catalog says so. A Conventional Commit `!` is breaking. Release-intent checks derive this set from config.
-- Product source PRs never edit versions. The generated release PR owns all version, compatibility, lockfile, and changelog changes.
+- Product source PRs never edit product versions or generated changelogs. Source PRs may author dependency requirements in conventional manifests. Release Please owns product versions and its ecosystem dependency updates; sync projects actual compiled inputs and manifest requirements into package metadata and lockfiles.
 - While every product is still `0.0.0`, top-level `bootstrap-sha` is the full
   legacy-history boundary `07a9054faa03d5737dc0193f7a77ed4a71920c05`.
   Release Please considers only commits after that exclusive boundary. Derived
@@ -155,15 +155,30 @@ contrib inputs may select both runtime owners because those source files are
 physically bundled into both products. No Moon dependency edge creates another
 release candidate.
 
-Candidate preparation also checks the exact runtime required by selected
-extension consumers. If a published external extension targets a different
-runtime, Release Please prepares its next independent packaging release before
-sync closes the pins. Unselected extensions and transitive SDKs are read from
-their immutable product tags. This selection runs after workspace plugins,
-preserves existing extension candidates, and rejects conflicting consumer
-requirements or repackaging that would target the wrong current producer.
-A runtime-only release or an SDK release whose extensions already match adds
-no extension releases. Ordinary dependency edges still do not select consumers.
+A dependency requirement is a consumer declaration. Releasing a producer does
+not rewrite unselected consumers, and selecting a source-only SDK preserves its
+authored requirements unless Release Please's ecosystem updater changes them.
+A compiled payload names the source versions it actually incorporates. Shared
+carrier writers are explicit `shared_source_paths` of every product whose bytes
+they render. Carrier versions continue to equal their owning product version.
+
+Every compatibility reference declares `public_support`. Set it to `true` for an
+exact host supplied independently by the caller, such as an external extension's
+native or WASIX runtime. Set it to `false` for a private dependency or artifact
+provider requirement. Removing a published public host supplies breaking intent
+before Release Please chooses a version, including workspace-created candidates.
+The release-commit verifier also checks the previous immutable product tag, so an
+authored retarget before the release commit cannot evade the breaking boundary.
+The configured pre-1.0 policy requires a minor bump; stable products require a
+major bump. A private dependency update does not automatically imply a breaking
+public API change.
+
+Compatibility means that a declared installation recipe resolves and works. It
+is not a promise that every product's newest release works with every other
+newest release. External extensions remain independent; SDK changes do not
+select an extension cohort. Recipes use the installed package's catalog,
+requirements, extension member and dependency closure, provider ABI and target
+profile. Runtime version equality alone is insufficient.
 
 Binary products declare `embedded_cargo_manifests` in their `release.toml`.
 Release planning reads Cargo's versioned `metadata --no-deps --frozen` output
@@ -200,10 +215,10 @@ Moon `production` and `peer` edges describe source and qualification impact.
 Product-local `compatibility_versions` describe the exact published product
 versions a carrier consumes. A native runtime can therefore be published
 without bumping an SDK, and the unchanged SDK continues to pin the older native
-version. When a consumer is selected for release, sync updates its compatibility
-fields to the current dependency versions so the package describes the source
-and artifacts qualified at that commit. If a dependency is also selected,
-publication orders it first.
+version. A selected compiled consumer records the versions of the inputs it
+actually embeds. Other requirements retain their authored values unless Release
+Please's ecosystem updater changes them. If a required dependency is also
+selected at a satisfying version, publication orders it first.
 
 Before publishing a selected consumer, version checks require each pinned
 dependency to be either selected at that exact version or already available at
@@ -424,12 +439,12 @@ dispatches; ordinary source PRs and feature diagnostics keep source qualificatio
 unselected dependencies from their immutable product tags. It compares the WASIX
 SDK runtime with the runtime embedded by its exact N-API dependency, follows
 declared SDK dependencies through tools and React Native, checks consumers'
-own runtime pins against those SDKs, and checks every
-external extension against consumers that enforce exact runtime identity.
-Cargo SDK admission also checks published, unselected extension facades' API
-requirements. A workspace `qualificationOnly` fixture cannot satisfy these
-release contracts. A new runtime SDK must declare its extension compatibility
-policy before metadata admission.
+own runtime pins against those SDKs. Installed consumers then resolve the frozen
+root package's conventional manifest requirements and verify its artifact bytes.
+Native extension execution uses the exact host declared by the package.
+Unrelated historical extensions do not gate a new SDK release. A workspace `qualificationOnly`
+fixture cannot satisfy these release contracts. A new runtime SDK must declare
+its extension compatibility policy before metadata admission.
 
 Cargo extension facades use compatible SemVer requirements for SDK, build-helper
 and binding APIs; extension payload and AOT carrier versions remain exact.
@@ -642,7 +657,8 @@ every frozen carrier; a missing carrier cannot be silently relabelled as
 receipt-only. Cargo enables each entry's public features and respects the
 features that entry requests from its dependencies, so an individual Cargo
 resolution may omit transitive opt-ins exercised by another entry. npm and Maven
-entries require their complete frozen dependency closures. It never invents one
+entries require their complete requirement-compatible frozen dependency closures;
+an older authored dependency stays a separate public input. It never invents one
 all-platform consumer graph.
 Required npm peers are installed so the SDK/N-API compatibility check validates
 the same dependency tree a normal clean install receives, including historical
@@ -829,6 +845,55 @@ contrib carriers belong to the matching native or WASIX runtime product; each
 active external extension owns its independent product. The global extension
 target-profile contract applies to every public SQL member and is checked
 against the runtime target matrix.
+
+## Frozen consumer readiness
+
+The publication path is: source `Qualified`, final carrier rendering, exhaustive
+publication lock and candidate capsule, `Frozen consumers` on the required hosts,
+`Publication ready`, then bootstrap and normal publication. Both protected jobs
+require the ready gate. Every supported mutation entry point also checks the
+proof, including transport refs, release drafts, asset uploads, Swift pushes and
+the direct frozen npm upload helper. Preparation and read-only registry inventory
+do not require proof.
+
+The consumer plan is derived from the frozen carrier identities, canonical target
+contracts and product-owned fixtures. Consumers install an exact public entry
+into a disposable external project. npm uses a GET-only loopback registry with
+the complete packaged manifest and exact frozen tarball; historical versions
+remain read-only public inputs. No overrides or extra transitive root requirements
+replace authored pins. Cargo uses a clean home and lockfile with root
+`[patch.crates-io]` entries pointing to safely extracted frozen crates. This is
+explicit staging evidence, not crates.io provenance. Maven resolves unchanged
+primary files from an isolated repository; protected signing remains the
+publication envelope. Swift verifies canonical URLs and checksums before
+localizing a disposable manifest. The frozen manifest is unchanged. React Native
+has separate Android and iOS application builds, and Android SDK cases exercise
+the actual Gradle plugin and packaged AAR public API.
+Archive-only WASIX postmaster cases extract the frozen release and initialize a
+cluster through its shipped launcher; their recorded level is `initialize-cluster`.
+
+The case plan also selects toolchain setup. A query-only npm lane does not install
+Rust or Android tooling. Node, Bun and Deno share one fresh SDK installation per
+host and execute separately with fresh runtime data directories; browser projects
+remain separate. Kotlin's AAR, plugin and marker share the same application build,
+with each carrier's coordinates and primary bytes checked against its result.
+Cargo and Maven staging happen once when needed, and npm downloads and historical
+packuments share a fresh job-local cache. Cargo staging retains other target
+crates because its lockfile resolver includes dependencies for all platforms.
+
+Case results record resolved identities and checksums, execution level, resolver digest, toolchain, producing
+run/attempt and log reference. Installation and compile/link checks are identified
+as such. Missing, failed, skipped, duplicate or unexpected cases fail aggregation.
+`oliphaunt-publication-consumer-proof` binds the complete case plan, test
+configuration and publication lock. Mutation admission compares local proof bytes
+to the immutable GitHub artifact, validates the canonical main Release workflow
+and checks readiness and consumer jobs in their actual producing attempts.
+
+An `approval_run_id` imports a successfully prepared capsule even if its old
+consumer proof is absent or failed. Current consumer jobs run again over the same
+bytes and produce current readiness. Test or controller fixes never require
+rebuilding a frozen payload merely to obtain new proof. Postpublication anonymous
+consumer verification and immutable registry reconciliation remain required.
 
 ## Recovery
 

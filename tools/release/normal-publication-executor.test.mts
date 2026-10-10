@@ -5,6 +5,7 @@ import {
   executeCargoPublicationBatch,
   normalPublicationSchedule,
 } from './normal-publication-executor.mts';
+import { normalPublicationPlan } from './normal-publication-plan.mts';
 
 function operation(ecosystem, index, carrierId = `${ecosystem}:package-${index}`) {
   return {
@@ -43,6 +44,74 @@ const tokenEnvironment = {
 };
 
 describe('normal publication executor', () => {
+  for (const size of [2, 40, 265])
+    test(`partial publication and recovery cover ${size} carriers exactly once`, async () => {
+      const carriers = Array.from({ length: size }, (_, index) => ({
+        id: `cargo:package-${index}`,
+        ecosystem: 'cargo',
+        name: `package-${index}`,
+        version: '1.0.0',
+        product: 'fixture',
+        publishOrder: index,
+        dependencies: index ? [`cargo:package-${index - 1}`] : [],
+      }));
+      const plan = normalPublicationPlan({ products: [{ id: 'fixture' }], carriers }, ['fixture']);
+      const schedule = normalPublicationSchedule(plan);
+      expect(schedule.cargoBatches.flat()).toEqual(Array.from({ length: size }, (_, i) => i));
+      const publicVersions = new Set(
+        carriers.filter((_, index) => index % 3 === 0).map(({ id }) => id),
+      );
+      const methods = [];
+      const uploads = [];
+      const receipts = new Map();
+      let failAt = Math.floor(size / 2);
+      const run = async () => {
+        for (const batch of schedule.cargoBatches)
+          await executeCargoPublicationBatch({
+            operations: batch.map((index) => plan.operations[index]),
+            cargoVersionPublished: async ({ carrierId }) => publicVersions.has(carrierId),
+            isAborted: () => false,
+            publishCarrier: async (operation, context) => {
+              if (!context.alreadyPublished) {
+                if (operation.operationOrder >= failAt)
+                  throw new Error('simulated registry outage');
+                for (const dependency of carriers[operation.operationOrder].dependencies)
+                  expect(publicVersions.has(dependency)).toBe(true);
+                uploads.push(operation.carrierId);
+                publicVersions.add(operation.carrierId);
+              }
+              receipts.set(operation.carrierId, { id: operation.carrierId });
+            },
+            nowImpl: () => 1_000_000,
+            tokenOptions: {
+              env: tokenEnvironment,
+              fetchImpl: tokenFetch(methods),
+              maskImpl: () => {},
+            },
+          });
+      };
+      await expect(run()).rejects.toThrow('simulated registry outage');
+      const incomplete = plan.operations.map(({ carrierId }) => receipts.get(carrierId));
+      expect(() =>
+        collectNormalPublicationReceipts({ plan, operationResults: incomplete }),
+      ).toThrow('exact non-bootstrap carrier set');
+      expect(methods.at(-1)).toBe('DELETE');
+      failAt = Infinity;
+      await run();
+      expect(publicVersions.size).toBe(size);
+      expect(new Set(uploads).size).toBe(uploads.length);
+      expect(uploads.length).toBe(carriers.filter((_, index) => index % 3 !== 0).length);
+      expect(
+        collectNormalPublicationReceipts({
+          plan,
+          operationResults: plan.operations.map(({ carrierId }) => receipts.get(carrierId)),
+        }).size,
+      ).toBe(size);
+      const before = methods.length;
+      await run();
+      expect(methods.length).toBe(before);
+      expect(new Set(uploads).size).toBe(uploads.length);
+    });
   test('collects exact per-operation receipts without omission, addition, duplication, or bootstrap replacement', () => {
     const cargo = operation('cargo', 0);
     const npm = operation('npm', 1);

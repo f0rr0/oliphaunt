@@ -4,8 +4,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { DESKTOP_TARGETS } from './release-artifact-targets.mts';
-
 import {
   cargoEntryFeatureNames,
   PUBLIC_CONSUMER_EVIDENCE_SCHEMA,
@@ -19,6 +17,7 @@ import {
   validatePublicConsumerEvidence,
   writeImmutablePublicConsumerEvidence,
 } from './public-consumer-smoke.mts';
+import { DESKTOP_TARGETS } from './release-artifact-targets.mts';
 
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 
@@ -247,6 +246,32 @@ if (fixtureMode === 'assert-npm') {
   } else assert.equal(existsSync(path.join(fixtureRoot, 'npm.json')), false);
   process.exit(0);
 }
+
+test('an older declared dependency does not become a newer selected carrier edge', () => {
+  const products = [product('sdk', ['npm']), product('runtime', ['npm'])];
+  const root = {
+    ...carrier('npm:@example/sdk', 'sdk', 0, ['npm:@example/runtime']),
+    packageDependencies: [
+      { ecosystem: 'npm', name: '@example/runtime', requirement: '=1.0.0', scope: 'runtime' },
+    ],
+  };
+  const runtime = { ...carrier('npm:@example/runtime', 'runtime', 1), packageDependencies: [] };
+  const value = lock(products, [root, runtime]);
+  const plan = publicConsumerPlan(value, ['sdk', 'runtime'], graph(products));
+  const npm = plan.surfaces.find((surface) => surface.ecosystem === 'npm');
+  assert.deepEqual(npm.entryCarrierIds, [root.id, runtime.id].sort());
+  assert.deepEqual(npm.entryClosures.find((entry) => entry.entryCarrierId === root.id).carrierIds, [
+    root.id,
+  ]);
+  const rows = validateCargoResolution(
+    'version = 4\n[[package]]\nname="runtime"\nversion="1.0.0"\nsource="registry+https://github.com/rust-lang/crates.io-index"\nchecksum="' +
+      'd'.repeat(64) +
+      '"\n',
+    [{ ...runtime, id: 'cargo:runtime', name: 'runtime', ecosystem: 'cargo' }],
+    [],
+  );
+  assert.deepEqual(rows, []);
+});
 
 test('derives every registry surface and graph-root entry from the exact selected lock', () => {
   const products = [

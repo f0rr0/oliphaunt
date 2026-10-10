@@ -620,6 +620,7 @@ export function compatibilityVersionEntries(
         sourceProduct: typeof sourceProduct === 'string' ? sourceProduct : null,
         path: specPath,
         parser,
+        publicSupport: spec.public_support,
       });
     }
   }
@@ -638,6 +639,14 @@ export function compatibilityVersionValue(
     if (missingValue !== undefined) return missingValue;
     fail(prefix, `cannot read ${entry.path} at immutable compatibility ref ${ref}`);
   }
+  return compatibilityVersionFromText(entry, text, { prefix, missingValue });
+}
+
+export function compatibilityVersionFromText(
+  entry,
+  text,
+  { prefix = 'release-graph', missingValue = undefined } = {},
+) {
   if (entry.parser === 'raw') return text.trim();
   if (entry.parser.startsWith('rust-const:')) {
     const name = entry.parser.slice('rust-const:'.length);

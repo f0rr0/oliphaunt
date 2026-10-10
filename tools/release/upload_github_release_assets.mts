@@ -15,7 +15,6 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { loadProducts } from './release-graph.mts';
 import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from './github-content-write-pacer.mts';
 import { RetryableReadError, redactGitHubReadDetail, retryReadOperation } from './github-read.mts';
 import {
@@ -34,6 +33,7 @@ import {
   loadPublicationLock,
   lockedProductArtifactPaths,
 } from './publication-lock.mts';
+import { loadProducts } from './release-graph.mts';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 const FULL_SHA = /^[0-9a-f]{40}$/u;
@@ -720,6 +720,11 @@ export async function uploadFrozenReleaseAssets(plan, dependencies = {}) {
 export async function main(argv, { environment = process.env } = {}) {
   const args = parseArgs([...argv], environment);
   const plan = frozenUploadPlan(args);
+  const { requirePublicationConsumerProof } = await import('./publication-consumer-proof.mts');
+  await requirePublicationConsumerProof(
+    loadPublicationLock(path.resolve(ROOT, args.publicationLock)),
+    { environment },
+  );
   await uploadFrozenReleaseAssets(plan, { environment });
 }
 

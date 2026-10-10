@@ -2,6 +2,7 @@ import { access, cp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCdpClient } from '../browser-cdp.mts';
 import { stagePackedWasixConsumer } from './packed-node-fixture.mts';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../..');
@@ -174,7 +175,7 @@ if (phase === '--prepare') {
           "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',phase:document.documentElement.dataset.oliphauntSmokePhase??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
         returnByValue: true,
       });
-      snapshot = JSON.parse(evaluated.result.value ?? '{}');
+      snapshot = JSON.parse(evaluated.result?.value ?? '{}');
       if (snapshot.state === 'passed') {
         if (benchmark) {
           await writeFile(
@@ -197,7 +198,7 @@ if (phase === '--prepare') {
       expression: "document.documentElement.dataset.oliphauntSmoke ?? ''",
       returnByValue: true,
     });
-    if (finalState.result.value !== 'passed') {
+    if (finalState.result?.value !== 'passed') {
       throw new Error(`browser smoke timed out after ${timeoutMs}ms: ${JSON.stringify(snapshot)}`);
     }
   } finally {
@@ -244,88 +245,6 @@ function argumentValue(flag) {
   const value = process.argv[positions[0] + 1];
   if (value === undefined || value.startsWith('--')) throw new Error(`${flag} requires a value`);
   return value;
-}
-
-function createCdpClient(webSocket, recordFailure, deadline) {
-  let nextId = 1;
-  const pending = new Map();
-
-  const rejectPending = (reason) => {
-    const error = new Error(`Chrome DevTools Protocol connection ${reason}`);
-    for (const request of pending.values()) request.reject(error);
-    pending.clear();
-  };
-  webSocket.addEventListener('close', () => rejectPending('closed'));
-  webSocket.addEventListener('error', () => rejectPending('failed'));
-
-  webSocket.addEventListener('message', (event) => {
-    const message = JSON.parse(event.data);
-    if (message.id !== undefined) {
-      const request = pending.get(message.id);
-      if (request !== undefined) {
-        pending.delete(message.id);
-        if (message.error === undefined) request.resolve(message.result);
-        else
-          request.reject(
-            new Error(`Chrome DevTools Protocol error: ${JSON.stringify(message.error)}`),
-          );
-      }
-      return;
-    }
-
-    if (message.method === 'Runtime.exceptionThrown') {
-      const failure = formatCdpException(message.params.exceptionDetails);
-      recordFailure(failure);
-      console.error(`browser exception: ${failure}`);
-    } else if (message.method === 'Runtime.consoleAPICalled') {
-      const values = message.params.args.map(
-        (argument) => argument.value ?? argument.description ?? argument.type,
-      );
-      console.error(`browser console ${message.params.type}: ${values.join(' ')}`);
-    } else if (message.method === 'Log.entryAdded') {
-      console.error(`browser log ${message.params.entry.level}: ${message.params.entry.text}`);
-    } else if (message.method === 'Target.attachedToTarget') {
-      const sessionId = message.params.sessionId;
-      void send('Runtime.enable', {}, sessionId).catch((error) => recordFailure(error.message));
-      void send('Log.enable', {}, sessionId).catch((error) => recordFailure(error.message));
-    }
-  });
-
-  function send(method, params = {}, sessionId = undefined) {
-    const id = nextId++;
-    return new Promise((resolveRequest, rejectRequest) => {
-      const timer = setTimeout(
-        () => {
-          pending.delete(id);
-          rejectRequest(new Error(`Chrome DevTools Protocol ${method} timed out`));
-        },
-        Math.max(1, Math.min(30_000, deadline - Date.now())),
-      );
-      pending.set(id, {
-        resolve(value) {
-          clearTimeout(timer);
-          resolveRequest(value);
-        },
-        reject(error) {
-          clearTimeout(timer);
-          rejectRequest(error);
-        },
-      });
-      webSocket.send(
-        JSON.stringify({ id, method, params, ...(sessionId === undefined ? {} : { sessionId }) }),
-      );
-    });
-  }
-
-  return { send };
-}
-
-function formatCdpException(details) {
-  const description = details.exception?.description ?? details.exception?.value ?? details.text;
-  const location = details.url
-    ? `${details.url}:${Number(details.lineNumber ?? 0) + 1}:${Number(details.columnNumber ?? 0) + 1}`
-    : undefined;
-  return [description, location].filter(Boolean).join('\n');
 }
 
 async function waitForChrome(url, chromePid, deadline) {

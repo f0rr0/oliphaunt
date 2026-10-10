@@ -1,7 +1,7 @@
 id = "oliphaunt-extension-pg-hashids"
 owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
-shared_source_paths = ["src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts"]
+shared_source_paths = ["src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts", "src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts", "src/native/sdks/swift/tools/ios-carrier-manifest.mts", "src/wasix/runtime/tools/package_liboliphaunt_wasix_cargo_artifacts.mts", "tools/packaging/build-maven-artifact-manifest.mts", "tools/packaging/maven-artifact-staging.mts"]
 publish_targets = [
   "github-release-assets",
   "npm",
@@ -51,11 +51,13 @@ native_runtime_version = "0.3.3"
 wasix_runtime_product = "liboliphaunt-wasix"
 wasix_runtime_version = "0.3.2"
 [compatibility_versions.oliphaunt-extension-pg-hashids-liboliphaunt-native]
+public_support = true
 source_product = "liboliphaunt-native"
 path = "src/extensions/external/pg_hashids/release.toml"
 parser = "toml:extension.compatibility.native_runtime_version"
 
 [compatibility_versions.oliphaunt-extension-pg-hashids-liboliphaunt-wasix]
+public_support = true
 source_product = "liboliphaunt-wasix"
 path = "src/extensions/external/pg_hashids/release.toml"
 parser = "toml:extension.compatibility.wasix_runtime_version"

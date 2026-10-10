@@ -17,7 +17,11 @@ const ELECTRON_RELEASE_DEPENDENCIES = [
   },
   {
     packageName: '@oliphaunt/extension-contrib-pg18',
-    versionSource: { type: 'text', path: 'src/native/runtime/VERSION' },
+    versionSource: {
+      type: 'json',
+      path: 'src/native/sdks/ts/package.json',
+      keys: ['oliphaunt', 'liboliphauntVersion'],
+    },
   },
 ];
 
@@ -26,8 +30,8 @@ const ELECTRON_SMOKE_PACKAGES = [
     packageName: '@oliphaunt/liboliphaunt-linux-x64-gnu',
     versionSource: {
       type: 'json',
-      path: 'src/native/runtime/packages/linux-x64-gnu/package.json',
-      keys: ['version'],
+      path: 'src/native/sdks/ts/package.json',
+      keys: ['oliphaunt', 'liboliphauntVersion'],
     },
   },
 ];

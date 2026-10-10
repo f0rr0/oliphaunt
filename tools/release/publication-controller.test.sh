@@ -39,6 +39,12 @@ mkdir -p tools/release/testdata
 printf 'workflow gate fixture' > tools/release/testdata/require-workflow-success-github.mts
 fixture_fix="$(commit)"
 bash "$owner/publication-controller.sh" "$source" "$fixture_fix"
+for file in src/native/sdks/ts/tools/frozen-consumer.mts src/query/ts/tools/frozen-consumer.mts src/wasix/sdks/ts/tools/frozen-consumer.mts src/wasix/sdks/ts/tools/frozen-browser-consumer.mts src/wasix/sdks/ts/tools/browser-cdp.mts; do
+  mkdir -p "$(dirname "$file")"
+  printf 'installed consumer fix' > "$file"
+done
+consumer_fix="$(commit)"
+bash "$owner/publication-controller.sh" "$source" "$consumer_fix"
 mkdir -p src/docs/maintainers
 printf 'release guidance' > src/docs/maintainers/release.md
 printf 'setup guidance' > src/docs/maintainers/release-setup.md

@@ -5,6 +5,11 @@ import { electronReleaseDependencies } from '../../src/examples/tools/example-re
 import { extensionRegistryPackageStrings } from '../../src/extensions/artifacts/packages/tools/extension-registry-packages.mts';
 import { currentEvidenceTable } from '../../src/extensions/tools/extension-evidence.mts';
 import { catalogPath, readJson } from '../../src/extensions/tools/extension-projections.mts';
+import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
+import {
+  exampleCargoPolicies,
+  exampleCargoReleaseVersionBindings,
+} from './example-cargo-versions.mts';
 import {
   compareText,
   currentProductVersion,
@@ -13,12 +18,16 @@ import {
   nativeToolsOptionalPackageProducts,
   ROOT,
 } from './release-artifact-targets.mts';
-import { compatibilityVersionEntries, loadGraph, loadProducts } from './release-graph.mts';
-import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import {
-  exampleCargoPolicies,
-  exampleCargoReleaseVersionBindings,
-} from './example-cargo-versions.mts';
+  buildBoundCompatibilityProducts,
+  releaseDependencyPlan,
+} from './release-dependency-plan.mts';
+import {
+  compatibilityVersionEntries,
+  loadGraph,
+  loadProducts,
+  productCompatibilityVersion,
+} from './release-graph.mts';
 import { releasePleaseConfigAfterBootstrapConsumption } from './release-please-bootstrap.mts';
 import {
   cargoManifestPaths,
@@ -273,9 +282,15 @@ function syncReleasePleaseBootstrapBoundary(changes, { write }) {
 
 async function syncCompatibilityVersions(changes, { write, transitions }) {
   const links = compatibilityEntriesForBumpedProducts(compatibilityVersionLinks(), transitions);
-  for (const { id: specId, sourceProduct, path: pathText, parser } of links) {
+  const plan = releaseDependencyPlan(
+    graphProducts(),
+    transitions.map(({ product }) => product),
+    {
+      entries: links,
+    },
+  );
+  for (const { id: specId, sourceProduct, path: pathText, parser, version: expected } of plan) {
     const file = path.join(ROOT, pathText);
-    const expected = await currentProductVersion(sourceProduct, PREFIX);
     if (parser === 'raw') {
       writeTextIfChanged(
         file,
@@ -359,7 +374,12 @@ async function syncOptionalRuntimeDependencies(
   }
 }
 
-function syncElectronExampleDependencies(changes, { write }) {
+function syncElectronExampleDependencies(changes, { write, transitions }) {
+  if (
+    transitions.length &&
+    !transitions.some(({ product }) => ['oliphaunt-js', 'postgres-tools-native'].includes(product))
+  )
+    return;
   const data = readJsonObject(ELECTRON_EXAMPLE_PACKAGE);
   const dependencies = data.dependencies;
   if (dependencies === null || Array.isArray(dependencies) || typeof dependencies !== 'object') {
@@ -507,24 +527,37 @@ export function cargoPathDependencyBindings(
 
 function syncCargoPathDependencyPins(changes, { write, transitions }) {
   const localPackages = localCargoPackagesByManifest();
+  const products = graphProducts();
+  const compiled = buildBoundCompatibilityProducts(products);
   const selectedRoots = transitions
-    .map(({ product }) => path.join(ROOT, packagePath(product)))
-    .sort((left, right) => right.length - left.length || compareText(left, right));
+    .map(({ product }) => ({ product, root: path.join(ROOT, packagePath(product)) }))
+    .sort(
+      (left, right) => right.root.length - left.root.length || compareText(left.root, right.root),
+    );
   for (const manifestPath of cargoManifestPaths()) {
-    if (
-      !selectedRoots.some(
-        (root) => manifestPath === root || manifestPath.startsWith(`${root}${path.sep}`),
-      )
-    ) {
-      continue;
-    }
+    const owner = selectedRoots.find(
+      ({ root }) => manifestPath === root || manifestPath.startsWith(`${root}${path.sep}`),
+    );
+    if (!owner) continue;
     const source = readText(manifestPath);
+    const parsed = Bun.TOML.parse(source);
     const bindings = cargoPathDependencyBindings(
       source,
       manifestPath,
       localPackages,
       priorCargoPathDependencyVersions(manifestPath),
-    );
+    ).filter((binding) => {
+      const dependency = valueAt(parsed, binding.entryParts);
+      const input = path.resolve(path.dirname(manifestPath), dependency.path);
+      const producer = Object.entries(products)
+        .filter(
+          ([, metadata]) =>
+            input === path.join(ROOT, metadata.path) ||
+            input.startsWith(path.join(ROOT, metadata.path) + path.sep),
+        )
+        .sort((left, right) => right[1].path.length - left[1].path.length)[0]?.[0];
+      return compiled.get(owner.product)?.has(producer);
+    });
     const result = syncExampleCargoManifestText(source, {
       policy: { crateDir: path.dirname(manifestPath) },
       bindings,
@@ -722,9 +755,18 @@ export function syncExampleCargoManifestText(
   return { text: updated, details };
 }
 
-function syncExampleCargoRegistryPins(changes, { write }) {
+function syncExampleCargoRegistryPins(changes, { write, transitions }) {
   const bindings = exampleCargoReleaseVersionBindings();
   for (const policy of exampleCargoPolicies()) {
+    if (
+      transitions.length &&
+      !bindings.some(
+        (binding) =>
+          binding.policyId === policy.id &&
+          transitions.some(({ product }) => product === binding.sourceProduct),
+      )
+    )
+      continue;
     const file = path.join(ROOT, policy.crateDir, 'Cargo.toml');
     let result;
     try {
@@ -879,21 +921,33 @@ async function main(argv) {
     (write || changes.length === 0)
   ) {
     const sdk = readJsonObject(path.join(ROOT, 'src/wasix/sdks/ts/package.json')).oliphaunt;
-    const addon = readJsonObject(path.join(ROOT, 'src/wasix/node-addon/package.json')).oliphaunt;
+    const products = graphProducts();
+    const addonSelected =
+      transitions.some(({ product }) => product === 'oliphaunt-wasix-napi') &&
+      sdk.wasixNapiVersion === products['oliphaunt-wasix-napi'].version;
     requireMatchingWasixRuntime(
       {
         runtimeVersion: sdk.runtimeVersion,
         napiVersion: sdk.wasixNapiVersion,
-        napiRuntimeVersion: addon.runtimeVersion,
+        napiRuntimeVersion: productCompatibilityVersion(
+          'oliphaunt-wasix-napi',
+          'liboliphaunt-wasix',
+          PREFIX,
+          {
+            ref: addonSelected
+              ? null
+              : products['oliphaunt-wasix-napi'].tag_prefix + sdk.wasixNapiVersion,
+          },
+        ),
       },
       { prefix: PREFIX },
     );
   }
   syncExtensionRegistryMetadata(changes, { write });
   await syncNativeToolsOptionalDependencies(changes, { write, transitions });
-  syncElectronExampleDependencies(changes, { write });
+  syncElectronExampleDependencies(changes, { write, transitions });
   syncCargoPathDependencyPins(changes, { write, transitions });
-  syncExampleCargoRegistryPins(changes, { write });
+  syncExampleCargoRegistryPins(changes, { write, transitions });
   syncLockfiles(changes, { write });
   if (!args.generatedReleaseCheck) {
     syncExtensionEvidenceSummary(changes, { write });

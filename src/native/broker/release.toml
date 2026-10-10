@@ -17,11 +17,13 @@ release_artifacts = ["broker-helper-binary", "cargo-crate"]
 embedded_cargo_manifests = ["src/native/broker/Cargo.toml"]
 
 [compatibility_versions.broker_native_bindings]
+public_support = false
 source_product = "liboliphaunt-native-bindings"
 path = "src/native/broker/Cargo.toml"
 parser = "toml:dependencies.liboliphaunt-native-bindings.version"
 
 [compatibility_versions.broker_query]
+public_support = false
 source_product = "oliphaunt-query"
 path = "src/native/broker/Cargo.toml"
 parser = "toml:dependencies.oliphaunt-query.version"
