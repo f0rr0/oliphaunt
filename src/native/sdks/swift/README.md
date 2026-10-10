@@ -1,6 +1,6 @@
 # Oliphaunt Swift SDK
 
-Embed PostgreSQL in an iOS 17+ or macOS 14+ application using Swift 6 concurrency.
+Embed native PostgreSQL in an iOS 17+ or macOS 14+ application using Swift 6 concurrency.
 
 ## Install
 
@@ -35,6 +35,8 @@ func firstQuery() async throws {
 Default storage is a disposable temporary directory. Direct mode stays bound to its first root and configuration for the lifetime of the process, even after closing a handle. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
 ## Build your integration
+
+See [Ship a mobile database](https://oliphaunt.dev/docs/learn/mobile-stability) for application-owned persistent storage, local PostgreSQL features, lifecycle, and broker setup.
 
 - [Guide](https://oliphaunt.dev/docs/sdk/swift/guide): parameters, transactions, extensions, backups, and shutdown.
 - [API reference](https://oliphaunt.dev/docs/sdk/swift/api-reference): methods, configuration, results, and errors.

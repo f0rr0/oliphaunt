@@ -3,7 +3,7 @@ title: WASIX TypeScript API reference
 description: Imports, storage descriptors, configuration, methods, and runtime-specific constraints.
 ---
 
-`@oliphaunt/wasix-ts` exports `Oliphaunt` and its TypeScript declarations. The default export is the same client.
+`@oliphaunt/wasix-ts` exports `Oliphaunt` and its TypeScript declarations. The default export is the same client. The SDK hosts [WebAssembly PostgreSQL](/docs/sdk#postgresql-as-webassembly) in browsers, Node.js, Bun, Deno, and Electron.
 
 ## Entry points
 
@@ -27,9 +27,11 @@ description: Imports, storage descriptors, configuration, methods, and runtime-s
 | `startupGUCs` | `Record<string, string>`; no extra settings |
 | `username`, `database` | Optional strings; fresh roots use `postgres` |
 | `icu` | Optional imported `WasixIcuDescriptor` |
-| `seed` | Optional `WasixSeed`; initializes fresh storage |
+| `seed` | Optional `WasixSeed` with archive and manifest URLs or bytes; otherwise new storage runs `initdb` |
 
-Extension descriptors come from `@oliphaunt/extension-*-wasix` packages. SQL-name strings are not accepted. Host placement is selected by import, not an `execution` configuration option.
+For the published `@oliphaunt/wasix-ts@0.2.2` browser Worker, follow the [initialization compatibility recipe](/docs/sdk/wasix-typescript/guide#initialize-browser-worker-storage).
+
+Extension descriptors come from `@oliphaunt/extension-*-wasix` packages. SQL-name strings are not accepted. Host placement is selected by import, not an `execution` configuration option. The browser root import and host `/direct` can block the calling thread. See [execution placement](/docs/sdk/wasix-typescript/guide#choose-execution-placement).
 
 ## Queries and transactions
 
@@ -43,7 +45,7 @@ Extension descriptors come from `@oliphaunt/extension-*-wasix` packages. SQL-nam
 
 `close()` returns `Promise<void>` and performs one terminal teardown attempt. `closed` reports terminal state, including unexpected isolated-host termination. Repeated close calls share the same result. `Symbol.asyncDispose` uses the same close operation.
 
-There is no public direct-query `cancel()` method. Browser TCP listeners and independent endpoint sessions are unavailable.
+There is no public direct-query `cancel()` method. Browser TCP listeners are unavailable. The host `/server` endpoint accepts one connected client at a time.
 
 ## Protocol and errors
 

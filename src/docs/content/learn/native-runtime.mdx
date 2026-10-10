@@ -1,9 +1,9 @@
 ---
-title: Choose a native runtime mode
-description: Choose direct embedding, process isolation, or a local server for your application.
+title: Choose how PostgreSQL runs
+description: Compare native PostgreSQL modes and WebAssembly execution placement for your application.
 ---
 
-Native Rust and desktop TypeScript offer three runtime modes. Swift, Kotlin, and React Native also offer mobile broker integration. Choose a mode based on process isolation and the number of database sessions your application needs.
+Choose the PostgreSQL runtime through your [SDK package](/docs/sdk), then choose where its work runs. Native Rust and native TypeScript offer the three modes below. Swift, Kotlin, and React Native use direct or mobile broker integration. The [WASIX execution choices](#webassembly-execution) are separate from these native PostgreSQL modes.
 
 | Mode | Database runs in | Access | Choose it when |
 | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ Native Rust and desktop TypeScript offer three runtime modes. Swift, Kotlin, and
 
 ## Direct
 
-Direct mode is the default. The SDK manages a resident native backend in the application process. Keep one application-owned database handle and share it according to your language's concurrency rules.
+For native PostgreSQL SDKs, direct mode is the default. The SDK manages a resident native backend in the application process. Keep one application-owned database handle and share it according to your language's concurrency rules.
 
 The first successful direct open binds the process to that root and configuration. Closing the handle releases the logical session; it does not unload PostgreSQL or let the process switch roots. Reopen the same root with compatible settings, or use broker/server mode for multiple roots. In direct mode, mobile apps switch to restored data on a subsequent process launch.
 
@@ -35,6 +35,24 @@ Keep the server handle alive for as long as clients use it. At shutdown, stop ac
 
 See [Rust runtime recipes](/docs/sdk/rust/guide#choose-a-runtime-mode) or [TypeScript runtime recipes](/docs/sdk/typescript/guide#choose-a-runtime-mode). For a desktop webview, see [Use with Tauri](/docs/learn/tauri).
 
+## WebAssembly execution
+
+The [WASIX SDKs](/docs/sdk#postgresql-as-webassembly) run the WebAssembly PostgreSQL runtime in your host application. These choices control scheduling; every embedded handle still owns one session.
+
+| Host | Default execution | Use for responsive application work |
+| --- | --- | --- |
+| Browser TypeScript | Importing realm; can block its thread | `/worker` in a package-owned module Worker |
+| Node.js, Bun, Deno, Electron | Dedicated Rust owner thread | Root import, or `/worker` for a JavaScript Worker |
+| Rust desktop and Tauri | Synchronous calling thread | `AsyncOliphaunt` on a dedicated owner thread |
+
+Desktop TypeScript also exposes `/direct` for caller-thread execution. A promise does not guarantee that a query runs off the calling thread. See [TypeScript placement](/docs/sdk/wasix-typescript/guide#choose-execution-placement) and [Rust ownership](/docs/sdk/wasix-rust/runtime#thread-ownership).
+
+Native PostgreSQL's process-wide direct-root binding does not describe WASIX handles. WASIX persistent storage still allows only one live owner per root or browser storage name.
+
 ## WASIX endpoints
 
-WASIX SDKs have their own local endpoint on socket-capable hosts. It serves one connected client at a time; it is not a replacement for a native server with independent sessions. Browser apps do not expose a TCP listener.
+WASIX SDKs provide a local PostgreSQL endpoint on supported desktop hosts. It serves one connected client at a time; configure a pool with a maximum of one connection. Keep the server handle alive and close clients before shutting it down. Browser apps cannot open this TCP listener.
+
+Use [WASIX Rust endpoints](/docs/sdk/wasix-rust/runtime#local-postgresql-endpoint) or [WASIX TypeScript `/server`](/docs/sdk/wasix-typescript/guide#open-a-local-endpoint) when a driver expects a PostgreSQL URL. For independent client sessions, use native server mode above.
+
+The separate [WASIX postmaster product](https://github.com/f0rr0/oliphaunt/tree/main/src/wasix/postmaster) implements a concurrent PostgreSQL server on Linux GNU and macOS ARM64. It has its own runtime and data-directory contract; the embedded SDK endpoints do not switch to it. Check its release notes and README before integrating it.

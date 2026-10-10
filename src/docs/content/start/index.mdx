@@ -3,17 +3,20 @@ title: Get started
 description: Run PostgreSQL inside your app, without a separate database service.
 ---
 
+Use PostgreSQL SQL, JSONB, full-text search, transactions, and extensions in your application.
+
 ## Choose your SDK
+
+The WASIX SDKs run [PostgreSQL as WebAssembly](/docs/sdk#postgresql-as-webassembly). They work in browsers, Node.js, Bun, Deno, Electron, and Rust desktop apps, including Tauri. The mobile SDKs run native PostgreSQL.
 
 <SdkChooser />
 
-Start with the native SDK for your app's platform. For a browser app, use **WASIX TypeScript**. WASIX runs PostgreSQL as WebAssembly and also has a Rust binding.
-
-Each quickstart includes installation, a complete query example, and persistent storage setup. Compare [runtime support](/docs/reference/capabilities) if you need process isolation, an ORM, or browser storage.
+Each quickstart includes installation, a complete query example, and persistent storage setup. Rust and Node.js, Bun, Deno, or Electron apps can choose either PostgreSQL runtime. Compare [runtime support](/docs/reference/capabilities) for host requirements, isolation, and client sessions.
 
 ## After your first query
 
 - **Build application features.** Your SDK's guide covers parameters, transactions, backups, and errors.
 - **Understand storage.** [Embedded PostgreSQL](/docs/learn/embedded-postgres) explains database lifetime and recovery.
 - **Add PostgreSQL extensions.** [Choose an extension](/docs/reference/extensions), then follow your SDK's setup.
+- **Ship on iOS and Android.** [Manage mobile storage and lifecycle](/docs/learn/mobile-stability) with Swift, Kotlin, or React Native.
 - **Bring an existing app.** Read [Moving from SQLite](/docs/learn/sqlite-upgrade) or [Use with Tauri](/docs/learn/tauri).

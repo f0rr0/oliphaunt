@@ -1,6 +1,6 @@
 # Oliphaunt WASIX Rust SDK
 
-Host WebAssembly PostgreSQL in a Rust application. The synchronous handle must be created, used, and dropped on one OS thread. Use `AsyncOliphaunt` for a cloneable `Send + Sync` owner.
+Host [WebAssembly PostgreSQL](https://oliphaunt.dev/docs/sdk#postgresql-as-webassembly) in Rust desktop and Tauri applications. Your Rust app builds as a native executable while the SDK runs the WebAssembly database. The synchronous handle must be created, used, and dropped on one OS thread. Use `AsyncOliphaunt` for a cloneable `Send + Sync` owner.
 
 ## Install
 
@@ -26,6 +26,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Default storage is a memory filesystem and is discarded on close. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
+
+## Desktop and Tauri apps
+
+Keep `AsyncOliphaunt` in application state to run database work on its dedicated owner thread. Choose `DatabaseStorage::Directory` for persistent data. The [Tauri guide](https://oliphaunt.dev/docs/learn/tauri#webassembly-postgresql) shows storage and application commands for this SDK and the native Rust alternative.
+
+For a PostgreSQL driver, the separate `oliphaunt-pgwire-server` crate provides a local endpoint for one connected client at a time. The [Tauri example](../../../examples/wasix/tauri/README.md) uses a one-connection SQLx pool; retain its server handle until clients close.
 
 ## Build your integration
 

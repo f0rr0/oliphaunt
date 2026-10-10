@@ -1,15 +1,40 @@
 ---
 title: Use with Tauri
-description: Keep the database in Rust application state and expose focused commands to your webview.
+description: Run native or WebAssembly PostgreSQL in your Rust backend and expose commands to the webview.
 ---
 
-Use the native [Rust SDK](/docs/sdk/rust) in a Tauri app. Keep the database in Rust state and expose application operations such as adding or searching notes to the webview.
+Tauri desktop apps can use either [WASIX Rust](/docs/sdk/wasix-rust) for WebAssembly PostgreSQL or [native Rust](/docs/sdk/rust) for native PostgreSQL. Keep the database in Rust application state and expose operations such as adding or searching notes to the webview. Both Rust applications build as native desktop executables.
 
-Add the `oliphaunt` dependency to the Tauri Rust application as shown in the [Rust quickstart](/docs/sdk/rust). The SDK includes its matching runtime resources.
+## WebAssembly PostgreSQL
 
-## Open persistent application storage
+Add `oliphaunt-wasix` to the Tauri Rust application's `Cargo.toml`:
 
-Use `AsyncOliphaunt` so database work does not block Tauri's async executor. This helper opens a root beneath the application-data directory and prepares a table:
+```toml
+[dependencies]
+oliphaunt-wasix = "{{release:oliphaunt-wasix-rust}}"
+```
+
+Use `AsyncOliphaunt` to run database work on its dedicated owner thread. This helper opens persistent storage beneath the application's data directory:
+
+```rust
+use oliphaunt_wasix::{AsyncOliphaunt, DatabaseStorage};
+use std::path::PathBuf;
+
+struct AppDatabase(AsyncOliphaunt);
+
+async fn open_database(app_data: PathBuf) -> oliphaunt_wasix::Result<AsyncOliphaunt> {
+    let db = AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(app_data.join("postgres")))
+        .open()
+        .await?;
+    db.execute("CREATE TABLE IF NOT EXISTS notes (body text NOT NULL)").await?;
+    Ok(db)
+}
+```
+
+## Native PostgreSQL
+
+Alternatively, add `oliphaunt` using the [native Rust quickstart](/docs/sdk/rust). Use this helper in place of the WebAssembly helper above:
 
 ```rust
 use oliphaunt::{AsyncOliphaunt, DatabaseStorage};
@@ -27,6 +52,10 @@ async fn open_database(app_data: PathBuf) -> oliphaunt::Result<AsyncOliphaunt> {
     Ok(db)
 }
 ```
+
+Both helpers expose the application operations below. Each uses its own PostgreSQL runtime; use a logical dump when moving existing data between them. Native direct mode binds the process to its first root, as described in [runtime modes](/docs/learn/native-runtime#direct).
+
+## Open persistent application storage
 
 During your existing Tauri builder's setup, resolve the directory and register the handle:
 
@@ -71,7 +100,9 @@ Validate inputs and expose only operations the frontend needs. Keep database pat
 
 ## Use a PostgreSQL driver or ORM
 
-If your Rust integration expects a connection URL and independent sessions, start an `AsyncOliphauntServer`. Return and retain the server handle, not only its URL:
+For WebAssembly PostgreSQL, add `oliphaunt-pgwire-server` using the [WASIX endpoint recipe](/docs/sdk/wasix-rust/runtime#local-postgresql-endpoint). Its `AsyncOliphauntServer` exposes a PostgreSQL URL for **one connected client at a time**. Configure pools with a maximum of one connection. The [WASIX Tauri example](https://github.com/f0rr0/oliphaunt/tree/main/src/examples/wasix/tauri) retains the server in application state alongside a one-connection SQLx pool.
+
+For native PostgreSQL and independent client sessions, use `oliphaunt::AsyncOliphauntServer`. Return and retain the server handle:
 
 ```rust
 use oliphaunt::AsyncOliphauntServer;
@@ -88,8 +119,8 @@ Store the server alongside the application's driver or pool. Create the pool usi
 
 ## Package and shut down
 
-Ship the native runtime and any selected extensions with each desktop build. Test the packaged application; a development run may resolve files that are absent from the final bundle.
+Ship the chosen runtime's host assets and matching extension packages with each desktop build. WASIX Rust includes platform-specific host resources, so check [supported desktop hosts](/docs/reference/capabilities#supported-webassembly-hosts). Test the packaged application; a development run may resolve files that are absent from the final bundle.
 
-Stop accepting application work before closing the database. Await `db.close()` through your app's shutdown path to observe errors. Use the SDK's backup API for direct/broker storage and PostgreSQL tools for server workflows.
+Stop accepting application work before closing the database. Await `db.close()` through your app's shutdown path to observe errors. Use the SDK's physical backup API for compatible restores within its runtime family and logical PostgreSQL tools for transfers between families.
 
 See Tauri's [state management](https://v2.tauri.app/develop/state-management/) and [calling Rust](https://v2.tauri.app/develop/calling-rust/) documentation for application wiring.

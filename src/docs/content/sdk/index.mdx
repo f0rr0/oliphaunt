@@ -3,14 +3,22 @@ title: SDKs
 description: Choose the Oliphaunt package for your language and application runtime.
 ---
 
-Choose an SDK by where your application runs. Every quickstart shows how to install its package, run a query, and close the database.
+Choose an SDK by your application's language and platform, then choose how PostgreSQL runs. Every quickstart shows installation, a complete query, and persistence.
+
+## PostgreSQL as WebAssembly
+
+The WASIX SDKs run PostgreSQL compiled to **WebAssembly**. [WASIX](https://www.wasix.org/docs/#what-is-wasix) supplies the system interfaces, such as files and clocks, that WebAssembly programs need. Oliphaunt uses these interfaces to host PostgreSQL inside your application.
+
+Use WASIX TypeScript in browsers, Node.js, Bun, Deno, and Electron. Use WASIX Rust in Rust desktop applications, including Tauri. Your application uses its usual language and build tools; the SDK runs the WebAssembly database. A native desktop application can use either PostgreSQL runtime.
+
+## Choose your package
 
 <SdkChooser />
 
-## Native or WASIX?
+## Native PostgreSQL
 
-Native SDKs run the native PostgreSQL runtime. Use them for mobile apps and desktop applications that can ship native libraries. Use broker mode to isolate database execution. Rust and desktop TypeScript also provide a local PostgreSQL server for drivers and ORMs.
+Swift, Kotlin, and React Native embed native PostgreSQL in iOS and Android apps. Swift also supports macOS. These SDKs provide async queries, app-private persistent storage, and platform integration for extensions and process isolation.
 
-WASIX SDKs run PostgreSQL compiled to WebAssembly. Use WASIX TypeScript in browsers, or either WASIX binding when you want that runtime in a desktop host. Select WASIX explicitly; the native packages do not switch to it automatically.
+Native Rust and native TypeScript support desktop hosts, including Tauri and Node.js, Bun, Deno, and Electron. They offer direct embedding, a broker process, and a local PostgreSQL server with independent client sessions. The WASIX SDKs have their own execution and endpoint choices; see [Choose how PostgreSQL runs](/docs/learn/native-runtime).
 
-See [SDKs and platforms](/docs/reference/sdk-products) for package names and [runtime support](/docs/reference/capabilities) for storage, tools, and concurrency differences.
+Select the runtime through its package. See [SDKs and platforms](/docs/reference/sdk-products) for package names and [runtime support](/docs/reference/capabilities) for host requirements, storage, tools, and concurrency differences.

@@ -18,7 +18,7 @@ Extension packages have their own versions and runtime compatibility. A matching
 1. Read release notes for your SDK, its runtime changes, and selected extensions.
 2. Create a recoverable backup and test the upgrade against a copy of application data.
 3. Update the application dependency and its lockfile.
-4. Rebuild native applications when runtime resources or extensions change.
+4. Rebuild and repackage the application when runtime resources or extensions change. For mobile and desktop apps, include matching native libraries or WASIX host assets; for browsers, deploy matching WebAssembly and Worker assets.
 5. Apply documented schema or extension migrations.
 6. Verify queries, transactions, restart recovery, and restore before switching user data.
 

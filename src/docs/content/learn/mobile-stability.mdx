@@ -3,7 +3,7 @@ title: Ship a mobile database
 description: Manage persistent storage, transactions, and application lifecycle on iOS and Android.
 ---
 
-Mobile apps need a database that survives normal process termination. Start with the [Swift](/docs/sdk/swift), [Kotlin](/docs/sdk/kotlin), or [React Native](/docs/sdk/react-native) quickstart, then apply these practices before shipping.
+The Swift, Kotlin, and React Native SDKs run native PostgreSQL on iOS and Android. Use PostgreSQL queries, JSONB, full-text search, and selected extensions over persistent app-private storage. Mobile apps need a database that survives normal process termination. Start with the [Swift](/docs/sdk/swift), [Kotlin](/docs/sdk/kotlin), or [React Native](/docs/sdk/react-native) quickstart, then apply these practices before shipping.
 
 ## Keep data in app-private storage
 
@@ -18,6 +18,29 @@ Open the database in an application service or state owner. Avoid opening a new 
 Direct mode binds the process to one root and configuration. Closing the database does not unload the backend. If you restore into a new root, switch to it on a subsequent application launch.
 
 Run schema setup before screens depend on it. Use parameterized queries, keep transactions short, and keep network requests and user interaction outside transaction callbacks.
+
+## Build local application features
+
+Run schema migrations in the application service before screens use the database. Execute these schema statements individually through each mobile SDK's `execute` method:
+
+```sql
+CREATE TABLE IF NOT EXISTS notes (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  body text NOT NULL,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS notes_search
+  ON notes USING gin (to_tsvector('english', body));
+```
+
+Use bound parameters to save notes, and query `metadata` with PostgreSQL JSONB operators. For full-text search, match the indexed expression:
+
+```sql
+SELECT id, body FROM notes
+WHERE to_tsvector('english', body) @@ plainto_tsquery('english', $1);
+```
+
+Pass the search text as the first query parameter. Vector search and spatial types require their [extension packages](/docs/reference/extensions) in the native build. SQL features do not remove the app's responsibility for storage, migrations, and background execution.
 
 ## Broker mode
 
@@ -102,7 +125,7 @@ If an operation fails after the connection or process is lost, its outcome can b
 
 Selecting an extension changes native resources in your app. Configure the platform package or React Native plugin, rebuild the application, and then request the extension when opening the database. A JavaScript-only update cannot add a missing native extension.
 
-Use the [extension catalog](/docs/reference/extension-catalog) to check availability. Test the installed app on each target architecture with the selected extensions.
+Use the [extension catalog](/docs/reference/extension-catalog) to check declared packaging targets. Test the installed app on each target architecture with the selected extensions.
 
 ## Exercise recovery
 

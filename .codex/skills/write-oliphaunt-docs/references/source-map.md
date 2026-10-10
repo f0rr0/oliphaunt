@@ -10,7 +10,7 @@ Paths are relative to the repository root. Recheck them when the code moves.
 | `src/docs/docs-manifest.toml` | Route ownership, section order, sidebar entries, required SDK pages |
 | `src/docs/tools/generate-content.mts` | Copies/normalizes MDX; generates extension catalog, version matrix, navigation, and version snapshot |
 | `src/docs/src/lib/source.ts`, `src/docs/src/app/llms*` | Markdown text and exports from the same generated pages as the site |
-| `tools/policy/sdk-manifest.toml` | SDK package identity, snippet ownership, supported documentation surfaces |
+| `tools/release/sdk-manifest.toml` | SDK package identity, snippet ownership, supported documentation surfaces |
 | `.release-please-manifest.json`, SDK `release.toml` files | Repository versions and publication identities; verify publication separately |
 | `src/docs/src/components/mdx.tsx`, `src/docs/src/app/global.css` | Available content components and site styling |
 | `src/docs/tools/check-docs-snippets.mts` | Strict source type-checks for complete TypeScript quickstarts; does not execute the database |

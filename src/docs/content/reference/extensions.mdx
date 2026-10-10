@@ -3,11 +3,11 @@ title: Extensions
 description: Package a PostgreSQL extension, select it in your SDK, and enable it with SQL.
 ---
 
-Extensions add PostgreSQL functionality such as vector search, spatial types, and additional operators. Find a supported SQL name in the [extension catalog](/docs/reference/extension-catalog).
+Extensions add PostgreSQL functionality such as vector search, spatial types, and additional operators. Find SQL names and declared packaging targets in the [extension catalog](/docs/reference/extension-catalog).
 
 ## Add an extension in three steps
 
-1. **Package it.** Include the extension resources and any required native code for your application target.
+1. **Package it.** Include the extension resources and native or WebAssembly code for your chosen PostgreSQL runtime and application target.
 2. **Select it before opening.** Use your SDK's configuration, typed value, or descriptor.
 3. **Enable it with SQL.** Run the extension's documented activation, usually `CREATE EXTENSION`.
 
@@ -24,11 +24,11 @@ Selection makes an extension available; it does not run your schema migrations. 
 
 | SDK | Packaging and selection |
 | --- | --- |
-| [Rust](/docs/sdk/rust/guide#select-extensions) | Native builder selection such as `oliphaunt_extension_vector::VECTOR` |
+| [Native Rust](/docs/sdk/rust/guide#select-extensions) | Native builder selection such as `oliphaunt_extension_vector::VECTOR` |
 | [Swift](/docs/sdk/swift/guide#add-an-extension) | Generate/link a Swift extension product and select its `.resource` |
 | [Kotlin](/docs/sdk/kotlin/guide#select-extensions) | Select in Gradle, rebuild, and select its `OliphauntExtension` value at open |
 | [React Native](/docs/sdk/react-native/guide#add-an-extension) | Install extension packages, configure the plugin, rebuild, and select at open |
-| [TypeScript](/docs/sdk/typescript/guide#select-extensions) | Install/import the native extension descriptor and pass it at open |
+| [Native TypeScript](/docs/sdk/typescript/guide#select-extensions) | Install/import the native extension descriptor and pass it at open |
 | [WASIX Rust](/docs/sdk/wasix-rust/guide#select-extensions) | Add the extension crate with its `wasix` feature and select its typed value |
 | [WASIX TypeScript](/docs/sdk/wasix-typescript/guide#select-extensions) | Install/import the `-wasix` descriptor package and pass the descriptor |
 | [C ABI](/docs/sdk/c-abi/guide#register-extensions) | Link/register static modules and provide matching resources |

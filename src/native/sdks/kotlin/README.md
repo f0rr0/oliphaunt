@@ -1,6 +1,6 @@
 # Oliphaunt Kotlin SDK
 
-Embed PostgreSQL in an Android app with coroutine APIs. Android API 24+ is supported on `arm64-v8a` and `x86_64`.
+Embed native PostgreSQL in an Android app with coroutine APIs. Android API 24+ is supported on `arm64-v8a` and `x86_64`.
 
 ## Install
 
@@ -33,6 +33,8 @@ suspend fun firstQuery(context: Context) {
 Default storage is a disposable temporary directory. Direct mode stays bound to its first root and configuration for the lifetime of the process, even after closing a handle. Use the quickstart's persistent-storage example for application data; run it as an alternative to this disposable example. Always close database handles explicitly.
 
 ## Build your integration
+
+See [Ship a mobile database](https://oliphaunt.dev/docs/learn/mobile-stability) for application-owned persistent storage, local PostgreSQL features, lifecycle, and broker setup.
 
 - [Guide](https://oliphaunt.dev/docs/sdk/kotlin/guide): parameters, transactions, extensions, backups, and shutdown.
 - [API reference](https://oliphaunt.dev/docs/sdk/kotlin/api-reference): methods, configuration, results, and errors.

@@ -141,7 +141,8 @@ runtime, packaging, verification, and qualification machinery.
 
 - Product id and tag prefix: `liboliphaunt-wasix-postmaster` and
   `liboliphaunt-wasix-postmaster-v`.
-- The source version remains `0.0.0` until the first generated release PR.
+- `VERSION` and `.release-please-manifest.json` track the source version; a
+  completed GitHub release establishes downloadable carrier availability.
 - `release.toml`, Moon release metadata, Release Please, and the release asset
   task describe the same product.
 - A release is valid only when the exact release commit produced and verified

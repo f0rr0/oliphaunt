@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const parseToml = Bun.TOML.parse;
 
 import { renderPublicPlatformCompatibilityTable } from '../../../tools/release/platform-compatibility-policy.mts';
+import { loadExtensionTargetProfiles } from '../../extensions/contracts/extension-target-profiles.mts';
 import { documentedProducts, publishedProducts } from './published-products.mts';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -220,28 +221,75 @@ function markdownDocIdFor(filePath) {
     .replace(/\.mdx?$/, '');
 }
 
-function generateExtensionCatalog() {
-  const catalogPath = path.join(repoRoot, 'src/extensions/generated/extensions.catalog.json');
+export function generateExtensionCatalog(root = repoRoot) {
+  const catalogPath = path.join(root, 'src/extensions/generated/extensions.catalog.json');
   if (!fs.existsSync(catalogPath)) {
     throw new Error('extension catalog source is required for public docs generation');
   }
   const catalog = JSON.parse(readText(catalogPath));
+  const projections = path.join(root, 'src/extensions/generated');
+  const native = new Map(
+    JSON.parse(readText(path.join(projections, 'sdk/extensions.json'))).extensions.map((row) => [
+      row.id,
+      row,
+    ]),
+  );
+  const wasix = new Set(
+    JSON.parse(readText(path.join(projections, 'wasix/extensions.json'))).extensions.map(
+      (row) => row.id,
+    ),
+  );
+  const mobile = new Set(
+    JSON.parse(readText(path.join(projections, 'mobile/static-registry.json'))).modules.map(
+      (row) => row.id,
+    ),
+  );
+  const profiles = loadExtensionTargetProfiles({
+    file: path.join(root, 'src/extensions/contracts/extension-target-profiles.toml'),
+  });
+  const targetRows = profiles.profiles.map(
+    (profile) =>
+      `| ${escapeMarkdown({ 'native-desktop-v1': 'Native desktop', 'native-mobile-v1': 'iOS and Android', 'wasix-portable-v1': 'WebAssembly (WASIX)' }[profile.id] ?? profile.id)} | ${profile.targets.map((row) => escapeMarkdown(row.target)).join(', ')} |`,
+  );
   const rows = (catalog.extensions ?? [])
     .sort((left, right) =>
       String(left['sql-name'] ?? left.id).localeCompare(String(right['sql-name'] ?? right.id)),
     )
     .map((extension) => {
       const control = extension.control ?? {};
-      return `| ${escapeMarkdown(extension['sql-name'] ?? extension.id)} | ${escapeMarkdown(extension['display-name'] ?? extension.id)} | ${escapeMarkdown(extensionVersion(control['default-version']))} | ${escapeMarkdown(extensionFamily(extension['source-kind']))} | ${escapeMarkdown(extensionActivation(extension))} |`;
+      const metadata = native.get(extension.id);
+      if (!metadata || !wasix.has(extension.id)) {
+        throw new Error(`extension ${extension.id} is missing a runtime packaging projection`);
+      }
+      const sqlOnly = metadata['native-module-stem'] === null;
+      if (!sqlOnly && !mobile.has(extension.id)) {
+        throw new Error(`extension ${extension.id} is missing its mobile static registry row`);
+      }
+      const name = extension['sql-name'] ?? extension.id;
+      const displayName = extension['display-name'];
+      const label = displayName && displayName !== name ? `${name} (${displayName})` : name;
+      return `| ${escapeMarkdown(label)} | ${escapeMarkdown(extensionVersion(control['default-version']))} | ${escapeMarkdown(extensionFamily(extension['source-kind']))} | Declared | ${sqlOnly ? 'SQL resources' : 'Declared'} | Declared | ${escapeMarkdown(extensionActivation(extension))} |`;
     });
   return `---
 title: Extension catalog
 ---
 
-Find the SQL name and activation method for an extension. Follow your [SDK setup](/docs/reference/extensions) to install and select it before opening a database. Versions here describe the upstream extension, not its Oliphaunt package.
+Find SQL names, activation methods, and declared packaging targets. Follow your [SDK setup](/docs/reference/extensions) to install and select an extension before opening a database. Versions here describe the upstream extension, not its Oliphaunt package.
 
-| SQL extension | Display name | Version | Family | Activation |
-| --- | --- | --- | --- | --- |
+## Packaging targets
+
+The catalog uses the shared target contract below. Native desktop packages, native mobile resources, and portable WASIX packages are separate artifacts. WebAssembly PostgreSQL can use its portable extensions in browsers and supported Rust or JavaScript hosts; check [host requirements](/docs/reference/capabilities#supported-webassembly-hosts).
+
+| Target profile | Declared targets |
+| --- | --- |
+${targetRows.join('\n')}
+
+## Extensions
+
+**Declared** means the extension is included in the corresponding packaging contract. These columns do not certify a particular release or device; check the [completed release](/docs/reference/version-matrix), use matching runtime packages, and test your selected extensions on the application target. **SQL resources** means the extension needs no native static module.
+
+| SQL extension | Upstream version | Source | Native desktop | iOS / Android | WebAssembly | Activation |
+| --- | --- | --- | --- | --- | --- | --- |
 ${rows.join('\n')}
 `;
 }
@@ -289,7 +337,8 @@ const routePresentation = {
     collapsible: false,
   },
   sdk: {
-    description: 'Choose a native SDK, Rust WASIX, WASIX TypeScript, or the C ABI.',
+    description:
+      'Choose an SDK for mobile, browsers, or desktop, with native or WebAssembly PostgreSQL.',
     icon: 'PackageCheck',
     defaultOpen: false,
   },
@@ -309,7 +358,8 @@ const routePresentation = {
     icon: 'CodeXml',
   },
   'oliphaunt-rust': {
-    description: 'Rust and Tauri SDK with direct, broker, and server runtime modes.',
+    description:
+      'Native PostgreSQL for Rust desktop and Tauri, with direct, broker, and server modes.',
     icon: 'Laptop',
   },
   'oliphaunt-swift': {
@@ -321,19 +371,19 @@ const routePresentation = {
     icon: 'Smartphone',
   },
   'oliphaunt-react-native': {
-    description: 'PostgreSQL for React Native and Expo apps.',
+    description: 'Native PostgreSQL for iOS and Android with React Native and Expo native builds.',
     icon: 'Layers',
   },
   'oliphaunt-js': {
-    description: 'TypeScript SDK for Node.js, Bun, and Deno.',
+    description: 'Native PostgreSQL for Node.js, Bun, Deno, and Electron.',
     icon: 'Braces',
   },
   'oliphaunt-wasix-rust': {
-    description: 'Rust SDK for the portable WASIX runtime.',
+    description: 'WebAssembly PostgreSQL for Rust desktop and Tauri apps.',
     icon: 'Boxes',
   },
   'oliphaunt-wasix-typescript': {
-    description: 'Portable TypeScript SDK for browsers, Node.js, Bun, Deno, and Electron.',
+    description: 'WebAssembly PostgreSQL for browsers, Node.js, Bun, Deno, and Electron.',
     icon: 'Boxes',
   },
 };
@@ -449,7 +499,7 @@ function writeFumadocsMeta(manifest) {
   writeJson(path.join(siteDocsRoot, 'meta.json'), {
     title: 'Oliphaunt',
     description:
-      'Embedded PostgreSQL SDK documentation for native, Rust WASIX, and WASIX TypeScript apps.',
+      'PostgreSQL for iOS, Android, React Native, browsers, and desktop apps, with native and WebAssembly runtimes.',
     pages: ['start', 'sdk', 'learn', 'reference'],
   });
   for (const route of manifest.routes ?? []) {

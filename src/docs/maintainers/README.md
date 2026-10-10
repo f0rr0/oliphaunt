@@ -40,3 +40,4 @@ When changing a workflow or contract:
 4. avoid policy assertions that depend on YAML step order, display text, or helper filenames unless the string itself is an external API.
 
 - [Documentation authoring](../README.md) and [current documentation audit](docs-rebase-audit.md).
+- [Runtime and application documentation audit](runtime-application-docs-audit.md): WASIX, mobile, and Tauri framing and validation.

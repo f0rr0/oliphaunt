@@ -115,9 +115,10 @@ moon run database-resources:package-wasix
 moon run database-resources:package-android
 ```
 
-Extension selection is exact-name only. SDKs accept exact PostgreSQL extension
-names; `vector` means only the SQL extension `vector`, and names like `core`,
-`search`, or `geo` must not resolve to hidden extension sets.
+Extension selection uses exact PostgreSQL SQL names. Bindings may require
+typed values or package descriptors rather than accepting name strings.
+`vector` means only the SQL extension `vector`; names like `core`, `search`,
+or `geo` must not resolve to hidden extension sets.
 
 Select seed and ICU carriers explicitly when needed. Browser, native desktop,
 and native WASIX hosts run `initdb` for new storage when no seed is selected;

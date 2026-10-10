@@ -1,9 +1,9 @@
 ---
 title: WASIX Rust SDK
-description: Host WebAssembly PostgreSQL from Rust with memory or persistent directory storage.
+description: Run WebAssembly PostgreSQL in Rust desktop and Tauri apps, with synchronous or async APIs.
 ---
 
-Use `oliphaunt-wasix` when a Rust application hosts the WASIX PostgreSQL runtime. For native desktop PostgreSQL, use the [native Rust SDK](/docs/sdk/rust).
+Use `oliphaunt-wasix` to run [WebAssembly PostgreSQL](/docs/sdk#postgresql-as-webassembly) in Rust desktop applications, including Tauri. Your Rust application builds as a normal native executable; the SDK hosts the WebAssembly database. The [native Rust SDK](/docs/sdk/rust) offers the other PostgreSQL runtime choice.
 
 ## Install
 
@@ -12,7 +12,7 @@ Use `oliphaunt-wasix` when a Rust application hosts the WASIX PostgreSQL runtime
 oliphaunt-wasix = "{{release:oliphaunt-wasix-rust}}"
 ```
 
-The package resolves matching runtime assets for supported hosts. Use Rust 1.93 or later.
+Use Rust 1.93 or later. The package resolves matching host assets for macOS ARM64, Linux GNU x64/ARM64, and Windows MSVC x64. See [host support](/docs/reference/capabilities#supported-webassembly-hosts).
 
 ## Run your first query
 
@@ -52,11 +52,14 @@ Only one live owner can open a persistent root. Reopen the same path to access s
 The synchronous `Oliphaunt` is **not `Send` or `Sync`**. Create, use, close, and drop it on the same OS thread. Use `AsyncOliphaunt` for a cloneable `Send + Sync` handle:
 
 ```rust
-use oliphaunt_wasix::AsyncOliphaunt;
+use oliphaunt_wasix::{AsyncOliphaunt, DatabaseStorage};
 
-let db = AsyncOliphaunt::open().await?;
+let db = AsyncOliphaunt::builder()
+    .storage(DatabaseStorage::Directory("./data/notes".into()))
+    .open()
+    .await?;
 let result = db.query("SELECT 42::int4 AS answer").await?;
 db.close().await?;
 ```
 
-Async clones share one owner and session. Continue with the [WASIX Rust guide](/docs/sdk/wasix-rust/guide), [runtime behavior](/docs/sdk/wasix-rust/runtime), or [API reference](/docs/sdk/wasix-rust/api-reference).
+This fragment runs inside an async function. Async clones share one owner and session. For a native desktop UI, keep this handle in application state; see [Use with Tauri](/docs/learn/tauri#webassembly-postgresql). Continue with the [WASIX Rust guide](/docs/sdk/wasix-rust/guide), [runtime behavior](/docs/sdk/wasix-rust/runtime), or [API reference](/docs/sdk/wasix-rust/api-reference).
