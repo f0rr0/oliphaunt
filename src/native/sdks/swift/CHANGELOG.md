@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.3]() (2026-10-11)
+
+
+### Bug Fixes
+
+* **broker:** normalize accepted sockets to blocking mode ([#284](https://github.com/f0rr0/oliphaunt/issues/284)) ([306e2dc](https://github.com/f0rr0/oliphaunt/commit/306e2dc4a57f6165a79f0bbf30337174ba54261e))
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+
+
+### Dependencies
+
+* Require liboliphaunt-native@0.3.4 for the default extension install.
+
 ## [0.8.2]() (2026-10-09)
 
 

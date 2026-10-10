@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.3]() (2026-10-11)
+
+
+### Bug Fixes
+
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+* **release:** bind qualification to exact package versions ([#280](https://github.com/f0rr0/oliphaunt/issues/280)) ([cd68c6c](https://github.com/f0rr0/oliphaunt/commit/cd68c6c9655f53c50a3a98d4db36cfc256d26a3c))
+* **release:** validate default SDK and extension installations ([#293](https://github.com/f0rr0/oliphaunt/issues/293)) ([8316eb4](https://github.com/f0rr0/oliphaunt/commit/8316eb419999f47d6d4a61a8444e6c5ef32caf46))
+* **wasix-ts:** initialize browser Worker storage without a seed ([#286](https://github.com/f0rr0/oliphaunt/issues/286)) ([0f5bfcd](https://github.com/f0rr0/oliphaunt/commit/0f5bfcdb42389ce8ad6a8f479203471d827a3865))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @oliphaunt/ts-query bumped from 0.1.1 to 0.1.2
+* Require liboliphaunt-wasix@0.3.3 for the default extension install.
+* Require oliphaunt-wasix-napi@0.2.2 for the default extension install.
+
 ## [0.2.2]() (2026-10-07)
 
 

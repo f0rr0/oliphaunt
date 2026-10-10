@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-pgwire-server"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT"
@@ -59,7 +59,7 @@ extension-vector = ["extensions", "oliphaunt-wasix/extension-vector"]
 [dependencies]
 anyhow = "1"
 oliphaunt-query = { path = "../../query/rust", version = "0.1.1" }
-oliphaunt-wasix = { path = "../sdks/rust", version = "0.3.2", optional = true }
+oliphaunt-wasix = { path = "../sdks/rust", version = "0.3.3", optional = true }
 tempfile = { version = "3", optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
 tracing = { version = "0.1", optional = true }

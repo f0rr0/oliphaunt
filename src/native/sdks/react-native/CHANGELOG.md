@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.3]() (2026-10-11)
+
+
+### Bug Fixes
+
+* **mobile:** harden Swift, Kotlin, and React Native integration ([#274](https://github.com/f0rr0/oliphaunt/issues/274)) ([8dfbfd2](https://github.com/f0rr0/oliphaunt/commit/8dfbfd288214ee59e5ef6000a492e73fff81c716))
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+* **release:** preserve dependency identity across SDK stages ([#253](https://github.com/f0rr0/oliphaunt/issues/253)) ([207fcfa](https://github.com/f0rr0/oliphaunt/commit/207fcfa5cb0cccad89545b84e95356692ee12cd9))
+* **release:** validate default SDK and extension installations ([#293](https://github.com/f0rr0/oliphaunt/issues/293)) ([8316eb4](https://github.com/f0rr0/oliphaunt/commit/8316eb419999f47d6d4a61a8444e6c5ef32caf46))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @oliphaunt/ts-query bumped from 0.1.1 to 0.1.2
+* Require oliphaunt-swift@0.8.3 for the default extension install.
+* Require oliphaunt-kotlin@0.3.4 for the default extension install.
+
 ## [0.3.2]() (2026-10-09)
 
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.2]() (2026-10-11)
+
+
+### Bug Fixes
+
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+
+
+### Dependencies
+
+* Require oliphaunt-wasix-rust@0.3.3 for the default extension install.
+
 ## [0.2.1]() (2026-10-07)
 
 
