@@ -33,6 +33,12 @@ import { assertWasixNapiCarrierManifest } from '../../src/wasix/node-addon/tools
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import { workspaceBindingManifest } from '../../src/wasix/sdks/ts/tools/integration/packed-node-fixture.mts';
 import { prepareWasixToolsTypescriptPackage } from '../../src/wasix/postgres-tools/ts/tools/wasix-tools-typescript-package.mts';
+import { validateCarrierCoverage } from './check_artifact_targets.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
+import {
+  allArtifactTargets,
+  nativeToolsOptionalPackageProducts,
+} from './release-artifact-targets.mts';
 
 if (process.env.OLIPHAUNT_INDEPENDENT_VERSION_TEST !== '1' || existsSync(path.join(ROOT, '.git'))) {
   throw new Error('Run bash tools/release/independent-version-pins.test.sh');
@@ -95,6 +101,33 @@ test('every SDK retains its declared compatibility pins after independent depend
       assert.notEqual(entry.value, manifest[source.path], entry.id);
     }
   }
+});
+
+test('carrier validation accepts an older SDK broker pin after producer versions advance', () => {
+  const current = loadProducts();
+  const nativeToolsManifest = structuredClone(json('src/native/postgres-tools/npm/package.json'));
+  for (const { packageName, product } of nativeToolsOptionalPackageProducts()) {
+    nativeToolsManifest.optionalDependencies[packageName] = `workspace:${current[product].version}`;
+  }
+  const platformManifests = new Map(
+    Object.values(current).flatMap(({ version_files }) =>
+      version_files
+        .filter((file) => path.basename(file) === 'package.json')
+        .map((file) => {
+          const manifest = json(file);
+          return [manifest.name, manifest];
+        }),
+    ),
+  );
+  validateCarrierCoverage({
+    graph: { products: current },
+    catalog: loadPublicationCatalog(),
+    targets: allArtifactTargets(),
+    jsManifest: json('src/native/sdks/ts/package.json'),
+    nativeToolsManifest,
+    rustManifest: Bun.TOML.parse(read('src/native/sdks/rust/Cargo.toml')),
+    platformManifests,
+  });
 });
 
 test('React Native resolves the runtime through its pinned Swift release after Swift advances', () => {

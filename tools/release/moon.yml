@@ -196,6 +196,7 @@ tasks:
       - unit
       - requires-rust
     inputs:
+      - "@group(package-test-metadata)"
       - /.moon/tasks/**/*
       - /.moon/toolchains.yml
       - /.moon/workspace.yml
@@ -232,6 +233,15 @@ tasks:
       - /tools/release/release-artifact-targets.mts
       - /tools/release/prepare-release-candidate.mts
       - /tools/release/prepare-release-candidate.test.mts
+      - /tools/release/close-release-candidate.sh
+      - /tools/release/sync-release-pr.{mts,sh}
+      - /tools/release/release-metadata-check.sh
+      - /tools/release/check_artifact_targets.mts
+      - /tools/release/check-release-metadata.mts
+      - /tools/release/check_release_please_config.mts
+      - /tools/release/verify-release-commit.mts
+      - /tools/release/release-please-state.sh
+      - /tools/release/with-{product,release}-history.sh
       - /tools/release/release-dependency-plan.mts
       - /tools/release/frozen-consumer.mts
       - /tools/release/publication-catalog.mts

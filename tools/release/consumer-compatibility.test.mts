@@ -155,11 +155,41 @@ test('a tools-only release uses its older SDK tag after the workspace SDK advanc
   });
 });
 
-test('tools and embedded SDK consumers must agree with their pinned SDK runtime', () => {
+test('installed SDK consumers must agree with their pinned SDK runtime', () => {
   const state = fixture();
   state.pins['postgres-tools-wasix']['liboliphaunt-wasix'] = '0.3.2';
   expect(() => validateReleaseConsumerCompatibility(['postgres-tools-wasix'], state)).toThrow(
     'postgres-tools-wasix targets liboliphaunt-wasix@0.3.2',
+  );
+});
+
+test('compiled SDK sources follow the binary closure while installed addon consumers retain runtime checks', () => {
+  const state = fixture();
+  state.products['oliphaunt-wasix-napi'].compatibility_versions.sdk = {
+    source_product: 'oliphaunt-wasix-rust',
+    public_support: false,
+  };
+  state.pins['oliphaunt-wasix-napi']['oliphaunt-wasix-rust'] = '0.3.1';
+  state.pins['oliphaunt-wasix-napi']['liboliphaunt-wasix'] = '0.3.2';
+  const selected = ['oliphaunt-wasix-napi', 'oliphaunt-wasix-rust'];
+  expect(() => validateReleaseConsumerCompatibility(selected, state)).toThrow(
+    'oliphaunt-wasix-napi targets liboliphaunt-wasix@0.3.2',
+  );
+  const buildBound = new Map([
+    ['oliphaunt-wasix-napi', new Set(['oliphaunt-wasix-rust', 'liboliphaunt-wasix'])],
+  ]);
+  expect(() =>
+    validateReleaseConsumerCompatibility(selected, { ...state, buildBound }),
+  ).not.toThrow();
+  expect(() =>
+    validateReleaseConsumerCompatibility([...selected, 'oliphaunt-wasix-ts'], {
+      ...state,
+      buildBound,
+    }),
+  ).toThrow('runtime 0.3.1 differs');
+  state.products['oliphaunt-wasix-napi'].compatibility_versions.sdk.public_support = true;
+  expect(() => validateReleaseConsumerCompatibility(selected, { ...state, buildBound })).toThrow(
+    'oliphaunt-wasix-napi targets liboliphaunt-wasix@0.3.2',
   );
 });
 
