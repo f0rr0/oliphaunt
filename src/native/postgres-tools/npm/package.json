@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/tools",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Optional PostgreSQL pg_dump and psql runners for Oliphaunt native endpoints.",
   "license": "MIT",
   "type": "module",
@@ -37,10 +37,10 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "optionalDependencies": {
-    "@oliphaunt/tools-darwin-arm64": "workspace:0.2.2",
-    "@oliphaunt/tools-linux-arm64-gnu": "workspace:0.2.2",
-    "@oliphaunt/tools-linux-x64-gnu": "workspace:0.2.2",
-    "@oliphaunt/tools-win32-x64-msvc": "workspace:0.2.2"
+    "@oliphaunt/tools-darwin-arm64": "workspace:0.2.3",
+    "@oliphaunt/tools-linux-arm64-gnu": "workspace:0.2.3",
+    "@oliphaunt/tools-linux-x64-gnu": "workspace:0.2.3",
+    "@oliphaunt/tools-win32-x64-msvc": "workspace:0.2.3"
   },
   "engines": {
     "node": ">=22.13 <25",

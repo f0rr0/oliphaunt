@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-ts",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, Deno, and Electron.",
   "license": "MIT",
   "type": "module",
@@ -155,7 +155,7 @@
     "package": "bash tools/package.sh"
   },
   "dependencies": {
-    "@oliphaunt/ts-query": "0.1.1",
+    "@oliphaunt/ts-query": "0.1.2",
     "fzstd": "0.1.1"
   },
   "optionalDependencies": {

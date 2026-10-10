@@ -39,9 +39,9 @@ path = "src/extensions/external/pgtap/source.toml"
 postgres_major = "18"
 extension_runtime_contract = "src/extensions/contracts/contract.toml"
 native_runtime_product = "liboliphaunt-native"
-native_runtime_version = "0.3.3"
+native_runtime_version = "0.3.4"
 wasix_runtime_product = "liboliphaunt-wasix"
-wasix_runtime_version = "0.3.2"
+wasix_runtime_version = "0.3.3"
 [compatibility_versions.oliphaunt-extension-pgtap-liboliphaunt-native]
 public_support = true
 source_product = "liboliphaunt-native"

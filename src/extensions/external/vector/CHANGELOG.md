@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0]() (2026-10-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace exact host support liboliphaunt-native@0.3.3 with liboliphaunt-native@0.3.4; liboliphaunt-wasix@0.3.2 with liboliphaunt-wasix@0.3.3
+
+### Bug Fixes
+
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+* **release:** validate published consumer compatibility ([#259](https://github.com/f0rr0/oliphaunt/issues/259)) ([e918d6a](https://github.com/f0rr0/oliphaunt/commit/e918d6adf3deeafb38205ce61402e40896d2f3c1))
+* replace exact host support liboliphaunt-native@0.3.3 with liboliphaunt-native@0.3.4; liboliphaunt-wasix@0.3.2 with liboliphaunt-wasix@0.3.3
+
 ## [0.3.2]() (2026-10-09)
 
 

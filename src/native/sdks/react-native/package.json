@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/react-native",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "React Native New Architecture SDK for Oliphaunt.",
   "license": "MIT",
   "repository": {
@@ -107,7 +107,7 @@
     }
   },
   "dependencies": {
-    "@oliphaunt/ts-query": "0.1.1"
+    "@oliphaunt/ts-query": "0.1.2"
   },
   "devDependencies": {
     "@react-native/codegen": "^0.85.3",

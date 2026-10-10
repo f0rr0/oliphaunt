@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = 'OliphauntICU'
-  s.version = '0.2.2' # x-release-please-version
+  s.version = '0.2.3' # x-release-please-version
   s.summary = 'Portable ICU data files for Oliphaunt runtimes.'
   s.homepage = 'https://oliphaunt.dev'
   s.license = { :type => 'MIT AND Unicode-3.0' }

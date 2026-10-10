@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-wasix"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 rust-version = "1.93"
 description = "Embedded PostgreSQL 18 for Rust with synchronous and asynchronous APIs."

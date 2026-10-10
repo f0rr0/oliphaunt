@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-tools",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Optional in-process PostgreSQL pg_dump and psql runners for Oliphaunt WASIX.",
   "license": "MIT",
   "type": "module",

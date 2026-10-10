@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2]() (2026-10-10)
+
+
+### Bug Fixes
+
+* **release:** bind publication to package contracts and consumers ([#288](https://github.com/f0rr0/oliphaunt/issues/288)) ([027ffdc](https://github.com/f0rr0/oliphaunt/commit/027ffdcca83824a7a455926d4546a6b98b09c3c2))
+
 ## [0.1.1]() (2026-09-29)
 
 
