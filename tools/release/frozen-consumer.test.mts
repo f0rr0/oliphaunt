@@ -91,6 +91,84 @@ test('every current release product and declared registry carrier has a frozen c
     expect(plan.cases.some((entry) => entry.carrierId === carrier.id)).toBe(true);
 });
 
+test('SDK-only consumers install the independently versioned vector package', () => {
+  const catalog = loadPublicationCatalog('SDK extension consumers');
+  const lock = {
+    ...catalog,
+    lockDigest: 'a'.repeat(64),
+    products: catalog.products.filter(({ id }) =>
+      ['oliphaunt-js', 'oliphaunt-wasix-ts'].includes(id),
+    ),
+    carriers: catalog.carriers.filter(({ product }) =>
+      ['oliphaunt-js', 'oliphaunt-wasix-ts'].includes(product),
+    ),
+  };
+  const plan = frozenConsumerPlan(lock, { configurationDigest: 'b'.repeat(64) });
+  for (const test of plan.cases) {
+    expect(test.sdk.product).toBe(test.product);
+    expect(test.extensions).toEqual([
+      {
+        product: 'oliphaunt-extension-vector',
+        name: `@oliphaunt/extension-vector${test.product === 'oliphaunt-wasix-ts' ? '-wasix' : ''}`,
+        version: catalog.products.find(({ id }) => id === 'oliphaunt-extension-vector').version,
+        sqlName: 'vector',
+      },
+    ]);
+  }
+});
+
+test('extension-only releases reuse one carrier case per host to prove both default SDK installs', () => {
+  const catalog = loadPublicationCatalog('extension default consumers');
+  const extensionIds = new Set(
+    catalog.products.filter(({ kind }) => kind === 'exact-extension-artifact').map(({ id }) => id),
+  );
+  const lock = {
+    lockDigest: 'a'.repeat(64),
+    products: catalog.products
+      .filter(({ id }) => extensionIds.has(id))
+      .map((product) => ({ ...product, version: '9.0.0' })),
+    carriers: catalog.carriers
+      .filter(({ product }) => extensionIds.has(product))
+      .map((carrier) => ({ ...carrier, version: '9.0.0' })),
+  };
+  const plan = frozenConsumerPlan(lock, { configurationDigest: 'b'.repeat(64) });
+  const compositions = plan.cases.filter((test) => test.sdk);
+  expect(compositions).toHaveLength(8);
+  for (const test of compositions) {
+    expect(test.extensions).toHaveLength(extensionIds.size);
+    expect(test.extensions.every(({ version }) => version === '9.0.0')).toBe(true);
+    expect(test.sdk.version).toBe(
+      catalog.products.find(({ id }) => id === test.sdk.product).version,
+    );
+    expect(test.executionLevel).toBe('execute');
+  }
+  expect(plan.cases).toHaveLength(
+    lock.carriers.flatMap((carrier) =>
+      carrier.ecosystem === 'maven' || consumerHostTarget(carrier.target)
+        ? [carrier]
+        : Array(4).fill(carrier),
+    ).length,
+  );
+});
+
+test('installation reuse binds the SDK and extension requirements while sharing JS runtime checks', () => {
+  const test = {
+    id: 'sdk/node',
+    carrierId: 'npm:sdk',
+    target: 'linux-x64-gnu',
+    transportMode: 'frozen-npm-registry',
+    integration: 'node',
+    sdk: { name: 'sdk', version: '1.2.3' },
+    extensions: [{ name: 'extension', version: '4.5.6' }],
+  };
+  expect(consumerInstallationKey(test)).toBe(
+    consumerInstallationKey({ ...test, id: 'sdk/bun', integration: 'bun' }),
+  );
+  expect(consumerInstallationKey(test)).not.toBe(
+    consumerInstallationKey({ ...test, extensions: [{ name: 'extension', version: '4.5.7' }] }),
+  );
+});
+
 test('carrier triples and npm platform names map to the canonical consumer hosts', () => {
   expect(consumerHostTarget('aarch64-apple-darwin')).toBe('macos-arm64');
   expect(consumerHostTarget('darwin-arm64')).toBe('macos-arm64');

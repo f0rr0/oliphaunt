@@ -6,6 +6,13 @@ import { DefaultChangelogNotes } from 'release-please/build/src/changelog-notes/
 import { parseConventionalCommits } from 'release-please/build/src/commit.js';
 import { ManifestPlugin } from 'release-please/build/src/plugin.js';
 import { mergeUpdates } from 'release-please/build/src/updaters/composite.js';
+import { Changelog } from 'release-please/build/src/updaters/changelog.js';
+import { GenericJson } from 'release-please/build/src/updaters/generic-json.js';
+import { ReleasePleaseManifest } from 'release-please/build/src/updaters/release-please-manifest.js';
+import { appendDependenciesSectionToChangelog } from 'release-please/build/src/plugins/workspace.js';
+import { Version } from 'release-please/build/src/version.js';
+import { defaultExtensionReleasePlan } from './default-extension-release-plan.mts';
+import { syncTomlStringPath } from './sync-release-pr.mts';
 import {
   buildBoundCompatibilityProducts,
   releaseDependencyPlan,
@@ -35,7 +42,12 @@ export function includeOwnedSourceCommits(
   };
   manifest.plugins.push(
     new (class extends ManifestPlugin {
+      strategies;
+      releasesByPath;
+
       async preconfigure(strategies, commitsByPath, releasesByPath) {
+        this.strategies = strategies;
+        this.releasesByPath = releasesByPath;
         const owners = new Map(
           observed.map((commit) => [
             commit.sha,
@@ -144,6 +156,96 @@ export function includeOwnedSourceCommits(
           };
         }
         return strategies;
+      }
+
+      async run(candidates) {
+        let plan;
+        for (;;) {
+          const products = structuredClone(graph.products);
+          const selected = new Set();
+          for (const candidate of candidates) {
+            const product = this.repositoryConfig[candidate.path].component;
+            products[product].version = candidate.pullRequest.version.toString();
+            selected.add(product);
+          }
+          plan = defaultExtensionReleasePlan(products, selected, { readCompatibility });
+          const missing = [...plan.required].filter((product) => !selected.has(product));
+          if (!missing.length) break;
+          for (const product of missing) {
+            const metadata = products[product];
+            const ownerPath = metadata.path;
+            const commits = parseConventionalCommits([
+              {
+                sha: '',
+                files: [],
+                message: `${metadata.extension?.class === 'external' ? 'fix!' : 'fix'}: align default extension installation`,
+              },
+            ]);
+            const pullRequest = await this.strategies[ownerPath].buildReleasePullRequest(
+              commits,
+              this.releasesByPath[ownerPath],
+              manifest.draftPullRequest,
+              manifest.labels,
+            );
+            if (!pullRequest) throw new Error(`could not prepare compatible product ${product}`);
+            pullRequest.updates.push({
+              path: manifest.manifestPath,
+              createIfMissing: false,
+              updater: new ReleasePleaseManifest({
+                version: pullRequest.version,
+                versionsMap: new Map([[ownerPath, pullRequest.version]]),
+              }),
+            });
+            candidates.push({
+              path: ownerPath,
+              config: this.repositoryConfig[ownerPath],
+              pullRequest,
+            });
+          }
+        }
+        const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true });
+        for (const candidate of candidates) {
+          const product = this.repositoryConfig[candidate.path].component;
+          const changes = [...plan.requirements.values()].filter(
+            (entry) => entry.product === product,
+          );
+          for (const { sourceProduct, version } of changes) {
+            for (const entry of entries.filter(
+              (entry) => entry.product === product && entry.sourceProduct === sourceProduct,
+            )) {
+              candidate.pullRequest.updates.push({
+                path: entry.path,
+                createIfMissing: false,
+                updater: entry.parser.startsWith('json:')
+                  ? new GenericJson(`$.${entry.parser.slice(5)}`, Version.parse(version))
+                  : {
+                      updateContent: (content) =>
+                        entry.parser === 'raw'
+                          ? `${version}\n`
+                          : syncTomlStringPath(content, entry.parser.slice(5), version, entry.id)
+                              .text,
+                    },
+              });
+            }
+          }
+          if (!changes.length) continue;
+          const notes = changes
+            .map(
+              ({ sourceProduct, version }) =>
+                `* Require ${sourceProduct}@${version} for the default extension install.`,
+            )
+            .join('\n');
+          for (const update of candidate.pullRequest.updates) {
+            if (update.updater instanceof Changelog)
+              update.updater.changelogEntry = appendDependenciesSectionToChangelog(
+                update.updater.changelogEntry,
+                notes,
+              );
+          }
+          for (const release of candidate.pullRequest.body.releaseData)
+            release.notes = appendDependenciesSectionToChangelog(release.notes, notes);
+        }
+        return candidates;
       }
     })(github, 'main', manifest.repositoryConfig),
   );

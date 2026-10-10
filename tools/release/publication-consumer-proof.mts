@@ -24,6 +24,8 @@ export const CONSUMER_PROOF_SCHEMA = 'oliphaunt-publication-consumer-proof-v1';
 export const CONSUMER_PROOF_ARTIFACT = 'oliphaunt-publication-consumer-proof';
 export const CONSUMER_CONFIGURATION_FILES = [
   'tools/release/frozen-consumer.mts',
+  'tools/release/frozen-extension-consumer.mts',
+  '.release-please-manifest.json',
   'tools/release/publication-consumer-proof.mts',
   'rust-toolchain.toml',
   '.github/workflows/release.yml',

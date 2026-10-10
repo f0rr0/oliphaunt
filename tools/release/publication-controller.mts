@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 // contains packagers: allowing that directory wholesale would change bytes.
 const CONTROL_FILES = new Set([
   'tools/release/frozen-consumer.mts',
+  'tools/release/frozen-extension-consumer.mts',
   'tools/release/publication-consumer-proof.mts',
   'src/native/sdks/ts/tools/frozen-consumer.mts',
   'src/query/ts/tools/frozen-consumer.mts',

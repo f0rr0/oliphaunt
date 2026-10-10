@@ -4,6 +4,15 @@ import { compareText, loadProducts, productCompatibilityVersion } from './releas
 
 const EXTENSION_RUNTIMES = new Set(['liboliphaunt-native', 'liboliphaunt-wasix']);
 
+export function isDefaultExtensionRequirement(products, consumer, producer) {
+  return (
+    products[consumer]?.kind === 'sdk' &&
+    (products[consumer].exact_extension_runtime === producer ||
+      typeof products[producer]?.exact_extension_runtime === 'string' ||
+      (consumer === 'oliphaunt-wasix-ts' && producer === 'oliphaunt-wasix-napi'))
+  );
+}
+
 function extensionConsumerContracts(products) {
   const consumers = [];
   for (const [product, metadata] of Object.entries(products)) {
@@ -82,7 +91,17 @@ export function validateReleaseConsumerCompatibility(
           ? null
           : products[product].tag_prefix + version,
     });
-  const consumers = extensionConsumerRequirements(selected, products, pin, buildBound);
+  const extensions = Object.entries(products).filter(
+    ([, metadata]) => metadata.extension?.class === 'external',
+  );
+  // Publishing an extension also changes the default install for unchanged SDKs.
+  const sdkSelection = new Set(selected);
+  if (extensions.some(([product]) => selected.has(product))) {
+    for (const [product, metadata] of Object.entries(products)) {
+      if (metadata.kind === 'sdk') sdkSelection.add(product);
+    }
+  }
+  const consumers = extensionConsumerRequirements(sdkSelection, products, pin, buildBound);
   const failures = [];
   for (const { product, runtime, version, owner, runtimeVersion } of consumers) {
     const label = `${owner ? `${owner} through ` : ''}${product}@${version}`;
@@ -112,6 +131,17 @@ export function validateReleaseConsumerCompatibility(
         );
       } catch (cause) {
         failures.push(cause.message);
+      }
+    }
+    for (const [extension, metadata] of extensions) {
+      // A private binary's SDK input is not an advertised SDK/extension install.
+      if (owner && products[owner].kind !== 'sdk') continue;
+      if (!selected.has(product) && !selected.has(owner) && !selected.has(extension)) continue;
+      const extensionRuntime = pin(extension, runtime);
+      if (extensionRuntime !== runtimeVersion) {
+        failures.push(
+          `${label} requires ${runtime}@${runtimeVersion}, but ${extension}@${metadata.version} targets ${runtime}@${extensionRuntime}`,
+        );
       }
     }
   }

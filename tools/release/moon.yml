@@ -244,9 +244,12 @@ tasks:
       - /tools/release/with-{product,release}-history.sh
       - /tools/release/release-dependency-plan.mts
       - /tools/release/frozen-consumer.mts
+      - /tools/release/frozen-extension-consumer.mts
       - /tools/release/publication-catalog.mts
       - /tools/release/publication-consumer-proof.mts
       - /tools/release/consumer-compatibility.mts
+      - /tools/release/default-extension-release-plan.mts
+      - /tools/release/testdata/extension-release-fixture.mts
       - "@group(release-archive-contract)"
       - /tools/release/release-graph.mts
       - /src/wasix/runtime/tools/wasix-cargo-artifact-contract.mts

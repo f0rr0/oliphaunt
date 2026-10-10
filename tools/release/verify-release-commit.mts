@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { electronReleaseDependencies } from '../../src/examples/tools/example-release-dependencies.mts';
 import { exampleCargoReleaseVersionBindings } from './example-cargo-versions.mts';
+import { isDefaultExtensionRequirement } from './consumer-compatibility.mts';
 import {
   nativeToolsOptionalPackageProducts,
   registryPackageRows,
@@ -456,12 +457,24 @@ function derivedVersionRules() {
   }
 
   for (const rule of structured.values()) {
-    if (rule.consumerProduct !== undefined)
+    if (rule.consumerProduct !== undefined) {
       rule.buildBound = buildBound.get(rule.consumerProduct)?.has(rule.sourceProduct) ?? false;
+      rule.defaultInstall = isDefaultExtensionRequirement(
+        products,
+        rule.consumerProduct,
+        rule.sourceProduct,
+      );
+    }
   }
   for (const rule of text.values()) {
-    if (rule.consumerProduct !== undefined)
+    if (rule.consumerProduct !== undefined) {
       rule.buildBound = buildBound.get(rule.consumerProduct)?.has(rule.sourceProduct) ?? false;
+      rule.defaultInstall = isDefaultExtensionRequirement(
+        products,
+        rule.consumerProduct,
+        rule.sourceProduct,
+      );
+    }
   }
   cachedDerivedRules = { structured, text };
   return cachedDerivedRules;
@@ -474,7 +487,7 @@ function productTransition(rule, before, after, transitions, productVersions) {
       typeof before === 'string' &&
       after === rule.projection
     );
-  // Generated updates require a producer transition or an actual compiled input.
+  // Default-install updates are checked by consumer admission and registry availability.
   if (rule.consumerProduct !== undefined) {
     return (
       transitions.some(({ product }) => product === rule.consumerProduct) &&
@@ -482,8 +495,10 @@ function productTransition(rule, before, after, transitions, productVersions) {
       SEMVER.test(before) &&
       typeof after === 'string' &&
       SEMVER.test(after) &&
-      after === productVersions.get(rule.sourceProduct) &&
-      (rule.buildBound || transitions.some(({ product }) => product === rule.sourceProduct)) &&
+      (rule.defaultInstall
+        ? Bun.semver.order(after, productVersions.get(rule.sourceProduct)) <= 0
+        : after === productVersions.get(rule.sourceProduct) &&
+          (rule.buildBound || transitions.some(({ product }) => product === rule.sourceProduct))) &&
       Bun.semver.order(after, before) > 0
     );
   }

@@ -500,6 +500,13 @@ prepare_swift_sdk_git_repo() {
     fail "Swift SDK source artifact did not unpack to Sources/Oliphaunt/Oliphaunt.swift: $archive"
   local swift_version bindings_archive
   swift_version="$(cat "$source_root/VERSION")"
+  local qualification="$(expo_sdk_artifact_product_root oliphaunt-swift)/qualification.json"
+  if [ -f "$qualification" ]; then
+    # CocoaPods must name the workspace SDK whose bytes this marked fixture stages.
+    OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION="$(bun "$root/src/native/sdks/react-native/tools/expo-ios-runner.mts" qualification-swift-version "$qualification" "$swift_version")" ||
+      fail "invalid Swift qualification descriptor: $qualification"
+    export OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION
+  fi
   bindings_archive="$(expo_sdk_artifact_product_root oliphaunt-swift)/release-assets/oliphaunt-swift-$swift_version-bindings.xcframework.zip"
   [ -s "$bindings_archive" ] || fail "Swift SDK bindings artifact is missing: $bindings_archive"
   mkdir -p "$artifact_repo/Artifacts"

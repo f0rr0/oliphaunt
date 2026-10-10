@@ -26,6 +26,27 @@ Cross-Origin-Embedder-Policy: require-corp
 
 Check that `window.crossOriginIsolated` is `true`. Serve all runtime and Worker assets with compatible cross-origin policies. Configure your bundler to preserve the package's module Worker asset when using `/worker`.
 
+For Vite, keep the SDK and runtime asset packages out of dependency prebundling:
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  optimizeDeps: {
+    exclude: ['@oliphaunt/wasix-ts', '@oliphaunt/liboliphaunt-wasix'],
+  },
+  worker: { format: 'es' },
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+});
+```
+
+Add any selected WASIX extension and tools packages to `optimizeDeps.exclude` too. These packages resolve binary archives relative to their own modules, so relocating those modules during prebundling breaks asset loading.
+
 Desktop runtimes do not need these browser headers.
 
 ## Run your first query

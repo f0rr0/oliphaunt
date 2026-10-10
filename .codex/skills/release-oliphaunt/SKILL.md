@@ -210,12 +210,15 @@ releases from target/ecosystem carrier packages.
 
 ## Declared requirements and frozen consumers
 
-Preserve authored conventional manifest requirements for source consumers. Only
-actual compiled inputs or Release Please ecosystem updates justify generated
-retargets. External extension host references declare `public_support = true`;
-private dependency/provider references declare `false`. A removed public host
-requires breaking intent before native version selection and verification against
-the previous immutable product tag. SDK changes do not select all extensions.
+Conventional manifests own source consumer requirements. Compiled inputs,
+Release Please ecosystem updates and necessary default SDK/extension install
+updates justify generated retargets. Candidate preparation coordinates only the
+required dependency closure when exact extension hosts change; compatible SDK
+and extension updates and runtime-only releases keep independent scope. Admission
+checks the resulting default install against unchanged immutable releases.
+External extension host references declare `public_support = true`; private
+references declare `false`. Public host removal requires breaking intent before
+version selection and verification against the previous immutable product tag.
 
 Source `Qualified` and capsule preparation precede final installed consumer
 checks. Require `Frozen consumers` and `Publication ready` before bootstrap or

@@ -156,8 +156,9 @@ physically bundled into both products. No Moon dependency edge creates another
 release candidate.
 
 A dependency requirement is a consumer declaration. Releasing a producer does
-not rewrite unselected consumers, and selecting a source-only SDK preserves its
-authored requirements unless Release Please's ecosystem updater changes them.
+not rewrite unselected consumers. Source-only SDKs preserve their authored
+requirements except for Release Please ecosystem updates and the default
+extension install closure described below.
 A compiled payload names the source versions it actually incorporates. Shared
 carrier writers are explicit `shared_source_paths` of every product whose bytes
 they render. Carrier versions continue to equal their owning product version.
@@ -173,12 +174,20 @@ The configured pre-1.0 policy requires a minor bump; stable products require a
 major bump. A private dependency update does not automatically imply a breaking
 public API change.
 
-Compatibility means that a declared installation recipe resolves and works. It
-is not a promise that every product's newest release works with every other
-newest release. External extensions remain independent; SDK changes do not
-select an extension cohort. Recipes use the installed package's catalog,
-requirements, extension member and dependency closure, provider ABI and target
-profile. Runtime version equality alone is insufficient.
+Compatibility means that a declared installation recipe resolves and works.
+The default SDK plus independently packaged extensions is one supported recipe.
+Candidate preparation compares the selected packages with unchanged packages'
+immutable release requirements. An exact extension host change selects the
+required SDK, platform wrapper, addon and extension candidates; Release Please
+chooses their versions and updates their conventional manifest requirements.
+Runtime-only and compatible SDK-only or extension-only releases remain narrow.
+Private broker, query and other unrelated requirements retain their authored
+pins. Product version numbers remain independent, and historical combinations
+retain their original requirements. Admission independently rejects a broken
+default recipe. Frozen npm consumers install the declared SDK and extensions,
+create the extensions and execute extension SQL through the existing host cases.
+Recipes also depend on extension members, provider ABI and target profile;
+runtime version equality alone is insufficient.
 
 Binary products declare `embedded_cargo_manifests` in their `release.toml`.
 Release planning reads Cargo's versioned `metadata --no-deps --frozen` output
@@ -216,8 +225,9 @@ Product-local `compatibility_versions` describe the exact published product
 versions a carrier consumes. A native runtime can therefore be published
 without bumping an SDK, and the unchanged SDK continues to pin the older native
 version. A selected compiled consumer records the versions of the inputs it
-actually embeds. Other requirements retain their authored values unless Release
-Please's ecosystem updater changes them. If a required dependency is also
+actually embeds. Other requirements retain their authored values except for
+Release Please ecosystem updates or required default extension install updates.
+If a required dependency is also
 selected at a satisfying version, publication orders it first.
 
 Before publishing a selected consumer, version checks require each pinned

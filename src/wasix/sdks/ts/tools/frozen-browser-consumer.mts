@@ -9,19 +9,25 @@ import { createCdpClient } from './browser-cdp.mts';
 // Copied into the external app: Vite resolves installed package exports.
 const root = process.argv[2];
 assert(root, 'browser consumer requires its external app directory');
+const packages: { name: string; sqlName: string }[] = JSON.parse(process.argv[3]);
 writeFileSync(path.join(root, 'index.html'), '<script type="module" src="/probe.ts"></script>');
 writeFileSync(
   path.join(root, 'probe.ts'),
   `
 import Default from '@oliphaunt/wasix-ts';
 import Worker from '@oliphaunt/wasix-ts/worker';
+import { checkExtensions } from './extensions.mts';
+${packages.map(({ name }, index) => `import extension${index} from ${JSON.stringify(name)};`).join('\n')}
 const state = document.documentElement.dataset;
 state.frozenState = 'running';
 (async () => {
   const answers: (string | null)[] = [];
   for (const Oliphaunt of [Default, Worker]) {
-    const db = await Oliphaunt.open();
-    try { answers.push((await db.queryRaw('SELECT 42::int AS answer')).getText(0, 'answer')); }
+    const db = await Oliphaunt.open({ extensions: [${packages.map((_, index) => `extension${index}`).join(',')}] });
+    try {
+      await checkExtensions(db, ${JSON.stringify(packages.map(({ sqlName }) => sqlName))});
+      answers.push((await db.queryRaw('SELECT 42::int AS answer')).getText(0, 'answer'));
+    }
     finally { await db.close(); }
   }
   state.frozenAnswers = JSON.stringify(answers);
@@ -35,7 +41,14 @@ state.frozenState = 'running';
 const vite = await createServer({
   root,
   configFile: false,
-  optimizeDeps: { exclude: ['@oliphaunt/wasix-ts'] },
+  // Keep asset-owning ESM modules beside the archives addressed by import.meta.url.
+  optimizeDeps: {
+    exclude: [
+      '@oliphaunt/wasix-ts',
+      '@oliphaunt/liboliphaunt-wasix',
+      ...packages.map(({ name }) => name),
+    ],
+  },
   worker: { format: 'es' },
   server: {
     host: '127.0.0.1',
@@ -120,7 +133,9 @@ try {
     await delay(200);
   }
   assert(passed, 'installed browser module timed out');
-  console.log('Installed browser default and worker exports executed SELECT 42');
+  console.log(
+    'Installed browser default and worker exports loaded extensions and executed queries',
+  );
 } finally {
   socket?.close();
   chrome?.kill('SIGKILL');

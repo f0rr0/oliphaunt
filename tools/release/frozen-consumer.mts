@@ -25,6 +25,7 @@ import {
 } from '../packaging/portable-archive.mts';
 import { boundedResponseBytes } from './github-read.mts';
 import { publicCargoEnvironment, sanitizedPublicEnvironment } from './public-consumer-smoke.mts';
+import { loadPublicationCatalog } from './publication-catalog.mts';
 import { consumerConfigurationDigest, consumerDigest } from './publication-consumer-proof.mts';
 import {
   loadPublicationLock,
@@ -32,7 +33,7 @@ import {
   lockedPublicationFiles,
 } from './publication-lock.mts';
 import { DESKTOP_TARGETS } from './release-artifact-targets.mts';
-import { ROOT } from './release-graph.mts';
+import { loadProducts, ROOT } from './release-graph.mts';
 
 const TARGETS = Object.entries(DESKTOP_TARGETS).filter(([, platform]) => platform.npmOs);
 const JSON_LIMIT = 16 * 1024 * 1024;
@@ -62,7 +63,11 @@ function writeJson(file, value) {
 
 export function frozenConsumerPlan(
   lock,
-  { configurationDigest = consumerConfigurationDigest() } = {},
+  {
+    configurationDigest = consumerConfigurationDigest(),
+    catalog = loadPublicationCatalog(),
+    products = loadProducts(),
+  } = {},
 ) {
   const cases = [];
   for (const carrier of lock.carriers) {
@@ -169,6 +174,56 @@ export function frozenConsumerPlan(
     if (!cases.some((test) => test.product === product.id))
       throw new Error(`selected product ${product.id} has no frozen consumption contract`);
   }
+  const selectedExtensions = lock.products.filter(
+    ({ id }) => products[id]?.extension?.class === 'external',
+  );
+  for (const sdk of ['oliphaunt-js', 'oliphaunt-wasix-ts']) {
+    const sdkCases = cases.filter((test) => test.product === sdk);
+    if (!sdkCases.length && !selectedExtensions.length) continue;
+    const portable = sdk === 'oliphaunt-wasix-ts';
+    const extensions = (
+      selectedExtensions.length
+        ? selectedExtensions
+        : [catalog.products.find(({ id }) => id === 'oliphaunt-extension-vector')]
+    ).map((product) => {
+      if (!product) throw new Error('default extension consumer requires the vector product');
+      const carrier = catalog.carriers.find(
+        (carrier) =>
+          carrier.product === product.id &&
+          carrier.ecosystem === 'npm' &&
+          (portable ? carrier.target === 'wasix-portable' : carrier.target === null),
+      );
+      if (!carrier) throw new Error(`${product.id} has no ${sdk} extension carrier`);
+      return {
+        product: product.id,
+        name: carrier.name,
+        version: product.version,
+        sqlName: products[product.id].extension.sql_name,
+      };
+    });
+    // Reuse SDK cases, or one existing extension case per host for extension-only releases.
+    const consumers = sdkCases.length
+      ? sdkCases
+      : cases.filter((test) => {
+          const carrier = lock.carriers.find(({ id }) => id === test.carrierId);
+          return (
+            carrier?.product === extensions[0].product &&
+            carrier.ecosystem === 'npm' &&
+            (portable ? carrier.target === 'wasix-portable' : carrier.target === null)
+          );
+        });
+    const sdkProduct =
+      lock.products.find(({ id }) => id === sdk) ?? catalog.products.find(({ id }) => id === sdk);
+    const sdkCarrier = catalog.carriers.find(
+      ({ product, ecosystem }) => product === sdk && ecosystem === 'npm',
+    );
+    if (!sdkProduct || !sdkCarrier) throw new Error(`${sdk} has no default installed consumer`);
+    for (const test of consumers) {
+      test.sdk = { product: sdk, name: sdkCarrier.name, version: sdkProduct.version };
+      test.extensions = extensions;
+      test.executionLevel = 'execute';
+    }
+  }
   return {
     schema: 'oliphaunt-frozen-consumer-plan-v1',
     lockDigest: lock.lockDigest,
@@ -224,7 +279,7 @@ export function consumerInstallationKey(test) {
   // Node, Bun and Deno execute the same ordinary installation with distinct exports.
   return test.transportMode === 'frozen-npm-registry' &&
     ['node', 'bun', 'deno'].includes(test.integration)
-    ? `${test.carrierId}/${test.target}`
+    ? `${test.carrierId}/${test.target}/${consumerDigest({ sdk: test.sdk, extensions: test.extensions })}`
     : test.id;
 }
 
@@ -691,6 +746,8 @@ async function npmConsumer(
           ? Object.fromEntries(['expo', 'react', 'react-native'].map((name) => [name, peers[name]]))
           : {}),
         [carrier.name]: carrier.version,
+        ...(test.sdk ? { [test.sdk.name]: test.sdk.version } : {}),
+        ...Object.fromEntries((test.extensions ?? []).map(({ name, version }) => [name, version])),
       },
     });
     writeFileSync(
@@ -711,17 +768,26 @@ async function npmConsumer(
     manifest.oliphaunt?.qualificationOnly
   )
     throw new Error(`npm installed the wrong ${carrier.id}`);
+  if (test.sdk) {
+    const installedSdk = json(path.join(directory, 'node_modules', test.sdk.name, 'package.json'));
+    if (installedSdk.version !== test.sdk.version || installedSdk.oliphaunt?.qualificationOnly)
+      throw new Error(`npm installed the wrong SDK for ${carrier.id}`);
+  }
   const fixture = {
     'oliphaunt-js': 'src/native/sdks/ts/tools/frozen-consumer.mts',
     'oliphaunt-wasix-ts': 'src/wasix/sdks/ts/tools/frozen-consumer.mts',
     'oliphaunt-query-ts': 'src/query/ts/tools/frozen-consumer.mts',
-  }[test.product];
+  }[test.sdk?.product ?? test.product];
   if (fixture) {
     const script =
       test.integration === 'browser'
         ? 'src/wasix/sdks/ts/tools/frozen-browser-consumer.mts'
         : fixture;
     copyFileSync(path.join(ROOT, script), path.join(directory, 'consume.mts'));
+    copyFileSync(
+      path.join(ROOT, 'tools/release/frozen-extension-consumer.mts'),
+      path.join(directory, 'extensions.mts'),
+    );
     if (test.integration === 'browser')
       copyFileSync(
         path.join(ROOT, 'src/wasix/sdks/ts/tools/browser-cdp.mts'),
@@ -738,7 +804,7 @@ async function npmConsumer(
         : directory;
     mkdirSync(data, { recursive: true });
     await command(
-      [...args, 'consume.mts', data],
+      [...args, 'consume.mts', data, JSON.stringify(test.extensions ?? [])],
       directory,
       environment,
       path.join(directory, 'execute.log'),
@@ -765,6 +831,16 @@ async function npmConsumer(
   )
     await nativePackageConsumer(test, manifest, lock, directory, environment);
   const resolution = json(path.join(directory, 'package-lock.json'));
+  for (const { name, version } of [test.sdk, ...(test.extensions ?? [])].filter(Boolean)) {
+    const input = resolution.packages?.[`node_modules/${name}`];
+    const integrity = registry.integrityFor(name, version);
+    if (
+      input?.version !== version ||
+      !input.integrity ||
+      (integrity && input.integrity !== integrity)
+    )
+      throw new Error(`default extension install did not consume ${name}@${version}`);
+  }
   if (
     resolution.packages?.[`node_modules/${carrier.name}`]?.integrity !==
     registry.integrityFor(carrier.name, carrier.version)
