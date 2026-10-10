@@ -2,9 +2,6 @@ use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, mpsc};
@@ -12,14 +9,18 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::child_process::reap_child_process;
-use crate::config::{EngineMode, NativeBrokerConfig, OpenConfig};
+use crate::config::{
+    CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT, DEFAULT_STARTUP_TIMEOUT, EngineMode,
+    NativeBrokerConfig, OpenConfig, lifecycle_timeout,
+};
 use crate::engine::{EngineCancel, EngineSession, NativeRuntime, ProtocolStreamOutcome};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 use crate::ipc::{RequestFrame, ResponseFrame, read_response, write_request};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
+use crate::socket::LocalSocket;
 use crate::storage::DatabaseStorage;
-use oliphaunt_broker::pgwire::{self, Connection as BrokerTransport};
+use oliphaunt_broker::pgwire;
 
 const ENV_BROKER: &str = "OLIPHAUNT_BROKER";
 const ENV_BROKER_ASSET_DIR: &str = "OLIPHAUNT_BROKER_ASSET_DIR";
@@ -28,8 +29,7 @@ const ENV_BROKER_AUTH_TOKEN: &str = "OLIPHAUNT_BROKER_AUTH_TOKEN";
 const READY_PREFIX: &str = "OLIPHAUNT_BROKER_READY ";
 const ERROR_PREFIX: &str = "OLIPHAUNT_BROKER_ERROR ";
 const BROKER_RELEASE_VERSION: &str = "0.3.1";
-const BROKER_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
-const BROKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const BROKER_STARTUP_TIMEOUT_ENV: &str = "OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS";
 
 /// Broker runtime backed by a local helper process.
 ///
@@ -66,6 +66,9 @@ impl NativeRuntime for NativeBrokerRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
         debug_assert_eq!(config.mode, EngineMode::Broker);
         config.validate()?;
+        let startup_timeout =
+            lifecycle_timeout(BROKER_STARTUP_TIMEOUT_ENV, DEFAULT_STARTUP_TIMEOUT)?;
+        let control_timeout = lifecycle_timeout(CONTROL_TIMEOUT_ENV, DEFAULT_CONTROL_TIMEOUT)?;
         let executable = self
             .executable
             .clone()
@@ -74,6 +77,7 @@ impl NativeRuntime for NativeBrokerRuntime {
             .ok_or_else(|| Error::Engine("native broker executable is unavailable".to_owned()))?;
         let (root_path, temporary_root) = materialize_broker_root(&config.storage)?;
         let mut open_guard = BrokerOpenGuard {
+            control_timeout,
             child: None,
             temporary_root,
             ipc_cleanup: None,
@@ -93,6 +97,7 @@ impl NativeRuntime for NativeBrokerRuntime {
         }
         let auth_token = BrokerAuthToken::generate()?;
         let launch_plan = BrokerLaunchPlan {
+            startup_timeout,
             executable,
             config,
             root_path,
@@ -101,10 +106,15 @@ impl NativeRuntime for NativeBrokerRuntime {
             auth_token,
         };
         let launch = launch_plan.launch(&mut open_guard)?;
-        let cancel = Arc::new(BrokerCancel::new(launch.sql_endpoint, launch.cancel_key));
+        let cancel = Arc::new(BrokerCancel::new(
+            launch.sql_endpoint,
+            launch.cancel_key,
+            control_timeout,
+        ));
         let (child, temporary_root, ipc_cleanup) = open_guard.into_session_parts();
 
         Ok(Box::new(NativeBrokerSession {
+            control_timeout,
             child: Some(child),
             transport: Some(launch.transport),
             control: Some(launch.control),
@@ -118,9 +128,10 @@ impl NativeRuntime for NativeBrokerRuntime {
 }
 
 struct NativeBrokerSession {
+    control_timeout: Duration,
     child: Option<Child>,
-    transport: Option<Box<dyn BrokerTransport>>,
-    control: Option<Box<dyn BrokerTransport>>,
+    transport: Option<LocalSocket>,
+    control: Option<LocalSocket>,
     cancel: Arc<BrokerCancel>,
     temporary_root: Option<PathBuf>,
     ipc_cleanup: Option<PathBuf>,
@@ -164,9 +175,7 @@ impl EngineSession for NativeBrokerSession {
             Ok(transport) => transport,
             Err(error) => return ProtocolStreamOutcome::SessionStateUnknown(error),
         };
-        match pgwire::exchange(transport.as_mut(), request.as_bytes(), &mut |chunk| {
-            on_chunk(chunk)
-        }) {
+        match pgwire::exchange(transport, request.as_bytes(), &mut |chunk| on_chunk(chunk)) {
             Ok(Some(error)) => ProtocolStreamOutcome::ReadyForQuery(Err(error)),
             Ok(None) => ProtocolStreamOutcome::ReadyForQuery(Ok(())),
             Err(error) => ProtocolStreamOutcome::SessionStateUnknown(
@@ -192,6 +201,7 @@ impl EngineSession for NativeBrokerSession {
 }
 
 struct BrokerLaunchPlan {
+    startup_timeout: Duration,
     executable: PathBuf,
     config: OpenConfig,
     root_path: PathBuf,
@@ -201,14 +211,15 @@ struct BrokerLaunchPlan {
 }
 
 struct BrokerLaunch {
-    transport: Box<dyn BrokerTransport>,
-    control: Box<dyn BrokerTransport>,
+    transport: LocalSocket,
+    control: LocalSocket,
     sql_endpoint: String,
     cancel_key: [u8; 8],
 }
 
 impl BrokerLaunchPlan {
     fn launch(&self, guard: &mut BrokerOpenGuard) -> Result<BrokerLaunch> {
+        let deadline = Instant::now() + self.startup_timeout;
         guard.child = Some(spawn_broker(
             &self.executable,
             &self.config,
@@ -230,10 +241,11 @@ impl BrokerLaunchPlan {
                 .as_mut()
                 .expect("broker launch guard owns child while waiting for ready line"),
             stdout,
+            deadline,
         )?;
-        let mut control = connect_ready_endpoint(&ready.control)?;
+        let mut control = connect_ready_endpoint(&ready.control, deadline)?;
         authenticate_broker(&mut control, &self.auth_token)?;
-        let mut transport = self.endpoint.connect_primary(&ready)?;
+        let mut transport = self.endpoint.connect_primary(&ready, deadline)?;
         let cancel_key = pgwire::authenticate(
             &mut transport,
             &self.config.username,
@@ -241,6 +253,12 @@ impl BrokerLaunchPlan {
             self.auth_token.as_str(),
         )
         .map_err(|error| Error::Engine(error.to_string()))?;
+        transport
+            .set_deadline(None)
+            .map_err(|error| Error::Engine(error.to_string()))?;
+        control
+            .set_deadline(None)
+            .map_err(|error| Error::Engine(error.to_string()))?;
         Ok(BrokerLaunch {
             transport,
             control,
@@ -251,25 +269,31 @@ impl BrokerLaunchPlan {
 }
 
 struct BrokerCancel {
+    control_timeout: Duration,
     endpoint: String,
     key: [u8; 8],
 }
 
 impl BrokerCancel {
-    fn new(endpoint: String, key: [u8; 8]) -> Self {
-        Self { endpoint, key }
+    fn new(endpoint: String, key: [u8; 8], control_timeout: Duration) -> Self {
+        Self {
+            endpoint,
+            key,
+            control_timeout,
+        }
     }
 }
 
 impl EngineCancel for BrokerCancel {
     fn cancel(&self) -> Result<()> {
-        let mut transport = connect_ready_endpoint(&self.endpoint)?;
+        let mut transport =
+            connect_ready_endpoint(&self.endpoint, Instant::now() + self.control_timeout)?;
         pgwire::cancel(&mut transport, &self.key).map_err(|error| Error::Engine(error.to_string()))
     }
 }
 
 impl NativeBrokerSession {
-    fn ensure_transport(&mut self) -> Result<&mut Box<dyn BrokerTransport>> {
+    fn ensure_transport(&mut self) -> Result<&mut LocalSocket> {
         if self.closed {
             return Err(Error::EngineStopped);
         }
@@ -336,7 +360,7 @@ impl NativeBrokerSession {
             let outcome = reap_child_process(
                 &mut child,
                 Duration::ZERO,
-                BROKER_SHUTDOWN_TIMEOUT,
+                self.control_timeout,
                 "failed native broker",
             );
             if !outcome.reaped {
@@ -351,23 +375,39 @@ impl NativeBrokerSession {
     fn close_broker(&mut self) -> Result<()> {
         let first_attempt = !self.closed;
         self.closed = true;
-        if first_attempt {
-            if let Some(transport) = self.transport.as_mut() {
-                let _ = transport.write_all(&[b'X', 0, 0, 0, 4]);
-            }
-            self.transport = None;
-            if let Some(control) = self.control.as_mut() {
-                let _ = write_request(control, RequestFrame::Close);
-                let _ = read_response(control);
-            }
-            self.control = None;
-        }
         let mut cleanup_failures = Vec::new();
+        if first_attempt {
+            let deadline = Instant::now() + self.control_timeout;
+            if let Some(mut transport) = self.transport.take() {
+                let result = transport
+                    .set_deadline(Some(deadline))
+                    .and_then(|()| transport.write_all(&[b'X', 0, 0, 0, 4]));
+                if let Err(error) = result {
+                    cleanup_failures
+                        .push(format!("terminate native broker SQL connection: {error}"));
+                }
+            }
+            if let Some(mut control) = self.control.take() {
+                let response = control
+                    .set_deadline(Some(deadline))
+                    .map_err(|error| Error::Engine(error.to_string()))
+                    .and_then(|()| write_request(&mut control, RequestFrame::Close))
+                    .and_then(|()| read_response(&mut control));
+                match response {
+                    Ok(ResponseFrame::Ok(_)) => {}
+                    Ok(ResponseFrame::Error(message)) => {
+                        cleanup_failures.push(format!("native broker close failed: {message}"))
+                    }
+                    Err(error) => cleanup_failures
+                        .push(format!("native broker close acknowledgement: {error}")),
+                }
+            }
+        }
         if let Some(child) = self.child.as_mut() {
             let outcome = reap_child_process(
                 child,
-                BROKER_SHUTDOWN_TIMEOUT,
-                BROKER_SHUTDOWN_TIMEOUT,
+                self.control_timeout,
+                self.control_timeout,
                 "native broker",
             );
             cleanup_failures.extend(outcome.failures);
@@ -422,6 +462,7 @@ impl Drop for NativeBrokerSession {
 }
 
 struct BrokerOpenGuard {
+    control_timeout: Duration,
     child: Option<Child>,
     temporary_root: Option<PathBuf>,
     ipc_cleanup: Option<PathBuf>,
@@ -445,7 +486,7 @@ impl Drop for BrokerOpenGuard {
             let outcome = reap_child_process(
                 &mut child,
                 Duration::ZERO,
-                BROKER_SHUTDOWN_TIMEOUT,
+                self.control_timeout,
                 "failed broker open",
             );
             if !outcome.reaped {
@@ -566,10 +607,7 @@ fn broker_spawn_args(
     args
 }
 
-fn authenticate_broker(
-    transport: &mut Box<dyn BrokerTransport>,
-    auth_token: &BrokerAuthToken,
-) -> Result<()> {
+fn authenticate_broker(transport: &mut LocalSocket, auth_token: &BrokerAuthToken) -> Result<()> {
     write_request(
         transport,
         RequestFrame::Authenticate(auth_token.as_str().to_owned()),
@@ -649,6 +687,7 @@ fn read_ready_line(stdout: &mut impl BufRead) -> Result<BrokerReadyEndpoints> {
 fn read_ready_line_from_child(
     child: &mut Child,
     stdout: impl Read + Send + 'static,
+    deadline: Instant,
 ) -> Result<BrokerReadyEndpoints> {
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     thread::Builder::new()
@@ -659,9 +698,12 @@ fn read_ready_line_from_child(
         })
         .map_err(|err| Error::Engine(format!("spawn native broker ready reader: {err}")))?;
 
-    let deadline = Instant::now() + BROKER_STARTUP_TIMEOUT;
     loop {
-        match ready_rx.recv_timeout(Duration::from_millis(50)) {
+        match ready_rx.recv_timeout(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(50)),
+        ) {
             Ok(result) => return result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(status) = child
@@ -673,10 +715,10 @@ fn read_ready_line_from_child(
                     )));
                 }
                 if Instant::now() >= deadline {
-                    return Err(Error::Engine(format!(
-                        "native broker did not print a ready line within {:?}",
-                        BROKER_STARTUP_TIMEOUT
-                    )));
+                    return Err(Error::Engine(
+                        "native broker did not print a ready line before the startup deadline"
+                            .to_owned(),
+                    ));
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -868,7 +910,11 @@ impl BrokerEndpoint {
         }
     }
 
-    fn connect_primary(&self, ready: &BrokerReadyEndpoints) -> Result<Box<dyn BrokerTransport>> {
+    fn connect_primary(
+        &self,
+        ready: &BrokerReadyEndpoints,
+        deadline: Instant,
+    ) -> Result<LocalSocket> {
         match self {
             #[cfg(unix)]
             Self::Unix { socket, .. } => {
@@ -889,9 +935,9 @@ impl BrokerEndpoint {
                         socket.display()
                     )));
                 }
-                connect_ready_endpoint(&ready.primary)
+                connect_ready_endpoint(&ready.primary, deadline)
             }
-            Self::Tcp { .. } => connect_ready_endpoint(&ready.primary),
+            Self::Tcp { .. } => connect_ready_endpoint(&ready.primary, deadline),
         }
     }
 
@@ -904,39 +950,32 @@ impl BrokerEndpoint {
     }
 }
 
-fn connect_ready_endpoint(ready_endpoint: &str) -> Result<Box<dyn BrokerTransport>> {
-    if let Some(path) = ready_endpoint.strip_prefix("unix:") {
+fn connect_ready_endpoint(ready_endpoint: &str, deadline: Instant) -> Result<LocalSocket> {
+    let result = if let Some(path) = ready_endpoint.strip_prefix("unix:") {
         #[cfg(unix)]
         {
-            let path = PathBuf::from(path);
-            return UnixStream::connect(&path)
-                .map(|stream| Box::new(stream) as Box<dyn BrokerTransport>)
-                .map_err(|err| {
-                    Error::Engine(format!(
-                        "connect to native broker Unix socket {}: {err}",
-                        path.display()
-                    ))
-                });
+            LocalSocket::unix(Path::new(path), deadline)
         }
-
         #[cfg(not(unix))]
         {
             let _ = path;
             return Err(Error::Engine(
-                "native broker returned a Unix socket endpoint on a non-Unix platform".to_owned(),
+                "Unix sockets are unavailable on this target".to_owned(),
             ));
         }
-    }
-
-    let addr = ready_endpoint
-        .strip_prefix("tcp:")
-        .unwrap_or(ready_endpoint);
-    let stream = TcpStream::connect(addr)
-        .map_err(|err| Error::Engine(format!("connect to native broker {addr}: {err}")))?;
-    stream
-        .set_nodelay(true)
-        .map_err(|err| Error::Engine(format!("set TCP_NODELAY for broker IPC: {err}")))?;
-    Ok(Box::new(stream))
+    } else {
+        let address = ready_endpoint
+            .strip_prefix("tcp:")
+            .unwrap_or(ready_endpoint)
+            .parse()
+            .map_err(|err| {
+                Error::Engine(format!(
+                    "invalid native broker endpoint {ready_endpoint}: {err}"
+                ))
+            })?;
+        LocalSocket::tcp(address, deadline)
+    };
+    result.map_err(|err| Error::Engine(format!("connect to native broker {ready_endpoint}: {err}")))
 }
 
 #[cfg(unix)]
@@ -975,6 +1014,87 @@ mod tests {
     use super::*;
 
     #[test]
+    fn close_bounds_a_silent_control_peer_with_the_configured_budget() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let control = LocalSocket::tcp(
+            listener.local_addr().unwrap(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        let (_peer, _) = listener.accept().unwrap();
+        let control_timeout = Duration::from_millis(30);
+        let temporary_root = create_temporary_root().unwrap();
+        let mut session = NativeBrokerSession {
+            control_timeout,
+            child: None,
+            transport: None,
+            control: Some(control),
+            cancel: Arc::new(BrokerCancel::new(
+                "tcp:127.0.0.1:1".to_owned(),
+                [0; 8],
+                control_timeout,
+            )),
+            temporary_root: Some(temporary_root.clone()),
+            ipc_cleanup: None,
+            failure: None,
+            closed: false,
+        };
+        let start = Instant::now();
+        let error = session.close_broker().unwrap_err();
+        assert!(error.to_string().contains("close acknowledgement"));
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(session.closed);
+        assert!(!temporary_root.exists());
+    }
+
+    #[test]
+    fn close_preserves_native_control_error_and_still_releases_paths() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let control = LocalSocket::tcp(
+            listener.local_addr().unwrap(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        let reply = std::thread::spawn(move || {
+            assert!(matches!(
+                oliphaunt_broker::ipc::read_request(&mut peer).unwrap(),
+                RequestFrame::Close
+            ));
+            oliphaunt_broker::ipc::write_response(
+                &mut peer,
+                ResponseFrame::Error("reset failed".to_owned()),
+            )
+            .unwrap();
+        });
+        let temporary_root = create_temporary_root().unwrap();
+        let mut session = NativeBrokerSession {
+            control_timeout: DEFAULT_CONTROL_TIMEOUT,
+            child: None,
+            transport: None,
+            control: Some(control),
+            cancel: Arc::new(BrokerCancel::new(
+                "tcp:127.0.0.1:1".to_owned(),
+                [0; 8],
+                DEFAULT_CONTROL_TIMEOUT,
+            )),
+            temporary_root: Some(temporary_root.clone()),
+            ipc_cleanup: None,
+            failure: None,
+            closed: false,
+        };
+        let error = session.close_broker().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("native broker close failed: reset failed")
+        );
+        assert!(session.closed);
+        assert!(!temporary_root.exists());
+        reply.join().unwrap();
+    }
+
+    #[test]
     fn exited_broker_is_terminal_for_the_existing_session_and_close_still_cleans_up() {
         let mut command = if cfg!(windows) {
             let mut command = Command::new("cmd");
@@ -990,10 +1110,15 @@ mod tests {
         let temporary_root = create_temporary_root().expect("temporary broker root");
         let ipc_cleanup = create_temporary_root().expect("temporary broker IPC root");
         let mut session = NativeBrokerSession {
+            control_timeout: DEFAULT_CONTROL_TIMEOUT,
             child: Some(child),
             transport: None,
             control: None,
-            cancel: Arc::new(BrokerCancel::new("tcp:127.0.0.1:1".to_owned(), [0; 8])),
+            cancel: Arc::new(BrokerCancel::new(
+                "tcp:127.0.0.1:1".to_owned(),
+                [0; 8],
+                DEFAULT_CONTROL_TIMEOUT,
+            )),
             temporary_root: Some(temporary_root.clone()),
             ipc_cleanup: Some(ipc_cleanup.clone()),
             failure: None,

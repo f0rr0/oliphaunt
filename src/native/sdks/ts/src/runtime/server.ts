@@ -13,6 +13,12 @@ import {
 } from '../native/assets.js';
 import { envVar } from '../native/common.js';
 import {
+  CONTROL_TIMEOUT_MS_ENV,
+  DEFAULT_CONTROL_TIMEOUT_MS,
+  DEFAULT_STARTUP_TIMEOUT_MS,
+  lifecycleTimeoutMs,
+} from './timeouts.js';
+import {
   initializeNativePgdata,
   nativeInitdbArgs,
   nativePostgresChildEnvironment,
@@ -35,9 +41,7 @@ import type { RuntimeBinding, RuntimeHandle } from './types.js';
 
 const SERVER_HOST = '127.0.0.1';
 const SERVER_STARTUP_TIMEOUT_MS_ENV = 'OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS';
-const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
 const CONNECT_RETRY_MS = 50;
-const STOP_TIMEOUT_MS = 5_000;
 const OLIPHAUNT_POSTGRES_ENV = 'OLIPHAUNT_POSTGRES';
 
 type ServerTools = {
@@ -123,7 +127,7 @@ export class ServerHandle {
     readonly connectionString: string,
     readonly temporaryDirectory: boolean,
     shutdownServer?: () => Promise<void>,
-    private readonly shutdownTimeoutMs = STOP_TIMEOUT_MS,
+    private readonly shutdownTimeoutMs = DEFAULT_CONTROL_TIMEOUT_MS,
   ) {
     this.#child = child;
     this.#ownedSocketDir = ownedSocketDir;
@@ -133,9 +137,18 @@ export class ServerHandle {
       (() =>
         runCommand(
           this.pgCtl,
-          ['-D', this.pgdata, '-m', 'fast', '-w', 'stop'],
+          [
+            '-D',
+            this.pgdata,
+            '-m',
+            'fast',
+            '-w',
+            '-t',
+            String(Math.ceil(this.shutdownTimeoutMs / 1_000)),
+            'stop',
+          ],
           this.toolEnvironment,
-          STOP_TIMEOUT_MS,
+          this.shutdownTimeoutMs,
         ).then(() => undefined));
   }
 
@@ -282,8 +295,13 @@ const retainedUnreapedServerCommands = new Set<ServerCommandProcess>();
 async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
   let ownedSocketDir: string | undefined;
   let child: ManagedChild | undefined;
+  let controlTimeoutMs = DEFAULT_CONTROL_TIMEOUT_MS;
   try {
-    const startupTimeoutMs = serverStartupTimeoutMs();
+    controlTimeoutMs = lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
+    const startupTimeoutMs = lifecycleTimeoutMs(
+      SERVER_STARTUP_TIMEOUT_MS_ENV,
+      DEFAULT_STARTUP_TIMEOUT_MS,
+    );
     const tools = await resolveServerTools({
       icuData: config.icuData,
       serverExecutable: config.serverExecutable,
@@ -321,7 +339,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       config.database,
       startupTimeoutMs,
     );
-    await releaseReadinessClient(readinessClient);
+    await releaseReadinessClient(readinessClient, controlTimeoutMs);
     return new ServerHandle(
       child,
       config.instanceDirectory,
@@ -331,6 +349,8 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       ownedSocketDir,
       serverConnectionString(config.username, config.database, listen, port),
       config.temporaryDirectory,
+      undefined,
+      controlTimeoutMs,
     );
   } catch (error) {
     const cleanupFailures = await cleanupFailedManagedLaunch(
@@ -338,7 +358,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
         child,
         paths: [ownedSocketDir, config.temporaryDirectory ? config.instanceDirectory : undefined],
       },
-      STOP_TIMEOUT_MS,
+      controlTimeoutMs,
       'native server startup child',
     );
     throwCollectedCloseFailures(
@@ -439,10 +459,13 @@ async function waitForServer(
   throw new Error(`native server did not accept SDK connections: ${errorString(lastError)}`);
 }
 
-async function releaseReadinessClient(client: PostgresWireClient): Promise<void> {
+async function releaseReadinessClient(
+  client: PostgresWireClient,
+  controlTimeoutMs: number,
+): Promise<void> {
   const failures: unknown[] = [];
   try {
-    await client.terminate();
+    await client.terminate(controlTimeoutMs);
   } catch (error) {
     failures.push(error);
   }
@@ -450,7 +473,7 @@ async function releaseReadinessClient(client: PostgresWireClient): Promise<void>
     try {
       // terminate() memoizes the protocol request and retries only the exact
       // stream close, so this cannot send a second Terminate packet.
-      await client.terminate();
+      await client.terminate(controlTimeoutMs);
     } catch (error) {
       failures.push(error);
     }
@@ -530,20 +553,6 @@ async function rejectExistingUnixEndpoint(path: string): Promise<void> {
   throw new Error(
     `native server refuses to replace existing Unix endpoint ${path}; remove it explicitly if it is stale`,
   );
-}
-
-function serverStartupTimeoutMs(): number {
-  const value = envVar(SERVER_STARTUP_TIMEOUT_MS_ENV);
-  if (value === undefined || value.length === 0) {
-    return DEFAULT_STARTUP_TIMEOUT_MS;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed.toString() !== value.trim()) {
-    throw new Error(
-      `${SERVER_STARTUP_TIMEOUT_MS_ENV} must be a positive integer number of milliseconds`,
-    );
-  }
-  return parsed;
 }
 
 export async function resolveServerTools(options: {

@@ -9,6 +9,68 @@ static uint32_t read_be32(const uint8_t *ptr) {
            (uint32_t)ptr[3];
 }
 
+void oliphaunt_postgres_error_message(const uint8_t *body, size_t len, char *out, size_t out_len) {
+    const char *localized_severity = NULL;
+    size_t localized_severity_len = 0;
+    const char *severity = NULL;
+    size_t severity_len = 0;
+    const char *message = NULL;
+    size_t message_len = 0;
+    size_t off = 0;
+    while (off < len && body[off] != 0) {
+        uint8_t field = body[off++];
+        size_t start = off;
+        while (off < len && body[off] != 0) {
+            off++;
+        }
+        if (off >= len) {
+            break;
+        }
+        if (field == 'V' && severity == NULL) {
+            severity = (const char *)body + start;
+            severity_len = off - start;
+        } else if (field == 'S' && localized_severity == NULL) {
+            localized_severity = (const char *)body + start;
+            localized_severity_len = off - start;
+        } else if (field == 'M') {
+            message = (const char *)body + start;
+            message_len = off - start;
+        }
+        off++;
+    }
+    if (severity == NULL) {
+        severity = localized_severity;
+        severity_len = localized_severity_len;
+    }
+    if (severity != NULL && message != NULL) {
+        snprintf(out, out_len, "%.*s: %.*s", (int)severity_len, severity, (int)message_len, message);
+    } else if (message != NULL) {
+        snprintf(out, out_len, "%.*s", (int)message_len, message);
+    } else {
+        snprintf(out, out_len, "PostgreSQL ErrorResponse");
+    }
+}
+
+bool oliphaunt_response_error_message(
+    const uint8_t *response,
+    size_t response_len,
+    char *out,
+    size_t out_len) {
+    size_t off = 0;
+    while (response_len - off >= 5) {
+        uint32_t len = read_be32(response + off + 1);
+        if (len < 4 || (size_t)len + 1 > response_len - off) {
+            return false;
+        }
+        if (response[off] == 'E') {
+            oliphaunt_postgres_error_message(response + off + 5, len - 4, out, out_len);
+            return true;
+        }
+        off += (size_t)len + 1;
+    }
+    return false;
+}
+
 bool oliphaunt_response_confirms_command(
     const uint8_t *response,
     size_t response_len,

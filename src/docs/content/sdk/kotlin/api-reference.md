@@ -44,7 +44,9 @@ Read `result.rows` and decode with `row.value(column, decoder)`, using a name or
 
 ## Raw protocol
 
-`execProtocolRaw(request)` returns a buffered `ByteArray`. `execProtocolRawStream` delivers raw chunks through a synchronous callback. Do not re-enter ordinary database or transaction methods from that callback. These methods belong to the database, not callback transactions.
+`execProtocolRaw(request)` returns a buffered `ByteArray`. `execProtocolRawStream` delivers raw chunks through a synchronous callback. While a callback is active, newly submitted ordinary operations on the same database or transaction are rejected. Previously accepted operations retain their order; another database and out-of-band `cancel()` remain available. These methods belong to the database, not callback transactions.
+
+See [large mobile responses](/docs/learn/mobile-stability#large-responses) for buffered response limits and streaming alternatives.
 
 ## Exceptions
 

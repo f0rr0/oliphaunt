@@ -20,7 +20,7 @@ import {
   readBrokerResponse,
   writeBrokerRequest,
 } from './broker-frames.js';
-import type { ByteStream } from './byte-stream.js';
+import { type ByteStream, withStreamDeadline } from './byte-stream.js';
 import { PostgresWireClient } from './pgwire.js';
 import { throwCollectedCloseFailures } from './close.js';
 import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
@@ -39,6 +39,12 @@ import {
   waitForManagedChild,
 } from './node-adapter.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
+import {
+  CONTROL_TIMEOUT_MS_ENV,
+  DEFAULT_CONTROL_TIMEOUT_MS,
+  DEFAULT_STARTUP_TIMEOUT_MS,
+  lifecycleTimeoutMs,
+} from './timeouts.js';
 
 const READY_PREFIX = 'OLIPHAUNT_BROKER_READY ';
 const ERROR_PREFIX = 'OLIPHAUNT_BROKER_ERROR ';
@@ -46,8 +52,6 @@ const LIBOLIPHAUNT_PATH_ENV = 'LIBOLIPHAUNT_PATH';
 const OLIPHAUNT_INSTALL_DIR_ENV = 'OLIPHAUNT_INSTALL_DIR';
 const OLIPHAUNT_BROKER_ENV = 'OLIPHAUNT_BROKER';
 const OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV = 'OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS';
-const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
-const SHUTDOWN_TIMEOUT_MS = 5_000;
 const require = createRequire(import.meta.url);
 
 export type BrokerRuntimeBindingOptions = {
@@ -121,7 +125,7 @@ export class BrokerHandle {
   constructor(
     readonly config: NormalizedOpenConfig,
     launch: BrokerLaunch,
-    private readonly shutdownTimeoutMs = SHUTDOWN_TIMEOUT_MS,
+    private readonly shutdownTimeoutMs = DEFAULT_CONTROL_TIMEOUT_MS,
   ) {
     this.#child = launch.child;
     this.#stream = launch.stream;
@@ -189,17 +193,19 @@ export class BrokerHandle {
   async cancel(): Promise<void> {
     await this.ensureStream();
     if (!this.#client) throw new Error('native broker SQL connection is unavailable');
-    await this.#client.cancel();
+    await this.#client.cancel(this.shutdownTimeoutMs);
   }
 
   async detach(): Promise<void> {
     const firstAttempt = !this.#closed;
     this.#closed = true;
     const failures: unknown[] = [];
+    const deadline = performance.now() + this.shutdownTimeoutMs;
     const client = this.#client;
     if (client) {
       try {
-        if (firstAttempt && !this.#failed) await client.terminate();
+        if (firstAttempt && !this.#failed)
+          await client.terminate(Math.max(0, deadline - performance.now()));
         else await client.close();
         this.#client = undefined;
       } catch (error) {
@@ -210,8 +216,15 @@ export class BrokerHandle {
     if (stream !== undefined) {
       if (firstAttempt && !this.#failed) {
         try {
-          await writeBrokerRequest(stream, { kind: 'close' });
-          const response = await readBrokerResponse(stream);
+          const response = await withStreamDeadline(
+            stream,
+            deadline,
+            async () => {
+              await writeBrokerRequest(stream, { kind: 'close' });
+              return readBrokerResponse(stream);
+            },
+            'native broker close acknowledgement',
+          );
           if (response.kind === 'error') {
             throw new Error(`native broker close failed: ${response.message}`);
           }
@@ -383,15 +396,6 @@ export class BrokerHandle {
 // best-effort retry later releases every exact resource.
 const retainedFailedBrokerHandles = new Set<BrokerHandle>();
 
-async function openBrokerHandle(
-  executable: string | undefined,
-  config: NormalizedOpenConfig,
-): Promise<BrokerHandle> {
-  const authToken = randomHexToken();
-  const launch = await launchBroker(executable, config, authToken);
-  return new BrokerHandle(config, launch);
-}
-
 type BrokerLaunch = {
   child: ManagedChild;
   stream: ByteStream;
@@ -399,16 +403,21 @@ type BrokerLaunch = {
   ipcDir?: string;
 };
 
-async function launchBroker(
+async function openBrokerHandle(
   executable: string | undefined,
   config: NormalizedOpenConfig,
-  authToken: string,
-): Promise<BrokerLaunch> {
+): Promise<BrokerHandle> {
+  let controlTimeoutMs = DEFAULT_CONTROL_TIMEOUT_MS;
   const failedLaunch: FailedManagedLaunch = {
     paths: [undefined, config.temporaryDirectory ? config.instanceDirectory : undefined],
   };
   try {
-    const startupTimeoutMs = brokerStartupTimeoutMs();
+    controlTimeoutMs = lifecycleTimeoutMs(CONTROL_TIMEOUT_MS_ENV, DEFAULT_CONTROL_TIMEOUT_MS);
+    const startupTimeoutMs = lifecycleTimeoutMs(
+      OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV,
+      DEFAULT_STARTUP_TIMEOUT_MS,
+    );
+    const authToken = randomHexToken();
     const resolvedExecutable = await resolveBrokerExecutable(executable);
     const endpoint = await allocateBrokerEndpoint(config);
     failedLaunch.paths[0] = endpoint.ipcDir;
@@ -420,34 +429,40 @@ async function launchBroker(
       replaceEnv: true,
     });
     failedLaunch.child = child;
+    const deadline = performance.now() + startupTimeoutMs;
+    const startup = new AbortController();
+    const startupTimer = setTimeout(() => startup.abort(), startupTimeoutMs);
     const readiness = new AbortController();
-    const line = await Promise.race([
-      readReadyLine(child.stdout, startupTimeoutMs, 'native broker', readiness.signal),
-      child.exited().then((code) => {
-        throw new Error(`native broker exited before readiness with code ${code ?? 'signal'}`);
-      }),
-    ]).finally(() => readiness.abort());
-    const ready = parseBrokerReadyLine(line);
-    const stream = await connectEndpoint(parseReadyEndpoint(ready.control));
-    failedLaunch.stream = stream;
-    await authenticateBroker(stream, authToken);
-    const client = await PostgresWireClient.connect(
-      parseReadyEndpoint(ready.primary),
-      config.username,
-      config.database,
-      startupTimeoutMs,
-      authToken,
-    );
-    return {
-      child,
-      stream,
-      client,
-      ipcDir: endpoint.ipcDir,
-    };
+    try {
+      const line = await Promise.race([
+        readReadyLine(child.stdout, startupTimeoutMs, 'native broker', readiness.signal),
+        child.exited().then((code) => {
+          throw new Error(`native broker exited before readiness with code ${code ?? 'signal'}`);
+        }),
+      ]).finally(() => readiness.abort());
+      const ready = parseBrokerReadyLine(line);
+      const stream = await connectEndpoint(parseReadyEndpoint(ready.control), startup.signal);
+      failedLaunch.stream = stream;
+      await authenticateBroker(stream, authToken);
+      const client = await PostgresWireClient.connect(
+        parseReadyEndpoint(ready.primary),
+        config.username,
+        config.database,
+        Math.max(0, deadline - performance.now()),
+        authToken,
+      );
+      return new BrokerHandle(
+        config,
+        { child, stream, client, ipcDir: endpoint.ipcDir },
+        controlTimeoutMs,
+      );
+    } finally {
+      clearTimeout(startupTimer);
+    }
   } catch (error) {
     const cleanupFailures = await cleanupFailedManagedLaunch(
       failedLaunch,
-      SHUTDOWN_TIMEOUT_MS,
+      controlTimeoutMs,
       'native broker startup child',
     );
     throwCollectedCloseFailures(
@@ -456,22 +471,6 @@ async function launchBroker(
     );
     throw error;
   }
-}
-
-function brokerStartupTimeoutMs(): number {
-  return positiveIntegerEnvMs(OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV, DEFAULT_STARTUP_TIMEOUT_MS);
-}
-
-function positiveIntegerEnvMs(name: string, fallback: number): number {
-  const value = envVar(name);
-  if (value === undefined || value.length === 0) {
-    return fallback;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed.toString() !== value.trim()) {
-    throw new Error(`${name} must be a positive integer number of milliseconds`);
-  }
-  return parsed;
 }
 
 type BrokerNativeInstall = {

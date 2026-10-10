@@ -90,6 +90,10 @@ Inspect `requiresReopen` on the broker error. When true, close the handle and re
 
 Direct and broker databases have separate storage locations. To migrate, back up through the original mode, close it, and restore into a fresh destination through the new mode. Do not switch modes and assume the same name opens the same files.
 
+## Large responses
+
+Swift and Kotlin buffered native responses accept at most 2,147,483,643 bytes. An oversized response fails after execution, so check its effect before retrying a write. This limit does not bound peak native memory use. Use raw streaming for large protocol payloads and file backup for large archives.
+
 ## Handle suspension and termination
 
 Finish important writes while the app has execution time. An operating system can terminate a background app without waiting for a close callback. Persist throughout the session and use explicit close for orderly teardown.

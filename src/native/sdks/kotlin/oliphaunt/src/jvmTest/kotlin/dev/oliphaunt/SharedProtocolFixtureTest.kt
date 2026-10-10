@@ -98,9 +98,7 @@ class SharedProtocolFixtureTest {
             val actual = result.fields[index]
             assertEquals(expectedField.name, actual.name, "${fixture.name} field name")
             assertEquals(expectedField.typeOid, actual.typeOid.value, "${fixture.name} type OID")
-            if (expectedField.format == "text") {
-                assertEquals(QueryFormat.Text, actual.format, "${fixture.name} field format")
-            }
+            assertEquals(if (expectedField.format == "text") QueryFormat.Text else QueryFormat.Binary, actual.format, "${fixture.name} field format")
         }
 
         expected.rows.forEachIndexed { rowIndex, row ->
@@ -109,7 +107,7 @@ class SharedProtocolFixtureTest {
                 val field = expected.fields[columnIndex]
                 assertEquals(
                     expectedValue,
-                    result.getText(rowIndex, field.name),
+                    result.rows[rowIndex].text(columnIndex),
                     "${fixture.name} row $rowIndex column ${field.name}",
                 )
             }

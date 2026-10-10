@@ -167,6 +167,22 @@ int main(void) {
               !command_tag_matches,
           "an unexpected command tag must preserve confirmed backup-mode exit");
 
+    const uint8_t reset_error[] = {
+        'E', 0, 0, 0, 33, 'S', 'E', 'R', 'R', 'O', 'R', 0,
+        'C', 'X', 'X', '0', '0', '0', 0,
+        'M', 'r', 'e', 's', 'e', 't', ' ', 'f', 'a', 'i', 'l', 'e', 'd', 0, 0,
+        'Z', 0, 0, 0, 5, 'I',
+    };
+    char reset_message[128] = {0};
+    CHECK(!oliphaunt_response_confirms_command(reset_error, sizeof(reset_error), "DISCARD ALL", &command_tag_matches),
+          "SQL reset errors must not confirm logical detach");
+    CHECK(oliphaunt_response_error_message(reset_error, sizeof(reset_error), reset_message, sizeof(reset_message)),
+          "reset errors must preserve the PostgreSQL diagnostic");
+    CHECK(strcmp(reset_message, "ERROR: reset failed") == 0,
+          "reset error must retain severity and original message");
+    CHECK(!oliphaunt_response_error_message(reset_error, 6, reset_message, sizeof(reset_message)),
+          "truncated ErrorResponse must not read beyond its frame");
+
     CHECK(!oliphaunt_backup_cleanup_required(OLIPHAUNT_BACKUP_NOT_ENTERED),
           "PostgreSQL pg_backup_start errors must not trigger pg_backup_stop");
     CHECK(oliphaunt_backup_cleanup_required(OLIPHAUNT_BACKUP_EXIT_REQUIRED),
