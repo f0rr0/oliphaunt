@@ -1492,7 +1492,11 @@ export function buildPlan(graph, files, prefix = 'release-graph') {
     }
     // Documentation alone does not request a product release. Declared
     // changelogs and explicit shared release inputs remain release-affecting.
-    if (/\.(?:md|mdx)$/iu.test(file) && !changelogs.has(file)) continue;
+    if (
+      (/\.(?:md|mdx)$/iu.test(file) || /(?:^|\/)generated\/docs\//u.test(file)) &&
+      !changelogs.has(file)
+    )
+      continue;
     const owner = ownerProjectForPath(projects, file);
     if (owner !== undefined) {
       directProjects.add(owner);

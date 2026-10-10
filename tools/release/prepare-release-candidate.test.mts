@@ -1,11 +1,14 @@
 import { expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   appendFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -24,6 +27,7 @@ import { loadPublicationCatalog } from './publication-catalog.mts';
 import { releaseDependencyPlan } from './release-dependency-plan.mts';
 import {
   buildPlan,
+  compatibilityVersionEntries,
   compatibilityVersionFromText,
   compatibilityVersionValue,
   declaredSharedSourceImpacts,
@@ -317,8 +321,8 @@ async function generateProductCandidate(
   commits,
   readCompatibility = (product, source) => productCompatibilityVersion(product, source),
   configure = () => {},
+  { root = ROOT, baseline = first } = {},
 ) {
-  const root = path.resolve(import.meta.dir, '../..');
   const config = JSON.parse(readFileSync(path.join(root, 'release-please-config.json'), 'utf8'));
   const versions = JSON.parse(
     readFileSync(path.join(root, '.release-please-manifest.json'), 'utf8'),
@@ -329,13 +333,13 @@ async function generateProductCandidate(
       for (const owner of Object.keys(config.packages))
         yield {
           tagName: `${config.packages[owner].component}-v${versions[owner]}`,
-          sha: first,
+          sha: baseline,
           notes: 'Existing release',
         };
     },
     async *mergeCommitIterator() {
       yield* commits;
-      yield { sha: first, message: 'chore(release): previous versions', files: [] };
+      yield { sha: baseline, message: 'chore(release): previous versions', files: [] };
     },
     async getFileContentsOnBranch(file) {
       const local = path.join(root, file);
@@ -369,7 +373,14 @@ async function generateProductCandidate(
 }
 
 for (const scenario of [
-  { name: 'documentation only', files: ['src/native/sdks/ts/README.md'], products: [] },
+  {
+    name: 'documentation only',
+    files: [
+      'src/native/sdks/ts/README.md',
+      'src/extensions/generated/docs/extension-evidence.json',
+    ],
+    products: [],
+  },
   {
     name: 'one source SDK',
     files: ['src/native/sdks/ts/src/index.ts'],
@@ -392,8 +403,27 @@ for (const scenario of [
   },
   {
     name: 'runtime and one external extension',
-    files: [`${native}/VERSION`, 'src/extensions/external/vector/source.toml'],
+    files: [`${native}/src/liboliphaunt.c`, 'src/extensions/external/vector/source.toml'],
     products: ['liboliphaunt-native', 'oliphaunt-extension-vector'],
+  },
+  {
+    name: 'broker and Rust SDK retain the older published broker requirement',
+    files: ['src/native/broker/src/lib.rs', 'src/native/sdks/rust/src/lib.rs'],
+    products: ['oliphaunt-broker', 'oliphaunt-rust', 'oliphaunt-kotlin', 'oliphaunt-swift'],
+  },
+  {
+    name: 'WASIX compiled inputs advance while installed SDK pins retain published history',
+    files: [
+      `${wasix}/toolchain.toml`,
+      'src/wasix/sdks/rust/src/oliphaunt/base.rs',
+      'src/wasix/sdks/ts/src/index.ts',
+    ],
+    products: [
+      'liboliphaunt-wasix',
+      'oliphaunt-wasix-napi',
+      'oliphaunt-wasix-rust',
+      'oliphaunt-wasix-ts',
+    ],
   },
   {
     name: 'shared package writer',
@@ -411,28 +441,118 @@ for (const scenario of [
   },
 ])
   test(`release scenario: ${scenario.name} produces coherent versions and exact consumer scope`, async () => {
-    const { candidate, versions } = await generateProductCandidate([
-      {
-        sha: head,
-        message: scenario.products.length ? 'fix: repair shipped behavior' : 'docs: clarify usage',
-        files: scenario.files,
-      },
-    ]);
     if (!scenario.products.length) {
+      const { candidate } = await generateProductCandidate([
+        { sha: head, message: 'docs: clarify usage', files: scenario.files },
+      ]);
       expect(candidate).toBeUndefined();
       return;
     }
     const scratch = mkdtempSync(path.join(os.tmpdir(), 'release-scenario-'));
+    const env = {
+      ...process.env,
+      CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR ?? path.join(ROOT, 'target'),
+    };
+    for (const name of Object.keys(env)) {
+      if (
+        /^(ACTIONS_|GH_|GITHUB_|RELEASE_|PUBLICATION_|OLIPHAUNT_(RELEASE_|PRODUCT_HISTORY|GIT_SOURCE_JSON|EVIDENCE_))/u.test(
+          name,
+        )
+      )
+        delete env[name];
+    }
+    const run = (command, args) => {
+      const result = spawnSync(command, args, {
+        cwd: scratch,
+        env,
+        encoding: 'utf8',
+        timeout: 120_000,
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      if (result.error || result.status !== 0)
+        throw new Error(
+          `${command} ${args.join(' ')}: ${result.error?.message ?? result.status}\n${result.stdout?.slice(-4000)}\n${result.stderr?.slice(-4000)}`,
+        );
+      return result.stdout.trim();
+    };
     try {
-      for (const update of candidate.updates) {
-        const input = path.join(ROOT, update.path);
-        if (existsSync(input)) {
-          const destination = path.join(scratch, update.path);
+      run('git', ['clone', '--quiet', '--shared', ROOT, '.']);
+      // Include uncommitted control fixes, without rebuilding any product outputs.
+      const changed = spawnSync('git', ['diff', '--name-only', '-z', 'HEAD'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+      });
+      expect(changed.status).toBe(0);
+      for (const file of changed.stdout.split('\0').filter(Boolean)) {
+        const destination = path.join(scratch, file);
+        if (existsSync(path.join(ROOT, file))) {
           mkdirSync(path.dirname(destination), { recursive: true });
-          writeFileSync(destination, readFileSync(input));
-        }
+          cpSync(path.join(ROOT, file), destination);
+        } else rmSync(destination, { force: true });
       }
+      appendFileSync(path.join(scratch, '.git/info/exclude'), '/node_modules\n');
+      symlinkSync(path.join(ROOT, 'node_modules'), path.join(scratch, 'node_modules'));
+      run('git', ['config', 'user.name', 'Release Fixture']);
+      run('git', ['config', 'user.email', 'release@example.invalid']);
+      run('git', ['add', '-A']);
+      run('git', ['commit', '--allow-empty', '-qm', 'test: published release baseline']);
+      const baseline = run('git', ['rev-parse', 'HEAD']);
+      for (const product of Object.values(graph.products))
+        run('git', ['tag', '-f', product.tag_prefix + product.version, baseline]);
+      for (const file of scenario.files)
+        appendFileSync(
+          path.join(scratch, file),
+          file.endsWith('.toml') ? '\n# release fixture\n' : '\n// release fixture\n',
+        );
+      if (scenario.files.some((file) => file.endsWith('/source.toml')))
+        run('bash', ['tools/release/sync-release-pr.sh']);
+      run('git', ['add', '-A']);
+      run('git', ['commit', '-qm', 'fix: repair shipped behavior']);
+      const source = run('git', ['rev-parse', 'HEAD']);
+      const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true });
+      const readCompatibility = (product, dependency, _prefix, { ref = null } = {}) => {
+        const entry = entries.find(
+          (entry) => entry.product === product && entry.sourceProduct === dependency,
+        );
+        return compatibilityVersionFromText(
+          entry,
+          ref
+            ? run('git', ['show', `${ref}:${entry.path}`])
+            : readFileSync(path.join(scratch, entry.path), 'utf8'),
+        );
+      };
+      const { candidate, versions } = await generateProductCandidate(
+        [
+          {
+            sha: source,
+            message: 'fix: repair shipped behavior',
+            files: run('git', ['diff', '--name-only', baseline, source]).split('\n'),
+          },
+        ],
+        readCompatibility,
+        undefined,
+        { root: scratch, baseline },
+      );
       applyCandidate(scratch, candidate);
+      const declaredRequirements = new Map(
+        entries.map((entry) => [
+          entry.id,
+          compatibilityVersionFromText(entry, readFileSync(path.join(scratch, entry.path), 'utf8')),
+        ]),
+      );
+      const metadata = path.join(scratch, '.git/release-candidate');
+      mkdirSync(metadata);
+      writeFileSync(path.join(metadata, 'required'), 'true\n');
+      writeFileSync(path.join(metadata, 'title'), `${candidate.title.toString()}\n`);
+      writeFileSync(path.join(metadata, 'body.md'), `${candidate.body.toString()}\n`);
+      run('bash', ['tools/release/close-release-candidate.sh', metadata]);
+      const closed = run('git', ['rev-parse', 'HEAD']);
+      expect(run('git', ['rev-parse', 'HEAD^'])).toBe(source);
+      run('bash', ['tools/release/sync-release-pr.sh']);
+      run('bash', ['tools/release/sync-release-pr.sh', '--check-generated-release']);
+      expect(run('git', ['diff', '--no-ext-diff'])).toBe('');
+      expect(run('git', ['status', '--porcelain', '--untracked-files=all'])).toBe('');
+      expect(run('git', ['rev-parse', 'HEAD'])).toBe(closed);
       const after = JSON.parse(
         readFileSync(path.join(scratch, '.release-please-manifest.json'), 'utf8'),
       );
@@ -450,19 +570,14 @@ for (const scenario of [
         expect(paths).toContain(`${products[id].path}/CHANGELOG.md`);
       }
       const readRequirement = (entry) =>
-        existsSync(path.join(scratch, entry.path))
-          ? compatibilityVersionFromText(
-              entry,
-              readFileSync(path.join(scratch, entry.path), 'utf8'),
-            )
-          : compatibilityVersionValue(entry);
+        compatibilityVersionFromText(entry, readFileSync(path.join(scratch, entry.path), 'utf8'));
       const requirements = releaseDependencyPlan(products, scenario.products, {
-        readValue: readRequirement,
+        readValue: (entry) => declaredRequirements.get(entry.id),
       });
       for (const requirement of requirements) {
+        expect(readRequirement(requirement)).toBe(requirement.version);
         if (requirement.binding === 'compiled-input')
           expect(requirement.version).toBe(products[requirement.sourceProduct].version);
-        else expect(requirement.version).toBe(readRequirement(requirement));
         if (
           requirement.binding === 'declared-requirement' &&
           ['liboliphaunt-native', 'liboliphaunt-wasix'].includes(requirement.sourceProduct)
@@ -496,10 +611,35 @@ for (const scenario of [
       expect(new Set(frozenConsumerMatrix(plan).include.map((row) => row.target)).size).toBe(
         frozenConsumerMatrix(plan).include.length,
       );
+      if (scenario.products.includes('oliphaunt-rust')) {
+        expect(readCompatibility('oliphaunt-rust', 'oliphaunt-broker')).toBe(
+          graph.products['oliphaunt-broker'].version,
+        );
+        expect(products['oliphaunt-broker'].version).not.toBe(
+          graph.products['oliphaunt-broker'].version,
+        );
+      }
+      if (scenario.products.includes('liboliphaunt-wasix')) {
+        expect(readCompatibility('oliphaunt-wasix-rust', 'liboliphaunt-wasix')).toBe(
+          graph.products['liboliphaunt-wasix'].version,
+        );
+        expect(readCompatibility('oliphaunt-wasix-napi', 'liboliphaunt-wasix')).toBe(
+          products['liboliphaunt-wasix'].version,
+        );
+        run('git', ['reset', '--hard', source]);
+        applyCandidate(scratch, candidate);
+        const sdkPath = path.join(scratch, 'src/wasix/sdks/ts/package.json');
+        const sdk = JSON.parse(readFileSync(sdkPath, 'utf8'));
+        sdk.oliphaunt.runtimeVersion = products['liboliphaunt-wasix'].version;
+        writeFileSync(sdkPath, `${JSON.stringify(sdk, null, 2)}\n`);
+        expect(() => run('bash', ['tools/release/close-release-candidate.sh', metadata])).toThrow(
+          /differs from oliphaunt-wasix-napi .* runtime/u,
+        );
+      }
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 180_000);
 
 test('actual Rust, npm, Swift and Gradle strategy updates apply to one local candidate', async () => {
   const root = path.resolve(import.meta.dir, '../..');

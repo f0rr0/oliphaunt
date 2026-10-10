@@ -8,7 +8,7 @@ bash tools/ci/with-projects.sh --exec bash tools/release/release-please-state.sh
   bash tools/release/with-product-history.sh "$PWD" HEAD '' @workspace \
   bash tools/dev/bun.sh tools/release/sync-release-pr.mts "$@"
 
-# Bun owns its lock format and workspace dependency resolution.
+# Bun owns dependency resolution and the final lock format.
 for argument in "$@"; do
   if [[ "$argument" == "--check" || "$argument" == "--check-generated-release" ]]; then
     test -f bun.lock

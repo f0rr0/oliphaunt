@@ -40,27 +40,3 @@ bun tools/release/sync-release-pr.mts --check --check-generated-release > "$scra
 [[ "$status" == 2 ]]
 rg -q 'mutually exclusive' "$scratch/result"
 echo 'Release sync: real tracked/untracked Cargo inventory and prior constraints passed'
-
-git clone --quiet --shared "$source_root" "$scratch/release"
-cp tools/release/sync-release-pr.sh "$scratch/release/tools/release/sync-release-pr.sh"
-printf '/node_modules\n' >> "$scratch/release/.git/info/exclude"
-ln -s "$source_root/node_modules" "$scratch/release/node_modules"
-cd "$scratch/release"
-git config user.name Fixture
-git config user.email fixture@example.invalid
-bun "$source_root/tools/release/sync-release-pr.test.mts" historical-consumer "$PWD" baseline
-git add -A
-git commit --allow-empty -qm baseline
-git tag -f "oliphaunt-wasix-napi-v$(bun -p 'require("./src/wasix/node-addon/package.json").version')" >/dev/null
-bun "$source_root/tools/release/sync-release-pr.test.mts" historical-consumer "$PWD" candidate
-git add -A
-git commit -qm 'chore(release): selected WASIX SDK'
-bash tools/release/sync-release-pr.sh
-bash tools/release/sync-release-pr.sh --check
-bash tools/release/sync-release-pr.sh --check-generated-release
-bun "$source_root/tools/release/sync-release-pr.test.mts" historical-consumer "$PWD" mismatch
-status=0
-bash tools/release/sync-release-pr.sh --check-generated-release > "$scratch/result" 2>&1 || status=$?
-[[ "$status" != 0 ]]
-rg -q 'differs from oliphaunt-wasix-napi .* runtime' "$scratch/result"
-echo 'Release sync: published addon pin survives workspace drift; incompatible SDK pin rejected'

@@ -856,6 +856,18 @@ function syncLockfiles(changes, { write }) {
   for (const lockfile of LOCKFILES) {
     syncLockfile(lockfile, versions, changes, { write });
   }
+  // Bun can defer workspace dependency changes when their package versions also change.
+  const lock = Bun.JSONC.parse(readText(BUN_LOCKFILE));
+  const updated = [];
+  for (const [workspace, metadata] of Object.entries(lock.workspaces)) {
+    const version = readJsonObject(path.join(ROOT, workspace, 'package.json')).version;
+    if (version !== undefined && metadata.version !== version) {
+      metadata.version = version;
+      updated.push(workspace);
+    }
+  }
+  if (updated.length > 0)
+    writeTextIfChanged(BUN_LOCKFILE, jsonText(lock), changes, 'npm workspace versions', { write });
 }
 
 function syncExtensionEvidenceSummary(changes, { write }) {
