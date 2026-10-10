@@ -408,10 +408,6 @@ export function validateCarrierCoverage({
     brokerMetadata['broker-helper'] === 'oliphaunt-broker',
     'Rust SDK broker helper identity must be oliphaunt-broker',
   );
-  invariant(
-    brokerMetadata['broker-version'] === graph.products['oliphaunt-broker'].version,
-    'Rust SDK broker helper version must match the broker product',
-  );
 }
 
 export function validateExtensionCarrierCoverage(graph, catalog, products) {

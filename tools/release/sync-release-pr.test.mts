@@ -34,6 +34,37 @@ if (mode === 'inventory') {
   process.exit(0);
 }
 
+if (mode === 'historical-consumer') {
+  const sdkPath = path.join(root, 'src/wasix/sdks/ts/package.json');
+  const addonPath = path.join(root, 'src/wasix/node-addon/package.json');
+  const manifestPath = path.join(root, '.release-please-manifest.json');
+  const sdk = JSON.parse(readFileSync(sdkPath, 'utf8'));
+  const addon = JSON.parse(readFileSync(addonPath, 'utf8'));
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (stage === 'baseline') {
+    sdk.oliphaunt.wasixNapiVersion = addon.version;
+    sdk.oliphaunt.runtimeVersion = addon.oliphaunt.runtimeVersion;
+  } else if (stage === 'candidate') {
+    const version = sdk.version.split('.').map(Number);
+    version[2] += 1;
+    sdk.version = version.join('.');
+    manifest['src/wasix/sdks/ts'] = sdk.version;
+    addon.oliphaunt.runtimeVersion = '9.9.9';
+  } else if (stage === 'mismatch') {
+    sdk.oliphaunt.runtimeVersion = addon.oliphaunt.runtimeVersion;
+  } else {
+    throw new Error(`unknown historical consumer stage ${stage}`);
+  }
+  for (const [file, data] of [
+    [sdkPath, sdk],
+    [addonPath, addon],
+    [manifestPath, manifest],
+  ]) {
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+  }
+  process.exit(0);
+}
+
 test('compatibility sync handles inline and table Cargo dependencies without changing other fields', () => {
   for (const source of [
     `[dependencies]\nquery = { path = '../query', version = '0.1.0', features = ['one'] }\n`,

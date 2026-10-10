@@ -1,4 +1,5 @@
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
+import { buildBoundCompatibilityProducts } from './release-dependency-plan.mts';
 import { compareText, loadProducts, productCompatibilityVersion } from './release-graph.mts';
 
 const EXTENSION_RUNTIMES = new Set(['liboliphaunt-native', 'liboliphaunt-wasix']);
@@ -25,14 +26,18 @@ function extensionConsumerContracts(products) {
   return consumers.sort((left, right) => compareText(left.product, right.product));
 }
 
-export function extensionConsumerRequirements(selected, products, pin) {
+export function extensionConsumerRequirements(selected, products, pin, buildBound) {
   const contracts = extensionConsumerContracts(products);
   const consumers = contracts.filter(({ product }) => selected.has(product));
   for (const owner of selected) {
+    // Privately compiled SDK sources use the binary's Cargo closure, not its published package.
     const dependencies = new Set(
-      Object.values(products[owner].compatibility_versions ?? {}).map(
-        ({ source_product }) => source_product,
-      ),
+      Object.values(products[owner].compatibility_versions ?? {})
+        .filter(
+          ({ source_product, public_support }) =>
+            public_support !== false || !buildBound.get(owner)?.has(source_product),
+        )
+        .map(({ source_product }) => source_product),
     );
     for (const { product, runtime } of contracts) {
       if (dependencies.has(product)) consumers.push({ product, runtime, owner });
@@ -59,6 +64,7 @@ export function validateReleaseConsumerCompatibility(
   {
     products = loadProducts(),
     readCompatibility = productCompatibilityVersion,
+    buildBound = buildBoundCompatibilityProducts(products),
     prefix = 'release-consumer-compatibility',
   } = {},
 ) {
@@ -76,7 +82,7 @@ export function validateReleaseConsumerCompatibility(
           ? null
           : products[product].tag_prefix + version,
     });
-  const consumers = extensionConsumerRequirements(selected, products, pin);
+  const consumers = extensionConsumerRequirements(selected, products, pin, buildBound);
   const failures = [];
   for (const { product, runtime, version, owner, runtimeVersion } of consumers) {
     const label = `${owner ? `${owner} through ` : ''}${product}@${version}`;
