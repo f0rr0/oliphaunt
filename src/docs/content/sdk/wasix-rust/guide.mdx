@@ -32,10 +32,8 @@ Return `Ok` to commit or `Err` to roll back. Use the transaction handle for all 
 
 Add the extension crate with its WASIX feature:
 
-```toml
-[dependencies]
-oliphaunt-wasix = "{{release:oliphaunt-wasix-rust}}"
-oliphaunt-extension-pgtap = { version = "{{release:oliphaunt-extension-pgtap}}", default-features = false, features = ["wasix"] }
+```sh
+cargo add oliphaunt-extension-pgtap --no-default-features --features wasix
 ```
 
 Select it before opening, then enable it with SQL:

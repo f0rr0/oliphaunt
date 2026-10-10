@@ -73,10 +73,10 @@ The server lifecycle handle does not run SQL itself. Use `AsyncOliphauntServer` 
 
 ## Select extensions
 
-Add the extension crate to `Cargo.toml`:
+Add the extension crate:
 
-```toml
-oliphaunt-extension-vector = "{{release:oliphaunt-extension-vector}}"
+```sh
+cargo add oliphaunt-extension-vector
 ```
 
 Select it before opening, then enable it with SQL:

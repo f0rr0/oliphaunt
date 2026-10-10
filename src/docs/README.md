@@ -9,23 +9,24 @@ From this directory after installing the root Bun workspace:
 - `bun run dev`: prepare content and start Next.js.
 - `bun run check`: check internal links, site TypeScript, and TypeScript quickstart snippets.
 - `bun run test`: exercise published-release selection and refresh-request handling.
-- `bun run build`: resolve versions, type-check TypeScript quickstarts, and export the site.
+- `bun run build`: resolve published-release data, type-check TypeScript quickstarts, and export the site.
 - `bun run smoke`: check exported routes and text endpoints.
 
 ## Versions and example accuracy
 
 These guides target the current checkout, per the documentation rewrite's scope.
-`{{release:product-id}}` resolves the owning path in `release-please-config.json`
-to `.release-please-manifest.json`. Updating a product version therefore updates
-all its public install examples without editing individual pages. Generated
-`docs-version.json` records the resolved map and source revision; set
+Install commands name packages without prescribing versions. Where the package
+manager requires a version field, show a placeholder for the application's
+chosen dependency. Compatibility belongs in package manifests and release
+qualification, not in a documentation-generated version set. Generated
+`docs-version.json` records checkout product versions and the source revision for
+build provenance only; set
 `OLIPHAUNT_DOCS_GIT_SHA` for a local archived build (Vercel uses its commit SHA).
 Keep this record with an archived static export. No historical picker is hosted.
 
-The version table separately lists completed stable GitHub releases. Never label
-current-checkout examples with an older published version. A source build does
-not prove registry availability; release qualification verifies the documented
-package set before publication. SDK dependencies select compatible runtimes.
+The release table lists completed stable GitHub releases and links to their notes.
+It does not recommend versions or establish compatibility. A source build does
+not prove registry availability. SDK dependencies select compatible runtimes.
 
 Each preparation resolves GitHub metadata anew and fails on network errors.
 For an explicit offline build set `OLIPHAUNT_DOCS_RELEASES_FILE` to a previously

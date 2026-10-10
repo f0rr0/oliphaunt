@@ -72,12 +72,12 @@ Here `restoredURL` is an app-owned file URL for a new or empty directory. Restor
 The base Swift package is extension-free. Add the generated product to your application before selecting it at open.
 
 1. Install [Bun](https://bun.sh/docs/installation), then obtain the Swift extension generator from the Oliphaunt source package matching your Swift dependency.
-2. Download the matching `vector` Swift extension carrier JSON from its [release](https://github.com/f0rr0/oliphaunt/releases/tag/oliphaunt-extension-vector-v{{release:oliphaunt-extension-vector}}).
+2. Download the matching `vector` Swift extension carrier JSON from its [release](https://github.com/f0rr0/oliphaunt/releases?q=oliphaunt-extension-vector-v).
 3. Generate a local Swift package with the command below, replacing the two input paths.
 
 ```sh
 bun /path/to/oliphaunt/src/native/sdks/swift/tools/render-extension-products.mts \
-  --extension-carrier /path/to/oliphaunt-extension-vector-{{release:oliphaunt-extension-vector}}-swift-extension-carrier.json \
+  --extension-carrier /path/to/vector-swift-extension-carrier.json \
   --extensions vector \
   --output-dir ./OliphauntExtensions
 ```
