@@ -3,6 +3,18 @@ import * as path from 'node:path';
 
 const [command, ...args] = process.argv.slice(2);
 switch (command) {
+  case 'qualification-swift-version': {
+    const [file, version] = args;
+    const descriptor = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (
+      descriptor.qualificationOnly !== true ||
+      descriptor.product !== 'oliphaunt-swift' ||
+      !/^\d+\.\d+\.\d+$/.test(version ?? '')
+    )
+      throw new Error('Swift version override requires an explicit qualification-only SDK');
+    process.stdout.write(version);
+    break;
+  }
   case 'configure-resource-dependencies': {
     const [workspaceFile, exampleFile, ...archives] = args;
     const { readPortableArchiveEntries } = await import(

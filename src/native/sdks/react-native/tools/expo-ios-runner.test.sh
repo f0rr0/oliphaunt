@@ -74,6 +74,7 @@ EOF
   export OLIPHAUNT_EXPO_IOS_SCRATCH="$scratch/runner"
   export OLIPHAUNT_EXPO_REQUIRE_SDK_ARTIFACTS=1
   export OLIPHAUNT_EXPO_SDK_ARTIFACT_ROOT="$scratch/sdk-artifacts"
+  export OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION=9.9.9
   . "${tool%.mts}.sh"
   swift_artifacts="$(expo_sdk_artifact_product_root oliphaunt-swift)"
   mkdir -p "$scratch/package" "$swift_artifacts/release-assets"
@@ -87,13 +88,33 @@ EOF
   bun "$root/tools/packaging/archive-directory.mts" --keep-parent \
     "$scratch/package" "$swift_artifacts/Oliphaunt-source.zip"
   prepare_swift_sdk_git_repo
+  test "$OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION" = 9.9.9
   git clone -q --branch "$OLIPHAUNT_SWIFT_SDK_BRANCH" "$OLIPHAUNT_SWIFT_SDK_GIT_URL" "$scratch/consumer"
+  if (cd "$scratch/consumer" && bash "$prepare" "$OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION") > "$scratch/pinned-version-failure.log" 2>&1; then
+    echo 'CocoaPods accepted SDK bytes from another declared version' >&2
+    exit 1
+  fi
+  rg -q 'checksum-pinned bindings target for the selected SDK version' "$scratch/pinned-version-failure.log"
+  cp "$rn_dir/package.json" "$scratch/declared-package.json"
+  for descriptor in \
+    '{"qualificationOnly":false,"product":"oliphaunt-swift"}' \
+    '{"qualificationOnly":true,"product":"another-sdk"}'; do
+    printf '%s\n' "$descriptor" > "$swift_artifacts/qualification.json"
+    if (prepare_swift_sdk_git_repo) > "$scratch/invalid-qualification.log" 2>&1; then
+      echo 'invalid qualification descriptor accepted' >&2
+      exit 1
+    fi
+  done
+  printf '%s\n' '{"qualificationOnly":true,"product":"oliphaunt-swift"}' > "$swift_artifacts/qualification.json"
+  prepare_swift_sdk_git_repo
+  test "$OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION" = "$version"
+  cmp "$scratch/declared-package.json" "$rn_dir/package.json"
   cd "$scratch/consumer"
   diff -r "$scratch/package/Sources" src/sdks/swift/Sources
   header_prepare="$(sed -n 's/^  s.prepare_command = "\(.*\)"$/\1/p' "$rn_dir/ios/podspecs/COliphaunt.podspec")"
   test -n "$header_prepare"
   bash -ec "$header_prepare"
-  bash "$prepare" "$version"
+  bash "$prepare" "$OLIPHAUNT_REACT_NATIVE_SWIFT_SDK_VERSION"
   cmp "$scratch/input/OliphauntNativeBindingsFFI.xcframework/Info.plist" Artifacts/OliphauntNativeBindingsFFI.xcframework/Info.plist
 )
 (

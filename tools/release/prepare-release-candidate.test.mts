@@ -404,7 +404,20 @@ for (const scenario of [
   {
     name: 'runtime and one external extension',
     files: [`${native}/src/liboliphaunt.c`, 'src/extensions/external/vector/source.toml'],
-    products: ['liboliphaunt-native', 'oliphaunt-extension-vector'],
+    products: [
+      'liboliphaunt-native',
+      'oliphaunt-extension-vector',
+      'oliphaunt-extension-pg-hashids',
+      'oliphaunt-extension-pg-ivm',
+      'oliphaunt-extension-pg-textsearch',
+      'oliphaunt-extension-pg-uuidv7',
+      'oliphaunt-extension-pgtap',
+      'oliphaunt-extension-postgis',
+      'oliphaunt-js',
+      'oliphaunt-kotlin',
+      'oliphaunt-swift',
+      'oliphaunt-react-native',
+    ],
   },
   {
     name: 'broker and Rust SDK retain the older published broker requirement',
@@ -426,6 +439,29 @@ for (const scenario of [
     ],
   },
   {
+    name: 'both runtime families and one extension close all default installs',
+    files: [
+      `${native}/src/liboliphaunt.c`,
+      `${wasix}/toolchain.toml`,
+      'src/extensions/external/vector/source.toml',
+    ],
+    products: [
+      'liboliphaunt-native',
+      'liboliphaunt-wasix',
+      ...Object.keys(graph.products).filter(
+        (id) => graph.products[id].extension?.class === 'external',
+      ),
+      'oliphaunt-js',
+      'oliphaunt-kotlin',
+      'oliphaunt-swift',
+      'oliphaunt-react-native',
+      'oliphaunt-wasix-rust',
+      'oliphaunt-wasix-ts',
+      'oliphaunt-wasix-napi',
+      'oliphaunt-pgwire-server',
+    ],
+  },
+  {
     name: 'shared package writer',
     files: ['src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts'],
     products: [
@@ -437,6 +473,10 @@ for (const scenario of [
       'oliphaunt-extension-pgtap',
       'oliphaunt-extension-postgis',
       'oliphaunt-extension-vector',
+      'oliphaunt-js',
+      'oliphaunt-kotlin',
+      'oliphaunt-swift',
+      'oliphaunt-react-native',
     ],
   },
 ])
@@ -582,7 +622,7 @@ for (const scenario of [
           requirement.binding === 'declared-requirement' &&
           ['liboliphaunt-native', 'liboliphaunt-wasix'].includes(requirement.sourceProduct)
         )
-          expect(requirement.version).toBe(compatibilityVersionValue(requirement));
+          expect(requirement.version).toBe(declaredRequirements.get(requirement.id));
       }
       const catalog = loadPublicationCatalog('release scenario', { products: scenario.products });
       const lock = {
@@ -619,9 +659,34 @@ for (const scenario of [
           graph.products['oliphaunt-broker'].version,
         );
       }
+      if (
+        scenario.products.includes('liboliphaunt-native') &&
+        scenario.products.includes('oliphaunt-js')
+      ) {
+        // Removing the planned SDK host edit recreates the original individually
+        // valid, mutually incompatible release. Admission must catch it independently.
+        run('git', ['reset', '--hard', source]);
+        applyCandidate(scratch, candidate);
+        const sdkPath = path.join(scratch, 'src/native/sdks/ts/package.json');
+        const sdk = JSON.parse(readFileSync(sdkPath, 'utf8'));
+        sdk.oliphaunt.liboliphauntVersion = productCompatibilityVersion(
+          'oliphaunt-js',
+          'liboliphaunt-native',
+        );
+        writeFileSync(sdkPath, `${JSON.stringify(sdk, null, 2)}\n`);
+        expect(() => run('bash', ['tools/release/close-release-candidate.sh', metadata])).toThrow(
+          /but oliphaunt-extension-.* targets liboliphaunt-native/u,
+        );
+      }
       if (scenario.products.includes('liboliphaunt-wasix')) {
         expect(readCompatibility('oliphaunt-wasix-rust', 'liboliphaunt-wasix')).toBe(
-          graph.products['liboliphaunt-wasix'].version,
+          declaredRequirements.get(
+            entries.find(
+              (entry) =>
+                entry.product === 'oliphaunt-wasix-rust' &&
+                entry.sourceProduct === 'liboliphaunt-wasix',
+            ).id,
+          ),
         );
         expect(readCompatibility('oliphaunt-wasix-napi', 'liboliphaunt-wasix')).toBe(
           products['liboliphaunt-wasix'].version,
@@ -630,7 +695,10 @@ for (const scenario of [
         applyCandidate(scratch, candidate);
         const sdkPath = path.join(scratch, 'src/wasix/sdks/ts/package.json');
         const sdk = JSON.parse(readFileSync(sdkPath, 'utf8'));
-        sdk.oliphaunt.runtimeVersion = products['liboliphaunt-wasix'].version;
+        sdk.oliphaunt.runtimeVersion =
+          sdk.oliphaunt.runtimeVersion === products['liboliphaunt-wasix'].version
+            ? graph.products['liboliphaunt-wasix'].version
+            : products['liboliphaunt-wasix'].version;
         writeFileSync(sdkPath, `${JSON.stringify(sdk, null, 2)}\n`);
         expect(() => run('bash', ['tools/release/close-release-candidate.sh', metadata])).toThrow(
           /differs from oliphaunt-wasix-napi .* runtime/u,
@@ -759,9 +827,7 @@ test('removing published exact host support supplies breaking intent before nati
   expect(changelog).toContain('replace exact host support');
   expect(changelog).toContain('repair vector packaging');
   expect(
-    reads
-      .filter(({ ref }) => ref !== null)
-      .every(({ product }) => product === vector.id || product === 'oliphaunt-extension-vector'),
+    reads.some(({ product, ref }) => product === 'oliphaunt-extension-vector' && ref !== null),
   ).toBe(true);
 });
 

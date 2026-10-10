@@ -4,75 +4,7 @@ import {
   validateReleaseConsumerCompatibility,
 } from './consumer-compatibility.mts';
 import { releasePackageBindings } from './release-graph.mts';
-
-function fixture() {
-  const extensionRuntimes = {
-    'oliphaunt-wasix-ts': 'liboliphaunt-wasix',
-    'oliphaunt-wasix-rust': 'liboliphaunt-wasix',
-    'oliphaunt-js': 'liboliphaunt-native',
-    'oliphaunt-kotlin': 'liboliphaunt-native',
-    'oliphaunt-swift': 'liboliphaunt-native',
-  };
-  const sdks = new Set([...Object.keys(extensionRuntimes), 'oliphaunt-rust']);
-  const versions = {
-    'oliphaunt-wasix-ts': '0.2.1',
-    'oliphaunt-wasix-napi': '0.2.0',
-    'postgres-tools-wasix': '0.2.3',
-    'oliphaunt-wasix-rust': '0.3.1',
-    'oliphaunt-rust': '0.3.1',
-    'oliphaunt-js': '0.3.0',
-    'oliphaunt-kotlin': '0.3.1',
-    'oliphaunt-swift': '0.8.0',
-    'oliphaunt-react-native': '0.3.0',
-    'oliphaunt-extension-vector': '9.8.7',
-    'liboliphaunt-wasix': '0.3.1',
-    'liboliphaunt-native': '0.3.1',
-  };
-  const products = Object.fromEntries(
-    Object.entries(versions).map(([id, version]) => [
-      id,
-      {
-        version,
-        tag_prefix: `${id}-v`,
-        ...(sdks.has(id) ? { kind: 'sdk' } : {}),
-        ...(extensionRuntimes[id]
-          ? { exact_extension_runtime: extensionRuntimes[id] }
-          : id === 'oliphaunt-rust'
-            ? { exact_extension_runtime: false }
-            : {}),
-        ...(id === 'oliphaunt-extension-vector' ? { extension: { class: 'external' } } : {}),
-      },
-    ]),
-  );
-  const pins = {
-    'oliphaunt-wasix-ts': { 'liboliphaunt-wasix': '0.3.1', 'oliphaunt-wasix-napi': '0.2.0' },
-    'oliphaunt-wasix-napi': { 'liboliphaunt-wasix': '0.3.1' },
-    'oliphaunt-wasix-rust': { 'liboliphaunt-wasix': '0.3.1' },
-    'postgres-tools-wasix': {
-      'oliphaunt-wasix-ts': '0.2.1',
-      'liboliphaunt-wasix': '0.3.1',
-    },
-    'oliphaunt-js': { 'liboliphaunt-native': '0.3.1' },
-    'oliphaunt-kotlin': { 'liboliphaunt-native': '0.3.1' },
-    'oliphaunt-swift': { 'liboliphaunt-native': '0.3.1' },
-    'oliphaunt-rust': { 'liboliphaunt-native': '0.3.1' },
-    'oliphaunt-react-native': { 'oliphaunt-kotlin': '0.3.1', 'oliphaunt-swift': '0.8.0' },
-    'oliphaunt-extension-vector': { 'liboliphaunt-wasix': '0.3.1', 'liboliphaunt-native': '0.3.1' },
-  };
-  const published = structuredClone(pins);
-  for (const [id, fields] of Object.entries(pins)) {
-    products[id].compatibility_versions = Object.fromEntries(
-      Object.keys(fields).map((source) => [source, { source_product: source }]),
-    );
-  }
-  const reads = [];
-  const readCompatibility = (product, source, _prefix, { ref }) => {
-    reads.push({ product, source, ref });
-    if (ref !== null) expect(ref.startsWith(products[product].tag_prefix)).toBe(true);
-    return (ref === null ? pins : published)[product][source];
-  };
-  return { products, pins, published, reads, readCompatibility };
-}
+import { fixture } from './testdata/extension-release-fixture.mts';
 
 test('compatible independent products pass without coupling their packaging versions', () => {
   const state = fixture();
@@ -92,7 +24,7 @@ test('source qualification cannot substitute a newer workspace addon for a publi
   ).not.toThrow();
 });
 
-test('SDK releases do not require every latest extension to follow their runtime', () => {
+test('SDK releases reject incompatible default extensions without coupling packaging versions', () => {
   const state = fixture();
   state.published['oliphaunt-extension-vector'] = {
     'liboliphaunt-wasix': '0.3.0',
@@ -110,8 +42,32 @@ test('SDK releases do not require every latest extension to follow their runtime
       ],
       state,
     ),
-  ).not.toThrow();
-  expect(state.reads.some(({ product }) => product === 'oliphaunt-extension-vector')).toBe(false);
+  ).toThrow('oliphaunt-extension-vector@9.8.7 targets');
+  expect(state.reads.some(({ product }) => product === 'oliphaunt-extension-vector')).toBe(true);
+});
+
+test('an SDK release reads unchanged extensions from their immutable tags', () => {
+  const state = fixture();
+  state.pins['oliphaunt-extension-vector']['liboliphaunt-native'] = '0.3.2';
+  expect(() => validateReleaseConsumerCompatibility(['oliphaunt-js'], state)).not.toThrow();
+  expect(state.reads).toContainEqual({
+    product: 'oliphaunt-extension-vector',
+    source: 'liboliphaunt-native',
+    ref: 'oliphaunt-extension-vector-v9.8.7',
+  });
+});
+
+test('extension-only releases cannot break unchanged SDK default installs', () => {
+  const state = fixture();
+  state.pins['oliphaunt-extension-vector']['liboliphaunt-native'] = '0.3.2';
+  expect(() => validateReleaseConsumerCompatibility(['oliphaunt-extension-vector'], state)).toThrow(
+    'oliphaunt-js@0.3.0 requires liboliphaunt-native@0.3.1',
+  );
+  expect(state.reads).toContainEqual({
+    product: 'oliphaunt-js',
+    source: 'liboliphaunt-native',
+    ref: 'oliphaunt-js-v0.3.0',
+  });
 });
 
 test('React Native validates the historical SDKs it actually pins', () => {
@@ -131,16 +87,20 @@ test('React Native validates the historical SDKs it actually pins', () => {
     });
 });
 
-test('an unrelated runtime or extension release retains independent consumer boundaries', () => {
+test('an unrelated runtime release retains independent consumer boundaries', () => {
   const state = fixture();
   state.published['oliphaunt-wasix-napi']['liboliphaunt-wasix'] = '0.3.0';
-  expect(() =>
-    validateReleaseConsumerCompatibility(
-      ['liboliphaunt-wasix', 'oliphaunt-extension-vector'],
-      state,
-    ),
-  ).not.toThrow();
+  expect(() => validateReleaseConsumerCompatibility(['liboliphaunt-wasix'], state)).not.toThrow();
   expect(state.reads).toEqual([]);
+});
+
+test('a compatible extension-only release preserves SDK versions and requirements', () => {
+  const state = fixture();
+  const before = structuredClone({ products: state.products, pins: state.pins });
+  expect(() =>
+    validateReleaseConsumerCompatibility(['oliphaunt-extension-vector'], state),
+  ).not.toThrow();
+  expect({ products: state.products, pins: state.pins }).toEqual(before);
 });
 
 test('a tools-only release uses its older SDK tag after the workspace SDK advances', () => {

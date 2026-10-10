@@ -51,4 +51,4 @@
   build, source-selection, target, and packaging output changes require
   releases regardless of commit subject.
 
-- Conventional manifests own consumer requirements. Public exact-host removal requires a breaking boundary; private dependency updates do not. Selecting an SDK does not select all external extensions. Frozen consumer proof is independent of capsule preparation and must identify the current tests and actual producing attempts.
+- Conventional manifests own consumer requirements. Public exact-host removal requires a breaking boundary; private dependency updates do not. Default SDK/extension installs must remain compatible: host changes select only the necessary Release Please dependency closure, while compatible updates and runtime-only releases keep independent scope. Frozen consumer proof is independent of capsule preparation and must identify the current tests and actual producing attempts.

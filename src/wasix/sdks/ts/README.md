@@ -10,8 +10,6 @@ npm install @oliphaunt/wasix-ts
 
 Browser Workers require cross-origin isolation. Follow the [quickstart](https://oliphaunt.dev/docs/sdk/wasix-typescript) to configure the required response headers and bundler.
 
-The [quickstart](https://oliphaunt.dev/docs/sdk/wasix-typescript) covers prerequisites and the versions documented by the current site. Pin dependencies in your application manifest or lockfile.
-
 ## First query
 
 ```ts
