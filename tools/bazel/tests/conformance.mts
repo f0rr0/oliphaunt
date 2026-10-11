@@ -183,7 +183,10 @@ function cargoBuildScriptParity() {
   const manifest = path.join(repository, 'Cargo.toml');
   writeFileSync(
     manifest,
-    readFileSync(manifest, 'utf8').replace(/^version = .*$/m, `version = "${version}"`),
+    readFileSync(path.join(repository, 'fixture.Cargo.toml'), 'utf8').replace(
+      /^version = .*$/m,
+      `version = "${version}"`,
+    ),
   );
   const pkg = '@conformance_cargo_build_script//';
   bazel('test', [
