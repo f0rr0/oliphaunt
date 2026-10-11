@@ -106,10 +106,10 @@ jobs:
           diagnostic_root="$RUNNER_TEMP/native-bazel-diagnostics"
           qualifier_output_base="$RUNNER_TEMP/native-bazel"
           mkdir -p "$diagnostic_root"
-          bash tools/dev/bazel.sh --output_base="$qualifier_output_base" \
+          bash tools/dev/bazel.sh --output_base="$qualifier_output_base" --host_jvm_args=-Xmx3g \
             --server_jvm_out="$diagnostic_root/server-jvm.out" test \
             //:portable_tests "${host_tests[@]}" \
-            --platforms="$profile" --host_platform="$profile" --jobs=2 \
+            --config=macos-sandbox --platforms="$profile" --host_platform="$profile" --jobs=2 \
             --profile="$diagnostic_root/qualification.json.gz" \
             --starlark_cpu_profile="$diagnostic_root/starlark.pprof" &
           qualifier_pid=$!
@@ -150,26 +150,48 @@ jobs:
           fi
           exit "$qualifier_status"
 
+      - name: Qualify installed desktop extension family
+        if: matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64'
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          case "$TARGET_PLATFORM" in
+            macos-arm64)
+              profile=//build_defs/host:native_macos_arm64
+              startup=(--output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
+                --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out")
+              configuration=(--config=macos-sandbox)
+              ;;
+            windows-x64)
+              profile=//build_defs/host:native_windows_x64
+              startup=(--output_base="$RUNNER_TEMP/b")
+              configuration=()
+              ;;
+          esac
+          bash tools/dev/bazel.sh "${startup[@]}" test \
+            //build_defs/extensions:desktop_members_sql_test \
+            "${configuration[@]}" --platforms="$profile" --host_platform="$profile" --jobs=2
+
       - name: Qualify declared macOS Swift SDK
         if: matrix.platform == 'macos-arm64'
         run: >-
-          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel"
+          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
           --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" test //build_defs/host:host_swift_smoke
           //src/native/sdks/swift:installed_consumer_test
           //src/native/sdks/swift:native_candidate_consumer_test
           //src/database-resources:swift_seed_archive
-          --platforms=//build_defs/host:apple_package_macos_arm64
+          --config=macos-sandbox --platforms=//build_defs/host:apple_package_macos_arm64
           --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
 
       - name: Construct native iOS device and simulator ABI consumers
         if: matrix.platform == 'macos-arm64'
         run: |
           for profile in ios_device_arm64 ios_simulator_arm64; do
-            bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" \
+            bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g \
               --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" build -c opt \
               //src/native/runtime:mobile_static_abi_consumer \
               //src/native/runtime:runtime_abi_binary \
-              --platforms="//build_defs/host:$profile" \
+              --config=macos-sandbox --platforms="//build_defs/host:$profile" \
               --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
           done
 
@@ -470,6 +492,60 @@ jobs:
           path: ~/.cache/oliphaunt/bazel-disk
           key: ${{ steps.bazel-cache.outputs.cache-primary-key }}
 
+  postmaster:
+    name: Linux native postmaster lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # This owner has a separate compiler/sysroot closure. Keep it parallel to
+      # tools/browser construction and share its one base across both profiles.
+      - name: Qualify native postmaster carrier and installed lifecycle
+        run: >-
+          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/postmaster-native" test
+          --platforms=//build_defs/wasix:portable
+          --host_platform=//build_defs/wasix:llvm_serializer_linux_x86_64
+          --compilation_mode=opt --jobs=2
+          //build_defs/wasix/postmaster:cargo_source_projection_test
+          //build_defs/wasix/postmaster:sjlj_runtime_probe_test
+          //build_defs/wasix/postmaster:vfork_runtime_probe_test
+          @postmaster_postgres//:sealed_profile_test
+          @postmaster_postgres//:runtime_test
+          //src/wasix/postmaster:linux_public_archive_test
+
+      - name: Qualify linked unwinder marker detection
+        run: >-
+          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/postmaster-native" test
+          --platforms=//build_defs/native:linux_x86_64_glibc_2_28
+          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28
+          --compilation_mode=opt --jobs=2
+          //build_defs/wasix/postmaster:linked_unwinder_present_test
+          //build_defs/wasix/postmaster:linked_unwinder_absent_test
+
+      - name: Upload native postmaster lifecycle diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-postmaster-lifecycle-diagnostics
+          path: |
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/test.log
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/test.xml
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/runtime-result.json
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/*.stdout
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/*.stderr
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/*.loader.jsonl
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/archive-result.json
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/*.stdout
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/*.stderr
+          if-no-files-found: ignore
+          retention-days: 5
+
   wasix-host:
     name: WASIX imported runtime (${{ matrix.platform }})
     needs: wasix
@@ -523,11 +599,15 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
           test -z "$(git status --porcelain)"
           startup=()
+          configuration=()
           if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
             startup=(--output_base="$RUNNER_TEMP/b")
+          elif [[ "$TARGET_PLATFORM" == macos-arm64 ]]; then
+            startup=(--host_jvm_args=-Xmx3g)
+            configuration=(--config=macos-sandbox)
           fi
           bash tools/dev/bazel.sh "${startup[@]}" test //src/wasix/sdks/rust:postgres_regression_test \
-            --platforms="$TARGET_PROFILE" --host_platform="$TARGET_PROFILE" \
+            "${configuration[@]}" --platforms="$TARGET_PROFILE" --host_platform="$TARGET_PROFILE" \
             --repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT="$EXPECTED_SOURCE_COMMIT" \
             --repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS="$RUNNER_TEMP/wasix-cargo-inputs" \
             --jobs=2 --local_test_jobs=1 \

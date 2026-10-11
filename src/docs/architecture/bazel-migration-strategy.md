@@ -51,17 +51,27 @@ does not admit a release or establish coverage of the other rows.
 
 | Boundary | Demonstrated | Remaining before cutover |
 | --- | --- | --- |
-| Linux runtime and WASIX | Native runtime tests pass on both Linux CPUs. The Linux WASIX producer, installed browser SQL/OPFS/crash checks, and ARM consumer of its exact transferred Cargo archives pass in CI. | Fresh qualification of the current source and all declared host consumers. |
-| WASIX tools | All 17 final shipping outputs pass the canonical publication reader and frozen staging locally. An installed test resolves the actual candidate tools beside an integrity-pinned public SDK. | Fresh CI with the full-family guard; remaining native host behavior. |
-| Native extensions | Seven external extension envelopes pass installed Linux SQL/restart tests. All 32 contrib members produce canonical Linux GitHub/npm/Cargo envelopes; selective loading and actual static OpenSSL legal closure pass. | Full owner facades, all declared platform/mobile/WASIX outputs, and complete installed compositions. |
-| Apple and Windows | Native package/toolchain contracts and local SDK watching scenarios pass. Windows startup uses a short output base for generated Rust object paths. | Genuine fresh Xcode/MSVC execution, complete Apple slices, and installed application tests. |
-| Postmaster | The genuine sysroot, all 29 sealed modules, AOT images, carrier and `initdb` build and run locally. Canonical fence, ABI, memory and export checks pass. The independent `longjmp` probe reproduces startup's unwind failure; registering FDEs instead of CIEs makes the unchanged probe succeed under a debugger. | Correct the linked-unwinder detection and pass both primitive probes without a debugger, then startup, SQL, concurrency/recovery, foreign hosts and final public envelopes. |
-| Construction evidence | The producing build emits shipping identities. Its BEP content-binds their bytes and configuration; physical inputs/outputs and required configured tests are checked. | Protected producer input lifetime, authenticated action-dump bytes, and loaded analysis/acquisition provenance. |
+| Linux runtime and WASIX | Native runtime tests pass on both Linux CPUs. The Linux WASIX producer, installed browser SQL/OPFS/crash checks, and ARM and macOS consumers of its exact transferred Cargo archives pass in CI at `93c8079f`. | Fresh qualification of the current source and all declared host consumers. |
+| WASIX tools | All 17 final shipping outputs pass the canonical publication reader, frozen staging and CI at `93c8079f`. An installed test resolves the actual candidate tools beside an integrity-pinned public SDK. | Fresh qualification after source changes and remaining native host behavior. |
+| Native extensions | Seven external extension envelopes pass installed Linux SQL/restart tests. All 32 contrib members produce canonical Linux GitHub/npm/Cargo envelopes; selective loading and actual static OpenSSL legal closure pass. The complete eight-distribution/39-member Linux ARM envelope contract passes locally against real AArch64 outputs, including split PostGIS crates and static OpenSSL legal closure; that x64-hosted check does not execute ARM SQL. The shared desktop root builds and validates 38 actual archives and executes the canonical fixtures through relocated embedded/server consumers locally. | Full owner facades, actual macOS/Windows execution, all declared mobile/WASIX outputs, and complete installed compositions. |
+| Apple and Windows | Native package/toolchain contracts and local SDK watching scenarios pass. Actual macOS profiling identified repeated sandbox input-tree traversal after completed analysis; the built-in in-memory sandbox reuse passes focused input-edit/removal and stale-output regressions. Windows startup uses a short output base; the later imported build-script path needs the conventional private crate name. | Fresh actual SDK/host qualification, including macOS timing/heap and Windows generated-object paths, complete Apple slices, and installed application tests. |
+| Postmaster | The genuine sysroot, all 29 sealed modules, AOT images, carrier and `initdb` build and run locally. Correct linked-unwinder detection passes real `longjmp` and `vfork` probes, startup/SQL, four concurrent backends, clean reopening and the existing immediate-shutdown/WAL-redo recovery contract. Canonical fence, ABI, memory and export checks pass. The actual Linux x64 public archive retains the canonical source bytes/layout/modes, passes unchanged carrier admission and initializes a real cluster through its installed launcher. | Declared lifecycle CI, both foreign public archives and the complete family checksum. The existing host-SIGKILL/shared-memory-liveness limitation remains separate from immediate PostgreSQL recovery. |
+| Construction evidence | The producing build emits shipping identities. Its BEP binds their bytes and configuration; physical inputs/outputs and required configured tests are checked. The explicit reviewed-producer API requires an authenticated exact main source/attempt and canonical job/artifact role; its policy regressions preserve PR construction-only transport. | Wire the reviewed-source assurance into release admission with complete canonical product qualification. The reviewed isolated builder attests input lifetime and the after-build dump; parsing their bytes alone does not prove those execution claims. |
 | Release integration | Authenticated construction observations and explicitly opted-in controller metadata have focused regressions. Default publication inventory and frozen locks reject incomplete native admission. | All-product coverage, durable admitted baselines, one necessary-delivery/compatibility decision, and replacement of the active selector and gates. |
 
 The migration remains incomplete. Existing Moon qualification and release
 selection retain authority; these construction checkpoints cannot be used to
 justify publishing or to remove an existing gate.
+
+macOS construction uses `--config=macos-sandbox` and the same
+`--host_jvm_args=-Xmx3g` startup setting throughout its shared output base. The
+extra heap is a bounded allowance for Bazel's retained sandbox input maps;
+actual hosted timing and memory remain qualification evidence. SDK inputs and
+sandbox isolation remain declared. Linux postmaster qualification has its own
+parallel owner job and reuses one base across its portable/serializer and native
+marker-test profiles. Installed desktop SQL includes construction validation,
+so CI does not also execute the separate construction check or duplicate the
+existing Linux 39-member SQL lane.
 
 The audit baseline is main commit
 `8316eb419999f47d6d4a61a8444e6c5ef32caf46`, tree
