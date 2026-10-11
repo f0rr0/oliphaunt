@@ -947,6 +947,7 @@ link_liboliphaunt() {
       -Wl,-soname,liboliphaunt.so \
       -Wl,-z,defs \
       -Wl,-z,max-page-size=16384 \
+      -Wl,-z,common-page-size=16384 \
       -o "$lib_out" \
       "${liboliphaunt_objects[@]}" \
       "${mobile_static_objects[@]}" \

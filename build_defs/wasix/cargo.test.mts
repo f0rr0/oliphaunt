@@ -127,43 +127,45 @@ async function fixture(target: string | null = null) {
   return { root, spec, manifest, manifestPath, sourceRoot };
 }
 
-test('all five canonical Cargo envelopes preserve declared sources and payload bytes', async () => {
-  for (const target of [null, ...Object.keys(AOT_TARGET_TRIPLES)]) {
-    const { root, spec, sourceRoot } = await fixture(target);
-    const first = path.join(root, 'first.crate');
-    const second = path.join(root, 'second.crate');
-    packageRuntimeCargo(spec, first);
-    packageRuntimeCargo(spec, second);
-    expect(await readFile(first)).toEqual(await readFile(second));
-    const files = await new Bun.Archive(await readFile(first)).files();
-    const read = async (name: string) => {
-      const file = files.get(`${spec.packageName}-${spec.version}/${name}`);
-      if (!file) throw new Error(`independent archive reader found no ${name}`);
-      return Buffer.from(await file.arrayBuffer());
-    };
-    const manifest = Bun.TOML.parse((await read('Cargo.toml')).toString());
-    expect(manifest.package).toMatchObject({ name: spec.packageName, version: spec.version });
-    expect(manifest.package.publish).toBeUndefined();
-    expect((await read('build.rs')).toString()).toBe(
-      'const PACKAGE_LOCAL: bool = true;\ninclude!("build-support.rs");\n',
-    );
-    expect(await read('build-support.rs')).toEqual(
-      await readFile(spec.sources['build-support.rs']),
-    );
-    expect(await read('src/lib.rs')).toEqual(await readFile(spec.sources['src/lib.rs']));
-    expect(await read(`${target ? 'artifacts' : 'payload'}/manifest.json`)).toEqual(
-      await readFile(path.join(spec.payload, 'manifest.json')),
-    );
-    expect([...files.keys()].some((member) => member.includes('BUILD.bazel'))).toBe(false);
-    const extracted = path.join(root, 'installed');
-    extractPortableArchiveTree(first, extracted, `${spec.packageName}-${spec.version}`);
-    validatePackedRuntimeCargo(extracted, spec, sourceRoot);
-    await writeFile(path.join(extracted, 'build.rs'), await readFile(spec.sources['build.rs']));
-    expect(() => validatePackedRuntimeCargo(extracted, spec, sourceRoot)).toThrow(
-      'must require its package-local payload',
-    );
-  }
-});
+async function verifyCanonicalEnvelope(target: string | null) {
+  const { root, spec, sourceRoot } = await fixture(target);
+  const first = path.join(root, 'first.crate');
+  const second = path.join(root, 'second.crate');
+  packageRuntimeCargo(spec, first);
+  packageRuntimeCargo(spec, second);
+  expect(await readFile(first)).toEqual(await readFile(second));
+  const files = await new Bun.Archive(await readFile(first)).files();
+  const read = async (name: string) => {
+    const file = files.get(`${spec.packageName}-${spec.version}/${name}`);
+    if (!file) throw new Error(`independent archive reader found no ${name}`);
+    return Buffer.from(await file.arrayBuffer());
+  };
+  const manifest = Bun.TOML.parse((await read('Cargo.toml')).toString());
+  expect(manifest.package).toMatchObject({ name: spec.packageName, version: spec.version });
+  expect(manifest.package.publish).toBeUndefined();
+  expect((await read('build.rs')).toString()).toBe(
+    'const PACKAGE_LOCAL: bool = true;\ninclude!("build-support.rs");\n',
+  );
+  expect(await read('build-support.rs')).toEqual(await readFile(spec.sources['build-support.rs']));
+  expect(await read('src/lib.rs')).toEqual(await readFile(spec.sources['src/lib.rs']));
+  expect(await read(`${target ? 'artifacts' : 'payload'}/manifest.json`)).toEqual(
+    await readFile(path.join(spec.payload, 'manifest.json')),
+  );
+  expect([...files.keys()].some((member) => member.includes('BUILD.bazel'))).toBe(false);
+  const extracted = path.join(root, 'installed');
+  extractPortableArchiveTree(first, extracted, `${spec.packageName}-${spec.version}`);
+  validatePackedRuntimeCargo(extracted, spec, sourceRoot);
+  await writeFile(path.join(extracted, 'build.rs'), await readFile(spec.sources['build.rs']));
+  expect(() => validatePackedRuntimeCargo(extracted, spec, sourceRoot)).toThrow(
+    'must require its package-local payload',
+  );
+}
+
+for (const target of [null, ...Object.keys(AOT_TARGET_TRIPLES)]) {
+  test(`canonical ${target ?? 'portable'} Cargo envelope preserves sources and payload bytes`, () => {
+    return verifyCanonicalEnvelope(target);
+  });
+}
 
 test('runtime Cargo rejects wrong carrier identity, unsafe sources, missing notices and stale payloads', async () => {
   const { root, spec, manifest, manifestPath } = await fixture();

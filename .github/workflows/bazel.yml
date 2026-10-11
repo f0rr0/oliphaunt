@@ -58,6 +58,7 @@ jobs:
         uses: ./.github/actions/setup-msvc
 
       - name: Qualify packages and native host behavior
+        timeout-minutes: 70
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
         run: |
@@ -262,7 +263,7 @@ jobs:
 
       - name: Qualify bridge and initdb shim ABI
         run: >-
-          bash tools/dev/bazel.sh test //build_defs/wasix:bridge_abi_test
+          bash tools/dev/bazel.sh test --config=wasix-aot //build_defs/wasix:bridge_abi_test
           //build_defs/wasix:initdb_shim_abi_test
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
@@ -289,7 +290,7 @@ jobs:
       - name: Qualify installed browser SQL
         run: |
           chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
-          bash tools/dev/bazel.sh run //src/wasix/sdks/ts:browser_sql_consumer \
+          bash tools/dev/bazel.sh run --config=wasix-aot //src/wasix/sdks/ts:browser_sql_consumer \
             --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
             --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2 \
             -- "$chrome_binary" "$RUNNER_TEMP/chrome-host.json"

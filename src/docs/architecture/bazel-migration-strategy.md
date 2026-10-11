@@ -667,9 +667,11 @@ Use parallel construction and behavior cohorts with distinct purposes. Batch
 related Linux roots per execution configuration so one invocation shares
 analysis and actions. Construct supported Linux, Android and portable WASIX
 outputs on Linux. Keep native Apple/MSVC construction where the declared SDK or
-toolchain requires it. Move Swift assembly/consumers to macOS. Devices/browser/GUI
-tests use separately allocated suitable hosts; `--platforms` does not allocate
-a runner or emulator. A native compiler/rule integration probe can deliberately
+toolchain requires it. Swift compilation, Apple SDK-dependent framework actions
+and SwiftPM consumers run on macOS; pure archive assembly stays on Linux when
+its complete final inputs are available. Devices/browser/GUI tests use separately
+allocated suitable hosts; `--platforms` does not allocate a runner or emulator.
+A native compiler/rule integration probe can deliberately
 construct a small fixture on its host, but cannot stand in for testing the final
 Linux-constructed package.
 
@@ -720,9 +722,9 @@ explicit operational trust boundary, not a shortcut within construction. Apple
 aggregate artifacts can be fully constructed on the Apple host. Device jobs
 similarly consume an exact qualified app envelope.
 
-The cross-host handoff is the lock-derived `frozenFiles` projection, not a copied
-Bazel output base or a second authored inventory. Reuse the existing physical
-output capture and publication-lock file expansion: preserve the source commit
+The release cross-host handoff is the lock-derived `frozenFiles` projection,
+not a copied Bazel output base or a second authored inventory. Reuse the existing
+physical output capture and publication-lock file expansion: preserve the source commit
 and tree, configured shipping roots, target identity, relative member paths,
 hashes, sizes and required modes/directory boundaries. Transport only the final
 package closure plus its construction evidence, then verify the files again on
@@ -730,14 +732,21 @@ the receiving host. Consumer evidence identifies that same source and lock
 digest, the package hashes it actually consumed, and the observed host/SDK/device
 identity. It does not rewrite construction provenance.
 
+During migration, construction-only capture can use the same physical output
+boundary before publication integration. The WASIX helper captures the five
+final Cargo envelopes; its importer verifies exact source identity, canonical
+targets, archive hashes and packaged contents. These receipts neither authorize
+publication nor prove foreign-host execution. GitHub artifact transport and
+installed macOS/Windows consumption must still pass for those exact files.
+
 Host/device tests install or execute these files directly, using conventional
 consumer compilers where that is the public interface. Missing, substituted or
 wrong-target bytes fail before execution. They must not invoke the shipping
 producer, satisfy a Bazel dependency by placing files in its output directory,
 fall back to workspace runtime sources, or use a cache entry as host execution
 proof. For example, a Linux-only WASIX serializer stays in the Linux construction
-cohort; macOS and Windows qualification deserialize and execute its transported
-AOT images with their native runtime. Calling a target that still depends on the
+cohort; macOS and Windows qualification must deserialize and execute its
+transported AOT images with their native runtime. Calling a target that still depends on the
 serializer on those hosts would request an unavailable Linux execution action,
 not provide cross-host qualification.
 

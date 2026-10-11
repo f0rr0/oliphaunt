@@ -108,7 +108,7 @@ profile=//build_defs/native:linux_x86_64_glibc_2_28
 receipt_dir="$(mktemp -d)"
 chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts \
   "$receipt_dir/chrome-host.json" local-linux unmanaged)"
-bash tools/dev/bazel.sh run //src/wasix/sdks/ts:browser_sql_consumer \
+bash tools/dev/bazel.sh run --config=wasix-aot //src/wasix/sdks/ts:browser_sql_consumer \
   --platforms="$profile" --host_platform="$profile" --jobs=2 \
   -- "$chrome_binary" "$receipt_dir/chrome-host.json"
 ```
@@ -125,6 +125,13 @@ checks. Those hosted checks must pass for the exact source commit. This migratio
 workflow does not supply publication evidence. Existing Required/Qualified and frozen
 publication checks remain authoritative until every product/platform's native
 construction and final carrier gate passes.
+
+Shared construction stays on Linux to reproduce CI locally. macOS/Windows jobs
+provide licensed SDK construction and native execution where required. Cross-host
+consumers must receive exact final archives with their source, target and hash
+receipts through GitHub artifacts. The five-Cargo WASIX capture/importer helpers
+validate this construction boundary; foreign-host installed execution and release
+integration remain pending. No remote executor is needed for this handoff.
 
 `@oliphaunt_metadata` imports existing release and extension manifests. Its
 identity targets have no payload dependencies. Construction exports describe
@@ -147,7 +154,6 @@ Tool/rule repins intentionally update `MODULE.bazel.lock`:
 bash tools/dev/bazel.sh mod deps --lockfile_mode=update
 ```
 
-Ordinary commands verify that lock. Linux-first construction makes shared CI
-failures reproducible locally; no hosted executor or cache is required. See the
+Ordinary commands verify that lock. See the
 [migration strategy](../../src/docs/architecture/bazel-migration-strategy.md)
 for remaining product coverage and cutover gates.

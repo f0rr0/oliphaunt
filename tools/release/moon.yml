@@ -123,6 +123,10 @@ tasks:
       - requires-rust
     command: bash tools/release/release-check.sh --mutation-tests-only
     inputs:
+      - /build_defs/native/carriers/envelopes.mts
+      - /build_defs/native/carriers/payload.mts
+      - /src/native/runtime/tools/native-runtime-payload.mts
+      - /src/native/runtime/tools/native-runtime-payload-policy.json
       - /src/**/tools/frozen-*.mts
       - /src/wasix/sdks/ts/tools/browser-cdp.mts
       - /src/native/runtime/smoke/frozen-consumer.c

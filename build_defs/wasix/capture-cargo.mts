@@ -62,7 +62,7 @@ export function captureWasixCargoConstructionInputs({
   });
   const carriers = new Map(
     catalog.carriers
-      .filter((carrier) => carrier.ecosystem === 'cargo')
+      .filter((carrier) => carrier.ecosystem === 'cargo' && TARGETS.has(carrier.name))
       .map((carrier) => [carrier.name, carrier]),
   );
   if (carriers.size !== TARGETS.size || [...TARGETS.keys()].some((name) => !carriers.has(name)))

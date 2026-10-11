@@ -74,6 +74,8 @@ def host_cc_profiles(sdk):
             },
             archiver_flags = ["/MACHINE:X64"],
             default_link_flags = ["/MACHINE:X64"],
+            fastbuild_mode_debug_flag = "/DEBUG",
+            dbg_mode_debug_flag = "/DEBUG",
             supports_parse_showincludes = True,
             shorten_virtual_includes = True,
         )

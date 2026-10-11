@@ -62,8 +62,10 @@ def icu_windows_targets(common_sources, i18n_sources):
     _data_object(name = "windows_data_object", version = "common/unicode/uvernum.h", types = "common/unicode/utypes.h", target_compatible_with = _WINDOWS)
     # Upstream pkgdata uses /NOENTRY for its data-only DLL: no CRT initializer
     # or bootstrap stub is part of the Unicode resource carrier.
-    # Its COFF resource object has no debug information for a PDB.
-    _shared(name = "icudt76.dll", srcs = [":windows_data_object"], linkopts = ["/NOENTRY", "/MANIFEST:NO"], features = ["-generate_pdb_file"])
+    # Its raw COFF data object is independent of C++ compilation/debug modes.
+    # Those mode features imply generate_pdb_file; disable the owning modes
+    # together with the PDB feature for this resource-only link.
+    _shared(name = "icudt76.dll", srcs = [":windows_data_object"], linkopts = ["/NOENTRY", "/MANIFEST:NO"], features = ["-fastbuild", "-dbg", "-generate_pdb_file"])
 
     for role, sources, headers, dependencies, definitions, linkopts in [
         ("common", common_sources, ":common_headers", [":icudt76.dll_import"], ["U_COMMON_IMPLEMENTATION", "U_PLATFORM_USES_ONLY_WIN32_API=1"], ["kernel32.lib", "advapi32.lib"]),
