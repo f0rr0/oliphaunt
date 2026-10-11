@@ -23,7 +23,7 @@ filegroup(name = "headers", srcs = glob(["**/*.h", "**/*.hpp", "**/*.inl", "**/*
 """
 
 _DEPENDENCY_INPUTS = {
-    "geos": '\nfilegroup(name = "native_sources", srcs = glob(["src/**/*.cpp", "capi/*.cpp"]))\nfilegroup(name = "native_c_sources", srcs = glob(["src/deps/**/*.c"]))\n',
+    "geos": '\nfilegroup(name = "native_sources", srcs = glob(["src/**/*.cpp", "capi/*.cpp"]))\nfilegroup(name = "native_c_sources", srcs = glob(["src/deps/**/*.c"]))\nfilegroup(name = "native_core_sources", srcs = glob(["src/**/*.cpp"]))\nfilegroup(name = "native_capi_sources", srcs = glob(["capi/*.cpp"]))\n',
     "proj": '\nfilegroup(name = "native_sources", srcs = glob(["src/*.cpp", "src/projections/*.cpp", "src/conversions/*.cpp", "src/transformations/*.cpp", "src/iso19111/**/*.cpp"]))\nfilegroup(name = "native_c_sources", srcs = glob(["src/*.c"], exclude = ["src/embedded_resources.c", "src/memvfs.c"]))\n',
 }
 

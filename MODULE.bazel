@@ -107,8 +107,10 @@ native_cargo_metadata(
 )
 
 cargo_crates = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+# Short physical Cargo hub names keep MSVC's relative includes below MAX_PATH;
+# use_repo aliases preserve descriptive labels for the configured contexts.
 cargo_crates.from_cargo(
-    name = "cargo_crates",
+    name = "n",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@native_cargo_metadata//:Cargo.lock",
     manifests = ["@native_cargo_metadata//:Cargo.toml"],
@@ -124,7 +126,7 @@ cargo_crates.from_cargo(
         "x86_64-linux-android",
     ],
 )
-use_repo(cargo_crates, "cargo_crates")
+use_repo(cargo_crates, cargo_crates = "n")
 
 node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
 node.toolchain(node_version_from_nvmrc = "@oliphaunt_toolchain_metadata//:node-version")
@@ -200,7 +202,7 @@ mobile_cargo_metadata(
     activations = {"src/native/mobile-bindings": ["bindgen"]},
 )
 cargo_crates.from_cargo(
-    name = "mobile_bindgen_crates",
+    name = "m",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@mobile_bindgen_cargo_metadata//:Cargo.lock",
     manifests = ["@mobile_bindgen_cargo_metadata//:Cargo.toml"],
@@ -212,7 +214,7 @@ cargo_crates.from_cargo(
         "x86_64-pc-windows-msvc",
     ],
 )
-use_repo(cargo_crates, "mobile_bindgen_crates")
+use_repo(cargo_crates, mobile_bindgen_crates = "m")
 
 openssl = use_repo_rule("//build_defs/native:openssl_repository.bzl", "openssl_repository")
 openssl(name = "openssl")
@@ -224,7 +226,7 @@ native_cargo_metadata(
     activations = {"src/wasix/runtime/tools/xtask": ["aot-serializer"]},
 )
 cargo_crates.from_cargo(
-    name = "aot_serializer_crates",
+    name = "a",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@aot_serializer_cargo_metadata//:Cargo.lock",
     manifests = ["@aot_serializer_cargo_metadata//:Cargo.toml"],
@@ -236,7 +238,7 @@ cargo_crates.from_cargo(
         "x86_64-pc-windows-msvc",
     ],
 )
-use_repo(cargo_crates, "aot_serializer_crates")
+use_repo(cargo_crates, aot_serializer_crates = "a")
 
 browser_sources = use_repo_rule("//build_defs/wasix/browser:repositories.bzl", "browser_sources_repository")
 browser_sources(name = "browser_sources")
@@ -273,7 +275,7 @@ register_toolchains("//build_defs/wasix/browser/std:host_toolchain", "//build_de
 
 cargo_crates.annotation(
     crate = "llvm-sys",
-    repositories = ["aot_serializer_crates"],
+    repositories = ["a"],
     build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_files"],
     build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_env"],
     patches = ["//build_defs/wasix:llvm-sys-declared-prefix.patch"],
@@ -288,13 +290,13 @@ cargo_crates.annotation(
 )
 cargo_crates.annotation_select(
     crate = "llvm-sys",
-    repositories = ["aot_serializer_crates", "wasix_seed_crates"],
+    repositories = ["a", "s"],
     triples = ["aarch64-unknown-linux-gnu"],
     link_deps = ["@oliphaunt//build_defs/extensions/postgis:libxml2"],
 )
 cargo_crates.annotation_select(
     crate = "llvm-sys",
-    repositories = ["aot_serializer_crates", "wasix_seed_crates"],
+    repositories = ["a", "s"],
     triples = ["x86_64-unknown-linux-gnu"],
     link_deps = [
         "@oliphaunt//build_defs/extensions/postgis:libxml2",
@@ -474,7 +476,7 @@ native_cargo_metadata(
 )
 wasix_adapter_crates = use_extension("//build_defs/languages:adapter-cargo-extension.bzl", "crate")
 wasix_adapter_crates.from_cargo(
-    name = "wasix_adapter_crates",
+    name = "d",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@wasix_adapter_cargo_metadata//:Cargo.lock",
     manifests = ["@wasix_adapter_cargo_metadata//:Cargo.toml"],
@@ -486,7 +488,7 @@ wasix_adapter_crates.from_cargo(
         "x86_64-pc-windows-msvc",
     ],
 )
-use_repo(wasix_adapter_crates, "wasix_adapter_crates")
+use_repo(wasix_adapter_crates, wasix_adapter_crates = "d")
 
 # Independent feature acquisition preserves the headless SDK's feature set.
 native_cargo_metadata(
@@ -494,7 +496,7 @@ native_cargo_metadata(
     activations = {"src/database-resources/seeds/wasix": ["cluster-seed-runner"]},
 )
 cargo_crates.from_cargo(
-    name = "wasix_seed_crates",
+    name = "s",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@wasix_seed_cargo_metadata//:Cargo.lock",
     manifests = ["@wasix_seed_cargo_metadata//:Cargo.toml"],
@@ -506,20 +508,20 @@ cargo_crates.from_cargo(
         "x86_64-pc-windows-msvc",
     ],
 )
-use_repo(cargo_crates, "wasix_seed_crates")
+use_repo(cargo_crates, wasix_seed_crates = "s")
 
 # Keep Mach-O sections valid and serialized GOT relocation ordering repeatable.
 cargo_crates.annotation(
     crate = "wasmer-compiler-llvm",
     version = "=7.2.1",
-    repositories = ["aot_serializer_crates", "wasix_seed_crates"],
+    repositories = ["a", "s"],
     patches = ["//build_defs/wasix:wasmer-macho-trampoline.patch"],
     patch_args = ["-p1"],
 )
 
 cargo_crates.annotation(
     crate = "llvm-sys",
-    repositories = ["wasix_seed_crates"],
+    repositories = ["s"],
     build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_files"],
     build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_env"],
     patches = ["//build_defs/wasix:llvm-sys-declared-prefix.patch"],
@@ -665,7 +667,7 @@ native_cargo_metadata(
 )
 wasix_release_crates = use_extension("//build_defs/languages:release-cargo-extension.bzl", "crate")
 wasix_release_crates.from_cargo(
-    name = "wasix_release_crates",
+    name = "r",
     host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@wasix_release_cargo_metadata//:Cargo.lock",
     manifests = ["@wasix_release_cargo_metadata//:Cargo.toml"],
@@ -679,93 +681,95 @@ wasix_release_crates.from_cargo(
 )
 use_repo(
     wasix_release_crates,
-    "wasix_release_crates",
-    "wasix_release_crates__oliphaunt-wasix-0.3.2",
-    "wasix_release_crates__liboliphaunt-wasix-portable-0.3.2",
-    "wasix_release_crates__liboliphaunt-wasix-aot-aarch64-apple-darwin-0.3.2",
-    "wasix_release_crates__liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu-0.3.2",
-    "wasix_release_crates__liboliphaunt-wasix-aot-x86_64-pc-windows-msvc-0.3.2",
-    "wasix_release_crates__liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu-0.3.2",
-    "wasix_release_crates__oliphaunt-extension-contrib-pg18-wasix-0.3.2",
-    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-linux-arm64-0.3.2",
-    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-linux-x64-0.3.2",
-    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-macos-arm64-0.3.2",
-    "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-windows-x64-0.3.2",
+    **{
+        "wasix_release_crates": "r",
+        "wasix_release_crates__oliphaunt-wasix-0.3.2": "r__oliphaunt-wasix-0.3.2",
+        "wasix_release_crates__liboliphaunt-wasix-portable-0.3.2": "r__liboliphaunt-wasix-portable-0.3.2",
+        "wasix_release_crates__liboliphaunt-wasix-aot-aarch64-apple-darwin-0.3.2": "r__liboliphaunt-wasix-aot-aarch64-apple-darwin-0.3.2",
+        "wasix_release_crates__liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu-0.3.2": "r__liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu-0.3.2",
+        "wasix_release_crates__liboliphaunt-wasix-aot-x86_64-pc-windows-msvc-0.3.2": "r__liboliphaunt-wasix-aot-x86_64-pc-windows-msvc-0.3.2",
+        "wasix_release_crates__liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu-0.3.2": "r__liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu-0.3.2",
+        "wasix_release_crates__oliphaunt-extension-contrib-pg18-wasix-0.3.2": "r__oliphaunt-extension-contrib-pg18-wasix-0.3.2",
+        "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-linux-arm64-0.3.2": "r__oliphaunt-extension-contrib-pg18-aot-linux-arm64-0.3.2",
+        "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-linux-x64-0.3.2": "r__oliphaunt-extension-contrib-pg18-aot-linux-x64-0.3.2",
+        "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-macos-arm64-0.3.2": "r__oliphaunt-extension-contrib-pg18-aot-macos-arm64-0.3.2",
+        "wasix_release_crates__oliphaunt-extension-contrib-pg18-aot-windows-x64-0.3.2": "r__oliphaunt-extension-contrib-pg18-aot-windows-x64-0.3.2",
+    }
 )
 
 wasix_release_crates.annotation(
     crate = "oliphaunt-wasix",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file_content = "filegroup(name = \"payload_files\", srcs = [\"Cargo.toml\"], visibility = [\"//visibility:public\"])\n",
 )
 
 wasix_release_crates.annotation(
     crate = "liboliphaunt-wasix-portable",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "liboliphaunt-wasix-aot-aarch64-apple-darwin",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "oliphaunt-extension-contrib-pg18-wasix",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "oliphaunt-extension-contrib-pg18-aot-linux-arm64",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "oliphaunt-extension-contrib-pg18-aot-linux-x64",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "oliphaunt-extension-contrib-pg18-aot-macos-arm64",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )
 
 wasix_release_crates.annotation(
     crate = "oliphaunt-extension-contrib-pg18-aot-windows-x64",
     version = "=0.3.2",
-    repositories = ["wasix_release_crates"],
+    repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
 )

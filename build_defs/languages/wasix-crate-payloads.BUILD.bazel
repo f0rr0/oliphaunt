@@ -5,7 +5,7 @@ filegroup(
     name = "payload_files",
     srcs = ["Cargo.toml"] + glob(
         ["payload/**", "artifacts/**", "manifests/**"],
-        allow_empty = False,
+        allow_empty = True,
     ),
     visibility = ["//visibility:public"],
 )
