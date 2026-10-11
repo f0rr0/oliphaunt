@@ -34,6 +34,11 @@ platforms and commands. No remote executor is required or configured.
 GitHub-hosted runners provide native host and SDK verification. A foreign target
 does not by itself justify moving its construction off Linux; platform SDK
 requirements and actual runtime execution determine the exceptions.
+Keep the construction host, package target and execution host separate. A
+Linux-built foreign package retains its configured target and frozen hashes
+when it moves to a native consumer; the consumer must neither reconstruct the
+producer closure nor relabel those bytes as a native-host build. Every shared
+construction command must work locally without a remote executor or cache.
 Full WASIX, mobile, macOS and Windows construction, final carrier coverage and
 publication cutover remain migration gates. Moon and the current producer
 engines remain in use for products whose replacements have not passed those
@@ -123,7 +128,7 @@ Source findings explain why changing the scheduler alone is insufficient:
 | `tools/release/prepare-release-candidate.mts`, `includeOwnedSourceCommits` | Starts with already path-filtered commits, then adds observed ownership; old entries are not inherently bounded by the completed product boundary | Start with a complete verified history and an empty per-product selection; require every boundary to be reached |
 | `with-product-history.sh` versus Release Please history | Git tags and GitHub release discovery can disagree about the last completed delivery | One completed-publication snapshot shared by preparation and admission |
 | `tools/ci/ci_plan.mts` and `.github/scripts/*moon*` | Reconstruct closures, setup capability propagation, target grouping, and execution batches outside the task engine | Bazel handles dependencies and execution; a thin scheduler partitions explicit roots/configurations into GitHub jobs |
-| `run-planned-moon-job.sh` | Transferred output trees lead to disabled cache/prerequisite traversal | Remove construction transfers and satisfaction overrides; request the complete Bazel closure |
+| `run-planned-moon-job.sh` | Transferred output trees lead to disabled cache/prerequisite traversal | Remove intermediate producer-tree transfers and satisfaction overrides; construction requests its complete Bazel closure. Transport verified final packages explicitly to native consumers |
 | Persistent exact-extension Android/iOS builders | Source invalidation clears the PG build directory while dependency archives survive; OpenSSL/PostGIS helpers can return on archive/header presence. This finding does not establish stale extension-free base CI | Native dependency actions keyed by actual source/tools/flags; remove readiness-based reuse |
 | Native desktop dependency selection | Host OpenSSL/Homebrew/PostGIS libraries and ambient generator executables influence production | Pinned repositories/toolchains and explicit parity qualification of changed dependency selection |
 | WASIX initdb/frontends | Mutable common/port archives are rebuilt with different frontend/backend flags | Separate configured libraries and outputs |
@@ -653,12 +658,20 @@ Keep multiple jobs/invocations. The thin TS plan contains source/request identit
 explicit `(root, configuration)` requirements, compatible runner cohorts,
 expected outputs, and required external proof cases. It does not topologically
 schedule actions, infer tool availability, or mark downloaded prerequisites
-satisfied. All job roots include their complete native prerequisites.
+satisfied. Construction roots include their complete native prerequisites on
+their declared execution host. Consumer roots instead receive the exact frozen
+package inputs they test; their closure must not pull those producer actions
+onto a different host.
 
-Use parallel Linux x64/arm64, macOS, Windows and Android/Apple cohorts. Batch
-related roots per configuration so one invocation shares analysis and actions.
-Move Swift assembly/consumers to macOS. Devices/browser/GUI tests use separately
-allocated suitable hosts; `--platforms` does not allocate a runner or emulator.
+Use parallel construction and behavior cohorts with distinct purposes. Batch
+related Linux roots per execution configuration so one invocation shares
+analysis and actions. Construct supported Linux, Android and portable WASIX
+outputs on Linux. Keep native Apple/MSVC construction where the declared SDK or
+toolchain requires it. Move Swift assembly/consumers to macOS. Devices/browser/GUI
+tests use separately allocated suitable hosts; `--platforms` does not allocate
+a runner or emulator. A native compiler/rule integration probe can deliberately
+construct a small fixture on its host, but cannot stand in for testing the final
+Linux-constructed package.
 
 Keep portable WASIX production and supported cross-compilation on Linux so
 maintainers can reproduce them locally. The existing serializer supports a
@@ -699,12 +712,34 @@ Its absence cannot block the default Linux reproduction path. Temporary
 intermediate imports during migration still require exact
 digest/configuration/producer descriptors and a removal gate.
 
-No global compiler root needs every desktop OS in one invocation. Each host
-produces its complete configured packages. Frozen publication collates those
-already qualified final packages across hosts; this is an explicit operational
-trust boundary, not a shortcut within construction. Apple aggregate artifacts
-can be fully constructed on the Apple host. Device jobs similarly consume an
-exact qualified app envelope.
+No global compiler root needs every desktop OS in one invocation. Linux
+construction exports the complete supported cross-target packages; native
+construction exceptions export their own complete configured packages. Frozen
+publication collates these packages without reconstructing them. This is an
+explicit operational trust boundary, not a shortcut within construction. Apple
+aggregate artifacts can be fully constructed on the Apple host. Device jobs
+similarly consume an exact qualified app envelope.
+
+The cross-host handoff is the lock-derived `frozenFiles` projection, not a copied
+Bazel output base or a second authored inventory. Reuse the existing physical
+output capture and publication-lock file expansion: preserve the source commit
+and tree, configured shipping roots, target identity, relative member paths,
+hashes, sizes and required modes/directory boundaries. Transport only the final
+package closure plus its construction evidence, then verify the files again on
+the receiving host. Consumer evidence identifies that same source and lock
+digest, the package hashes it actually consumed, and the observed host/SDK/device
+identity. It does not rewrite construction provenance.
+
+Host/device tests install or execute these files directly, using conventional
+consumer compilers where that is the public interface. Missing, substituted or
+wrong-target bytes fail before execution. They must not invoke the shipping
+producer, satisfy a Bazel dependency by placing files in its output directory,
+fall back to workspace runtime sources, or use a cache entry as host execution
+proof. For example, a Linux-only WASIX serializer stays in the Linux construction
+cohort; macOS and Windows qualification deserialize and execute its transported
+AOT images with their native runtime. Calling a target that still depends on the
+serializer on those hosts would request an unavailable Linux execution action,
+not provide cross-host qualification.
 
 | Workflow | Migration |
 | --- | --- |
@@ -1021,6 +1056,7 @@ It must not ask a planner to produce both the result and expected answer.
 | Installed compatibility | Actual packed requirements plus loaded runtime/extension/profile/target agree; historical pin unavailable, wrong host, unsupported feature, missing resource or wrong default recipe fails |
 | Generated parts and envelopes | Size thresholds, several targets, missing/extra/noncontiguous/wrong-version parts, aggregator pins, exports, Swift URLs/checksums, plugin marker and optional npm dependency cases are detected |
 | Cached versus clean construction | For representative edits/configs, a clean execution and incremental execution have equivalent final contents/contracts; no presence stamp or prepopulated target tree hides an omission |
+| Linux construction and cross-host transport | Cold local construction works without remote execution/cache. Native consumers receive the same frozen files and construction evidence; changed source/lock/target/hash/member mode or missing bytes fails. Consumer requests cannot reconstruct producers or relabel a Linux-built package as native-host output |
 | Qualification coverage and evidence reuse | Identical complete inputs reuse the original trusted result. Changed/missing transitive input, wrong environment, stale policy, untrusted result, missing config/shard/manual target, debug run, wrong app digest, failed/skipped proof and main/source mismatch block admission; required current external observations cannot use cached PASS |
 | Publication and recovery | Fail after each registry boundary, replay matching identity, conflicting byte, later-page Maven deployment, auth failure, ambiguous response, delayed visibility, main movement and controller-only repair reconcile correctly without rebuilding |
 | Completed publication/docs | Partial publication never becomes the next baseline; a docs failure retries only deployment; no recommended-version edits or product bumps |
@@ -1061,18 +1097,23 @@ The real installed browser SDK/query/runtime archives execute SQL through both
 default and worker exports in Chrome. The native browser host and portable
 runtime are constructed on Linux; Chrome's observed executable and host identity
 are explicit consumer inputs.
-The four actual WASIX AOT images are also constructed through the declared Linux
-LLVM execution profile. Seven source-SDK AOT tests cover SQL, savepoints, error
-handling, isolation, reopen and abrupt durability. These do not qualify an
-installed Cargo envelope or foreign-host deserialization.
+All sixteen WASIX AOT images, covering four modules on all four canonical host
+triples, are constructed through the declared Linux LLVM execution profile.
+The five final portable/AOT Cargo envelopes are built from those declared
+payloads. Seven source-SDK AOT tests cover SQL, savepoints, error handling,
+isolation, reopen and abrupt durability. Foreign-host deserialization and
+installed Cargo execution remain separate qualifications.
 Finished Linux runtime/tools GitHub, npm and Cargo carriers pass relocation,
 offline Cargo reconstruction, persistence, dump/restore and backup/reopen. The
 tools npm consumer executes the declared Node toolchain. Resource construction
 and physical seed consumers pass for Linux x64; Android domain admission uses
 both actual configured runtime ABI receipts and preserves the frozen seed bytes.
-These resource slices cover 13 of 33 registry carriers and nine of 31 GitHub
+The WASIX standard/ICU seeds also pass actual PostgreSQL reopen and persistence,
+packed-byte verification, resource-parser consumption and six Rust verifier
+tests. These slices cover 17 of 33 registry carriers and 13 of 31 GitHub
 identities. Android device execution and the remaining resource identities are
-separate gates.
+separate gates. Warm requests reuse the frozen seed bytes; bootstrapping a new
+seed is not a repeatable byte-generation claim.
 Physical conformance fixtures cover seeded edit subsets, independent release
 baselines, malformed ownership and cached reuse. These construction results do
 not admit all products or replace real installed compatibility qualification.
@@ -1088,6 +1129,10 @@ on Linux x64 and ARM, plus Android cross-compilation and ABI checks on Linux
 x64. Local regression tests cover the initial macOS SDK symlink cycles,
 Windows script-launch failure and incremental metadata-directory deletion.
 The corresponding hosted platform results remain required at the revised SHA.
+Native-host construction probes establish their compiler/rule integration;
+they cannot certify a different package constructed on Linux. The final-file
+transport and target-host/device consumption gates must bind their results to
+the original frozen bytes before the cross-target paths can cut over.
 
 Completed-history preparation now uses exact captured Git ancestry and verified
 publication boundaries, with real merge/clock-skew regressions. Existing

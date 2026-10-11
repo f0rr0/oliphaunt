@@ -128,6 +128,36 @@ function identities(rows) {
   return rows.map(({ absolute: _absolute, ...identity }) => identity);
 }
 
+export type NativeOutputMember =
+  | { path: string; type: 'directory'; mode: number }
+  | { path: string; type: 'file'; mode: number; size: number; sha256: string };
+
+/** Read one declared output, retaining physical modes without a shipping-mode policy. */
+export function captureNativeOutputMembers(executionRoot: string, output: string) {
+  if (!path.isAbsolute(executionRoot ?? ''))
+    throw new Error('native payload requires the captured absolute executionRoot');
+  const root = realpathSync(executionRoot);
+  const absolute = nativeOutputPath(root, safeRelative(output));
+  requireSafeDirectoryChain(path.dirname(absolute), { label: 'native output' });
+  const outputs = [{ key: 'payload', relative: 'root', absolute }];
+  const observed = identities(snapshot(outputs));
+  const expected = JSON.stringify(observed);
+  return {
+    members: observed.map(({ id, ...member }) => ({
+      path: id.slice('payload/root'.length).replace(/^\//u, ''),
+      ...member,
+    })) as NativeOutputMember[],
+    assertUnchanged() {
+      requireSafeDirectoryChain(path.dirname(absolute), { label: 'native output' });
+      if (
+        nativeOutputPath(root, output) !== absolute ||
+        JSON.stringify(identities(snapshot(outputs))) !== expected
+      )
+        throw new Error('native payload bytes, modes or membership changed after capture');
+    },
+  };
+}
+
 /**
  * Capturing before physical validation and comparing again before/after copying
  * binds the staged candidate to those same bytes and directory members. This is

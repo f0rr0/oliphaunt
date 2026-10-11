@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import {
   postmasterCargoManifest,
   postmasterCargoSources,
+  postmasterCargoTargets,
   postmasterLeafPatch,
   postmasterRoleManifest,
   postmasterSource,
@@ -74,54 +75,130 @@ test('uses the canonical binary feature and retains package and dependency pins'
   ).toThrow('empty');
 });
 
-test('exports actual selected local metadata identities and rejects source/lock drift', () => {
-  const metadata = {
-    workspace_members: ['executor'],
-    packages: [
-      { id: 'executor', source: null },
-      {
-        id: 'engine',
-        source: null,
-        name: 'engine',
-        version: '1.2.3',
-        manifest_path: '/source/lib/engine/Cargo.toml',
-      },
-      { id: 'registry', source: 'registry+https://example.invalid' },
+test('imports every genuine locked path source without selecting optional features', () => {
+  const own = { name: 'executor', version: '7.2.0-alpha.2' };
+  const lock = {
+    version: 4,
+    package: [
+      own,
+      { name: 'engine', version: '1.2.3' },
+      { name: 'optional-compiler', version: '1.2.3' },
+      { name: 'registry', version: '1.0.0', source: 'registry+https://example.invalid' },
     ],
   };
-  const lock = { version: 4, package: [{ name: 'engine', version: '1.2.3' }] };
   const manifests = {
-    'Cargo.toml': { workspace: { members: ['lib/engine'], package: { version: '1.2.3' } } },
+    'Cargo.toml': {
+      workspace: {
+        members: ['lib/engine', 'lib/compiler', 'lib/unlocked'],
+        package: { version: '1.2.3' },
+      },
+    },
     'lib/engine/Cargo.toml': { package: { name: 'engine', version: { workspace: true } } },
+    'lib/compiler/Cargo.toml': {
+      package: { name: 'optional-compiler', version: { workspace: true } },
+    },
+    'lib/unlocked/Cargo.toml': { package: { name: 'unlocked', version: { workspace: true } } },
   };
   const read = (relative: string) => manifests[relative];
-  const projection = postmasterCargoSources(metadata, lock, '/source', source, patch, read);
-  expect(Object.keys(projection.sources)).toEqual(['engine 1.2.3']);
+  const projection = postmasterCargoSources(lock, own, source, patch, read);
+  expect(Object.keys(projection.sources)).toEqual(['engine 1.2.3', 'optional-compiler 1.2.3']);
   expect(projection.sources['engine 1.2.3'].strip_prefix).toBe(`wasmer-${pin.commit}/lib/engine`);
   expect(projection.sources['engine 1.2.3'].patches).toEqual(['patches/cargo/engine.patch']);
   expect(Object.keys(projection.patches)).toEqual(['patches/cargo/engine.patch']);
+  expect(projection.sources['optional-compiler 1.2.3'].patches).toEqual([]);
+  expect(projection.sources['unlocked 1.2.3']).toBeUndefined();
   expect(() =>
-    postmasterCargoSources(metadata, { ...lock, package: [] }, '/source', source, patch, read),
-  ).toThrow('one canonical locked');
+    postmasterCargoSources({ ...lock, package: [own] }, own, source, patch, read),
+  ).toThrow('no patched path sources');
+  expect(() =>
+    postmasterCargoSources(lock, { ...own, version: '7.2.0-alpha.3' }, source, patch, read),
+  ).toThrow('executor package must match');
   expect(() =>
     postmasterCargoSources(
       {
-        ...metadata,
-        packages: [
-          metadata.packages[0],
-          { ...metadata.packages[1], manifest_path: '/other/lib/engine/Cargo.toml' },
-        ],
+        ...lock,
+        package: [{ ...own, source: 'registry+https://example.invalid' }, ...lock.package.slice(1)],
       },
-      lock,
-      '/source',
+      own,
       source,
       patch,
       read,
     ),
+  ).toThrow('retain its path source');
+  expect(() =>
+    postmasterCargoSources(
+      {
+        ...lock,
+        package: [
+          ...lock.package,
+          { name: 'engine', version: '1.2.3', source: 'registry+https://example.invalid' },
+        ],
+      },
+      own,
+      source,
+      patch,
+      read,
+    ),
+  ).toThrow('Ambiguous canonical source identity');
+  expect(() =>
+    postmasterCargoSources(
+      { ...lock, package: [own, { name: 'engine', version: '1.2.4' }] },
+      own,
+      source,
+      patch,
+      read,
+    ),
+  ).toThrow('one immutable workspace member');
+  expect(() =>
+    postmasterCargoSources(lock, own, source, patch, (relative) =>
+      relative === 'Cargo.toml' ? { workspace: { members: ['../engine'] } } : read(relative),
+    ),
   ).toThrow('Unsafe source path');
+  expect(() =>
+    postmasterCargoSources(
+      { ...lock, package: [own, { name: '../engine', version: '1.2.3' }] },
+      own,
+      source,
+      patch,
+      read,
+    ),
+  ).toThrow('Unsafe Cargo package');
   expect(() => postmasterSource({ ...pin, commit: 'main' }, 'b'.repeat(64))).toThrow(
     'Immutable GitHub',
   );
+});
+
+test('metadata target placeholders require authentic declared source paths', () => {
+  const manifest = {
+    package: { name: 'executor' },
+    bin: [{ name: 'executor', path: 'src/bin/executor.rs' }],
+  };
+  const files = new Set(['src/lib.rs', 'src/bin/executor.rs']);
+  expect(postmasterCargoTargets(manifest, (relative) => files.has(relative))).toEqual([
+    'src/bin/executor.rs',
+    'src/lib.rs',
+  ]);
+  expect(() => postmasterCargoTargets(manifest, (relative) => relative === 'src/lib.rs')).toThrow(
+    'Missing canonical Cargo target src/bin/executor.rs',
+  );
+  expect(() =>
+    postmasterCargoTargets(
+      { ...manifest, bin: [{ name: 'executor', path: '../other.rs' }] },
+      () => true,
+    ),
+  ).toThrow('Unsafe source path');
+  expect(() =>
+    postmasterCargoTargets(
+      { ...manifest, bin: [{ name: 'executor', path: 'src/\nother.rs' }] },
+      () => true,
+    ),
+  ).toThrow('Unsafe source path');
+  expect(() =>
+    postmasterCargoTargets(
+      { ...manifest, package: { name: 'executor', build: 'other-build.rs' } },
+      (relative) => files.has(relative),
+    ),
+  ).toThrow('Missing canonical Cargo target other-build.rs');
 });
 
 test('derives conventional direct path patches from exact workspace and lock identities', () => {

@@ -1,9 +1,12 @@
 load("//build_defs/languages:rust.bzl", "cargo_generator_test")
 load("//build_defs/languages:wasix.bzl", "wasix_runtime_carrier")
+load("//build_defs/wasix:cargo.bzl", "wasix_runtime_cargo")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml"])
 
 wasix_runtime_carrier(payload = "//src/wasix/runtime:aot_linux_x64_gnu_payload")
+
+wasix_runtime_cargo(payload = "//src/wasix/runtime:aot_linux_x64_gnu_payload", target_id = "linux-x64-gnu")
 
 cargo_generator_test(srcs = ["build-support.rs"])

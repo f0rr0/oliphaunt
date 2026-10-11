@@ -133,6 +133,10 @@ test('physical native roots enter the existing candidate and cannot freeze as pu
     expect(candidate.schema).toBe(PUBLICATION_CANDIDATE_SCHEMA);
     expect(candidate.scope).toBe('construction');
     expect(candidate.source).toEqual(sourceIdentity('HEAD'));
+    expect(candidate.nativePayloads.source).toEqual(candidate.source);
+    expect(candidate.nativePayloads.products).toEqual([
+      { id: carrier.product, version: carrier.version, roots: [] },
+    ]);
     expect(candidate.missing).toEqual([]);
     expect(candidate.carriers).toHaveLength(1);
     expect(candidate.carriers[0].artifacts[0].sha256).toBe(
@@ -150,6 +154,14 @@ test('physical native roots enter the existing candidate and cannot freeze as pu
     expect(() =>
       validatePublicationLock({ ...candidate, schema: PUBLICATION_LOCK_SCHEMA }),
     ).toThrow('construction evidence cannot authorize');
+    const withoutScope = { ...candidate };
+    delete withoutScope.scope;
+    for (const value of [withoutScope, { ...withoutScope, nativePayloads: undefined }]) {
+      expect(() => freezePublicationCandidate(value)).toThrow('cannot freeze');
+      expect(() => validatePublicationLock({ ...value, schema: PUBLICATION_LOCK_SCHEMA })).toThrow(
+        'construction evidence cannot authorize',
+      );
+    }
   });
 });
 
@@ -170,6 +182,32 @@ test('native candidate rejects foreign frozen sources, missing cohort outputs an
     expect(() =>
       run({ ...cohort, source, executionRoot: path.dirname(cohort.executionRoot) }),
     ).toThrow();
+  });
+});
+
+test('native candidate rejects a replaced source snapshot between physical capture and candidate assembly', () => {
+  fixture(({ carrier, cohort }) => {
+    const snapshot = process.env.OLIPHAUNT_GIT_SOURCE_JSON!;
+    const source = sourceIdentity('HEAD');
+    try {
+      for (const replacement of [
+        { ...JSON.parse(snapshot), commit: 'b'.repeat(40), checkout: 'b'.repeat(40) },
+        { ...JSON.parse(snapshot), tree: 'c'.repeat(40) },
+      ]) {
+        process.env.OLIPHAUNT_GIT_SOURCE_JSON = snapshot;
+        const changing = Object.defineProperty({ ...cohort, source }, 'aquery', {
+          get() {
+            process.env.OLIPHAUNT_GIT_SOURCE_JSON = JSON.stringify(replacement);
+            return cohort.aquery;
+          },
+        });
+        expect(() =>
+          buildNativePublicationCandidate({ products: [carrier.product], cohorts: [changing] }),
+        ).toThrow();
+      }
+    } finally {
+      process.env.OLIPHAUNT_GIT_SOURCE_JSON = snapshot;
+    }
   });
 });
 

@@ -2210,7 +2210,7 @@ function withoutDigest(value) {
 
 export function freezePublicationCandidate(candidate) {
   validatePublicationCandidate(candidate);
-  if (candidate.scope !== undefined) {
+  if (candidate.scope !== undefined || Object.hasOwn(candidate, 'nativePayloads')) {
     throw error(
       'native construction candidate lacks qualified producer and completed-baseline evidence; cannot freeze',
     );
@@ -2752,7 +2752,7 @@ export function validatePublicationCandidate(candidate) {
 
 export function validatePublicationLock(lock) {
   requireObject(lock, 'publication lock');
-  if (lock.scope !== undefined) {
+  if (lock.scope !== undefined || Object.hasOwn(lock, 'nativePayloads')) {
     throw error('construction evidence cannot authorize a publication lock');
   }
   if (lock.schema !== PUBLICATION_LOCK_SCHEMA) {

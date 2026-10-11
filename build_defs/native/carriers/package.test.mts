@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
+  copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -12,7 +16,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readPortableArchiveEntries } from '../../../tools/packaging/portable-archive.mts';
+import {
+  releaseNoticeRows,
+  stageReleaseNotices,
+} from '../../../tools/packaging/release-notices.mts';
 import { writeNativeChecksums } from './checksums.mts';
 import { type EnvelopeSpec, packageEnvelope, validateNpmIdentity } from './envelopes.mts';
 import { type FacadeSpec, packageToolsFacade, toolsFacadeTargets } from './facades.mts';
@@ -32,6 +41,53 @@ function requiredMember(
 }
 let scenarios = 0;
 try {
+  // Exercise the exact declared payload tool tree, without the envelope tool's
+  // much larger module set or the checkout as an import fallback.
+  const modules = path.join(root, 'payload-modules');
+  for (const [relative, file] of Object.entries(specification.payloadModules)) {
+    assert(!relative.startsWith('../') && !path.isAbsolute(relative));
+    const destination = path.join(modules, relative);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(file as string, destination);
+  }
+  const importedPayload = path.join(modules, 'build_defs/native/carriers/payload.mts');
+  const probePayload = () =>
+    spawnSync(
+      process.execPath,
+      [
+        '--no-env-file',
+        '--no-install',
+        '--eval',
+        `await import(${JSON.stringify(pathToFileURL(importedPayload).href)})`,
+      ],
+      { cwd: modules, env: {}, encoding: 'utf8' },
+    );
+  assert.equal(probePayload().status, 0, 'declared payload module closure must execute');
+  assert(!existsSync(path.join(modules, 'build_defs/native/carriers/envelopes.mts')));
+  const unused = path.join(modules, 'tools/packaging/npm-package.mts');
+  writeFileSync(unused, 'deliberately invalid unused envelope code');
+  assert.equal(probePayload().status, 0, 'envelope code must not enter the payload import closure');
+  const policy = path.join(modules, 'src/native/runtime/tools/native-runtime-payload-policy.json');
+  const policyBytes = readFileSync(policy);
+  writeFileSync(policy, 'invalid consumed payload policy');
+  assert.notEqual(
+    probePayload().status,
+    0,
+    'consumed payload policy must remain an actual module input',
+  );
+  writeFileSync(policy, policyBytes);
+  const binaryHelper = path.join(modules, 'tools/packaging/platform-binary-contract.mts');
+  const helperBytes = readFileSync(binaryHelper);
+  writeFileSync(binaryHelper, 'deliberately invalid consumed binary validator');
+  assert.notEqual(
+    probePayload().status,
+    0,
+    'consumed binary validator must remain an actual module input',
+  );
+  writeFileSync(binaryHelper, helperBytes);
+  assert.equal(probePayload().status, 0);
+  scenarios++;
+
   const scalar = path.join(root, 'scalar');
   writeFileSync(scalar, 'actual producer bytes');
   const tree = path.join(root, 'tree');
@@ -220,6 +276,43 @@ try {
   chmodSync(path.join(payload, 'runtime/bin/provider-receipt.json'), 0o755);
   const legal = path.join(root, 'legal');
   stageLegalSources(specification.legal, legal);
+  for (const profile of ['native-tools', 'native-runtime']) {
+    const declared = specification.payloadLegalInputs[profile];
+    const required = releaseNoticeRows({ profile, sourceRoot: legal }).flatMap((row) =>
+      [row.source, row.sourceManifest]
+        .filter((file) => file !== undefined)
+        .map((file) => path.relative(legal, file)),
+    );
+    assert.deepEqual([...declared].sort(), required.sort(), `${profile} legal source closure`);
+  }
+  const toolsLegal = path.join(root, 'tools-legal');
+  stageLegalSources(
+    Object.fromEntries(
+      specification.payloadLegalInputs['native-tools'].map((name) => [
+        name,
+        specification.legal[name],
+      ]),
+    ),
+    toolsLegal,
+  );
+  assert(!existsSync(path.join(toolsLegal, 'src/third-party/icu')));
+  const originalNotices = path.join(root, 'original-tools-notices');
+  const narrowedNotices = path.join(root, 'narrowed-tools-notices');
+  stageReleaseNotices(originalNotices, { profile: 'native-tools', sourceRoot: legal });
+  stageReleaseNotices(narrowedNotices, { profile: 'native-tools', sourceRoot: toolsLegal });
+  const compareNotices = (relative = '') => {
+    const names = readdirSync(path.join(originalNotices, relative)).sort();
+    assert.deepEqual(readdirSync(path.join(narrowedNotices, relative)).sort(), names);
+    for (const name of names) {
+      const member = path.join(relative, name);
+      const original = path.join(originalNotices, member);
+      const narrowed = path.join(narrowedNotices, member);
+      if (statSync(original).isDirectory()) compareNotices(member);
+      else assert.deepEqual(readFileSync(narrowed), readFileSync(original), member);
+    }
+  };
+  compareNotices();
+  scenarios++;
   const cargoOutput = path.join(root, 'cargo-packages');
   await packageEnvelope({
     ...envelope,

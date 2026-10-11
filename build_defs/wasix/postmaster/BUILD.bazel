@@ -1,4 +1,4 @@
-load("//build_defs/foundation:bun.bzl", "bun_test")
+load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -8,5 +8,24 @@ bun_test(
     name = "metadata_test",
     entry_point = "metadata.test.mts",
     data = ["metadata.mts", "//:tools/packaging/cargo-manifest.mts"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "cargo_source_projection_test",
+    entry_point = "cargo-source-projection-test.mts",
+    data = [
+        "@postmaster_cargo//:cargo-sources.json",
+        "@postmaster_cargo//:executor/Cargo.toml",
+        "@postmaster_cargo//:executor/Cargo.lock",
+        "@postmaster_cargo//:compiler/Cargo.toml",
+        "@postmaster_cargo//:compiler/Cargo.lock",
+        "@postmaster_executor_crates//:cargo-bazel.json",
+        "@postmaster_executor_crates//:crates.bzl",
+        "@postmaster_compiler_crates//:cargo-bazel.json",
+        "@postmaster_compiler_crates//:crates.bzl",
+        "//src/wasix/postmaster:executor/Cargo.toml",
+        "//src/wasix/postmaster:executor/Cargo.lock",
+    ],
     size = "small",
 )

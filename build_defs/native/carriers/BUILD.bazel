@@ -1,5 +1,5 @@
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_script_test")
-load(":defs.bzl", "native_carrier_helpers", "native_carrier_legal_inputs", "native_carrier_unit_inputs")
+load(":defs.bzl", "native_carrier_helpers", "native_carrier_legal_inputs", "native_carrier_unit_inputs", "native_payload_helpers")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(glob(["*.bzl", "*.mts"]))
@@ -7,7 +7,7 @@ exports_files(glob(["*.bzl", "*.mts"]))
 _HELPERS = native_carrier_helpers()
 _LEGAL = list(native_carrier_legal_inputs().keys())
 
-bun_binary(name = "payload_tool", entry_point = "payload.mts", data = _HELPERS + _LEGAL)
+bun_binary(name = "payload_tool", entry_point = "payload.mts", data = native_payload_helpers())
 bun_binary(name = "envelope_tool", entry_point = "envelopes.mts", data = ["payload.mts"] + _HELPERS + _LEGAL)
 bun_binary(name = "facade_tool", entry_point = "facades.mts", data = ["payload.mts", "//src/native/postgres-tools:tools/package-cargo-artifacts.mts", "//:tools/packaging/emit-javascript.mts"] + _HELPERS + _LEGAL)
 bun_binary(name = "checksum_tool", entry_point = "checksums.mts")

@@ -15,12 +15,19 @@ _CONFIGURATIONS = {
     "windows-x64-msvc": "//build_defs/native:windows_x64",
 }
 
-def native_carrier_legal_inputs():
+def native_carrier_legal_inputs(profile = "native-runtime"):
+    # Keep this declared source map aligned with releaseNoticeRows(profile),
+    # including the source.toml pins validated by that existing renderer.
+    if profile not in ["native-runtime", "native-tools"]:
+        fail("unsupported native carrier legal profile: " + profile)
     result = {"//:" + name: name for name in [
         "LICENSE", "THIRD_PARTY_NOTICES.md",
     ]}
     result["//src/native/runtime:THIRD_PARTY_NOTICES.md"] = "src/native/runtime/THIRD_PARTY_NOTICES.md"
-    for package, names in [("postgres", ["COPYRIGHT", "source.toml"]), ("icu", ["LICENSE", "source.toml"])]:
+    components = [("postgres", ["COPYRIGHT", "source.toml"])]
+    if profile == "native-runtime":
+        components.append(("icu", ["LICENSE", "source.toml"]))
+    for package, names in components:
         for name in names:
             result["//src/third-party/" + package + ":" + name] = "src/third-party/" + package + "/" + name
     return result
@@ -47,6 +54,25 @@ def native_carrier_helpers():
         "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
         "//src/native/runtime:tools/native-runtime-payload.mts",
         "//src/native/runtime:tools/native-runtime-payload-policy.json",
+    ]
+
+def native_payload_helpers():
+    """The payload renderer's module closure and eagerly read policy files.
+
+    Envelope/registry rendering is a later action with its own inputs. Keep
+    those modules out of the payload tool so they cannot invalidate its output.
+    Legal source bytes are supplied separately by the payload rule.
+    """
+    return [
+        "//src/native/runtime:tools/native-runtime-payload.mts",
+        "//src/native/runtime:tools/native-runtime-payload-policy.json",
+        "//:tools/packaging/platform-binary-contract.mts",
+        "//tools/release:platform-compatibility-policy.mts",
+        "//:tools/packaging/release-notices.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/release-directory-safety.mts",
+        "//:tools/packaging/windows-vc-runtime-closure.mts",
+        "//:tools/packaging/windows-vc-runtime-policy.json",
     ]
 
 def _sources(entries, inputs):
@@ -147,11 +173,17 @@ def native_desktop_carriers(product, root_mappings, runtime_mappings, binary_map
     descriptor = PRODUCTS[product]
     rows = [row for row in NATIVE_RUNTIME_ARTIFACTS if row["product"] == product and row["kind"] in ["native-runtime", "native-tools"] and row["target"] in _CONFIGURATIONS]
     carriers = [row for row in PUBLICATION_CARRIERS if row["product"] == product]
-    metadata, github, npm, npm_names, npm_roles, cargo_names, cargo_roles, physical, compatible, sources = {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+    metadata, payload_metadata, payload_legal, github, npm, npm_names, npm_roles, cargo_names, cargo_roles, physical, compatible, sources = {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
     for artifact in rows:
         target = artifact["target"]
         configuration = _CONFIGURATIONS[target]
         metadata[configuration] = json.encode({"artifact": artifact, "version": descriptor["version"], "carriers": carriers})
+        # The public payload consumes only its binary/layout contract. Own
+        # release versions and registry identities belong to later envelopes.
+        # Compiler inputs (including the runtime's public version API) stay in
+        # the actual typed mappings and their native construction closure.
+        payload_metadata[configuration] = json.encode({"artifact": {"kind": artifact["kind"], "target": target}})
+        payload_legal[configuration] = native_carrier_legal_inputs(artifact["kind"])
         github[configuration] = "release-assets/" + artifact["asset"].replace("{version}", descriptor["version"])
         leaf = [row for row in carriers if row["ecosystem"] == "npm" and row["name"] == artifact["npm_package"]]
         # Base runtime and contrib share a release owner. Select the exact
@@ -173,7 +205,7 @@ def native_desktop_carriers(product, root_mappings, runtime_mappings, binary_map
         name = "public_binary_mapping_" + str(index)
         _stripped_mapping(name = name, mapping = mapping, enabled = select({"//build_defs/native:macos_arm64": True, "//conditions:default": False}), strip_flags = ["-S"], target_compatible_with = compatibility)
         replacements[mapping] = ":" + name
-    _native_payload(name = "public_payload", root_mappings = [replacements.get(label, label) for label in root_mappings], runtime_mappings = [replacements.get(label, label) for label in runtime_mappings], metadata = select(metadata), legal = native_carrier_legal_inputs(), windows_runtime = select({"//build_defs/native:windows_x64": ["@native_msvc_sdk//:runtime_dlls"], "//conditions:default": []}), target_compatible_with = compatibility)
+    _native_payload(name = "public_payload", root_mappings = [replacements.get(label, label) for label in root_mappings], runtime_mappings = [replacements.get(label, label) for label in runtime_mappings], metadata = select(payload_metadata), legal = select(payload_legal), windows_runtime = select({"//build_defs/native:windows_x64": ["@native_msvc_sdk//:runtime_dlls"], "//conditions:default": []}), target_compatible_with = compatibility)
     for phase, out in [("github", select(github)), ("npm", select(npm)), ("cargo", "cargo-packages")]:
         _native_envelope(name = "github_archive" if phase == "github" else "cargo_packages" if phase == "cargo" else "npm", phase = phase, payload = ":public_payload", metadata = select(metadata), sources = select(sources) if phase == "npm" else {}, legal = native_carrier_legal_inputs() if phase != "github" else {}, out = out, target_compatible_with = compatibility)
     shipping_package(name = "native_github_shipping", owner = "@oliphaunt_metadata//:product_" + product, artifacts = [":github_archive"], ecosystem = "github", package_name = select({key: value[len("release-assets/"):] for key, value in github.items()}), configuration = select(physical), role = "github-release-asset")
@@ -221,10 +253,13 @@ def _unit_inputs_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     metadata = json.decode(ctx.attr.metadata)
     metadata.update({"sources": _sources(ctx.attr.sources, inputs), "legal": _sources(ctx.attr.legal, inputs)})
+    metadata["payloadModules"] = {file.short_path: file.path for file in ctx.files.payload_modules}
+    metadata["payloadLegalInputs"] = {profile: native_carrier_legal_inputs(profile).values() for profile in ["native-tools", "native-runtime"]}
+    inputs += ctx.files.payload_modules
     ctx.actions.write(output, json.encode(metadata))
     return [DefaultInfo(files = depset([output]), runfiles = ctx.runfiles(files = inputs + [output]))]
 
-_native_unit_inputs = rule(implementation = _unit_inputs_impl, attrs = {"metadata": attr.string(mandatory = True), "sources": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_keyed_string_dict(allow_files = True)})
+_native_unit_inputs = rule(implementation = _unit_inputs_impl, attrs = {"metadata": attr.string(mandatory = True), "sources": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_keyed_string_dict(allow_files = True), "payload_modules": attr.label_list(allow_files = True)})
 
 def native_carrier_unit_inputs(name):
     product = "postgres-tools-native"
@@ -235,7 +270,7 @@ def native_carrier_unit_inputs(name):
     for file in ["Cargo.toml", "README.md", "build.rs", "build_support.rs", "src/arguments.rs", "src/lib.rs"]:
         sources["//src/native/postgres-tools:crates/tools/" + file] = "cargo/" + file
     sources["//src/test-fixtures:postgres/logical-tools.json"] = "cargo/testdata/logical-tools.json"
-    _native_unit_inputs(name = name, metadata = json.encode({"version": PRODUCTS[product]["version"], "targets": rows, "carriers": [row for row in PUBLICATION_CARRIERS if row["product"] == product]}), sources = sources, legal = native_carrier_legal_inputs())
+    _native_unit_inputs(name = name, metadata = json.encode({"version": PRODUCTS[product]["version"], "targets": rows, "carriers": [row for row in PUBLICATION_CARRIERS if row["product"] == product]}), sources = sources, legal = native_carrier_legal_inputs(), payload_modules = [":payload.mts"] + native_payload_helpers())
 
 def _checksums_impl(ctx):
     files = ctx.files.archives

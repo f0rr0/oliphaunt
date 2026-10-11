@@ -1,18 +1,19 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { packageClusterSeed } from '../../src/database-resources/seeds/package.mts';
-import { materializeInputs } from './shared.mts';
-import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
-import { releaseProfilePackageLicense } from '../../tools/packaging/release-notices.mts';
-import { bindSeedDomain } from './seed_domain.mts';
 import {
   emptyDirectoryPaths,
   filesystemTreeRows,
   logicalTreeSha256,
   parseProperties,
 } from '../../src/database-resources/contracts/native-manifest.mts';
+import { packageClusterSeed } from '../../src/database-resources/seeds/package.mts';
+import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import { releaseProfilePackageLicense } from '../../tools/packaging/release-notices.mts';
+import { bindSeedDomain } from './seed_domain.mts';
+import { materializeInputs } from './shared.mts';
 
 test('declared input staging rejects paths that escape its private root', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'resource-contract-'));
@@ -76,6 +77,54 @@ test('seed envelopes preserve explicit historical runtime requirements and empty
       'exact',
     );
     await expect(packageClusterSeed({ ...options, icuData: root })).rejects.toThrow('only ICU');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('WASIX manifest retains exact consumed module hashes and the distinct Datum32 contract', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'resource-wasix-contract-'));
+  try {
+    const contract = JSON.parse(
+      readFileSync(
+        new URL('../../src/database-resources/contracts/contract.json', import.meta.url),
+        'utf8',
+      ),
+    );
+    const pgdata = path.join(root, 'formatter-fixture');
+    for (const directory of contract.pgdataDirectories)
+      mkdirSync(path.join(pgdata, directory), { recursive: true });
+    writeFileSync(path.join(pgdata, 'PG_VERSION'), '18\n');
+    writeFileSync(path.join(pgdata, 'global/pg_control'), 'formatter fixture only');
+    const runtime = path.join(root, 'runtime');
+    mkdirSync(path.join(runtime, 'bin'), { recursive: true });
+    const postgres = Buffer.from('explicit WASIX postgres fixture');
+    const initdb = Buffer.from('explicit WASIX initdb fixture');
+    writeFileSync(path.join(runtime, 'bin/postgres'), postgres);
+    writeFileSync(path.join(runtime, 'bin/initdb'), initdb);
+    const result = await packageClusterSeed({
+      family: 'wasix',
+      profile: 'standard',
+      target: 'portable',
+      pgdata,
+      runtime,
+      contract,
+      version: '0.2.2',
+      runtimeVersion: '0.3.2',
+      outputDir: path.join(root, 'assets'),
+    });
+    const manifest = JSON.parse(readFileSync(result.manifest, 'utf8'));
+    const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+    expect(manifest.runtime.version).toBe('0.3.2');
+    expect(manifest.runtime.engineFamily).toBe('wasix');
+    expect(manifest.runtime.target).toBe('portable');
+    expect(manifest.runtime.physicalFormat).toBe(contract.physicalFormats.wasix);
+    expect(manifest.runtime.compatibilityKey).toBe(contract.compatibilityKeys.wasixDatum32);
+    expect(manifest.runtime.consumerSha256).toBe(sha256(postgres));
+    expect(manifest.runtime.producerSha256).toBe(sha256(postgres));
+    expect(manifest.runtime.initdbSha256).toBe(sha256(initdb));
+    expect(manifest.source.producer).toBe('wasix-initdb');
+    expect(readPortableArchiveEntries(result.archive).get('pg_twophase')?.isDirectory).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

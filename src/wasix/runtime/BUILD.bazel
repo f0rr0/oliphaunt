@@ -7,17 +7,23 @@ load("//build_defs/wasix:platform.bzl", "wasix_artifact")
 load("//build_defs/wasix:config.bzl", "WASIX_COPTS")
 load("@postgres_wasix//:patches.bzl", "POSTGRES_PATCHES")
 load("//build_defs/wasix:npm.bzl", "wasix_runtime_npm")
+load("//build_defs/wasix:cargo.bzl", "wasix_runtime_cargo_exports")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "toolchain.toml",
+    "release.toml",
     "postgres/series",
     "assets/build/docker/pinned-wasixcc-assets.tsv",
     "tools/wasix-runtime-npm-payload.mts",
     "tools/wasix-runtime-npm-contract.mts",
     "tools/wasix-runtime-npm-descriptor.mts",
     "tools/wasix-cargo-artifact-contract.mts",
+    "tools/package_liboliphaunt_wasix_cargo_artifacts.mts",
+    "tools/check-release-assets.mts",
+    "tools/wasix-aot-manifest.mts",
+    "tools/wasix-cargo-toolchain-policy.mts",
 ] + glob(["assets/build/postgres/patches/*.patch", "assets/build/wasix_shim/*.c"]))
 
 cc_library(
@@ -130,3 +136,5 @@ wasix_artifact(
 wasix_runtime_aot_targets()
 
 wasix_runtime_npm()
+
+wasix_runtime_cargo_exports()

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { chmodSync, copyFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { resourceNpmTarballs } from '../../src/database-resources/icu/tools/package-npm.mts';
 import { packageIcuCargo } from '../../src/database-resources/icu/tools/package-cargo.mts';
+import { resourceNpmTarballs } from '../../src/database-resources/icu/tools/package-npm.mts';
 import { packageSeedCarriers } from '../../src/database-resources/seeds/package-carriers.mts';
 import { packageMobileSeedCarriers } from '../../src/database-resources/seeds/package-mobile-carriers.mts';
 import { buildMavenArtifactManifest } from '../../tools/packaging/build-maven-artifact-manifest.mts';
@@ -71,7 +71,14 @@ try {
   } else {
     assert.equal(specification.kind, 'seed');
     const [result] = packageSeedCarriers(
-      ['--family', 'native', '--target', specification.target, '--profile', specification.profile],
+      [
+        '--family',
+        specification.family,
+        '--target',
+        specification.target,
+        '--profile',
+        specification.profile,
+      ],
       {
         version: specification.version,
         assetDir: assets,

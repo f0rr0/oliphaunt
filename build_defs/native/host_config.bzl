@@ -1,4 +1,4 @@
-"""PostgreSQL host facts established by the selected Apple/MSVC compiler.
+"""PostgreSQL target facts established by the selected Apple/MSVC compiler.
 
 Linux and Android retain their already qualified bounded profiles. These host
 profiles use upstream PG18.4 capability tests through the maintained native
@@ -15,7 +15,12 @@ load(":postgres_sources.bzl", "POSTGRES_PORT_REPLACEMENT_SOURCES")
 load(":windows_config.bzl", "WINDOWS_CONFIG", "WINDOWS_COPTS", "WINDOWS_DEFINES")
 load(":windows_sources.bzl", "WINDOWS_PORT_REPLACEMENT_SOURCES", "WINDOWS_FORCED_PORT_REPLACEMENTS")
 
-_HOSTS = ["@oliphaunt//build_defs/native:macos_arm64", "@oliphaunt//build_defs/native:windows_x64"]
+_PROFILES = [
+    ("macos", False, "@oliphaunt//build_defs/native:macos_arm64", None),
+    ("windows", True, "@oliphaunt//build_defs/native:windows_x64", None),
+    ("ios", False, "@oliphaunt//build_defs/native:ios_arm64", 0),
+    ("ios_simulator", False, "@oliphaunt//build_defs/native:ios_arm64_simulator", 1),
+]
 
 _HEADERS = [
     "atomic.h", "copyfile.h", "crtdefs.h", "execinfo.h", "getopt.h",
@@ -91,7 +96,7 @@ _LINK_FEATURES = {
     "HAVE_PTHREAD": "#include <pthread.h>\nstatic void *f(void *p) { return p; } int main(void) { pthread_t t; return pthread_create(&t, 0, f, 0); }",
 }
 
-def _policy(version, windows):
+def _policy(version, windows, ios = False):
     major, minor = [int(part) for part in version.split(".")]
     policy = WINDOWS_CONFIG if windows else {
         "BLCKSZ": "8192", "CONFIGURE_ARGS": '"Bazel macOS arm64 ICU profile"',
@@ -104,6 +109,8 @@ def _policy(version, windows):
         "XLOG_BLCKSZ": "8192", "pg_restrict": "__restrict",
         "PG_C_PRINTF_ATTRIBUTE": "printf", "PG_CXX_PRINTF_ATTRIBUTE": "printf",
     }
+    if ios:
+        policy = policy | {"CONFIGURE_ARGS": '"Bazel iOS arm64 ICU profile"'}
     return policy | {
         "PACKAGE_STRING": '"PostgreSQL ' + version + '"',
         "PACKAGE_VERSION": '"' + version + '"',
@@ -118,13 +125,12 @@ def _policy(version, windows):
 
 def postgres_host_configuration_targets(version):
     """Declare facts, header, positive admission and conditional port units."""
-    for windows, setting in [(False, _HOSTS[0]), (True, _HOSTS[1])]:
-        suffix = "windows" if windows else "macos"
+    for suffix, windows, setting, simulator in _PROFILES:
         name = "host_" + suffix
         compatible = select({setting: [], "//conditions:default": ["@platforms//:incompatible"]})
         opts = WINDOWS_COPTS + ["/WX"] if windows else ["-std=gnu11", "-Werror=unguarded-availability-new", "-Werror=incompatible-pointer-types", "-Werror=implicit-function-declaration"]
         definitions = WINDOWS_DEFINES if windows else ["_DARWIN_C_SOURCE"]
-        policy = _policy(version, windows)
+        policy = _policy(version, windows, ios = simulator != None)
         tests = macros.AC_CHECK_HEADERS(_HEADERS) + macros.AC_CHECK_FUNCS(_FUNCTIONS)
         tests += [checks.AC_CHECK_DECL(symbol, includes = ["#include <" + header + ">"], define = "HAVE_DECL_" + symbol.upper(), if_false = "0") for symbol, header in _DECLARATIONS.items()]
         tests += [checks.AC_CHECK_SIZEOF(t, includes = ["#include <stdint.h>", "#include <sys/types.h>"], define = d) for t, d in [
@@ -147,7 +153,12 @@ def postgres_host_configuration_targets(version):
         autoconf_hdr(name = name + "_config", out = name + "/src/include/pg_config.h", template = "src/include/pg_config.h.in", deps = [":" + name + "_facts"], defaults = False, target_compatible_with = compatible)
         pg_config_layout(name = name + "_layout", os_header = "src/include/port/" + ("win32.h" if windows else "darwin.h"), output_directory = name + "/src/include", target_compatible_with = compatible)
         cc_binary(name = name + "_sanity", srcs = ["@oliphaunt//build_defs/native:probe-sanity.c"], copts = opts, target_compatible_with = compatible)
-        cc_library(name = name + "_abi", srcs = ["@oliphaunt//build_defs/native:host-config-contract.c"], hdrs = [":" + name + "_config"], includes = [name + "/src/include"], copts = opts, target_compatible_with = compatible)
+        abi_sources = ["@oliphaunt//build_defs/native:host-config-contract.c"]
+        abi_defines = []
+        if simulator != None:
+            abi_sources.append("@oliphaunt//build_defs/native:ios-config-contract.c")
+            abi_defines.append("OLIPHAUNT_EXPECT_IOS_SIMULATOR=" + str(simulator))
+        cc_library(name = name + "_abi", srcs = abi_sources, local_defines = abi_defines, hdrs = [":" + name + "_config"], includes = [name + "/src/include"], copts = opts, target_compatible_with = compatible)
         native.filegroup(name = name + "_configuration", srcs = [":" + name + "_config", ":" + name + "_layout"], target_compatible_with = compatible)
         # This dependency is built once for the profile; a dead compiler cannot
         # be interpreted as a platform where every optional feature is absent.

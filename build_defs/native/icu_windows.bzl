@@ -32,7 +32,7 @@ _data_object = rule(
     toolchains = BUN_SOURCE_TOOLCHAINS,
 )
 
-def _shared(name, srcs = [], deps = [], import_deps = [], linkopts = []):
+def _shared(name, srcs = [], deps = [], import_deps = [], linkopts = [], features = []):
     cc_binary(
         name = name,
         srcs = srcs,
@@ -43,7 +43,7 @@ def _shared(name, srcs = [], deps = [], import_deps = [], linkopts = []):
         linkstatic = True,
         # ICU's public declarations and the data object's directive explicitly
         # export the ABI; avoid an unrelated export-all symbol scan.
-        features = ["no_windows_export_all_symbols"],
+        features = ["no_windows_export_all_symbols"] + features,
         target_compatible_with = _WINDOWS,
     )
     interface = name + "_interface"
@@ -62,7 +62,8 @@ def icu_windows_targets(common_sources, i18n_sources):
     _data_object(name = "windows_data_object", version = "common/unicode/uvernum.h", types = "common/unicode/utypes.h", target_compatible_with = _WINDOWS)
     # Upstream pkgdata uses /NOENTRY for its data-only DLL: no CRT initializer
     # or bootstrap stub is part of the Unicode resource carrier.
-    _shared(name = "icudt76.dll", srcs = [":windows_data_object"], linkopts = ["/NOENTRY", "/MANIFEST:NO"])
+    # Its COFF resource object has no debug information for a PDB.
+    _shared(name = "icudt76.dll", srcs = [":windows_data_object"], linkopts = ["/NOENTRY", "/MANIFEST:NO"], features = ["-generate_pdb_file"])
 
     for role, sources, headers, dependencies, definitions, linkopts in [
         ("common", common_sources, ":common_headers", [":icudt76.dll_import"], ["U_COMMON_IMPLEMENTATION", "U_PLATFORM_USES_ONLY_WIN32_API=1"], ["kernel32.lib", "advapi32.lib"]),

@@ -1,8 +1,8 @@
 diff --git a/crate_universe/extensions.bzl b/crate_universe/extensions.bzl
-index 99ce629..172dc76 100644
+index 99ce629..543ef14 100644
 --- a/crate_universe/extensions.bzl
 +++ b/crate_universe/extensions.bzl
-@@ -637,7 +637,10 @@ def _generate_hub_and_spokes(
+@@ -637,38 +637,32 @@ def _generate_hub_and_spokes(
                  fail("Invalid immutable Cargo source metadata for " + crate_id)
              name, version = parts
              if (
@@ -14,7 +14,98 @@ index 99ce629..172dc76 100644
                  not source["url"].startswith("https://") or
                  len(source["sha256"]) != 64 or
                  [c for c in source["sha256"].elems() if c not in "0123456789abcdef"]
-@@ -815,12 +818,30 @@ def _generate_hub_and_spokes(
+             ):
+                 fail("Invalid immutable Cargo archive identity for " + crate_id)
+-            annotation = _crate_universe_crate.annotation(
+-                version = version,
+-                patches = [Label(patch) for patch in source["patches"]],
+-                patch_args = ["-p1"],
+-            )
+-            annotations[name] = list(annotations.get(name, [])) + [annotation]
+ 
+     config_file = tag_path.get_child("config.json")
+-    module_ctx.file(
+-        config_file,
+-        executable = False,
+-        content = generate_config_file(
+-            module_ctx,
+-            mode = "remote",
+-            annotations = annotations,
+-            generate_build_scripts = cfg.generate_build_scripts,
+-            supported_platform_triples = cfg.supported_platform_triples,
+-            generate_target_compatible_with = True,
+-            repository_name = cfg.name,
+-            output_pkg = cfg.name,
+-            workspace_name = cfg.name,
+-            generate_binaries = cfg.generate_binaries,
+-            render_config = render_config,
+-            repository_ctx = module_ctx,
+-        ),
++    config_args = dict(
++        ctx = module_ctx,
++        mode = "remote",
++        annotations = annotations,
++        generate_build_scripts = cfg.generate_build_scripts,
++        supported_platform_triples = cfg.supported_platform_triples,
++        generate_target_compatible_with = True,
++        repository_name = cfg.name,
++        output_pkg = cfg.name,
++        workspace_name = cfg.name,
++        generate_binaries = cfg.generate_binaries,
++        render_config = dict(render_config),
++        repository_ctx = module_ctx,
+     )
++    module_ctx.file(config_file, executable = False, content = generate_config_file(**config_args))
+ 
+     splicing_manifest = tag_path.get_child("splicing_manifest.json")
+     module_ctx.file(
+@@ -747,16 +741,37 @@ def _generate_hub_and_spokes(
+         if source_metadata:
+             metadata = json.decode(module_ctx.read(splice_outputs.metadata))
+             sources = metadata["metadata"]["cargo-bazel"]["sources"]
++            selected_sources = {}
++            for package in metadata["packages"]:
++                crate_id = package["name"] + " " + package["version"]
++                if package["id"] in metadata["workspace_members"]:
++                    if crate_id in source_metadata:
++                        fail("Immutable acquisition cannot override a Cargo workspace member: " + crate_id)
++                    continue
++                if package["source"] != None:
++                    if crate_id in source_metadata:
++                        fail("Immutable acquisition cannot override a registry or Git Cargo source: " + crate_id)
++                    continue
++                if crate_id not in source_metadata or crate_id in selected_sources or crate_id in sources:
++                    fail("Immutable acquisition must cover each selected path-patched Cargo package exactly once: " + crate_id)
++                selected_sources[crate_id] = source_metadata[crate_id]
++            if not selected_sources:
++                fail("Immutable acquisition selected no nonworkspace path-patched Cargo packages")
++            source_metadata = selected_sources
+             for crate_id, source in source_metadata.items():
+-                name, version = crate_id.split(" ")
+-                packages = [
+-                    p
+-                    for p in metadata["packages"]
+-                    if p["name"] == name and p["version"] == version
+-                ]
+-                if len(packages) != 1 or packages[0]["source"] != None or crate_id in sources:
+-                    fail("Immutable source must match exactly one path-patched Cargo package: " + crate_id)
+                 sources[crate_id] = {"url": source["url"], "sha256": source["sha256"]}
++                name, version = crate_id.split(" ")
++                annotation = _crate_universe_crate.annotation(
++                    version = version,
++                    patches = [Label(patch) for patch in source["patches"]],
++                    patch_args = ["-p1"],
++                )
++                annotations[name] = list(annotations.get(name, [])) + [annotation]
++            # Acquisition annotations follow the standard selected dependency
++            # closure; optional unselected crates must retain strict rejection.
++            config_args["annotations"] = annotations
++            config_args["render_config"] = dict(render_config)
++            module_ctx.file(config_file, executable = False, content = generate_config_file(**config_args))
+             _project_configured_target_features(metadata, cfg.supported_platform_triples)
+             module_ctx.file(splice_outputs.metadata, json.encode(metadata))
+ 
+@@ -815,12 +830,30 @@ def _generate_hub_and_spokes(
                  sorted(patches) != sorted(source["patches"])
              ):
                  fail("Generated HTTP source differs from canonical acquisition: " + crate_id)
@@ -47,7 +138,7 @@ index 99ce629..172dc76 100644
              repository["patches"] = source["patches"]
          module_ctx.file(rendered_file, rendered)
          module_ctx.file(lockfile, json.encode(contents))
-@@ -876,7 +897,7 @@ def _generate_hub_and_spokes(
+@@ -876,7 +909,7 @@ def _generate_hub_and_spokes(
                  sha256 = repo.get("sha256", None),
                  type = "tar.gz",
                  urls = [repo["url"]],

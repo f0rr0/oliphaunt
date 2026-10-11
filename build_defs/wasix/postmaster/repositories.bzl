@@ -59,6 +59,41 @@ filegroup(name = "sources", srcs = glob(["**"], exclude = ["BUILD.bazel", "sourc
 """)
     return ctx.repo_metadata(reproducible = True)
 
+def _cargo_impl(ctx):
+    for source in [ctx.attr.workspace, ctx.attr.lockfile, ctx.attr.wasmer_manifest, ctx.attr.source_identity, ctx.attr.patch, ctx.attr.converter, ctx.attr.manifest_helper]:
+        ctx.read(source)
+    ctx.watch(ctx.path(ctx.attr.bun))
+    result = ctx.execute([
+        ctx.path(ctx.attr.bun),
+        ctx.path(ctx.attr.converter),
+        "cargo",
+        ctx.path(ctx.attr.workspace),
+        ctx.path(ctx.attr.lockfile),
+        ctx.path(ctx.attr.wasmer_manifest),
+        ctx.path(ctx.attr.source_identity),
+        ctx.path(ctx.attr.patch),
+        ctx.path("."),
+        json.encode(ctx.attr.roles),
+    ], quiet = True)
+    if result.return_code:
+        fail("Cannot import canonical postmaster Cargo roles: " + result.stderr)
+    observed = json.decode(result.stdout)
+    wasmer = ctx.path(ctx.attr.wasmer_manifest).dirname
+    for relative in observed["manifests"]:
+        ctx.watch(wasmer.get_child(relative))
+    for relative in observed["targets"]:
+        ctx.watch(ctx.path(ctx.attr.workspace).dirname.get_child(relative))
+    exported = ["cargo-sources.json"] + observed["patches"]
+    for role in ctx.attr.roles:
+        ctx.symlink(wasmer, role + "/wasmer")
+        exported.extend([role + "/Cargo.toml", role + "/Cargo.lock"])
+    sources = json.decode(ctx.read("cargo-sources.json"))
+    for crate_id, source in sources.items():
+        source["patches"] = ["@@" + ctx.name + "//:" + patch for patch in source["patches"]]
+    ctx.file("cargo-sources.json", json.encode(sources))
+    ctx.file("BUILD.bazel", "package(default_visibility = [\"//visibility:public\"])\nexports_files(" + repr(exported) + ")\n")
+    return ctx.repo_metadata(reproducible = True)
+
 _COMMON = {
     "converter": attr.label(default = Label("//build_defs/wasix/postmaster:metadata.mts"), allow_single_file = True),
     "manifest_helper": attr.label(default = Label("//:tools/packaging/cargo-manifest.mts"), allow_single_file = True),
@@ -79,5 +114,17 @@ postmaster_wasix_libc_repository = repository_rule(
     attrs = dict(_COMMON, **{
         "source_manifest": attr.label(default = Label("//src/wasix/postmaster:sources/wasix-libc.toml"), allow_single_file = True),
         "patch": attr.label(default = Label("//src/wasix/postmaster:wasmer/patches/wasix-libc/0001-postgres-wasix-blockers.patch"), allow_single_file = True),
+    }),
+)
+
+postmaster_cargo_repository = repository_rule(
+    implementation = _cargo_impl,
+    attrs = dict(_COMMON, **{
+        "workspace": attr.label(default = Label("//src/wasix/postmaster:executor/Cargo.toml"), allow_single_file = True),
+        "lockfile": attr.label(default = Label("//src/wasix/postmaster:executor/Cargo.lock"), allow_single_file = True),
+        "wasmer_manifest": attr.label(default = Label("@postmaster_wasmer//:Cargo.toml"), allow_single_file = True),
+        "source_identity": attr.label(default = Label("@postmaster_wasmer//:source.json"), allow_single_file = True),
+        "patch": attr.label(default = Label("//src/wasix/postmaster:wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch"), allow_single_file = True),
+        "roles": attr.string_dict(mandatory = True),
     }),
 )

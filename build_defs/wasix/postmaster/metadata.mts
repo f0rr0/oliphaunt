@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   renderCargoToml,
@@ -24,6 +24,7 @@ function normalized(value: string) {
   assert(
     typeof value === 'string' &&
       value &&
+      /^[A-Za-z0-9_./+-]+$/u.test(value) &&
       !value.includes('\\') &&
       !path.posix.isAbsolute(value) &&
       value.split('/').every((part) => part && part !== '.' && part !== '..'),
@@ -134,41 +135,57 @@ export function postmasterCargoManifest(
   return renderCargoToml(result);
 }
 
-/** Export only local crates actually selected by standard locked Cargo metadata. */
+/** Import every genuine path-source row; standard Cargo selects the role's closure. */
 export function postmasterCargoSources(
-  metadata: Table,
   lock: Table,
-  sourceRoot: string,
+  ownPackage: Table,
   source: ReturnType<typeof postmasterSource>,
   canonicalPatch: string,
   readManifest: (relative: string) => Table,
 ) {
   assert.equal(lock.version, 4);
-  assert.equal(metadata.workspace_members?.length, 1, 'Expected one canonical executor member');
+  const ownRows = lock.package.filter(
+    (row: Table) => row.name === ownPackage.name && row.version === ownPackage.version,
+  );
+  assert.equal(
+    ownRows.length,
+    1,
+    'Canonical executor package must match its Cargo lock exactly once',
+  );
+  assert.equal(ownRows[0].source, undefined, 'Canonical executor must retain its path source');
   const workspace = readManifest('Cargo.toml').workspace;
-  assert(workspace?.members, 'Expected the pinned Wasmer workspace');
-  const root = path.resolve(sourceRoot);
+  assert(Array.isArray(workspace?.members), 'Expected the pinned Wasmer workspace');
+  const members = workspace.members.map((directory: string) => {
+    normalized(directory);
+    return {
+      directory,
+      manifest: resolveCargoWorkspaceInheritance(
+        readManifest(`${directory}/Cargo.toml`),
+        workspace,
+      ),
+    };
+  });
   const sources: Table = {};
   const patches: Record<string, string> = {};
-  for (const pkg of metadata.packages) {
-    if (pkg.source !== null || metadata.workspace_members.includes(pkg.id)) continue;
-    const relative = normalized(path.relative(root, pkg.manifest_path).split(path.sep).join('/'));
-    assert(relative.endsWith('/Cargo.toml'), 'Expected a canonical crate manifest');
-    const directory = relative.slice(0, -'/Cargo.toml'.length);
-    assert(
-      workspace.members.includes(directory),
-      `Crate is outside the pinned workspace: ${directory}`,
-    );
-    const manifest = resolveCargoWorkspaceInheritance(readManifest(relative), workspace);
-    assert.equal(pkg.name, manifest.package.name);
-    assert.equal(pkg.version, manifest.package.version);
+  for (const pkg of lock.package) {
+    if (
+      pkg.source !== undefined ||
+      (pkg.name === ownPackage.name && pkg.version === ownPackage.version)
+    )
+      continue;
     const id = `${pkg.name} ${pkg.version}`;
+    assert(/^[A-Za-z0-9_-]+$/u.test(pkg.name), `Unsafe Cargo package name ${pkg.name}`);
     assert(!Object.hasOwn(sources, id), `Duplicate canonical path package ${id}`);
     const resolutions = lock.package.filter(
       (row: Table) => row.name === pkg.name && row.version === pkg.version,
     );
-    assert.equal(resolutions.length, 1, `Expected one canonical locked path package ${id}`);
-    assert.equal(resolutions[0].source, undefined, `Expected canonical path source ${id}`);
+    assert.equal(resolutions.length, 1, `Ambiguous canonical source identity ${id}`);
+    const matching = members.filter(
+      ({ manifest }: Table) =>
+        manifest.package.name === pkg.name && manifest.package.version === pkg.version,
+    );
+    assert.equal(matching.length, 1, `Expected one immutable workspace member ${id}`);
+    const directory = matching[0].directory;
     const patch = postmasterLeafPatch(canonicalPatch, directory);
     const patchPath = `patches/cargo/${pkg.name}.patch`;
     if (patch) patches[patchPath] = patch;
@@ -179,8 +196,37 @@ export function postmasterCargoSources(
       patches: patch ? [patchPath] : [],
     };
   }
-  assert(Object.keys(sources).length, 'Locked Cargo metadata selected no patched sources');
+  assert(Object.keys(sources).length, 'Canonical Cargo lock contains no patched path sources');
   return { sources, patches };
+}
+
+/** Metadata target placeholders come from the authored manifest and existing sources. */
+export function postmasterCargoTargets(manifest: Table, exists: (relative: string) => boolean) {
+  const targets: string[] = [];
+  for (const row of [
+    ...(manifest.bin ?? []),
+    ...(manifest.example ?? []),
+    ...(manifest.test ?? []),
+    ...(manifest.bench ?? []),
+  ]) {
+    const relative = normalized(row.path);
+    assert(exists(relative), `Missing canonical Cargo target ${relative}`);
+    targets.push(relative);
+  }
+  const library = manifest.lib?.path ?? 'src/lib.rs';
+  if (manifest.lib || exists(library)) {
+    normalized(library);
+    assert(exists(library), `Missing canonical Cargo target ${library}`);
+    targets.push(library);
+  }
+  const build = manifest.package.build;
+  if (build !== false && (typeof build === 'string' || exists('build.rs'))) {
+    const relative = normalized(build ?? 'build.rs');
+    assert(exists(relative), `Missing canonical Cargo target ${relative}`);
+    targets.push(relative);
+  }
+  assert(targets.length, 'Canonical Cargo package has no source targets');
+  return [...new Set(targets)].sort();
 }
 
 if (import.meta.main) {
@@ -191,17 +237,52 @@ if (import.meta.main) {
     console.log(JSON.stringify(postmasterSource(pin, sha256)));
     process.exit(0);
   }
-  const [metadataFile, lockFile, sourceRoot, sourcePin, sha256, patchFile, output] =
+  const [command, workspaceFile, lockFile, wasmerFile, sourceFile, patchFile, output, rolesJson] =
     Bun.argv.slice(2);
-  assert(metadataFile && lockFile && sourceRoot && sourcePin && sha256 && patchFile && output);
-  const projection = postmasterCargoSources(
-    JSON.parse(readFileSync(metadataFile, 'utf8')),
-    Bun.TOML.parse(readFileSync(lockFile, 'utf8')),
-    sourceRoot,
-    postmasterSource(Bun.TOML.parse(readFileSync(sourcePin, 'utf8')), sha256),
-    readFileSync(patchFile, 'utf8'),
-    (relative) => Bun.TOML.parse(readFileSync(path.join(sourceRoot, relative), 'utf8')),
+  assert(
+    command === 'cargo' &&
+      workspaceFile &&
+      lockFile &&
+      wasmerFile &&
+      sourceFile &&
+      patchFile &&
+      output &&
+      rolesJson,
   );
+  const original = Bun.TOML.parse(readFileSync(workspaceFile, 'utf8'));
+  const lockBytes = readFileSync(lockFile);
+  const lock = Bun.TOML.parse(lockBytes.toString('utf8'));
+  const sourceRoot = path.dirname(wasmerFile);
+  const readManifest = (relative: string) =>
+    Bun.TOML.parse(readFileSync(path.join(sourceRoot, relative), 'utf8'));
+  const workspace = readManifest('Cargo.toml').workspace;
+  const projection = postmasterCargoSources(
+    lock,
+    original.package,
+    JSON.parse(readFileSync(sourceFile, 'utf8')).wasmer,
+    readFileSync(patchFile, 'utf8'),
+    readManifest,
+  );
+  const targets = postmasterCargoTargets(original, (relative) =>
+    existsSync(path.join(path.dirname(workspaceFile), relative)),
+  );
+  const roles = JSON.parse(rolesJson);
+  assert(Object.keys(roles).length, 'Canonical binary role selections required');
+  for (const [role, binary] of Object.entries(roles) as [string, string][]) {
+    assert.equal(normalized(role).split('/').length, 1, 'Cargo role must name one directory');
+    const directory = path.join(output, role);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      path.join(directory, 'Cargo.toml'),
+      postmasterCargoManifest(original, lock, workspace, readManifest, binary),
+    );
+    writeFileSync(path.join(directory, 'Cargo.lock'), lockBytes);
+    for (const target of targets) {
+      const file = path.join(directory, target);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, '');
+    }
+  }
   mkdirSync(output, { recursive: true });
   for (const [relative, content] of Object.entries(projection.patches)) {
     const file = path.join(output, relative);
@@ -216,6 +297,8 @@ if (import.meta.main) {
     JSON.stringify({
       packages: Object.keys(projection.sources),
       patches: Object.keys(projection.patches),
+      manifests: workspace.members.map((member: string) => `${member}/Cargo.toml`),
+      targets,
     }),
   );
 }

@@ -1,0 +1,40 @@
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@wasix_seed_crates//:defs.bzl", seed_all_crate_deps = "all_crate_deps", seed_crate_deps = "crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+cargo_package_env()
+
+cargo_library(
+    name = "lib",
+    features = ["cluster-seed-runner"],
+    proc_macro_names = ["async-trait"],
+    crate_dependencies = seed_crate_deps,
+    compile_data = [
+        "//src/database-resources:contract_compile_data",
+        "//src/database-resources:profile_probe_compile_data",
+    ],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+)
+
+cargo_binary(
+    name = "seed_runner",
+    source = "src/main.rs",
+    library = ":lib",
+    features = ["cluster-seed-runner"],
+    proc_macro_names = ["async-trait"],
+    crate_dependencies = seed_crate_deps,
+    experimental_use_cc_common_link = 1,
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+)
+
+cargo_library_test(
+    name = "unit_test",
+    all_dependencies = seed_all_crate_deps,
+    crate_features = ["cluster-seed-runner"],
+    experimental_use_cc_common_link = 1,
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+    size = "small",
+)

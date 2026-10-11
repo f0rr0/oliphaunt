@@ -49,5 +49,5 @@ bun_test(
     name = "abi_test",
     size = "small",
     entry_point = "abi.test.mts",
-    data = [":abi_arm64", ":abi_x86_64", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//tools/release:platform-compatibility-policy.mts"],
+    data = [":abi_arm64", ":abi_x86_64", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts"],
 )

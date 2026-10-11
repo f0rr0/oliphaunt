@@ -21,7 +21,7 @@ jobs:
   portable:
     name: Portable packages (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -77,21 +77,86 @@ jobs:
                 //src/native/runtime:abi_conformance_test
                 //src/native/runtime:runtime_sql_test
                 //src/native/runtime:native_tools_sql_test
+                //src/native/runtime:npm
+                //src/native/runtime:installed_cargo_test
+                //src/native/postgres-tools:cargo_facade
+                //src/native/postgres-tools:installed_cargo_test
+                //src/native/postgres-tools:installed_carrier_test
               )
               ;;
           esac
           if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
             host_tests+=(@icu//:windows_icu_smoke_test)
           fi
-          bash tools/dev/bazel.sh test //:portable_tests "${host_tests[@]}" \
-            --platforms="$profile" --host_platform="$profile" --jobs=2
+          if [[ "$TARGET_PLATFORM" != macos-arm64 ]]; then
+            bash tools/dev/bazel.sh test //:portable_tests "${host_tests[@]}" \
+              --platforms="$profile" --host_platform="$profile" --jobs=2
+            exit
+          fi
+
+          diagnostic_root="$RUNNER_TEMP/native-bazel-diagnostics"
+          qualifier_output_base="$RUNNER_TEMP/native-bazel"
+          mkdir -p "$diagnostic_root"
+          bash tools/dev/bazel.sh --output_base="$qualifier_output_base" test \
+            //:portable_tests "${host_tests[@]}" \
+            --platforms="$profile" --host_platform="$profile" --jobs=2 \
+            --profile="$diagnostic_root/qualification.json.gz" \
+            --starlark_cpu_profile="$diagnostic_root/starlark.pprof" &
+          qualifier_pid=$!
+          (
+            diagnostic_delay_pid=
+            trap 'if [[ -n "$diagnostic_delay_pid" ]]; then kill "$diagnostic_delay_pid" 2>/dev/null || true; fi' EXIT
+            trap 'exit 0' TERM INT
+            sleep 480 &
+            diagnostic_delay_pid=$!
+            wait "$diagnostic_delay_pid"
+            if kill -0 "$qualifier_pid" 2>/dev/null; then
+              ps -axo pid,ppid,state,etime,%cpu,%mem,comm > "$diagnostic_root/processes.txt"
+              java_pid_file="$qualifier_output_base/server/server.pid.txt"
+              if [[ -r "$java_pid_file" ]]; then
+                java_pid="$(cat "$java_pid_file")"
+                if [[ "$java_pid" =~ ^[0-9]+$ ]]; then
+                  java_command="$(ps -p "$java_pid" -o comm= || true)"
+                  case "$java_command" in
+                    java|*/java)
+                      kill -QUIT "$java_pid" 2>/dev/null || true
+                      sleep 2
+                      cp "$qualifier_output_base/server/jvm.out" "$diagnostic_root/jvm-8min.out" || true
+                      ;;
+                  esac
+                fi
+              fi
+            fi
+          ) &
+          diagnostic_pid=$!
+          qualifier_status=0
+          trap 'kill "$diagnostic_pid" 2>/dev/null || true' EXIT
+          wait "$qualifier_pid" || qualifier_status=$?
+          kill "$diagnostic_pid" 2>/dev/null || true
+          wait "$diagnostic_pid" || true
+          trap - EXIT
+          if [[ -f "$qualifier_output_base/server/jvm.out" ]]; then
+            cp "$qualifier_output_base/server/jvm.out" "$diagnostic_root/jvm-final.out" || true
+          fi
+          exit "$qualifier_status"
 
       - name: Qualify declared macOS Swift SDK
         if: matrix.platform == 'macos-arm64'
         run: >-
-          bash tools/dev/bazel.sh test //build_defs/host:host_swift_smoke
+          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" test //build_defs/host:host_swift_smoke
           //src/native/sdks/swift:installed_consumer_test
           --platforms=//build_defs/host:apple_package_macos_arm64 --jobs=2
+
+      - name: Construct native iOS device and simulator ABI consumers
+        if: matrix.platform == 'macos-arm64'
+        run: |
+          for profile in ios_device_arm64 ios_simulator_arm64; do
+            bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" build -c opt \
+              //src/native/runtime:mobile_static_abi_consumer \
+              //src/native/runtime:runtime_abi_binary \
+              --platforms="//build_defs/host:$profile" \
+              --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
+          done
 
       - name: Check execution tool selection for foreign targets
         if: matrix.platform == 'linux-x64'
@@ -105,6 +170,15 @@ jobs:
       - name: Exercise cold, incremental and coverage scenarios
         if: matrix.platform == 'linux-x64'
         run: bash tools/dev/bun.sh tools/bazel/tests/conformance.mts
+
+      - name: Upload macOS Bazel diagnostics
+        if: ${{ always() && matrix.platform == 'macos-arm64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-bazel-macos-diagnostics
+          path: ${{ runner.temp }}/native-bazel-diagnostics
+          if-no-files-found: ignore
+          retention-days: 5
 
   linux:
     name: Linux runtime (${{ matrix.platform }})
@@ -193,16 +267,22 @@ jobs:
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
-      - name: Qualify Linux AOT images and SDK execution
+      - name: Construct platform AOT packages and qualify Linux SDK and resources
         run: >-
           bash tools/dev/bazel.sh test --config=wasix-aot
           //src/wasix/runtime:aot_linux_x64_gnu_payload
+          //src/wasix/runtime:aot_linux_arm64_gnu_payload
+          //src/wasix/runtime:aot_macos_arm64_payload
+          //src/wasix/runtime:aot_windows_x64_msvc_payload
+          //src/wasix/runtime:cargo
           //src/wasix/sdks/rust:postgres_regression_test
+          //src/database-resources:wasix_resource_test
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
-          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
+          --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=1
+          --local_test_jobs=1
           --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full
           --test_env=XDG_CACHE_HOME="$RUNNER_TEMP/wasix-source-sdk-cache"
-          --test_arg=--test-threads=1
+          --test_env=RUST_TEST_THREADS=1
 
       # One Linux producer base supplies the real portable runtime and SDK
       # archives consumed by both browser exports. Chrome is a host input.

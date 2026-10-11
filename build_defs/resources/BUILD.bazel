@@ -7,6 +7,7 @@ exports_files(glob(["*.bzl", "*.mts"]))
 
 filegroup(name = "helpers", srcs = [
     "shared.mts",
+    "wasix_inputs.mts",
     "//build_defs/native:host-runtime-test-helpers.mts",
     "//src/database-resources:contracts/contract.json",
     "//src/database-resources:contracts/icu-data.mts",
@@ -27,6 +28,9 @@ filegroup(name = "helpers", srcs = [
     "//src/native/mobile-bindings:tools/dependency-license-contract.mts",
     "//src/native/runtime:tools/native-mobile-abi-contract.mts",
     "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
+    "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
+    "//src/wasix/runtime:tools/wasix-runtime-npm-descriptor.mts",
+    "//src/wasix/runtime:tools/wasix-runtime-npm-payload.mts",
     "//:tools/packaging/archive-directory.mts",
     "//:tools/packaging/atomic-directory.mts",
     "//:tools/packaging/build-maven-artifact-manifest.mts",
@@ -68,6 +72,7 @@ BOOTSTRAP_HELPERS = [
 ]
 
 bun_binary(name = "native_seed", entry_point = "native_seed.mts", data = BOOTSTRAP_HELPERS)
+bun_binary(name = "wasix_seed", entry_point = "wasix_seed.mts", data = [":helpers"])
 bun_binary(name = "seed_domain", entry_point = "seed_domain.mts", data = BOOTSTRAP_HELPERS)
 bun_binary(name = "abi_receipt", entry_point = "abi_receipt.mts", data = [
     "shared.mts", "//src/native/runtime:tools/native-mobile-abi-contract.mts",

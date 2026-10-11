@@ -3,6 +3,7 @@ load("//build_defs/android:toolchain.bzl", "android_artifact")
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
 load(":platform_config.bzl", "NATIVE_COMPATIBLE")
 load(":compiler_probes.bzl", "native_compiler_probe_targets")
+load(":mobile-profile-test.bzl", "native_mobile_profile_tests")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -17,11 +18,15 @@ config_setting(name = "android_x86_64", constraint_values = ["@platforms//os:and
 config_setting(name = "android", constraint_values = ["@platforms//os:android", "//build_defs/android:ndk_runtime"])
 config_setting(name = "macos_arm64", constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
 config_setting(name = "windows_x64", constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"])
+config_setting(name = "ios_arm64", constraint_values = ["@platforms//os:ios", "@platforms//cpu:aarch64", "@apple_support//constraints:apple", "@apple_support//constraints:device"])
+config_setting(name = "ios_arm64_simulator", constraint_values = ["@platforms//os:ios", "@platforms//cpu:aarch64", "@apple_support//constraints:apple", "@apple_support//constraints:simulator"])
+config_setting(name = "ios", constraint_values = ["@platforms//os:ios", "@platforms//cpu:aarch64", "@apple_support//constraints:apple"])
 
 platform(name = "linux_x86_64_glibc_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.28"])
 platform(name = "linux_aarch64_glibc_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64", "@zig_sdk//libc:gnu.2.28"])
 
 native_compiler_probe_targets(name = "compiler_probe")
+native_mobile_profile_tests()
 
 cc_test(
     name = "probe_process_test",
@@ -72,7 +77,7 @@ bun_script_test(
     name = "android_runtime_abi_test",
     entry_point = "android-runtime-abi.test.mts",
     args = ["$(location :android_runtime_arm64)", "$(location :android_runtime_x86_64)", "$(location @android_ndk//:nm)", "$(location //src/native/runtime:include/oliphaunt.h)"],
-    data = [":android_runtime_arm64", ":android_runtime_x86_64", "@android_ndk//:nm", "//src/native/runtime:include/oliphaunt.h", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//tools/release:platform-compatibility-policy.mts"],
+    data = [":android_runtime_arm64", ":android_runtime_x86_64", "@android_ndk//:nm", "//src/native/runtime:include/oliphaunt.h", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts"],
     size = "medium",
     tags = ["manual"],
 )

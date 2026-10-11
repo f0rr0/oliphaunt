@@ -25,7 +25,7 @@ native_cargo_consumer_test(
 
 native_installed_carrier_test(
     name = "installed_carrier_test",
-    inputs = ["//src/native/runtime:github_archive", ":github_archive", ":npm_facade", ":npm", "//src/native/runtime:profile_smoke", "//build_defs/native/carriers:tools-consumer.mts", "//src/test-fixtures:postgres/logical-tools.json"],
+    inputs = ["//src/native/runtime:github_archive", "//src/native/runtime:npm", ":github_archive", ":npm_facade", ":npm", "//src/native/runtime:profile_smoke", "//build_defs/native/carriers:tools-consumer.mts", "//src/test-fixtures:postgres/logical-tools.json"],
     target_compatible_with = NATIVE_COMPATIBLE,
     size = "medium",
 )

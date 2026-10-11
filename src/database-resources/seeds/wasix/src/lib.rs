@@ -74,16 +74,108 @@ pub fn run_wasix_initdb_cluster_seed(
     profile: CatalogProfile,
     icu_data_root: Option<&Path>,
 ) -> Result<()> {
-    use std::env;
+    use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
+    use wasmer_wasix::virtual_fs::null_file::NullFile;
+
+    with_wasix_cluster_seed_runner(
+        runtime_stage,
+        work_root,
+        profile,
+        icu_data_root,
+        None,
+        |seed_runner| {
+            let (stdout_file, stdout_capture) = TailCaptureFile::new(64 * 1024);
+            let (stderr_file, stderr_capture) = TailCaptureFile::new(64 * 1024);
+            let run_result = {
+                let mut runner = WasiRunner::new();
+                runner.with_current_dir("/");
+                runner.with_mount("/".to_owned(), seed_runner.root_fs.clone());
+                runner.with_mount("/base".to_owned(), seed_runner.pgdata_fs.clone());
+                runner.with_args(default_initdb_args());
+                runner.with_envs(cluster_seed_producer_environment(profile));
+                runner.with_stdin(Box::<NullFile>::default());
+                runner.with_stdout(Box::new(stdout_file));
+                runner.with_stderr(Box::new(stderr_file));
+                runner.run_command(
+                    "initdb",
+                    &seed_runner.package,
+                    RuntimeOrEngine::Runtime(seed_runner.runtime.clone()),
+                )
+            };
+            let stdout = stdout_capture.text();
+            let stderr = stderr_capture.text();
+            if std::env::var_os("OLIPHAUNT_WASM_CLUSTER_SEED_LOG").is_some() || run_result.is_err()
+            {
+                print_captured_wasix_output("initdb stdout", &stdout);
+                print_captured_wasix_output("initdb stderr", &stderr);
+            }
+            run_result.context("run WASIX initdb to generate cluster seed")?;
+            verify_wasix_cluster_seed_profile(seed_runner, profile)
+        },
+    )
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+pub fn verify_wasix_cluster_seed(
+    runtime_stage: &Path,
+    work_root: &Path,
+    profile: CatalogProfile,
+    pgdata_source: &Path,
+    icu_data_root: Option<&Path>,
+) -> Result<()> {
+    with_wasix_cluster_seed_runner(
+        runtime_stage,
+        work_root,
+        profile,
+        icu_data_root,
+        Some(pgdata_source),
+        |runner| {
+            verify_wasix_cluster_seed_profile(runner, profile)?;
+            runner.run_sql(
+                profile,
+                "CREATE TABLE public.oliphaunt_seed_consumer_probe (id integer PRIMARY KEY, marker text NOT NULL);\nINSERT INTO public.oliphaunt_seed_consumer_probe VALUES (1, 'persisted-after-reopen');\n",
+                "create and populate WASIX cluster-seed persistence probe",
+            )?;
+            let stdout = runner.run_sql(
+                profile,
+                "SELECT CASE WHEN count(*) = 1 AND min(marker) = 'persisted-after-reopen' THEN 'oliphaunt-wasix-seed-persistence-ok' ELSE 'oliphaunt-wasix-seed-persistence-invalid' END FROM public.oliphaunt_seed_consumer_probe WHERE id = 1;\n",
+                "reopen WASIX cluster seed and read persistence probe",
+            )?;
+            anyhow::ensure!(
+                stdout.contains("oliphaunt-wasix-seed-persistence-ok"),
+                "reopened WASIX cluster seed did not preserve the inserted row"
+            );
+            Ok(())
+        },
+    )
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+struct ClusterSeedRunner {
+    package: wasmer_wasix::bin_factory::BinaryPackage,
+    runtime: std::sync::Arc<dyn wasmer_wasix::runtime::Runtime + Send + Sync>,
+    root_fs: std::sync::Arc<dyn wasmer_wasix::virtual_fs::FileSystem + Send + Sync>,
+    pgdata_fs: std::sync::Arc<dyn wasmer_wasix::virtual_fs::FileSystem + Send + Sync>,
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+fn with_wasix_cluster_seed_runner(
+    runtime_stage: &Path,
+    work_root: &Path,
+    profile: CatalogProfile,
+    icu_data_root: Option<&Path>,
+    pgdata_source: Option<&Path>,
+    run: impl FnOnce(&ClusterSeedRunner) -> Result<()>,
+) -> Result<()> {
     use std::sync::Arc;
 
     use wasmer::Engine;
     use wasmer_wasix::bin_factory::BinaryPackage;
-    use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
     use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
     use wasmer_wasix::runtime::{PluggableRuntime, Runtime};
     use wasmer_wasix::virtual_fs;
-    use wasmer_wasix::virtual_fs::null_file::NullFile;
+
+    validate_cluster_seed_work_root(runtime_stage, work_root, icu_data_root, pgdata_source)?;
 
     let package_dir = work_root.join("package");
     let package_root = work_root.join("root");
@@ -92,6 +184,15 @@ pub fn run_wasix_initdb_cluster_seed(
         .with_context(|| format!("create {}", package_dir.join("modules").display()))?;
     fs::create_dir_all(&pgdata_root)
         .with_context(|| format!("create {}", pgdata_root.display()))?;
+    if let Some(source) = pgdata_source {
+        copy_tree(source, &pgdata_root)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&pgdata_root, fs::Permissions::from_mode(0o700))
+                .context("set private copied PGDATA permissions")?;
+        }
+    }
     copy_tree(runtime_stage, &package_root)?;
     let staged_icu_data = package_root.join("share/icu");
     if staged_icu_data.exists() {
@@ -101,13 +202,18 @@ pub fn run_wasix_initdb_cluster_seed(
     match (profile, icu_data_root) {
         (CatalogProfile::Standard, None) => {}
         (CatalogProfile::Standard, Some(_)) => {
-            bail!("standard cluster-seed generation must not receive ICU data")
+            bail!("standard cluster seed must not receive ICU data")
         }
         (CatalogProfile::Icu, Some(icu_data_root)) => {
+            anyhow::ensure!(
+                fs::symlink_metadata(icu_data_root.join("icudt76l.dat"))
+                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0),
+                "ICU cluster seed requires a nonempty icudt76l.dat file"
+            );
             copy_tree(icu_data_root, &staged_icu_data)?;
         }
         (CatalogProfile::Icu, None) => {
-            bail!("ICU cluster-seed generation requires verified ICU data")
+            bail!("ICU cluster seed requires verified ICU data")
         }
     }
     copy_file(
@@ -148,7 +254,7 @@ module = "postgres"
     let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .context("create Tokio runtime for WASIX cluster-seed generation")?;
+        .context("create Tokio runtime for WASIX cluster seed")?;
     let _guard = tokio_runtime.enter();
     let engine = Engine::default();
     let task_manager = Arc::new(TokioTaskManager::new(tokio_runtime.handle().clone()));
@@ -158,7 +264,7 @@ module = "postgres"
     let runtime: Arc<dyn Runtime + Send + Sync> = Arc::new(runtime);
     let package = tokio_runtime
         .block_on(BinaryPackage::from_dir(&package_dir, runtime.as_ref()))
-        .context("load WASIX initdb package")?;
+        .context("load local WASIX cluster-seed package")?;
     let root_fs = Arc::new(
         virtual_fs::host_fs::FileSystem::new(tokio_runtime.handle().clone(), &package_root)
             .with_context(|| {
@@ -178,32 +284,70 @@ module = "postgres"
             })?,
     ) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
 
-    let (stdout_file, stdout_capture) = TailCaptureFile::new(64 * 1024);
-    let (stderr_file, stderr_capture) = TailCaptureFile::new(64 * 1024);
-    let run_result = {
-        let mut runner = WasiRunner::new();
-        runner.with_current_dir("/");
-        runner.with_mount("/".to_owned(), root_fs.clone());
-        runner.with_mount("/base".to_owned(), pgdata_fs.clone());
-        runner.with_args(default_initdb_args());
-        runner.with_envs(cluster_seed_producer_environment(profile));
-        runner.with_stdin(Box::<NullFile>::default());
-        runner.with_stdout(Box::new(stdout_file));
-        runner.with_stderr(Box::new(stderr_file));
-        runner.run_command(
-            "initdb",
-            &package,
-            RuntimeOrEngine::Runtime(runtime.clone()),
-        )
+    run(&ClusterSeedRunner {
+        package,
+        runtime,
+        root_fs,
+        pgdata_fs,
+    })
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+fn validate_cluster_seed_work_root(
+    runtime_stage: &Path,
+    work_root: &Path,
+    icu_data_root: Option<&Path>,
+    pgdata_source: Option<&Path>,
+) -> Result<()> {
+    anyhow::ensure!(
+        !work_root
+            .components()
+            .any(|component| component == std::path::Component::ParentDir),
+        "work directory must not contain parent components"
+    );
+    anyhow::ensure!(!work_root.exists(), "work directory must be new");
+    let mut ancestor = if work_root.is_absolute() {
+        work_root.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(work_root)
     };
-    let stdout = stdout_capture.text();
-    let stderr = stderr_capture.text();
-    if env::var_os("OLIPHAUNT_WASM_CLUSTER_SEED_LOG").is_some() || run_result.is_err() {
-        print_captured_wasix_output("initdb stdout", &stdout);
-        print_captured_wasix_output("initdb stderr", &stderr);
+    let mut missing = Vec::new();
+    let mut resolved = loop {
+        match fs::canonicalize(&ancestor) {
+            Ok(path) => break path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    ancestor
+                        .file_name()
+                        .context("work directory has no existing ancestor")?
+                        .to_os_string(),
+                );
+                anyhow::ensure!(ancestor.pop(), "work directory has no existing ancestor");
+            }
+            Err(error) => return Err(error).context("resolve cluster-seed work directory"),
+        }
+    };
+    for component in missing.into_iter().rev() {
+        resolved.push(component);
     }
-    run_result.context("run WASIX initdb to generate cluster seed")?;
-    verify_wasix_cluster_seed_profile(&package, runtime, root_fs, pgdata_fs, profile)
+    match fs::symlink_metadata(&resolved) {
+        Ok(_) => bail!("work directory must be new"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("inspect resolved cluster-seed work directory"),
+    }
+    for source in [Some(runtime_stage), pgdata_source, icu_data_root]
+        .into_iter()
+        .flatten()
+    {
+        let input = fs::canonicalize(source)
+            .with_context(|| format!("resolve seed input directory {}", source.display()))?;
+        anyhow::ensure!(
+            !resolved.starts_with(&input),
+            "work directory must be outside seed input directory {}",
+            source.display()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "cluster-seed-runner"))]
@@ -216,6 +360,17 @@ pub fn run_wasix_initdb_cluster_seed(
     bail!(
         "WASIX seed generation requires the seed producer's `cluster-seed-runner` feature; run `bash src/database-resources/seeds/build.sh`"
     )
+}
+
+#[cfg(not(feature = "cluster-seed-runner"))]
+pub fn verify_wasix_cluster_seed(
+    _runtime_stage: &Path,
+    _work_root: &Path,
+    _profile: CatalogProfile,
+    _pgdata_source: &Path,
+    _icu_data_root: Option<&Path>,
+) -> Result<()> {
+    bail!("WASIX seed verification requires the seed producer's `cluster-seed-runner` feature")
 }
 
 #[cfg_attr(not(feature = "cluster-seed-runner"), allow(dead_code))]
@@ -268,15 +423,9 @@ fn cluster_seed_producer_environment(profile: CatalogProfile) -> Vec<(&'static s
 
 #[cfg(feature = "cluster-seed-runner")]
 fn verify_wasix_cluster_seed_profile(
-    package: &wasmer_wasix::bin_factory::BinaryPackage,
-    runtime: std::sync::Arc<dyn wasmer_wasix::runtime::Runtime + Send + Sync>,
-    root_fs: std::sync::Arc<dyn wasmer_wasix::virtual_fs::FileSystem + Send + Sync>,
-    pgdata_fs: std::sync::Arc<dyn wasmer_wasix::virtual_fs::FileSystem + Send + Sync>,
+    runner: &ClusterSeedRunner,
     profile: CatalogProfile,
 ) -> Result<()> {
-    use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
-    use wasmer_wasix::virtual_fs;
-
     const CONTRACT_JSON: &str = include_str!("../../../contracts/profile-probe.json");
 
     let contract: ClusterSeedProfileProbeContract =
@@ -293,38 +442,13 @@ fn verify_wasix_cluster_seed_profile(
     };
 
     for attempt in 1..=2 {
-        let (stdout_file, stdout_capture) = TailCaptureFile::new(64 * 1024);
-        let (stderr_file, stderr_capture) = TailCaptureFile::new(64 * 1024);
-        let mut runner = WasiRunner::new();
-        runner.with_current_dir("/");
-        runner.with_mount("/".to_owned(), root_fs.clone());
-        runner.with_mount("/base".to_owned(), pgdata_fs.clone());
-        runner.with_args(vec!["--single", "-D", "/base", "postgres"]);
-        runner.with_envs(cluster_seed_environment(profile));
-        runner.with_stdin(Box::new(virtual_fs::StaticFile::new(
-            format!("{};\n", probe.sql).into_bytes(),
-        )));
-        runner.with_stdout(Box::new(stdout_file));
-        runner.with_stderr(Box::new(stderr_file));
-        let result = runner.run_command(
-            "postgres",
-            package,
-            RuntimeOrEngine::Runtime(runtime.clone()),
+        let label = format!(
+            "{} WASIX cluster-seed profile probe (attempt {attempt})",
+            profile.as_str()
         );
-        let stdout = stdout_capture.text();
-        let stderr = stderr_capture.text();
-        let failed = result.is_err() || !stdout.contains(&probe.expected);
-        if std::env::var_os("OLIPHAUNT_WASM_CLUSTER_SEED_LOG").is_some() || failed {
-            print_captured_wasix_output("profile probe stdout", &stdout);
-            print_captured_wasix_output("profile probe stderr", &stderr);
-        }
-        result.with_context(|| {
-            format!(
-                "run {} WASIX cluster-seed profile probe (attempt {attempt})",
-                profile.as_str()
-            )
-        })?;
+        let stdout = runner.run_sql(profile, &format!("{};\n", probe.sql), &label)?;
         if !stdout.contains(&probe.expected) {
+            print_captured_wasix_output("profile probe stdout", &stdout);
             bail!(
                 "{} WASIX cluster-seed profile probe attempt {attempt} did not emit {:?}",
                 profile.as_str(),
@@ -333,6 +457,47 @@ fn verify_wasix_cluster_seed_profile(
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+impl ClusterSeedRunner {
+    fn run_sql(&self, profile: CatalogProfile, sql: &str, label: &str) -> Result<String> {
+        use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
+        use wasmer_wasix::virtual_fs;
+
+        let (stdout_file, stdout_capture) = TailCaptureFile::new(64 * 1024);
+        let (stderr_file, stderr_capture) = TailCaptureFile::new(64 * 1024);
+        let mut runner = WasiRunner::new();
+        runner.with_current_dir("/");
+        runner.with_mount("/".to_owned(), self.root_fs.clone());
+        runner.with_mount("/base".to_owned(), self.pgdata_fs.clone());
+        runner.with_args(vec!["--single", "-D", "/base", "postgres"]);
+        runner.with_envs(cluster_seed_environment(profile));
+        runner.with_stdin(Box::new(virtual_fs::StaticFile::new(
+            sql.as_bytes().to_vec(),
+        )));
+        runner.with_stdout(Box::new(stdout_file));
+        runner.with_stderr(Box::new(stderr_file));
+        let result = runner.run_command(
+            "postgres",
+            &self.package,
+            RuntimeOrEngine::Runtime(self.runtime.clone()),
+        );
+        let stdout = stdout_capture.text();
+        let stderr = stderr_capture.text();
+        let sql_failed = stdout_capture.saw_postgres_error() || stderr_capture.saw_postgres_error();
+        let failed = result.is_err() || sql_failed;
+        if std::env::var_os("OLIPHAUNT_WASM_CLUSTER_SEED_LOG").is_some() || failed {
+            print_captured_wasix_output(&format!("{label} stdout"), &stdout);
+            print_captured_wasix_output(&format!("{label} stderr"), &stderr);
+        }
+        result.with_context(|| format!("run {label}"))?;
+        anyhow::ensure!(
+            !sql_failed,
+            "{label} emitted PostgreSQL ERROR, FATAL, or PANIC"
+        );
+        Ok(stdout)
+    }
 }
 
 #[cfg(feature = "cluster-seed-runner")]
@@ -385,6 +550,7 @@ struct TailCaptureFile {
 #[derive(Debug, Default)]
 struct TailCaptureState {
     bytes: std::collections::VecDeque<u8>,
+    postgres_error: bool,
 }
 
 #[cfg(feature = "cluster-seed-runner")]
@@ -410,6 +576,19 @@ impl TailCaptureFile {
         let Ok(mut state) = self.inner.lock() else {
             return;
         };
+        // Keep failure evidence even when later output displaces it from the captured tail.
+        let mut scan = state
+            .bytes
+            .iter()
+            .rev()
+            .take(5)
+            .copied()
+            .collect::<Vec<_>>();
+        scan.reverse();
+        scan.extend_from_slice(bytes);
+        state.postgres_error |= scan
+            .windows(6)
+            .any(|window| matches!(window, b"ERROR:" | b"FATAL:" | b"PANIC:"));
         for byte in bytes {
             state.bytes.push_back(*byte);
             while state.bytes.len() > self.limit {
@@ -421,6 +600,13 @@ impl TailCaptureFile {
 
 #[cfg(feature = "cluster-seed-runner")]
 impl TailCaptureHandle {
+    fn saw_postgres_error(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|state| state.postgres_error)
+            .unwrap_or(true)
+    }
+
     fn text(&self) -> String {
         let Ok(state) = self.inner.lock() else {
             return "<cluster-seed output capture lock poisoned>".to_owned();
@@ -585,6 +771,11 @@ fn copy_file(source: &Path, destination: &Path) -> Result<()> {
 
 #[cfg(feature = "cluster-seed-runner")]
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+    anyhow::ensure!(
+        fs::symlink_metadata(source)?.is_dir(),
+        "seed input must be a regular directory: {}",
+        source.display()
+    );
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -627,5 +818,140 @@ mod layout_tests {
         fs::remove_dir_all(root)?;
         assert!(error.to_string().contains("pg_notify"));
         Ok(())
+    }
+
+    #[cfg(feature = "cluster-seed-runner")]
+    fn work_root_fixture() -> Result<std::path::PathBuf> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-seed-work-root-{}-{nonce}",
+            std::process::id()
+        ));
+        for name in ["runtime", "pgdata", "icu", "outside"] {
+            fs::create_dir_all(root.join(name))?;
+        }
+        Ok(root)
+    }
+
+    #[cfg(feature = "cluster-seed-runner")]
+    #[test]
+    fn rejects_work_inside_inputs_before_creating_missing_parents() -> Result<()> {
+        let root = work_root_fixture()?;
+        let runtime = root.join("runtime");
+        let pgdata = root.join("pgdata");
+        let icu = root.join("icu");
+        for input in [&runtime, &pgdata, &icu] {
+            let work = input.join("missing/also-missing/work");
+            let error = validate_cluster_seed_work_root(&runtime, &work, Some(&icu), Some(&pgdata))
+                .unwrap_err();
+            assert!(error.to_string().contains("outside seed input directory"));
+            assert!(!input.join("missing").exists());
+            let error = validate_cluster_seed_work_root(&runtime, input, Some(&icu), Some(&pgdata))
+                .unwrap_err();
+            assert!(error.to_string().contains("work directory must be new"));
+        }
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "cluster-seed-runner")]
+    #[test]
+    fn accepts_unrelated_new_workspace_without_creating_it() -> Result<()> {
+        let root = work_root_fixture()?;
+        let work = root.join("outside/missing/also-missing/work");
+        validate_cluster_seed_work_root(
+            &root.join("runtime"),
+            &work,
+            Some(&root.join("icu")),
+            Some(&root.join("pgdata")),
+        )?;
+        assert!(!root.join("outside/missing").exists());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "cluster-seed-runner")]
+    #[test]
+    fn rejects_parent_components_before_mutating_inputs() -> Result<()> {
+        let root = work_root_fixture()?;
+        let runtime = root.join("runtime");
+        let pgdata = root.join("pgdata");
+        let icu = root.join("icu");
+        for input in [&runtime, &pgdata, &icu] {
+            fs::write(input.join("frozen-input"), "unchanged")?;
+            let work = input.join("missing/../../outside/work");
+            let error = validate_cluster_seed_work_root(&runtime, &work, Some(&icu), Some(&pgdata))
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("must not contain parent components")
+            );
+            assert_eq!(fs::read_to_string(input.join("frozen-input"))?, "unchanged");
+            assert_eq!(fs::read_dir(input)?.count(), 1);
+        }
+        assert!(!root.join("outside/work").exists());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(all(feature = "cluster-seed-runner", unix))]
+    #[test]
+    fn rejects_work_inside_symlink_aliased_inputs() -> Result<()> {
+        let root = work_root_fixture()?;
+        let runtime = root.join("runtime");
+        let pgdata = root.join("pgdata");
+        let icu = root.join("icu");
+        let aliases = [
+            root.join("runtime-alias"),
+            root.join("pgdata-alias"),
+            root.join("icu-alias"),
+        ];
+        for (input, alias) in [&runtime, &pgdata, &icu].into_iter().zip(&aliases) {
+            std::os::unix::fs::symlink(input, alias)?;
+        }
+        for (input, alias) in [&runtime, &pgdata, &icu].into_iter().zip(&aliases) {
+            for work in [
+                input.join("missing/also-missing/work"),
+                alias.join("missing/also-missing/work"),
+            ] {
+                let error = validate_cluster_seed_work_root(
+                    &aliases[0],
+                    &work,
+                    Some(&aliases[2]),
+                    Some(&aliases[1]),
+                )
+                .unwrap_err();
+                assert!(error.to_string().contains("outside seed input directory"));
+                assert!(!input.join("missing").exists());
+            }
+        }
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "cluster-seed-runner")]
+    #[test]
+    fn retains_postgres_errors_across_chunks_and_tail_eviction() {
+        for severity in [b"ERROR:".as_slice(), b"FATAL:", b"PANIC:"] {
+            let (file, capture) = TailCaptureFile::new(64);
+            file.push_tail(&severity[..3]);
+            assert!(!capture.saw_postgres_error());
+            file.push_tail(&severity[3..]);
+            file.push_tail(&vec![b' '; 128]);
+            file.push_tail(b"oliphaunt-standard-seed-ok");
+            assert!(capture.text().contains("oliphaunt-standard-seed-ok"));
+            assert!(
+                !capture
+                    .text()
+                    .contains(std::str::from_utf8(severity).unwrap())
+            );
+            assert!(capture.saw_postgres_error());
+        }
+        let (file, capture) = TailCaptureFile::new(64);
+        file.push_tail(b"oliphaunt-standard-seed-ok");
+        assert!(!capture.saw_postgres_error());
     }
 }

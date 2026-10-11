@@ -1,4 +1,4 @@
-load("//build_defs/resources:resources.bzl", "linux_resource_slice")
+load("//build_defs/resources:resources.bzl", "linux_resource_slice", "resource_compile_data", "wasix_resource_slice", "wasix_resource_test")
 load("//build_defs/resources:mobile.bzl", "android_resource_slice", "native_abi_receipt")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
@@ -15,6 +15,11 @@ filegroup(
     name = "cluster_seed_contract_fixtures",
     srcs = glob(["contracts/fixtures/*.properties"]),
 )
+
+# rules_rust stages authored Rust sources beneath bazel-out. These symlinks
+# preserve the existing relative include_str! paths to the exact contracts.
+resource_compile_data(name = "contract_compile_data", src = "contracts/contract.json", out = "contracts/contract.json")
+resource_compile_data(name = "profile_probe_compile_data", src = "contracts/profile-probe.json", out = "contracts/profile-probe.json")
 
 native_abi_receipt(name = "native_target_abi")
 
@@ -37,6 +42,9 @@ linux_resource_slice(name = "linux_shipping_export", templates = {
 })
 
 android_resource_slice(name = "android_shipping_export")
+
+wasix_resource_slice(name = "wasix_shipping_export")
+wasix_resource_test(name = "wasix_resource_test")
 
 bun_script_test(
     name = "linux_resource_test",

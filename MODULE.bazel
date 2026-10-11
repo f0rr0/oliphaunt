@@ -31,7 +31,10 @@ bazel_dep(name = "protobuf", version = "34.0.bcr.1")
 single_version_override(
     module_name = "rules_rust",
     version = "0.74.0",
-    patches = ["//build_defs/wasix/browser:crate-source-metadata.patch"],
+    patches = [
+        "//build_defs/wasix/browser:crate-source-metadata.patch",
+        "//build_defs/wasix/postmaster:crate-monorepo-source.patch",
+    ],
     patch_strip = 1,
 )
 single_version_override(
@@ -93,6 +96,10 @@ languages.configure(metadata = "@oliphaunt_toolchain_metadata//:toolchains.json"
 use_repo(languages, "rust_toolchains", "query_types_node", "query_undici_types")
 register_toolchains("@rust_toolchains//:all")
 
+stable_host_tools = use_extension("//build_defs/foundation:extensions.bzl", "rust_host_tools")
+stable_host_tools.configure(metadata = "@oliphaunt_toolchain_metadata//:toolchains.json")
+use_repo(stable_host_tools, "rust_host_tools")
+
 native_cargo_metadata = use_repo_rule("//build_defs/languages:repositories.bzl", "cargo_metadata_repository")
 native_cargo_metadata(
     name = "native_cargo_metadata",
@@ -102,6 +109,7 @@ native_cargo_metadata(
 cargo_crates = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
 cargo_crates.from_cargo(
     name = "cargo_crates",
+    host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@native_cargo_metadata//:Cargo.lock",
     manifests = ["@native_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
@@ -183,6 +191,7 @@ mobile_cargo_metadata(
 )
 cargo_crates.from_cargo(
     name = "mobile_bindgen_crates",
+    host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@mobile_bindgen_cargo_metadata//:Cargo.lock",
     manifests = ["@mobile_bindgen_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
@@ -206,6 +215,7 @@ native_cargo_metadata(
 )
 cargo_crates.from_cargo(
     name = "aot_serializer_crates",
+    host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@aot_serializer_cargo_metadata//:Cargo.lock",
     manifests = ["@aot_serializer_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
@@ -268,13 +278,13 @@ cargo_crates.annotation(
 )
 cargo_crates.annotation_select(
     crate = "llvm-sys",
-    repositories = ["aot_serializer_crates"],
+    repositories = ["aot_serializer_crates", "wasix_seed_crates"],
     triples = ["aarch64-unknown-linux-gnu"],
     link_deps = ["@oliphaunt//build_defs/extensions/postgis:libxml2"],
 )
 cargo_crates.annotation_select(
     crate = "llvm-sys",
-    repositories = ["aot_serializer_crates"],
+    repositories = ["aot_serializer_crates", "wasix_seed_crates"],
     triples = ["x86_64-unknown-linux-gnu"],
     link_deps = [
         "@oliphaunt//build_defs/extensions/postgis:libxml2",
@@ -399,6 +409,7 @@ native_cargo_metadata(
 wasix_adapter_crates = use_extension("//build_defs/languages:adapter-cargo-extension.bzl", "crate")
 wasix_adapter_crates.from_cargo(
     name = "wasix_adapter_crates",
+    host_tools = "@rust_host_tools//:BUILD.bazel",
     cargo_lockfile = "@wasix_adapter_cargo_metadata//:Cargo.lock",
     manifests = ["@wasix_adapter_cargo_metadata//:Cargo.toml"],
     skip_cargo_lockfile_overwrite = True,
@@ -410,3 +421,83 @@ wasix_adapter_crates.from_cargo(
     ],
 )
 use_repo(wasix_adapter_crates, "wasix_adapter_crates")
+
+# Independent feature acquisition preserves the headless SDK's feature set.
+native_cargo_metadata(
+    name = "wasix_seed_cargo_metadata",
+    activations = {"src/database-resources/seeds/wasix": ["cluster-seed-runner"]},
+)
+cargo_crates.from_cargo(
+    name = "wasix_seed_crates",
+    host_tools = "@rust_host_tools//:BUILD.bazel",
+    cargo_lockfile = "@wasix_seed_cargo_metadata//:Cargo.lock",
+    manifests = ["@wasix_seed_cargo_metadata//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ],
+)
+use_repo(cargo_crates, "wasix_seed_crates")
+
+# LLVM's Mach-O emitter needs a qualified section; its loader keeps the bare name.
+cargo_crates.annotation(
+    crate = "wasmer-compiler-llvm",
+    version = "=7.2.1",
+    repositories = ["aot_serializer_crates", "wasix_seed_crates"],
+    patches = ["//build_defs/wasix:wasmer-macho-trampoline.patch"],
+    patch_args = ["-p1"],
+)
+
+cargo_crates.annotation(
+    crate = "llvm-sys",
+    repositories = ["wasix_seed_crates"],
+    build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_files"],
+    build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_env"],
+    patches = ["//build_defs/wasix:llvm-sys-declared-prefix.patch"],
+    patch_args = ["-p1"],
+    link_deps = ["@wasix_seed_crates//:zstd"],
+    label_injections = {
+        "//build_defs/wasix:wasmer_llvm_files": "@oliphaunt",
+        "//build_defs/wasix:wasmer_llvm_gnu_link": "@oliphaunt",
+        "//build_defs/wasix:wasmer_llvm_gnu_files": "@oliphaunt",
+        "@wasix_seed_crates//:zstd": "@wasix_seed_crates",
+    },
+)
+
+# The pinned postmaster workspace keeps its executor/compiler feature contexts
+# independent of the current WASIX SDK workspace.
+postmaster_wasmer = use_repo_rule("//build_defs/wasix/postmaster:repositories.bzl", "postmaster_wasmer_repository")
+postmaster_wasmer(name = "postmaster_wasmer")
+
+postmaster_cargo = use_repo_rule("//build_defs/wasix/postmaster:repositories.bzl", "postmaster_cargo_repository")
+postmaster_cargo(
+    name = "postmaster_cargo",
+    roles = {
+        "executor": "oliphaunt-wasix-postmaster-executor",
+        "compiler": "oliphaunt-wasix-postmaster-compiler",
+    },
+)
+
+postmaster_crates = use_extension("//build_defs/wasix/postmaster:cargo-extension.bzl", "crate")
+postmaster_crates.from_cargo(
+    name = "postmaster_executor_crates",
+    cargo_lockfile = "@postmaster_cargo//:executor/Cargo.lock",
+    manifests = ["@postmaster_cargo//:executor/Cargo.toml"],
+    host_tools = "@rust_host_tools//:BUILD.bazel",
+    source_metadata = "@postmaster_cargo//:cargo-sources.json",
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"],
+)
+postmaster_crates.from_cargo(
+    name = "postmaster_compiler_crates",
+    cargo_lockfile = "@postmaster_cargo//:compiler/Cargo.lock",
+    manifests = ["@postmaster_cargo//:compiler/Cargo.toml"],
+    host_tools = "@rust_host_tools//:BUILD.bazel",
+    source_metadata = "@postmaster_cargo//:cargo-sources.json",
+    skip_cargo_lockfile_overwrite = True,
+    supported_platform_triples = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"],
+)
+use_repo(postmaster_crates, "postmaster_executor_crates", "postmaster_compiler_crates")

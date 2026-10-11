@@ -14,6 +14,9 @@ _ANDROID_X64 = "@oliphaunt//build_defs/native:android_x86_64"
 _ANDROID = "@oliphaunt//build_defs/native:android"
 _MACOS = "@oliphaunt//build_defs/native:macos_arm64"
 _WINDOWS = "@oliphaunt//build_defs/native:windows_x64"
+_IOS = "@oliphaunt//build_defs/native:ios"
+_IOS_DEVICE = "@oliphaunt//build_defs/native:ios_arm64"
+_IOS_SIMULATOR = "@oliphaunt//build_defs/native:ios_arm64_simulator"
 
 # glibc introduced strlcpy/strlcat in 2.38; lower ABI profiles must compile PG's
 # replacements. This is a toolchain-dependent fact, not a host configure probe.
@@ -54,12 +57,14 @@ NATIVE_COMPATIBLE = select({
 })
 
 # C construction capability is broader than the desktop module/server carrier.
-# Android embeds process-local IPC and builtin modules; it cannot claim the
+# Android and iOS embed process-local IPC and builtin modules; they cannot claim the
 # desktop postmaster or installed dynamic-extension SQL consumer semantics.
 NATIVE_C_COMPATIBLE = select({
     _X64: [],
     _ARM64_GNU_228: [],
     _ANDROID: [],
+    _IOS_DEVICE: [],
+    _IOS_SIMULATOR: [],
     _MACOS: [],
     _WINDOWS: [],
     "//conditions:default": ["@platforms//:incompatible"],
@@ -82,6 +87,8 @@ NATIVE_PORT_REPLACEMENTS = select({
     _ANDROID: _port_replacements(ANDROID_LP64_CONFIG),
     _MACOS: [":host_macos_replacements"],
     _WINDOWS: [":host_windows_replacements"],
+    _IOS_DEVICE: [":host_ios_replacements"],
+    _IOS_SIMULATOR: [":host_ios_simulator_replacements"],
 })
 
 # The fixed profiles remain selected only on their qualified configurations.
@@ -89,21 +96,28 @@ NATIVE_PORT_REPLACEMENTS = select({
 NATIVE_CONFIGURATION = select({
     _MACOS: [":host_macos_configuration"],
     _WINDOWS: [":host_windows_configuration"],
+    _IOS_DEVICE: [":host_ios_configuration"],
+    _IOS_SIMULATOR: [":host_ios_simulator_configuration"],
     "//conditions:default": [":static_configuration"],
 })
 NATIVE_CONFIGURATION_ADMISSION = select({
     _MACOS: [":host_macos_admission"],
     _WINDOWS: [":host_windows_admission"],
+    _IOS_DEVICE: [":host_ios_admission"],
+    _IOS_SIMULATOR: [":host_ios_simulator_admission"],
     "//conditions:default": [],
 })
 NATIVE_INCLUDE_DIRECTORIES = select({
     _MACOS: ["host_macos/src/include"],
     _WINDOWS: ["host_windows/src/include"] + WINDOWS_INCLUDE_DIRECTORIES,
+    _IOS_DEVICE: ["host_ios/src/include"],
+    _IOS_SIMULATOR: ["host_ios_simulator/src/include"],
     "//conditions:default": [],
 })
 NATIVE_HEADER_DEFINES = select({
     _MACOS: ["_DARWIN_C_SOURCE"],
     _WINDOWS: WINDOWS_DEFINES,
+    _IOS: ["_DARWIN_C_SOURCE"],
     "//conditions:default": ["_GNU_SOURCE"],
 })
 NATIVE_COPTS = select({
@@ -121,6 +135,7 @@ NATIVE_LIBPQ_ADDITIONAL_SOURCES = select({_WINDOWS: WINDOWS_LIBPQ_SOURCES, "//co
 NATIVE_OS_HEADER = "src/include/port/linux.h"
 NATIVE_BACKEND_PORT_SOURCES = select({
     _ANDROID: ["src/backend/port/oliphaunt_embedded_sema.c", "src/backend/port/oliphaunt_embedded_shmem.c"],
+    _IOS: ["src/backend/port/oliphaunt_embedded_sema.c", "src/backend/port/oliphaunt_embedded_shmem.c"],
     _MACOS: ["src/backend/port/sysv_sema.c", "src/backend/port/sysv_shmem.c"],
     _WINDOWS: WINDOWS_BACKEND_PORT_SOURCES,
     "//conditions:default": POSTGRES_BACKEND_LINUX_SOURCES,
@@ -128,6 +143,7 @@ NATIVE_BACKEND_PORT_SOURCES = select({
 NATIVE_LINKOPTS = select({
     _ANDROID: ["-lm", "-ldl"],
     _MACOS: [],
+    _IOS: [],
     _WINDOWS: WINDOWS_LINKOPTS,
     "//conditions:default": ["-lm", "-ldl", "-lpthread"],
 })
@@ -143,13 +159,16 @@ NATIVE_LIBPQ_LINKOPTS = select({_MACOS: ["-Wl,-install_name,@rpath/libpq.5.dylib
 NATIVE_RUNTIME_LINKOPTS = select({_MACOS: ["-Wl,-install_name,@rpath/liboliphaunt.dylib"], _WINDOWS: [], "//conditions:default": ["-Wl,-soname,liboliphaunt.so", "-Wl,-z,defs"]})
 NATIVE_EMBEDDED_DEFINES = select({
     _ANDROID: ["OLIPHAUNT_EMBEDDED_MOBILE_SHMEM"],
+    _IOS: ["OLIPHAUNT_EMBEDDED_MOBILE_SHMEM"],
     "//conditions:default": [],
 })
 NATIVE_BUILTIN_SNOWBALL = select({
     _ANDROID: ["OLIPHAUNT_BUILTIN_DICT_SNOWBALL"],
+    _IOS: ["OLIPHAUNT_BUILTIN_DICT_SNOWBALL"],
     "//conditions:default": [],
 })
 NATIVE_BUILTIN_SNOWBALL_DEPS = select({
     _ANDROID: ["@postgres//:snowball_builtin"],
+    _IOS: ["@postgres//:snowball_builtin"],
     "//conditions:default": [],
 })

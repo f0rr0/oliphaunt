@@ -46,8 +46,7 @@ export interface Artifact {
   npm_libc?: string;
 }
 export interface PayloadSpec {
-  artifact: Artifact;
-  version: string;
+  artifact: Pick<Artifact, 'kind' | 'target'>;
   mappings: Mapping[];
   legal: Record<string, string>;
   windowsRuntime: Record<string, string>;

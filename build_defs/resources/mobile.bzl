@@ -13,6 +13,12 @@ def _constraint(ctx, name):
 def _target(ctx):
     arm64 = _constraint(ctx, "_arm64")
     x64 = _constraint(ctx, "_x64")
+    if _constraint(ctx, "_ios") and arm64:
+        device = _constraint(ctx, "_apple_device")
+        simulator = _constraint(ctx, "_apple_simulator")
+        if device == simulator:
+            fail("iOS seed ABI requires exactly one actual device/simulator compiler configuration")
+        return "ios-arm64" if device else "ios-arm64-simulator"
     if _constraint(ctx, "_android"):
         if arm64:
             return "android-arm64-v8a"
@@ -40,23 +46,21 @@ def _native_abi_receipt_impl(ctx):
         if len(files) != 1:
             fail("Native seed ABI receipt header must name one actual source file")
         headers[relative] = files[0].path
-    runtime = [file for file in ctx.files.runtime if file.basename in ["liboliphaunt.so", "liboliphaunt.dylib", "oliphaunt.dll"]]
-    if len(runtime) != 1:
-        fail("Native seed ABI receipt must consume the same configured compiled runtime")
+    runtime = ctx.file.runtime
     receipt = ctx.actions.declare_file(ctx.label.name + ".properties")
     specification = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
-    ctx.actions.write(specification, json.encode({"target": target, "runtime": runtime[0].path, "headers": headers, "output": receipt.path}) + "\n")
+    ctx.actions.write(specification, json.encode({"target": target, "runtime": runtime.path, "headers": headers, "output": receipt.path}) + "\n")
     arguments = ctx.actions.args()
     arguments.add(specification)
     bun_action(ctx, ctx.attr._tool, arguments = [arguments],
-               inputs = [specification, runtime[0]] + ctx.files.configuration + ctx.files.headers,
+               inputs = [specification, runtime] + ctx.files.configuration + ctx.files.headers,
                outputs = [receipt], mnemonic = "NativeSeedTargetAbi")
-    return [DefaultInfo(files = depset([receipt])), NativeAbiReceiptInfo(receipt = receipt, runtime = runtime[0], target = target)]
+    return [DefaultInfo(files = depset([receipt])), NativeAbiReceiptInfo(receipt = receipt, runtime = runtime, target = target)]
 
 native_abi_receipt = rule(
     implementation = _native_abi_receipt_impl,
     attrs = {
-        "runtime": attr.label(default = "//src/native/runtime:runtime_shared", allow_files = True),
+        "runtime": attr.label(default = "//src/native/runtime:runtime_abi_binary", allow_single_file = True),
         "configuration": attr.label(default = "@postgres//:configuration", allow_files = True),
         "headers": attr.label_keyed_string_dict(default = {
             Label("@postgres//:src/include/pg_config_manual.h"): "src/include/pg_config_manual.h",
@@ -65,6 +69,9 @@ native_abi_receipt = rule(
         }, allow_files = True),
         "_tool": attr.label(default = "//build_defs/resources:abi_receipt", providers = [BunScriptInfo], cfg = "exec"),
         "_android": attr.label(default = "@platforms//os:android"),
+        "_ios": attr.label(default = "@platforms//os:ios"),
+        "_apple_device": attr.label(default = "@apple_support//constraints:device"),
+        "_apple_simulator": attr.label(default = "@apple_support//constraints:simulator"),
         "_linux": attr.label(default = "@platforms//os:linux"),
         "_macos": attr.label(default = "@platforms//os:macos"),
         "_windows": attr.label(default = "@platforms//os:windows"),

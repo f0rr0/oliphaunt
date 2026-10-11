@@ -14,12 +14,6 @@ import fs, {
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  assertExtensionUpstreamLicensesInArchive,
-  assertExtensionUpstreamLicensesInDirectory,
-  extensionRegistryLicense,
-  stageExtensionUpstreamLicenses,
-} from '../../../extensions/tools/extension-upstream-licenses.mts';
 import { createDeterministicTar } from '../../../../tools/packaging/cargo-source-package.mts';
 import {
   portableMemberName,
@@ -48,8 +42,17 @@ import {
   extensionSqlNames,
 } from '../../../../tools/release/release-artifact-targets.mts';
 import { compareText } from '../../../../tools/release/release-graph.mts';
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  assertExtensionUpstreamLicensesInDirectory,
+  extensionRegistryLicense,
+  stageExtensionUpstreamLicenses,
+} from '../../../extensions/tools/extension-upstream-licenses.mts';
 import { assertWasixAotArtifactPayloads } from './check-release-assets.mts';
-import { assertCanonicalWasixAotManifest } from './wasix-aot-manifest.mts';
+import {
+  assertCanonicalWasixAotManifest,
+  canonicalWasixAotMetadata,
+} from './wasix-aot-manifest.mts';
 import {
   AOT_PACKAGES,
   AOT_TARGET_CFGS,
@@ -239,11 +242,12 @@ function readJson(file) {
   }
 }
 
-function validateCanonicalAotManifest(manifest, manifestPath, expectedTarget) {
+function validateCanonicalAotManifest(manifest, manifestPath, expectedTarget, sourceRoot = ROOT) {
   try {
     assertCanonicalWasixAotManifest(manifest, {
       context: rel(manifestPath),
       expectedTarget,
+      canonical: canonicalWasixAotMetadata(sourceRoot),
     });
   } catch (error) {
     fail(error.message);
@@ -421,10 +425,10 @@ function runtimeCorePayload(runtimeRoot, extractRoot) {
   return coreRoot;
 }
 
-export function validateAotPayload(root, expectedTarget) {
+export function validateAotPayload(root, expectedTarget, { sourceRoot = ROOT } = {}) {
   const manifestPath = path.join(root, 'manifest.json');
   const manifest = readJson(manifestPath);
-  validateCanonicalAotManifest(manifest, manifestPath, expectedTarget);
+  validateCanonicalAotManifest(manifest, manifestPath, expectedTarget, sourceRoot);
   let artifactRows;
   try {
     artifactRows = assertWasixAotArtifactPayloads(manifest, {
@@ -444,7 +448,7 @@ export function validateAotPayload(root, expectedTarget) {
   }
   const expected = new Set([
     'manifest.json',
-    ...releaseNoticeRows({ profile: 'wasix-aot' }).map((row) => row.member),
+    ...releaseNoticeRows({ profile: 'wasix-aot', sourceRoot }).map((row) => row.member),
   ]);
   for (const row of artifactRows) {
     if (row.name.startsWith('extension:')) {
@@ -452,7 +456,7 @@ export function validateAotPayload(root, expectedTarget) {
     }
     expected.add(row.path);
   }
-  assertReleaseNoticesInDirectory(root, { profile: 'wasix-aot' });
+  assertReleaseNoticesInDirectory(root, { profile: 'wasix-aot', sourceRoot });
   const actual = new Set(payloadFiles(root).map((file) => relPath(root, file)));
   if (!sameSet(actual, expected)) {
     fail(
@@ -461,8 +465,8 @@ export function validateAotPayload(root, expectedTarget) {
   }
 }
 
-export function validateRuntimeAotPayload(root, expectedTarget) {
-  validateAotPayload(root, expectedTarget);
+export function validateRuntimeAotPayload(root, expectedTarget, options = {}) {
+  validateAotPayload(root, expectedTarget, options);
   const manifestPath = path.join(root, 'manifest.json');
   assertCoreRuntimeAotArtifacts(readJson(manifestPath), rel(manifestPath));
 }

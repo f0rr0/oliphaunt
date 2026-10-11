@@ -6,6 +6,7 @@ import {
 } from './native-publication-artifacts.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import { captureNativePublicationOutputs } from './native-publication-staging.mts';
+import { captureNativePreEnvelopePayloads } from './native-publication-payloads.mts';
 import {
   buildPublicationCandidate,
   expectedProductArtifactRows,
@@ -36,6 +37,10 @@ export function buildNativePublicationCandidate({
   const outputs = captureNativePublicationOutputs(cohorts, { sourceCommit: source.commit });
   const catalog = loadPublicationCatalog('native-publication-candidate');
   const selected = new Set(products ?? catalog.products.map(({ id }) => id));
+  const payloads = captureNativePreEnvelopePayloads(cohorts, {
+    source,
+    products: catalog.products.filter(({ id }) => selected.has(id)),
+  });
   const authority = {
     catalog,
     artifactRows: expectedProductArtifactRows(
@@ -51,12 +56,16 @@ export function buildNativePublicationCandidate({
   const candidate = buildPublicationCandidate({
     products,
     artifactRoots: outputs.stage(),
-    headRef,
+    headRef: source.commit,
     nativeSourceBasis,
   });
+  if (candidate.source.commit !== source.commit || candidate.source.tree !== source.tree)
+    throw new Error('native candidate source changed after its physical cohorts were captured');
+  payloads.assertUnchanged();
   return {
     ...candidate,
     scope: 'construction' as const,
+    nativePayloads: payloads.payloads,
     unverified: physical.unverified,
   };
 }

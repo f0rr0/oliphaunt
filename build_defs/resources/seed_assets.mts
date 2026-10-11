@@ -1,17 +1,23 @@
 import assert from 'node:assert/strict';
 import { copyFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { extractNativePayload } from '../native/host-runtime-test-helpers.mts';
-import { extractPortableArchiveTree } from '../../tools/packaging/portable-archive.mts';
 import { validateNativeClusterSeedDirectory } from '../../src/database-resources/contracts/native-manifest.mts';
 import { packageClusterSeed } from '../../src/database-resources/seeds/package.mts';
+import { extractPortableArchiveTree } from '../../tools/packaging/portable-archive.mts';
+import { extractNativePayload } from '../native/host-runtime-test-helpers.mts';
 import { materializeArchive, privateWork, readSpecification } from './shared.mts';
+import { extractWasixRuntime } from './wasix_inputs.mts';
 
 const specification = readSpecification();
 const work = privateWork(path.resolve(specification.archive));
 try {
-  const runtime = path.join(work, 'runtime');
-  await extractNativePayload(specification.runtime, runtime);
+  const family = specification.family;
+  assert.ok(['native', 'wasix'].includes(family));
+  const runtime =
+    family === 'wasix'
+      ? extractWasixRuntime(specification.runtime, work)
+      : path.join(work, 'runtime');
+  if (family === 'native') await extractNativePayload(specification.runtime, runtime);
   const seed = path.join(work, 'seed');
   await extractNativePayload(specification.seed, seed);
   let icuData: string | undefined;
@@ -23,15 +29,16 @@ try {
     );
     icuData = path.join(icuRoot, 'share/icu');
   }
-  validateNativeClusterSeedDirectory(seed, specification.profile, {
-    target: specification.target,
-    icuData,
-  });
+  if (family === 'native')
+    validateNativeClusterSeedDirectory(seed, specification.profile, {
+      target: specification.target,
+      icuData,
+    });
   const result = await packageClusterSeed({
-    family: 'native',
+    family,
     target: specification.target,
     profile: specification.profile,
-    pgdata: path.join(seed, 'files'),
+    pgdata: family === 'native' ? path.join(seed, 'files') : seed,
     runtime,
     icuData,
     version: specification.version,

@@ -2,6 +2,7 @@ load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_test")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":llvm.bzl", "exec_files", "llvm_helper_runtime")
 load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
+load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -23,6 +24,39 @@ bun_test(
     name = "runtime_npm_test",
     entry_point = "npm.test.mts",
     data = ["npm.mts"] + RUNTIME_NPM_HELPERS + RUNTIME_NPM_NOTICES.keys(),
+    size = "small",
+)
+
+bun_test(
+    name = "runtime_cargo_test",
+    entry_point = "cargo.test.mts",
+    data = ["cargo.mts", "//src/wasix/runtime:toolchain.toml"] + RUNTIME_CARGO_HELPERS + RUNTIME_NPM_NOTICES.keys() + [
+        "//src/wasix/runtime/crates/assets:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:package_sources",
+    ],
+    size = "small",
+)
+
+bun_test(
+    name = "cargo_inputs_test",
+    entry_point = "cargo-inputs.test.mts",
+    data = [
+        "cargo-inputs.mts",
+        "cargo.mts",
+        "//build_defs/languages:cargo-metadata.mts",
+        "//:tools/packaging/frozen-cargo.mts",
+        "//:Cargo.lock",
+        "//src/wasix/runtime:release.toml",
+        "//src/wasix/runtime:toolchain.toml",
+        "//src/wasix/runtime/crates/assets:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:package_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:package_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:package_sources",
+    ] + RUNTIME_CARGO_HELPERS + RUNTIME_NPM_NOTICES.keys(),
     size = "small",
 )
 

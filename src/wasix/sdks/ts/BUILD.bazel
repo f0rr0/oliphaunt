@@ -13,6 +13,13 @@ load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["package.json", "tools/package.mts", "tools/frozen-browser-consumer.mts", "tools/browser-cdp.mts"])
+exports_files([
+    "src/resources/extensions.ts",
+    "src/resources/archive.ts",
+    "src/resources/asset-source.ts",
+    "src/resources/zstd.ts",
+    "src/storage/database-root.ts",
+])
 
 SDK = JAVASCRIPT["@oliphaunt/wasix-ts"]
 QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
