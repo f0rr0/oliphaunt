@@ -61,6 +61,12 @@
   },
   "overrides": [
     {
+      "includes": ["build_defs/release/native-*-npm-*.json"],
+      "formatter": {
+        "enabled": false
+      }
+    },
+    {
       "includes": [
         "src/native/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
       ],

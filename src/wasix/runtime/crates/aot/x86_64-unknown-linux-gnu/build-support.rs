@@ -234,6 +234,17 @@ fn rust_string_literal(path: &Path) -> String {
         env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"),
     ));
     let target = lexical_absolute(path);
+    if !target.starts_with(&base) {
+        let manifest_dir = lexical_absolute(&PathBuf::from(
+            env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
+        ));
+        if let Ok(member) = target.strip_prefix(&manifest_dir) {
+            return format!(
+                "concat!(env!(\"CARGO_MANIFEST_DIR\"), {:?})",
+                format!("/{}", member.to_string_lossy().replace('\\', "/"))
+            );
+        }
+    }
     let base_components = base.components().collect::<Vec<_>>();
     let target_components = target.components().collect::<Vec<_>>();
     let common = base_components

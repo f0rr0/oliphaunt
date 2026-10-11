@@ -17,6 +17,12 @@ import { extractPortableArchiveTree } from '../../../tools/packaging/portable-ar
 import { nativeWasmerReceipt, runtimeAbiFacts } from './native-receipts.mts';
 
 const arguments_ = Bun.argv.slice(2);
+const libraryNameAt = arguments_.indexOf('--libpq-name');
+const libraryName = libraryNameAt < 0 ? 'libpq.so.5' : arguments_.splice(libraryNameAt, 2)[1];
+assert(
+  ['libpq.so.5', 'libpq.5.dylib'].includes(libraryName),
+  'Unsupported native libpq installed name',
+);
 const archiveInput = arguments_[0] === '--archive';
 if (archiveInput) arguments_.shift();
 const [carrierArg, psqlArg, libraryOrWork, archiveWork] = arguments_;
@@ -38,8 +44,8 @@ let psql = psqlSource;
 const libpq = archiveInput && libraryOrWork ? realpathSync(resolve(libraryOrWork)) : undefined;
 if (libpq) {
   psql = join(work, 'client/bin/psql');
-  const library = join(work, 'client/lib/libpq.so.5');
-  // Match the actual native psql $ORIGIN/../lib and libpq.so.5 SONAME contract.
+  const library = join(work, 'client/lib', libraryName);
+  // Match the maintained native psql loader path and libpq installed identity.
   for (const [source, destination] of [
     [psqlSource, psql],
     [libpq, library],
@@ -66,6 +72,12 @@ if (archive) {
 const wasmer = JSON.parse(readFileSync(join(carrier, 'wasmer-build.receipt'), 'utf8'));
 nativeWasmerReceipt(wasmer);
 const facts = runtimeAbiFacts(wasmer.runtime_abi);
+if (libpq)
+  assert.equal(
+    libraryName,
+    facts.hostAbi === 'darwin' ? 'libpq.5.dylib' : 'libpq.so.5',
+    'Native client library differs from actual carrier host',
+  );
 const manifest = JSON.parse(readFileSync(join(carrier, 'manifest.json'), 'utf8'));
 verify(
   carrier,

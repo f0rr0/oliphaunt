@@ -1862,6 +1862,136 @@ pub(crate) fn generate_declared_wasix_export_policy(args: &[String]) -> Result<(
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredExtensionLinkSpec {
+    sql_name: String,
+    runtime: PathBuf,
+    runtime_manifest: PathBuf,
+    modules: Vec<DeclaredExtensionModule>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredExtensionModule {
+    name: String,
+    path: PathBuf,
+    runtime_path: String,
+}
+
+/// Resolve one declared extension's physical side-module closure against its core.
+pub(crate) fn generate_declared_extension_link(args: &[String]) -> Result<()> {
+    let (input, output) = declared_manifest_args(args)?;
+    let spec: DeclaredExtensionLinkSpec = serde_json::from_slice(&fs::read(&input)?)?;
+    ensure!(
+        !spec.sql_name.is_empty()
+            && spec
+                .sql_name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'),
+        "invalid declared extension SQL name"
+    );
+    ensure!(
+        output != spec.runtime
+            && output != spec.runtime_manifest
+            && spec.modules.iter().all(|module| output != module.path),
+        "extension link output must differ from its declared inputs"
+    );
+    let portable: AssetManifestOut = serde_json::from_slice(&fs::read(&spec.runtime_manifest)?)?;
+    ensure!(
+        portable.format_version == ASSET_MANIFEST_FORMAT_VERSION
+            && portable.runtime.runtime_kind == "wasix-dynamic-main"
+            && portable.source_lane.as_deref() == Some(DEFAULT_SOURCE_LANE),
+        "extension link requires its canonical portable runtime manifest"
+    );
+    ensure_eq(
+        &sha256_file(&spec.runtime)?,
+        &portable.runtime.module_sha256,
+        "extension core module digest",
+    )?;
+    let runtime_link = read_wasm_link_metadata(&spec.runtime)?;
+    ensure!(
+        serde_json::to_value(&runtime_link)? == serde_json::to_value(&portable.runtime.link)?,
+        "extension core link metadata differs from its physical module"
+    );
+    let mut links = BTreeMap::new();
+    let mut runtime_paths = BTreeSet::new();
+    let mut native_modules = Vec::new();
+    for module in &spec.modules {
+        ensure!(
+            module.runtime_path
+                == format!(
+                    "lib/postgresql/{}",
+                    module
+                        .path
+                        .file_name()
+                        .context("extension module filename")?
+                        .to_str()
+                        .context("extension module filename UTF-8")?
+                ),
+            "extension module has a noncanonical runtime destination"
+        );
+        ensure!(
+            runtime_paths.insert(&module.runtime_path),
+            "duplicate extension module destination"
+        );
+        let link = read_wasm_link_metadata(&module.path)?;
+        validate_module_link_metadata(&BuildModuleManifestOut {
+            name: module.name.clone(),
+            kind: "extension".to_owned(),
+            path: module.path.display().to_string(),
+            sha256: String::new(),
+            link: link.clone(),
+        })?;
+        ensure!(
+            links.insert(module.name.clone(), link).is_none(),
+            "duplicate extension module name"
+        );
+        let digest = sha256_file(&module.path)?;
+        native_modules.push(serde_json::json!({"name": module.name, "path": module.runtime_path, "sha256": digest, "moduleSha256": digest, "size": fs::metadata(&module.path)?.len()}));
+    }
+    ensure!(
+        links.contains_key(&spec.sql_name),
+        "extension closure has no primary SQL module"
+    );
+    let basenames = side_module_basename_index(
+        spec.modules
+            .iter()
+            .map(|module| (module.name.as_str(), module.path.as_path())),
+    )?;
+    let mut required = BTreeSet::new();
+    for module in &spec.modules {
+        let providers = side_module_provider_exports(&module.name, &links, &basenames)?;
+        for import in &links[&module.name].imports {
+            if !import_should_resolve_from_runtime(import)
+                || import_resolves_from_wasm_exports(import, &providers, &module.name)?
+            {
+                continue;
+            }
+            let name = resolved_wasm_export_name(import, &runtime_link.exports, "runtime")?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "extension {} has unresolved import {}.{} ({})",
+                        module.name,
+                        import.module,
+                        import.name,
+                        import.kind
+                    )
+                })?;
+            required.insert(name);
+        }
+    }
+    native_modules.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+    let result = serde_json::json!({"schema": "oliphaunt-declared-wasix-extension-link-v1", "sqlName": spec.sql_name,
+        "nativeModules": native_modules, "coreExportsRequired": required, "unresolvedImports": [], "moduleLinkMetadata": links,
+        "sourceFingerprint": portable.source_fingerprint.context("extension core source fingerprint")?, "postgresVersion": portable.runtime.postgres_version});
+    fs::write(
+        output,
+        format!("{}\n", serde_json::to_string_pretty(&result)?),
+    )?;
+    Ok(())
+}
+
 pub(crate) fn required_runtime_abi_exports() -> &'static [&'static str] {
     REQUIRED_RUNTIME_ABI_EXPORTS
 }
@@ -3339,6 +3469,72 @@ mod tests {
         fs::write(&module, b"invalid WASM").expect("replace malformed input");
         assert!(generate_declared_wasix_export_policy(&arguments).is_err());
         fs::remove_dir_all(directory).expect("remove fixture directory");
+    }
+
+    #[test]
+    fn declared_extension_link_binds_physical_core_and_side_module() {
+        let directory =
+            std::env::temp_dir().join(format!("oliphaunt-extension-link-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let module = directory.join("plugin.so");
+        fs::write(&module, b"\0asm\x01\0\0\0\0\x0f\x08dylink.0\x01\x04\0\0\0\0\x01\x04\x01\x60\0\0\x02\x0f\x01\x03env\x07backend\0\0\x07\x0a\x01\x06plugin\0\0").unwrap();
+        let runtime = directory.join("postgres.wasm");
+        fs::write(&runtime, b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x07\x0b\x01\x07backend\0\0\x0a\x04\x01\x02\0\x0b").unwrap();
+        let manifest = directory.join("manifest.json");
+        let portable = serde_json::json!({"format-version": ASSET_MANIFEST_FORMAT_VERSION, "source-lane": "stable", "source-fingerprint": "18.4:declared-test",
+            "runtime": {"archive": "oliphaunt.wasix.tar.zst", "sha256": "a".repeat(64), "module-sha256": sha256_file(&runtime).unwrap(), "postgres-version": "18.4", "runtime-kind": "wasix-dynamic-main", "link": read_wasm_link_metadata(&runtime).unwrap()}, "runtime-support": [], "extensions": [], "sources": []});
+        fs::write(&manifest, serde_json::to_vec(&portable).unwrap()).unwrap();
+        let spec = directory.join("spec.json");
+        let mut inputs = serde_json::json!({"sql_name": "plugin", "runtime": runtime, "runtime_manifest": manifest, "modules": [{"name": "plugin", "path": module, "runtime_path": "lib/postgresql/plugin.so"}]});
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        let output = directory.join("link.json");
+        let args = [
+            "--spec".to_owned(),
+            spec.display().to_string(),
+            "--output".to_owned(),
+            output.display().to_string(),
+        ];
+        generate_declared_extension_link(&args).unwrap();
+        let first = fs::read(&output).unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(
+            result["coreExportsRequired"],
+            serde_json::json!(["backend"])
+        );
+        assert_eq!(
+            result["nativeModules"][0]["moduleSha256"],
+            sha256_file(&module).unwrap()
+        );
+        generate_declared_extension_link(&args).unwrap();
+        assert_eq!(fs::read(&output).unwrap(), first);
+        inputs["modules"][0]["runtime_path"] = serde_json::json!("../plugin.so");
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        assert!(generate_declared_extension_link(&args).is_err());
+        inputs["modules"][0]["runtime_path"] = serde_json::json!("lib/postgresql/plugin.so");
+        fs::write(&spec, serde_json::to_vec(&inputs).unwrap()).unwrap();
+        let original_module = fs::read(&module).unwrap();
+        let mut unresolved_module = original_module.clone();
+        let position = unresolved_module
+            .windows(7)
+            .position(|bytes| bytes == b"backend")
+            .unwrap();
+        unresolved_module[position..position + 7].copy_from_slice(b"missing");
+        fs::write(&module, unresolved_module).unwrap();
+        assert!(
+            generate_declared_extension_link(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved import env.missing")
+        );
+        fs::write(&module, original_module).unwrap();
+        let mut wrong_link = portable.clone();
+        wrong_link["runtime"]["link"]["exports"][0]["name"] = serde_json::json!("invented");
+        fs::write(&manifest, serde_json::to_vec(&wrong_link).unwrap()).unwrap();
+        assert!(generate_declared_extension_link(&args).is_err());
+        fs::write(&manifest, serde_json::to_vec(&portable).unwrap()).unwrap();
+        fs::write(&runtime, b"invalid core bytes").unwrap();
+        assert!(generate_declared_extension_link(&args).is_err());
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

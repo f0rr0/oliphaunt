@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/extensions/postgis:modules.bzl", "native_postgis_modules")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_RECIPES", "EXTENSION_SOURCES")
 load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
@@ -30,3 +31,5 @@ extension_member_payload(name = "native_payload", sql_name = "postgis", owner = 
 shipping_package(name = "native_member", owner = extension_identity("postgis"), artifacts = [":native_payload"],
                  ecosystem = "internal", package_name = "postgis", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member")
 extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "postgis")
+
+source_quality_files()

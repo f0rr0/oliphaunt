@@ -8,6 +8,13 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load(":runtime-abi.bzl", "postmaster_runtime_abi")
 
+_COMPILER_COMPATIBLE = select({
+    "//build_defs/wasix:llvm_linux_x64": ["@zig_sdk//libc:gnu.2.34"],
+    "//build_defs/wasix:llvm_linux_arm64": ["@zig_sdk//libc:gnu.2.34"],
+    "//build_defs/wasix:llvm_macos_arm64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
 def _version_test_impl(ctx):
     binary = ctx.attr.binary[DefaultInfo].files_to_run.executable
     result = bun_test_entrypoint(
@@ -81,7 +88,7 @@ def postmaster_rust_targets(library_sources):
         )
         # LLVM22's native archives have the same internal 2.34 construction
         # floor as the maintained serializer; the public executor is separate.
-        compatible = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"] if role == "compiler" else []
+        compatible = _COMPILER_COMPATIBLE if role == "compiler" else []
         rust_binary(
             name = role,
             binary_name = facts["binary"],
@@ -132,7 +139,7 @@ def postmaster_rust_targets(library_sources):
         deps = [":compiler_library"] + compiler_crate_deps(["anyhow"], package_name = ""),
         rustc_env_files = [":cargo_env", ":runtime_abi"],
         experimental_use_cc_common_link = 1,
-        target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+        target_compatible_with = _COMPILER_COMPATIBLE,
         tags = ["manual"],
     )
     rust_binary(

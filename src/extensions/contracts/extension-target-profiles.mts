@@ -6,6 +6,13 @@ export const EXTENSION_TARGET_PROFILES_RELATIVE_PATH =
 const ROOT = path.resolve(import.meta.dir, '../../..');
 const ID = /^[a-z][a-z0-9_-]*$/u;
 
+/** Mobile exact archives retain the existing ordinary host module alongside static units. */
+export function nativeExtensionModuleHostTarget(target) {
+  if (target === 'ios-xcframework') return 'macos-arm64';
+  if (target === 'android-arm64-v8a' || target === 'android-x86_64') return 'linux-x64-gnu';
+  return target;
+}
+
 function fail(message) {
   throw new Error(`extension target profiles: ${message}`);
 }

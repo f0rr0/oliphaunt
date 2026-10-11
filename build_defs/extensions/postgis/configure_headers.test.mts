@@ -111,3 +111,65 @@ test('libiconv retains upstream type fallbacks and source-bound EILSEQ; JSON typ
     /EILSEQ/u,
   );
 });
+
+test('static profiles require the actual target proof and disable mobile XML/runtime features', () => {
+  const original = {
+    WITH_ICONV: '1',
+    WITH_THREADS: '1',
+    WITH_MODULES: '1',
+    HAVE_LIBDL: '1',
+    HAVE_ICONV: '1',
+    HAVE_ICONVCTL: '1',
+    HAVE_LIBICONVCTL: '1',
+    HAVE_LIBGEOS_C: '1',
+    MODULE_EXTENSION: '.so',
+  };
+  for (const target of [
+    'android-arm64-v8a',
+    'android-x86_64',
+    'ios-device',
+    'ios-simulator',
+    'macos-arm64',
+  ]) {
+    const proof = `HAVE_POSTGIS_TARGET_${target.toUpperCase().replaceAll('-', '_')}`;
+    const selected = { ...facts(target), [proof]: '1' };
+    const configured = targetSubstitutions(original, target, selected, 'mobile-static');
+    assert.equal(configured.WITH_ICONV, '0');
+    assert.equal(configured.WITH_THREADS, '0');
+    assert.equal(configured.WITH_MODULES, '0');
+    assert(!Object.hasOwn(configured, 'HAVE_LIBDL'));
+    assert.equal(configured.HAVE_LIBGEOS_C, '1');
+    assert.equal(configured.HAVE_ICONV, target.startsWith('android-') ? '1' : undefined);
+    assert.equal(configured.MODULE_EXTENSION, target.startsWith('android-') ? '.so' : '.dylib');
+    assert.equal(
+      configure(
+        '#cmakedefine01 WITH_THREADS\n#cmakedefine WITH_MODULES\n#undef HAVE_LIBDL\n',
+        configured,
+      ),
+      '#define WITH_THREADS 0\n/* #undef WITH_MODULES */\n#undef HAVE_LIBDL\n',
+    );
+    assert.throws(
+      () => targetSubstitutions(original, target, facts(target), 'mobile-static'),
+      /do not prove/u,
+    );
+    assert.throws(
+      () => targetSubstitutions(original, target, { ...selected, [proof]: '0' }, 'mobile-static'),
+      /do not prove/u,
+    );
+  }
+});
+
+test('mobile and desktop configuration selectors cannot substitute one another', () => {
+  assert.throws(
+    () => targetSubstitutions({}, 'android-arm64-v8a', facts('macos-arm64')),
+    /unsupported/u,
+  );
+  assert.throws(
+    () => targetSubstitutions({}, 'linux-x64-gnu', undefined, 'mobile-static'),
+    /unsupported/u,
+  );
+  assert.throws(
+    () => targetSubstitutions({}, 'macos-arm64', facts('macos-arm64'), 'unknown'),
+    /unsupported PostGIS profile/u,
+  );
+});

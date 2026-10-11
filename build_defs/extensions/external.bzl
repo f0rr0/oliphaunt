@@ -111,8 +111,10 @@ _windows_sources = rule(
 # The PostGIS recipe uses the same declared projection and pure source transforms.
 windows_extension_sources = _windows_sources
 
-def external_extension_inputs(name, sql_name):
+def external_extension_inputs(name, sql_name, link_profile = "native"):
     """C source inputs only; callers supply their actual host/profile headers."""
+    if link_profile not in ["native", "wasix"]:
+        fail("unknown external extension link profile: " + link_profile)
     if sql_name not in EXTERNAL_C_SOURCES:
         fail("%s has no reviewed external C construction recipe" % sql_name)
     prefix = "@" + EXTENSION_SOURCES[sql_name]["name"] + "//:"
@@ -127,6 +129,8 @@ def external_extension_inputs(name, sql_name):
         extension_source_headers(name = headers, hdrs = [prefix + "headers"], include_root = prefix + "src/constants.h")
         attrs["deps"] = [":" + headers]
         attrs["copts"] = ["-DPG_TEXTSEARCH_VERSION=\\\"%s\\\"" % extension_default_version(sql_name)]
+    if sql_name == "pg_hashids":
+        attrs["linkopts"] = ["-lm"] if link_profile == "wasix" else select({"//build_defs/native:windows_x64": [], "//conditions:default": ["-lm"]})
     return attrs
 
 def native_external_extension_modules(name, sql_name = None):
@@ -156,6 +160,4 @@ def native_external_extension_modules(name, sql_name = None):
             "//build_defs/native:linux_x86_64_gnu_2_28": ["@pgvector_compiler_rt//:cpu_model"],
             "//conditions:default": [],
         })
-    elif sql_name == "pg_hashids":
-        attrs["linkopts"] = select({"//build_defs/native:windows_x64": [], "//conditions:default": ["-lm"]})
     native_extension_modules(name = name, **attrs)

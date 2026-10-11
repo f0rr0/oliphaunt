@@ -267,6 +267,16 @@ test('reviewed main producer assurance preserves construction limits and accepts
     ['Linux runtime (x86_64)', 'native-build-evidence-x86_64'],
     ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],
     ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
+    ['Linux WASIX and installed browser', 'native-build-evidence-wasix-pg-hashids'],
+    ['Linux native postmaster lifecycle', 'native-build-evidence-postmaster-linux'],
+    ['Native postmaster lifecycle (linux-arm64)', 'native-build-evidence-postmaster-linux-arm64'],
+    ['Native postmaster lifecycle (macos-arm64)', 'native-build-evidence-postmaster-macos-arm64'],
+    ['Portable packages (linux-x64)', 'native-build-evidence-napi-linux-x64'],
+    ['Portable packages (linux-arm64)', 'native-build-evidence-napi-linux-arm64'],
+    ['Portable packages (macos-arm64)', 'native-build-evidence-napi-macos-arm64'],
+    ['Portable packages (windows-x64)', 'native-build-evidence-napi-windows-x64'],
+    ['Linux runtime (x86_64)', 'native-build-evidence-mobile-android'],
+    ['Portable packages (macos-arm64)', 'native-build-evidence-mobile-ios'],
   ]) {
     for (const event of ['push', 'workflow_dispatch'] as const) {
       const f = syntheticReviewedProducer(job, artifact);

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   mkdirSync,
@@ -27,6 +28,45 @@ const constraints = (f) => ({
   source: f.origin.evidence.source,
   github: f.origin.evidence.github,
   bazelVersion: f.input.bazelVersion,
+});
+
+test('file staging CLI binds source and producer before reconstructing captured public files', async () => {
+  await fixture(
+    async (f) => {
+      const directory = path.join(f.directory, 'cli-packet');
+      writeNativeBuildEvidence(f.capture, directory);
+      const github = path.join(f.directory, 'github.json');
+      writeFileSync(github, JSON.stringify(f.origin.evidence.github));
+      const argv = [
+        path.join(ROOT, 'tools/release/native-build-files.mts'),
+        '--evidence-root',
+        directory,
+        '--source-commit',
+        f.origin.evidence.source.commit,
+        '--source-tree',
+        f.origin.evidence.source.tree,
+        '--github-json',
+        github,
+        '--output-directory',
+        path.relative(ROOT, path.join(f.directory, 'cli-stage')).split(path.sep).join('/'),
+      ];
+      const invoke = (args: string[]) => spawnSync(process.execPath, args, { encoding: 'utf8' });
+      const accepted = invoke(argv);
+      expect(accepted.stderr).toBe('');
+      expect(accepted.status).toBe(0);
+      const staged = JSON.parse(accepted.stdout);
+      expect(staged).toHaveLength(3);
+      for (const file of staged) expect(readFileSync(file).length).toBeGreaterThan(0);
+      const differentSource = [...argv];
+      differentSource[differentSource.indexOf('--source-tree') + 1] = 'f'.repeat(40);
+      const rejected = invoke(differentSource);
+      expect(rejected.status).toBe(1);
+      expect(rejected.stdout).toBe('');
+      expect(rejected.stderr).toContain('source');
+      expect(invoke([...argv, '--allow-dirty']).status).toBe(1);
+    },
+    { producerCapture: true },
+  );
 });
 
 test('actual packed public files survive transport with exact members and held dependencies', async () => {
@@ -251,7 +291,45 @@ test('transport cannot substitute source, attempt, root configuration or output 
   });
 });
 
-test('internal outputs and source publication inputs remain explicitly outside final-file transport', async () => {
+test('extension join documents survive final transport and owned staging without public identities', async () => {
+  await fixture(async (f) => {
+    const evidence = f.origin.evidence;
+    const roots = evidence.cohorts[0].roots;
+    for (const [index, role] of [
+      'extension-release-manifest-input',
+      'extension-release-frozen-input',
+    ].entries()) {
+      roots[index].package.ecosystem = 'internal';
+      roots[index].package.role = role;
+    }
+    const directory = path.join(f.directory, 'join-packet');
+    const file = writeNativeBuildEvidence(f.capture, directory);
+    const packet = readNativeBuildFinalFiles(
+      directory,
+      JSON.parse(readFileSync(file, 'utf8')),
+      constraints(f),
+    );
+    expect(packet.files).toHaveLength(3);
+    expect(packet.unsupported).toEqual([]);
+    const staged = packet.stage({
+      stageDirectory: path
+        .relative(ROOT, path.join(f.directory, 'join-stage'))
+        .split(path.sep)
+        .join('/'),
+    });
+    expect(staged).toHaveLength(3);
+    for (const root of roots.slice(0, 2)) {
+      const original = path.join(evidence.cohorts[0].executionRoot, root.package.outputs[0].path);
+      const transferred = staged.find((file) => path.basename(file) === path.basename(original));
+      expect(transferred).toBeDefined();
+      expect(readFileSync(transferred)).toEqual(readFileSync(original));
+    }
+    expect(roots.slice(0, 2).every(({ package: pkg }) => pkg.ecosystem === 'internal')).toBe(true);
+    expect(packet).not.toHaveProperty('releaseDecision');
+  });
+});
+
+test('producer internals and unsupported source publication inputs stay outside final-file transport', async () => {
   await fixture(async (f) => {
     const evidence = f.origin.evidence;
     evidence.cohorts[0].roots[0].package.ecosystem = 'internal';

@@ -65,6 +65,18 @@ version="$(jq -r .swift "$scratch/versions.json")"
 ref="refs/tags/$version"
 invoke() { bash "$publisher" --target HEAD --manifest Package.swift.release --include-tree frozen-tree "$@" > "$scratch/result" 2>&1; }
 invoke --preflight
+# A complete native source tree carries the same root manifest as its separate frozen input.
+cp Package.swift.release frozen-tree/Package.swift
+invoke --preflight
+printf 'conflicting root manifest' > frozen-tree/Package.swift
+if invoke --preflight; then exit 1; fi
+rg -q 'differs from the frozen release manifest' "$scratch/result"
+rm frozen-tree/Package.swift
+ln -s "$PWD/Package.swift.release" frozen-tree/Package.swift
+if invoke --preflight; then exit 1; fi
+rg -q 'differs from the frozen release manifest' "$scratch/result"
+rm frozen-tree/Package.swift
+cp Package.swift.release frozen-tree/Package.swift
 [[ -z "$(git tag --list "$version")" && -z "$(git ls-remote --refs --tags origin "$ref")" ]]
 GIT_AUTHOR_DATE='946684800 +0000' GIT_COMMITTER_DATE='946684800 +0000' GIT_AUTHOR_NAME=ambient invoke
 first="$(git rev-parse "$ref")"

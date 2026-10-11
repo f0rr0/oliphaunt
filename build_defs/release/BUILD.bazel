@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -31,3 +32,5 @@ bun_test(
         "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + glob(["*-npm-*.json"]) + NATIVE_BINARY_HELPERS,
     size = "small",
 )
+
+source_quality_files()

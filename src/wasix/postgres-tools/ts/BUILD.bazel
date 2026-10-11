@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package", "npm_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
@@ -65,6 +66,18 @@ ts_project(
 )
 
 source_sdk_publish_files(name = "publish_files", manifest = "package.json", profile = "wasix-tools")
+
+ts_project(
+    name = "source_checks",
+    srcs = glob(["src/**/*.ts"]),
+    tsconfig = "tsconfig.json",
+    no_emit = True,
+    declaration = True,
+    out_dir = "lib",
+    root_dir = "src",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/wasix-ts"] + [":node_modules/" + name for name in SDK["types"]],
+)
 filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
 filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
 filegroup(name = "notices", srcs = [":publish_files"], output_group = "notices")
@@ -129,3 +142,5 @@ installed_npm_consumer_test(
     size = "medium",
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
+
+source_quality_files()

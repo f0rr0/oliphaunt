@@ -1,3 +1,39 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env")
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["source.toml"] + glob(["tools/*.mts", "npm/*", "cargo/*", "cargo/src/*.rs"]))
+
+cargo_package_env(name = "icu_cargo_env", package_name = "src/database-resources/icu/cargo")
+cargo_generator(
+    name = "icu_cargo_build_script",
+    package_name = "src/database-resources/icu/cargo",
+    cargo_env = ":icu_cargo_env",
+    srcs = ["cargo/build-support.rs"],
+)
+cargo_library(
+    name = "icu_cargo_lib",
+    package_name = "src/database-resources/icu/cargo",
+    cargo_env = ":icu_cargo_env",
+    build_script = ":icu_cargo_build_script",
+)
+cargo_library_test(
+    name = "icu_cargo_unit_test",
+    package_name = "src/database-resources/icu/cargo",
+    cargo_env = ":icu_cargo_env",
+    crate = ":icu_cargo_lib",
+    tags = ["manual"],
+)
+
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [":icu_cargo_lib", ":icu_cargo_unit_test", ":icu_cargo_build_script_"],
+    transitive = False,
+    size = "small",
+    tags = ["quality", "static"],
+)
+
+source_quality_files()
+
+rust_quality_files()

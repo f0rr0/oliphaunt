@@ -1,20 +1,35 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
-
 import { archiveDirectory } from '../../../../tools/packaging/archive-directory.mts';
-import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
-import { stageReleaseNotices } from '../../../../tools/packaging/release-notices.mts';
+import { packGeneratedNpmCarrier } from '../../../../tools/packaging/npm-package.mts';
 import { inspectPlatformBinaryTree } from '../../../../tools/packaging/platform-binary-contract.mts';
+import { readPortableArchiveEntries } from '../../../../tools/packaging/portable-archive.mts';
 import {
-  WINDOWS_VC_RUNTIME_RECEIPT,
+  releaseNoticeRows,
+  stageReleaseNotices,
+} from '../../../../tools/packaging/release-notices.mts';
+import {
   stageWindowsVcRuntime,
   verifyWindowsVcRuntimeClosure,
+  WINDOWS_VC_RUNTIME_RECEIPT,
 } from '../../../../tools/packaging/windows-vc-runtime-closure.mts';
+import {
+  assertWasixNapiConstructionData,
+  type WasixNapiConstructionContract,
+} from './carrier-contract.mts';
+import { workspaceCarrierManifest } from './workspace-runtime-contract.mts';
 
 const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const PRODUCT_ROOT = path.join(WORKSPACE_ROOT, 'src/wasix/node-addon');
@@ -24,7 +39,156 @@ const TARGETS = Object.freeze({
   'linux-x64-gnu': 'linux-x64-gnu',
   'windows-x64-msvc': 'win32-x64-msvc',
 });
-const BINARY = 'oliphaunt_wasix_napi.node';
+export const WASIX_NAPI_BINARY = 'oliphaunt_wasix_napi.node';
+const BINARY = WASIX_NAPI_BINARY;
+
+export type WasixNapiStage = {
+  target: keyof typeof TARGETS;
+  manifest: Record<string, any>;
+  readme: string;
+  binary: string;
+  provenance: Record<string, any>;
+  constructionContract?: WasixNapiConstructionContract;
+  sourceRoot: string;
+  packageStage: string;
+  releaseStage: string;
+  windowsRuntimeSourceDirectory?: string;
+};
+
+/** Stage the canonical envelope from explicit inputs; qualification is never promoted here. */
+export async function stageWasixNapiCarrier(input: WasixNapiStage) {
+  if (!Object.hasOwn(TARGETS, input.target)) throw new Error('unknown WASIX Node-API target');
+  const binary = lstatSync(input.binary);
+  if (!binary.isFile() || binary.isSymbolicLink() || binary.size <= 0)
+    throw new Error('WASIX Node-API binary must be a non-empty regular file');
+  const buildInputs = input.provenance.buildInputs;
+  const construction = input.provenance.schema === 'oliphaunt-wasix-napi-construction-data-v2';
+  if (!construction && input.provenance.schema !== 'oliphaunt-wasix-napi-provenance-v1')
+    throw new Error('unknown WASIX Node-API provenance schema');
+  if (construction) {
+    if (!input.constructionContract)
+      throw new Error('native WASIX Node-API construction requires its declared release contract');
+    assertWasixNapiConstructionData(
+      input.provenance,
+      input.target,
+      sha256(input.binary),
+      input.constructionContract,
+    );
+  }
+  if (
+    buildInputs?.schema !==
+      (construction
+        ? 'oliphaunt-wasix-napi-build-inputs-v2'
+        : 'oliphaunt-wasix-napi-build-inputs-v1') ||
+    buildInputs.target !== input.target ||
+    typeof buildInputs.targetTriple !== 'string' ||
+    buildInputs.targetTriple.length === 0 ||
+    !Array.isArray(buildInputs.inputs?.extensionArtifacts) ||
+    buildInputs.inputs.extensionArtifacts.length === 0 ||
+    input.provenance.target !== input.target ||
+    input.provenance.product !== 'oliphaunt-wasix-napi' ||
+    (!construction && !/^[0-9a-f]{40}$/u.test(input.provenance.sourceSha ?? '')) ||
+    (!construction && !/^[0-9a-f]{40}$/u.test(input.provenance.artifactSourceSha ?? '')) ||
+    input.provenance.binary?.filename !== BINARY ||
+    input.provenance.binary?.sha256 !== sha256(input.binary)
+  )
+    throw new Error('WASIX Node-API provenance differs from its declared binary or inputs');
+  const contains = (directory: string, file: string) => {
+    const relative = path.relative(path.resolve(directory), path.resolve(file));
+    return (
+      relative === '' ||
+      (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+    );
+  };
+  if (
+    contains(input.packageStage, input.releaseStage) ||
+    contains(input.releaseStage, input.packageStage) ||
+    [input.packageStage, input.releaseStage].some((stage) =>
+      [input.sourceRoot, input.binary, input.readme].some((source) => contains(stage, source)),
+    )
+  )
+    throw new Error('WASIX Node-API staging directories must be distinct from source inputs');
+
+  const packagePrebuilds = path.join(input.packageStage, 'prebuilds');
+  for (const stage of [input.packageStage, input.releaseStage]) {
+    rmSync(stage, { recursive: true, force: true });
+    mkdirSync(stage, { recursive: true });
+    stageReleaseNotices(stage, { profile: 'wasix-napi-addon', sourceRoot: input.sourceRoot });
+    writeFileSync(
+      path.join(stage, 'artifact-provenance.json'),
+      `${JSON.stringify(input.provenance, null, 2)}\n`,
+    );
+  }
+  writeFileSync(
+    path.join(input.packageStage, 'package.json'),
+    `${JSON.stringify(input.manifest, null, 2)}\n`,
+  );
+  cpSync(input.readme, path.join(input.packageStage, 'README.md'));
+  mkdirSync(packagePrebuilds, { recursive: true });
+  cpSync(input.binary, path.join(packagePrebuilds, BINARY));
+  cpSync(input.binary, path.join(input.releaseStage, BINARY));
+  if (input.target === 'windows-x64-msvc') {
+    const npm = stageWindowsVcRuntime({
+      root: input.packageStage,
+      sourceDirectory: input.windowsRuntimeSourceDirectory,
+      destinations: [packagePrebuilds],
+    }).required;
+    const github = stageWindowsVcRuntime({
+      root: input.releaseStage,
+      sourceDirectory: packagePrebuilds,
+      destinations: [input.releaseStage],
+    }).required;
+    if (JSON.stringify(npm) !== JSON.stringify(github))
+      throw new Error('release and npm carriers derived different Windows VC runtime closures');
+  }
+  await inspectPlatformBinaryTree(input.releaseStage, { target: input.target });
+}
+
+export async function finishWasixNapiCarrier(input: {
+  target: keyof typeof TARGETS;
+  packageStage: string;
+  releaseStage: string;
+  tarball: string;
+  releaseArchive: string;
+}) {
+  const listing = readPortableArchiveEntries(input.tarball);
+  const windowsRuntimeNames =
+    input.target === 'windows-x64-msvc'
+      ? verifyWindowsVcRuntimeClosure({
+          root: input.packageStage,
+          searchRoots: [path.join(input.packageStage, 'prebuilds')],
+        }).required
+      : [];
+  const requiredMembers = [
+    `package/prebuilds/${BINARY}`,
+    'package/artifact-provenance.json',
+    'package/LICENSE',
+    'package/THIRD_PARTY_NOTICES.md',
+    'package/THIRD_PARTY_NOTICES.oliphaunt-wasix.md',
+    'package/THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT',
+    'package/THIRD_PARTY_LICENSES/ICU-LICENSE',
+    'package/THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt',
+  ];
+  if (windowsRuntimeNames.length > 0)
+    requiredMembers.push(
+      ...windowsRuntimeNames.map((name) => `package/prebuilds/${name}`),
+      `package/prebuilds/${WINDOWS_VC_RUNTIME_RECEIPT}`,
+    );
+  for (const member of requiredMembers)
+    if (!listing.get(member)?.isFile || listing.get(member)?.isSymbolicLink)
+      throw new Error(`${path.basename(input.tarball)} is missing ${member}`);
+  await archiveDirectory(input.releaseStage, input.releaseArchive);
+  return { npm: input.tarball, github: input.releaseArchive };
+}
+
+/** Both public envelopes share the sole compiled binary and provenance subjects. */
+export async function packageWasixNapiCarrier(
+  input: WasixNapiStage & { tarballRoot: string; releaseArchive: string },
+) {
+  await stageWasixNapiCarrier(input);
+  const tarball = packGeneratedNpmCarrier(input.packageStage, input.tarballRoot);
+  return finishWasixNapiCarrier({ ...input, tarball });
+}
 
 function parseArguments(argv) {
   const options = {};
@@ -110,34 +274,8 @@ async function main() {
     );
     requireFile(path.join(prebuildDirectory, BINARY));
 
-    rmSync(packageWork, { recursive: true, force: true });
-    mkdirSync(path.join(packageWork, 'prebuilds'), { recursive: true });
     mkdirSync(packageOutput, { recursive: true });
-    cpSync(sourcePackage, packageWork, { recursive: true });
-    writeFileSync(
-      path.join(packageWork, 'package.json'),
-      `${JSON.stringify(
-        workspaceCarrierManifest(
-          readJson(path.join(sourcePackage, 'package.json')),
-          rootManifest.oliphaunt,
-          WORKSPACE_ROOT,
-        ),
-        null,
-        2,
-      )}\n`,
-    );
-    const packagePrebuilds = path.join(packageWork, 'prebuilds');
-    mkdirSync(packagePrebuilds, { recursive: true });
-    cpSync(path.join(prebuildDirectory, BINARY), path.join(packagePrebuilds, BINARY));
-    stageReleaseNotices(packageWork, { profile: 'wasix-napi-addon' });
-    const windowsRuntimeNames =
-      target === 'windows-x64-msvc'
-        ? stageWindowsVcRuntime({
-            root: packageWork,
-            destinations: [packagePrebuilds],
-          }).required
-        : [];
-
+    mkdirSync(releaseAssets, { recursive: true });
     const sourceSha = options['source-sha'];
     if (!/^[0-9a-f]{40}$/u.test(sourceSha ?? ''))
       throw new Error('--source-sha must be a lowercase Git SHA');
@@ -163,34 +301,23 @@ async function main() {
       buildInputs,
       binary: {
         filename: BINARY,
-        sha256: sha256(path.join(packageWork, 'prebuilds', BINARY)),
+        sha256: sha256(path.join(prebuildDirectory, BINARY)),
       },
     };
-    writeFileSync(
-      path.join(packageWork, 'artifact-provenance.json'),
-      `${JSON.stringify(provenance, null, 2)}\n`,
-    );
-
-    rmSync(releaseStage, { recursive: true, force: true });
-    mkdirSync(releaseStage, { recursive: true });
-    mkdirSync(releaseAssets, { recursive: true });
-    cpSync(path.join(prebuildDirectory, BINARY), path.join(releaseStage, BINARY));
-    stageReleaseNotices(releaseStage, { profile: 'wasix-napi-addon' });
-    cpSync(
-      path.join(packageWork, 'artifact-provenance.json'),
-      path.join(releaseStage, 'artifact-provenance.json'),
-    );
-    if (target === 'windows-x64-msvc') {
-      const releaseRuntimeNames = stageWindowsVcRuntime({
-        root: releaseStage,
-        sourceDirectory: packagePrebuilds,
-        destinations: [releaseStage],
-      }).required;
-      if (JSON.stringify(releaseRuntimeNames) !== JSON.stringify(windowsRuntimeNames)) {
-        throw new Error('release and npm carriers derived different Windows VC runtime closures');
-      }
-    }
-    await inspectPlatformBinaryTree(releaseStage, { target });
+    await stageWasixNapiCarrier({
+      target,
+      manifest: workspaceCarrierManifest(
+        readJson(path.join(sourcePackage, 'package.json')),
+        rootManifest.oliphaunt,
+        WORKSPACE_ROOT,
+      ),
+      readme: path.join(sourcePackage, 'README.md'),
+      binary: path.join(prebuildDirectory, BINARY),
+      provenance,
+      sourceRoot: path.dirname(releaseNoticeRows({ profile: 'wasix-napi-addon' })[0].source),
+      packageStage: packageWork,
+      releaseStage,
+    });
     console.log(
       [releaseStage, packageWork, packageOutput]
         .map((file) => path.relative(WORKSPACE_ROOT, file).split(path.sep).join('/'))
@@ -201,44 +328,23 @@ async function main() {
   const tarball = options.tarball;
   requireFile(tarball);
 
-  const listing = readPortableArchiveEntries(tarball);
-  const windowsRuntimeNames =
-    target === 'windows-x64-msvc'
-      ? verifyWindowsVcRuntimeClosure({
-          root: packageWork,
-          searchRoots: [path.join(packageWork, 'prebuilds')],
-        }).required
-      : [];
-  const requiredMembers = [
-    `package/prebuilds/${BINARY}`,
-    'package/artifact-provenance.json',
-    'package/LICENSE',
-    'package/THIRD_PARTY_NOTICES.md',
-    'package/THIRD_PARTY_NOTICES.oliphaunt-wasix.md',
-    'package/THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT',
-    'package/THIRD_PARTY_LICENSES/ICU-LICENSE',
-    'package/THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt',
-  ];
-  if (windowsRuntimeNames.length > 0) {
-    requiredMembers.push(
-      ...windowsRuntimeNames.map((name) => `package/prebuilds/${name}`),
-      `package/prebuilds/${WINDOWS_VC_RUNTIME_RECEIPT}`,
-    );
-  }
-  for (const member of requiredMembers) {
-    if (!listing.get(member)?.isFile || listing.get(member)?.isSymbolicLink) {
-      throw new Error(`${path.basename(tarball)} is missing ${member}`);
-    }
-  }
-  await archiveDirectory(releaseStage, releaseArchive);
+  await finishWasixNapiCarrier({
+    target,
+    packageStage: packageWork,
+    releaseStage,
+    tarball,
+    releaseArchive,
+  });
   process.stdout.write(`${tarball}\n${releaseArchive}\n`);
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error(
-    `package-wasix-napi-platform: ${error instanceof Error ? error.message : String(error)}`,
-  );
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(
+      `package-wasix-napi-platform: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  }
 }

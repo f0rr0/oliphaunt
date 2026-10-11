@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
@@ -21,6 +22,11 @@ exports_files(["contrib_carriers.bzl", "contrib_carriers.mts", "contrib_carriers
 exports_files(["native_carrier_install_helpers.mts"])
 exports_files(["final_leaf.bzl", "owner_carriers.bzl", "owner_carriers.mts", "final_receipt_fixture.mts", "final_contract.test.mts"])
 exports_files(["wasix_carriers.bzl", "wasix_carriers.mts", "wasix_carriers.test.mts"])
+exports_files(["mobile.bzl", "mobile_carriers.bzl", "mobile_carriers.mts", "mobile_registration.mts", "mobile_members.bzl", "mobile_consumer.c", "mobile_maven.mts"])
+
+bun_test(name = "mobile_registration_test", entry_point = "mobile_registration.test.mts", data = ["mobile_registration.mts", "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts"] + native_extension_carrier_helpers(), size = "small")
+bun_test(name = "mobile_carriers_test", entry_point = "mobile_carriers.test.mts", data = ["mobile_carriers.mts", "mobile_registration.mts", "//src/native/sdks/swift:tools/swift-xcframework-contract.mts"] + native_owner_carrier_helpers(), size = "small")
+bun_test(name = "mobile_maven_test", entry_point = "mobile_maven.test.mts", data = ["@pgvector_compiler_rt//:LICENSE.TXT", "//:tools/packaging/build-maven-artifact-manifest.mts", "//:tools/packaging/maven-artifact-manifest.mts", "//:tools/packaging/maven-artifact-staging.mts", "//:tools/packaging/maven-central-contract.mts", "//:tools/packaging/atomic-directory.mts", "//tools/release:compatibility-version-policy.mts", "//tools/release:product-version.mts"] + native_owner_carrier_helpers() + native_owner_carrier_legal("oliphaunt-extension-vector"), size = "small")
 
 wasix_sql_carrier_unit_inputs(name = "wasix_sql_carrier_unit_inputs")
 bun_script_test(
@@ -270,3 +276,5 @@ bun_test(
     data = ["member_payload.mts", "validate_member_payload.mts"] + ARCHIVE_HELPERS + BINARY_HELPERS,
     size = "small",
 )
+
+source_quality_files()

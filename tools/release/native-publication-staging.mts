@@ -1,19 +1,17 @@
+import { fileIdentity, safeRelative } from './native-file-identity.mts';
+
+export { copyNativeInputFile } from './native-file-identity.mts';
+
 /** Copy only captured native outputs into the existing target/ capsule boundary. */
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
-  closeSync,
-  constants,
-  fstatSync,
   lstatSync,
   mkdtempSync,
-  openSync,
   readdirSync,
-  readSync,
   realpathSync,
   renameSync,
   rmSync,
-  writeSync,
 } from 'node:fs';
 import path from 'node:path';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
@@ -24,74 +22,8 @@ import {
 } from './native-publication-artifacts.mts';
 import { ROOT } from './release-graph.mts';
 
-function safeRelative(value: string) {
-  if (
-    typeof value !== 'string' ||
-    value.startsWith('/') ||
-    value.includes('\\') ||
-    /[\u0000-\u001f\u007f]/u.test(value) ||
-    value.normalize('NFC') !== value ||
-    value.split('/').some((part) => !part || part === '.' || part === '..')
-  )
-    throw new Error(`unsafe native staging path: ${JSON.stringify(value)}`);
-  return value;
-}
-
 function digest(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function fileIdentity(file: string, destination?: string) {
-  requireSafeDirectoryChain(path.dirname(file), { label: 'native output' });
-  const source = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  let target;
-  try {
-    const before = fstatSync(source);
-    if (!before.isFile()) throw new Error(`native output must be a regular file: ${file}`);
-    if (destination !== undefined) {
-      requireSafeDirectoryChain(path.dirname(destination), { create: true, label: 'native stage' });
-      target = openSync(
-        destination,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-        0o600,
-      );
-    }
-    const hash = createHash('sha256');
-    const buffer = Buffer.allocUnsafe(1024 * 1024);
-    let size = 0;
-    for (;;) {
-      const count = readSync(source, buffer, 0, buffer.length, null);
-      if (!count) break;
-      const bytes = buffer.subarray(0, count);
-      hash.update(bytes);
-      size += count;
-      if (target !== undefined) {
-        let offset = 0;
-        while (offset < count) offset += writeSync(target, bytes, offset, count - offset);
-      }
-    }
-    const after = fstatSync(source);
-    const named = lstatSync(file);
-    if (
-      !named.isFile() ||
-      named.isSymbolicLink() ||
-      [after, named].some(
-        (stat) =>
-          stat.dev !== before.dev ||
-          stat.ino !== before.ino ||
-          stat.size !== size ||
-          stat.mode !== before.mode ||
-          stat.mtimeMs !== before.mtimeMs ||
-          stat.ctimeMs !== before.ctimeMs,
-      )
-    )
-      throw new Error(`native output changed while being read: ${file}`);
-    if (destination !== undefined) chmodSync(destination, before.mode & 0o777);
-    return { type: 'file', mode: before.mode & 0o777, size, sha256: hash.digest('hex') };
-  } finally {
-    closeSync(source);
-    if (target !== undefined) closeSync(target);
-  }
 }
 
 function snapshot(outputs: { key: string; relative: string; absolute: string }[]) {
@@ -181,24 +113,19 @@ export function captureNativeInputMembers(executionRoot: string, input: string) 
   });
 }
 
-/** Copy an exact declared input with the bounded reader, retaining its captured link identity. */
-export function copyNativeInputFile(executionRoot: string, input: string, destination: string) {
-  if (!path.isAbsolute(executionRoot ?? ''))
-    throw new Error('native input requires the captured absolute executionRoot');
-  const root = realpathSync(executionRoot);
-  const declared = path.join(root, safeRelative(input));
-  const physical = realpathSync(declared);
-  const identity = fileIdentity(physical, destination);
-  if (realpathSync(declared) !== physical)
-    throw new Error('native input path changed while being copied');
-  return identity;
-}
-
 /**
  * Capturing before physical validation and comparing again before/after copying
  * binds the staged candidate to those same bytes and directory members. This is
  * byte staging, never producer execution, qualification or release selection.
  */
+/** Final envelopes and the exact documents required to join extension target leaves. */
+export function isNativeFinalTransportRoot({ package: pkg }: NativeRoot) {
+  return (
+    pkg.ecosystem !== 'internal' ||
+    ['extension-release-manifest-input', 'extension-release-frozen-input'].includes(pkg.role)
+  );
+}
+
 export function captureNativePublicationOutputs(
   cohorts: PhysicalShippingCohort[],
   { sourceCommit, stageDirectory }: { sourceCommit: string; stageDirectory?: string },
@@ -214,9 +141,7 @@ export function captureNativePublicationOutputs(
     if (!path.isAbsolute(cohort.executionRoot ?? ''))
       throw new Error('native stage requires the captured absolute executionRoot');
     const executionRoot = realpathSync(cohort.executionRoot);
-    const roots = (cohort.roots as NativeRoot[]).filter(
-      ({ package: pkg }) => pkg.ecosystem !== 'internal',
-    );
+    const roots = (cohort.roots as NativeRoot[]).filter(isNativeFinalTransportRoot);
     const declarations = roots
       .map(({ package: pkg }) => ({
         product: pkg.product,

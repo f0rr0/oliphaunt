@@ -7,17 +7,16 @@ load("//build_defs/native:resources.bzl", "timezone_database")
 load("//build_defs/native:postgres_sources.bzl", "POSTGRES_BACKEND_SOURCES", "POSTGRES_BACKEND_LINUX_SOURCES", "POSTGRES_BACKEND_GENERATED_SOURCES", "POSTGRES_BACKEND_TEXTUAL_SOURCES", "POSTGRES_BACKEND_INCLUDE_DIRECTORIES", "POSTGRES_CATALOG_GENERATED_HEADERS", "POSTGRES_NODE_GENERATED_TEXTUAL_SOURCES", "POSTGRES_WAIT_EVENT_GENERATED_TEXTUAL_SOURCES", "POSTGRES_BACKEND_GENERATED_HEADERS", "POSTGRES_COMMON_GENERATED_HEADERS", "POSTGRES_PLPGSQL_GENERATED_HEADERS", "POSTGRES_COMMON_SOURCES", "POSTGRES_COMMON_RYU_SOURCES", "POSTGRES_COMMON_CONFIG_INFO_SOURCES", "POSTGRES_COMMON_BUILTIN_CRYPTO_SOURCES", "POSTGRES_COMMON_FRONTEND_SHARED_ADDITIONAL_SOURCES", "POSTGRES_COMMON_FRONTEND_STATIC_ADDITIONAL_SOURCES", "POSTGRES_PORT_SOURCES", "POSTGRES_PORT_REPLACEMENT_SOURCES", "POSTGRES_PORT_CRC_GENERIC_SOURCES", "POSTGRES_TIMEZONE_SOURCES", "POSTGRES_MAIN_SOURCES", "POSTGRES_PLPGSQL_SOURCES", "POSTGRES_PLPGSQL_GENERATED_SOURCES", "POSTGRES_SNOWBALL_SOURCES", "POSTGRES_LIBPQ_SOURCES", "POSTGRES_INITDB_SOURCES")
 load("//build_defs/wasix:wasm.bzl", "wasix_module")
 load(":postgres-config.bzl", "POSTMASTER_PG_CONFIG")
-load(":sealing.bzl", "postmaster_seal_modules", "postmaster_sealed_profile_test")
+load(":sealing.bzl", "postmaster_seal_modules")
 load(":aot.bzl", "postmaster_aot")
 load(":carrier.bzl", "postmaster_carrier")
-load(":runtime-test.bzl", "postmaster_runtime_test")
 load("@postmaster_postgres//:patches.bzl", "POSTGRES_PATCHES")
 
 _COMPATIBLE = ["@platforms//cpu:wasm32", "@platforms//os:wasi"]
 _SYSROOT = "@postmaster_wasix_libc//:sysroot"
 _OPTIMIZATION = ["--enable-threads", "--enable-mutable-globals", "--enable-bulk-memory", "--enable-bulk-memory-opt", "--enable-exception-handling", "--enable-simd", "--enable-relaxed-simd", "--enable-extended-const", "--emit-exnref", "--converge", "--strip-debug", "--strip-producers"]
 
-def _patch_inputs(paths):
+def postmaster_patch_inputs(paths):
     result = []
     for path in paths:
         found = False
@@ -100,7 +99,7 @@ def postgres_postmaster_targets(version):
     native.filegroup(name = "side_modules", srcs = side_targets, target_compatible_with = _COMPATIBLE)
     native.filegroup(name = "unsealed_modules", srcs = [":postgres_seed", ":initdb", ":side_modules"], target_compatible_with = _COMPATIBLE)
     postmaster_seal_modules(name = "sealed_modules", main = ":postgres_seed", initdb = ":initdb", sides = ":side_modules", abi_check = ":abi_check", target_compatible_with = _COMPATIBLE, exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
-    postmaster_sealed_profile_test(name = "sealed_profile_test", main = ":postgres_seed", sealed = ":sealed_modules", target_compatible_with = _COMPATIBLE, size = "small", tags = ["manual"])
+    native.alias(name = "sealed_profile_test", actual = "@oliphaunt//src/wasix/postmaster:linux_sealed_profile_test")
     aot_targets = []
     for name, path in dict(module_paths, postgres = "bin/postgres", initdb = "bin/initdb").items():
         target = name + "_aot"
@@ -112,10 +111,11 @@ def postgres_postmaster_targets(version):
         name = "native_carrier",
         sealed = ":sealed_modules",
         sysroot = _SYSROOT,
+        clang = "@wasix_toolchain//:llvm/bin/clang",
         aot = ":aot_modules",
         aot_receipts = ":aot_receipts",
         configuration = ":configuration",
-        patches = _patch_inputs(POSTGRES_PATCHES),
+        patches = postmaster_patch_inputs(POSTGRES_PATCHES),
         resources = {
             ":catalog_runtime_data": "share/postgresql/",
             ":builtin_extension_data": "share/postgresql/extension/",
@@ -127,12 +127,4 @@ def postgres_postmaster_targets(version):
         target_compatible_with = _COMPATIBLE,
         exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
     )
-    postmaster_runtime_test(
-        name = "runtime_test",
-        carrier = ":native_carrier",
-        target_compatible_with = _COMPATIBLE,
-        exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
-        tags = ["manual"],
-        size = "medium",
-        timeout = "long",
-    )
+    native.alias(name = "runtime_test", actual = "@oliphaunt//src/wasix/postmaster:linux_runtime_test")

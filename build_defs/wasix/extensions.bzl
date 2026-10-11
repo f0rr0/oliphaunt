@@ -58,10 +58,19 @@ def wasix_external_c_modules():
     modules = []
     for sql_name in EXTERNAL_C_SOURCES:
         name = "external_" + sql_name
-        attrs = external_extension_inputs(name = name, sql_name = sql_name)
+        attrs = external_extension_inputs(name = name, sql_name = sql_name, link_profile = "wasix")
+        # The CcInfo linker context must contain archives only. Forward the
+        # reviewed math dependency explicitly to the WASIX side-module link.
+        linkopts = attrs.pop("linkopts", [])
+        if type(linkopts) != "list":
+            fail("external WASIX input requires explicit literal linker options: " + sql_name)
         attrs["deps"] = attrs.get("deps", []) + ["@postgres_wasix//:server_headers"]
         attrs["copts"] = attrs.get("copts", []) + WASIX_COPTS + (VECTOR_COPTS if sql_name == "vector" else [])
+        if sql_name == "pg_hashids":
+            # PG_FUNCTION_INFO_V1 keeps every SQL entry point PGDLLEXPORT.
+            # Internal hashids helpers are not the PostgreSQL module API.
+            attrs["copts"].append("-fvisibility=hidden")
         cc_library(name = name + "_objects", linkstatic = True, target_compatible_with = _COMPATIBLE, **attrs)
-        wasix_module(name = name, output_name = sql_name + ".so", deps = [":" + name + "_objects"], target_compatible_with = _COMPATIBLE)
+        wasix_module(name = name, output_name = sql_name + ".so", deps = [":" + name + "_objects"], linkopts = linkopts, target_compatible_with = _COMPATIBLE)
         modules.append(":" + name)
     return modules

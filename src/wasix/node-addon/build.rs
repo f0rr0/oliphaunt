@@ -103,11 +103,12 @@ fn required_directory(name: &str) -> PathBuf {
 }
 
 fn required_file(path: &Path, label: &str) {
-    let metadata = std::fs::symlink_metadata(path)
+    // Bazel transports declared input files through sandbox symlinks.
+    let metadata = std::fs::metadata(path)
         .unwrap_or_else(|error| panic!("inspect {label} {}: {error}", path.display()));
     assert!(
-        metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() > 0,
-        "{label} must be a non-empty regular non-symlink file: {}",
+        metadata.is_file() && metadata.len() > 0,
+        "{label} must be a non-empty regular file: {}",
         path.display(),
     );
 }

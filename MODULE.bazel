@@ -75,9 +75,18 @@ bun_execution = use_extension("//build_defs/foundation:repositories.bzl", "bun_t
 use_repo(bun_execution, "bun_toolchains")
 register_toolchains("@bun_toolchains//:all")
 
+quality_metadata = use_repo_rule("//build_defs/quality:repositories.bzl", "quality_metadata_repository")
+quality_metadata(name = "oliphaunt_quality_metadata")
+quality_tools = use_extension("//build_defs/quality:repositories.bzl", "quality_tools")
+quality_tools.configure(metadata = "@oliphaunt_quality_metadata//:biome.json")
+use_repo(quality_tools, "biome_linux_x64")
+
 wasix_toolchain = use_repo_rule("//build_defs/wasix:repositories.bzl", "wasix_toolchain_repository")
 wasix_toolchain(name = "wasix_toolchain")
 register_toolchains("//build_defs/wasix/postmaster/libc_toolchain:toolchain", "//build_defs/wasix:cc_toolchain")
+
+postmaster_guest = use_repo_rule("//build_defs/wasix/postmaster:guest-repository.bzl", "postmaster_guest_repository")
+postmaster_guest(name = "postmaster_guest")
 
 wasix_tool_metadata = use_repo_rule("//build_defs/wasix:repositories.bzl", "wasix_tool_metadata")
 wasix_tool_metadata(name = "wasix_tool_metadata", bun = "@bun_runtime//:bun")
@@ -490,6 +499,48 @@ wasix_adapter_crates.from_cargo(
 )
 use_repo(wasix_adapter_crates, wasix_adapter_crates = "d")
 
+# Adapter carriers compile in a later action than their Cargo build scripts.
+# Keep the same held-package include relocation as the release resolver below.
+wasix_adapter_crates.annotation(
+    crate = "liboliphaunt-wasix-portable",
+    version = "=0.3.2",
+    repositories = ["d"],
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
+)
+
+wasix_adapter_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-aarch64-apple-darwin",
+    version = "=0.3.2",
+    repositories = ["d"],
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
+)
+
+wasix_adapter_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+    version = "=0.3.2",
+    repositories = ["d"],
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
+)
+
+wasix_adapter_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+    version = "=0.3.2",
+    repositories = ["d"],
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
+)
+
+wasix_adapter_crates.annotation(
+    crate = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+    version = "=0.3.2",
+    repositories = ["d"],
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
+)
+
 # Independent feature acquisition preserves the headless SDK's feature set.
 native_cargo_metadata(
     name = "wasix_seed_cargo_metadata",
@@ -709,6 +760,8 @@ wasix_release_crates.annotation(
     version = "=0.3.2",
     repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
 )
 
 wasix_release_crates.annotation(
@@ -716,6 +769,8 @@ wasix_release_crates.annotation(
     version = "=0.3.2",
     repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
 )
 
 wasix_release_crates.annotation(
@@ -723,6 +778,8 @@ wasix_release_crates.annotation(
     version = "=0.3.2",
     repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
 )
 
 wasix_release_crates.annotation(
@@ -730,6 +787,8 @@ wasix_release_crates.annotation(
     version = "=0.3.2",
     repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
 )
 
 wasix_release_crates.annotation(
@@ -737,6 +796,8 @@ wasix_release_crates.annotation(
     version = "=0.3.2",
     repositories = ["r"],
     additive_build_file = "//build_defs/languages:wasix-crate-payloads.BUILD.bazel",
+    patches = ["//build_defs/wasix:held-wasix-relocatable-includes.patch"],
+    patch_args = ["-p1"],
 )
 
 wasix_release_crates.annotation(

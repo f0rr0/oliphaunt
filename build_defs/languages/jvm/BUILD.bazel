@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load(":kotlin.bzl", "kotlin_sdk_toolchain")
 
@@ -11,14 +12,14 @@ kotlin_sdk_toolchain(name = "sdk_toolchain")
 
 bun_binary(name = "plugin_descriptor", entry_point = "plugin-descriptor.mts")
 
-bun_test(name = "android_sdk_metadata_test", entry_point = "android-sdk-metadata.test.mts", data = ["android-sdk-metadata.mts", "//:tools/dev/android-sdk.toml"], size = "small")
+bun_test(name = "android_sdk_metadata_test", entry_point = "android-sdk-metadata.test.mts", data = ["android-sdk-metadata.mts", "//tools/dev:android-sdk.toml"], size = "small")
 
 bun_test(
     name = "kotlin_sdk_metadata_test",
     entry_point = "kotlin-sdk-metadata.test.mts",
     data = [
         "kotlin-sdk-metadata.mts", "maven-pom.mts",
-        "//:tools/packaging/maven-central-contract.mts", "//:tools/dev/android-sdk.toml",
+        "//:tools/packaging/maven-central-contract.mts", "//tools/dev:android-sdk.toml",
         "//src/native/sdks/kotlin:VERSION", "//src/native/sdks/kotlin:gradle.properties",
         "//src/native/sdks/kotlin:oliphaunt/build.gradle.kts", "//src/native/sdks/kotlin:gradle/libs.versions.toml",
         "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:build.gradle.kts",
@@ -34,7 +35,7 @@ bun_test(
         "//src/native/sdks/kotlin:VERSION", "//src/native/sdks/kotlin:gradle.properties", "//src/native/sdks/kotlin:gradle/libs.versions.toml",
         "//src/native/sdks/kotlin:oliphaunt/build.gradle.kts", "//src/native/sdks/kotlin:tools/kotlin-maven-staging.mts",
         "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:build.gradle.kts",
-        "//:tools/dev/android-sdk.toml", "//:Cargo.lock", "//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//src/native/mobile-bindings:license_inputs",
+        "//tools/dev:android-sdk.toml", "//:Cargo.lock", "//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//src/native/mobile-bindings:license_inputs",
         "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/testdata/release-fixture-utils.mts", "//:tools/packaging/testdata/zip-fixture.mts",
         "//:tools/packaging/maven-central-contract.mts", "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts",
         "//:tools/packaging/windows-vc-runtime-policy.json",
@@ -42,3 +43,5 @@ bun_test(
     ],
     size = "small",
 )
+
+source_quality_files()

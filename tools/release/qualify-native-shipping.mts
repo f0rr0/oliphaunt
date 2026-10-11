@@ -10,7 +10,9 @@ import { canonicalShippingLabel } from './bazel-shipping-inputs.mts';
 import {
   type NativeBuildEvidence,
   type NativeBuildGithub,
+  type NativeRequiredTest,
   nativeBuildMetadata,
+  validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
 import { readNativePublicationArtifacts } from './native-publication-artifacts.mts';
 import {
@@ -31,7 +33,7 @@ export type NativeShippingRequest = {
   startup?: string[];
   configuration: string[];
   shipping: { export: string } | { roots: string[] };
-  targets: string[];
+  targets?: string[];
   completeProducts?: string[];
   outputDirectory: string;
 };
@@ -54,6 +56,40 @@ function label(value: string): string {
 
 function json(file: string): unknown {
   return JSON.parse(readFileSync(file, 'utf8'));
+}
+
+/** Policy edges name actual tests; cquery cannot expand test_suite or tests(). */
+function configuredQualificationTests(raw: unknown): NativeRequiredTest[] {
+  const query = raw as {
+    configurations?: { id: number; checksum: string }[];
+    results?: {
+      target?: { rule?: { name: string; ruleClass: string } };
+      configurationId: number;
+    }[];
+  };
+  if (!query || typeof query !== 'object' || Array.isArray(query))
+    throw new Error('shipping qualification requires configured policy query results');
+  const configurations = new Map<number, string>();
+  for (const row of query.configurations ?? []) {
+    if (
+      !Number.isSafeInteger(row.id) ||
+      row.id <= 0 ||
+      configurations.has(row.id) ||
+      !/^[a-f0-9]{64}$/u.test(row.checksum)
+    )
+      throw new Error('shipping qualification requires unique configured policy checksums');
+    configurations.set(row.id, row.checksum);
+  }
+  const tests = (query.results ?? []).map((result) => {
+    const rule = result.target?.rule;
+    const configuration = configurations.get(result.configurationId);
+    if (!rule?.ruleClass.endsWith('_test') || !configuration)
+      throw new Error('shipping qualification policy must declare configured actual test rules');
+    return { label: label(rule.name), configuration };
+  });
+  if (new Set(tests.map((test) => test.label)).size !== tests.length)
+    throw new Error('shipping qualification policy requires one configuration per test rule');
+  return tests.sort((left, right) => left.label.localeCompare(right.label));
 }
 
 /** A complete family must survive the conventional readers before and after freezing its outputs. */
@@ -174,7 +210,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
     )
   )
     throw new Error('configuration cannot override qualification metadata or query output');
-  const targets = argv(request.targets, 'additional targets').map(label);
+  const targets = argv(request.targets ?? [], 'additional targets').map(label);
   const completeProducts = argv(request.completeProducts ?? [], 'complete products');
   if (new Set(completeProducts).size !== completeProducts.length)
     throw new Error('complete products must be unique');
@@ -208,6 +244,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
   const bazel = (args: string[], stdout?: string) =>
     run('bash', ['tools/dev/bazel.sh', ...startup, ...args], stdout);
   let roots: string[];
+  let requiredTests: NativeRequiredTest[] = [];
   if ('export' in request.shipping) {
     const owner = label(request.shipping.export);
     bazel(
@@ -215,6 +252,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
         'cquery',
         `kind("shipping_package", deps(${owner}, 1))`,
         ...configuration,
+        `--universe_scope=${owner}`,
         '--output=starlark',
         '--starlark:expr=str(target.label)',
       ],
@@ -224,6 +262,20 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
       .split(/\r?\n/u)
       .filter(Boolean)
       .map(label);
+    // These graph edges are source-owned, independently of caller targets.
+    // An incompatible declared test fails analysis rather than disappearing.
+    bazel(
+      [
+        'cquery',
+        `labels(qualification, ${owner})`,
+        ...configuration,
+        `--universe_scope=${owner}`,
+        '--output=jsonproto',
+        '--proto:include_configurations',
+      ],
+      file('qualification-targets.json'),
+    );
+    requiredTests = configuredQualificationTests(json(file('qualification-targets.json')));
   } else roots = argv(request.shipping.roots, 'shipping roots').map(label);
   if (!roots.length || new Set(roots).size !== roots.length)
     throw new Error('shipping qualification requires nonempty unique shipping roots');
@@ -232,7 +284,7 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
   assertSource();
   bazel([
     'test',
-    ...new Set([...roots, ...targets]),
+    ...new Set([...roots, ...requiredTests.map((test) => test.label), ...targets]),
     ...configuration,
     ...metadata,
     `--build_event_json_file=${file('build-events.jsonl')}`,
@@ -267,13 +319,21 @@ export function qualifyNativeShipping(request: NativeShippingRequest, directory 
   const evidence = file('evidence/native-build-evidence.json');
   try {
     assertSource();
+    if (requiredTests.length)
+      validateNativeBuildEvidence(json(evidence), {
+        source,
+        github: request.github,
+        bazelVersion: readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim(),
+        requiredTests,
+        requireShippingAnalysis: true,
+      });
     if (completeProducts.length) {
       checkCompleteProducts(json(evidence) as NativeBuildEvidence, completeProducts);
       assertSource();
     }
   } catch (error) {
     // The collector completed, so this file belongs to this invocation. Keep
-    // raw diagnostics, but remove a packet captured across a source change.
+    // raw diagnostics, but remove a packet that failed final validation.
     rmSync(path.dirname(evidence), { recursive: true, force: true });
     throw error;
   }
@@ -297,12 +357,11 @@ function main() {
   if (
     !values['github-json'] ||
     !values['configuration-json'] ||
-    !values['targets-json'] ||
     !values['output-directory'] ||
     Boolean(values['shipping-export']) === Boolean(values['shipping-roots-json'])
   )
     throw new Error(
-      'usage: qualify-native-shipping.mts --github-json FILE --configuration-json FILE [--startup-json FILE] (--shipping-export LABEL | --shipping-roots-json FILE) --targets-json FILE [--complete-products-json FILE] --output-directory DIR',
+      'usage: qualify-native-shipping.mts --github-json FILE --configuration-json FILE [--startup-json FILE] (--shipping-export LABEL | --shipping-roots-json FILE) [--targets-json FILE] [--complete-products-json FILE] --output-directory DIR',
     );
   let shipping: NativeShippingRequest['shipping'];
   if (values['shipping-export']) shipping = { export: values['shipping-export'] };
@@ -317,7 +376,9 @@ function main() {
       startup: values['startup-json'] ? argv(json(values['startup-json']), 'startup') : [],
       configuration: argv(json(values['configuration-json']), 'configuration'),
       shipping,
-      targets: argv(json(values['targets-json']), 'additional targets'),
+      targets: values['targets-json']
+        ? argv(json(values['targets-json']), 'additional targets')
+        : [],
       completeProducts: values['complete-products-json']
         ? argv(json(values['complete-products-json']), 'complete products')
         : [],

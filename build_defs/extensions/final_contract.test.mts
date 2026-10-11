@@ -39,7 +39,7 @@ try {
     members += validated.members.length;
     sqlNames.push(...validated.members.map((member) => member.sqlName));
     console.log(
-      `${spec.product}: actual ${inventory.target} GitHub/npm/Cargo files, exact member inventory, platform binaries, and legal bytes PASS`,
+      `${spec.product}: actual ${inventory.target} final files, exact member inventory, platform binaries, and legal bytes PASS`,
     );
   }
   assert.deepEqual(sqlNames.sort(), inventory.members);

@@ -1,0 +1,96 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "android-sdk.toml",
+    "bun.toml",
+    "native-host-toolchains.json",
+    "winflexbison.toml",
+])
+
+_SOURCE_ACQUISITION_INPUTS = [
+    "//:src/third-party/tools/source-fetch-core.mts",
+    "//:src/third-party/tools/source-archive.mts",
+    "//:tools/packaging/portable-archive.mts",
+    "//:tools/packaging/testdata/tar-fixture.mts",
+    "//:tools/packaging/testdata/zip-fixture.mts",
+]
+
+bun_test(
+    name = "source_fetch_core_test",
+    entry_point = "//:src/third-party/tools/source-fetch-core.test.mts",
+    data = _SOURCE_ACQUISITION_INPUTS,
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "source_fetch_scopes_test",
+    entry_point = "//:src/third-party/tools/source-fetch-scopes.test.mts",
+    data = ["//:src/third-party/tools/source-fetch-scopes.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "source_acquisition_test",
+    entry_point = "source-acquisition.test.mts",
+    data = _SOURCE_ACQUISITION_INPUTS,
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "pinned_zip_test",
+    entry_point = "extract-pinned-zip.test.mts",
+    data = [
+        "extract-pinned-zip.mts",
+        "//:tools/packaging/portable-archive.mts",
+        "//:tools/packaging/testdata/zip-fixture.mts",
+    ],
+    tags = ["source-check"],
+    size = "small",
+)
+
+_RUNTIME_PIN_INPUTS = [
+    "bazel-checksums.tsv",
+    "bun.toml",
+    "deno.toml",
+    "node-runtime.toml",
+    "winflexbison.toml",
+    "//:.bazelversion",
+    "//:.prototools",
+]
+
+bun_test(
+    name = "runtime_pin_policy_test",
+    entry_point = "runtime-pin-policy.test.mts",
+    data = ["runtime-pin-policy.mts"] + _RUNTIME_PIN_INPUTS,
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "runtime_pin_policy_check",
+    entry_point = "runtime-pin-policy.mts",
+    args = ["--root", "."],
+    data = _RUNTIME_PIN_INPUTS,
+    tags = ["source-check"],
+    size = "small",
+)
+
+test_suite(
+    name = "source_checks",
+    tests = [
+        ":pinned_zip_test",
+        ":runtime_pin_policy_check",
+        ":runtime_pin_policy_test",
+        ":source_acquisition_test",
+        ":source_fetch_core_test",
+        ":source_fetch_scopes_test",
+    ],
+)
+
+source_quality_files()

@@ -166,6 +166,50 @@ export function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+export function canonicalExtensionAssetName(product, row) {
+  const prefix = `${product.id}-${product.version}`;
+  if (row.family === 'wasix') return `${prefix}-wasix-portable.tar.zst`;
+  if (row.kind === 'ios-xcframework') return `${prefix}-native-ios-xcframework.zip`;
+  if (row.kind === 'ios-dependency-xcframework')
+    return `${prefix}-native-ios-dependency-${row.identity}-xcframework.zip`;
+  if (row.target === 'ios-xcframework') return `${prefix}-native-ios-runtime.tar.gz`;
+  return `${prefix}-native-${row.target}-runtime.tar.gz`;
+}
+
+export function canonicalExtensionBundleAssetName(product, { family, target }) {
+  return `${product.id}-${product.version}-${family}-${target}-bundle.tar.gz`;
+}
+
+/** The canonical release names can also consume already declared target/member rows. */
+export function expectedExtensionGithubReleaseAssetRows(product, { sqlNames, requiredRows }) {
+  if (
+    !Array.isArray(sqlNames) ||
+    sqlNames.length === 0 ||
+    sqlNames.some((name) => typeof name !== 'string' || !name) ||
+    new Set(sqlNames).size !== sqlNames.length ||
+    !Array.isArray(requiredRows)
+  )
+    throw new Error('extension asset inventory requires explicit unique SQL names and target rows');
+  if (sqlNames.length > 1) {
+    const groups = new Map();
+    for (const { family, target } of requiredRows) {
+      if (product.family != null && family !== product.family) continue;
+      const key = `${family}\0${target}`;
+      if (!groups.has(key)) groups.set(key, { family, target, kind: 'extension-bundle' });
+    }
+    return [...groups.values()]
+      .sort((left, right) =>
+        compareText(`${left.family}\0${left.target}`, `${right.family}\0${right.target}`),
+      )
+      .map((row) => ({
+        ...row,
+        identity: row.family,
+        name: canonicalExtensionBundleAssetName(product, row),
+      }));
+  }
+  return requiredRows.map((row) => ({ ...row, name: canonicalExtensionAssetName(product, row) }));
+}
+
 export function rel(file) {
   const relative = path.relative(ROOT, file);
   return relative.startsWith('..') ? file : relative.split(path.sep).join('/');

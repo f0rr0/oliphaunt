@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "PGTAP_TARGET_OS_ARGS", "extension_identity", "extension_member_payload", "extension_member_validation_test", "pgtap_sql")
 load("//build_defs/release:shipping.bzl", "shipping_package")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
@@ -40,3 +41,5 @@ bun_script_test(
     data = ["@pgtap//:sql_inputs", "@pgtap//:pgtap.control", ":sql", "//build_defs/extensions:perl", "//build_defs/extensions:perl_runtime", "//build_defs/extensions:perl_options", "@native_exec_tools//:patch"],
     size = "small",
 )
+
+source_quality_files()

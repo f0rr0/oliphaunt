@@ -2,18 +2,27 @@ import { expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { validateExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
+import {
+  resolveNativeComponentClosure,
+  validateNativeComponentContract,
+} from '../../src/extensions/tools/native-component-contract.mts';
 import { nativeCargoArtifactRows } from '../packaging/rust-native-targets.mts';
+import {
+  extensionGithubArtifactInputs,
+  loadReleaseMetadata,
+  nativeMobileComponentInputs,
+  nativeMobileMemberAliasInputs,
+  renderReleaseMetadata,
+  repositoryPath,
+} from './bazel-release-metadata.mts';
 import {
   databaseResourceArtifactRows,
   nativeHelperArtifactRows,
   nativeRuntimeArtifactRows,
+  validateExtensionCatalogRows,
   wasixArtifactRows,
 } from './release-artifact-targets.mts';
-import {
-  loadReleaseMetadata,
-  renderReleaseMetadata,
-  repositoryPath,
-} from './bazel-release-metadata.mts';
 
 function fixture(run: (root: string, write: (name: string, content: string) => void) => void) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-domain-metadata-'));
@@ -70,6 +79,10 @@ function fixture(run: (root: string, write: (name: string, content: string) => v
   );
   write('src/extensions/contracts/contract.toml', 'postgres_major="18"\n');
   write(
+    'src/extensions/catalog/native-components.toml',
+    'schema="oliphaunt-native-components-v1"\nrequirements=[]\n[[components]]\nid="fixture"\nsource="fixture"\ndepends-on=[]\nruntime-files=[]\n[[components.link-units]]\nid="fixture"\narchive-candidates=["fixture/libfixture.a"]\n',
+  );
+  write(
     'src/extensions/contracts/extension-target-profiles.toml',
     `schema="oliphaunt-extension-artifact-target-profiles-v1"
 [[profiles]]
@@ -108,6 +121,190 @@ kind="wasix-runtime"
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+test('native component projection preserves the parsed canonical source and watches its bytes', () => {
+  const file = 'src/extensions/catalog/native-components.toml';
+  fixture((root) => {
+    const text = readFileSync(path.join(root, file), 'utf8');
+    const metadata = loadReleaseMetadata(root);
+    expect(metadata.nativeComponents).toEqual(Bun.TOML.parse(text));
+    expect(metadata.inputs[file]).toBe(text);
+    expect(renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').bzl).toContain(
+      'NATIVE_COMPONENTS =',
+    );
+  });
+});
+
+test('all canonical 39 mobile members use the existing component resolver for all three targets', () => {
+  const root = path.resolve(import.meta.dirname, '../..');
+  const raw = Bun.TOML.parse(
+    readFileSync(path.join(root, 'src/extensions/catalog/native-components.toml'), 'utf8'),
+  );
+  const catalog = JSON.parse(
+    readFileSync(path.join(root, 'src/extensions/generated/extensions.catalog.json'), 'utf8'),
+  );
+  const sqlNames = catalog.extensions.map((row) => row['sql-name']);
+  const profiles = validateExtensionTargetProfiles(
+    Bun.TOML.parse(
+      readFileSync(
+        path.join(root, 'src/extensions/contracts/extension-target-profiles.toml'),
+        'utf8',
+      ),
+    ),
+  ).targets;
+  const projected = nativeMobileComponentInputs(raw, sqlNames, profiles);
+  const descriptors = validateExtensionCatalogRows(catalog);
+  const aliases = nativeMobileMemberAliasInputs(descriptors);
+  expect(Object.keys(aliases)).toHaveLength(39);
+  const contract = validateNativeComponentContract(raw, {
+    checkSourcePaths: false,
+    knownExtensions: new Set(sqlNames),
+    targetProfiles: new Map(profiles.map((row) => [row.target, `${row.family}\0${row.kind}`])),
+  });
+  expect(Object.keys(projected)).toHaveLength(39);
+  for (const sqlName of sqlNames) {
+    expect(Object.keys(projected[sqlName])).toHaveLength(3);
+    for (const target of Object.keys(projected[sqlName])) {
+      expect(aliases[sqlName], `${sqlName}/${target}`).toEqual(
+        sqlName === 'postgis'
+          ? {
+              difference: 'oliphaunt_static_postgis_3_difference',
+              pg_finfo_difference: 'pg_finfo_oliphaunt_static_postgis_3_difference',
+            }
+          : {},
+      );
+    }
+    const assets = extensionGithubArtifactInputs(
+      { artifactProduct: 'fixture', owner: 'native', version: '1.2.3', sqlNames: [sqlName] },
+      profiles,
+      descriptors,
+      projected,
+    );
+    for (const [target, actual] of Object.entries(projected[sqlName])) {
+      const expected = resolveNativeComponentClosure(contract, {
+        extension: sqlName,
+        family: 'native',
+        kind: 'native-static-registry',
+        target,
+      });
+      expect(actual).toEqual({
+        linkUnits: expected.linkUnits,
+        runtimeFiles: expected.runtimeFiles,
+      });
+      const targetAssets = assets.filter((row) => row.target === target);
+      expect(targetAssets.filter((row) => row.kind === 'runtime')).toHaveLength(1);
+      const module = descriptors.get(sqlName)?.['native-module-file'];
+      expect(targetAssets.filter((row) => row.kind === 'ios-xcframework')).toHaveLength(
+        target === 'ios-xcframework' && typeof module === 'string' ? 1 : 0,
+      );
+      expect(
+        targetAssets
+          .filter((row) => row.kind === 'ios-dependency-xcframework')
+          .map((row) => row.identity),
+      ).toEqual(
+        target === 'ios-xcframework' && module !== undefined ? [...expected.linkUnits].sort() : [],
+      );
+    }
+  }
+});
+
+test('canonical extension GitHub projection uses only supplied root metadata and owner versions', () => {
+  fixture((root, write) => {
+    const profiles = 'src/extensions/contracts/extension-target-profiles.toml';
+    write(
+      'src/native/runtime/release.toml',
+      'id="native"\n[artifact_targets]\npreset="liboliphaunt-native"\ntargets=["linux-x64-gnu","android-arm64-v8a","android-x86_64","ios-xcframework"]\n',
+    );
+    write(
+      profiles,
+      `${readFileSync(path.join(root, profiles), 'utf8')}
+[[profiles.targets]]
+target="android-x86_64"
+family="native"
+kind="native-static-registry"
+[[profiles.targets]]
+target="ios-xcframework"
+family="native"
+kind="native-static-registry"
+`,
+    );
+    const components = 'src/extensions/catalog/native-components.toml';
+    write(
+      components,
+      `${readFileSync(path.join(root, components), 'utf8').replace('requirements=[]\n', '')}
+[[requirements]]
+extension="example"
+family="native"
+kind="native-static-registry"
+targets=["ios-xcframework"]
+roots=["fixture"]
+`,
+    );
+    write(
+      'src/extensions/generated/extensions.catalog.json',
+      JSON.stringify({
+        'format-version': 1,
+        extensions: [
+          { 'sql-name': 'member', 'native-module-file': 'member.so' },
+          { 'sql-name': 'example', 'native-module-file': 'different-stem.so' },
+        ],
+      }),
+    );
+    const metadata = loadReleaseMetadata(root);
+    const external = metadata.extensionGithubArtifacts.filter(
+      (row) => row.artifactProduct === 'oliphaunt-extension-example',
+    );
+    expect(external.map((row) => row.name)).toEqual([
+      'oliphaunt-extension-example-3.4.5-native-android-arm64-v8a-runtime.tar.gz',
+      'oliphaunt-extension-example-3.4.5-native-android-x86_64-runtime.tar.gz',
+      'oliphaunt-extension-example-3.4.5-native-ios-dependency-fixture-xcframework.zip',
+      'oliphaunt-extension-example-3.4.5-native-ios-xcframework.zip',
+      'oliphaunt-extension-example-3.4.5-native-ios-runtime.tar.gz',
+      'oliphaunt-extension-example-3.4.5-native-linux-x64-gnu-runtime.tar.gz',
+    ]);
+    expect(external.every((row) => row.owner === 'oliphaunt-extension-example')).toBe(true);
+    expect(external.find((row) => row.kind === 'ios-xcframework')?.identity).toBe('different-stem');
+    const contrib = metadata.extensionGithubArtifacts.filter(
+      (row) => row.artifactProduct === 'oliphaunt-extension-contrib-pg18',
+    );
+    expect(contrib.every((row) => row.owner === 'native' && row.version === '1.2.3')).toBe(true);
+    expect(contrib.every((row) => row.name.includes('-1.2.3-'))).toBe(true);
+    expect(renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').bzl).toContain(
+      'EXTENSION_GITHUB_ARTIFACTS =',
+    );
+    expect(
+      renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').extensionSourcesBzl,
+    ).not.toContain('EXTENSION_GITHUB_ARTIFACTS');
+    const descriptors = new Map([['example', { 'native-module-file': 'example.so' }]]);
+    expect(() =>
+      extensionGithubArtifactInputs(
+        { artifactProduct: 'example', owner: 'example', version: '1.2.3', sqlNames: ['example'] },
+        [{ target: 'ios-xcframework', family: 'native', kind: 'native-static-registry' }],
+        descriptors,
+        {},
+      ),
+    ).toThrow('missing example/ios-xcframework');
+  });
+});
+
+test('native component acquisition projection watches canonical source bytes', () => {
+  fixture((root, write) => {
+    const component = 'src/extensions/catalog/native-components.toml';
+    write(
+      component,
+      readFileSync(path.join(root, component), 'utf8').replaceAll('fixture', 'openssl'),
+    );
+    const sourcePath = 'src/third-party/openssl/source.toml';
+    const text = `name="openssl"\nurl="https://example.invalid/openssl.git"\ncommit="${'d'.repeat(40)}"\n`;
+    write(sourcePath, text);
+    const metadata = loadReleaseMetadata(root);
+    expect(metadata.nativeComponentSources).toEqual({ openssl: Bun.TOML.parse(text) });
+    expect(metadata.inputs[sourcePath]).toBe(text);
+    expect(renderReleaseMetadata(metadata, '@test//build_defs/release:identity.bzl').bzl).toContain(
+      'NATIVE_COMPONENT_SOURCES =',
+    );
+  });
+});
 
 test('WASIX artifact projection follows explicit release targets without loading another source tree', () => {
   fixture((root, write) => {

@@ -1,0 +1,5 @@
+load("//build_defs/extensions/postgis:mobile.bzl", "mobile_postgis")
+
+package(default_visibility = ["//visibility:public"])
+
+mobile_postgis()

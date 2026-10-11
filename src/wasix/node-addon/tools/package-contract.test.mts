@@ -1,14 +1,13 @@
-import { createHash } from 'node:crypto';
-
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { windowsPeFixture } from '../../../../tools/packaging/testdata/release-fixture-utils.mts';
 import productManifest from '../package.json' with { type: 'json' };
-
+import { wasixNapiReleaseSqlNames } from './carrier-contract.mts';
 import {
   assertSingleWasixNapiAddonMember,
   assertWasixNapiCarrierManifest,
   assertWasixNapiPlatformEntries,
 } from './check-release-assets.mts';
-import { windowsPeFixture } from '../../../../tools/packaging/testdata/release-fixture-utils.mts';
 
 const target = Object.freeze({
   npmPackage: '@oliphaunt/wasix-napi-linux-x64-gnu',
@@ -62,6 +61,28 @@ function archiveEntry(data) {
 }
 
 describe('WASIX Node-API carrier fail-closed package contract', () => {
+  test('release members follow conventional nested Cargo features and reject ambiguous or unknown members', () => {
+    const cargo = {
+      features: {
+        default: [],
+        release: ['members', 'tools'],
+        members: ['release', 'extension-uuid-ossp', 'extension-pg-trgm'],
+        tools: ['oliphaunt-wasix/tools-execution'],
+        'extension-uuid-ossp': ['oliphaunt-wasix/extension-uuid-ossp'],
+        'extension-pg-trgm': ['oliphaunt-wasix/extension-pg-trgm'],
+      },
+    };
+    expect(wasixNapiReleaseSqlNames(cargo, ['uuid-ossp', 'pg_trgm'])).toEqual([
+      'pg_trgm',
+      'uuid-ossp',
+    ]);
+    expect(() => wasixNapiReleaseSqlNames(cargo, ['uuid-ossp', 'uuid_ossp', 'pg_trgm'])).toThrow(
+      'unique canonical SQL member',
+    );
+    expect(() => wasixNapiReleaseSqlNames({ features: { release: ['missing'] } }, [])).toThrow(
+      'unknown addon Cargo feature',
+    );
+  });
   test('accepts the one-binary, two-profile carrier', () => {
     expect(() => assertWasixNapiCarrierManifest(manifest(), target, '1.2.3')).not.toThrow();
   });

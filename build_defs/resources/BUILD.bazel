@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
@@ -102,3 +103,5 @@ bun_test(name = "resource_contract_test", entry_point = "resource_contract.test.
     ":helpers", "seed_domain.mts", "//src/database-resources:cluster_seed_contract_fixtures",
     "//:LICENSE", "//src/third-party/icu:LICENSE", "//src/third-party/icu:source.toml",
 ], size = "small")
+
+source_quality_files()

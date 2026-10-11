@@ -1,4 +1,6 @@
-load("//build_defs/languages:rust.bzl", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
 
 package(default_visibility = ["//visibility:public"])
@@ -8,4 +10,17 @@ cargo_package_env()
 cargo_library()
 cargo_library(name = "packaging_lib", features = ["internal-native-packaging"])
 cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"], isolated_cache = True)
+_INTEGRATION_ROOTS = glob(["tests/*.rs"])
+[
+    cargo_integration_test(name = source.removeprefix("tests/").removesuffix(".rs") + "_test", source = source, tags = ["manual"])
+    for source in _INTEGRATION_ROOTS
+]
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [":lib", ":unit_test_binary"] + [":" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS],
+    transitive = False,
+    size = "small",
+)
 cargo_source_package(product = "liboliphaunt-native-bindings", fixtures = "testdata/")
+
+rust_quality_files()

@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/extensions:external.bzl", "native_external_extension_modules")
 load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test")
 load("//build_defs/release:shipping.bzl", "shipping_package")
@@ -23,3 +24,5 @@ extension_member_payload(
 
 shipping_package(name = "native_member", owner = extension_identity("pg_hashids"), artifacts = [":native_payload"], ecosystem = "internal", package_name = "pg_hashids", configuration = NATIVE_EXTENSION_CONFIGURATION, role = "extension-member")
 extension_member_validation_test(name = "native_payload_test", payload = ":native_payload", sql_name = "pg_hashids")
+
+source_quality_files()

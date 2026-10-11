@@ -92,7 +92,7 @@ _tools_carriers = rule(
     },
 )
 
-def wasix_tools_carriers(patches):
+def wasix_tools_carriers(patches, qualification = []):
     owner = "@oliphaunt_metadata//:product_postgres-tools-wasix"
     rows = [row for row in WASIX_ARTIFACTS if row["product"] == "postgres-tools-wasix" and row["kind"] != "checksums"]
     carriers = [row for row in PUBLICATION_CARRIERS if row["product"] == "postgres-tools-wasix"]
@@ -137,4 +137,4 @@ def wasix_tools_carriers(patches):
     packages.append(":checksums_shipping")
     native.filegroup(name = "release_assets", srcs = [":assembled_release_assets"])
     native.filegroup(name = "carriers", srcs = [":carriers_" + row["target"].replace("-", "_") for row in rows] + ["//src/wasix/postgres-tools/ts:npm"])
-    shipping_export(name = "shipping_export", packages = packages)
+    shipping_export(name = "shipping_export", packages = packages, qualification = qualification, testonly = True)

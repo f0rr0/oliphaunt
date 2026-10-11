@@ -123,6 +123,19 @@ tasks:
       - requires-rust
     command: bash tools/release/release-check.sh --mutation-tests-only
     inputs:
+      - /build_defs/languages/swift/source-package.mts
+      - /build_defs/languages/swift/source-package.fixture.mts
+      - /build_defs/languages/swift/source-delivery-contract.mts
+      - /build_defs/languages/jvm/maven-pom.mts
+      - /build_defs/release/testdata/swift-0.8.2-carrier.json
+      - /build_defs/release/swift-0.8.2-publication-source.json
+      - /build_defs/release/native-0.3.3-completed-publication.json
+      - /src/native/runtime/include/oliphaunt.h
+      - /src/native/sdks/swift/tools/swift-release-manifest.mts
+      - /src/native/sdks/swift/tools/swift-xcframework-contract.mts
+      - /src/native/sdks/swift/tools/extension-resource-inventory.mts
+      - /src/native/sdks/swift/tools/render-extension-products.mts
+      - /src/extensions/generated/sdk/extensions.json
       - /build_defs/native/carriers/envelopes.mts
       - /build_defs/native/carriers/payload.mts
       - /src/native/runtime/tools/native-runtime-payload.mts

@@ -1,6 +1,7 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
 load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_package_env")
 load("@aot_serializer_crates//:defs.bzl", serializer_crate_deps = "crate_deps")
-load("@rules_rust//rust:defs.bzl", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -41,3 +42,7 @@ rust_test(
     size = "small",
     experimental_use_cc_common_link = 1,
 )
+
+rust_quality_files()
+
+rust_clippy_test(name = "clippy_test", targets = [":xtask", ":export_policy_test"], transitive = False, size = "small")

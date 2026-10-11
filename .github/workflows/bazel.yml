@@ -21,7 +21,8 @@ jobs:
   portable:
     name: Portable packages (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # Native addon and Apple package qualification share this job's compiler base.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -93,6 +94,24 @@ jobs:
           esac
           if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
             host_tests+=(@icu//:windows_icu_smoke_test)
+          fi
+          if [[ "$TARGET_PLATFORM" == linux-x64 ]]; then
+            host_tests+=(
+              //tools/ci:source_checks
+              //tools/dev:source_checks
+              //:biome_format_test
+              //:biome_lint_test
+              //:rustfmt_test
+              //build_defs/quality:rust_clippy_test
+              //build_defs/quality:rust_doctest_suite
+              //build_defs/quality:metadata_test
+              //build_defs/quality:biome_runner_test
+              //build_defs/quality:rustfmt_runner_test
+              //src/native/sdks/ts:source_checks_typecheck_test
+              //src/wasix/sdks/ts:source_checks_typecheck_test
+              //src/native/sdks/react-native:source_checks_typecheck_test
+              //src/wasix/postgres-tools/ts:source_checks_typecheck_test
+            )
           fi
           if [[ "$TARGET_PLATFORM" != macos-arm64 ]]; then
             startup=()
@@ -179,6 +198,52 @@ jobs:
             //build_defs/extensions:desktop_all_final_contract_test \
             "${configuration[@]}" --platforms="$profile" --host_platform="$profile" --jobs=2
 
+      - name: Qualify final WASIX addon on its native host
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
+        run: |
+          startup=()
+          configuration=()
+          case "$TARGET_PLATFORM" in
+            linux-x64) profile=//build_defs/native:linux_x86_64_glibc_2_28 ;;
+            linux-arm64) profile=//build_defs/native:linux_aarch64_glibc_2_28 ;;
+            macos-arm64)
+              profile=//build_defs/host:native_macos_arm64
+              startup=(--output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g
+                --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out")
+              configuration=(--config=macos-sandbox)
+              ;;
+            windows-x64)
+              profile=//build_defs/host:native_windows_x64
+              startup=(--output_base="$RUNNER_TEMP/b")
+              ;;
+          esac
+          input_root="$RUNNER_TEMP/napi-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --args '$ARGS.positional' -- "${startup[@]}" > "$input_root/startup.json"
+          jq -nc --args '$ARGS.positional' -- -c opt "${configuration[@]}" \
+            "--platforms=$profile" "--host_platform=$profile" --jobs=1 --local_test_jobs=1 \
+            > "$input_root/configuration.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //src/wasix/node-addon:release_shipping_export \
+            --output-directory "$RUNNER_TEMP/napi-build-capture"
+
+      - name: Upload WASIX addon construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-napi-${{ matrix.platform }}
+          path: ${{ runner.temp }}/napi-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Qualify declared macOS Swift SDK
         if: matrix.platform == 'macos-arm64'
         run: >-
@@ -198,9 +263,52 @@ jobs:
               --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" build -c opt \
               //src/native/runtime:mobile_static_abi_consumer \
               //src/native/runtime:runtime_abi_binary \
+              //build_defs/extensions/mobile:all_members_consumer \
               --config=macos-sandbox --platforms="//build_defs/host:$profile" \
               --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
           done
+          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" --host_jvm_args=-Xmx3g \
+            --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" build -c opt \
+            //build_defs/extensions/mobile:all_members_consumer \
+            --config=macos-sandbox --platforms=//build_defs/host:apple_package_macos_arm64 \
+            --host_platform=//build_defs/host:native_macos_arm64 --jobs=2
+
+      - name: Qualify complete iOS extension packages
+        if: matrix.platform == 'macos-arm64'
+        env:
+          QUALIFICATION_JOB_NAME: Portable packages (${{ matrix.platform }})
+        run: |
+          input_root="$RUNNER_TEMP/ios-extension-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/native-bazel" \
+            --arg log "$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g","--server_jvm_out="+$log]' \
+            > "$input_root/startup.json"
+          jq -nc '["-c","opt","--config=macos-sandbox",
+            "--platforms=//build_defs/host:apple_package_macos_arm64",
+            "--host_platform=//build_defs/host:native_macos_arm64","--jobs=1","--local_test_jobs=1"]' \
+            > "$input_root/configuration.json"
+          jq -nc '["//build_defs/extensions/mobile/final:ios_xcframework_final_contract_test"]' \
+            > "$input_root/targets.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //build_defs/extensions/mobile/final:ios_xcframework_shipping_export \
+            --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/ios-extension-build-capture"
+
+      - name: Upload iOS extension construction evidence
+        if: matrix.platform == 'macos-arm64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-mobile-ios
+          path: ${{ runner.temp }}/ios-extension-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Check execution tool selection for foreign targets
         if: matrix.platform == 'linux-x64'
@@ -266,6 +374,42 @@ jobs:
           //build_defs/native:android_runtime_abi_test
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
+
+      - name: Qualify complete Android extension and Maven packages
+        if: matrix.platform == 'x86_64'
+        env:
+          QUALIFICATION_JOB_NAME: Linux runtime (${{ matrix.platform }})
+        run: |
+          input_root="$RUNNER_TEMP/android-extension-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc '["-c","opt","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
+            "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=1","--local_test_jobs=1"]' \
+            > "$input_root/configuration.json"
+          jq -nc '[
+            "//build_defs/extensions/mobile/final:android_arm64_v8a_final_contract_test",
+            "//build_defs/extensions/mobile/final:android_x86_64_final_contract_test",
+            "//build_defs/extensions/mobile:android_arm64_all_members_consumer",
+            "//build_defs/extensions/mobile:android_x86_64_all_members_consumer",
+            "//build_defs/extensions:mobile_maven_test"
+          ]' > "$input_root/targets.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
+            --shipping-export //build_defs/extensions/mobile/final:android_shipping_export \
+            --targets-json "$input_root/targets.json" --output-directory "$RUNNER_TEMP/android-extension-build-capture"
+
+      - name: Upload Android extension construction evidence
+        if: matrix.platform == 'x86_64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-mobile-android
+          path: ${{ runner.temp }}/android-extension-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Qualify installed packages and frozen resources
         if: matrix.platform == 'x86_64'
@@ -386,10 +530,11 @@ jobs:
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
-      - name: Construct platform AOT packages and qualify Linux SDK and resources
+      - name: Construct platform AOT packages and qualify Linux SDK, resources and browser
         env:
           QUALIFICATION_JOB_NAME: Linux WASIX and installed browser
         run: |
+          chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
           input_root="$RUNNER_TEMP/wasix-tools-build-inputs"
           mkdir -p "$input_root"
           jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
@@ -397,23 +542,20 @@ jobs:
             --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
             > "$input_root/github.json"
-          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" --arg diskCache "$HOME/.cache/oliphaunt/bazel-disk" '[
+          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" --arg diskCache "$HOME/.cache/oliphaunt/bazel-disk" \
+            --arg chrome "$chrome_binary" --arg chromeReceipt "$RUNNER_TEMP/chrome-host.json" '[
             "--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
             "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=1","--local_test_jobs=1",
             "--config=ci-cache","--disk_cache="+$diskCache,
-            "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1"
+            "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1",
+            "--test_env=OLIPHAUNT_BROWSER_CHROME="+$chrome,"--test_env=OLIPHAUNT_BROWSER_CHROME_RECEIPT="+$chromeReceipt
           ]' > "$input_root/configuration.json"
           jq -nc '[
             "//src/wasix/runtime:aot_linux_x64_gnu_payload",
             "//src/wasix/runtime:aot_linux_arm64_gnu_payload",
             "//src/wasix/runtime:aot_macos_arm64_payload",
             "//src/wasix/runtime:aot_windows_x64_msvc_payload",
-            "//src/wasix/runtime:cargo",
-            "//src/wasix/sdks/ts:browser_sql_consumer",
-            "//build_defs/wasix:macos_aot_repeatability_test",
-            "//src/wasix/sdks/rust:postgres_regression_test",
-            "//src/database-resources:wasix_resource_test",
-            "//src/wasix/postgres-tools/ts:installed_consumer_test"
+            "//src/wasix/runtime:cargo"
           ]' > "$input_root/targets.json"
           jq -nc '["postgres-tools-wasix"]' > "$input_root/complete-products.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
@@ -427,6 +569,22 @@ jobs:
         with:
           name: native-build-evidence-wasix-tools
           path: ${{ runner.temp }}/wasix-tools-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Qualify declared WASIX pg_hashids packages
+        run: >-
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts
+          --github-json "$RUNNER_TEMP/wasix-tools-build-inputs/github.json"
+          --configuration-json "$RUNNER_TEMP/wasix-tools-build-inputs/configuration.json"
+          --shipping-export //build_defs/extensions/wasix:pg_hashids_shipping_export
+          --output-directory "$RUNNER_TEMP/wasix-pg-hashids-build-capture"
+
+      - name: Upload WASIX pg_hashids construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-wasix-pg-hashids
+          path: ${{ runner.temp }}/wasix-pg-hashids-build-capture/evidence/
           if-no-files-found: error
           retention-days: 7
 
@@ -467,17 +625,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # One Linux producer base supplies the real portable runtime and SDK
-      # archives consumed by both browser exports. Chrome is a host input.
-      - name: Qualify installed browser SQL, persistence and crash recovery
-        run: |
-          chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
-          bash tools/dev/bazel.sh run --config=wasix-aot //src/wasix/sdks/ts:browser_sql_consumer \
-            --config=ci-cache --disk_cache="$HOME/.cache/oliphaunt/bazel-disk" \
-            --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
-            --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2 \
-            -- "$chrome_binary" "$RUNNER_TEMP/chrome-host.json"
-
       - name: Freeze bounded Bazel cache for transport
         id: bazel-cache-ready
         continue-on-error: true
@@ -508,6 +655,9 @@ jobs:
     name: Linux native postmaster lifecycle
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    outputs:
+      source_commit: ${{ steps.postmaster-capture.outputs.source_commit }}
+      source_tree: ${{ steps.postmaster-capture.outputs.source_tree }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -519,21 +669,49 @@ jobs:
       # This owner has a separate compiler/sysroot closure. Keep it parallel to
       # tools/browser construction and share its one base across both profiles.
       - name: Qualify native postmaster carrier and installed lifecycle
-        run: >-
-          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/postmaster-native" test
-          --platforms=//build_defs/wasix:portable
-          --host_platform=//build_defs/wasix:llvm_serializer_linux_x86_64
-          --compilation_mode=opt --jobs=2
-          //build_defs/wasix/postmaster:cargo_source_projection_test
-          //build_defs/wasix/postmaster:sjlj_runtime_probe_test
-          //build_defs/wasix/postmaster:vfork_runtime_probe_test
-          @postmaster_postgres//:sealed_profile_test
-          @postmaster_postgres//:runtime_test
-          //src/wasix/postmaster:linux_public_archive_test
+        id: postmaster-capture
+        run: |
+          input_root="$RUNNER_TEMP/postmaster-build-inputs"
+          mkdir -p "$input_root"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job 'Linux native postmaster lifecycle' \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/postmaster-native" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
+          jq -nc '["-c","opt","--platforms=//build_defs/wasix:portable",
+            "--host_platform=//build_defs/wasix:llvm_serializer_linux_x86_64","--jobs=2"]' \
+            > "$input_root/configuration.json"
+          jq -nc '[
+            "//build_defs/wasix/postmaster:cargo_source_projection_test",
+            "//build_defs/wasix/postmaster:sjlj_runtime_probe_test",
+            "//build_defs/wasix/postmaster:vfork_runtime_probe_test",
+            "//build_defs/wasix/postmaster:guest_inputs_test",
+            "//src/wasix/postmaster:linux_sealed_profile_test",
+            "//src/wasix/postmaster:linux_runtime_test",
+            "//src/wasix/postmaster:linux_public_archive_test"
+          ]' > "$input_root/targets.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export //src/wasix/postmaster:linux_shipping_export \
+            --targets-json "$input_root/targets.json" \
+            --output-directory "$RUNNER_TEMP/postmaster-build-capture"
+          printf 'source_commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'source_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload native postmaster construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-postmaster-linux
+          path: ${{ runner.temp }}/postmaster-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Qualify linked unwinder marker detection
         run: >-
-          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/postmaster-native" test
+          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/postmaster-native" --host_jvm_args=-Xmx3g test
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28
           --compilation_mode=opt --jobs=2
@@ -548,15 +726,114 @@ jobs:
           path: |
             ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/test.log
             ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/test.xml
-            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/runtime-result.json
-            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/*.stdout
-            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/*.stderr
-            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/runtime_test/test.outputs/postmaster-runtime/*.loader.jsonl
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/runtime-result.json
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/*.stdout
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/*.stderr
+            ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/*runtime_test/test.outputs/postmaster-runtime/*.loader.jsonl
             ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/archive-result.json
             ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/*.stdout
             ${{ runner.temp }}/postmaster-native/execroot/_main/bazel-out/**/testlogs/**/linux_public_archive_test/test.outputs/postmaster-public-archive/*.stderr
           if-no-files-found: ignore
           retention-days: 5
+
+  postmaster-host:
+    name: Native postmaster lifecycle (${{ matrix.platform }})
+    needs: postmaster
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            compiler: //src/wasix/postmaster:compiler_linux_arm64
+            prefix: linux_arm64_gnu
+          - platform: macos-arm64
+            runner: macos-26
+            compiler: //src/wasix/postmaster:native_macos_arm64
+            prefix: macos_arm64
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Select declared Apple SDK
+        if: matrix.platform == 'macos-arm64'
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Qualify native carrier from authenticated Linux guest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE_COMMIT: ${{ needs.postmaster.outputs.source_commit }}
+          EXPECTED_SOURCE_TREE: ${{ needs.postmaster.outputs.source_tree }}
+          WORKFLOW_EVENT: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_COMPILER: ${{ matrix.compiler }}
+          TARGET_PREFIX: ${{ matrix.prefix }}
+          QUALIFICATION_JOB_NAME: Native postmaster lifecycle (${{ matrix.platform }})
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_SOURCE_TREE"
+          input_root="$RUNNER_TEMP/postmaster-build-inputs"
+          mkdir -p "$input_root"
+          bun_binary="$(bash tools/dev/bun.sh -p process.execPath)"
+          bun_directory="$(dirname "$bun_binary")"
+          PATH="$bun_directory:$PATH"
+          export PATH
+          bash .github/scripts/download-build-artifacts.sh "$GITHUB_WORKFLOW" "$EXPECTED_SOURCE_COMMIT" \
+            "$RUNNER_TEMP/postmaster-linux-packet" --run-id "$GITHUB_RUN_ID" \
+            --job 'Linux native postmaster lifecycle' --job-success-only \
+            --workflow-path .github/workflows/bazel.yml --event "$WORKFLOW_EVENT" --ref "$WORKFLOW_REF" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --source-tree "$EXPECTED_SOURCE_TREE" \
+            --artifact native-build-evidence-postmaster-linux
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job 'Linux native postmaster lifecycle' \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$input_root/linux-github.json"
+          bash tools/dev/bun.sh tools/release/native-build-files.mts \
+            --evidence-root "$RUNNER_TEMP/postmaster-linux-packet" \
+            --source-commit "$EXPECTED_SOURCE_COMMIT" --source-tree "$EXPECTED_SOURCE_TREE" \
+            --github-json "$input_root/linux-github.json" --output-directory target/postmaster-linux-import \
+            > "$input_root/files.json"
+          archive="$(jq -er '[.[] | select(endswith("-linux-x64-gnu.tar.zst"))] | if length == 1 then .[0] else error("one canonical Linux archive required") end' "$input_root/files.json")"
+          jq --arg job "$QUALIFICATION_JOB_NAME" '.job=$job' "$input_root/linux-github.json" \
+            > "$input_root/github.json"
+          jq -nc --arg base "$RUNNER_TEMP/postmaster-native" \
+            '["--output_base="+$base,"--host_jvm_args=-Xmx3g"]' > "$input_root/startup.json"
+          jq -nc --arg compiler "$TARGET_COMPILER" --arg archive "$archive" --arg platform "$TARGET_PLATFORM" \
+            '["-c","opt","--platforms=//build_defs/wasix:portable","--host_platform="+$compiler,
+              "--extra_execution_platforms="+$compiler,"--jobs=1","--local_test_jobs=1",
+              "--repo_env=OLIPHAUNT_POSTMASTER_GUEST_ARCHIVE="+$archive]
+              + (if $platform == "macos-arm64" then ["--config=macos-sandbox"] else [] end)' \
+            > "$input_root/configuration.json"
+          jq -nc --arg prefix "$TARGET_PREFIX" \
+            '["//src/wasix/postmaster:"+$prefix+"_public_archive_test",
+              "//src/wasix/postmaster:"+$prefix+"_runtime_test"]' > "$input_root/targets.json"
+          bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
+            --github-json "$input_root/github.json" --startup-json "$input_root/startup.json" \
+            --configuration-json "$input_root/configuration.json" \
+            --shipping-export "//src/wasix/postmaster:${TARGET_PREFIX}_shipping_export" \
+            --targets-json "$input_root/targets.json" \
+            --output-directory "$RUNNER_TEMP/postmaster-build-capture"
+
+      - name: Upload native postmaster construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-postmaster-${{ matrix.platform }}
+          path: ${{ runner.temp }}/postmaster-build-capture/evidence/
+          if-no-files-found: error
+          retention-days: 7
 
   wasix-host:
     name: WASIX imported runtime (${{ matrix.platform }})

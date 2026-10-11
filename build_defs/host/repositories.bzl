@@ -83,7 +83,7 @@ _host_sdk_repository = repository_rule(
     attrs = {
         "family": attr.string(mandatory = True, values = ["apple", "msvc"]),
         "bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),
-        "policy": attr.label(default = Label("//:tools/dev/native-host-toolchains.json"), allow_single_file = True),
+        "policy": attr.label(default = Label("//tools/dev:native-host-toolchains.json"), allow_single_file = True),
         "compatibility": attr.label(default = Label("//tools/release:platform-compatibility-policy.mts"), allow_single_file = True),
         "collector": attr.label(default = Label("//build_defs/host:host-sdk.mts"), allow_single_file = True),
         "deployment_policy": attr.label(default = Label("//build_defs/host:deployment-policy.mts"), allow_single_file = True),

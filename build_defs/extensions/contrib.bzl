@@ -100,58 +100,54 @@ def contrib_generated_sources(name, grammar = None, scanner = None, header_scrip
         generated.append(":" + target)
     _contrib_generated_inputs(name = name, srcs = generated, include_headers = include_headers)
 
+def contrib_extension_inputs(name, member, crypto = None, uuid_provider = None):
+    """One upstream object/generator inventory, with an explicit UUID component seam."""
+    identity = member["id"]
+    if identity not in CONTRIB_C_SOURCES:
+        fail("contrib member %s has no reviewed PostgreSQL 18.4 source recipe" % identity)
+    if identity == "pgcrypto" and crypto == None:
+        fail("pgcrypto construction requires an actual CcInfo OpenSSL input")
+    prefix = "@postgres//:contrib/" + member["contrib-dir"] + "/"
+    sources = [prefix + source + ".c" for source in CONTRIB_C_SOURCES[identity]]
+    headers = [prefix + header for header in CONTRIB_HEADERS.get(identity, [])]
+    deps, includes, copts = [], [], []
+    if identity in ["cube", "seg"]:
+        generated = name + "_generated"
+        contrib_generated_sources(name = generated, grammar = prefix + identity + "parse.y", scanner = prefix + identity + "scan.l", include_headers = headers)
+        sources.append(":" + generated)
+        deps.append(":" + generated)
+    elif identity == "fuzzystrmatch":
+        generated = name + "_generated"
+        contrib_generated_sources(name = generated, header_script = prefix + "daitch_mokotoff_header.pl")
+        sources.append(":" + generated)
+        deps.append(":" + generated)
+    elif identity == "uuid_ossp":
+        if uuid_provider:
+            deps.append(uuid_provider)
+        else:
+            sources.append("portable-uuid/portable_uuid.c")
+            headers.append("portable-uuid/include/uuid/uuid.h")
+            includes.append("portable-uuid/include")
+        headers.append("//build_defs/extensions:uuid_config.h")
+        # pg_config.h undefines optional UUID macros. Select the explicit provider
+        # after that header, without changing the PostgreSQL host configuration.
+        copts += select({"//build_defs/native:windows_x64": ["/FI$(location //build_defs/extensions:uuid_config.h)"], "//conditions:default": ["-include", "build_defs/extensions/uuid_config.h"]})
+    elif identity == "pgcrypto":
+        deps.append(crypto)
+    linkopts = select({"//build_defs/native:windows_x64": [], "//conditions:default": ["-lm"]}) if identity in ["btree_gist", "cube", "earthdistance", "tsm_system_time"] else []
+    return {"srcs": sources, "hdrs": headers, "deps": deps, "defines": [], "includes": includes, "copts": copts, "linkopts": linkopts}
+
 def native_contrib_members(crypto = None):
     """Construct each admitted member; crypto requires an actual CcInfo input."""
     for member in CONTRIB_MEMBERS:
         name = member["id"]
         directory = member["contrib-dir"]
-        if name not in CONTRIB_C_SOURCES:
-            fail("contrib member %s has no reviewed PostgreSQL 18.4 source recipe" % name)
-        # Until the separately pinned OpenSSL producer is available, there is no
-        # pgcrypto construction target or pretend archive in this development graph.
         if name == "pgcrypto" and crypto == None:
             continue
-        prefix = "@postgres//:contrib/" + directory + "/"
-        sources = [prefix + source + ".c" for source in CONTRIB_C_SOURCES[name]]
-        headers = [prefix + header for header in CONTRIB_HEADERS.get(name, [])]
-        deps = []
-        defines = []
-        includes = []
-        copts = []
-        if name in ["cube", "seg"]:
-            generated = name + "_generated"
-            contrib_generated_sources(
-                name = generated,
-                grammar = prefix + name + "parse.y",
-                scanner = prefix + name + "scan.l",
-                include_headers = headers,
-            )
-            sources.append(":" + generated)
-            deps.append(":" + generated)
-        elif name == "fuzzystrmatch":
-            generated = name + "_generated"
-            contrib_generated_sources(name = generated, header_script = prefix + "daitch_mokotoff_header.pl")
-            sources.append(":" + generated)
-            deps.append(":" + generated)
-        elif name == "uuid_ossp":
-            sources.append("portable-uuid/portable_uuid.c")
-            headers.append("portable-uuid/include/uuid/uuid.h")
-            headers.append("//build_defs/extensions:uuid_config.h")
-            includes.append("portable-uuid/include")
-            # pg_config.h undefines optional UUID macros. Select this module's
-            # explicit provider after that header, without changing the host.
-            copts += select({"//build_defs/native:windows_x64": ["/FI$(location //build_defs/extensions:uuid_config.h)"], "//conditions:default": ["-include", "build_defs/extensions/uuid_config.h"]})
-        elif name == "pgcrypto":
-            deps.append(crypto)
+        inputs = contrib_extension_inputs(name = name, member = member, crypto = crypto)
         native_extension_modules(
             name = name,
-            srcs = sources,
-            hdrs = headers,
-            deps = deps,
-            defines = defines,
-            includes = includes,
-            copts = copts,
-            linkopts = select({"//build_defs/native:windows_x64": [], "//conditions:default": ["-lm"]}) if name in ["btree_gist", "cube", "earthdistance", "tsm_system_time"] else [],
+            **inputs
         )
         resources = name + "_sql_resources"
         native.filegroup(

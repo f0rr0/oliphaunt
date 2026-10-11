@@ -51,7 +51,10 @@ import {
 } from './publication-catalog.mts';
 import {
   allArtifactTargets,
+  canonicalExtensionAssetName,
+  canonicalExtensionBundleAssetName,
   contribCarrierDescriptor,
+  expectedExtensionGithubReleaseAssetRows as declaredExtensionGithubReleaseAssetRows,
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
@@ -851,39 +854,16 @@ export function expectedExtensionGithubReleaseAssetCount(product) {
   return extensionRequiredAssetKeys(product).length + 4;
 }
 
-function canonicalExtensionAssetName(product, row) {
-  const prefix = `${product.id}-${product.version}`;
-  if (row.family === 'wasix') {
-    return `${prefix}-wasix-portable.tar.zst`;
-  }
-  if (row.kind === 'ios-xcframework') {
-    return `${prefix}-native-ios-xcframework.zip`;
-  }
-  if (row.kind === 'ios-dependency-xcframework') {
-    return `${prefix}-native-ios-dependency-${row.identity}-xcframework.zip`;
-  }
-  if (row.target === 'ios-xcframework') {
-    return `${prefix}-native-ios-runtime.tar.gz`;
-  }
-  return `${prefix}-native-${row.target}-runtime.tar.gz`;
-}
-
-function canonicalExtensionBundleAssetName(product, { family, target }) {
-  return `${product.id}-${product.version}-${family}-${target}-bundle.tar.gz`;
-}
-
-function expectedExtensionGithubReleaseAssetRows(product) {
-  if (extensionSqlNames(product.id, 'publication-lock').length > 1) {
-    return extensionBundleCarrierRows(product.id, extensionCarrierFamily(product)).map((row) => ({
-      ...row,
-      identity: row.family,
-      name: canonicalExtensionBundleAssetName(product, row),
-    }));
-  }
-  return extensionRequiredArtifactRows(product.id).map((row) => ({
-    ...row,
-    name: canonicalExtensionAssetName(product, row),
-  }));
+export function expectedExtensionGithubReleaseAssetRows(product, declared = undefined) {
+  if (declared !== undefined) return declaredExtensionGithubReleaseAssetRows(product, declared);
+  const sqlNames = extensionSqlNames(product.id, 'publication-lock');
+  return declaredExtensionGithubReleaseAssetRows(product, {
+    sqlNames,
+    requiredRows:
+      sqlNames.length > 1
+        ? extensionBundleCarrierRows(product.id, extensionCarrierFamily(product))
+        : extensionRequiredArtifactRows(product.id),
+  });
 }
 
 function exactExtensionManifestRows(product, manifest, manifestPath) {

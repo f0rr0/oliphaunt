@@ -27,7 +27,7 @@ import {
   validateExtensionArtifactArchive,
 } from './extension-artifact-inventory.mts';
 
-test('canonical native dependency stems project only into declared desktop module suffixes', async () => {
+test('canonical native dependency stems project into desktop and mobile host module suffixes', async () => {
   const recipe = Bun.TOML.parse(
     await fs.readFile(
       path.resolve(import.meta.dirname, '../../../external/postgis/recipe.toml'),
@@ -40,6 +40,9 @@ test('canonical native dependency stems project only into declared desktop modul
     ['linux-arm64-gnu', '.so'],
     ['macos-arm64', '.dylib'],
     ['windows-x64-msvc', '.dll'],
+    ['ios-xcframework', '.dylib'],
+    ['android-arm64-v8a', '.so'],
+    ['android-x86_64', '.so'],
   ]) {
     assert.deepEqual(
       nativeDependencyModuleBasenames(paths, target),
@@ -56,7 +59,7 @@ test('canonical native dependency stems project only into declared desktop modul
       () => nativeDependencyModuleBasenames(invalid, 'windows-x64-msvc'),
       /canonical recipe/u,
     );
-  assert.throws(() => nativeDependencyModuleBasenames(paths, 'ios-xcframework'), /no desktop/u);
+  assert.throws(() => nativeDependencyModuleBasenames(paths, 'wasix-portable'), /no desktop/u);
   assert.deepEqual(nativeDependencyModuleBasenames([], 'ios-xcframework'), []);
 });
 
@@ -710,6 +713,65 @@ async function main() {
       validatedPostgis.legalFiles.map(({ path: member }) => member),
       [...postgisLegal.keys()].sort(),
     );
+
+    // These synthetic archive bytes exercise the reader's alias contract;
+    // actual target archives are qualified by the mobile final-carrier roots.
+    for (const target of ['android-arm64-v8a', 'android-x86_64']) {
+      const archive = `mobile-static/${target}/extensions/postgis-3/liboliphaunt_extension_postgis-3.a`;
+      const aliases = [
+        'difference:oliphaunt_static_postgis_3_difference',
+        'pg_finfo_difference:pg_finfo_oliphaunt_static_postgis_3_difference',
+      ];
+      const contract = {
+        target,
+        archives: [`${target}:${archive}`],
+        dependencies: [],
+        symbolPrefix: 'oliphaunt_static_postgis_3',
+        symbolAliases: aliases,
+      };
+      const entries = new Map(postgis);
+      entries.delete('files/lib/modules/postgis-3.so');
+      entries.set(archive, 'synthetic target archive');
+      const properties = {
+        sqlName: 'postgis',
+        nativeTarget: target,
+        nativeModuleStem: 'postgis-3',
+        nativeModuleFile: 'postgis-3.so',
+        dataFiles: postgisMetadata.dataFiles.join(','),
+        extensionSqlFileNames: '',
+        extensionSqlFilePrefixes: postgisMetadata.extensionSqlFilePrefixes.join(','),
+        mobilePrebuilt: 'yes',
+        mobileStaticArchives: contract.archives.join(','),
+        staticSymbolPrefix: contract.symbolPrefix,
+        staticSymbolAliases: aliases.join(','),
+      };
+      const read = async (label, actualAliases) => {
+        entries.set(
+          'manifest.properties',
+          manifest({ ...properties, staticSymbolAliases: [...actualAliases].sort().join(',') }),
+        );
+        const file = await writeArchive(root, `postgis-${target}-${label}.tar.gz`, entries);
+        return () =>
+          validateExtensionArtifactArchive({
+            file,
+            metadata: postgisMetadata,
+            target,
+            nativeRuntimeVersion: '1.2.3',
+            mobileContract: contract,
+          });
+      };
+      (await read('valid', aliases))();
+      for (const [label, actualAliases] of [
+        ['missing', []],
+        ['wrong', aliases.map((value) => `${value}_wrong`)],
+        ['extra', [...aliases, 'extra:oliphaunt_static_postgis_3_extra']],
+      ]) {
+        assert.throws(
+          await read(label, actualAliases),
+          /staticSymbolAliases.*mobile inventory contract/u,
+        );
+      }
+    }
 
     const missingEmbeddedPostgis = new Map(postgis);
     missingEmbeddedPostgis.delete('files/lib/modules/postgis-3.so');

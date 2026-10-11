@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
@@ -37,6 +38,21 @@ ts_config(name = "base_tsconfig", src = "tsconfig.json", deps = [":node_modules/
 ts_project(name = "module", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.module.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = "lib/module", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
 ts_project(name = "commonjs", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.commonjs.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, out_dir = "lib/commonjs", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
 ts_project(name = "types", srcs = SDK_SRCS + [":extension_projections"], tsconfig = "tsconfig.build.types.json", extends = ":base_tsconfig", allow_js = True, resolve_json_module = True, declaration = True, declaration_map = True, emit_declaration_only = True, out_dir = "lib/typescript", root_dir = "src", transpiler = "tsc", supports_workers = 0, deps = COMPILER_DEPS)
+
+ts_project(
+    name = "source_checks",
+    srcs = SDK_SRCS + glob(["src/__tests__/**/*.ts"]) + [":extension_projections"],
+    tsconfig = ":base_tsconfig",
+    allow_js = True,
+    resolve_json_module = True,
+    no_emit = True,
+    declaration = True,
+    declaration_map = True,
+    out_dir = "lib/typescript",
+    root_dir = "src",
+    supports_workers = 0,
+    deps = COMPILER_DEPS,
+)
 
 ts_project(
     name = "helpers",
@@ -128,3 +144,5 @@ cc_test(
     }),
     size = "small",
 )
+
+source_quality_files()

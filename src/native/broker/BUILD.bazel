@@ -1,4 +1,6 @@
-load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_binary", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
 load("//build_defs/languages/carriers:defs.bzl", "native_helper_carriers")
 
@@ -14,5 +16,17 @@ cargo_library(path_dependencies = PATH_DEPS)
 cargo_binary(name = "broker", source = "src/main.rs", path_dependencies = PATH_DEPS, library = ":lib")
 cargo_library_test()
 cargo_library_test(name = "binary_test", crate = ":broker")
+cargo_integration_test(
+    name = "postgres_client_test",
+    source = "tests/postgres_client.rs",
+    rustc_env = {"CARGO_BIN_EXE_oliphaunt-broker": "$(rootpath :broker)"},
+    data = [":broker"],
+    tags = ["manual"],
+)
+rust_clippy_test(name = "clippy_test", targets = [":lib", ":unit_test", ":broker", ":binary_test", ":postgres_client_test"], transitive = False, size = "small")
 cargo_source_package(product = "oliphaunt-broker")
 native_helper_carriers(product = "oliphaunt-broker", binary = ":broker")
+
+source_quality_files()
+
+rust_quality_files()

@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_java//java:defs.bzl", "java_library", "java_test")
 load("//build_defs/languages/jvm:maven.bzl", "java_javadoc", "kotlin_maven_package")
@@ -77,3 +78,5 @@ kotlin_maven_package(
     coordinate = "dev.oliphaunt.android:dev.oliphaunt.android.gradle.plugin",
     packaging = "pom",
 )
+
+source_quality_files()

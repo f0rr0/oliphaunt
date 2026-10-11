@@ -71,5 +71,10 @@ def _shipping_export_impl(ctx):
 
 shipping_export = rule(
     implementation = _shipping_export_impl,
-    attrs = {"packages": attr.label_list(providers = [ShippingInfo], mandatory = True)},
+    attrs = {
+        "packages": attr.label_list(providers = [ShippingInfo], mandatory = True),
+        "qualification": attr.label_list(
+            doc = "Mandatory final consumer test rules in this configuration; set testonly = True on the export. Declare actual tests, including manual tests, rather than test_suite targets. Incompatible mandatory tests make the export incompatible; use select() only when the owner explicitly has no policy for that configuration.",
+        ),
+    },
 )

@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":defs.bzl", "installed_cargo_test")
 
@@ -30,3 +31,5 @@ installed_cargo_test(
     source = "fixture/main.rs",
     build_script = "fixture/build.rs",
 )
+
+source_quality_files()

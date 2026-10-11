@@ -5,8 +5,9 @@ load("//build_defs/extensions:contrib.bzl", "contrib_generated_sources")
 load("//build_defs/extensions:extensions.bzl", "native_extension_modules")
 load("//build_defs/extensions:external.bzl", "windows_extension_sources")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
+load("//build_defs/extensions:mobile.bzl", "MOBILE_EXTENSION_COMPATIBLE")
 load("//build_defs/native:platform_config.bzl", "NATIVE_RELEASE_LINKOPTS", "NATIVE_WINDOWS_COMPATIBLE")
-load(":libraries.bzl", "POSTGIS_MATH_LINKOPTS", "POSTGIS_NATIVE_COPTS", "POSTGIS_NATIVE_CXX_COPTS", "postgis_configuration", "postgis_source_headers")
+load(":libraries.bzl", "POSTGIS_MATH_LINKOPTS", "POSTGIS_NATIVE_COPTS", "POSTGIS_NATIVE_CXX_COPTS", "postgis_configuration", "postgis_profile", "postgis_source_headers")
 load(":generators.bzl", "postgis_flex")
 load(":windows_sources_test.bzl", "postgis_windows_sources_test")
 
@@ -21,7 +22,10 @@ _PGCOMMON = "gserialized_gist lwgeom_transform lwgeom_cache lwgeom_pg shared_gse
 POSTGIS_LWGEOM_SOURCES = ["liblwgeom/" + source + ".c" for source in _LWGEOM]
 POSTGIS_PG_SOURCES = ["postgis/" + source + ".c" for source in _PG] + ["libpgcommon/" + source + ".c" for source in _PGCOMMON]
 
-def postgis_standalone(name):
+def postgis_standalone(name, profile = "desktop"):
+    if profile != "desktop":
+        _mobile_standalone(name, profile)
+        return
     prefix = "@postgis//:"
     flatgeobuf_sources = ["deps/flatgeobuf/" + source + ".cpp" for source in ["flatgeobuf_c", "geometrywriter", "geometryreader", "packedrtree"]]
     windows_srcs = [prefix + source for source in POSTGIS_LWGEOM_SOURCES + POSTGIS_PG_SOURCES + flatgeobuf_sources]
@@ -81,3 +85,25 @@ def native_postgis_modules(name, standalone, dependency_module):
                              copts = select({"//build_defs/native:windows_x64": ["/D_USE_MATH_DEFINES", "/FI$(location //src/extensions/external/postgis:tools/windows/postgis-compat.h)"], "//conditions:default": []}),
                              hdrs = select({"//build_defs/native:windows_x64": ["//src/extensions/external/postgis:tools/windows/postgis-compat.h"], "//conditions:default": []}),
                              dynamic_deps = [dependency_module], linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": ["-Wl,-rpath,@loader_path"], "//conditions:default": ["-Wl,-rpath,$$ORIGIN"]}))
+
+def _mobile_standalone(name, profile):
+    settings = postgis_profile(profile)
+    prefix = "@postgis//:"
+    dependencies = "//build_defs/extensions/postgis/mobile:"
+    postgis_configuration(name = name + "_config", profile = profile)
+    postgis_source_headers(name = name + "_headers", root = prefix + "Version.config",
+                           headers = [prefix + "postgis_headers"],
+                           include_dirs = ["liblwgeom", "libpgcommon", "postgis", "deps", "deps/flatgeobuf", "deps/flatgeobuf/include", ""])
+    contrib_generated_sources(name = name + "_wkt", grammar = prefix + "liblwgeom/lwin_wkt_parse.y",
+                               scanner = prefix + "liblwgeom/lwin_wkt_lex.l",
+                               grammar_options = ["-d", "-p", "wkt_yy"], scanner_options = ["-i"], scanner_rule = postgis_flex)
+    cc_library(name = name + "_ryu", srcs = [prefix + "deps/ryu/d2s.c"], deps = [":" + name + "_headers"],
+               defines = ["RYU_NO_TRAILING_ZEROS"], copts = settings.c, target_compatible_with = settings.compatible)
+    cc_library(name = name + "_lwgeom", srcs = [prefix + source for source in POSTGIS_LWGEOM_SOURCES] + [":" + name + "_wkt"],
+               deps = [":" + name + "_config", ":" + name + "_headers", ":" + name + "_wkt", ":" + name + "_ryu"] +
+                      [dependencies + component for component in ["geos_c_objects", "proj_objects", "json_c_objects"]],
+               copts = settings.c, linkopts = POSTGIS_MATH_LINKOPTS, target_compatible_with = settings.compatible)
+    cc_library(name = name + "_flatgeobuf",
+               srcs = [prefix + "deps/flatgeobuf/" + source + ".cpp" for source in ["flatgeobuf_c", "geometrywriter", "geometryreader", "packedrtree"]],
+               deps = [":" + name + "_config", ":" + name + "_headers", dependencies + "proj_objects"],
+               copts = settings.cxx, defines = ["flatbuffers=postgis_flatbuffers"], target_compatible_with = MOBILE_EXTENSION_COMPATIBLE)

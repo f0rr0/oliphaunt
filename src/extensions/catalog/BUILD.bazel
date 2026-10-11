@@ -1,3 +1,6 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["native-components.toml"])
+
+source_quality_files()

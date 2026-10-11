@@ -1,9 +1,12 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
 load("@javascript_packages//:defs.bzl", "PACKAGES", "javascript_type_links")
+load("@javascript_compiler_packages//:defs.bzl", "compiler_input_links")
+load("@javascript_compiler_packages//:roots.bzl", "COMPILER_INPUTS")
 load("//build_defs/extensions:sdk_projections.bzl", "sdk_extension_projections")
 load("//build_defs/languages/ts:defs.bzl", "npm_archive_package", "source_sdk_consumer_test", "source_sdk_publish_files")
 load("//build_defs/query:defs.bzl", "query_envelope")
@@ -22,6 +25,7 @@ SDK_SRCS = glob(["src/**/*.ts"], exclude = ["src/__tests__/**", "src/extensions.
 filegroup(name = "native_asset_sources", srcs = SDK_SRCS + [":extension_projections", "package.json"])
 
 javascript_type_links(SDK["types"])
+compiler_input_links(COMPILER_INPUTS[SDK["name"]])
 
 npm_archive_package(
     name = "query_package",
@@ -54,6 +58,21 @@ ts_project(
 )
 
 source_sdk_publish_files(name = "publish_files", manifest = "package.json")
+
+# The build configuration excludes tests; use the conventional source configuration
+# for this independently requested typecheck, without constructing native packages.
+ts_project(
+    name = "source_checks",
+    srcs = SDK_SRCS + glob(["src/__tests__/**/*.ts"]) + [":extension_projections"],
+    tsconfig = "tsconfig.json",
+    no_emit = True,
+    declaration = True,
+    declaration_map = True,
+    out_dir = "lib",
+    root_dir = "src",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query"] + [":node_modules/" + name for name in SDK["types"]] + [":node_modules/" + name for name in COMPILER_INPUTS[SDK["name"]]],
+)
 
 filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
 filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
@@ -97,3 +116,5 @@ source_sdk_consumer_test(
     type_packages = {"@javascript_packages//:" + key: key for key in PACKAGES},
     types = SDK["types"],
 )
+
+source_quality_files()

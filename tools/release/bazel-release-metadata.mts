@@ -1,8 +1,13 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
+import { staticMemberAliases } from '../../src/extensions/artifacts/native/tools/ios-extension-registration.mts';
 import { loadContribCarriers } from '../../src/extensions/artifacts/packages/tools/contrib-carriers.mts';
 import { validateExtensionTargetProfiles } from '../../src/extensions/contracts/extension-target-profiles.mts';
+import {
+  resolveNativeComponentClosure,
+  validateNativeComponentContract,
+} from '../../src/extensions/tools/native-component-contract.mts';
 import { nativeCargoArtifactRows } from '../packaging/rust-native-targets.mts';
 import { compatibilityVersionFromText } from './compatibility-version-parser.mts';
 import {
@@ -14,6 +19,7 @@ import {
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import {
   databaseResourceArtifactRows,
+  expectedExtensionGithubReleaseAssetRows,
   extensionRegistryPackageTargetSetsFromRows,
   nativeHelperArtifactRows,
   nativeRuntimeArtifactRows,
@@ -49,7 +55,15 @@ export interface ReleaseMetadata {
   extensionCompatibility: Record<string, Record<string, unknown>>;
   extensionDependencies: Record<string, Record<string, Record<string, unknown>>>;
   extensionReleaseMetadata: Record<string, unknown>[];
+  extensionGithubArtifacts: Record<string, unknown>[];
   extensionProfiles: Record<string, unknown>;
+  nativeComponents: Record<string, unknown>;
+  nativeComponentSources: Record<string, Record<string, unknown>>;
+  nativeMobileComponentClosures: Record<
+    string,
+    Record<string, { linkUnits: string[]; runtimeFiles: string[] }>
+  >;
+  nativeMobileMemberAliases: Record<string, Record<string, string>>;
   publicationCarriers: {
     product: string;
     ecosystem: string;
@@ -85,6 +99,113 @@ function strings(value: unknown, context: string): string[] {
     throw new Error(`${context} must be a string list`);
   if (new Set(value).size !== value.length) throw new Error(`${context} must be unique`);
   return value;
+}
+
+/** Analysis consumes physical unit IDs from the existing canonical resolver. */
+export function nativeMobileComponentInputs(
+  raw: Record<string, unknown>,
+  sqlNames: string[],
+  profiles: { target: string; family: string; kind: string }[],
+) {
+  const components = validateNativeComponentContract(raw, {
+    checkSourcePaths: false,
+    knownExtensions: new Set(sqlNames),
+    targetProfiles: new Map(profiles.map((row) => [row.target, `${row.family}\0${row.kind}`])),
+  });
+  const mobile = profiles.filter(
+    (row) => row.family === 'native' && row.kind === 'native-static-registry',
+  );
+  return Object.fromEntries(
+    [...sqlNames].sort().map((sqlName) => [
+      sqlName,
+      Object.fromEntries(
+        mobile.map((row) => {
+          const closure = resolveNativeComponentClosure(components, {
+            extension: sqlName,
+            family: row.family,
+            kind: row.kind,
+            target: row.target,
+          });
+          return [row.target, { linkUnits: closure.linkUnits, runtimeFiles: closure.runtimeFiles }];
+        }),
+      ),
+    ]),
+  );
+}
+
+export function nativeMobileMemberAliasInputs(catalog: Map<string, Record<string, unknown>>) {
+  return Object.fromEntries(
+    [...catalog.values()].map((row) => {
+      const sqlName = string(row['sql-name'], 'static alias SQL name');
+      const module = row['native-module-file'];
+      if (module !== undefined && (typeof module !== 'string' || !module.endsWith('.so')))
+        throw new Error(`static aliases require the canonical module stem for ${sqlName}`);
+      const stem = typeof module === 'string' ? module.slice(0, -3) : null;
+      return [
+        sqlName,
+        Object.fromEntries(
+          staticMemberAliases(sqlName, stem).map(({ name, address }) => [name, address]),
+        ),
+      ];
+    }),
+  );
+}
+
+export function extensionGithubArtifactInputs(
+  identity: { artifactProduct: string; owner: string; version: string; sqlNames: string[] },
+  profiles: { target: string; family: string; kind: string }[],
+  catalog: Map<string, Record<string, unknown>>,
+  mobile: ReleaseMetadata['nativeMobileComponentClosures'],
+) {
+  const requiredRows = identity.sqlNames.flatMap((sqlName) => {
+    const descriptor = catalog.get(sqlName);
+    if (!descriptor) throw new Error(`extension asset inventory is missing ${sqlName}`);
+    const module = descriptor['native-module-file'];
+    if (module !== undefined && (typeof module !== 'string' || !module.endsWith('.so')))
+      throw new Error(
+        `extension asset inventory requires the canonical module stem for ${sqlName}`,
+      );
+    return profiles
+      .filter((row) => row.family === 'native')
+      .flatMap(({ family, target }) => {
+        const runtime = { sqlName, family, target, kind: 'runtime', identity: null };
+        if (target !== 'ios-xcframework' || module === undefined) return [runtime];
+        const closure = mobile[sqlName]?.[target];
+        if (!closure) throw new Error(`extension asset inventory is missing ${sqlName}/${target}`);
+        return [
+          runtime,
+          { sqlName, family, target, kind: 'ios-xcframework', identity: module.slice(0, -3) },
+          ...closure.linkUnits.map((dependency) => ({
+            sqlName,
+            family,
+            target,
+            kind: 'ios-dependency-xcframework',
+            identity: dependency,
+          })),
+        ];
+      });
+  });
+  requiredRows.sort((left, right) => {
+    const a = `${left.sqlName}:${left.family}:${left.target}:${left.kind}:${left.identity ?? ''}`;
+    const b = `${right.sqlName}:${right.family}:${right.target}:${right.kind}:${right.identity ?? ''}`;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  return expectedExtensionGithubReleaseAssetRows(
+    { id: identity.artifactProduct, version: identity.version, family: 'native' },
+    { sqlNames: identity.sqlNames, requiredRows },
+  ).map((row) => ({
+    artifactProduct: identity.artifactProduct,
+    owner: identity.owner,
+    product: identity.owner,
+    version: identity.version,
+    id: `github-release:${row.name}`,
+    role: 'github-release-asset',
+    family: row.family,
+    kind: row.kind,
+    target: row.target,
+    identity: row.identity,
+    name: row.name,
+  }));
 }
 
 export function repositoryPath(value: string): string {
@@ -282,6 +403,24 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     }
   }
   const extensionProfiles = toml('src/extensions/contracts/extension-target-profiles.toml');
+  const nativeComponents = toml('src/extensions/catalog/native-components.toml');
+  const nativeComponentSources: Record<string, Record<string, unknown>> = {};
+  for (const component of nativeComponents.components as Record<string, unknown>[]) {
+    if (component['source-path']) continue;
+    const name = string(component.source, 'native component source');
+    const dependencies = Object.values(extensionDependencies)
+      .flatMap((rows) => Object.entries(rows))
+      .filter(([key]) => key === name)
+      .map(([, source]) => source);
+    if (dependencies.length > 0) {
+      if (dependencies.some((source) => JSON.stringify(source) !== JSON.stringify(dependencies[0])))
+        throw new Error(`native component ${name} has conflicting canonical acquisitions`);
+      nativeComponentSources[name] = dependencies[0];
+    } else {
+      const source = optionalToml(`src/third-party/${repositoryPath(name)}/source.toml`);
+      if (source) nativeComponentSources[name] = source;
+    }
+  }
   const publicationProducts = Object.fromEntries(
     [...descriptors].map(([product, descriptor]) => [
       product,
@@ -317,6 +456,14 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
       .filter(([, row]) => typeof row['native-module-file'] === 'string')
       .map(([name]) => name),
   );
+  const nativeMobileComponentClosures = nativeMobileComponentInputs(
+    nativeComponents,
+    [...generatedCatalog.values()].map((row) =>
+      string(row['sql-name'], 'native component SQL name'),
+    ),
+    targetRows,
+  );
+  const nativeMobileMemberAliases = nativeMobileMemberAliasInputs(generatedCatalog);
   const contribSqlNames = canonicalContrib.members
     .map((member) => string(member['sql-name'], 'contrib SQL name'))
     .sort();
@@ -435,6 +582,30 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     const b = `${right.product}:${right.sqlName}`;
     return a < b ? -1 : a > b ? 1 : 0;
   });
+  const extensionGithubArtifacts = [
+    ...new Set(extensionReleaseMetadata.map((row) => row.artifactProduct)),
+  ]
+    .sort()
+    .flatMap((artifactProduct) => {
+      const rows = extensionReleaseMetadata.filter(
+        (row) => row.artifactProduct === artifactProduct,
+      );
+      const owner =
+        rows[0].class === 'contrib'
+          ? contribOwners.native
+          : string(artifactProduct, 'extension artifact product');
+      return extensionGithubArtifactInputs(
+        {
+          artifactProduct: string(artifactProduct, 'extension artifact product'),
+          owner,
+          version: products[owner].version,
+          sqlNames: rows.map((row) => string(row.sqlName, 'extension SQL name')),
+        },
+        targetRows,
+        generatedCatalog,
+        nativeMobileComponentClosures,
+      );
+    });
   return {
     products,
     contribOwners,
@@ -446,7 +617,12 @@ export function loadReleaseMetadata(root: string): ReleaseMetadata {
     extensionCompatibility,
     extensionDependencies,
     extensionReleaseMetadata,
+    extensionGithubArtifacts,
     extensionProfiles,
+    nativeComponents,
+    nativeComponentSources,
+    nativeMobileComponentClosures,
+    nativeMobileMemberAliases,
     publicationCarriers,
     nativeHelperArtifacts,
     nativeRuntimeArtifacts,
@@ -488,7 +664,12 @@ export function renderReleaseMetadata(metadata: ReleaseMetadata, identityRule: s
     EXTENSION_COMPATIBILITY: metadata.extensionCompatibility,
     EXTENSION_DEPENDENCIES: metadata.extensionDependencies,
     EXTENSION_RELEASE_METADATA: metadata.extensionReleaseMetadata,
+    EXTENSION_GITHUB_ARTIFACTS: metadata.extensionGithubArtifacts,
     EXTENSION_PROFILES: metadata.extensionProfiles,
+    NATIVE_COMPONENTS: metadata.nativeComponents,
+    NATIVE_COMPONENT_SOURCES: metadata.nativeComponentSources,
+    NATIVE_MOBILE_COMPONENT_CLOSURES: metadata.nativeMobileComponentClosures,
+    NATIVE_MOBILE_MEMBER_ALIASES: metadata.nativeMobileMemberAliases,
     PUBLICATION_CARRIERS: metadata.publicationCarriers,
     NATIVE_HELPER_ARTIFACTS: metadata.nativeHelperArtifacts,
     NATIVE_RUNTIME_ARTIFACTS: metadata.nativeRuntimeArtifacts,

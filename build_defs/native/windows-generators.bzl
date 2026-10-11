@@ -59,7 +59,7 @@ toolchain(name = "bison_toolchain", toolchain = ":bison_info", toolchain_type = 
 windows_generators_repository = repository_rule(
     implementation = _repository_impl,
     attrs = {
-        "manifest": attr.label(default = Label("//:tools/dev/winflexbison.toml"), allow_single_file = True),
+        "manifest": attr.label(default = Label("//tools/dev:winflexbison.toml"), allow_single_file = True),
         "definition": attr.label(default = Label(":windows-generators.bzl"), allow_single_file = True),
     },
 )

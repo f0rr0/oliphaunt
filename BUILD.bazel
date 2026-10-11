@@ -1,6 +1,28 @@
+load("//build_defs/quality:biome.bzl", "biome_test")
+load("//build_defs/quality:rust.bzl", "root_cargo_quality")
+load("//build_defs/quality:rustfmt.bzl", "rustfmt_test")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+
 package(default_visibility = ["//visibility:public"])
 
+root_cargo_quality()
+
 exports_files([
+    ".bazelversion",
+    ".gitignore",
+    "biome.json",
+    "rustfmt.toml",
+    "clippy.toml",
+    ".github/scripts/check-ci-gate.mts",
+    ".github/scripts/resolve-mobile-e2e.mts",
+    ".github/scripts/resolve-mobile-e2e.test.mts",
+    "src/third-party/tools/source-fetch-core.mts",
+    "src/third-party/tools/source-fetch-core.test.mts",
+    "src/third-party/tools/source-archive.mts",
+    "src/third-party/tools/source-fetch-scopes.mts",
+    "src/third-party/tools/source-fetch-scopes.test.mts",
+    "src/extensions/generated/extensions.catalog.json",
+    "src/extensions/artifacts/native/tools/ios-extension-registration.mts",
     "src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts",
     "src/extensions/artifacts/packages/tools/build-extension-ci-artifacts.mts",
     "src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts",
@@ -14,10 +36,6 @@ exports_files([
     "package.json",
     "rust-toolchain.toml",
     "release-please-config.json",
-    "tools/dev/bun.toml",
-    "tools/dev/android-sdk.toml",
-    "tools/dev/native-host-toolchains.json",
-    "tools/dev/winflexbison.toml",
     "tools/packaging/archive-directory.mts",
     "tools/packaging/atomic-directory.mts",
     "tools/packaging/build-maven-artifact-manifest.mts",
@@ -30,6 +48,7 @@ exports_files([
     "tools/packaging/wasix-cargo-payload.mts",
     "tools/packaging/native-cargo-payload.mts",
     "tools/packaging/testdata/release-fixture-utils.mts",
+    "tools/packaging/testdata/tar-fixture.mts",
     "tools/packaging/testdata/zip-fixture.mts",
     "tools/packaging/portable-archive.mts",
     "tools/packaging/strict-json.mts",
@@ -54,6 +73,142 @@ exports_files([
     "src/extensions/artifacts/packages/tools/package-extension-release-carriers.mts",
     "src/extensions/artifacts/packages/tools/extension-registry-packages.mts",
 ])
+
+
+source_quality_files(name = "root_quality_sources")
+
+filegroup(
+    name = "quality_sources",
+    srcs = [
+        ":root_quality_sources",
+        "//build_defs/android:quality_sources",
+        "//build_defs/extensions:quality_sources",
+        "//build_defs/extensions/compiler_rt:quality_sources",
+        "//build_defs/extensions/postgis:quality_sources",
+        "//build_defs/extensions/wasix:quality_sources",
+        "//build_defs/foundation:quality_sources",
+        "//build_defs/host:quality_sources",
+        "//build_defs/languages:quality_sources",
+        "//build_defs/languages/carriers:quality_sources",
+        "//build_defs/languages/installed:quality_sources",
+        "//build_defs/languages/jvm:quality_sources",
+        "//build_defs/languages/swift:quality_sources",
+        "//build_defs/languages/ts:quality_sources",
+        "//build_defs/native:quality_sources",
+        "//build_defs/native/apple:quality_sources",
+        "//build_defs/native/carriers:quality_sources",
+        "//build_defs/query:quality_sources",
+        "//build_defs/release:quality_sources",
+        "//build_defs/resources:quality_sources",
+        "//build_defs/wasix:quality_sources",
+        "//build_defs/wasix/browser:quality_sources",
+        "//build_defs/wasix/browser/std:quality_sources",
+        "//build_defs/wasix/dependencies:quality_sources",
+        "//build_defs/wasix/postmaster:quality_sources",
+        "//src/database-resources:quality_sources",
+        "//src/database-resources/icu:quality_sources",
+        "//src/examples/wasix/browser:quality_sources",
+        "//src/extensions/catalog:quality_sources",
+        "//src/extensions/contracts:quality_sources",
+        "//src/extensions/external/pg_hashids:quality_sources",
+        "//src/extensions/external/pg_ivm:quality_sources",
+        "//src/extensions/external/pg_textsearch:quality_sources",
+        "//src/extensions/external/pg_uuidv7:quality_sources",
+        "//src/extensions/external/pgtap:quality_sources",
+        "//src/extensions/external/postgis:quality_sources",
+        "//src/extensions/external/vector:quality_sources",
+        "//src/extensions/generated/sdk:quality_sources",
+        "//src/extensions/tools:quality_sources",
+        "//src/native/broker:quality_sources",
+        "//src/native/mobile-bindings:quality_sources",
+        "//src/native/node-addon:quality_sources",
+        "//src/native/postgres-tools:quality_sources",
+        "//src/native/runtime:quality_sources",
+        "//src/native/sdks/kotlin:quality_sources",
+        "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:quality_sources",
+        "//src/native/sdks/react-native:quality_sources",
+        "//src/native/sdks/rust:quality_sources",
+        "//src/native/sdks/swift:quality_sources",
+        "//src/native/sdks/ts:quality_sources",
+        "//src/query/ts:quality_sources",
+        "//src/third-party/postgres:quality_sources",
+        "//src/wasix/browser-host:quality_sources",
+        "//src/wasix/node-addon:quality_sources",
+        "//src/wasix/postgres-tools:quality_sources",
+        "//src/wasix/postgres-tools/ts:quality_sources",
+        "//src/wasix/postgres-tools/ts/tests/installed:quality_sources",
+        "//src/wasix/postmaster:quality_sources",
+        "//src/wasix/runtime:quality_sources",
+        "//src/wasix/sdks/rust:quality_sources",
+        "//src/wasix/sdks/ts:quality_sources",
+        "//src/wasix/sdks/ts/src/host:quality_sources",
+        "//tools/bazel:quality_sources",
+        "//tools/ci:quality_sources",
+        "//tools/dev:quality_sources",
+        "//tools/release:quality_sources",
+        "//build_defs/quality:quality_sources",
+    ],
+)
+
+filegroup(
+    name = "root_rustfmt_sources",
+    srcs = glob(["src/benchmarks/perf/runner/**/*.rs", "src/extensions/tests/native/**/*.rs"]),
+)
+
+filegroup(
+    name = "rustfmt_sources",
+    srcs = [
+        ":root_rustfmt_sources",
+        "//src/query/rust:rustfmt_sources",
+        "//src/native/rust-bindings:rustfmt_sources",
+        "//src/native/mobile-bindings:rustfmt_sources",
+        "//src/native/sdks/rust:rustfmt_sources",
+        "//src/native/sdks/rust/crates/oliphaunt-build:rustfmt_sources",
+        "//src/native/broker:rustfmt_sources",
+        "//src/native/node-addon:rustfmt_sources",
+        "//src/native/runtime/packaging:rustfmt_sources",
+        "//src/native/postgres-tools:rustfmt_sources",
+        "//src/wasix/sdks/rust:rustfmt_sources",
+        "//src/wasix/pgwire-server:rustfmt_sources",
+        "//src/wasix/node-addon:rustfmt_sources",
+        "//src/wasix/runtime:rustfmt_sources",
+        "//src/wasix/runtime/tools/xtask:rustfmt_sources",
+        "//src/wasix/runtime/crates/assets:rustfmt_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:rustfmt_sources",
+        "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:rustfmt_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:rustfmt_sources",
+        "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:rustfmt_sources",
+        "//src/wasix/postgres-tools:rustfmt_sources",
+        "//src/database-resources/icu:rustfmt_sources",
+        "//src/database-resources/seeds/wasix:rustfmt_sources",
+        "//src/wasix/postmaster:rustfmt_sources",
+        "//src/wasix/postmaster/tools/sealed-export-closure:rustfmt_sources",
+    ],
+)
+
+biome_test(
+    name = "biome_format_test",
+    mode = "format",
+    sources = [":quality_sources"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+biome_test(
+    name = "biome_lint_test",
+    mode = "lint",
+    sources = [":quality_sources"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+)
+
+rustfmt_test(
+    name = "rustfmt_test",
+    source_files = [":rustfmt_sources"],
+)
+
+filegroup(
+    name = "workflow_policy_sources",
+    srcs = glob([".github/workflows/*.yml", ".github/workflows/*.yaml", ".github/actions/**/action.yml", ".github/actions/**/action.yaml"], allow_empty = True),
+)
 
 test_suite(
     name = "portable_tests",

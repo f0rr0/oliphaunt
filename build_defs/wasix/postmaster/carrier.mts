@@ -26,6 +26,7 @@ import {
 } from '../../../src/wasix/postmaster/lib/verify-sealed-carrier.mts';
 import { verifyReceipt } from '../../../src/wasix/postmaster/wasmer/bin/verify-postmaster-concurrency-contract.mts';
 import { parseStrictJson } from '../../../tools/packaging/strict-json.mts';
+import { declaredGuestInputs, validateImportedGuestReceipt } from './guest-inputs.mts';
 import {
   canonicalJson,
   digest,
@@ -119,11 +120,13 @@ export function constructCarrier(spec: any, output: string, leaves: string[]) {
   };
   for (const row of tree(spec.sealed))
     put(row.relative, readFileSync(row.path), row.relative.startsWith('bin/'));
-  const sysroot = tree(spec.sysroot).map(({ relative, sha256, size }) => ({
-    relative,
-    sha256,
-    size,
-  }));
+  const sysroot = spec.guestReceipt
+    ? undefined
+    : tree(spec.sysroot).map(({ relative, sha256, size }) => ({
+        relative,
+        sha256,
+        size,
+      }));
   for (const resource of spec.resources) {
     if (resource.tree)
       for (const row of tree(resource.source))
@@ -159,21 +162,14 @@ export function constructCarrier(spec: any, output: string, leaves: string[]) {
       features: executorAbi.roles.executor.features,
     }),
   );
-  const source = Bun.TOML.parse(readFileSync(spec.source, 'utf8')) as any;
-  const patches = readFileSync(spec.series, 'utf8')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'));
-  assert.deepEqual(
-    [...new Set(patches)].sort(),
-    Object.keys(spec.patches).sort(),
-    'Declared PostgreSQL patches differ from canonical ordered series',
-  );
+  const expectedGuest = declaredGuestInputs(spec);
+  const source = { postgresql: expectedGuest.source.postgresql };
   const concurrencyPath = 'share/postgresql/wasix-postmaster.final-wasm-concurrency.receipt';
-  put(
-    concurrencyPath,
-    readFileSync(join(output, 'share/postgresql/wasix-postmaster.concurrency.receipt')),
-  );
+  if (!spec.guestReceipt)
+    put(
+      concurrencyPath,
+      readFileSync(join(output, 'share/postgresql/wasix-postmaster.concurrency.receipt')),
+    );
   const observed = verifyReceipt(
     readFileSync(join(output, concurrencyPath), 'utf8'),
     readFileSync(join(output, 'bin/postgres')),
@@ -186,36 +182,31 @@ export function constructCarrier(spec: any, output: string, leaves: string[]) {
         .map(([path]) => path),
     ]),
   ].sort();
-  const guest = {
-    schema: 'oliphaunt.wasix-postmaster.guest-build.native.v1',
-    source: {
-      postgresql: source.postgresql,
-      overlays: Object.entries<string>(spec.overlays)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([path, file]) => ({ path, ...identity(file) })),
-      patches: patches.map((path) => ({ path, ...identity(spec.patches[path]) })),
-    },
-    configuration: Object.fromEntries(
-      Object.entries<string>(spec.configuration).map(([name, file]) => [name, identity(file)]),
-    ),
-    sysroot: {
-      schema: wasmerFacts.sysroot_variant,
-      source: json(spec.libcSource),
-      patch_sha256: identity(spec.libcPatch).sha256,
-      closure_sha256: digest(canonicalJson(sysroot)),
-    },
-    compiler: identity(spec.clang),
-    core_profile: 'release-o3',
-    postgres_version: source.postgresql.version,
-    installed_closure_sha256: installedClosureIdentityFromRecords(
-      closure.map((relative) => ({ relative, ...hashRegular(join(output, relative)) })),
-    ),
-    atomic_fence_total: Number(observed.atomic_fence_total),
-    final_wasm_concurrency_receipt_sha256: hashRegular(join(output, concurrencyPath)).sha256,
-    linear_memory_install_receipt_sha256: hashRegular(join(output, AGGREGATE_RELATIVE)).sha256,
-  };
+  const guest = spec.guestReceipt
+    ? validateImportedGuestReceipt(readFileSync(spec.guestReceipt), spec)
+    : {
+        schema: 'oliphaunt.wasix-postmaster.guest-build.native.v1',
+        source: expectedGuest.source,
+        configuration: expectedGuest.configuration,
+        sysroot: {
+          schema: wasmerFacts.sysroot_variant,
+          source: expectedGuest.libcSource,
+          patch_sha256: expectedGuest.libcPatch,
+          closure_sha256: digest(canonicalJson(sysroot)),
+        },
+        compiler: identity(spec.clang),
+        core_profile: 'release-o3',
+        postgres_version: source.postgresql.version,
+        installed_closure_sha256: installedClosureIdentityFromRecords(
+          closure.map((relative) => ({ relative, ...hashRegular(join(output, relative)) })),
+        ),
+        atomic_fence_total: Number(observed.atomic_fence_total),
+        final_wasm_concurrency_receipt_sha256: hashRegular(join(output, concurrencyPath)).sha256,
+        linear_memory_install_receipt_sha256: hashRegular(join(output, AGGREGATE_RELATIVE)).sha256,
+      };
   nativeGuestReceipt(guest);
-  put('guest-build.receipt', encode(guest));
+  const guestBytes = spec.guestReceipt ? readFileSync(spec.guestReceipt) : encode(guest);
+  put('guest-build.receipt', guestBytes);
   const memory = json(join(output, AGGREGATE_RELATIVE));
   const rows: string[] = [];
   for (const { path, artifact, receipt } of aotPlan(
@@ -254,7 +245,7 @@ export function constructCarrier(spec: any, output: string, leaves: string[]) {
     join(output, 'manifest.json'),
     sourceFingerprint(output),
     'release-o3',
-    digest(encode(guest)),
+    digest(guestBytes),
     facts.target,
     facts.hostAbi,
     'llvm-opta;non-volatile-memops;readonly-funcref-table;generic-baseline',

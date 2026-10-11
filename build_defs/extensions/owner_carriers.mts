@@ -15,6 +15,11 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  assertStaticMemberAliases,
+  staticMemberAliases,
+  staticSymbolPrefix,
+} from '../../src/extensions/artifacts/native/tools/ios-extension-registration.mts';
+import {
   composeExtensionReleaseDocuments,
   nativeAssetNameForRow,
   writeReleaseControls,
@@ -22,6 +27,7 @@ import {
 import {
   isDesktopNativeTarget,
   nativeDependencyModuleBasenames,
+  nativeModuleHostTarget,
   validateExtensionArtifactArchive,
 } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
@@ -188,7 +194,7 @@ export function validateFinalFileReceipt(leaf: FinalLeaf) {
   );
 }
 
-function expectedMember(spec: NativeCarrierSpec, target: string) {
+function expectedMember(spec: NativeCarrierSpec, target: string, selected?: any) {
   const artifact = spec.recipe.artifacts ?? {};
   const startup = spec.descriptor.lifecycle['startup-config'] ?? [];
   return {
@@ -211,14 +217,18 @@ function expectedMember(spec: NativeCarrierSpec, target: string) {
           : [],
       )
       .sort(),
-    nativeDependencyModules: isDesktopNativeTarget(target)
-      ? nativeDependencyModuleBasenames(artifact.native_dependency_modules, target)
-      : [],
+    nativeDependencyModules:
+      isDesktopNativeTarget(target) || selected?.nativeDependencyModules?.length > 0
+        ? nativeDependencyModuleBasenames(artifact.native_dependency_modules, target)
+        : [],
     nativeConstructionLicenseFiles:
-      (spec.sqlName === 'vector' && target === 'linux-x64-gnu') ||
+      (spec.sqlName === 'vector' &&
+        nativeModuleHostTarget(target) === 'linux-x64-gnu' &&
+        (isDesktopNativeTarget(target) || selected?.nativeConstructionLicenseFiles?.length > 0)) ||
       (spec.contrib &&
         spec.sqlName === 'pgcrypto' &&
-        PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS.includes(target))
+        PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS.includes(nativeModuleHostTarget(target)) &&
+        (isDesktopNativeTarget(target) || selected?.nativeConstructionLicenseFiles?.length > 0))
         ? nativeExtensionConstructionLicenseInventory(spec.sqlName, target)
         : [],
   };
@@ -272,6 +282,12 @@ function mobileRuntimeContract(member: any, target: string, components: any) {
     })
     .sort();
   const stem = member.nativeModuleStem;
+  if (target === 'ios-xcframework' && stem !== null)
+    assertStaticMemberAliases(
+      member.sqlName,
+      stem,
+      (member.iosRegistration?.symbols ?? []).filter((row: any) => row.name !== row.address),
+    );
   return {
     target,
     archives:
@@ -284,16 +300,10 @@ function mobileRuntimeContract(member: any, target: string, components: any) {
             )
             .sort(),
     dependencies,
-    symbolPrefix:
-      stem === null ? '' : `oliphaunt_static_${stem.replaceAll(/[^A-Za-z0-9_]/gu, '_')}`,
-    ...(target === 'ios-xcframework'
-      ? {
-          symbolAliases: (member.iosRegistration?.symbols ?? [])
-            .filter((row: any) => row.name !== row.address)
-            .map((row: any) => `${row.name}:${row.address}`)
-            .sort(),
-        }
-      : {}),
+    symbolPrefix: stem === null ? '' : staticSymbolPrefix(stem),
+    symbolAliases: staticMemberAliases(member.sqlName, stem)
+      .map((row) => `${row.name}:${row.address}`)
+      .sort(),
   };
 }
 
@@ -488,13 +498,13 @@ export function validateNativeFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, 
   const components = componentContract(spec);
   const staged = members.map((member: any) => {
     const canonical = spec.members.find((item) => item.sqlName === member.sqlName)!;
-    const expected = expectedMember(canonical, leaf.target);
     const runtimeAsset = member.assets.find(
       (asset: any) =>
         asset.family === 'native' && asset.kind === 'runtime' && asset.target === leaf.target,
     );
     assert(runtimeAsset, 'final leaf requires its actual native runtime asset');
     const selectedMember = projectNativeRuntimeAssetMember(member, runtimeAsset);
+    const expected = expectedMember(canonical, leaf.target, selectedMember);
     for (const [key, wanted] of Object.entries(expected)) {
       assert.deepEqual(
         selectedMember[key] ?? (Array.isArray(wanted) ? [] : wanted),
@@ -564,12 +574,7 @@ export function validateNativeFinalLeaf(spec: NativeOwnerSpec, leaf: FinalLeaf, 
           nativeRuntimeVersion: spec.runtimeVersion,
           mobileContract,
         });
-        const hostTarget =
-          mobileContract === undefined
-            ? leaf.target
-            : leaf.target === 'ios-xcframework'
-              ? 'macos-arm64'
-              : 'linux-x64-gnu';
+        const hostTarget = nativeModuleHostTarget(leaf.target);
         for (const [name, entry] of runtime.entries) {
           if (name.startsWith('files/lib/'))
             validateNativeMemberModule(entry.data, hostTarget, name.slice('files/'.length));

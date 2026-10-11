@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":defs.bzl", "npm_consumer_test", "query_envelope")
@@ -88,3 +89,5 @@ npm_consumer_test(
     archive = ":nested_npm",
     consumer = "test-fixtures/consumer.mts",
 )
+
+source_quality_files()

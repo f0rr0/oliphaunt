@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":source.bzl", "cargo_source_contract_test")
 
@@ -37,3 +38,5 @@ bun_test(
     data = ["source-contract.mts", "source-package.mts", "//build_defs/query:package.mts", "//:tools/packaging/cargo-manifest.mts", "//:tools/packaging/cargo-dependencies.mts", "//:tools/packaging/cargo-source-package.mts", "//:tools/packaging/package-archive.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/portable-archive.mts", "//:tools/packaging/release-notices.mts", "//:tools/packaging/release-directory-safety.mts", "//:tools/packaging/rust-native-targets.mts"],
     size = "small",
 )
+
+source_quality_files()

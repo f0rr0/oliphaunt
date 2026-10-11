@@ -169,7 +169,7 @@ export function writeJson(file: string, value: unknown) {
   writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
 }
 
-function exactArchive(directory: string, output: string) {
+export function exactArchive(directory: string, output: string) {
   const rows: { name: string; data: Buffer; mode: number }[] = [];
   const visit = (current: string, prefix = '') => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {

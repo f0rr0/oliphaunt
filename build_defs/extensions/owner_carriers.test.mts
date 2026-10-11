@@ -218,11 +218,22 @@ try {
     });
   assert.equal(selected(linuxAsset).nativeConstructionLicenseFiles.length, 2);
   assert.equal(selected(androidAsset).nativeConstructionLicenseFiles, undefined);
+  assert.equal(
+    selected({
+      ...androidAsset,
+      nativeConstructionLicenseFiles: linuxAsset.nativeConstructionLicenseFiles,
+    }).nativeConstructionLicenseFiles.length,
+    2,
+    'mobile metadata accepts only the canonical construction receipts from its declared host',
+  );
   assert.throws(
     () =>
       selected({
         ...androidAsset,
-        nativeConstructionLicenseFiles: linuxAsset.nativeConstructionLicenseFiles,
+        nativeConstructionLicenseFiles: linuxAsset.nativeConstructionLicenseFiles.map(
+          (row: any, index: number) =>
+            index === 0 ? { ...row, path: 'share/licenses/undeclared-source/LICENSE' } : row,
+        ),
       }),
     /construction|immutable|inventory/u,
   );

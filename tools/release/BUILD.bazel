@@ -1,8 +1,18 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["bazel-release-metadata.mts", "bazel-shipping-inputs.mts", "extension-release-metadata.mts", "compatibility-version-parser.mts", "compatibility-version-policy.mts", "product-version.mts", "platform-compatibility-policy.mts", "frozen-extension-consumer.mts", "release-artifact-targets.mts", "release-graph.mts", "release-history.mts"])
+exports_files(["native-file-identity.mts"])
+exports_files(["github-read.mts", "github-core-request-journal.mts", "github-release-lineage.mts"])
+
+bun_test(
+    name = "native_file_identity_test",
+    entry_point = "native-file-identity.test.mts",
+    data = ["native-file-identity.mts", "//:tools/packaging/release-directory-safety.mts"],
+    size = "small",
+)
 
 bun_test(
     name = "bazel_metadata_test",
@@ -18,6 +28,7 @@ bun_test(
         "release-graph.mts",
         "release-history.mts",
         "//:src/extensions/artifacts/packages/tools/contrib-carriers.mts",
+        "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts",
         "//:src/extensions/artifacts/packages/tools/extension-registry-packages.mts",
         "//:tools/packaging/portable-archive.mts",
         "//:tools/packaging/release-directory-safety.mts",
@@ -26,6 +37,10 @@ bun_test(
         "//:tools/packaging/rust-native-targets.mts",
         "//src/database-resources:seeds/carrier-identities.mts",
         "//src/extensions/contracts:extension-target-profiles.mts",
+        "//src/extensions/catalog:native-components.toml",
+        "//src/extensions/contracts:extension-target-profiles.toml",
+        "//src/extensions/tools:native-component-contract.mts",
+        "//:src/extensions/generated/extensions.catalog.json",
         "//src/native/mobile-bindings:tools/dependency-license-contract.mts",
         "//src/wasix/runtime:tools/wasix-cargo-artifact-contract.mts",
         "//src/wasix/runtime:tools/wasix-runtime-npm-contract.mts",
@@ -45,3 +60,5 @@ bun_test(
     entry_point = "compatibility-version-parser.test.mts",
     data = ["compatibility-version-parser.mts"],
 )
+
+source_quality_files()

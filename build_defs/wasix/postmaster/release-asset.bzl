@@ -2,10 +2,11 @@
 
 load("@oliphaunt_metadata//:metadata.bzl", "PRODUCTS", "WASIX_ARTIFACTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("//build_defs/native/carriers:defs.bzl", "native_checksum_manifest")
 load("//build_defs/release:identity.bzl", "ReleaseIdentityInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
-_HELPERS = [
+POSTMASTER_RELEASE_HELPERS = [
     "//:tools/packaging/archive-directory.mts",
     "//:tools/packaging/portable-archive.mts",
     "//:tools/packaging/platform-binary-contract.mts",
@@ -56,7 +57,7 @@ _release_asset = rule(
         "license": attr.label(default = "//:LICENSE", allow_single_file = True),
         "notices": attr.label(default = "//:THIRD_PARTY_NOTICES.md", allow_single_file = True),
         "_writer": attr.label(default = "//build_defs/wasix/postmaster:release-asset.mts", allow_single_file = True),
-        "_helpers": attr.label_list(default = _HELPERS, allow_files = True),
+        "_helpers": attr.label_list(default = POSTMASTER_RELEASE_HELPERS, allow_files = True),
     },
 )
 
@@ -86,27 +87,46 @@ _archive_test = rule(
         "license": attr.label(default = "//:LICENSE", allow_single_file = True),
         "notices": attr.label(default = "//:THIRD_PARTY_NOTICES.md", allow_single_file = True),
         "_runner": attr.label(default = "//build_defs/wasix/postmaster:release-asset-test.mts", allow_single_file = True),
-        "_helpers": attr.label_list(default = _HELPERS, allow_files = True),
+        "_helpers": attr.label_list(default = POSTMASTER_RELEASE_HELPERS, allow_files = True),
     }),
 )
 
-def postmaster_linux_release_asset():
-    rows = [row for row in WASIX_ARTIFACTS if row["product"] == "liboliphaunt-wasix-postmaster" and row["target"] == "linux-x64-gnu"]
+def postmaster_release_asset(name, target, carrier, execution):
+    rows = [row for row in WASIX_ARTIFACTS if row["product"] == "liboliphaunt-wasix-postmaster" and row["target"] == target and row["kind"] == "wasix-postmaster-runtime"]
     if len(rows) != 1:
-        fail("Postmaster Linux release needs one canonical artifact row")
+        fail("Postmaster release needs one canonical artifact row for " + target)
     row = rows[0]
     owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix-postmaster"
-    carrier = "@postmaster_postgres//:native_carrier"
     compatible = ["@platforms//cpu:wasm32", "@platforms//os:wasi"]
-    execution = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"]
-    _release_asset(name = "linux_x64_gnu_release_asset", owner = owner, artifact = json.encode(row), carrier = carrier,
+    _release_asset(name = name + "_release_asset", owner = owner, artifact = json.encode(row), carrier = carrier,
                    target_compatible_with = compatible, exec_compatible_with = execution)
-    _shell(name = "linux_archive_shell")
-    _archive_test(name = "linux_public_archive_test", archive = ":linux_x64_gnu_release_asset", shell = ":linux_archive_shell",
-                  args = bun_test_entrypoint_args("linux_public_archive_test"), target_compatible_with = compatible,
+    legacy = name == "linux_x64_gnu"
+    prefix = "linux" if legacy else name
+    _shell(name = prefix + "_archive_shell")
+    _archive_test(name = prefix + "_public_archive_test", archive = ":" + name + "_release_asset", shell = ":" + prefix + "_archive_shell",
+                  args = bun_test_entrypoint_args(prefix + "_public_archive_test"), target_compatible_with = compatible,
                   exec_compatible_with = execution, tags = ["manual"], size = "medium")
-    shipping_package(name = "linux_carrier_construction", owner = owner, artifacts = [carrier], ecosystem = "internal",
+    shipping_package(name = prefix + "_carrier_construction", owner = owner, artifacts = [carrier], ecosystem = "internal",
                      package_name = "native_carrier", configuration = row["target"], role = "construction")
-    shipping_package(name = "linux_release_asset_shipping", owner = owner, artifacts = [":linux_x64_gnu_release_asset"], ecosystem = "github",
+    shipping_package(name = prefix + "_release_asset_shipping", owner = owner, artifacts = [":" + name + "_release_asset"], ecosystem = "github",
                      package_name = row["asset"].replace("{version}", PRODUCTS[row["product"]]["version"]), configuration = row["target"], role = "github-release-asset")
-    shipping_export(name = "linux_shipping_export", packages = [":linux_carrier_construction", ":linux_release_asset_shipping"])
+    shipping_export(name = prefix + "_shipping_export", packages = [":" + prefix + "_carrier_construction", ":" + prefix + "_release_asset_shipping"])
+
+def postmaster_linux_release_asset():
+    postmaster_release_asset(name = "linux_x64_gnu", target = "linux-x64-gnu", carrier = "@postmaster_postgres//:native_carrier",
+                              execution = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"])
+
+def postmaster_release_family():
+    """Join exactly the three actual authenticated public Files plus one checksum."""
+    native_checksum_manifest(name = "release_assets", product = "liboliphaunt-wasix-postmaster",
+                             artifact_rows = WASIX_ARTIFACTS, archives = ["@postmaster_guest//:release_archives"], assemble = True)
+    packages = []
+    for row in [row for row in WASIX_ARTIFACTS if row["product"] == "liboliphaunt-wasix-postmaster" and "github-release" in row["surfaces"]]:
+        name = "release_" + ("checksums" if row["kind"] == "checksums" else row["target"].replace("-", "_"))
+        asset = row["asset"].replace("{version}", PRODUCTS[row["product"]]["version"])
+        native.filegroup(name = name, srcs = [":release_assets"], output_group = "checksums" if row["kind"] == "checksums" else asset)
+        shipping_package(name = name + "_shipping", owner = "@oliphaunt_metadata//:product_liboliphaunt-wasix-postmaster",
+                         artifacts = [":" + name], ecosystem = "github", package_name = asset,
+                         configuration = row.get("target", "") or "portable", role = "github-release-asset")
+        packages.append(":" + name + "_shipping")
+    shipping_export(name = "release_shipping_export", packages = packages)

@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("//build_defs/native/carriers:defs.bzl", "native_carrier_legal_inputs", "native_payload_helpers")
 
@@ -30,3 +31,5 @@ bun_test(
     data = ["//build_defs/resources:helpers"] + native_carrier_legal_inputs().keys(),
     size = "small",
 )
+
+source_quality_files()

@@ -1,0 +1,27 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//build_defs/extensions:mobile.bzl", "MOBILE_EXTENSION_COMPATIBLE", "mobile_extension_registry")
+load("//build_defs/extensions:mobile_members.bzl", "MOBILE_MEMBER_LIBRARIES", "MOBILE_MEMBER_TARGETS", "mobile_extension_members")
+load("//build_defs/android:toolchain.bzl", "android_artifact")
+
+package(default_visibility = ["//visibility:public"])
+
+mobile_extension_members()
+
+mobile_extension_registry(name = "pg_uuidv7_registry", members = [MOBILE_MEMBER_TARGETS["pg_uuidv7"]], sql_names = ["pg_uuidv7"],
+                          target_compatible_with = MOBILE_EXTENSION_COMPATIBLE)
+mobile_extension_registry(name = "all_members_registry", members = MOBILE_MEMBER_TARGETS.values(), sql_names = MOBILE_MEMBER_TARGETS.keys(),
+                          target_compatible_with = MOBILE_EXTENSION_COMPATIBLE)
+
+cc_binary(name = "pg_uuidv7_consumer", srcs = ["//build_defs/extensions:mobile_consumer.c", ":pg_uuidv7_registry"],
+          deps = [MOBILE_MEMBER_LIBRARIES["pg_uuidv7"]] +
+                 select({"@platforms//os:ios": ["//src/native/runtime:mobile_static"], "//conditions:default": ["//src/native/runtime:liboliphaunt"]}),
+          copts = ["-std=gnu11", "-g0"], target_compatible_with = MOBILE_EXTENSION_COMPATIBLE)
+cc_binary(name = "all_members_consumer", srcs = ["//build_defs/extensions:mobile_consumer.c", ":all_members_registry"],
+          deps = MOBILE_MEMBER_LIBRARIES.values() +
+                 select({"@platforms//os:ios": ["//src/native/runtime:mobile_static"], "//conditions:default": ["//src/native/runtime:liboliphaunt"]}),
+          copts = ["-std=gnu11", "-g0"], target_compatible_with = MOBILE_EXTENSION_COMPATIBLE)
+
+[android_artifact(name = "android_" + architecture + "_" + group, artifact = ":" + group,
+                  platform = "//build_defs/android:android_" + architecture,
+                  target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+ for architecture in ["arm64", "x86_64"] for group in ["compiled_members", "pg_uuidv7_consumer", "all_members_consumer"]]

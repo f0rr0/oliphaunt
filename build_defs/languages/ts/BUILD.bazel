@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -12,3 +13,5 @@ bun_test(
     data = ["metadata.mts", "//src/wasix/postgres-tools/ts/tests/installed:package.json", "//src/wasix/postgres-tools/ts/tests/installed:bun.lock"],
     size = "small",
 )
+
+source_quality_files()

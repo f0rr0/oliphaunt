@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load(":compiler_facts.bzl", "postgis_compiler_facts")
 load(":sqlite.bzl", "postgis_sqlite")
@@ -28,3 +29,5 @@ postgis_sql(name = "sql_resources", configuration = ":postgis_config", headers =
 filegroup(name = "extension_sql", srcs = [":sql_resources"], output_group = "extension_sql")
 filegroup(name = "data_sql", srcs = [":sql_resources"], output_group = "data_sql")
 filegroup(name = "control", srcs = [":postgis_config"], output_group = "control")
+
+source_quality_files()

@@ -1,5 +1,7 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
 load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env")
 load("//build_defs/languages:mobile.bzl", "mobile_bindgen")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml", "uniffi.toml"])
@@ -20,4 +22,9 @@ cargo_library(name = "shared", kind = "cdylib", path_dependencies = PATH_DEPS, b
 cargo_library(name = "static", kind = "staticlib", path_dependencies = PATH_DEPS, build_script = ":build_script")
 cargo_library(name = "lib", path_dependencies = PATH_DEPS, build_script = ":build_script")
 cargo_library_test()
+rust_clippy_test(name = "clippy_test", targets = [":lib", ":unit_test", ":build_script_"], transitive = False, size = "small")
 mobile_bindgen()
+
+source_quality_files()
+
+rust_quality_files()

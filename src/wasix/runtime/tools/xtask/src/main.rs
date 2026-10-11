@@ -152,6 +152,7 @@ fn assets(args: Vec<String>) -> Result<()> {
             generate_wasix_export_list(write, source_lane)
         }
         Some("export-policy") => generate_declared_wasix_export_policy(&args[1..]),
+        Some("declared-extension-link") => generate_declared_extension_link(&args[1..]),
         Some("declared-manifest") => generate_declared_wasix_manifest(&args[1..]),
         Some("declared-tools-manifest") => generate_declared_tools_manifest(&args[1..]),
         Some("declared-aot-manifest") => generate_declared_aot_manifest(&args[1..]),

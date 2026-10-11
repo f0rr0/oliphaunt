@@ -1,1 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 exports_files(["package.json", "bun.lock", "consumer.mts"], visibility = ["//visibility:public"])
+
+source_quality_files()

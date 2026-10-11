@@ -1,4 +1,6 @@
-load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_package_env", "napi_artifact")
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env", "napi_artifact")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages/carriers:defs.bzl", "native_helper_carriers")
 
 package(default_visibility = ["//visibility:public"])
@@ -22,5 +24,11 @@ napi_artifact(
     library = ":addon_library",
     out = "oliphaunt_node.node",
 )
+cargo_library_test(crate = ":addon_library", tags = ["manual"])
+rust_clippy_test(name = "clippy_test", targets = [":addon_library", ":unit_test", ":build_script_"], transitive = False, size = "small")
 
 native_helper_carriers(product = "oliphaunt-node-direct", binary = ":addon")
+
+source_quality_files()
+
+rust_quality_files()

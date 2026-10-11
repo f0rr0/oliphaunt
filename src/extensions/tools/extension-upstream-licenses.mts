@@ -19,6 +19,7 @@ import {
   releaseNoticeRows,
   releaseProfilePackageLicense,
 } from '../../../tools/packaging/release-notices.mts';
+import { nativeExtensionModuleHostTarget } from '../contracts/extension-target-profiles.mts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const EXTERNAL_ROOT = path.join(ROOT, 'src/extensions/external');
@@ -527,6 +528,24 @@ export function extensionMavenLicenses(product, members, { version } = {}) {
   return Object.freeze(entries);
 }
 
+/** Supplemental Maven entries follow the same validated physical receipts. */
+export function nativeExtensionConstructionMavenLicenses(sqlName, target, files = []) {
+  const validated = validateNativeExtensionConstructionLicenseInventory(sqlName, target, files);
+  if (!validated.some((file) => file.path.startsWith('share/licenses/llvm-compiler-rt/')))
+    return [];
+  const source = JSON.parse(
+    readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
+  );
+  const license = source.files.find((file) => file.destination === 'LICENSE.TXT');
+  return [
+    {
+      name: `${source.license} (${source.project})`,
+      url: `https://github.com/llvm/llvm-project/blob/${source.commit}/${license.path}`,
+      distribution: 'repo',
+    },
+  ];
+}
+
 function hashFile(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
@@ -712,6 +731,7 @@ export function extensionUpstreamLicenseFileInventory(sqlNames) {
 
 /** Construction receipts bind bundled implementations to their immutable source pins. */
 export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
+  target = nativeExtensionModuleHostTarget(target);
   if (sqlName === 'pgcrypto' && PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS.includes(target)) {
     const license = releaseNoticeRows({ profile: 'contrib-native-openssl' }).find(
       (row) => row.id === 'openssl',

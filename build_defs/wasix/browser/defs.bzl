@@ -246,9 +246,9 @@ _SQL_CONSUMER_ATTRS = _CONSUMER_ATTRS | {
     "runtime_packages": attr.string_dict(mandatory = True),
 }
 
-browser_sql_consumer = rule(
+_browser_sql_consumer_test = rule(
     implementation = _consumer_impl,
-    executable = True,
+    test = True,
     toolchains = BUN_SOURCE_TOOLCHAINS + [_NODE_TOOLCHAIN],
     attrs = _SQL_CONSUMER_ATTRS | {
         "sdk": attr.label(mandatory = True, allow_single_file = [".tgz"]),
@@ -256,6 +256,9 @@ browser_sql_consumer = rule(
         "runtime": attr.label(mandatory = True, allow_single_file = [".tgz"]),
     },
 )
+
+def browser_sql_consumer(name, **kwargs):
+    _browser_sql_consumer_test(name = name, **kwargs)
 
 def _consumer_lifecycle_impl(ctx):
     return _consumer_launcher(ctx, "archives", [ctx.file.fixture, ctx.file.cdp, ctx.file.extensions])

@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":defs.bzl", "nightly_artifact")
 
@@ -27,3 +28,5 @@ toolchain(
     exec_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
     target_compatible_with = ["@platforms//cpu:wasm32", "@rules_rust//rust/platform/os:unknown"],
 )
+
+source_quality_files()

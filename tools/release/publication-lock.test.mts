@@ -27,6 +27,7 @@ import { createDeterministicTar } from '../packaging/cargo-source-package.mts';
 import { releaseJavaScript } from '../packaging/emit-javascript.mts';
 import { canonicalGzipSync } from '../packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../packaging/release-notices.mts';
+import { extensionGithubArtifactInputs, loadReleaseMetadata } from './bazel-release-metadata.mts';
 import { loadPublicationCatalog, resolveActualCarrier } from './publication-catalog.mts';
 import {
   assertLockedArtifactSet,
@@ -36,6 +37,7 @@ import {
   buildPublicationCandidate,
   discoverProductArtifacts,
   discoverPublicationArtifacts,
+  expectedExtensionGithubReleaseAssetRows,
   expectedProductArtifactRows,
   freezePublicationCandidate,
   lockedCarrierFile,
@@ -53,6 +55,7 @@ import {
   extensionMetadata,
   extensionSourceIdentity,
   extensionSqlNames,
+  validateExtensionCatalogRows,
 } from './release-artifact-targets.mts';
 import { productCompatibilityVersion, ROOT } from './release-graph.mts';
 
@@ -133,6 +136,160 @@ test('native publication inventory requires no Moon metadata and preserves runti
     env: { ...process.env, OLIPHAUNT_MOON_PROJECTS_FILE: '/missing-moon-projects.json' },
   });
   expect(result.exitCode, result.stderr.toString()).toBe(0);
+});
+
+test('canonical extension GitHub projection matches every legacy native asset row', () => {
+  const metadata = loadReleaseMetadata(ROOT);
+  const distributions = [
+    ...new Set(metadata.extensionGithubArtifacts.map((row) => row.artifactProduct)),
+  ];
+  expect(distributions).toHaveLength(8);
+  for (const artifactProduct of distributions) {
+    const actual = metadata.extensionGithubArtifacts.filter(
+      (row) => row.artifactProduct === artifactProduct,
+    );
+    const identity = { id: artifactProduct, version: actual[0].version, family: 'native' };
+    const legacy = expectedExtensionGithubReleaseAssetRows(identity).filter(
+      (row) => row.family === 'native',
+    );
+    expect(actual).toEqual(
+      legacy.map((row) => ({
+        artifactProduct,
+        owner: actual[0].owner,
+        product: actual[0].owner,
+        version: actual[0].version,
+        id: `github-release:${row.name}`,
+        role: 'github-release-asset',
+        family: row.family,
+        kind: row.kind,
+        target: row.target,
+        identity: row.identity,
+        name: row.name,
+      })),
+    );
+    expect(
+      expectedExtensionGithubReleaseAssetRows(identity, {
+        sqlNames: extensionSqlNames(artifactProduct),
+        requiredRows: legacy.map(({ name: _name, ...row }) => row),
+      }),
+    ).toEqual(legacy);
+  }
+  expect(metadata.extensionGithubArtifacts).toHaveLength(68);
+  for (const [target, count] of [
+    ['android-arm64-v8a', 8],
+    ['android-x86_64', 8],
+    ['ios-xcframework', 20],
+  ])
+    expect(metadata.extensionGithubArtifacts.filter((row) => row.target === target)).toHaveLength(
+      count,
+    );
+  const catalog = loadPublicationCatalog('canonical-extension-github-projection');
+  const old = expectedProductArtifactRows(catalog.products).filter(
+    (row) =>
+      row.role === 'github-release-asset' &&
+      metadata.extensionGithubArtifacts.some(
+        (asset) => asset.product === row.product && asset.id === row.id,
+      ),
+  );
+  expect(
+    metadata.extensionGithubArtifacts
+      .map(({ artifactProduct: _artifactProduct, owner: _owner, family: _family, ...row }) => row)
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  ).toEqual(old.sort((left, right) => left.id.localeCompare(right.id)));
+});
+
+test('canonical extension GitHub projection preserves all 39 legacy mobile member contracts', () => {
+  const metadata = loadReleaseMetadata(ROOT);
+  const catalog = validateExtensionCatalogRows(
+    JSON.parse(
+      readFileSync(path.join(ROOT, 'src/extensions/generated/extensions.catalog.json'), 'utf8'),
+    ),
+  );
+  const sdk = JSON.parse(
+    readFileSync(path.join(ROOT, 'src/extensions/generated/sdk/extensions.json'), 'utf8'),
+  );
+  const lines = readFileSync(
+    path.join(ROOT, 'src/extensions/generated/mobile/static-extensions.tsv'),
+    'utf8',
+  )
+    .split(/\r?\n/u)
+    .filter((line) => line && !line.startsWith('#'));
+  const columns = lines[0].split('\t');
+  const statics = new Map(
+    lines.slice(1).map((line) => {
+      const values = line.split('\t');
+      const row = Object.fromEntries(columns.map((key, index) => [key, values[index] ?? '']));
+      return [row['sql-name'], row];
+    }),
+  );
+  expect(metadata.extensionReleaseMetadata).toHaveLength(39);
+  let compared = 0;
+  for (const member of metadata.extensionReleaseMetadata) {
+    const sqlName = member.sqlName;
+    const legacy = sdk.extensions.find((row) => row['sql-name'] === sqlName);
+    expect(legacy).toBeDefined();
+    const stem = legacy['native-module-stem'] ?? null;
+    const profiles = Object.keys(metadata.nativeMobileComponentClosures[sqlName]).map((target) => ({
+      target,
+      family: 'native',
+      kind: 'native-static-registry',
+    }));
+    expect(profiles).toHaveLength(3);
+    const identity = {
+      artifactProduct: member.artifactProduct,
+      owner: 'fixture',
+      version: '1.2.3',
+      sqlNames: [sqlName],
+    };
+    const actual = extensionGithubArtifactInputs(
+      identity,
+      profiles,
+      catalog,
+      metadata.nativeMobileComponentClosures,
+    );
+    for (const { target } of profiles) {
+      const dependencies =
+        stem === null
+          ? []
+          : (
+              statics.get(sqlName)?.[
+                target === 'ios-xcframework'
+                  ? 'ios-static-dependencies'
+                  : 'android-static-dependencies'
+              ] ?? ''
+            )
+              .split(',')
+              .filter(Boolean)
+              .sort();
+      expect([...metadata.nativeMobileComponentClosures[sqlName][target].linkUnits].sort()).toEqual(
+        dependencies,
+      );
+      const rows = [{ sqlName, family: 'native', target, kind: 'runtime', identity: null }];
+      if (target === 'ios-xcframework' && stem !== null)
+        rows.push(
+          { sqlName, family: 'native', target, kind: 'ios-xcframework', identity: stem },
+          ...dependencies.map((dependency) => ({
+            sqlName,
+            family: 'native',
+            target,
+            kind: 'ios-dependency-xcframework',
+            identity: dependency,
+          })),
+        );
+      rows.sort(
+        (left, right) =>
+          left.kind.localeCompare(right.kind) ||
+          (left.identity ?? '').localeCompare(right.identity ?? ''),
+      );
+      expect(
+        actual
+          .filter((row) => row.target === target)
+          .map(({ kind, identity }) => ({ kind, identity })),
+      ).toEqual(rows.map(({ kind, identity }) => ({ kind, identity })));
+      compared += 1;
+    }
+  }
+  expect(compared).toBe(117);
 });
 
 test('frozen Cargo bytes reject a changed archive header with unchanged package identity', () => {

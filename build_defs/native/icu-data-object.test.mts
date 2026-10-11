@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { icuDataIdentity, icuDataObject } from './icu-data-object.mts';
 
 const version = '#define U_ICU_VERSION_MAJOR_NUM 91\n#define U_ICU_VERSION_SHORT "91"\n';
-const types = '#define U_ICUDATA_ENTRY_POINT U_DEF2_ICUDATA_ENTRY_POINT(U_ICU_VERSION_MAJOR_NUM,U_LIB_SUFFIX_C_NAME)\n' +
+const types =
+  '#define U_ICUDATA_ENTRY_POINT U_DEF2_ICUDATA_ENTRY_POINT(U_ICU_VERSION_MAJOR_NUM,U_LIB_SUFFIX_C_NAME)\n' +
   '#define U_DEF_ICUDATA_ENTRY_POINT(major, suff) icudt##major##_dat\n';
 
 function commonData(packageName: string) {
@@ -35,7 +36,10 @@ function checkObject(data: Buffer, versionHeader: string, typesHeader: string) {
   assert.equal(object.readUInt32LE(96), 0x40500040, 'read-only data needs 16-byte alignment');
   const directiveStart = object.readUInt32LE(40);
   const directiveEnd = directiveStart + object.readUInt32LE(36);
-  assert.equal(object.subarray(directiveStart, directiveEnd).toString('ascii'), `-export:${symbol},data `);
+  assert.equal(
+    object.subarray(directiveStart, directiveEnd).toString('ascii'),
+    `-export:${symbol},data `,
+  );
   const rawStart = object.readUInt32LE(80);
   const rawEnd = rawStart + object.readUInt32LE(76);
   assert.deepEqual(object.subarray(rawStart, rawEnd), data, 'full data bytes must be unchanged');
@@ -53,23 +57,57 @@ function checkObject(data: Buffer, versionHeader: string, typesHeader: string) {
 }
 
 const data = commonData('icudt91l');
-assert.deepEqual(icuDataIdentity(version, types), { symbol: 'icudt91_dat', packageName: 'icudt91l' });
+assert.deepEqual(icuDataIdentity(version, types), {
+  symbol: 'icudt91_dat',
+  packageName: 'icudt91l',
+});
 checkObject(data, version, types);
 assert.throws(() => icuDataObject(data, version, types, 'arm64'), /Unsupported ICU COFF machine/u);
 assert.throws(() => icuDataObject(data, version, types, 'i386'), /Unsupported ICU COFF machine/u);
 assert.throws(() => icuDataObject(data.subarray(0, 12), version, types, 'amd64'), /Expected ICU/u);
-assert.throws(() => icuDataObject(commonData('icudt90l'), version, types, 'amd64'), /does not match source/u);
-assert.throws(() => icuDataObject(data, version.replace('"91"', '"90"'), types, 'amd64'), /macros/u);
-assert.throws(() => icuDataObject(data, version, types.replace('icudt##major##_dat', 'other##major##_dat'), 'amd64'), /macros/u);
+assert.throws(
+  () => icuDataObject(commonData('icudt90l'), version, types, 'amd64'),
+  /does not match source/u,
+);
+assert.throws(
+  () => icuDataObject(data, version.replace('"91"', '"90"'), types, 'amd64'),
+  /macros/u,
+);
+assert.throws(
+  () =>
+    icuDataObject(
+      data,
+      version,
+      types.replace('icudt##major##_dat', 'other##major##_dat'),
+      'amd64',
+    ),
+  /macros/u,
+);
 for (const mutate of [
-  (bytes: Buffer) => { bytes[8] = 1; },
-  (bytes: Buffer) => { bytes.writeUInt16LE(0xffff, 0); },
-  (bytes: Buffer) => { bytes.writeUInt32LE(0, 32); },
-  (bytes: Buffer) => { bytes.writeUInt32LE(0xffffffff, 32); },
-  (bytes: Buffer) => { bytes.writeUInt32LE(0, 36); },
-  (bytes: Buffer) => { bytes.writeUInt32LE(63, 40); },
-  (bytes: Buffer) => { bytes.writeUInt32LE(128, 40); },
-  (bytes: Buffer) => { bytes.fill(0xff, 44); },
+  (bytes: Buffer) => {
+    bytes[8] = 1;
+  },
+  (bytes: Buffer) => {
+    bytes.writeUInt16LE(0xffff, 0);
+  },
+  (bytes: Buffer) => {
+    bytes.writeUInt32LE(0, 32);
+  },
+  (bytes: Buffer) => {
+    bytes.writeUInt32LE(0xffffffff, 32);
+  },
+  (bytes: Buffer) => {
+    bytes.writeUInt32LE(0, 36);
+  },
+  (bytes: Buffer) => {
+    bytes.writeUInt32LE(63, 40);
+  },
+  (bytes: Buffer) => {
+    bytes.writeUInt32LE(128, 40);
+  },
+  (bytes: Buffer) => {
+    bytes.fill(0xff, 44);
+  },
 ]) {
   const invalid = Buffer.from(data);
   mutate(invalid);
@@ -78,7 +116,14 @@ for (const mutate of [
 
 const [dataPath, versionPath, typesPath] = process.argv.slice(2);
 if (dataPath || versionPath || typesPath) {
-  assert(dataPath && versionPath && typesPath, 'expected canonical data and both actual source headers');
-  checkObject(readFileSync(dataPath), readFileSync(versionPath, 'utf8'), readFileSync(typesPath, 'utf8'));
+  assert(
+    dataPath && versionPath && typesPath,
+    'expected canonical data and both actual source headers',
+  );
+  checkObject(
+    readFileSync(dataPath),
+    readFileSync(versionPath, 'utf8'),
+    readFileSync(typesPath, 'utf8'),
+  );
 }
 console.log('ICU COFF data layout, source identity, raw bytes and malformed inputs: PASS');

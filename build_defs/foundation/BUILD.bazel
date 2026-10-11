@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load(":bun.bzl", "bun_binary", "bun_source_output", "bun_test", "bun_toolchain_test")
 load(":native-entry-test.bzl", "native_entry_test")
 
@@ -69,3 +70,5 @@ platform(
     name = "windows_x86_64",
     constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
 )
+
+source_quality_files()

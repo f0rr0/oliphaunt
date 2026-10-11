@@ -1,4 +1,6 @@
-load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_doc_test", "cargo_generator", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
 
 package(default_visibility = ["//visibility:public"])
@@ -15,4 +17,27 @@ cargo_library(path_dependencies = PATH_DEPS, build_script = ":build_script")
 cargo_library(name = "mobile_lib", path_dependencies = PATH_DEPS, build_script = ":mobile_build_script", features = ["mobile-bindings"], default_features = False)
 cargo_library(name = "minimal_lib", path_dependencies = PATH_DEPS, build_script = ":minimal_build_script", default_features = False)
 cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
+_INTEGRATION_ROOTS = glob(["tests/*.rs"])
+filegroup(name = "integration_sources", srcs = _INTEGRATION_ROOTS + glob(["tests/support/**/*.rs"]) + ["src/test_fixtures.rs"])
+[
+    cargo_integration_test(
+        name = source.removeprefix("tests/").removesuffix(".rs") + "_test",
+        source = source,
+        srcs = glob(["tests/support/**/*.rs"]) + ["src/test_fixtures.rs"],
+        data = ["//src/test-fixtures:rust_fixtures"],
+        tags = ["manual"],
+    )
+    for source in _INTEGRATION_ROOTS
+]
+cargo_doc_test(size = "small")
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [":lib", ":unit_test", ":build_script_"] + [":" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS],
+    transitive = False,
+    size = "small",
+)
 cargo_source_package(product = "oliphaunt-rust", fixtures = "testdata/", native_sdk = True)
+
+source_quality_files()
+
+rust_quality_files()

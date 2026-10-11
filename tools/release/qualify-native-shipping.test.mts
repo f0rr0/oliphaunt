@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateNativeBuildEvidence } from './native-build-qualification.mts';
 import { type NativeShippingRequest, qualifyNativeShipping } from './qualify-native-shipping.mts';
 
 const realCapture = fileURLToPath(new URL('./capture-native-build-evidence.mts', import.meta.url));
@@ -72,12 +73,15 @@ if(args[0]==='test') {
   if(state.mode==='manifest-tamper') writeFileSync(state.manifest,JSON.stringify({...state.root,package:{...state.root.package,version:'1.0.1'}})+'\\n');
   const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');return {optionName:arg.slice(2,split<0?undefined:split),optionValue:split<0?'':arg.slice(split+1)};});
   const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command options',optionList:{option:options}}]}};
-  const events=[...state.events,canonical,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
+  const events=[...state.events,...state.testEvents,canonical,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
 } else if(args[0]==='info') console.log(state.executionRoot);
 else {
   if(state.mode==='discovery-failure') process.exit(1);
-  console.log('@@//fixture:shipping');
+  if(args[1].startsWith('labels(qualification,')) {
+    if(state.mode==='incompatible-policy') process.exit(1);
+    console.log(JSON.stringify(state.qualification));
+  } else console.log('@@//fixture:shipping');
 }
 `,
   );
@@ -188,6 +192,36 @@ else {
       },
     },
   ];
+  const identity = {
+    label: '//fixture:mandatory_test',
+    configuration: { id: configuration },
+  };
+  const testEvents = [
+    { id: { targetCompleted: identity }, completed: { success: true } },
+    {
+      id: { testResult: { ...identity, run: 1, shard: 1, attempt: 1 } },
+      testResult: { status: 'PASSED', cachedLocally: true },
+    },
+    {
+      id: { testSummary: identity },
+      testSummary: { overallStatus: 'PASSED', totalRunCount: 1, totalNumCached: 1 },
+    },
+  ];
+  const qualification = {
+    configurations: [{ id: 1, checksum: configuration }],
+    results: [
+      {
+        configurationId: 1,
+        target: {
+          rule: {
+            name: '@@//fixture:mandatory_test',
+            ruleClass: '_installed_test',
+            attribute: [{ name: 'tags', stringListValue: ['manual'] }],
+          },
+        },
+      },
+    ],
+  };
   writeFileSync(
     stateFile,
     JSON.stringify({
@@ -198,6 +232,8 @@ else {
       manifest: path.join(executionRoot, manifest),
       aquery,
       events,
+      testEvents,
+      qualification,
     }),
   );
   const request: NativeShippingRequest = {
@@ -230,6 +266,11 @@ else {
             .split('\n')
             .map((line) => JSON.parse(line) as string[])
         : [],
+    update: (change: (state: any) => void) => {
+      const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+      change(state);
+      writeFileSync(stateFile, JSON.stringify(state));
+    },
     cleanup: () => rmSync(directory, { recursive: true, force: true }),
   };
 }
@@ -254,7 +295,7 @@ for (const selection of ['explicit', 'export'])
         `--experimental_aquery_dump_after_build_output_file=${path.join(f.outputDirectory, 'aquery.json')}`,
       );
       expect(calls.map((call) => call[0])).toEqual(
-        selection === 'export' ? ['cquery', 'test', 'info'] : ['test', 'info'],
+        selection === 'export' ? ['cquery', 'cquery', 'test', 'info'] : ['test', 'info'],
       );
       for (const call of calls)
         for (const flag of f.request.configuration) expect(call).toContain(flag);
@@ -278,6 +319,154 @@ for (const selection of ['explicit', 'export'])
       f.cleanup();
     }
   });
+
+for (const targets of [[], undefined])
+  test(`source-owned manual tests remain mandatory with ${targets ? 'empty' : 'omitted'} caller targets`, () => {
+    const f = fixture();
+    try {
+      f.request.shipping = { export: '//fixture:shipping_export' };
+      f.request.targets = targets;
+      const output = qualifyNativeShipping(f.request, f.workspace);
+      const evidence = JSON.parse(readFileSync(output, 'utf8'));
+      const requiredTests = [{ label: '//fixture:mandatory_test', configuration: 'c'.repeat(64) }];
+      const result = validateNativeBuildEvidence(evidence, {
+        source: evidence.source,
+        github: f.request.github,
+        bazelVersion: '8.8.1',
+        requiredTests,
+        requireShippingAnalysis: true,
+      });
+      expect(result.testQualification).toBe('passed');
+      expect(result.requiredTests).toEqual([
+        { ...requiredTests[0], invocationId: 'fixture-build' },
+      ]);
+      const calls = f.calls();
+      expect(calls[1]).toContain('labels(qualification, //fixture:shipping_export)');
+      expect(calls[1]).toContain('--universe_scope=//fixture:shipping_export');
+      expect(calls[1]).toContain('--output=jsonproto');
+      expect(calls.find((call) => call[0] === 'test')).toContain('//fixture:mandatory_test');
+      const events = readFileSync(path.join(f.outputDirectory, 'build-events.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(events.find((event: any) => event.testResult)?.testResult.cachedLocally).toBe(true);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+test('the existing CLI accepts omitted additional targets and still runs owner policy', () => {
+  const f = fixture();
+  try {
+    const input = path.dirname(f.outputDirectory);
+    const github = path.join(input, 'github.json');
+    const configuration = path.join(input, 'configuration.json');
+    writeFileSync(github, JSON.stringify(f.request.github));
+    writeFileSync(configuration, JSON.stringify(f.request.configuration));
+    execFileSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL('./qualify-native-shipping.mts', import.meta.url)),
+        '--github-json',
+        github,
+        '--configuration-json',
+        configuration,
+        '--shipping-export',
+        '//fixture:shipping_export',
+        '--output-directory',
+        f.outputDirectory,
+      ],
+      { cwd: f.workspace, stdio: 'pipe' },
+    );
+    expect(f.calls().find((call) => call[0] === 'test')).toContain('//fixture:mandatory_test');
+    expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
+      true,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+for (const failure of ['missing-summary', 'failed-result', 'configuration-mismatch'])
+  test(`removes evidence when source-owned configured qualification has ${failure}`, () => {
+    const f = fixture();
+    try {
+      f.request.shipping = { export: '//fixture:shipping_export' };
+      f.request.targets = [];
+      f.update((state) => {
+        if (failure === 'missing-summary')
+          state.testEvents = state.testEvents.filter((event: any) => !event.testSummary);
+        else if (failure === 'failed-result')
+          state.testEvents.find((event: any) => event.testResult).testResult.status = 'FAILED';
+        else state.qualification.configurations[0].checksum = 'd'.repeat(64);
+      });
+      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+        failure === 'failed-result' ? /successful test results/ : /mandatory configured test/,
+      );
+      expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
+        false,
+      );
+      expect(existsSync(path.join(f.outputDirectory, 'evidence/files'))).toBe(false);
+      expect(existsSync(path.join(f.outputDirectory, 'build-events.jsonl'))).toBe(true);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+for (const ruleClass of ['filegroup', 'test_suite'])
+  test(`rejects ${ruleClass} policy nodes before construction`, () => {
+    const f = fixture();
+    try {
+      f.request.shipping = { export: '//fixture:shipping_export' };
+      f.update((state) => {
+        state.qualification.results[0].target.rule.ruleClass = ruleClass;
+      });
+      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+        'configured actual test rules',
+      );
+      expect(f.calls().map((call) => call[0])).toEqual(['cquery', 'cquery']);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+test('an incompatible declared mandatory test fails policy analysis before construction', () => {
+  const f = fixture('incompatible-policy');
+  try {
+    f.request.shipping = { export: '//fixture:shipping_export' };
+    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow('failed');
+    expect(f.calls().map((call) => call[0])).toEqual(['cquery', 'cquery']);
+    expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
+      false,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('an explicitly empty owner policy retains construction-only compatibility', () => {
+  const f = fixture();
+  try {
+    f.request.shipping = { export: '//fixture:shipping_export' };
+    delete f.request.targets;
+    f.update((state) => {
+      state.qualification = {};
+      state.testEvents = [];
+    });
+    const output = qualifyNativeShipping(f.request, f.workspace);
+    const evidence = JSON.parse(readFileSync(output, 'utf8'));
+    const result = validateNativeBuildEvidence(evidence, {
+      source: evidence.source,
+      github: f.request.github,
+      bazelVersion: '8.8.1',
+    });
+    expect(result.testQualification).toBe('unverified');
+    expect(result.releaseDecision).toBe('unverified');
+    expect(f.calls().find((call) => call[0] === 'test')).not.toContain('//fixture:mandatory_test');
+  } finally {
+    f.cleanup();
+  }
+});
 
 test('complete-family validation rejects bytes changed after successful evidence capture', () => {
   const f = fixture('capture-output-race');

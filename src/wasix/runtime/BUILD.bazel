@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//build_defs/wasix:wasm.bzl", "wasix_export_policy", "wasix_module", "wasix_relocatable")
 load("//build_defs/wasix:extensions.bzl", "wasix_contrib_modules", "wasix_external_c_modules")
@@ -139,3 +140,7 @@ wasix_runtime_aot_targets()
 wasix_runtime_npm()
 
 wasix_runtime_cargo_exports()
+
+source_quality_files()
+
+rust_quality_files()

@@ -10,6 +10,10 @@ import {
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
 import { composeSwiftCandidateManifest } from '../../native/apple/swift-candidate-contract.mts';
+import {
+  assertSwiftSourceDeliveryParity,
+  readSwiftSourceTagMembers,
+} from './source-delivery-contract.mts';
 
 assert.equal(process.platform, 'darwin', 'Installed Swift runtime qualification requires macOS');
 assert.equal(process.arch, 'arm64', 'Installed Swift runtime qualification requires Apple arm64');
@@ -27,10 +31,11 @@ const [
   receipt,
   triple,
   mode,
+  sourceTree,
 ] = process.argv.slice(2);
 assert.equal(
   process.argv.length,
-  15,
+  16,
   'Expected exact Swift package, native assets, consumer and declared toolchain',
 );
 assert.ok(['frozen', 'bundled-candidate'].includes(mode), 'Expected a declared consumer mode');
@@ -44,6 +49,11 @@ mkdirSync(home);
 const packageRoot = path.join(root, 'package');
 extractPortableArchiveTree(realpathSync(source), packageRoot, 'package');
 const checksum = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
+assertSwiftSourceDeliveryParity(
+  realpathSync(source),
+  readSwiftSourceTagMembers(sourceTree),
+  readFileSync(path.join(sourceTree, 'Package.swift')),
+);
 const manifestFile = path.join(packageRoot, 'Package.swift');
 let composition;
 if (mode === 'bundled-candidate') {

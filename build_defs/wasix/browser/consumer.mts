@@ -80,7 +80,7 @@ if (mode === 'tools') {
     mode === 'archives'
       ? arguments_
       : [...arguments_.slice(3, 6), ...arguments_.slice(0, 3), ...arguments_.slice(6)];
-  const [sdk, query, runtime, chromePath, receiptFile] =
+  const [sdk, query, runtime, suppliedChromePath, suppliedReceiptFile] =
     mode === 'archives'
       ? [
           suppliedArchives[0],
@@ -89,6 +89,8 @@ if (mode === 'tools') {
           ...suppliedArchives.slice(6),
         ]
       : suppliedArchives;
+  const chromePath = suppliedChromePath ?? process.env.OLIPHAUNT_BROWSER_CHROME;
+  const receiptFile = suppliedReceiptFile ?? process.env.OLIPHAUNT_BROWSER_CHROME_RECEIPT;
   assert(
     sdk && query && runtime && frozenConsumer && cdp && extensions && chromePath && receiptFile,
     'Expected actual SDK/query/runtime archives, existing browser fixture, explicit Chrome executable and host receipt',

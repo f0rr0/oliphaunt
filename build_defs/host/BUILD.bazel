@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
@@ -19,7 +20,7 @@ platform(name = "native_windows_x64", constraint_values = ["@platforms//os:windo
 platform(name = "ios_device_arm64", constraint_values = ["@platforms//os:ios", "@platforms//cpu:aarch64", "@apple_support//constraints:apple", "@apple_support//constraints:device"])
 platform(name = "ios_simulator_arm64", constraint_values = ["@platforms//os:ios", "@platforms//cpu:aarch64", "@apple_support//constraints:apple", "@apple_support//constraints:simulator"])
 
-bun_test(name = "host_sdk_test", entry_point = "host-sdk.test.mts", data = ["host-sdk.mts", "deployment-policy.mts", "//:tools/dev/native-host-toolchains.json", "//tools/release:platform-compatibility-policy.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json"], size = "small")
+bun_test(name = "host_sdk_test", entry_point = "host-sdk.test.mts", data = ["host-sdk.mts", "deployment-policy.mts", "//tools/dev:native-host-toolchains.json", "//tools/release:platform-compatibility-policy.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json"], size = "small")
 bun_binary(name = "sdk_tree_conformance", entry_point = "sdk-tree-conformance.mts", data = ["sdk-tree.bzl"], tags = ["manual"])
 profile_test(name = "profile_analysis_test", size = "small")
 
@@ -48,3 +49,5 @@ sh_test(
     target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", ":apple_package"],
     size = "small",
 )
+
+source_quality_files()

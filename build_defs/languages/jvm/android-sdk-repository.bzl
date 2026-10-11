@@ -76,7 +76,7 @@ def _android_sdk_archive_impl(ctx):
 
 def _metadata_attrs():
     return {
-        "manifest": attr.label(default = Label("//:tools/dev/android-sdk.toml"), allow_single_file = True),
+        "manifest": attr.label(default = Label("//tools/dev:android-sdk.toml"), allow_single_file = True),
         "bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),
         "converter": attr.label(default = Label("//build_defs/languages/jvm:android-sdk-metadata.mts"), allow_single_file = True),
         "empty_template": attr.label(default = Label("@rules_android//rules/android_sdk_repository:empty.template.bzl"), allow_single_file = True),

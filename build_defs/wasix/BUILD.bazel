@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_test")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":llvm.bzl", "exec_files", "llvm_helper_runtime")
@@ -5,10 +6,29 @@ load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
 load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
 load(":tools-carriers.bzl", "TOOLS_CARRIER_HELPERS")
 load(":aot-repeatability.bzl", "wasix_aot_repeatability_test")
+load(":napi.bzl", "NAPI_HELPERS", "NAPI_NOTICES")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(glob(["*.bzl", "*.bazel", "*.mts", "*.patch"]))
+
+bun_test(
+    name = "napi_inputs_test",
+    entry_point = "napi-inputs.test.mts",
+    data = ["napi-inputs.mts", "napi.mts", "held-wasix-relocatable-includes.patch", "//src/wasix/runtime:toolchain.toml", "//src/wasix/node-addon:Cargo.toml", "//src/wasix/node-addon:package.json", "//:src/extensions/generated/extensions.catalog.json", "//:tools/packaging/testdata/release-fixture-utils.mts"] + NAPI_HELPERS + NAPI_NOTICES.keys() + [
+        "//src/wasix/node-addon:packages/" + target + "/" + file for target in ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "win32-x64-msvc"] for file in ["package.json", "README.md"]
+    ],
+    size = "small",
+)
+
+bun_test(
+    name = "napi_envelopes_test",
+    entry_point = "//src/wasix/node-addon:tools/package-platform.test.mts",
+    data = ["//:tools/packaging/testdata/release-fixture-utils.mts"] + NAPI_HELPERS + NAPI_NOTICES.keys() + [
+        "//src/wasix/node-addon:packages/" + target + "/" + file for target in ["linux-x64-gnu", "linux-arm64-gnu", "darwin-arm64", "win32-x64-msvc"] for file in ["package.json", "README.md"]
+    ],
+    size = "small",
+)
 
 wasix_aot_repeatability_test(
     name = "macos_aot_repeatability_test",
@@ -203,3 +223,5 @@ cc_test(
     copts = ["-std=c11", "-Wall", "-Wextra"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
+
+source_quality_files()

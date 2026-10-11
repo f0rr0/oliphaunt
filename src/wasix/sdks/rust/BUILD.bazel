@@ -1,4 +1,6 @@
-load("//build_defs/languages:rust.bzl", "cargo_generator", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
+load("//build_defs/languages:rust.bzl", "cargo_doc_test", "cargo_generator", "cargo_integration_test", "cargo_library", "cargo_library_test", "cargo_package_env")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
 
 package(default_visibility = ["//visibility:public"])
@@ -18,6 +20,44 @@ cargo_library(path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"],
 cargo_generator(name = "napi_build_script", path_dependencies = PATH_DEPS, features = ["__internal-napi"], proc_macro_names = ["async-trait"])
 cargo_library(name = "napi_lib", path_dependencies = PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":napi_build_script", features = ["__internal-napi"])
 cargo_library_test(data = ["//src/test-fixtures:rust_fixtures"])
+
+_QUALITY_PATH_DEPS = {
+    name: "//" + label.split("//", 1)[1].removesuffix(":lib") + ":quality_lib"
+    for name, label in PATH_DEPS.items()
+}
+_TOOLS_PATH_DEPS = _QUALITY_PATH_DEPS | {
+    "oliphaunt-wasix-tools": "//src/wasix/postgres-tools:portable_cargo_lib",
+    "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu": "//src/wasix/postgres-tools:aot_linux_arm64_gnu_cargo_lib",
+    "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu": "//src/wasix/postgres-tools:aot_linux_x64_gnu_cargo_lib",
+    "oliphaunt-wasix-tools-aot-aarch64-apple-darwin": "//src/wasix/postgres-tools:aot_macos_arm64_cargo_lib",
+    "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc": "//src/wasix/postgres-tools:aot_windows_x64_msvc_cargo_lib",
+}
+cargo_generator(name = "quality_build_script", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"])
+cargo_library(name = "quality_lib", path_dependencies = _QUALITY_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":quality_build_script")
+cargo_library_test(name = "quality_unit_test", crate = ":quality_lib", data = ["//src/test-fixtures:rust_fixtures"])
+cargo_generator(name = "tools_build_script", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], features = ["tools"])
+cargo_library(name = "tools_lib", path_dependencies = _TOOLS_PATH_DEPS, proc_macro_names = ["async-trait"], build_script = ":tools_build_script", features = ["tools"])
+cargo_doc_test(crate = ":quality_lib", size = "small")
+cargo_doc_test(name = "tools_doc_test", crate = ":tools_lib", features = ["tools"], size = "small")
+_INTEGRATION_ROOTS = glob(["tests/*.rs"])
+[
+    cargo_integration_test(
+        name = "quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test",
+        source = source,
+        crate = ":quality_lib",
+        path_dependencies = _QUALITY_PATH_DEPS,
+        proc_macro_names = ["async-trait"],
+        data = ["//src/test-fixtures:rust_fixtures"],
+        tags = ["manual"],
+    )
+    for source in _INTEGRATION_ROOTS
+]
+rust_clippy_test(
+    name = "clippy_test",
+    targets = [":quality_lib", ":quality_unit_test", ":quality_build_script_"] + [":quality_" + source.removeprefix("tests/").removesuffix(".rs") + "_test" for source in _INTEGRATION_ROOTS],
+    transitive = False,
+    size = "small",
+)
 cargo_integration_test(
     name = "postgres_regression_test",
     source = "tests/postgres_regression.rs",
@@ -29,3 +69,7 @@ cargo_integration_test(
     tags = ["manual"],
 )
 cargo_source_package(product = "oliphaunt-wasix-rust", fixtures = "src/testdata/")
+
+source_quality_files()
+
+rust_quality_files()

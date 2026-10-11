@@ -1,4 +1,4 @@
-"""PostGIS dependency facts from the selected Apple or MSVC compiler.
+"""PostGIS dependency facts from the selected NDK, Apple, or MSVC compiler.
 
 The qualified Linux templates do not depend on these targets. The maintained
 checker compiles and links against the target SDK without running target code.
@@ -15,6 +15,25 @@ POSTGIS_COMPILER_FACTS = select({
     "//build_defs/native:windows_x64": ":windows_compiler_facts_header",
     "//conditions:default": None,
 })
+
+_MOBILE_TARGETS = {
+    "android_arm64": ("//build_defs/native:android_arm64", "android-arm64-v8a"),
+    "android_x86_64": ("//build_defs/native:android_x86_64", "android-x86_64"),
+    "ios_device": ("//build_defs/native:ios_arm64", "ios-device"),
+    "ios_simulator": ("//build_defs/native:ios_arm64_simulator", "ios-simulator"),
+    "macos": ("//build_defs/native:macos_arm64", "macos-arm64"),
+}
+POSTGIS_MOBILE_COMPILER_FACTS = select({setting: ":mobile_" + prefix + "_compiler_facts_header" for prefix, (setting, _) in _MOBILE_TARGETS.items()}, no_match_error = "PostGIS static configuration requires a declared mobile slice.")
+
+def _mobile_guard(target):
+    if target.startswith("android-"):
+        architecture = "__aarch64__" if target == "android-arm64-v8a" else "__x86_64__"
+        return "#include <sys/cdefs.h>\n", "!defined(__ANDROID__) || !defined(__BIONIC__) || !defined(__ANDROID_API__) || __ANDROID_API__ != 24 || !defined(" + architecture + ")"
+    platform = "!TARGET_OS_OSX || TARGET_OS_IPHONE" if target == "macos-arm64" else "!TARGET_OS_IOS || " + ("!TARGET_OS_SIMULATOR" if target == "ios-simulator" else "TARGET_OS_SIMULATOR")
+    return "#include <TargetConditionals.h>\n", "!defined(__APPLE__) || !defined(__MACH__) || !defined(__aarch64__) || " + platform
+
+def _target_fact(target):
+    return "HAVE_POSTGIS_TARGET_" + target.upper().replace("-", "_")
 
 _HEADERS = [
     "dlfcn.h", "endian.h", "fcntl.h", "inttypes.h", "limits.h", "locale.h",
@@ -46,7 +65,7 @@ _COMPILE_FEATURES = {
     "WORDS_LITTLEENDIAN": "#if !defined(_WIN32) && (!defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__)\n#error not little endian\n#endif\nint main(void) { return 0; }",
 }
 
-def _compiler_checks(windows):
+def _compiler_checks(windows, mobile_target = None):
     probes = macros.AC_CHECK_HEADERS(_HEADERS) + macros.AC_CHECK_FUNCS(_FUNCTIONS)
     probes += [
         checks.AC_CHECK_DECL(symbol, includes = ["#include <math.h>"], define = "HAVE_DECL_" + symbol.upper())
@@ -92,11 +111,20 @@ def _compiler_checks(windows):
     ))
     probes += [checks.AC_TRY_COMPILE(code = code, define = define) for define, code in _COMPILE_FEATURES.items()]
     target_guard = "!defined(_WIN32) || !defined(_M_X64) || !defined(_MSC_VER)" if windows else "!defined(__APPLE__) || !defined(__MACH__) || !defined(__aarch64__)"
+    preamble = ""
+    if mobile_target:
+        preamble, target_guard = _mobile_guard(mobile_target)
+    sanity = preamble + "#if " + target_guard + "\n#error incorrect PostGIS compiler target\n#endif\n#include <stdio.h>\n#include <stdlib.h>\nint main(void) { void *p = malloc(8); printf(\"%p\\n\", p); free(p); return 0; }"
     probes.append(checks.AC_TRY_LINK(
-        code = "#if " + target_guard + "\n#error incorrect PostGIS compiler target\n#endif\n#include <stdio.h>\n#include <stdlib.h>\nint main(void) { void *p = malloc(8); printf(\"%p\\n\", p); free(p); return 0; }",
+        code = sanity,
         define = "HAVE_POSTGIS_COMPILER_SANITY",
         if_false = None,
     ))
+    if mobile_target:
+        # The sanity program already proves the exact SDK/architecture guard.
+        # Identical probes share one result in the maintained checker; derive
+        # the additional target marker from that actual result explicitly.
+        probes.append(checks.AC_DEFINE(_target_fact(mobile_target), condition = "ac_cv_try_link_HAVE_POSTGIS_COMPILER_SANITY", if_true = 1, if_false = None))
     # Match production's MSVC C mode and feature visibility. Values are integers
     # so the checker's generated preamble never defines a C string literal.
     definitions = ["_CRT_SECURE_NO_WARNINGS", "_CRT_NONSTDC_NO_WARNINGS", "_USE_MATH_DEFINES"] if windows else ["_GNU_SOURCE"]
@@ -123,7 +151,7 @@ def postgis_compiler_facts():
         write_file(
             name = name + "_template",
             out = name + ".h.in",
-            content = ["#undef " + json.decode(probe)["define"] for probe in probes],
+            content = ["#undef " + json.decode(probe)["define"] for probe in probes] + [""],
             target_compatible_with = compatible,
         )
         autoconf_hdr(
@@ -134,3 +162,15 @@ def postgis_compiler_facts():
             defaults = False,
             target_compatible_with = compatible,
         )
+
+def postgis_mobile_compiler_facts():
+    """Compile and link facts against each actual NDK or licensed Apple SDK."""
+    for prefix, (setting, target) in _MOBILE_TARGETS.items():
+        name = "mobile_" + prefix + "_compiler_facts"
+        compatible = select({setting: [], "//conditions:default": ["@platforms//:incompatible"]})
+        probes = _compiler_checks(False, mobile_target = target)
+        autoconf(name = name, checks = probes, target_compatible_with = compatible)
+        write_file(name = name + "_template", out = name + ".h.in",
+                   content = ["#undef " + json.decode(probe)["define"] for probe in probes] + [""], target_compatible_with = compatible)
+        autoconf_hdr(name = name + "_header", out = name + ".h", template = ":" + name + "_template",
+                     deps = [":" + name], defaults = False, target_compatible_with = compatible)

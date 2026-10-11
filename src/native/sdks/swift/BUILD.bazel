@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/languages/swift:bindings.bzl", "uniffi_swift", "uniffi_output")
 load("//build_defs/languages/swift:xcframework.bzl", "bindings_xcframework", "bindings_envelope")
 load("//build_defs/languages/swift:source.bzl", "swift_source_package")
@@ -43,6 +44,7 @@ filegroup(name = "generator_sources", srcs = ["tools/extension-resource-inventor
 swift_package_consumer_test(
     name = "installed_consumer_test",
     archive = ":release_input_Oliphaunt-source_zip",
+    source_tree = ":release_input_release-tree",
     bindings = ":bindings_archive",
     consumer = "Tests/PublicApiConsumer/Sources/OliphauntPublicApiConsumer/main.swift",
     target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
@@ -56,6 +58,7 @@ swift_package_consumer_test(
 swift_package_consumer_test(
     name = "native_candidate_consumer_test",
     archive = ":release_input_Oliphaunt-source_zip",
+    source_tree = ":release_input_release-tree",
     base = "//src/native/runtime:apple_swiftpm",
     resources = "//src/native/runtime:apple_macos_resources",
     bindings = ":bindings_archive",
@@ -130,3 +133,5 @@ sh_test(
     target_compatible_with = ["@platforms//os:macos", "@platforms//cpu:aarch64", "//build_defs/host:apple_package"],
     size = "small",
 )
+
+source_quality_files()

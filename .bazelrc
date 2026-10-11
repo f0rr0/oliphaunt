@@ -10,6 +10,10 @@ test --test_output=errors
 # Cross-platform runtime tests need manifest or directory runfiles.
 build --enable_runfiles
 
+# Native Clippy checks use the same configuration as conventional Cargo checks.
+build --@rules_rust//rust/settings:clippy.toml=//:clippy.toml
+build --@rules_rust//rust/settings:clippy_flags=-Dwarnings
+
 # Darwin sandbox reuse otherwise traverses the complete SDK forest per action.
 build:macos-sandbox --experimental_inmemory_sandbox_stashes
 

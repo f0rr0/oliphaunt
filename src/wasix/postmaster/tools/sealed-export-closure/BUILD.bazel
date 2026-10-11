@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
 load("@postmaster_sealing_crates//:defs.bzl", "aliases", "all_crate_deps", "crate_edition")
 load("@rules_rust//cargo:defs.bzl", "cargo_toml_env_vars")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
@@ -27,3 +28,5 @@ rust_test(
     tags = ["manual"],
     size = "small",
 )
+
+rust_quality_files()

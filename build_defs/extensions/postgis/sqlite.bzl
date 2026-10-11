@@ -10,7 +10,7 @@ load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSION_DEPENDENCIES")
 load("//build_defs/extensions:platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE")
-load(":libraries.bzl", "POSTGIS_NATIVE_COPTS", "POSTGIS_THREAD_LINKOPTS", "postgis_source_headers")
+load(":libraries.bzl", "POSTGIS_NATIVE_COPTS", "POSTGIS_THREAD_LINKOPTS", "postgis_profile", "postgis_source_headers")
 load("//build_defs/foundation:bun.bzl", "BunScriptInfo", "bun_action")
 
 _CORE = "alter analyze attach auth backup bitvec btmutex btree build callback carray complete date dbpage dbstat delete expr fault fkey func global hash insert json legacy loadext main malloc mem0 mem1 mem2 mem3 mem5 memdb memjournal mutex mutex_noop mutex_unix mutex_w32 notify os os_kv os_unix os_win pager pcache pcache1 pragma prepare printf random resolve rowset select status table threads tokenize treeview trigger update upsert utf util vacuum vdbe vdbeapi vdbeaux vdbeblob vdbemem vdbesort vdbetrace vdbevtab vtab wal walker where wherecode whereexpr window".split(" ")
@@ -57,11 +57,12 @@ SQLITE_CORE_SOURCES = _CORE
 SQLITE_FTS3_SOURCES = _FTS3
 sqlite_generate = _sqlite_generate
 
-def postgis_sqlite(name):
+def postgis_sqlite(name, profile = "desktop"):
+    settings = postgis_profile(profile)
     if EXTENSION_DEPENDENCIES["postgis"]["sqlite"]["commit"] != "ccd445d76a9362c63add000354fac84ba9022176":
         fail("review the upstream SQLite object/generator recipe before changing its canonical source pin")
     prefix = "@postgis_sqlite//:"
-    for tool in ["jim", "lemon", "mksourceid", "mkkeywordhash"]:
+    for tool in (["jim", "lemon", "mksourceid", "mkkeywordhash"] if profile == "desktop" else []):
         source = "autosetup/jimsh0.c" if tool == "jim" else "tool/" + tool + ".c"
         cc_binary(
             name = name + "_" + tool,
@@ -71,12 +72,14 @@ def postgis_sqlite(name):
             linkopts = select({"//build_defs/native:windows_x64": [], "//build_defs/native:macos_arm64": [], "//conditions:default": ["-lm", "-ldl"]}) if tool == "jim" else [],
             target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
         )
-    generated = name + "_generated"
-    _sqlite_generate(name = generated, inputs = [prefix + "all_sources"], version = prefix + "VERSION",
-                     jim = ":" + name + "_jim", lemon = ":" + name + "_lemon",
-                     mksourceid = ":" + name + "_mksourceid", mkkeywordhash = ":" + name + "_mkkeywordhash")
-    native.filegroup(name = name + "_generated_sources", srcs = [":" + generated], output_group = "library_sources")
-    native.filegroup(name = name + "_shell_source", srcs = [":" + generated], output_group = "shell")
+    generated = ":" + name + "_generated" if profile == "desktop" else "//build_defs/extensions/postgis:sqlite_generated"
+    if profile == "desktop":
+        _sqlite_generate(name = name + "_generated", inputs = [prefix + "all_sources"], version = prefix + "VERSION",
+                         jim = ":" + name + "_jim", lemon = ":" + name + "_lemon",
+                         mksourceid = ":" + name + "_mksourceid", mkkeywordhash = ":" + name + "_mkkeywordhash")
+    native.filegroup(name = name + "_generated_sources", srcs = [generated], output_group = "library_sources")
+    if profile == "desktop":
+        native.filegroup(name = name + "_shell_source", srcs = [generated], output_group = "shell")
     # main.mk T.cc.sqlite carries these upstream extension header roots.
     postgis_source_headers(name = name + "_source_headers", root = prefix + "VERSION",
                            headers = [prefix + "headers", prefix + "ext/rtree/geopoly.c"],
@@ -88,13 +91,14 @@ def postgis_sqlite(name):
                [prefix + path for path in ["ext/icu/icu.c", "ext/rtree/rtree.c", "ext/session/sqlite3session.c", "ext/rbu/sqlite3rbu.c", "ext/misc/stmt.c"]] +
                [":" + name + "_generated_sources"],
         hdrs = [prefix + "headers"],
-        deps = [":" + generated, ":" + name + "_source_headers"],
+        deps = [generated, ":" + name + "_source_headers"],
         local_defines = ["SQLITE_CORE"],
-        defines = ["SQLITE_THREADSAFE=1", "SQLITE_OMIT_LOAD_EXTENSION", "SQLITE_ENABLE_RTREE", "SQLITE_ENABLE_COLUMN_METADATA"],
+        defines = ["SQLITE_THREADSAFE=1", "SQLITE_OMIT_LOAD_EXTENSION", "SQLITE_ENABLE_RTREE", "SQLITE_ENABLE_COLUMN_METADATA"] if profile == "desktop" else ["SQLITE_THREADSAFE=0", "SQLITE_OMIT_LOAD_EXTENSION"],
         includes = [],
-        copts = POSTGIS_NATIVE_COPTS,
-        linkopts = POSTGIS_THREAD_LINKOPTS,
-        target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+        copts = settings.c,
+        linkopts = POSTGIS_THREAD_LINKOPTS if profile == "desktop" else [],
+        target_compatible_with = settings.compatible,
     )
-    cc_binary(name = name + "_cli", srcs = [":" + name + "_shell_source"], deps = [":" + name],
-              defines = ["SQLITE_OMIT_LOAD_EXTENSION"], target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+    if profile == "desktop":
+        cc_binary(name = name + "_cli", srcs = [":" + name + "_shell_source"], deps = [":" + name],
+                  defines = ["SQLITE_OMIT_LOAD_EXTENSION"], target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)

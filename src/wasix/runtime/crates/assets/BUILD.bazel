@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
 load("//build_defs/languages:rust.bzl", "cargo_generator_test")
 load("//build_defs/languages:wasix.bzl", "wasix_runtime_carrier")
 load("//build_defs/wasix:cargo.bzl", "wasix_runtime_cargo")
@@ -10,3 +11,5 @@ wasix_runtime_carrier(payload = "//src/wasix/runtime:portable_payload", portable
 wasix_runtime_cargo(payload = "//src/wasix/runtime:portable_payload")
 
 cargo_generator_test(srcs = ["build-support.rs"])
+
+rust_quality_files()

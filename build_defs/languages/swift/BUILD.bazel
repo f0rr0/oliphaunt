@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -26,7 +27,10 @@ bun_test(
     name = "source_package_test",
     entry_point = "source-package.test.mts",
     data = [
+        "source-package.fixture.mts",
         "source-package.mts",
+        "source-delivery-contract.mts",
+        "//tools/release:native-file-identity.mts",
         "//build_defs/release:testdata/swift-0.8.2-carrier.json",
         "//src/native/sdks/swift:tools/swift-native-carrier-contract.mts",
         "//src/native/sdks/swift:tools/swift-release-manifest.mts",
@@ -44,3 +48,5 @@ bun_test(
     ],
     size = "small",
 )
+
+source_quality_files()

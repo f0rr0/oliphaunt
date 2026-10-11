@@ -50,7 +50,7 @@ def _bun_runtime_impl(ctx):
 
 bun_runtime_repository = repository_rule(
     implementation = _bun_runtime_impl,
-    attrs = {"manifest": attr.label(default = Label("//:tools/dev/bun.toml"), allow_single_file = True)},
+    attrs = {"manifest": attr.label(default = Label("//tools/dev:bun.toml"), allow_single_file = True)},
 )
 
 _BUN_PLATFORMS = {
@@ -108,7 +108,7 @@ _bun_toolchains_repository = repository_rule(
 )
 
 def _bun_toolchains_impl(ctx):
-    manifest = Label("//:tools/dev/bun.toml")
+    manifest = Label("//tools/dev:bun.toml")
     assets = _quoted_assignments(ctx.read(manifest))
     hashes = {}
     for section, asset in assets.items():

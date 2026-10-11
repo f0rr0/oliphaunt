@@ -5,6 +5,13 @@ import { parseArgs } from 'node:util';
 
 type Values = Record<string, string>;
 const targets = new Set(['linux-x64-gnu', 'linux-arm64-gnu', 'macos-arm64', 'windows-x64-msvc']);
+const mobileTargets = new Set([
+  'android-arm64-v8a',
+  'android-x86_64',
+  'ios-device',
+  'ios-simulator',
+  'macos-arm64',
+]);
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 function read(path: string): string {
   return utf8.decode(readFileSync(path));
@@ -55,9 +62,18 @@ export function compilerFacts(header: string): Values {
   return result;
 }
 
-export function targetSubstitutions(original: Values, target: string, facts?: Values): Values {
-  if (!targets.has(target)) throw new Error(`unsupported PostGIS configuration target ${target}`);
-  if (target.startsWith('linux-')) {
+export function targetSubstitutions(
+  original: Values,
+  target: string,
+  facts?: Values,
+  profile = 'desktop',
+): Values {
+  if (profile !== 'desktop' && profile !== 'mobile-static')
+    throw new Error(`unsupported PostGIS profile ${profile}`);
+  const mobile = profile === 'mobile-static';
+  if (!(mobile ? mobileTargets : targets).has(target))
+    throw new Error(`unsupported PostGIS configuration target ${target}`);
+  if (!mobile && target.startsWith('linux-')) {
     if (facts) throw new Error('the qualified Linux profile does not consume foreign facts');
     return original;
   }
@@ -76,6 +92,8 @@ export function targetSubstitutions(original: Values, target: string, facts?: Va
     facts.SIZEOF_VOID_P !== '8'
   )
     throw new Error(`compiler facts disagree with ${target} ABI`);
+  if (mobile && facts[`HAVE_POSTGIS_TARGET_${target.toUpperCase().replaceAll('-', '_')}`] !== '1')
+    throw new Error(`compiler facts do not prove the ${target} static target`);
   const result = { ...original };
   for (const key of Object.keys(result)) {
     if (key.startsWith('HAVE_') || key.startsWith('SIZEOF_')) delete result[key];
@@ -111,7 +129,18 @@ export function targetSubstitutions(original: Values, target: string, facts?: Va
     if (!facts.HAVE_SSIZE_T) result.ssize_t = 'long long';
   }
   if (Object.hasOwn(result, 'MODULE_EXTENSION'))
-    result.MODULE_EXTENSION = target === 'macos-arm64' ? '.dylib' : '.dll';
+    result.MODULE_EXTENSION =
+      target === 'windows-x64-msvc' ? '.dll' : target.startsWith('android-') ? '.so' : '.dylib';
+  if (mobile) {
+    for (const key of ['WITH_ICONV', 'WITH_THREADS', 'WITH_MODULES']) {
+      if (Object.hasOwn(result, key)) result[key] = '0';
+    }
+    // PROJ resolves only its declared embedded resources in this profile.
+    delete result.HAVE_LIBDL;
+    if (!target.startsWith('android-')) {
+      for (const key of ['HAVE_ICONV', 'HAVE_ICONVCTL', 'HAVE_LIBICONVCTL']) delete result[key];
+    }
+  }
   return result;
 }
 
@@ -124,6 +153,7 @@ if (import.meta.main) {
       identity: { type: 'string' },
       target: { type: 'string', default: 'linux-x64-gnu' },
       facts: { type: 'string' },
+      profile: { type: 'string', default: 'desktop' },
     },
   });
   if (!values.kind || !values.source || !values.output)
@@ -138,7 +168,7 @@ if (import.meta.main) {
       destination,
       configure(
         read(join(source, input)),
-        targetSubstitutions(substitutions, values.target, facts),
+        targetSubstitutions(substitutions, values.target, facts, values.profile),
       ),
     );
   };

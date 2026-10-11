@@ -23,6 +23,10 @@ describe('MSVC backend exports', () => {
   });
   test('rejects empty output and contradictory ABI symbol kinds', () => {
     expect(() => postgresExports('MSVC banner')).toThrow('no defined');
-    expect(() => postgresExports('001 00000000 SECT1 notype External | symbol\n002 00000000 SECT1 notype () External | symbol')).toThrow('changes kind');
+    expect(() =>
+      postgresExports(
+        '001 00000000 SECT1 notype External | symbol\n002 00000000 SECT1 notype () External | symbol',
+      ),
+    ).toThrow('changes kind');
   });
 });

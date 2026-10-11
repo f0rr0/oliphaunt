@@ -14,6 +14,7 @@ import { TextDecoder } from 'node:util';
 import { strictGunzip } from '../../../../../tools/packaging/portable-archive.mts';
 import { releaseNoticeRows } from '../../../../../tools/packaging/release-notices.mts';
 import { extensionProductForSqlName } from '../../../../../tools/release/release-artifact-targets.mts';
+import { nativeExtensionModuleHostTarget } from '../../../contracts/extension-target-profiles.mts';
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from '../../../tools/extension-artifact-archive-policy.mts';
 import {
   extensionCarrierLegalContract,
@@ -506,8 +507,11 @@ export function isDesktopNativeTarget(target) {
 }
 
 /** Project the canonical recipe's module stems into an existing desktop profile. */
+export const nativeModuleHostTarget = nativeExtensionModuleHostTarget;
+
 export function nativeDependencyModuleBasenames(files = [], target) {
-  if (!isDesktopNativeTarget(target)) {
+  const hostTarget = nativeModuleHostTarget(target);
+  if (!isDesktopNativeTarget(hostTarget)) {
     if (files.length === 0) return [];
     throw inventoryError(
       'native dependency modules',
@@ -522,7 +526,7 @@ export function nativeDependencyModuleBasenames(files = [], target) {
           'native dependency modules',
           'canonical recipe requires a portable PostgreSQL module destination',
         );
-      return match[1] + moduleSuffix(target);
+      return match[1] + moduleSuffix(hostTarget);
     })
     .sort(compareText);
 }
@@ -924,7 +928,7 @@ export function validateExtensionArtifactEntries({
     }
     for (const dependency of metadata.nativeDependencyModules) {
       allowed.add(`files/lib/postgresql/${dependency}`);
-      allowed.add(`files/lib/modules/${dependency}`);
+      if (DESKTOP_NATIVE_TARGETS.has(target)) allowed.add(`files/lib/modules/${dependency}`);
     }
   } else if (metadata.nativeDependencyModules.length > 0) {
     throw inventoryError(label, 'SQL-only artifacts must not declare native dependency modules');

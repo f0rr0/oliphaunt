@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
@@ -13,6 +14,7 @@ load("//build_defs/wasix/browser:defs.bzl", "browser_host_assets", "browser_sql_
 
 package(default_visibility = ["//visibility:public"])
 exports_files(["package.json", "tools/package.mts", "tools/frozen-browser-consumer.mts", "tools/browser-cdp.mts"])
+exports_files(["tools/pgwire-client.mts"])
 exports_files([
     "src/resources/extensions.ts",
     "src/resources/archive.ts",
@@ -51,6 +53,18 @@ ts_project(
 )
 
 filegroup(name = "module_outputs", srcs = [":module"])
+
+ts_project(
+    name = "source_checks",
+    srcs = glob(["src/**/*.ts"]),
+    tsconfig = "tsconfig.json",
+    no_emit = True,
+    declaration = True,
+    out_dir = "lib",
+    root_dir = "src",
+    supports_workers = 0,
+    deps = [":package_metadata", ":node_modules/@oliphaunt/ts-query", "//src/wasix/sdks/ts/src/host:declaration"] + [":node_modules/" + name for name in SDK["types"] | SDK["packages"]],
+)
 source_sdk_publish_files(name = "publish_files", manifest = "package.json", profile = "wasix-ts")
 filegroup(name = "publish_manifest", srcs = [":publish_files"], output_group = "manifest")
 filegroup(name = "license", srcs = [":publish_files"], output_group = "license")
@@ -98,6 +112,10 @@ browser_sql_consumer(
     packages = {"@javascript_packages//:" + key: key for key in RUNTIME_PACKAGES} | {"@javascript_consumer_packages//:" + key: key for key in CONSUMER_PACKAGES},
     roots = CONSUMER_TOOLS[SDK["name"]],
     runtime_packages = SDK["packages"],
+    size = "large",
+    timeout = "long",
+    # Chrome is observed on this host; every qualification must execute it.
+    tags = ["manual", "external", "local", "installed-consumer"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 
@@ -113,3 +131,5 @@ browser_sql_lifecycle(
     runtime_packages = SDK["packages"],
     target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
+
+source_quality_files()

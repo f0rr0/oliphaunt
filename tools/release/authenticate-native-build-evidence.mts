@@ -18,11 +18,23 @@ import {
 } from './native-build-qualification.mts';
 
 const execute = promisify(execFile);
-const reviewedProducerArtifacts: ReadonlyMap<string, string> = new Map([
+const reviewedProducerArtifacts: readonly (readonly [string, string])[] = [
   ['Linux runtime (x86_64)', 'native-build-evidence-x86_64'],
   ['Linux runtime (aarch64)', 'native-build-evidence-aarch64'],
   ['Linux WASIX and installed browser', 'native-build-evidence-wasix-tools'],
-]);
+  ['Linux WASIX and installed browser', 'native-build-evidence-wasix-pg-hashids'],
+  ['Linux native postmaster lifecycle', 'native-build-evidence-postmaster-linux'],
+  ['Native postmaster lifecycle (linux-arm64)', 'native-build-evidence-postmaster-linux-arm64'],
+  ['Native postmaster lifecycle (macos-arm64)', 'native-build-evidence-postmaster-macos-arm64'],
+  ['Portable packages (linux-x64)', 'native-build-evidence-napi-linux-x64'],
+  ['Portable packages (linux-arm64)', 'native-build-evidence-napi-linux-arm64'],
+  ['Portable packages (macos-arm64)', 'native-build-evidence-napi-macos-arm64'],
+  ['Portable packages (windows-x64)', 'native-build-evidence-napi-windows-x64'],
+  ['Linux runtime (x86_64)', 'native-build-evidence-mobile-android'],
+  ['Portable packages (macos-arm64)', 'native-build-evidence-mobile-ios'],
+];
+const isReviewedProducerArtifact = (job: string, artifact: unknown) =>
+  reviewedProducerArtifacts.some(([owner, name]) => owner === job && name === artifact);
 const acceptedExecutionAssumptions = [
   'producer inputs remained immutable through capture in the reviewed isolated job',
   'the reviewed coordinator retained the native after-build dump from its producer invocation',
@@ -67,8 +79,7 @@ export function validateReviewedNativeProducerAssurance(
     value.github.repository !== 'f0rr0/oliphaunt' ||
     value.github.workflow !== 'Native Bazel qualification' ||
     value.github.workflowPath !== '.github/workflows/bazel.yml' ||
-    !reviewedProducerArtifacts.has(value.github.job) ||
-    reviewedProducerArtifacts.get(value.github.job) !== value.artifact?.name ||
+    !isReviewedProducerArtifact(value.github.job, value.artifact?.name) ||
     value.shippingAnalysis !== 'bound' ||
     value.testQualification !== 'passed' ||
     !Array.isArray(value.requiredTests) ||
@@ -277,10 +288,7 @@ export async function assureReviewedNativeBuildProducer(
     expected.github.workflowPath !== '.github/workflows/bazel.yml'
   )
     throw new Error('reviewed native producer requires the canonical main workflow');
-  if (
-    !reviewedProducerArtifacts.has(expected.github.job) ||
-    reviewedProducerArtifacts.get(expected.github.job) !== expected.artifactName
-  )
+  if (!isReviewedProducerArtifact(expected.github.job, expected.artifactName))
     throw new Error('reviewed native producer job/artifact role is not canonical');
   if (!Array.isArray(requiredTests) || !requiredTests.length)
     throw new Error('reviewed native producer requires controller-owned mandatory tests');

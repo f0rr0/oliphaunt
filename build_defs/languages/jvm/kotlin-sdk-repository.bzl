@@ -23,6 +23,6 @@ kotlin_sdk_metadata_repository = repository_rule(
         "plugin_gradle": attr.label(default = Label("//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:build.gradle.kts"), allow_single_file = True),
         "properties": attr.label(default = Label("//src/native/sdks/kotlin:gradle.properties"), allow_single_file = True),
         "version": attr.label(default = Label("//src/native/sdks/kotlin:VERSION"), allow_single_file = True),
-        "android_sdk": attr.label(default = Label("//:tools/dev/android-sdk.toml"), allow_single_file = True),
+        "android_sdk": attr.label(default = Label("//tools/dev:android-sdk.toml"), allow_single_file = True),
     },
 )

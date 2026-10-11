@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@rules_cc//cc:defs.bzl", "cc_test")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
@@ -89,3 +90,5 @@ bun_script_test(
     size = "medium",
     tags = ["manual"],
 )
+
+source_quality_files()

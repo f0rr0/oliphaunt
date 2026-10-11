@@ -36,6 +36,7 @@ import {
   extensionUpstreamLicenseRows,
   externalReleaseExtensionSqlNames,
   nativeExtensionConstructionLicenseInventory,
+  nativeExtensionConstructionMavenLicenses,
   PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS,
   stageExtensionUpstreamLicenses,
   validateExtensionUpstreamLicenseContract,
@@ -43,6 +44,30 @@ import {
 } from './extension-upstream-licenses.mts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
+
+test('Maven compiler-runtime entries follow validated canonical receipts', () => {
+  const receipts = nativeExtensionConstructionLicenseInventory('vector', 'android-arm64-v8a');
+  const source = JSON.parse(
+    readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
+  );
+  assert.deepEqual(
+    nativeExtensionConstructionMavenLicenses('vector', 'android-arm64-v8a', receipts),
+    [
+      {
+        name: `${source.license} (${source.project})`,
+        url: `https://github.com/llvm/llvm-project/blob/${source.commit}/${source.files.find((file) => file.destination === 'LICENSE.TXT').path}`,
+        distribution: 'repo',
+      },
+    ],
+  );
+  assert.deepEqual(nativeExtensionConstructionMavenLicenses('vector', 'android-arm64-v8a', []), []);
+  assert.throws(() =>
+    nativeExtensionConstructionMavenLicenses('vector', 'android-arm64-v8a', [
+      { ...receipts[0], sha256: '0'.repeat(64) },
+      receipts[1],
+    ]),
+  );
+});
 
 test('every active external release has an exact upstream license contract', () => {
   const rows = validateExtensionUpstreamLicenseContract();
@@ -80,7 +105,7 @@ test('npm extension legal inventory binds canonical paths, bytes, and modes', ()
   );
 });
 
-test('pgcrypto native construction receipts bind current desktop OpenSSL source bytes', () => {
+test('pgcrypto native construction receipts bind desktop and mobile-host OpenSSL source bytes', () => {
   assert.deepEqual(PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS, [
     'linux-x64-gnu',
     'linux-arm64-gnu',
@@ -100,7 +125,12 @@ test('pgcrypto native construction receipts bind current desktop OpenSSL source 
     sha256: createHash('sha256').update(readFileSync(source)).digest('hex'),
     mode: '0644',
   }));
-  for (const target of PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS) {
+  for (const target of [
+    ...PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS,
+    'android-arm64-v8a',
+    'android-x86_64',
+    'ios-xcframework',
+  ]) {
     const files = nativeExtensionConstructionLicenseInventory('pgcrypto', target);
     assert.deepEqual(files, expected, target);
     assert.equal(Object.isFrozen(files), true);
@@ -122,14 +152,7 @@ test('pgcrypto native construction receipts bind current desktop OpenSSL source 
 
 test('pgcrypto construction receipts reject unsupported targets and changed source digests', () => {
   const files = nativeExtensionConstructionLicenseInventory('pgcrypto', 'linux-x64-gnu');
-  for (const target of [
-    'android-arm64-v8a',
-    'android-x86_64',
-    'ios-xcframework',
-    'macos-x64',
-    'linux-x64-musl',
-    'wasix',
-  ]) {
+  for (const target of ['macos-x64', 'linux-x64-musl', 'wasix']) {
     assert.throws(
       () => validateNativeExtensionConstructionLicenseInventory('pgcrypto', target, files),
       /no declared source for this member\/target/u,
@@ -137,7 +160,12 @@ test('pgcrypto construction receipts reject unsupported targets and changed sour
     );
     assert.deepEqual(validateNativeExtensionConstructionLicenseInventory('pgcrypto', target), []);
   }
-  for (const target of PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS) {
+  for (const target of [
+    ...PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS,
+    'android-arm64-v8a',
+    'android-x86_64',
+    'ios-xcframework',
+  ]) {
     for (const changedIndex of [0, 1]) {
       const changed = files.map((file, index) =>
         index === changedIndex
@@ -161,6 +189,21 @@ test('pgcrypto construction receipts reject unsupported targets and changed sour
       'contrib-native-openssl',
     );
   }
+});
+
+test('Android vector host receipts retain the actual Linux compiler runtime without admitting Apple receipts', () => {
+  const files = nativeExtensionConstructionLicenseInventory('vector', 'linux-x64-gnu');
+  for (const target of ['android-arm64-v8a', 'android-x86_64']) {
+    assert.deepEqual(nativeExtensionConstructionLicenseInventory('vector', target), files);
+    assert.deepEqual(
+      validateNativeExtensionConstructionLicenseInventory('vector', target, files),
+      files,
+    );
+  }
+  assert.throws(
+    () => validateNativeExtensionConstructionLicenseInventory('vector', 'ios-xcframework', files),
+    /no declared source/u,
+  );
 });
 
 test('carrier legal inventory binds release notices and PostGIS upstream bytes', () => {

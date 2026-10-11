@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/languages/jvm:bindings.bzl", "uniffi_kotlin")
 load("//build_defs/languages/jvm:maven.bzl", "kotlin_maven_package")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
@@ -188,3 +189,5 @@ shipping_export(
     name = "shipping_export",
     packages = [":android_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:plugin_maven_shipping", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:marker_maven_shipping"],
 )
+
+source_quality_files()

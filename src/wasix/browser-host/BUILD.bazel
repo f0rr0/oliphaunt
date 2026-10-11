@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@browser_cargo//:defs.bzl", "all_crate_deps", "aliases")
 load("@browser_npm//:defs.bzl", "BROWSER_NPM")
 load("@browser_sources//:metadata.bzl", "BROWSER")
@@ -59,3 +60,5 @@ browser_host_package(
     std_receipt = "//build_defs/wasix/browser/std:construction_receipt",
     packages = BROWSER_NPM,
 )
+
+source_quality_files()

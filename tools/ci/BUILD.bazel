@@ -1,0 +1,53 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+
+package(default_visibility = ["//visibility:public"])
+
+bun_test(
+    name = "workflow_security_test",
+    entry_point = "workflow-security.test.mts",
+    data = ["workflow-security.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_script_test(
+    name = "workflow_security_check",
+    entry_point = "workflow-security.mts",
+    data = ["//:workflow_policy_sources"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "ci_gate_test",
+    entry_point = "ci-gate.test.mts",
+    data = ["//:.github/scripts/check-ci-gate.mts"],
+    tags = ["source-check"],
+    size = "small",
+)
+
+bun_test(
+    name = "mobile_e2e_resolver_test",
+    entry_point = "//:.github/scripts/resolve-mobile-e2e.test.mts",
+    data = [
+        "//:.github/scripts/resolve-mobile-e2e.mts",
+        "//tools/release:github-read.mts",
+        "//tools/release:github-core-request-journal.mts",
+        "//tools/release:github-release-lineage.mts",
+    ],
+    tags = ["source-check"],
+    size = "small",
+)
+
+test_suite(
+    name = "source_checks",
+    tests = [
+        ":ci_gate_test",
+        ":mobile_e2e_resolver_test",
+        ":workflow_security_check",
+        ":workflow_security_test",
+    ],
+)
+
+source_quality_files()

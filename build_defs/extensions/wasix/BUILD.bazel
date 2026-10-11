@@ -1,0 +1,44 @@
+load("//build_defs/extensions:wasix_carriers.bzl", "wasix_compiled_extension_carriers", "wasix_compiled_extension_installed_test", "wasix_compiled_extension_shipping", "wasix_extension_declared_host")
+load("//build_defs/quality:sources.bzl", "source_quality_files")
+load(":link_inputs_test.bzl", "wasix_extension_link_input_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["compiled_carriers.test.mts", "installed_consumer.mts"])
+
+wasix_extension_declared_host(name = "declared_host", sql_name = "pg_hashids")
+
+wasix_compiled_extension_carriers(
+    name = "pg_hashids",
+    sql_name = "pg_hashids",
+    module = "//src/wasix/runtime:external_pg_hashids",
+    host = ":declared_host",
+    resources = ["@pg_hashids//:sql_resources"],
+)
+
+wasix_compiled_extension_installed_test(
+    name = "pg_hashids_installed_test",
+    leaf = ":pg_hashids",
+    module = "//src/wasix/runtime:external_pg_hashids",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    size = "large",
+    timeout = "long",
+    tags = ["manual", "installed-consumer"],
+)
+
+wasix_compiled_extension_shipping(
+    name = "pg_hashids",
+    sql_name = "pg_hashids",
+    carriers = ":pg_hashids",
+    qualification = [
+        ":pg_hashids_installed_test",
+        ":link_inputs_test",
+        ":invalid_link_profile_test",
+        ":unhandled_linkopts_test",
+        "//src/wasix/runtime/tools/xtask:export_policy_test",
+    ],
+)
+
+source_quality_files()
+
+wasix_extension_link_input_tests()

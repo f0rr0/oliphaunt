@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 load("@oliphaunt_toolchain_metadata//:query-package-type.bzl", "QUERY_NPM_NAME", "QUERY_PACKAGE_TYPE")
@@ -98,3 +99,5 @@ npm_consumer_test(
     archive = ":npm",
     consumer = "tools/frozen-consumer.mts",
 )
+
+source_quality_files()

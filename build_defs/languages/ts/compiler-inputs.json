@@ -1,5 +1,6 @@
 {
   "workspaces": {
+    "@oliphaunt/ts": ["@types/pg"],
     "@oliphaunt/react-native": [
       "@react-native/typescript-config",
       "react-native",

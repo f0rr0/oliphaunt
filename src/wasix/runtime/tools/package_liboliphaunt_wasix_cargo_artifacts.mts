@@ -43,15 +43,15 @@ import {
 } from '../../../../tools/release/release-artifact-targets.mts';
 import { compareText } from '../../../../tools/release/release-graph.mts';
 import {
+  assertWasixExtensionArchiveInstall,
+  WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+} from '../../../extensions/contracts/wasix-extension-install.mts';
+import {
   assertExtensionUpstreamLicensesInArchive,
   assertExtensionUpstreamLicensesInDirectory,
   extensionRegistryLicense,
   stageExtensionUpstreamLicenses,
 } from '../../../extensions/tools/extension-upstream-licenses.mts';
-import {
-  assertWasixExtensionArchiveInstall,
-  WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
-} from '../../../extensions/contracts/wasix-extension-install.mts';
 import { assertWasixAotArtifactPayloads } from './check-release-assets.mts';
 import {
   assertCanonicalWasixAotManifest,
@@ -1616,6 +1616,103 @@ export function packageSqlOnlyWasixExtensionCargo(
     outputDir,
     cargoTargetDir: path.join(workDir, 'cargo-package-target'),
   });
+}
+
+/** Package a declared owner and complete AOT cohort without checkout discovery. */
+export function packageDeclaredWasixExtensionCargo(
+  spec: {
+    product: string;
+    version: string;
+    runtimeProduct: string;
+    runtimeVersion: string;
+    versioning: 'upstream-bound' | 'runtime-bound';
+    extensionRoot: string;
+    members: {
+      sqlName: string;
+      dependencies: string[];
+      nativeModuleStem: string | null;
+      archive: string;
+      sha256: string;
+      size: number;
+      install: Record<string, unknown>;
+    }[];
+  },
+  { outputDir, workDir }: { outputDir: string; workDir: string },
+) {
+  if (spec.runtimeProduct !== PRODUCT) fail('declared WASIX extension has the wrong runtime owner');
+  extensionDependencyRequirement(spec.runtimeVersion, 'runtime-bound');
+  const contrib = spec.product === 'oliphaunt-extension-contrib-pg18';
+  if (
+    !spec.members.length ||
+    new Set(spec.members.map((member) => member.sqlName)).size !== spec.members.length
+  )
+    fail('declared WASIX extension requires unique SQL members');
+  if (
+    contrib
+      ? spec.versioning !== 'runtime-bound' || spec.version !== spec.runtimeVersion
+      : spec.members.length !== 1 ||
+        spec.product !== `oliphaunt-extension-${spec.members[0].sqlName.replaceAll('_', '-')}` ||
+        spec.versioning !== 'upstream-bound'
+  )
+    fail('declared WASIX extension differs from its release owner or versioning');
+  const members = spec.members.map((member) => {
+    const { install } = assertWasixExtensionArchiveInstall(readFileSync(member.archive), {
+      schema: WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
+      sqlName: member.sqlName,
+      archive: `extensions/${member.sqlName}.tar.zst`,
+      sha256: member.sha256,
+      size: member.size,
+      install: member.install,
+    });
+    const requiresAot = install.nativeModule !== null;
+    if (requiresAot !== Boolean(member.nativeModuleStem) || install.unresolvedImports.length)
+      fail('declared WASIX member has inconsistent modules or unresolved imports');
+    return { ...member, requiresAot };
+  });
+  const declared = {
+    ...spec,
+    name: wasixExtensionPackageName(spec.product),
+    members,
+    dependencyRequirement: extensionDependencyRequirement(spec.version, spec.versioning),
+  };
+  const aotTargets = extensionAotSpecs(spec.extensionRoot, declared);
+  validateExtensionAotCoverage([{ ...declared, aotTargets }]);
+  for (const target of aotTargets)
+    for (const member of target.members) {
+      const portable = members.find((row) => row.sqlName === member.sqlName)!;
+      const manifest = readJson(path.join(member.sourceDir, 'manifest.json'));
+      const expected = new Map(
+        (portable.install.nativeModules as { name: string; moduleSha256: string }[]).map((row) => [
+          `extension:${member.sqlName}${row.name === member.sqlName ? '' : `:${row.name}`}`,
+          row.moduleSha256,
+        ]),
+      );
+      if (
+        manifest.artifacts.length !== expected.size ||
+        manifest.artifacts.some((row) => expected.get(row.name) !== row['module-sha256'])
+      )
+        fail('declared WASIX AOT cohort differs from its exact portable module identities');
+    }
+  const sourceRoot = path.join(workDir, 'cargo-package-sources');
+  const cargoTargetDir = path.join(workDir, 'cargo-package-target');
+  mkdirSync(sourceRoot, { recursive: true });
+  mkdirSync(outputDir, { recursive: true });
+  const source = writeExtensionCargoSource(
+    { ...declared, aotTargets },
+    sourceRoot,
+    DEFAULT_EXTENSION_PART_BYTES,
+  );
+  const packages = [
+    ...packageExtensionSource(source, { outputDir, cargoTargetDir }),
+    ...aotTargets.flatMap((target) =>
+      packageExtensionAotSource(
+        writeExtensionAotCargoSource(target, sourceRoot, DEFAULT_EXTENSION_PART_BYTES),
+        { outputDir, cargoTargetDir },
+      ),
+    ),
+  ];
+  writePackagesManifest(packages, outputDir);
+  return packages;
 }
 
 function packageExtensionAotSource(source, { outputDir, cargoTargetDir }) {

@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
 load(":postgres-overlay-test.bzl", "postgres_overlay_tests")
 load(":runtime-probe.bzl", "postmaster_runtime_probes")
@@ -33,6 +34,13 @@ cc_test(
 postmaster_runtime_probes()
 
 bun_test(name = "native_receipts_test", entry_point = "native-receipts.test.mts", data = ["native-receipts.mts"], size = "small")
+
+bun_test(
+    name = "guest_inputs_test",
+    entry_point = "guest-inputs.test.mts",
+    data = ["guest-inputs.mts", "native-receipts.mts", "//:tools/packaging/strict-json.mts"],
+    size = "small",
+)
 
 bun_test(
     name = "receipt_reader_test",
@@ -139,3 +147,5 @@ bun_script_test(
     ],
     size = "small",
 )
+
+source_quality_files()

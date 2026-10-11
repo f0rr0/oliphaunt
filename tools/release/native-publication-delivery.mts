@@ -13,6 +13,7 @@ import {
   createCompletedPublicationChecker,
 } from './completed-release-publication.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
+import type { compareNativeCompletedPhysicalDelivery } from './native-completed-delivery.mts';
 import { nativeOutputPath } from './native-publication-artifacts.mts';
 import type { observeNativePublicationConstruction } from './native-publication-observation.mts';
 import {
@@ -479,6 +480,7 @@ export function compareNativePreVersionDelivery({
   products,
   archives,
   sources,
+  completed,
   affectedProducts,
   observation,
 }: {
@@ -486,6 +488,7 @@ export function compareNativePreVersionDelivery({
   products: string[];
   archives?: ReturnType<typeof compareCompletedNativeArchiveDelivery>;
   sources?: Awaited<ReturnType<typeof compareNativeCompletedSourceDelivery>>;
+  completed?: Awaited<ReturnType<typeof compareNativeCompletedPhysicalDelivery>>;
   affectedProducts?: string[];
   observation?: Awaited<ReturnType<typeof observeNativePublicationConstruction>>;
 }) {
@@ -493,7 +496,7 @@ export function compareNativePreVersionDelivery({
   if (!Array.isArray(products) || new Set(products).size !== products.length)
     throw new Error('native pre-version comparison requires unique explicit products');
   const catalog = loadPublicationCatalog('native pre-version delivery', { products });
-  for (const comparison of [archives, sources]) {
+  for (const comparison of [archives, sources, completed]) {
     if (!comparison) continue;
     if (comparison.scope !== 'construction' || !same(comparison.source, source))
       throw new Error('native pre-version comparison differs from its captured source');
@@ -527,9 +530,34 @@ export function compareNativePreVersionDelivery({
   const results = catalog.products.map((product) => {
     const sourceDelivery = sources?.products.find((row) => row.product === product.id);
     const archiveDelivery = archives?.products.find((row) => row.product === product.id);
+    const completedDelivery = completed?.products.find((row) => row.product === product.id);
     let deliveryStatus = 'unknown' as 'unknown' | 'identical' | 'different';
     let reason = 'completed-delivery-origin-or-contract-missing';
-    if (sourceDelivery && sourceDelivery.deliveryStatus !== 'unknown') {
+    if (completedDelivery) {
+      deliveryStatus = completedDelivery.deliveryStatus;
+      reason =
+        deliveryStatus === 'unknown'
+          ? completedDelivery.unknowns?.join(',') || completedDelivery.reason || reason
+          : 'completed-public-members-compared';
+      if (observation) {
+        const observed = observation.products.find(({ product: row }) => row.id === product.id);
+        const ordered = (records) => [...records].sort((a, b) => a.id.localeCompare(b.id));
+        // Observation adds authenticated output locations to the same original
+        // envelope. Compare every envelope field; those derived bindings were
+        // already checked against the producing packet by the observer.
+        const envelope = (records) => records.map(({ qualifiedFiles: _bindings, ...row }) => row);
+        if (
+          !observed ||
+          observed.product.version !== product.version ||
+          !same(ordered(envelope(observed.carriers)), ordered(completedDelivery.carriers)) ||
+          !same(
+            ordered(envelope(observed.productArtifacts)),
+            ordered(completedDelivery.productArtifacts),
+          )
+        )
+          throw new Error('completed delivery differs from qualified physical inventory');
+      }
+    } else if (sourceDelivery && sourceDelivery.deliveryStatus !== 'unknown') {
       deliveryStatus = sourceDelivery.deliveryStatus as 'identical' | 'different';
       reason = 'source-envelope-members-compared';
       if (observation) {

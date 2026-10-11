@@ -21,6 +21,7 @@ def native_owner_carrier_helpers():
         "//:src/extensions/artifacts/packages/tools/package-extension-cargo-facades.mts",
         "//:tools/packaging/rust-native-targets.mts",
         "//src/extensions/tools:native-component-contract.mts",
+        "//:src/extensions/artifacts/native/tools/ios-extension-registration.mts",
     ]
 
 def native_owner_carrier_metadata(product):
@@ -73,6 +74,10 @@ def _leaf_input(leaf):
 
 def _leaf_files(leaf):
     return leaf.github + leaf.npm + leaf.cargo + [leaf.manifest, leaf.frozen, leaf.spec] + ([leaf.validation] if leaf.validation else []) + ([leaf.receipt] if leaf.receipt else [])
+
+# The mobile Maven action consumes the same serialized physical final leaves.
+native_final_leaf_input = _leaf_input
+native_final_leaf_files = _leaf_files
 
 def _import_impl(ctx):
     spec = native_owner_carrier_metadata(ctx.attr.product)
@@ -210,7 +215,7 @@ _native_extension_final_contract_test = rule(implementation = _final_contract_te
         "_helpers": attr.label_list(default = native_owner_carrier_helpers() + ["//build_defs/extensions:owner_carriers.mts"], allow_files = True),
     }))
 
-def native_extension_final_contract_test(name, products = None, desktop = False, include_postgis = False, **kwargs):
+def native_extension_final_contract_test(name, products = None, desktop = False, include_postgis = False, leaves = None, **kwargs):
     """Validate genuine final packages on the execution host, without target SQL."""
     if include_postgis and not desktop:
         fail("explicit PostGIS cohort selection requires the canonical desktop inventory")
@@ -225,11 +230,11 @@ def native_extension_final_contract_test(name, products = None, desktop = False,
         selected = sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA}.keys()) if products == None else sorted(products)
     if not selected or len(selected) != len({product: True for product in selected}):
         fail("final contract qualification requires unique canonical distributions")
-    leaves, legal = [], {}
+    selected_leaves, legal = [], {}
     for product in selected:
         spec = native_owner_carrier_metadata(product)
         package = "src/extensions/contrib" if spec["releaseMetadata"]["class"] == "contrib" else PRODUCTS[product]["path"]
-        leaves.append("//" + package + ":native_carriers")
+        selected_leaves.append("//" + package + ":native_carriers")
         for label in native_owner_carrier_legal(product):
             legal[label] = True
-    _native_extension_final_contract_test(name = name, products = selected, members = members, excluded = excluded, leaves = leaves, legal = legal.keys(), args = bun_test_entrypoint_args(name), **kwargs)
+    _native_extension_final_contract_test(name = name, products = selected, members = members, excluded = excluded, leaves = selected_leaves if leaves == None else leaves, legal = legal.keys(), args = bun_test_entrypoint_args(name), **kwargs)

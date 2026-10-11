@@ -4,10 +4,16 @@ export function icuDataIdentity(versionHeader: string, typesHeader: string) {
   const major = versionHeader.match(/^\s*#\s*define\s+U_ICU_VERSION_MAJOR_NUM\s+(\d+)\s*$/mu)?.[1];
   const short = versionHeader.match(/^\s*#\s*define\s+U_ICU_VERSION_SHORT\s+"(\d+)"\s*$/mu)?.[1];
   const entryMacro = typesHeader.match(/^\s*#\s*define\s+U_ICUDATA_ENTRY_POINT\s+(.+)$/mu)?.[1];
-  const body = typesHeader.match(/^\s*#\s*define\s+U_DEF_ICUDATA_ENTRY_POINT\(major,\s*suff\)\s+(.+)$/mu)?.[1];
-  if (!major || short !== major ||
-      entryMacro?.replace(/\s+/gu, '') !== 'U_DEF2_ICUDATA_ENTRY_POINT(U_ICU_VERSION_MAJOR_NUM,U_LIB_SUFFIX_C_NAME)' ||
-      body?.replace(/\s+/gu, '') !== 'icudt##major##_dat') {
+  const body = typesHeader.match(
+    /^\s*#\s*define\s+U_DEF_ICUDATA_ENTRY_POINT\(major,\s*suff\)\s+(.+)$/mu,
+  )?.[1];
+  if (
+    !major ||
+    short !== major ||
+    entryMacro?.replace(/\s+/gu, '') !==
+      'U_DEF2_ICUDATA_ENTRY_POINT(U_ICU_VERSION_MAJOR_NUM,U_LIB_SUFFIX_C_NAME)' ||
+    body?.replace(/\s+/gu, '') !== 'icudt##major##_dat'
+  ) {
     throw new Error('Unsupported ICU source data entry-point/version macros');
   }
   // Expand the unsuffixed upstream token-paste definition. Neither the version
@@ -17,9 +23,16 @@ export function icuDataIdentity(versionHeader: string, typesHeader: string) {
 }
 
 function checkCommonData(data: Buffer, packageName: string) {
-  if (data.length < 28 || data[2] !== 0xda || data[3] !== 0x27 ||
-      data[8] !== 0 || data[9] !== 0 || data[10] !== 2 ||
-      data.toString('ascii', 12, 16) !== 'CmnD' || data[16] !== 1) {
+  if (
+    data.length < 28 ||
+    data[2] !== 0xda ||
+    data[3] !== 0x27 ||
+    data[8] !== 0 ||
+    data[9] !== 0 ||
+    data[10] !== 2 ||
+    data.toString('ascii', 12, 16) !== 'CmnD' ||
+    data[16] !== 1
+  ) {
     throw new Error('Expected ICU little-endian ASCII common data (CmnD v1)');
   }
   const headerSize = data.readUInt16LE(0);
@@ -34,9 +47,14 @@ function checkCommonData(data: Buffer, packageName: string) {
     const nameOffset = data.readUInt32LE(entry);
     const itemOffset = data.readUInt32LE(entry + 4);
     const nameEnd = data.indexOf(0, headerSize + nameOffset);
-    if (nameOffset < tableEnd || itemOffset <= nameOffset ||
-        headerSize + itemOffset >= data.length || itemOffset % 16 !== 0 ||
-        nameEnd < 0 || nameEnd >= headerSize + itemOffset) {
+    if (
+      nameOffset < tableEnd ||
+      itemOffset <= nameOffset ||
+      headerSize + itemOffset >= data.length ||
+      itemOffset % 16 !== 0 ||
+      nameEnd < 0 ||
+      nameEnd >= headerSize + itemOffset
+    ) {
       throw new Error('Invalid ICU common-data item offsets');
     }
     const name = data.toString('ascii', headerSize + nameOffset, nameEnd);
@@ -45,7 +63,12 @@ function checkCommonData(data: Buffer, packageName: string) {
   }
 }
 
-export function icuDataObject(data: Buffer, versionHeader: string, typesHeader: string, machine: string) {
+export function icuDataObject(
+  data: Buffer,
+  versionHeader: string,
+  typesHeader: string,
+  machine: string,
+) {
   if (machine !== 'amd64') throw new Error(`Unsupported ICU COFF machine: ${machine}`);
   const { symbol, packageName } = icuDataIdentity(versionHeader, typesHeader);
   checkCommonData(data, packageName);
@@ -85,8 +108,13 @@ if (import.meta.main) {
   const [dataPath, versionPath, typesPath, machine, output] = process.argv.slice(2);
   if (!dataPath || !versionPath || !typesPath || !machine || !output)
     throw new Error('Expected data, uvernum.h, utypes.h, machine, output.obj');
-  writeFileSync(output, icuDataObject(
-    readFileSync(dataPath), readFileSync(versionPath, 'utf8'),
-    readFileSync(typesPath, 'utf8'), machine,
-  ));
+  writeFileSync(
+    output,
+    icuDataObject(
+      readFileSync(dataPath),
+      readFileSync(versionPath, 'utf8'),
+      readFileSync(typesPath, 'utf8'),
+      machine,
+    ),
+  );
 }

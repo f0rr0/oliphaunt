@@ -1,5 +1,9 @@
+load("//build_defs/quality:sources.bzl", "rust_quality_files", "source_quality_files")
 load("//build_defs/wasix/postmaster:rust.bzl", "postmaster_rust_targets")
-load("//build_defs/wasix/postmaster:release-asset.bzl", "postmaster_linux_release_asset")
+load("//build_defs/wasix/postmaster:release-asset.bzl", "postmaster_linux_release_asset", "postmaster_release_family")
+load("//build_defs/wasix/postmaster:host-carrier.bzl", "postmaster_imported_host_carrier")
+load("//build_defs/wasix/postmaster:sealing.bzl", "postmaster_sealed_profile_test")
+load("//build_defs/wasix/postmaster:runtime-test.bzl", "postmaster_runtime_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -31,3 +35,59 @@ postmaster_rust_targets(
 )
 
 postmaster_linux_release_asset()
+postmaster_release_family()
+
+# These are the sole actual test instances. The original source-repository
+# labels remain aliases, so old callers run the same behavior once.
+postmaster_sealed_profile_test(
+    name = "linux_sealed_profile_test",
+    main = "@postmaster_postgres//:postgres_seed",
+    sealed = "@postmaster_postgres//:sealed_modules",
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+    tags = ["manual"],
+    size = "small",
+)
+
+postmaster_runtime_test(
+    name = "linux_runtime_test",
+    carrier = "@postmaster_postgres//:native_carrier",
+    target_compatible_with = ["@platforms//cpu:wasm32", "@platforms//os:wasi"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+    tags = ["manual"],
+    size = "medium",
+    timeout = "long",
+)
+
+# Exercise the imported writer path against an actual Linux public archive.
+# Existing AOT may be reused only because the writer verifies every imported
+# module's digest against that AOT's declared receipt.
+postmaster_imported_host_carrier(
+    name = "linux_imported",
+    target = "linux-x64-gnu",
+    archive = ":linux_x64_gnu_release_asset",
+    aot_modules = "@postmaster_postgres//:aot_modules",
+    aot_receipts = "@postmaster_postgres//:aot_receipts",
+    native_platform = "//build_defs/native:linux_x86_64_glibc_2_28",
+    execution = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+)
+
+# LLVM22 is an internal host compiler input. The executor and native client
+# retain the public Linux glibc floor through their explicit transition.
+platform(name = "compiler_linux_arm64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64", "@zig_sdk//libc:gnu.2.34"])
+platform(name = "native_macos_arm64", constraint_values = ["@platforms//os:macos", "@platforms//cpu:aarch64"])
+
+postmaster_imported_host_carrier(
+    target = "linux-arm64-gnu",
+    native_platform = "//build_defs/native:linux_aarch64_glibc_2_28",
+    execution = ["@platforms//os:linux", "@platforms//cpu:aarch64", "@zig_sdk//libc:gnu.2.34"],
+)
+
+postmaster_imported_host_carrier(
+    target = "macos-arm64",
+    native_platform = ":native_macos_arm64",
+    execution = ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+)
+
+source_quality_files()
+
+rust_quality_files()

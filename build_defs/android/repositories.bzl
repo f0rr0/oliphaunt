@@ -29,7 +29,7 @@ def _android_ndk_impl(ctx):
 android_ndk_repository = repository_rule(
     implementation = _android_ndk_impl,
     attrs = {
-        "manifest": attr.label(default = Label("//:tools/dev/android-sdk.toml"), allow_single_file = True),
+        "manifest": attr.label(default = Label("//tools/dev:android-sdk.toml"), allow_single_file = True),
         "converter": attr.label(default = Label("//build_defs/android:metadata.mts"), allow_single_file = True),
         "policy": attr.label(default = Label("//tools/release:platform-compatibility-policy.mts"), allow_single_file = True),
         "bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),

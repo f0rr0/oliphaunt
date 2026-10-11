@@ -1,3 +1,4 @@
+load("//build_defs/quality:sources.bzl", "source_quality_files")
 load("//build_defs/resources:resources.bzl", "linux_resource_slice", "linux_resource_test", "native_resource_test", "resource_compile_data", "wasix_resource_slice", "wasix_resource_test")
 load("//build_defs/resources:mobile.bzl", "android_resource_slice", "ios_resource_slice", "native_abi_receipt")
 load("//build_defs/android:toolchain.bzl", "android_artifact")
@@ -47,3 +48,5 @@ wasix_resource_test(name = "wasix_resource_test")
 
 linux_resource_test(name = "linux_resource_test")
 native_resource_test(name = "native_resource_test")
+
+source_quality_files()

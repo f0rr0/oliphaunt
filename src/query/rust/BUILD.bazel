@@ -1,4 +1,5 @@
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//build_defs/quality:sources.bzl", "rust_quality_files")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rust_library", "rust_test")
 load("@oliphaunt_toolchain_metadata//:query-rust.bzl", "QUERY_RUST_CRATE_NAME", "QUERY_RUST_EDITION", "QUERY_RUST_ENV", "QUERY_RUST_VERSION")
 load("//build_defs/query:defs.bzl", "cargo_consumer_test")
 load("//build_defs/languages:source.bzl", "cargo_source_package")
@@ -30,6 +31,7 @@ rust_test(
 )
 
 cargo_source_package(product = "oliphaunt-query")
+rust_clippy_test(name = "clippy_test", targets = [":oliphaunt_query", ":unit_test"], transitive = False, size = "small")
 
 cargo_consumer_test(
     name = "consumer_test",
@@ -38,3 +40,5 @@ cargo_consumer_test(
     manifest = "//build_defs/query:consumer/Cargo.toml",
     source = "//build_defs/query:consumer/main.rs",
 )
+
+rust_quality_files()

@@ -1183,15 +1183,46 @@ they cannot certify a different package constructed on Linux. The final-file
 transport and target-host/device consumption gates must bind their results to
 the original frozen bytes before the cross-target paths can cut over.
 
-Completed-history preparation now uses exact captured Git ancestry and verified
-publication boundaries, with real merge/clock-skew regressions. Existing
-qualification and frozen publication remain active. The hosted native workflow
-qualifies an exact source commit; its platform results are required before the
-corresponding cutover. No registry mutation or release cutover was performed. Complete declared
-toolchain and execution identity, remaining runtime/extension profiles,
-Android/Apple package rules, final carriers, seed freeze/compatibility and release-hook
-integration remain concrete acceptance work. The completed-source package bridge
-compares authenticated delivered bytes and reports release necessity as
-unverified. A changed VCS stamp can change an archive without changing its
-consumed source; delivery differences cannot become release decisions. Trusted
-completed construction inputs are still required for causal release selection.
+The next checkpoint adds both Android extension ABIs and the three Apple
+extension profiles to the existing construction graph. Both Android ABIs pass
+the eight-distribution final-carrier checks and link all compiled members
+against their public C API. Maven payloads match their canonical GitHub archive
+bytes. Actual Android device execution and Apple construction/installed
+execution are separate pending qualifications. The full Apple XCFramework
+carrier uses the canonical owner inventory; authored targets alone do not
+establish successful construction.
+
+The WASIX Node-API release feature resolves its held public SDK, runtime and
+contrib requirements through conventional Cargo metadata. Its real Linux
+package passes direct, actor and TCP SQL, contrib lifecycle, persistence and
+backup/restore checks. The other three hosts remain required. Shipping exports
+now declare their qualification tests as Bazel dependencies; the coordinator
+requires PASS for those exact configured tests in the captured invocation.
+The installed browser lifecycle is a Bazel test in that invocation. Its local,
+external tags require a fresh observed Chrome execution while allowing package
+construction actions to reuse their cache.
+
+Source qualification now declares repository-owned Biome/rustfmt inputs,
+conventional TypeScript configurations, Rust compile roots and meaningful
+doctests. These source checks exclude generated carrier outputs and retain
+the conventional dependency features. Full Rust aggregate qualification is
+required; a discovered published adapter sandbox-path defect is not grounds
+for excluding an owner. Kotlin, documentation/application checks and complete
+native affectedness planning still require integration before Moon can retire.
+
+Completed-history preparation uses exact captured Git ancestry and verified
+publication boundaries, with merge/clock-skew regressions. The baseline bridge
+also handles the genuine historical contrib declarations and Swift source tag,
+authenticating their completed publication and suppliers before comparison.
+It does not invent a historical Bazel graph or a source archive that was never
+published. A changed VCS stamp or freshly bootstrapped PGDATA archive can change
+bytes without justifying a release; causal source equality and reuse of
+authenticated frozen deliveries still need live release-controller integration.
+
+Existing Moon qualification, Release Please versioning and release selection
+remain active. The native workflow qualifies an exact source commit; platform
+results from an earlier commit do not qualify the next checkpoint. Remaining
+WASIX extension families, foreign/device consumers, final inventory coverage,
+declared toolchain identity and the shared necessary-delivery decision must pass
+before that authority changes. No registry mutation, public version bump or
+release cutover was performed.

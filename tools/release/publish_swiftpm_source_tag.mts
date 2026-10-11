@@ -118,7 +118,8 @@ async function prepare(scratch, argv) {
   const files = [];
   if (args.manifest) {
     const manifest = path.resolve(args.manifest);
-    const text = readFileSync(manifest, 'utf8');
+    const manifestBytes = readFileSync(manifest);
+    const text = manifestBytes.toString('utf8');
     if (!resource && (!text.includes('binaryTarget(') || !text.includes('liboliphaunt-native-v')))
       throw new Error(
         'SwiftPM release manifest must contain a checksum-pinned liboliphaunt binaryTarget',
@@ -135,7 +136,14 @@ async function prepare(scratch, argv) {
           const file = path.join(directory, entry.name);
           const relative = path.relative(root, file).split(path.sep).join('/');
           if (resource && relative === 'Package.swift') continue;
-          if (relative === 'Package.swift' || relative.split('/').includes('.git'))
+          if (relative === 'Package.swift') {
+            if (!entry.isFile() || !readFileSync(file).equals(manifestBytes))
+              throw new Error(
+                'SwiftPM tree Package.swift differs from the frozen release manifest',
+              );
+            continue;
+          }
+          if (relative.split('/').includes('.git'))
             throw new Error('forbidden SwiftPM generated path: ' + relative);
           if (entry.isDirectory()) visit(file);
           else if (entry.isFile()) files.push(file, relative);
