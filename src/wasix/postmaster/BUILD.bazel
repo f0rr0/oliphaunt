@@ -1,8 +1,11 @@
 load("//build_defs/wasix/postmaster:rust.bzl", "postmaster_rust_targets")
+load("//build_defs/wasix/postmaster:release-asset.bzl", "postmaster_linux_release_asset")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "README.md",
+    "bin/run-release-carrier.sh",
     "release.toml",
     "executor/Cargo.toml",
     "executor/Cargo.lock",
@@ -26,3 +29,5 @@ filegroup(name = "postgres_overlays", srcs = glob(["postgres/overlays/wasix-core
 postmaster_rust_targets(
     library_sources = glob(["executor/src/**/*.rs"], exclude = ["executor/src/bin/**/*.rs"]),
 )
+
+postmaster_linux_release_asset()
