@@ -9,21 +9,23 @@ import {
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import {
-  createCompletedPublicationChecker,
   type CompletedPublication,
+  createCompletedPublicationChecker,
 } from './completed-release-publication.mts';
 import { requestGithubPages, requestGithubRepositoryJson } from './github-read.mts';
 import { nativeOutputPath } from './native-publication-artifacts.mts';
+import type { observeNativePublicationConstruction } from './native-publication-observation.mts';
 import {
-  nativePayloadDigest,
   type NativeDeliveryVerification,
   type NativePayloadCohort,
   type NativePayloads,
+  nativePayloadDigest,
 } from './native-publication-payloads.mts';
 import {
   captureNativeOutputMembers,
   type NativeOutputMember,
 } from './native-publication-staging.mts';
+import type { compareNativeCompletedSourceDelivery } from './native-source-carrier-changes.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
 import { expectedProductArtifactRows } from './publication-lock.mts';
 import { requestReleaseAssetProof } from './verify_github_release_attestations.mts';
@@ -39,6 +41,7 @@ type Artifact = {
 };
 type Source = { commit: string; tree: string };
 type DeliveredRoot = NativeDeliveryVerification['deliveredPayloads'][number];
+type DeliveredMember = { path: string; mode: number };
 const kinds = new Map([
   ['liboliphaunt-native', 'native-runtime'],
   ['postgres-tools-native', 'native-tools'],
@@ -57,6 +60,40 @@ const same = (left: unknown, right: unknown) => canonical(left) === canonical(ri
 const sortedMembers = (members: NativeOutputMember[]) =>
   members.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
+/** Exact inner member equality, independent of producer labels, actions and outer envelopes. */
+export function differentNativeDeliveredMembers(
+  before: readonly DeliveredMember[],
+  after: readonly DeliveredMember[],
+) {
+  const index = (members: readonly DeliveredMember[]) => {
+    const result = new Map<string, string>();
+    for (const member of members) {
+      if (
+        typeof member.path !== 'string' ||
+        (member.path !== '' &&
+          (member.path.startsWith('/') ||
+            member.path.includes('\\') ||
+            /[\u0000-\u001f\u007f]/u.test(member.path) ||
+            member.path.split('/').some((part) => !part || part === '.' || part === '..'))) ||
+        !Number.isInteger(member.mode) ||
+        member.mode < 0 ||
+        member.mode > 0o777 ||
+        result.has(member.path)
+      )
+        throw new Error('native delivery member identity is unsafe, duplicate or has invalid mode');
+      // Keep every adapter-supplied identity field. Source-envelope adapters
+      // neutralize only their typed own identity before calling this function.
+      result.set(member.path, canonical(member));
+    }
+    return result;
+  };
+  const old = index(before);
+  const current = index(after);
+  return [...new Set([...old.keys(), ...current.keys()])]
+    .filter((name) => old.get(name) !== current.get(name))
+    .sort();
+}
+
 function exactSource(source: Source) {
   if (![source?.commit, source?.tree].every((sha) => /^[a-f0-9]{40}$/u.test(sha ?? '')))
     throw new Error('native archive delivery requires exact source commit/tree');
@@ -69,8 +106,9 @@ function rows(products = loadPublicationCatalog('native archive delivery').produ
 }
 
 function memberIdentities(file: string): NativeOutputMember[] {
-  // The retained reader omits the archive's "." root marker. The existing
-  // archiveDirectory contract always supplies that directory with mode 0755.
+  // This is the installed-tree contract, not the TAR wrapper header. Both
+  // retained extractors force the destination root to 0755, including ZIPs
+  // without a root marker; all actual inner paths and modes remain below.
   const members: NativeOutputMember[] = [{ path: '', type: 'directory', mode: 0o755 }];
   for (const entry of readPortableArchiveEntries(file).values()) {
     const memberPath = entry.name.replace(/\/$/u, '');
@@ -397,6 +435,8 @@ export function compareCompletedNativeArchiveDelivery(
 ) {
   return {
     scope: 'construction' as const,
+    source: current.source,
+    currentArchives: current.products.flatMap(({ archives }) => archives),
     releaseDecision: 'unverified' as const,
     products: current.products.map((product) => {
       const matches = origins.filter((origin) => origin.publication.product === product.product);
@@ -413,16 +453,146 @@ export function compareCompletedNativeArchiveDelivery(
         )
       )
         return { product: product.product, deliveryStatus: 'unknown' as const };
-      const identical = after.every((root) =>
-        same(
-          root.outputs[0].members,
-          before.find(({ target }) => target === root.configuration)!.members,
-        ),
+      const identical = after.every(
+        (root) =>
+          !differentNativeDeliveredMembers(
+            root.outputs[0].members,
+            before.find(({ target }) => target === root.configuration)!.members,
+          ).length,
       );
       return {
         product: product.product,
         deliveryStatus: identical ? ('identical' as const) : ('different' as const),
       };
     }),
+  };
+}
+
+/**
+ * One pre-version comparison for the supported completed delivery bridges.
+ * Invoke before version updates or controller metadata sealing. Changed inputs
+ * and action definitions request checks only. Neither physical equality nor
+ * observed successful tests supply the still-missing native admission contract.
+ */
+export function compareNativePreVersionDelivery({
+  source,
+  products,
+  archives,
+  sources,
+  affectedProducts,
+  observation,
+}: {
+  source: Source;
+  products: string[];
+  archives?: ReturnType<typeof compareCompletedNativeArchiveDelivery>;
+  sources?: Awaited<ReturnType<typeof compareNativeCompletedSourceDelivery>>;
+  affectedProducts?: string[];
+  observation?: Awaited<ReturnType<typeof observeNativePublicationConstruction>>;
+}) {
+  exactSource(source);
+  if (!Array.isArray(products) || new Set(products).size !== products.length)
+    throw new Error('native pre-version comparison requires unique explicit products');
+  const catalog = loadPublicationCatalog('native pre-version delivery', { products });
+  for (const comparison of [archives, sources]) {
+    if (!comparison) continue;
+    if (comparison.scope !== 'construction' || !same(comparison.source, source))
+      throw new Error('native pre-version comparison differs from its captured source');
+    if (
+      new Set(comparison.products.map(({ product }) => product)).size !== comparison.products.length
+    )
+      throw new Error('ambiguous native pre-version product comparison');
+    if (comparison.products.some(({ product }) => !products.includes(product)))
+      throw new Error('native pre-version comparison exceeds explicit product inventory');
+  }
+  const qualificationUnknowns = [
+    'immutable input lifetime and loaded-analysis provenance',
+    'admitted complete product-specific qualification and delivery contract',
+  ];
+  if (observation) {
+    if (!observation.authenticated.length || !observation.coverage.completeProductInventory)
+      throw new Error('native pre-version observation has incomplete frozen inventory');
+    if (!same(observation.products.map(({ product }) => product.id).sort(), [...products].sort()))
+      throw new Error('native pre-version observation differs from product inventory');
+    for (const build of observation.authenticated) {
+      if (
+        !same(build.evidence.source, source) ||
+        !same(build.qualification.source, source) ||
+        build.qualification.testQualification !== 'passed' ||
+        !build.qualification.requiredTests.length
+      )
+        throw new Error('native pre-version observation differs from source/configured tests');
+      qualificationUnknowns.push(...build.qualification.unverified);
+    }
+  }
+  const results = catalog.products.map((product) => {
+    const sourceDelivery = sources?.products.find((row) => row.product === product.id);
+    const archiveDelivery = archives?.products.find((row) => row.product === product.id);
+    let deliveryStatus = 'unknown' as 'unknown' | 'identical' | 'different';
+    let reason = 'completed-delivery-origin-or-contract-missing';
+    if (sourceDelivery && sourceDelivery.deliveryStatus !== 'unknown') {
+      deliveryStatus = sourceDelivery.deliveryStatus as 'identical' | 'different';
+      reason = 'source-envelope-members-compared';
+      if (observation) {
+        const observed = observation.products.find(({ product: row }) => row.id === product.id);
+        if (
+          !observed ||
+          observed.product.version !== product.version ||
+          observed.productArtifacts.length
+        )
+          throw new Error('source delivery observation has a different identity or output class');
+        for (const carrier of sourceDelivery.carriers ?? []) {
+          const actual = observed.carriers.filter(({ id }) => id === carrier.carrier);
+          if (actual.length !== 1 || !same(actual[0].artifacts, [carrier.currentArtifact]))
+            throw new Error('source comparison differs from qualified physical envelope');
+        }
+        if (observed.carriers.length !== sourceDelivery.carriers?.length)
+          throw new Error('source comparison has incomplete qualified carrier inventory');
+      }
+    } else if (archiveDelivery) {
+      // These bridges currently map the two native GitHub archive families.
+      // Their registry facades/parts and contrib carriers are separate public
+      // contracts, so an identical archive must not certify the whole product.
+      reason = 'remaining-public-carrier-contracts-unmapped';
+      if (observation) {
+        const observed = observation.products.find(({ product: row }) => row.id === product.id);
+        if (!observed || observed.product.version !== product.version)
+          throw new Error('archive delivery observation has a different identity');
+        for (const archive of archives?.currentArchives.filter(
+          (row) => row.product === product.id,
+        ) ?? []) {
+          const actual = observed.productArtifacts.filter(({ id }) => id === archive.id);
+          if (
+            actual.length !== 1 ||
+            actual[0].name !== archive.name ||
+            actual[0].kind !== archive.kind ||
+            actual[0].target !== archive.target ||
+            actual[0].sha256 !== archive.sha256 ||
+            actual[0].size !== archive.size
+          )
+            throw new Error('archive comparison differs from qualified physical envelope');
+        }
+      }
+    } else if (sourceDelivery) reason = sourceDelivery.reason ?? reason;
+    return {
+      product: product.id,
+      affectedBuild:
+        affectedProducts === undefined
+          ? ('unknown' as const)
+          : affectedProducts.includes(product.id)
+            ? ('required' as const)
+            : ('not-required' as const),
+      deliveryStatus,
+      ...(archiveDelivery ? { archiveDeliveryStatus: archiveDelivery.deliveryStatus } : {}),
+      configuredTests: observation ? ('observed-passed' as const) : ('unverified' as const),
+      necessaryDelivery: 'unknown' as const,
+      reason,
+    };
+  });
+  return {
+    scope: 'construction' as const,
+    source,
+    releaseDecision: 'unverified' as const,
+    products: results,
+    unverified: [...new Set(qualificationUnknowns)],
   };
 }

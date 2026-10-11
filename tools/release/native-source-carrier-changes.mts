@@ -5,10 +5,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import {
-  createCompletedPublicationChecker,
   type CompletedPublication,
+  createCompletedPublicationChecker,
 } from './completed-release-publication.mts';
 import { requestGithubRepositoryJson } from './github-read.mts';
+import { differentNativeDeliveredMembers } from './native-publication-delivery.mts';
 import { validatePublicationCandidate } from './publication-lock.mts';
 import { verifyRegistryCarrierIntegrity } from './registry-integrity.mts';
 import { syncTomlStringPath } from './sync-release-pr.mts';
@@ -77,7 +78,7 @@ function cargoLockOwnVersion(text: string, name: string, version: string) {
 
 function npmOwnVersion(text: string, version: string) {
   // Token positions preserve every other byte, including nested dependency versions.
-  const tokens = [...text.matchAll(/"(?:\\.|[^"\\])*"|[{}\[\]:,]/gu)];
+  const tokens = [...text.matchAll(/"(?:\\.|[^"\\])*"|[{}[\]:,]/gu)];
   let depth = 0;
   const own = [];
   for (const [index, token] of tokens.entries()) {
@@ -104,10 +105,66 @@ function npmOwnVersion(text: string, version: string) {
   );
 }
 
+function cargoVcsCommitDiagnostic(text: string) {
+  // Cargo documents this as best-effort provenance, not source authentication:
+  // https://doc.rust-lang.org/cargo/commands/cargo-package.html
+  // A crate can nevertheless read this file. This projection is diagnostic;
+  // it is never an admitted delivery contract or a release-selection input.
+  const value = JSON.parse(text);
+  const object = (row: any) => row && typeof row === 'object' && !Array.isArray(row);
+  requireValue(
+    object(value) &&
+      object(value.git) &&
+      Object.keys(value).sort().join(',') === 'git,path_in_vcs' &&
+      ['sha1', 'dirty,sha1'].includes(Object.keys(value.git).sort().join(',')) &&
+      fullSha.test(value.git.sha1) &&
+      (value.git.dirty === undefined || value.git.dirty === false) &&
+      typeof value.path_in_vcs === 'string' &&
+      (value.path_in_vcs === '' ||
+        (!value.path_in_vcs.startsWith('/') &&
+          !/[\\\u0000-\u001f\u007f]/u.test(value.path_in_vcs) &&
+          !value.path_in_vcs.split('/').some((part) => !part || part === '.' || part === '..'))),
+    'Cargo VCS diagnostic requires a supported clean record and safe path_in_vcs',
+  );
+  const tokens = [...text.matchAll(/"(?:\\.|[^"\\])*"|[{}[\]:,]/gu)];
+  let depth = 0;
+  const keys = [[], []] as string[][];
+  const stamps = [];
+  for (const [index, token] of tokens.entries()) {
+    if (token[0] === '{' || token[0] === '[') depth++;
+    else if (token[0] === '}' || token[0] === ']') depth--;
+    else if (
+      token[0].startsWith('"') &&
+      ['{', ','].includes(tokens[index - 1]?.[0]) &&
+      tokens[index + 1]?.[0] === ':'
+    ) {
+      requireValue(depth === 1 || depth === 2, 'unsupported Cargo VCS diagnostic nesting');
+      const key = JSON.parse(token[0]);
+      keys[depth - 1].push(key);
+      if (depth === 2 && key === 'sha1') stamps.push(tokens[index + 2]);
+    }
+  }
+  requireValue(
+    keys[0].sort().join(',') === 'git,path_in_vcs' &&
+      keys[1].sort().join(',') === Object.keys(value.git).sort().join(',') &&
+      stamps.length === 1 &&
+      JSON.parse(stamps[0][0]) === value.git.sha1,
+    'Cargo VCS diagnostic has duplicate or unsupported fields',
+  );
+  const stamp = stamps[0];
+  // Retain whitespace, path_in_vcs, dirty:false, modes, and every other member.
+  return (
+    text.slice(0, stamp.index) +
+    JSON.stringify('0'.repeat(40)) +
+    text.slice(stamp.index + stamp[0].length)
+  );
+}
+
 /** Compare all shipped members, with only typed own package identities neutralized. */
 export function sourceCarrierMembers(
   file: string,
   carrier: { ecosystem: string; name: string; version: string },
+  { cargoVcsCommit = 'preserve' }: { cargoVcsCommit?: 'preserve' | 'provenance-diagnostic' } = {},
 ) {
   const entries = readPortableArchiveEntries(file);
   const prefix = carrier.ecosystem === 'cargo' ? `${carrier.name}-${carrier.version}/` : 'package/';
@@ -151,6 +208,8 @@ export function sourceCarrierMembers(
           bytes = Buffer.from(
             cargoLockOwnVersion(utf8.decode(bytes), carrier.name, carrier.version),
           );
+        else if (member === '.cargo_vcs_info.json' && cargoVcsCommit === 'provenance-diagnostic')
+          bytes = Buffer.from(cargoVcsCommitDiagnostic(utf8.decode(bytes)));
       } else if (entry.isFile && member === 'package.json') {
         bytes = Buffer.from(npmOwnVersion(utf8.decode(bytes), carrier.version));
       }
@@ -183,6 +242,7 @@ export async function compareNativeCompletedSourceDelivery(
     readJson = requestGithubRepositoryJson,
     assertCompletedPublication = createCompletedPublicationChecker({ repository }),
     registryOptions = {},
+    cargoVcsCommitDiagnostic: vcsDiagnostic = false,
   } = {},
 ) {
   requireValue(
@@ -319,12 +379,34 @@ export async function compareNativeCompletedSourceDelivery(
       const before = sourceCarrierMembers(publishedFile, published);
       const after = sourceCarrierMembers(artifactFile(current.artifacts[0]), current);
       const registryProof = await verifyRegistryCarrierIntegrity(published, registryOptions);
-      const beforeByMember = new Map(before.map((row) => [row.member, stable(row)]));
-      const afterByMember = new Map(after.map((row) => [row.member, stable(row)]));
-      const differentMembers = [...new Set([...beforeByMember.keys(), ...afterByMember.keys()])]
-        .filter((member) => beforeByMember.get(member) !== afterByMember.get(member))
-        .sort();
-      changes.push({ carrier: current.id, differentMembers, registryProof });
+      const identity = ({ member, ...row }) => ({
+        ...row,
+        path: member === '.' ? '' : member.replace(/\/$/u, ''),
+      });
+      const differentMembers = differentNativeDeliveredMembers(
+        before.map(identity),
+        after.map(identity),
+      ).map((member) => member || '.');
+      const provenanceDiagnostic = vcsDiagnostic
+        ? {
+            differentMembers: differentNativeDeliveredMembers(
+              sourceCarrierMembers(publishedFile, published, {
+                cargoVcsCommit: 'provenance-diagnostic',
+              }).map(identity),
+              sourceCarrierMembers(artifactFile(current.artifacts[0]), current, {
+                cargoVcsCommit: 'provenance-diagnostic',
+              }).map(identity),
+            ).map((member) => member || '.'),
+            releaseDecision: 'unverified' as const,
+          }
+        : undefined;
+      changes.push({
+        carrier: current.id,
+        currentArtifact: current.artifacts[0],
+        differentMembers,
+        registryProof,
+        ...(provenanceDiagnostic === undefined ? {} : { provenanceDiagnostic }),
+      });
     }
     products.push({
       product: product.id,

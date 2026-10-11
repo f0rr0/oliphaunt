@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { readPortableArchiveEntries } from '../packaging/portable-archive.mts';
 import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
 import { createCompletedPublicationChecker } from './completed-release-publication.mts';
+import { compareNativePreVersionDelivery } from './native-publication-delivery.mts';
 import {
   compareNativeCompletedSourceDelivery,
   sourceCarrierMembers,
 } from './native-source-carrier-changes.mts';
-import { buildPublicationCandidate, freezePublicationCandidate } from './publication-lock.mts';
 import { loadPublicationCatalog } from './publication-catalog.mts';
+import { buildPublicationCandidate, freezePublicationCandidate } from './publication-lock.mts';
 
 const fixture = fileURLToPath(new URL('./testdata/native-source-carriers/', import.meta.url));
 const captured = JSON.parse(readFileSync(path.join(fixture, 'captured-publication.json'), 'utf8'));
@@ -172,6 +173,55 @@ test('authentic completed tagged publications and registry bytes bridge source p
   );
 });
 
+test('pre-version source comparison binds observed physical inventory without admitting fixture qualification', async () => {
+  const input = candidate();
+  const sources = await compareNativeCompletedSourceDelivery(input, baselines, environment());
+  // This object exercises binding only; authenticated production observations
+  // must come from observeNativePublicationConstruction and its real read gate.
+  const observation: any = {
+    coverage: { completeProductInventory: true },
+    authenticated: [
+      {
+        evidence: { source: input.source },
+        qualification: {
+          source: input.source,
+          testQualification: 'passed',
+          requiredTests: [{ label: '//fixture:test', configuration: 'a'.repeat(64) }],
+          unverified: ['fixture origin is unverified'],
+        },
+      },
+    ],
+    products: input.products.map((product) => ({
+      product,
+      productArtifacts: [],
+      carriers: structuredClone(input.carriers.filter((carrier) => carrier.product === product.id)),
+    })),
+  };
+  const result = compareNativePreVersionDelivery({
+    source: input.source,
+    products: Object.keys(baselines),
+    sources,
+    observation,
+  });
+  assert.ok(
+    result.products.every(
+      ({ deliveryStatus, necessaryDelivery }) =>
+        deliveryStatus === 'identical' && necessaryDelivery === 'unknown',
+    ),
+  );
+  observation.products[0].carriers[0].artifacts[0].sha256 = 'f'.repeat(64);
+  assert.throws(
+    () =>
+      compareNativePreVersionDelivery({
+        source: input.source,
+        products: Object.keys(baselines),
+        sources,
+        observation,
+      }),
+    /qualified physical envelope/u,
+  );
+});
+
 test('neutralizes only typed Cargo own identity across manifest, original and lock', (t) => {
   const updated = repack(t, cargoFile, (rows) =>
     rows.map((row) => {
@@ -317,6 +367,73 @@ test('reports actual changed package members through the existing candidate adap
   assert.equal(report.releaseDecision, 'unverified');
 });
 
+test('seeded authentic source envelopes compare singleton and many products independently of requested checks', async (t) => {
+  let seed = 0x93c8079;
+  const random = () => {
+    seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+    return seed;
+  };
+  const witnessed = new Set<number>();
+  for (let scenario = 0; scenario < 12; scenario++) {
+    const mask = scenario < 4 ? scenario : (random() >>> 16) % 4;
+    witnessed.add(mask);
+    const directory = mkdtempSync(path.join(tmpdir(), 'native-source-many-products-'));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    for (const [index, file] of [cargoFile, npmFile].entries()) {
+      const rows = archiveRows(file).map((row) => {
+        if (!(mask & (1 << index))) return row;
+        const member = row.name
+          .replace(/^oliphaunt-query-0\.1\.1\//u, '')
+          .replace(/^package\//u, '');
+        if (member === 'README.md')
+          return {
+            ...row,
+            data: Buffer.concat([row.data, Buffer.from(`\nShipped documentation ${scenario}\n`)]),
+          };
+        return row;
+      });
+      writeFileSync(path.join(directory, path.basename(file)), tarArchive(rows));
+    }
+    const input = candidate([directory]);
+    const sources = await compareNativeCompletedSourceDelivery(input, baselines, environment());
+    // The request may arise from compiler/helper/input changes. It is separate
+    // from equality of the actual completed and candidate source envelopes.
+    const affectedProducts = scenario % 2 ? Object.keys(baselines) : [];
+    const result = compareNativePreVersionDelivery({
+      source: input.source,
+      products: Object.keys(baselines),
+      sources,
+      affectedProducts,
+    });
+    assert.deepEqual(
+      result.products.map(({ deliveryStatus }) => deliveryStatus),
+      [mask & 1 ? 'different' : 'identical', mask & 2 ? 'different' : 'identical'],
+    );
+    assert.ok(
+      result.products.every(
+        ({ affectedBuild }) =>
+          affectedBuild === (affectedProducts.length ? 'required' : 'not-required'),
+      ),
+    );
+    assert.ok(result.products.every(({ necessaryDelivery }) => necessaryDelivery === 'unknown'));
+    assert.equal(result.releaseDecision, 'unverified');
+    const singletonSources = await compareNativeCompletedSourceDelivery(
+      candidate([directory], ['oliphaunt-query']),
+      baselines,
+      environment(),
+    );
+    const singleton = compareNativePreVersionDelivery({
+      source: input.source,
+      products: ['oliphaunt-query'],
+      sources: singletonSources,
+      affectedProducts,
+    });
+    assert.equal(singleton.products.length, 1);
+    assert.equal(singleton.products[0].deliveryStatus, mask & 1 ? 'different' : 'identical');
+  }
+  assert.deepEqual([...witnessed].sort(), [0, 1, 2, 3]);
+});
+
 test('an unrelated-commit provenance stamp differs in delivery without asserting release necessity', async (t) => {
   const { commits, sourceTree, scope } = captured.provenanceOnlyExample;
   assert.notEqual(commits[0], commits[1]);
@@ -333,13 +450,130 @@ test('an unrelated-commit provenance stamp differs in delivery without asserting
   const report = await compareNativeCompletedSourceDelivery(
     candidate([path.dirname(updated)], ['oliphaunt-query']),
     baselines,
-    environment(),
+    { ...environment(), cargoVcsCommitDiagnostic: true },
   );
   assert.equal(report.products[0].deliveryStatus, 'different');
   assert.deepEqual(report.products[0].carriers[0].differentMembers, ['.cargo_vcs_info.json']);
+  assert.deepEqual(report.products[0].carriers[0].provenanceDiagnostic.differentMembers, []);
+  assert.equal(report.products[0].carriers[0].provenanceDiagnostic.releaseDecision, 'unverified');
   assert.equal(report.releaseDecision, 'unverified');
   assert.equal(Object.hasOwn(report, 'selectedProducts'), false);
   assert.ok(report.unverified.includes('completed native configured producer/input provenance'));
+  const preVersion = compareNativePreVersionDelivery({
+    source: report.source,
+    products: ['oliphaunt-query'],
+    sources: report,
+    affectedProducts: ['oliphaunt-query'],
+  });
+  assert.equal(preVersion.products[0].deliveryStatus, 'different');
+  assert.equal(preVersion.products[0].affectedBuild, 'required');
+  assert.equal(preVersion.products[0].necessaryDelivery, 'unknown');
+});
+
+test('Cargo commit diagnostic retains path, clean state, formatting, modes and member presence', (t) => {
+  const identity = (file: string) =>
+    sourceCarrierMembers(file, cargo, { cargoVcsCommit: 'provenance-diagnostic' });
+  const baseline = identity(cargoFile);
+  for (const transform of [
+    (text: string) => text.replace('src/query/rust', 'src/query/renamed'),
+    (text: string) => text.replace('"sha1":', '"dirty": false,\n    "sha1":'),
+    (text: string) => `${text}\n`,
+  ]) {
+    const changed = repack(t, cargoFile, (rows) =>
+      rows.map((row) =>
+        row.name.endsWith('/.cargo_vcs_info.json')
+          ? { ...row, data: Buffer.from(transform(row.data.toString())) }
+          : row,
+      ),
+    );
+    assert.deepEqual(differentMembers(baseline, identity(changed)), ['.cargo_vcs_info.json']);
+  }
+  const mode = repack(t, cargoFile, (rows) =>
+    rows.map((row) => (row.name.endsWith('/.cargo_vcs_info.json') ? { ...row, mode: 0o600 } : row)),
+  );
+  const absent = repack(t, cargoFile, (rows) =>
+    rows.filter((row) => !row.name.endsWith('/.cargo_vcs_info.json')),
+  );
+  assert.deepEqual(differentMembers(baseline, identity(mode)), ['.cargo_vcs_info.json']);
+  assert.deepEqual(differentMembers(baseline, identity(absent)), ['.cargo_vcs_info.json']);
+});
+
+test('Cargo provenance diagnostic rejects dirty, invalid, duplicate and unsupported records', (t) => {
+  const text = readPortableArchiveEntries(cargoFile)
+    .get('oliphaunt-query-0.1.1/.cargo_vcs_info.json')
+    .data()
+    .toString();
+  for (const invalid of [
+    text.replace('"sha1":', '"dirty": true, "sha1":'),
+    text.replace('79c340949f4121e962741b75d80e686b5ba023c2', 'invalid'),
+    text.replace('"sha1":', `"sha1": "${'a'.repeat(40)}", "sha1":`),
+    text.replace('"path_in_vcs":', '"path_in_vcs": "safe", "path_in_vcs":'),
+    text.replace('src/query/rust', '../outside'),
+    text.replace('"sha1":', '"other": 1, "sha1":'),
+    '{broken',
+  ]) {
+    const changed = repack(t, cargoFile, (rows) =>
+      rows.map((row) =>
+        row.name.endsWith('/.cargo_vcs_info.json') ? { ...row, data: Buffer.from(invalid) } : row,
+      ),
+    );
+    assert.throws(() =>
+      sourceCarrierMembers(changed, cargo, { cargoVcsCommit: 'provenance-diagnostic' }),
+    );
+  }
+  const malformed = repack(t, cargoFile, (rows) =>
+    rows.map((row) =>
+      row.name.endsWith('/.cargo_vcs_info.json')
+        ? { ...row, data: Buffer.concat([row.data, Buffer.from([0xff])]) }
+        : row,
+    ),
+  );
+  assert.throws(
+    () => sourceCarrierMembers(malformed, cargo, { cargoVcsCommit: 'provenance-diagnostic' }),
+    /encoded|UTF/u,
+  );
+});
+
+test('a crate can consume its VCS stamp; diagnostic equality never supplies an inert-source contract', (t) => {
+  const consumer = repack(t, cargoFile, (rows) =>
+    rows.map((row) =>
+      row.name.endsWith('/src/lib.rs')
+        ? {
+            ...row,
+            data: Buffer.from(
+              'pub const COMMIT: &str = include_str!("../.cargo_vcs_info.json");\n',
+            ),
+          }
+        : row,
+    ),
+  );
+  const changed = repack(t, consumer, (rows) =>
+    rows.map((row) =>
+      row.name.endsWith('/.cargo_vcs_info.json')
+        ? {
+            ...row,
+            data: Buffer.from(
+              row.data
+                .toString()
+                .replace('79c340949f4121e962741b75d80e686b5ba023c2', 'a'.repeat(40)),
+            ),
+          }
+        : row,
+    ),
+  );
+  assert.deepEqual(
+    differentMembers(sourceCarrierMembers(consumer, cargo), sourceCarrierMembers(changed, cargo)),
+    ['.cargo_vcs_info.json'],
+  );
+  assert.deepEqual(
+    differentMembers(
+      sourceCarrierMembers(consumer, cargo, { cargoVcsCommit: 'provenance-diagnostic' }),
+      sourceCarrierMembers(changed, cargo, { cargoVcsCommit: 'provenance-diagnostic' }),
+    ),
+    [],
+  );
+  // Diagnostic masking neither authenticates these repacked fixtures nor proves
+  // the new source's include_str! result is independent of that stamp.
 });
 
 test('missing origins stay unknown and incomplete candidates fail closed', async () => {

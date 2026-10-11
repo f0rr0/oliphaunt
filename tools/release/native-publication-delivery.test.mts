@@ -7,22 +7,30 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { archiveDirectory } from '../packaging/archive-directory.mts';
 import { packageEnvelope } from '../../build_defs/native/carriers/envelopes.mts';
 import {
   requiredRuntimeMemberPaths,
   requiredToolsMemberPaths,
 } from '../../src/native/runtime/tools/native-runtime-payload.mts';
+import { archiveDirectory } from '../packaging/archive-directory.mts';
+import {
+  extractPortableArchiveTree,
+  readPortableArchiveEntries,
+} from '../packaging/portable-archive.mts';
+import { tarArchive } from '../packaging/testdata/tar-fixture.mts';
 import type { CompletedPublication } from './completed-release-publication.mts';
 import {
   bindNativeArchiveDelivery,
   captureCompletedNativeArchiveDelivery,
   compareCompletedNativeArchiveDelivery,
+  compareNativePreVersionDelivery,
+  differentNativeDeliveredMembers,
 } from './native-publication-delivery.mts';
 import {
   captureNativePreEnvelopePayloads,
@@ -35,6 +43,24 @@ import { allArtifactTargets } from './release-artifact-targets.mts';
 const source = { commit: '1'.repeat(40), tree: '2'.repeat(40) };
 const hash = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
 const ids = ['liboliphaunt-native', 'postgres-tools-native'];
+
+test('canonical member equality preserves names, modes and every delivered identity field', () => {
+  const file = { path: 'public.bin', mode: 0o644, type: 'file', size: 1, sha256: 'a'.repeat(64) };
+  const directory = { path: '', mode: 0o755, type: 'directory' };
+  expect(differentNativeDeliveredMembers([directory, file], [file, directory])).toEqual([]);
+  for (const updated of [
+    { ...file, path: 'renamed.bin' },
+    { ...file, mode: 0o755 },
+    { ...file, sha256: 'b'.repeat(64) },
+    { ...file, size: 2 },
+    { ...file, type: 'directory' },
+  ])
+    expect(differentNativeDeliveredMembers([file], [updated]).length).toBeGreaterThan(0);
+  expect(() => differentNativeDeliveredMembers([file, file], [])).toThrow(/duplicate/);
+  expect(() => differentNativeDeliveredMembers([{ ...file, path: '../outside' }], [])).toThrow(
+    /unsafe/,
+  );
+});
 
 async function fixture(run) {
   const executionRoot = mkdtempSync(path.join(os.tmpdir(), 'native-delivered-members-'));
@@ -227,6 +253,250 @@ test('completed public member origin compares exact delivery while release neces
       ),
     ).toBe(true);
   });
+});
+
+test('archive wrapper root changes preserve the actual retained installed-tree contract', async () => {
+  await fixture(async ({ bind, catalog, files, executionRoot }) => {
+    const product = catalog.products[0];
+    const published = completedFixture(
+      product,
+      files.filter(({ row }) => row.product === product.id),
+    );
+    const origin = await captureCompletedNativeArchiveDelivery(published.input, published.options);
+    const file = files.find(
+      ({ row }) => row.product === product.id && row.name.endsWith('.tar.gz'),
+    );
+    if (!file) throw new Error('fixture has no native TAR archive');
+    const originalHash = hash(file.archive);
+    const inner = [...readPortableArchiveEntries(file.archive).values()].map((entry) => ({
+      name: entry.name + (entry.isDirectory ? '/' : ''),
+      type: entry.isDirectory ? '5' : '0',
+      mode: entry.mode,
+      data: entry.isFile ? entry.data() : Buffer.alloc(0),
+    }));
+    for (const [index, root] of [[{ name: './', type: '5', mode: 0o700 }], []].entries()) {
+      writeFileSync(file.archive, tarArchive([...root, ...inner]));
+      expect(hash(file.archive)).not.toBe(originalHash);
+      const destination = path.join(executionRoot, `installed-root-${index}`);
+      extractPortableArchiveTree(file.archive, destination);
+      expect(statSync(destination).mode & 0o777).toBe(0o755);
+      const current = bind();
+      expect(
+        current.products[0].archives.find(({ target }) => target === file.row.target)?.sha256,
+      ).toBe(hash(file.archive));
+      expect(
+        compareCompletedNativeArchiveDelivery(current, [origin]).products[0].deliveryStatus,
+      ).toBe('identical');
+    }
+  });
+});
+
+test('observed configured tests cannot bind a substituted archive envelope or source', async () => {
+  await fixture(async ({ bind, catalog, files }) => {
+    const origins = [];
+    for (const product of catalog.products) {
+      const published = completedFixture(
+        product,
+        files.filter(({ row }) => row.product === product.id),
+      );
+      origins.push(await captureCompletedNativeArchiveDelivery(published.input, published.options));
+    }
+    const archives = compareCompletedNativeArchiveDelivery(bind(), origins);
+    // Transport-shaped fixtures exercise only this comparison binding; they
+    // cannot authenticate a job, admit its contract or produce a release verdict.
+    const observation: any = {
+      coverage: { completeProductInventory: true },
+      authenticated: [
+        {
+          evidence: { source },
+          qualification: {
+            source,
+            testQualification: 'passed',
+            requiredTests: [{ label: '//fixture:test', configuration: 'a'.repeat(64) }],
+            unverified: ['fixture origin is unverified'],
+          },
+        },
+      ],
+      products: catalog.products.map((product) => ({
+        product,
+        carriers: [],
+        productArtifacts: archives.currentArchives.filter((row) => row.product === product.id),
+      })),
+    };
+    expect(
+      compareNativePreVersionDelivery({
+        source,
+        products: ids,
+        archives,
+        observation,
+      }).products.every(({ necessaryDelivery }) => necessaryDelivery === 'unknown'),
+    ).toBe(true);
+    observation.products[0].productArtifacts[0] = {
+      ...observation.products[0].productArtifacts[0],
+      sha256: 'f'.repeat(64),
+    };
+    expect(() =>
+      compareNativePreVersionDelivery({ source, products: ids, archives, observation }),
+    ).toThrow(/qualified physical envelope/);
+    observation.authenticated[0].evidence.source = { ...source, commit: 'f'.repeat(40) };
+    expect(() =>
+      compareNativePreVersionDelivery({ source, products: ids, archives, observation }),
+    ).toThrow(/source\/configured tests/);
+  });
+});
+
+test('seeded physical scenarios separate affected checks from zero, few and many archive changes', async () => {
+  await fixture(async ({ bind, catalog, files, executionRoot }) => {
+    const selected = catalog.products.map((product) => {
+      const file = files.find(({ row }) => row.product === product.id);
+      if (!file) throw new Error('fixture product has no public archive');
+      return file;
+    });
+    for (const file of selected) {
+      writeFileSync(
+        path.join(file.directory, 'consumed-compatibility.json'),
+        '{"nativeRuntime":"=0.3.2"}\n',
+      );
+      await file.pack();
+    }
+    const origins = [];
+    for (const product of catalog.products) {
+      const published = completedFixture(
+        product,
+        files.filter(({ row }) => row.product === product.id),
+      );
+      origins.push(await captureCompletedNativeArchiveDelivery(published.input, published.options));
+    }
+    let seed = 0x29493c80;
+    const random = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed;
+    };
+    const witnessed = new Set<number>();
+    for (let scenario = 0; scenario < 24; scenario++) {
+      const expected = new Map<string, string>();
+      const affected = [];
+      for (const [index, file] of selected.entries()) {
+        const variant = scenario < 8 ? (scenario + index) % 8 : random() % 8;
+        witnessed.add(variant);
+        if (random() & 1) affected.push(file.row.product);
+        const publicFile = path.join(file.directory, 'lib/public-interface.bin');
+        const renamed = path.join(file.directory, 'lib/renamed-interface.bin');
+        rmSync(renamed, { force: true });
+        rmSync(publicFile, { force: true });
+        writeFileSync(publicFile, `${file.row.product} lib/public-interface.bin exact bytes`);
+        chmodSync(path.join(file.directory, 'THIRD_PARTY_NOTICES.md'), 0o644);
+        writeFileSync(
+          path.join(file.directory, 'THIRD_PARTY_NOTICES.md'),
+          `${file.row.product} THIRD_PARTY_NOTICES.md exact bytes`,
+        );
+        writeFileSync(
+          path.join(file.directory, 'consumed-compatibility.json'),
+          '{"nativeRuntime":"=0.3.2"}\n',
+        );
+        if (variant === 1 || variant === 2) {
+          // Changed compiler source/action helper or controller stamp can request
+          // checks while the actual existing envelope writer delivers equal bytes.
+          writeFileSync(
+            path.join(executionRoot, 'changed-input.txt'),
+            `source/helper change ${random()}\n`,
+          );
+          writeFileSync(
+            path.join(executionRoot, 'controller-version.json'),
+            `{"version":"${scenario}.0.0"}\n`,
+          );
+          if (!affected.includes(file.row.product)) affected.push(file.row.product);
+        } else if (variant === 3) {
+          writeFileSync(
+            path.join(file.directory, 'THIRD_PARTY_NOTICES.md'),
+            'actual changed legal bytes',
+          );
+        } else if (variant === 4) {
+          writeFileSync(publicFile, 'actual compiled public version/interface changed');
+        } else if (variant === 5) {
+          writeFileSync(renamed, readFileSync(publicFile));
+          rmSync(publicFile);
+        } else if (variant === 7) {
+          writeFileSync(
+            path.join(file.directory, 'consumed-compatibility.json'),
+            '{"nativeRuntime":"=0.3.3"}\n',
+          );
+        }
+        if (variant !== 5) chmodSync(publicFile, variant === 6 ? 0o444 : 0o555);
+        await file.pack();
+        expected.set(file.row.product, [3, 4, 5, 7].includes(variant) ? 'different' : 'identical');
+      }
+      const archives = compareCompletedNativeArchiveDelivery(bind(), origins);
+      expect(archives.products.map((product) => [product.product, product.deliveryStatus])).toEqual(
+        catalog.products.map((product) => [product.id, expected.get(product.id)]),
+      );
+      const result = compareNativePreVersionDelivery({
+        source,
+        products: ids,
+        archives,
+        affectedProducts: affected,
+      });
+      expect(result.releaseDecision).toBe('unverified');
+      for (const product of result.products) {
+        expect(product.affectedBuild).toBe(
+          affected.includes(product.product) ? 'required' : 'not-required',
+        );
+        expect(product.archiveDeliveryStatus).toBe(expected.get(product.product));
+        // Registry parts/facades/contrib and mandatory qualification are not
+        // proved by the complete GitHub archive family, even when bytes match.
+        expect(product.deliveryStatus).toBe('unknown');
+        expect(product.necessaryDelivery).toBe('unknown');
+      }
+    }
+    expect([...witnessed].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+});
+
+test('pre-version comparison fails closed for absent seed mapping, origin, inventory and source substitution', () => {
+  const products = ['oliphaunt-query', 'database-resources'];
+  const missing = compareNativePreVersionDelivery({ source, products, affectedProducts: [] });
+  expect(
+    missing.products.every(
+      (product) => product.deliveryStatus === 'unknown' && product.necessaryDelivery === 'unknown',
+    ),
+  ).toBe(true);
+  expect(missing.products.every((product) => product.affectedBuild === 'not-required')).toBe(true);
+  expect(() =>
+    compareNativePreVersionDelivery({ source, products: [products[0], products[0]] }),
+  ).toThrow(/unique/);
+  expect(() =>
+    compareNativePreVersionDelivery({
+      source,
+      products: [products[0]],
+      archives: {
+        scope: 'construction',
+        source: { ...source, tree: 'f'.repeat(40) },
+        currentArchives: [],
+        releaseDecision: 'unverified',
+        products: [],
+      },
+    }),
+  ).toThrow(/captured source/);
+  expect(() =>
+    compareNativePreVersionDelivery({
+      source,
+      products: [products[0]],
+      archives: {
+        scope: 'construction',
+        source,
+        currentArchives: [],
+        releaseDecision: 'unverified',
+        products: [{ product: 'database-resources', deliveryStatus: 'identical' }],
+      },
+    }),
+  ).toThrow(/explicit product inventory/);
+  expect(() =>
+    compareNativePreVersionDelivery({
+      source,
+      products,
+      observation: { authenticated: [], coverage: { completeProductInventory: false } } as any,
+    }),
+  ).toThrow(/incomplete frozen inventory/);
 });
 
 test('missing root/final archive or configured coverage remains unknown; substitutions fail', async () => {
