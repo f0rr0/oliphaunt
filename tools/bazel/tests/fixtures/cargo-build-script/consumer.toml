@@ -1,0 +1,9 @@
+[package]
+name = "installed-name-parity-consumer"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+probe = { package = "oliphaunt-query", path = "../installed" }
+
+[workspace]

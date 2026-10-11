@@ -167,6 +167,38 @@ function externalBunEntrypoints() {
   );
 }
 
+function cargoBuildScriptParity() {
+  const repository = path.join(scratch, 'external-cargo-build-script');
+  cpSync(path.join(workspace, 'tools/bazel/tests/fixtures/cargo-build-script'), repository, {
+    recursive: true,
+  });
+  cpSync(path.join(repository, 'fixture.BUILD.bazel'), path.join(repository, 'BUILD.bazel'));
+  writeFileSync(path.join(repository, 'WORKSPACE.bazel'), '');
+  for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+    cpSync(path.join(workspace, file), path.join(repository, file));
+  }
+  const version = Bun.TOML.parse(
+    readFileSync(path.join(workspace, 'src/query/rust/Cargo.toml'), 'utf8'),
+  ).package.version;
+  const manifest = path.join(repository, 'Cargo.toml');
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, 'utf8').replace(/^version = .*$/m, `version = "${version}"`),
+  );
+  const pkg = '@conformance_cargo_build_script//';
+  bazel('test', [
+    `${pkg}:unit_test`,
+    `${pkg}:installed_consumer_test`,
+    `--inject_repository=conformance_cargo_build_script=${repository}`,
+    '--jobs=2',
+    '--test_output=errors',
+    '--noshow_progress',
+  ]);
+  console.log(
+    JSON.stringify({ cargoBuildScriptParity: { bazelTests: 1, installedCargoTests: 1 } }),
+  );
+}
+
 function writeModel() {
   writeFileSync(
     path.join(fixture, 'shared.h'),
@@ -650,6 +682,7 @@ try {
   writeModel();
   diskCacheAcrossFreshBases();
   externalBunEntrypoints();
+  cargoBuildScriptParity();
   const allProduction = [
     'config',
     'shared',

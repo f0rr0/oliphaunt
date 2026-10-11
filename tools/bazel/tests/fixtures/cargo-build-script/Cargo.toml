@@ -1,0 +1,12 @@
+[package]
+name = "oliphaunt-query"
+version = "0.3.2"
+edition = "2024"
+build = "build.rs"
+include = ["Cargo.toml", "build.rs", "README.md", "LICENSE", "src/**"]
+
+[lib]
+name = "public_probe_library"
+path = "src/lib.rs"
+
+[workspace]

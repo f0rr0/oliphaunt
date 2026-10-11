@@ -110,7 +110,9 @@ def cargo_generator(name = "build_script", path_dependencies = {}, srcs = [], da
         name = name,
         srcs = [facts["build"]] + srcs,
         crate_root = facts["build"],
-        crate_name = facts["crate_name"] + "_build_script",
+        # Cargo's private build-script name also bounds Windows object paths.
+        crate_name = "build_script_build",
+        rustc_env = {"CARGO_CRATE_NAME": "build_script_build"},
         pkg_name = facts["name"],
         edition = facts["edition"],
         version = facts["version"],
