@@ -14,7 +14,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import { parseArgs } from 'node:util';
+import {
+  extractPortableArchiveTree,
+  readPortableArchiveEntries,
+} from '../../tools/packaging/portable-archive.mts';
 import {
   assertMissingHostRuntime,
   extractNativePayload,
@@ -23,7 +27,20 @@ import {
 } from '../native/host-runtime-test-helpers.mts';
 import { validateDesktopConstruction } from './construction.mts';
 
-const inputs = process.argv.slice(2).map((file) => resolve(file));
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    'runtime-prefix': { type: 'string', default: '.' },
+    'library-prefix': { type: 'string', default: process.platform === 'win32' ? 'bin' : 'lib' },
+    'published-runtime': { type: 'boolean', default: false },
+  },
+});
+for (const prefix of [values['runtime-prefix'], values['library-prefix']])
+  assert(
+    prefix === '.' || /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/u.test(prefix),
+    'host layout must stay within its declared carrier',
+  );
+const inputs = positionals.map((file) => resolve(file));
 assert(
   inputs.length > 8,
   'expected runtime, consumer, five SQL plan files, inventory, and archives',
@@ -57,7 +74,9 @@ assert.equal(
   'desktop installed SQL must execute on the actual candidate native host',
 );
 const root = mkdtempSync(join(process.env.TEST_TMPDIR ?? tmpdir(), 'desktop-extensions-'));
-const runtime = join(root, 'runtime');
+const carrier = join(root, 'carrier');
+const runtime = join(carrier, values['runtime-prefix']);
+const libraryDirectory = join(carrier, values['library-prefix']);
 const windows = process.platform === 'win32';
 const suffix = windows ? '.exe' : '';
 const libraryName = windows
@@ -65,10 +84,18 @@ const libraryName = windows
   : process.platform === 'darwin'
     ? 'liboliphaunt.dylib'
     : 'liboliphaunt.so';
-const library = join(runtime, windows ? 'bin' : 'lib', libraryName);
+const library = join(libraryDirectory, libraryName);
 const consumer = join(root, 'consumer', 'bin', `extension-smoke${suffix}`);
 const env = hostRuntimeEnvironment(runtime, root);
-env.OLIPHAUNT_SMOKE_MODULE_DIR = join(runtime, 'lib', 'modules');
+if (windows) {
+  env.PATH = `${join(carrier, 'bin')};${env.PATH}`;
+  // Published Windows ICU uses its exact colocated data DLL, not a .dat path.
+  if (values['published-runtime']) delete env.ICU_DATA;
+} else {
+  env[process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH'] =
+    `${libraryDirectory}:${join(runtime, 'lib')}`;
+}
+env.OLIPHAUNT_SMOKE_MODULE_DIR = join(carrier, 'lib', 'modules');
 const run = (binary: string, args: string[], overrides: NodeJS.ProcessEnv = {}) =>
   runHostBinary(binary, args, { ...env, ...overrides }, root);
 
@@ -134,7 +161,8 @@ const server = (pgdata: string) =>
   );
 
 try {
-  await extractNativePayload(payload, runtime);
+  if (values['published-runtime']) extractPortableArchiveTree(realpathSync(payload), carrier);
+  else await extractNativePayload(payload, carrier);
   const selectedFiles = new Set<string>();
   for (const archive of archives) {
     for (const [name, entry] of readPortableArchiveEntries(archive, { format: 'tar.gz' })) {
@@ -144,7 +172,7 @@ try {
         'candidate members overlap or contain non-files',
       );
       selectedFiles.add(name);
-      const output = join(runtime, name);
+      const output = join(name.startsWith('lib/modules/') ? carrier : runtime, name);
       mkdirSync(dirname(output), { recursive: true });
       writeFileSync(output, entry.data(), { mode: entry.mode });
       chmodSync(output, entry.mode);
@@ -184,7 +212,12 @@ try {
   const missingMember = plan.members.find((member: { module_file: string }) => member.module_file);
   assert(missingMember, 'desktop member inventory must include compiled modules');
   for (const profile of ['modules', 'postgresql']) {
-    const module = join(runtime, 'lib', profile, missingMember.module_file);
+    const module = join(
+      profile === 'modules' ? carrier : runtime,
+      'lib',
+      profile,
+      missingMember.module_file,
+    );
     const pgdata = initialize(`missing-${profile}`);
     renameSync(module, `${module}.disabled`);
     try {

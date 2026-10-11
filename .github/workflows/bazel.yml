@@ -62,7 +62,10 @@ jobs:
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
         run: |
-          host_tests=()
+          host_tests=(
+            //build_defs/languages/carriers:package_test
+            //build_defs/languages/carriers:installed_sql_test
+          )
           case "$TARGET_PLATFORM" in
             linux-x64) profile=//build_defs/native:linux_x86_64_glibc_2_28 ;;
             linux-arm64) profile=//build_defs/native:linux_aarch64_glibc_2_28 ;;
@@ -71,7 +74,7 @@ jobs:
           esac
           case "$TARGET_PLATFORM" in
             macos-arm64|windows-x64)
-              host_tests=(
+              host_tests+=(
                 //build_defs/host:host_c_smoke
                 //build_defs/native:compiler_probe_test
                 //build_defs/native:probe_process_test
@@ -169,7 +172,8 @@ jobs:
               ;;
           esac
           bash tools/dev/bazel.sh "${startup[@]}" test \
-            //build_defs/extensions:desktop_members_sql_test \
+            //build_defs/extensions:desktop_members_frozen_sql_test \
+            //build_defs/extensions:desktop_final_contract_test \
             "${configuration[@]}" --platforms="$profile" --host_platform="$profile" --jobs=2
 
       - name: Qualify declared macOS Swift SDK
@@ -265,7 +269,7 @@ jobs:
         run: >-
           bash tools/dev/bazel.sh test -c opt
           //build_defs/languages/installed:consumer_test
-          //build_defs/languages/carriers:installed_sql_test
+          //build_defs/extensions:native_frozen_extension_sql_test
           //src/native/rust-bindings:unit_test
           //build_defs/native/carriers:package_test
           //build_defs/extensions:native_carriers_test

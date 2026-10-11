@@ -1,11 +1,36 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { frozenNativeRuntimeInputs } from './frozen-native-runtime.mts';
-import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
+import {
+  extractPortableArchiveTree,
+  readPortableArchiveEntries,
+} from '../../tools/packaging/portable-archive.mts';
+import { inspectPlatformBinaryEntries } from '../../tools/packaging/platform-binary-contract.mts';
+import { verifyWindowsVcRuntimeClosure } from '../../tools/packaging/windows-vc-runtime-closure.mts';
 
 const provenance = 'https://slsa.dev/provenance/v1';
 const publish = 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1';
 const repository = 'https://github.com/f0rr0/oliphaunt';
+const platforms = new Map([
+  ['linux-x64-gnu', { suffix: 'linux-x64-gnu', os: 'linux', cpu: 'x64', libc: ['glibc'] }],
+  ['linux-arm64-gnu', { suffix: 'linux-arm64-gnu', os: 'linux', cpu: 'arm64', libc: ['glibc'] }],
+  ['macos-arm64', { suffix: 'darwin-arm64', os: 'darwin', cpu: 'arm64' }],
+  ['windows-x64-msvc', { suffix: 'win32-x64-msvc', os: 'win32', cpu: 'x64' }],
+]);
+
+function matchesPlatform(manifest, target) {
+  const platform = platforms.get(target);
+  return (
+    platform &&
+    manifest.name === `@oliphaunt/liboliphaunt-${platform.suffix}` &&
+    JSON.stringify(manifest.os) === JSON.stringify([platform.os]) &&
+    JSON.stringify(manifest.cpu) === JSON.stringify([platform.cpu]) &&
+    JSON.stringify(manifest.libc) === JSON.stringify(platform.libc) &&
+    manifest.optional === true
+  );
+}
 
 /** Consume independently signature-verified registry captures; this is not a new authentication authority. */
 export function frozenNativeNpmInput({
@@ -21,6 +46,7 @@ export function frozenNativeNpmInput({
   if (
     ownerDescriptor.id !== 'liboliphaunt-native' ||
     !ownerDescriptor.registry_packages?.includes(`npm:${name}`) ||
+    !matchesPlatform(metadata, target) ||
     metadata.version !== version ||
     metadata.oliphaunt?.target !== target ||
     metadata.oliphaunt.libraryRelativePath !== native.library ||
@@ -105,6 +131,8 @@ export function verifyFrozenNativeNpm(input, archive) {
   )
     throw new Error('frozen native npm archive differs from captured registry integrity');
   const entries = readPortableArchiveEntries(archive);
+  if ([...entries.keys()].some((name) => name !== 'package' && !name.startsWith('package/')))
+    throw new Error('frozen native npm archive must contain only its package tree');
   const member = entries.get('package/package.json');
   if (!member?.isFile)
     throw new Error('frozen native npm archive is missing its regular package manifest');
@@ -114,6 +142,7 @@ export function verifyFrozenNativeNpm(input, archive) {
   if (
     manifest.name !== input.name ||
     manifest.version !== input.version ||
+    !matchesPlatform(manifest, input.target) ||
     manifest.oliphaunt?.target !== input.target ||
     manifest.oliphaunt.libraryRelativePath !== input.library ||
     manifest.oliphaunt.runtimeRelativePath !== 'runtime'
@@ -121,15 +150,32 @@ export function verifyFrozenNativeNpm(input, archive) {
     throw new Error('frozen native npm physical manifest differs from declared registry identity');
   for (const file of [
     input.library,
-    'runtime/bin/initdb',
+    `runtime/bin/initdb${input.target === 'windows-x64-msvc' ? '.exe' : ''}`,
     'runtime/share/postgresql/postgres.bki',
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
     'THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT',
     'THIRD_PARTY_LICENSES/ICU-LICENSE',
   ])
-    if (!entries.get(`package/${file}`)?.isFile)
+    if (!entries.get(`package/${file}`)?.isFile || entries.get(`package/${file}`).size <= 0)
       throw new Error(`frozen native npm archive is missing regular runtime/legal member ${file}`);
+  if (input.target === 'windows-x64-msvc') {
+    inspectPlatformBinaryEntries(
+      [...entries].map(([name, entry]) => ({ ...entry, name: name.replace(/^package\//u, '') })),
+      { target: input.target, rootLabel: input.filename, windowsVcRuntimeProfile: 'provider' },
+    );
+    const root = mkdtempSync(path.join(tmpdir(), 'frozen-native-npm-'));
+    try {
+      extractPortableArchiveTree(archive, root, 'package');
+      verifyWindowsVcRuntimeClosure({
+        root,
+        searchRoots: [path.join(root, 'bin'), path.join(root, 'runtime/bin')],
+        profile: 'provider',
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 }
 
 if (import.meta.main) {

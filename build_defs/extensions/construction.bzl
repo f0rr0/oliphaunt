@@ -104,3 +104,7 @@ def desktop_members_construction_test(name, **kwargs):
 def desktop_member_payloads():
     """Actual archive roots for the canonical desktop construction slice."""
     return [row.label for row in _desktop_members()]
+
+def desktop_member_inventory():
+    """Canonical identities shared by member and final-carrier qualification."""
+    return _desktop_members()

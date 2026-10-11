@@ -17,6 +17,7 @@ exports_files([
     "tools/dev/bun.toml",
     "tools/dev/android-sdk.toml",
     "tools/dev/native-host-toolchains.json",
+    "tools/dev/winflexbison.toml",
     "tools/packaging/archive-directory.mts",
     "tools/packaging/atomic-directory.mts",
     "tools/packaging/build-maven-artifact-manifest.mts",

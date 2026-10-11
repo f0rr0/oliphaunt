@@ -1,4 +1,4 @@
-load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "extension_identity", "extension_member_payload", "extension_member_validation_test", "pgtap_sql")
+load("//build_defs/extensions:extensions.bzl", "NATIVE_EXTENSION_CONFIGURATION", "PGTAP_TARGET_OS_ARGS", "extension_identity", "extension_member_payload", "extension_member_validation_test", "pgtap_sql")
 load("//build_defs/release:shipping.bzl", "shipping_package")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load("//build_defs/extensions:native_carriers.bzl", "native_external_extension_carriers")
@@ -34,7 +34,7 @@ bun_script_test(
     name = "upstream_sql_parity_test",
     entry_point = "//build_defs/extensions:pgtap_upstream_parity_test.mts",
     args = ["--control", "$(location @pgtap//:pgtap.control)", "--installed", "$(location :sql)",
-            "--perl", "$(location //build_defs/extensions:perl)", "--perl-options", "$(location //build_defs/extensions:perl_options)", "--patch", "$(location @native_exec_tools//:patch)"],
+            "--perl", "$(location //build_defs/extensions:perl)", "--perl-options", "$(location //build_defs/extensions:perl_options)", "--patch", "$(location @native_exec_tools//:patch)"] + PGTAP_TARGET_OS_ARGS,
     data = ["@pgtap//:sql_inputs", "@pgtap//:pgtap.control", ":sql", "//build_defs/extensions:perl", "//build_defs/extensions:perl_runtime", "//build_defs/extensions:perl_options", "@native_exec_tools//:patch"],
     size = "small",
 )

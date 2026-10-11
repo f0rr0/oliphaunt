@@ -9,6 +9,7 @@ separate from this native family surface.
 load("@oliphaunt_metadata//:metadata.bzl", "CONTRIB_OWNERS", "EXTENSIONS", "EXTENSION_PROFILES", "EXTENSION_RELEASE_METADATA", "PRODUCTS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "bun_file_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
 load(":contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_metadata")
+load(":construction.bzl", "desktop_member_inventory")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
 load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal", "native_external_carrier_metadata")
 
@@ -190,8 +191,11 @@ def _final_contract_test_impl(ctx):
             fail("final contract leaf differs from its canonical native owner")
         spec.update({"operation": "collect", "leaves": [_leaf_input(leaf)], "components": ctx.file._components.path, "outputs": {}})
         specs.append(spec)
+    members = sorted([member["sqlName"] for spec in specs for member in spec["members"]])
+    if ctx.attr.members and members != sorted(ctx.attr.members):
+        fail("final contract leaves differ from the declared construction member cohort")
     inventory = ctx.actions.declare_file(ctx.label.name + ".inventory.json")
-    ctx.actions.write(inventory, json.encode({"schema": "oliphaunt-native-extension-final-contract-test-v1", "scope": "construction", "target": targets.keys()[0], "products": specs}))
+    ctx.actions.write(inventory, json.encode({"schema": "oliphaunt-native-extension-final-contract-test-v1", "scope": "construction", "target": targets.keys()[0], "products": specs, "members": members, "excluded": sorted(ctx.attr.excluded)}))
     sources = [ctx.file._runner] + ctx.files._helpers + ctx.files.legal
     files = [inventory, ctx.file._components] + [file for leaf in leaves for file in _leaf_files(leaf)] + sources
     return bun_test_entrypoint(ctx, ctx.file._runner, [inventory], files, source_files = sources) + [OutputGroupInfo(inventory = depset([inventory]))]
@@ -199,15 +203,24 @@ def _final_contract_test_impl(ctx):
 _native_extension_final_contract_test = rule(implementation = _final_contract_test_impl, test = True, toolchains = BUN_SOURCE_TOOLCHAINS,
     attrs = dict(BUN_TEST_ENTRYPOINT_ATTRS, **{
         "products": attr.string_list(mandatory = True), "leaves": attr.label_list(mandatory = True, providers = [ExtensionFinalLeafInfo]),
+        "members": attr.string_list(), "excluded": attr.string_list(),
         "legal": attr.label_list(allow_files = True),
         "_runner": attr.label(default = "//build_defs/extensions:final_contract.test.mts", allow_single_file = True),
         "_components": _TOOLS["_components"],
         "_helpers": attr.label_list(default = native_owner_carrier_helpers() + ["//build_defs/extensions:owner_carriers.mts"], allow_files = True),
     }))
 
-def native_extension_final_contract_test(name, products = None, **kwargs):
+def native_extension_final_contract_test(name, products = None, desktop = False, **kwargs):
     """Validate genuine final packages on the execution host, without target SQL."""
-    selected = sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA}.keys()) if products == None else sorted(products)
+    members, excluded = [], []
+    if desktop:
+        if products != None:
+            fail("desktop final contract uses the existing complete desktop construction inventory")
+        members = [row.name for row in desktop_member_inventory()]
+        selected = sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA if row["sqlName"] in members}.keys())
+        excluded = sorted([row["sql-name"] for row in EXTENSIONS.values() if row["sql-name"] not in members])
+    else:
+        selected = sorted({row["artifactProduct"]: True for row in EXTENSION_RELEASE_METADATA}.keys()) if products == None else sorted(products)
     if not selected or len(selected) != len({product: True for product in selected}):
         fail("final contract qualification requires unique canonical distributions")
     leaves, legal = [], {}
@@ -217,4 +230,4 @@ def native_extension_final_contract_test(name, products = None, **kwargs):
         leaves.append("//" + package + ":native_carriers")
         for label in native_owner_carrier_legal(product):
             legal[label] = True
-    _native_extension_final_contract_test(name = name, products = selected, leaves = leaves, legal = legal.keys(), args = bun_test_entrypoint_args(name), **kwargs)
+    _native_extension_final_contract_test(name = name, products = selected, members = members, excluded = excluded, leaves = leaves, legal = legal.keys(), args = bun_test_entrypoint_args(name), **kwargs)

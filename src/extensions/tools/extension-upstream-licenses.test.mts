@@ -19,21 +19,27 @@ import {
   canonicalGzipSync,
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
-import { hasCanonicalReleaseStagingMode } from '../../../tools/packaging/release-notices.mts';
 import {
-  assertExtensionUpstreamLicensesInEntries,
+  hasCanonicalReleaseStagingMode,
+  releaseNoticeRows,
+} from '../../../tools/packaging/release-notices.mts';
+import {
   assertExtensionUpstreamLicensesInArchive,
   assertExtensionUpstreamLicensesInDirectory,
+  assertExtensionUpstreamLicensesInEntries,
   assertSupportedExtensionUpstreamSpdxId,
-  externalReleaseExtensionSqlNames,
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
   extensionMavenLicenses,
   extensionRegistryLicense,
-  stageExtensionUpstreamLicenses,
   extensionUpstreamLicenseFileInventory,
   extensionUpstreamLicenseRows,
+  externalReleaseExtensionSqlNames,
+  nativeExtensionConstructionLicenseInventory,
+  PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS,
+  stageExtensionUpstreamLicenses,
   validateExtensionUpstreamLicenseContract,
+  validateNativeExtensionConstructionLicenseInventory,
 } from './extension-upstream-licenses.mts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
@@ -72,6 +78,89 @@ test('npm extension legal inventory binds canonical paths, bytes, and modes', ()
     () => extensionUpstreamLicenseFileInventory([]),
     /requires a non-empty unique extension member list/u,
   );
+});
+
+test('pgcrypto native construction receipts bind current desktop OpenSSL source bytes', () => {
+  assert.deepEqual(PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS, [
+    'linux-x64-gnu',
+    'linux-arm64-gnu',
+    'macos-arm64',
+    'windows-x64-msvc',
+  ]);
+  assert.equal(Object.isFrozen(PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS), true);
+  const openssl = releaseNoticeRows({ profile: 'contrib-native-openssl' }).find(
+    ({ id }) => id === 'openssl',
+  );
+  assert.ok(openssl, 'the canonical native OpenSSL profile must declare its source');
+  const expected = [
+    ['share/licenses/openssl-native/LICENSE.txt', openssl.source],
+    ['share/licenses/openssl-native/SOURCE.toml', openssl.sourceManifest],
+  ].map(([file, source]) => ({
+    path: file,
+    sha256: createHash('sha256').update(readFileSync(source)).digest('hex'),
+    mode: '0644',
+  }));
+  for (const target of PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS) {
+    const files = nativeExtensionConstructionLicenseInventory('pgcrypto', target);
+    assert.deepEqual(files, expected, target);
+    assert.equal(Object.isFrozen(files), true);
+    assert.equal(files.every(Object.isFrozen), true);
+    assert.deepEqual(
+      validateNativeExtensionConstructionLicenseInventory('pgcrypto', target, files),
+      expected,
+    );
+    assert.equal(
+      extensionCarrierLegalContract('oliphaunt-extension-contrib-pg18', ['pgcrypto'], {
+        family: 'native',
+        target,
+        memberContracts: [{ sqlName: 'pgcrypto', nativeConstructionLicenseFiles: files }],
+      }).profile,
+      'contrib-native-openssl',
+    );
+  }
+});
+
+test('pgcrypto construction receipts reject unsupported targets and changed source digests', () => {
+  const files = nativeExtensionConstructionLicenseInventory('pgcrypto', 'linux-x64-gnu');
+  for (const target of [
+    'android-arm64-v8a',
+    'android-x86_64',
+    'ios-xcframework',
+    'macos-x64',
+    'linux-x64-musl',
+    'wasix',
+  ]) {
+    assert.throws(
+      () => validateNativeExtensionConstructionLicenseInventory('pgcrypto', target, files),
+      /no declared source for this member\/target/u,
+      target,
+    );
+    assert.deepEqual(validateNativeExtensionConstructionLicenseInventory('pgcrypto', target), []);
+  }
+  for (const target of PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS) {
+    for (const changedIndex of [0, 1]) {
+      const changed = files.map((file, index) =>
+        index === changedIndex
+          ? { ...file, sha256: `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}` }
+          : file,
+      );
+      assert.throws(
+        () => validateNativeExtensionConstructionLicenseInventory('pgcrypto', target, changed),
+        /differs from the immutable construction source/u,
+        `${target}: ${files[changedIndex].path}`,
+      );
+    }
+    assert.deepEqual(validateNativeExtensionConstructionLicenseInventory('pgcrypto', target), []);
+  }
+  for (const target of ['android-arm64-v8a', 'android-x86_64', 'ios-xcframework', 'macos-x64']) {
+    assert.equal(
+      extensionCarrierLegalContract('oliphaunt-extension-contrib-pg18', ['pgcrypto'], {
+        family: 'native',
+        target,
+      }).profile,
+      'contrib-native-openssl',
+    );
+  }
 });
 
 test('carrier legal inventory binds release notices and PostGIS upstream bytes', () => {

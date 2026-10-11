@@ -6,6 +6,10 @@ import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../../tools/packaging/portable-archive.mts';
+import {
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  verifyWindowsVcRuntimeClosure,
+} from '../../../tools/packaging/windows-vc-runtime-closure.mts';
 import { type CargoLinkConfiguration, cargoLinkEnvironment } from '../cargo-environment.mts';
 
 /** A genuine std-only Cargo consumer; Cargo never constructs a product here. */
@@ -45,21 +49,35 @@ export function verifyInstalledBrokerCargo(inputs: {
   const cargoHome = path.join(inputs.root, 'cargo-home');
   const target = path.join(inputs.root, 'cargo-target');
   mkdirSync(cargoHome);
-  const env = {
-    ...cargoLinkEnvironment(
-      JSON.parse(readFileSync(inputs.compiler, 'utf8')) as CargoLinkConfiguration,
-      inputs.runfiles,
-    ),
+  const linkEnv = cargoLinkEnvironment(
+    JSON.parse(readFileSync(inputs.compiler, 'utf8')) as CargoLinkConfiguration,
+    inputs.runfiles,
+  );
+  const providerPath = Object.entries(linkEnv).find(([key]) => key.toLowerCase() === 'path')?.[1];
+  const env: NodeJS.ProcessEnv = {
+    ...linkEnv,
     CARGO_HOME: cargoHome,
     CARGO_TARGET_DIR: target,
     CARGO_NET_OFFLINE: 'true',
     RUSTC: inputs.rustc,
     RUSTDOC: inputs.rustdoc,
-    PATH: path.dirname(inputs.rustc),
+    PATH: [path.dirname(inputs.rustc), providerPath].filter(Boolean).join(path.delimiter),
     HOME: inputs.root,
     TMPDIR: inputs.root,
+    TMP: inputs.root,
+    TEMP: inputs.root,
     OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: '1',
   };
+  for (const key of Object.keys(env))
+    if (key !== 'PATH' && key.toLowerCase() === 'path') delete env[key];
+  if (process.platform === 'win32') {
+    const systemRoot = Object.entries(process.env).find(
+      ([key]) => key.toLowerCase() === 'systemroot',
+    )?.[1];
+    assert(systemRoot && path.win32.isAbsolute(systemRoot), 'Windows Cargo requires OS SystemRoot');
+    env.SystemRoot = systemRoot;
+    env.PATH = [env.PATH, path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter);
+  }
   const compilerVersion = Bun.spawnSync([inputs.rustc, '-vV'], {
     cwd: crate,
     env,
@@ -117,21 +135,69 @@ export function verifyInstalledBrokerCargo(inputs: {
   assert.equal(artifact.kind, constants.KIND);
   assert.equal(artifact.target, constants.CARGO_TARGET);
   assert.equal(artifact.version, manifest.package.version);
-  assert.equal(artifact.files.length, 1, 'Unix broker carrier must bind its actual executable');
-  const binary = path.join(crate, 'payload', constants.EXECUTABLE_RELATIVE_PATH);
-  assert.equal(artifact.files[0].source, binary);
-  assert.equal(artifact.files[0].relative, constants.EXECUTABLE_RELATIVE_PATH);
-  assert.equal(artifact.files[0].executable, true);
-  assert.equal(
-    artifact.files[0].sha256,
-    createHash('sha256').update(readFileSync(binary)).digest('hex'),
+  const payload = path.join(crate, 'payload');
+  const windows = constants.RELEASE_TARGET === 'windows-x64-msvc';
+  const expectedMembers = [constants.EXECUTABLE_RELATIVE_PATH];
+  if (windows) {
+    const closure = verifyWindowsVcRuntimeClosure({
+      root: payload,
+      searchRoots: [path.join(payload, 'bin')],
+    });
+    assert(closure.required.length > 0, 'Windows broker must bind its app-local VC runtime');
+    expectedMembers.push(
+      `bin/${WINDOWS_VC_RUNTIME_RECEIPT}`,
+      ...closure.required.map((name: string) => `bin/${name}`),
+    );
+  }
+  expectedMembers.sort();
+  assert.deepEqual(
+    [...entries]
+      .filter(
+        ([name, entry]) =>
+          entry.isFile &&
+          name.startsWith(`${prefix}/payload/`) &&
+          name !== `${prefix}/payload/sha256`,
+      )
+      .map(([name]) => name.slice(`${prefix}/payload/`.length))
+      .sort(),
+    expectedMembers,
+    'broker Cargo payload must contain exactly its executable and declared runtime closure',
   );
-  renameSync(binary, `${binary}.removed`);
-  try {
-    const missing = check();
-    assert.notEqual(missing.exitCode, 0, 'Cargo accepted a missing required broker payload');
-    assert.match(missing.stderr.toString(), /missing packaged oliphaunt-broker payload/u);
-  } finally {
-    renameSync(`${binary}.removed`, binary);
+  assert.deepEqual(
+    artifact.files.map((file: { relative: string }) => file.relative).sort(),
+    expectedMembers,
+    'real Cargo build script must bind every packaged payload member exactly once',
+  );
+  for (const file of artifact.files) {
+    const physical = path.join(payload, file.relative);
+    assert.equal(file.source, physical);
+    assert.equal(file.executable, file.relative === constants.EXECUTABLE_RELATIVE_PATH);
+    assert.equal(file.sha256, createHash('sha256').update(readFileSync(physical)).digest('hex'));
+  }
+  if (windows)
+    assert.equal(
+      readFileSync(path.join(payload, 'sha256'), 'utf8'),
+      artifact.files
+        .map((file: { sha256: string; relative: string }) => `${file.sha256}  ${file.relative}\n`)
+        .join(''),
+      'Windows Cargo checksum inventory must match its emitted artifact manifest',
+    );
+  for (const relative of expectedMembers) {
+    const file = path.join(payload, relative);
+    renameSync(file, `${file}.removed`);
+    try {
+      const missing = check();
+      assert.notEqual(
+        missing.exitCode,
+        0,
+        `Cargo accepted missing required broker payload ${relative}`,
+      );
+      assert.match(
+        missing.stderr.toString(),
+        /missing packaged oliphaunt-broker payload|read packaged Windows VC runtime receipt/u,
+      );
+    } finally {
+      renameSync(`${file}.removed`, file);
+    }
   }
 }

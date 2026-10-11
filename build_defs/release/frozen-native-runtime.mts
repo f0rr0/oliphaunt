@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { compatibilityVersionFromText } from '../../tools/release/compatibility-version-parser.mts';
+import { inspectPlatformBinaryEntries } from '../../tools/packaging/platform-binary-contract.mts';
 import {
   extractPortableArchiveTree,
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
+import { verifyWindowsVcRuntimeClosure } from '../../tools/packaging/windows-vc-runtime-closure.mts';
+import { compatibilityVersionFromText } from '../../tools/release/compatibility-version-parser.mts';
 
 const product = 'liboliphaunt-native';
 const fullSha = /^[a-f0-9]{40}$/u;
@@ -17,6 +19,7 @@ const targets = new Map([
   ['macos-arm64', 'lib/liboliphaunt.dylib'],
   ['android-arm64-v8a', 'lib/liboliphaunt.so'],
   ['android-x86_64', 'lib/liboliphaunt.so'],
+  ['windows-x64-msvc', 'bin/oliphaunt.dll'],
 ]);
 
 function exactKeys(value, keys, context) {
@@ -120,13 +123,15 @@ export function frozenNativeRuntimeInputs({
   return selectedTargets.map((target) => {
     const library = targets.get(target);
     if (!library) throw new Error(`unsupported frozen native runtime target: ${target}`);
-    const name = `liboliphaunt-${version}-${target}.tar.gz`;
+    const windows = target === 'windows-x64-msvc';
+    const name = `liboliphaunt-${version}-${target}.${windows ? 'zip' : 'tar.gz'}`;
     const asset = release.assets.find((row) => row.name === name);
     if (!asset) throw new Error(`completed native publication is missing ${name}`);
     return {
       ...asset,
       target,
       library,
+      ...(windows ? { interfaceLibrary: 'lib/oliphaunt.lib' } : {}),
       version,
       publicationSha: completion.publicationSha,
       publicationTree: completion.publicationTree,
@@ -148,6 +153,7 @@ export function extractFrozenNativeRuntime(input, archive, destination) {
   const entries = readPortableArchiveEntries(archive);
   for (const member of [
     input.library,
+    ...(input.interfaceLibrary ? [input.interfaceLibrary] : []),
     'include/oliphaunt.h',
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
@@ -156,7 +162,20 @@ export function extractFrozenNativeRuntime(input, archive, destination) {
   ])
     if (!entries.get(member)?.isFile)
       throw new Error(`frozen native runtime is missing regular member ${member}`);
+  if (input.target === 'windows-x64-msvc')
+    inspectPlatformBinaryEntries(entries.values(), {
+      target: input.target,
+      rootLabel: input.name,
+      requireWindowsRuntimeImportLibrary: true,
+      windowsVcRuntimeProfile: 'provider',
+    });
   extractPortableArchiveTree(archive, destination);
+  if (input.target === 'windows-x64-msvc')
+    verifyWindowsVcRuntimeClosure({
+      root: destination,
+      searchRoots: [path.join(destination, 'bin'), path.join(destination, 'runtime/bin')],
+      profile: 'provider',
+    });
 }
 
 if (import.meta.main) {

@@ -20,6 +20,7 @@ const declared = (file: string) =>
   );
 try {
   const products = new Set<string>();
+  const sqlNames: string[] = [];
   let members = 0;
   for (const spec of inventory.products as NativeOwnerSpec[]) {
     assert(!products.has(spec.product), 'final contract repeats a distribution');
@@ -36,13 +37,18 @@ try {
     const validated = validateNativeFinalLeaf(spec, leaf, path.join(root, spec.product));
     assert.equal(validated.members.length, spec.members.length);
     members += validated.members.length;
+    sqlNames.push(...validated.members.map((member) => member.sqlName));
     console.log(
       `${spec.product}: actual ${inventory.target} GitHub/npm/Cargo files, exact member inventory, platform binaries, and legal bytes PASS`,
     );
   }
+  assert.deepEqual(sqlNames.sort(), inventory.members);
+  assert(inventory.excluded.every((name: string) => !sqlNames.includes(name)));
   console.log(
     `${products.size} native distributions / ${members} SQL members validated on ${process.platform}/${process.arch}; this content proof does not execute ${inventory.target} SQL.`,
   );
+  if (inventory.excluded.length > 0)
+    console.log(`Excluded canonical members: ${inventory.excluded.join(', ')}.`);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

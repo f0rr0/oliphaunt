@@ -78,7 +78,7 @@ extension_smoke_plan = rule(
     },
 )
 
-def native_extension_sql_test(name, members, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = "lib"):
+def native_extension_sql_test(name, members, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = "lib", target_compatible_with = NATIVE_EXTENSION_COMPATIBLE):
     """Exercise selected archives in the embedded and ordinary PG ABI profiles."""
     plan = name + "_plan"
     if bool(host_version) != bool(host_product):
@@ -105,14 +105,20 @@ def native_extension_sql_test(name, members, runtime = "//src/native/runtime:run
                [runtime_prefix, library_prefix] + ["$(location %s)" % label for label in archives],
         data = data,
         size = "medium",
-        target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+        target_compatible_with = target_compatible_with,
     )
 
-def desktop_members_sql_test(name):
+def desktop_members_sql_test(name, runtime = "//src/native/runtime:runtime_payload", consumer = "//build_defs/extensions:native_extension_smoke", host_version = "", host_product = "", runtime_prefix = ".", library_prefix = None, published_runtime = False, target_compatible_with = _desktop_compatible):
     """Use the maintained SQL plan and consumer on each native desktop host."""
+    if bool(host_version) != bool(host_product) or published_runtime != bool(host_version):
+        fail("published desktop host tests require the canonical host product and version")
+    for prefix in [runtime_prefix] + ([library_prefix] if library_prefix != None else []):
+        if prefix != "." and any([not part or part in [".", ".."] or "\\" in part or ":" in part for part in prefix.split("/")]):
+            fail("desktop host layout must use a safe carrier-relative directory")
+    library_args = select({"//build_defs/native:windows_x64": ["--library-prefix=bin"], "//conditions:default": ["--library-prefix=lib"]}) if library_prefix == None else ["--library-prefix=" + library_prefix]
     members = desktop_member_payloads()
     plan = name + "_plan"
-    extension_smoke_plan(name = plan, members = members, fixtures = ["//src/test-fixtures/extensions:sql"])
+    extension_smoke_plan(name = plan, members = members, fixtures = ["//src/test-fixtures/extensions:sql"], host_version = host_version, host_product = host_product)
     plans = []
     for group in ["install", "smoke", "startup", "environment", "dependencies"]:
         label = name + "_" + group
@@ -123,11 +129,12 @@ def desktop_members_sql_test(name):
         label = name + "_archive_" + str(index)
         native.filegroup(name = label, srcs = [member], output_group = "archive")
         archives.append(":" + label)
-    inputs = ["//src/native/runtime:runtime_payload", "//build_defs/extensions:native_extension_smoke"] + plans + ["//build_defs/extensions:desktop_members_construction_inventory"] + archives
+    inputs = [runtime, consumer] + plans + ["//build_defs/extensions:desktop_members_construction_inventory"] + archives
     bun_script_test(
         name = name,
         entry_point = "//build_defs/extensions:desktop_sql.test.mts",
-        args = ["$(location %s)" % label for label in inputs],
+        args = ["--runtime-prefix=" + runtime_prefix] + library_args +
+               (["--published-runtime"] if published_runtime else []) + ["$(location %s)" % label for label in inputs],
         data = inputs + [
             "//build_defs/extensions:construction.mts", "//build_defs/extensions:validate_member_payload.mts",
             "//build_defs/native:host-runtime-test-helpers.mts", "//:tools/packaging/portable-archive.mts",
@@ -136,5 +143,5 @@ def desktop_members_sql_test(name):
             "//:src/extensions/artifacts/native/tools/stage-windows-binary-contract.mts",
         ],
         size = "medium",
-        target_compatible_with = _desktop_compatible,
+        target_compatible_with = target_compatible_with,
     )

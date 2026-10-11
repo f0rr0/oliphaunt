@@ -246,7 +246,23 @@ export async function packageNativeHelper(spec: HelperPackageSpec): Promise<void
         sourceDirectory: windowsSource,
         destinations: [path.dirname(member(destination, binaryPath))],
       });
-    stageCrt(github, binaryMember);
+    const githubCrt = stageCrt(github, binaryMember);
+    if (spec.artifact.kind === 'broker-helper')
+      writeFileSync(
+        member(github, 'manifest.properties'),
+        [
+          'schema=oliphaunt-broker-release-assets-v1',
+          `product=${spec.product}`,
+          `version=${spec.version}`,
+          `target=${target}`,
+          `binary=${binaryMember}`,
+          ...(githubCrt && githubCrt.required.length
+            ? [`windowsVcRuntimeDlls=${githubCrt.required.join(',')}`]
+            : []),
+          '',
+        ].join('\n'),
+        { mode: 0o644 },
+      );
     const stageLegal = (destination: string) => {
       stageReleaseNotices(destination, notices);
       contract.stageRustDependencyLicenses(destination, target);

@@ -1,18 +1,20 @@
 // Explicit read-only capture, outside Bazel/repository actions. Version comes
 // from the consumer's conventional compatibility declaration, never latest.
+
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import { compatibilityVersionFromText } from '../../tools/release/compatibility-version-parser.mts';
 import { createCompletedPublicationChecker } from '../../tools/release/completed-release-publication.mts';
 import {
   requestGithubPages,
   requestGithubRepositoryJson,
 } from '../../tools/release/github-read.mts';
-import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import { frozenNativeNpmInput, verifyFrozenNativeNpm } from './frozen-native-npm.mts';
+import { frozenNativeRuntimeInputs } from './frozen-native-runtime.mts';
 
 async function json(url) {
   const response = await fetch(url);
@@ -48,9 +50,7 @@ if (import.meta.main) {
     publicationSha: release.target_commitish,
     tagName,
   });
-  const assets = await requestGithubPages(
-    `repos/f0rr0/oliphaunt/releases/${release.id}/assets?per_page=100`,
-  );
+  const assets = await requestGithubPages(`repos/f0rr0/oliphaunt/releases/${release.id}/assets`);
   const releases = [
     {
       product: 'liboliphaunt-native',
@@ -88,7 +88,7 @@ if (import.meta.main) {
     })),
   };
   const ownerDescriptor = Bun.TOML.parse(readFileSync('src/native/runtime/release.toml', 'utf8'));
-  const input = frozenNativeNpmInput({
+  const request = {
     metadata,
     attestations,
     releases,
@@ -98,14 +98,16 @@ if (import.meta.main) {
     compatibilityPath,
     ownerDescriptor,
     target,
-  });
+  };
+  const input = frozenNativeNpmInput(request);
+  const [native] = frozenNativeRuntimeInputs({ ...request, selectedTargets: [target] });
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-native-npm-capture-'));
   try {
     // npm verifies registry signatures and Sigstore attestations with its
     // maintained verifier. Offline import only binds these verified captures.
     writeFileSync(
       path.join(scratch, 'package.json'),
-      JSON.stringify({ private: true, dependencies: { [name]: version } }),
+      JSON.stringify({ private: true, optionalDependencies: { [name]: version } }),
     );
     const npm = (args) => {
       const result = spawnSync(
@@ -122,7 +124,17 @@ if (import.meta.main) {
         throw new Error(`npm signature capture failed: ${result.error?.message ?? result.stderr}`);
       process.stdout.write(result.stdout);
     };
-    npm(['install', '--ignore-scripts', '--no-audit', '--no-fund']);
+    // Capture foreign packages without executing them or disabling npm checks.
+    if (metadata.os?.length !== 1 || metadata.cpu?.length !== 1)
+      throw new Error('capture requires one declared npm OS and CPU');
+    npm([
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      `--os=${metadata.os[0]}`,
+      `--cpu=${metadata.cpu[0]}`,
+    ]);
     const lock = JSON.parse(readFileSync(path.join(scratch, 'package-lock.json'), 'utf8'));
     const installed = lock.packages?.[`node_modules/${name}`];
     if (
@@ -141,26 +153,28 @@ if (import.meta.main) {
     // The public GitHub archive supplies the independently completed native
     // payload. npm intentionally omits its source header; every runtime/legal
     // file must have identical bytes, rather than a renamed current build.
-    const asset = releases[0].assets.find(
-      (row) => row.name === `liboliphaunt-${version}-${target}.tar.gz`,
-    );
-    const nativeArchive = path.join(scratch, asset.name);
-    const nativeResponse = await fetch(
-      `https://github.com/f0rr0/oliphaunt/releases/download/${tagName}/${asset.name}`,
-    );
+    const nativeArchive = path.join(scratch, native.name);
+    const nativeResponse = await fetch(native.url);
     if (!nativeResponse.ok)
       throw new Error(`completed runtime download failed: ${nativeResponse.status}`);
     const nativeBytes = Buffer.from(await nativeResponse.arrayBuffer());
     if (
-      nativeBytes.length !== asset.size ||
-      createHash('sha256').update(nativeBytes).digest('hex') !== asset.sha256
+      nativeBytes.length !== native.size ||
+      createHash('sha256').update(nativeBytes).digest('hex') !== native.sha256
     )
       throw new Error('completed GitHub runtime bytes differ from captured release');
     writeFileSync(nativeArchive, nativeBytes);
     const npmEntries = readPortableArchiveEntries(archive);
     for (const [member, file] of readPortableArchiveEntries(nativeArchive)) {
-      if (!file.isFile || member === 'include/oliphaunt.h') continue;
-      const published = npmEntries.get(`package/${member}`);
+      if (!file.isFile || member.startsWith('include/') || member === native.interfaceLibrary)
+        continue;
+      // npm retains dependent ICU DLLs in runtime/bin; its root bin contains
+      // the provider DLL and the explicit VC closure selected by the packager.
+      const published =
+        npmEntries.get(`package/${member}`) ??
+        (target === 'windows-x64-msvc' && member.startsWith('bin/') && member.endsWith('.dll')
+          ? npmEntries.get(`package/runtime/${member}`)
+          : undefined);
       const data = (entry) => (typeof entry.data === 'function' ? entry.data() : entry.data);
       if (!published?.isFile || !data(file).equals(data(published)))
         throw new Error(`npm runtime differs from completed native publication member ${member}`);

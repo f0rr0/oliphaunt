@@ -158,6 +158,7 @@ def _unit_inputs_impl(ctx):
     inputs = []
     sources = _input_paths(ctx.attr.sources, inputs)
     legal = _input_paths(ctx.attr.legal, inputs)
+    inputs += ctx.files.windows_runtime
     cases = []
     for metadata in json.decode(ctx.attr.metadata):
         owner = PRODUCTS[metadata["product"]]["path"]
@@ -167,7 +168,11 @@ def _unit_inputs_impl(ctx):
         if metadata["product"] == "oliphaunt-broker":
             prefix = owner + "/crates/" + metadata["artifact"]["target"] + "/"
             entries.update({"cargo/" + name[len(prefix):]: file for name, file in sources.items() if name.startswith(prefix)})
-        metadata.update({"sources": entries, "legal": {name: file for name, file in legal.items() if name in ["LICENSE", "THIRD_PARTY_NOTICES.md", "Cargo.lock"] or name.startswith(owner + "/")}, "windowsRuntime": {}})
+        metadata.update({
+            "sources": entries,
+            "legal": {name: file for name, file in legal.items() if name in ["LICENSE", "THIRD_PARTY_NOTICES.md", "Cargo.lock"] or name.startswith(owner + "/")},
+            "windowsRuntime": {file.basename: file.path for file in ctx.files.windows_runtime} if metadata["artifact"]["target"] == "windows-x64-msvc" else {},
+        })
         cases.append(metadata)
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(output, json.encode(cases))
@@ -175,7 +180,7 @@ def _unit_inputs_impl(ctx):
 
 _native_helper_unit_inputs = rule(
     implementation = _unit_inputs_impl,
-    attrs = {"metadata": attr.string(mandatory = True), "sources": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_keyed_string_dict(allow_files = True)},
+    attrs = {"metadata": attr.string(mandatory = True), "sources": attr.label_keyed_string_dict(allow_files = True), "legal": attr.label_keyed_string_dict(allow_files = True), "windows_runtime": attr.label_list(allow_files = True)},
 )
 
 def native_helper_unit_inputs(name):
@@ -185,7 +190,7 @@ def native_helper_unit_inputs(name):
         owner = PRODUCTS[product]["path"]
         sources["//" + owner + ":carrier_template_sources"] = owner + "/"
         legal["//" + owner + ":carrier_legal_sources"] = owner + "/"
-    _native_helper_unit_inputs(name = name, sources = sources, legal = legal, metadata = json.encode([
+    _native_helper_unit_inputs(name = name, sources = sources, legal = legal, windows_runtime = select({"//build_defs/native:windows_x64": ["@native_msvc_sdk//:runtime_dlls"], "//conditions:default": []}), metadata = json.encode([
         {"product": row["product"], "version": PRODUCTS[row["product"]]["version"], "artifact": row, "carriers": [carrier for carrier in PUBLICATION_CARRIERS if carrier["product"] == row["product"]]}
         for row in NATIVE_HELPER_ARTIFACTS if row["kind"] in ["broker-helper", "node-direct-addon"]
     ]))
@@ -219,7 +224,7 @@ _native_installed_sql_test = rule(
         "artifact_crate": attr.label(mandatory = True, allow_single_file = [".crate"]),
         "_runner": attr.label(default = Label("//build_defs/languages/carriers:installed-sql.test.mts"), allow_single_file = True),
         "_consumer": attr.label(default = Label("//build_defs/languages/carriers:sql-consumer.mts"), allow_single_file = True),
-        "_helpers": attr.label_list(default = [Label("//:tools/packaging/portable-archive.mts"), Label("//build_defs/native:host-runtime-test-helpers.mts"), Label("//build_defs/languages:cargo-environment.mts"), Label("//build_defs/languages/carriers:cargo-consumer.mts")], allow_files = True),
+        "_helpers": attr.label_list(default = [Label("//:tools/packaging/portable-archive.mts"), Label("//:tools/packaging/windows-vc-runtime-closure.mts"), Label("//:tools/packaging/windows-vc-runtime-policy.json"), Label("//build_defs/native:host-runtime-test-helpers.mts"), Label("//build_defs/languages:cargo-environment.mts"), Label("//build_defs/languages/carriers:cargo-consumer.mts")], allow_files = True),
     }),
 )
 

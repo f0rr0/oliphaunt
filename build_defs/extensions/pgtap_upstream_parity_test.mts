@@ -25,7 +25,10 @@ export function compare(
   perl: string,
   patch: string,
   perlOptions: string[] = [],
+  osName = 'linux',
 ): void {
+  if (!['linux', 'darwin', 'MSWin32'].includes(osName))
+    throw new Error('upstream parity requires an explicit supported pgTAP target OS');
   const source = path.dirname(control);
   const libraries = readdirSync(path.dirname(perl))
     .filter((name) => name.startsWith('perl_lib_'))
@@ -44,7 +47,7 @@ export function compare(
   const template = readText(path.join(source, 'sql/pgtap.sql.in'));
   const main = template
     .replaceAll('MODULE_PATHNAME', 'pgtap')
-    .replaceAll('__OS__', 'linux')
+    .replaceAll('__OS__', osName)
     .replaceAll('__VERSION__', numeric);
   const root = mkdtempSync(path.join(tmpdir(), 'oliphaunt-pgtap-parity-'));
   try {
@@ -70,7 +73,7 @@ export function compare(
     }
     const staticSql = readText(staticPath)
       .replaceAll('MODULE_PATHNAME', '$libdir/pgtap')
-      .replaceAll('__OS__', 'linux')
+      .replaceAll('__OS__', osName)
       .replaceAll('__VERSION__', numeric);
     const recipe =
       /^sql\/uninstall_pgtap\.sql: sql\/pgtap\.sql test\/setup\.sql\n\t\$\(PERL\) -e '([^\n]+)' \$< > \$@\n/m.exec(
@@ -122,7 +125,7 @@ export function compare(
         throw new Error(`installed resource differs from upstream bytes: ${name}`);
       }
     }
-    console.log(`Upstream-byte parity: ${expected.size} installed resources`);
+    console.log(`Upstream-byte parity: ${expected.size} installed resources for ${osName}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -136,6 +139,7 @@ if (import.meta.main) {
       installed: { type: 'string' },
       perl: { type: 'string' },
       patch: { type: 'string' },
+      os: { type: 'string', default: 'linux' },
       'perl-options': { type: 'string' },
     },
     allowPositionals: false,
@@ -148,11 +152,11 @@ if (import.meta.main) {
     patch === undefined
   ) {
     throw new Error(
-      'usage: pgtap_upstream_parity_test.mts --control PATH --installed DIR --perl PATH --patch PATH',
+      'usage: pgtap_upstream_parity_test.mts --control PATH --installed DIR --perl PATH --patch PATH [--os linux|darwin|MSWin32]',
     );
   }
   const options = values['perl-options'] ? JSON.parse(readText(values['perl-options'])) : [];
   if (!Array.isArray(options) || !options.every((value) => typeof value === 'string'))
     throw new Error('execution Perl options must be a string array');
-  compare(control, installed, perl, patch, options);
+  compare(control, installed, perl, patch, options, values.os);
 }

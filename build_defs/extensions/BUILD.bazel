@@ -9,7 +9,7 @@ load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extensi
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
 load(":contrib_carriers.bzl", "native_contrib_carrier_legal", "native_contrib_carrier_unit_inputs")
 load(":owner_carriers.bzl", "native_extension_final_collection", "native_extension_final_contract_test", "native_extension_final_import", "native_extension_final_receipt_fixture", "native_owner_carrier_helpers", "native_owner_carrier_legal")
-load(":construction.bzl", "desktop_members_construction_test")
+load(":construction.bzl", "desktop_member_payloads", "desktop_members_construction_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -23,6 +23,12 @@ exports_files(["final_leaf.bzl", "owner_carriers.bzl", "owner_carriers.mts", "fi
 native_extension_final_contract_test(
     name = "native_final_contract_test",
     target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+    size = "medium",
+)
+native_extension_final_contract_test(
+    name = "desktop_final_contract_test",
+    desktop = True,
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
     size = "medium",
 )
 exports_files(["construction.mts"])
@@ -42,13 +48,13 @@ native_extension_final_collection(
     name = "native_pgtap_final_collection",
     product = "oliphaunt-extension-pgtap",
     leaves = ["//src/extensions/external/pgtap:native_carriers"],
-    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
 )
 native_extension_final_collection(
     name = "native_contrib_final_collection",
     product = "oliphaunt-extension-contrib-pg18",
     leaves = ["//src/extensions/contrib:native_carriers"],
-    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE,
+    target_compatible_with = NATIVE_EXTENSION_DESKTOP_COMPATIBLE,
 )
 native_extension_final_collection(
     name = "native_postgis_final_collection",
@@ -73,6 +79,32 @@ BINARY_HELPERS = ["//:tools/packaging/platform-binary-contract.mts", "//:tools/p
 
 desktop_members_construction_test(name = "desktop_members_construction_test", size = "medium")
 desktop_members_sql_test(name = "desktop_members_sql_test")
+FROZEN_DESKTOP_HOST_COMPATIBLE = select({
+    "//build_defs/native:linux_x86_64": [],
+    "//build_defs/native:macos_arm64": [],
+    "//build_defs/native:windows_x64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+filegroup(
+    name = "desktop_frozen_runtime_archive",
+    srcs = select({
+        "//build_defs/native:macos_arm64": ["@extension_frozen_native_macos//:archive_macos_arm64"],
+        "//build_defs/native:windows_x64": ["@extension_frozen_native_windows//:archive_windows_x64_msvc"],
+        "//conditions:default": ["@extension_frozen_native//:archive_linux_x64_gnu"],
+    }),
+    testonly = True,
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
+)
+desktop_members_sql_test(
+    name = "desktop_members_frozen_sql_test",
+    runtime = ":desktop_frozen_runtime_archive",
+    consumer = ":native_frozen_extension_smoke",
+    host_version = EXTENSION_COMPATIBILITY["vector"]["native_runtime_version"],
+    host_product = EXTENSION_COMPATIBILITY["vector"]["native_runtime_product"],
+    runtime_prefix = "runtime",
+    published_runtime = True,
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
+)
 filegroup(name = "desktop_members_construction_inventory", srcs = [":desktop_members_construction_test"], output_group = "inventory", testonly = True)
 bun_test(
     name = "desktop_construction_test",
@@ -99,7 +131,7 @@ bun_script_test(
     name = "native_carriers_test",
     entry_point = "native_carriers.test.mts",
     args = ["$(location :native_carrier_unit_inputs)"],
-    data = [":native_carrier_unit_inputs", "native_carriers.mts", "member_payload.mts"] + native_extension_carrier_helpers() + native_extension_carrier_legal("pgtap"),
+    data = [":native_carrier_unit_inputs", "native_carriers.mts", "member_payload.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + native_extension_carrier_helpers() + native_extension_carrier_legal("pgtap"),
     size = "small",
 )
 
@@ -150,17 +182,19 @@ native_extension_sql_test(
     host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
     runtime_prefix = "runtime",
     library_prefix = "lib",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 
 native_extension_sql_test(
     name = "native_frozen_extension_sql_test",
-    members = ["//src/extensions/external/" + name + ":native_payload" for name in ["pg_hashids", "pg_uuidv7", "pg_ivm", "pg_textsearch", "pgtap", "vector", "postgis"]],
+    members = desktop_member_payloads() + ["//src/extensions/external/postgis:native_payload"],
     runtime = "@extension_frozen_native//:archive_linux_x64_gnu",
     consumer = ":native_frozen_extension_smoke",
     host_version = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_version"],
     host_product = EXTENSION_COMPATIBILITY["postgis"]["native_runtime_product"],
     runtime_prefix = "runtime",
     library_prefix = "lib",
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
 )
 
 cc_binary(
@@ -174,9 +208,13 @@ cc_binary(
 cc_binary(
     name = "native_frozen_extension_smoke",
     srcs = ["native_extension_smoke.c"],
-    deps = ["@extension_frozen_native//:cc_linux_x64_gnu"],
-    copts = ["-std=c11", "-Wall", "-Wextra", "-Werror"],
-    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    deps = select({
+        "//build_defs/native:macos_arm64": ["@extension_frozen_native_macos//:cc_macos_arm64"],
+        "//build_defs/native:windows_x64": ["@extension_frozen_native_windows//:cc_windows_x64_msvc"],
+        "//conditions:default": ["@extension_frozen_native//:cc_linux_x64_gnu"],
+    }),
+    copts = select({"//build_defs/native:windows_x64": ["/std:c11"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
+    target_compatible_with = FROZEN_DESKTOP_HOST_COMPATIBLE,
 )
 
 filegroup(name = "pgtap_archive", srcs = ["//src/extensions/external/pgtap:native_payload"], output_group = "archive")

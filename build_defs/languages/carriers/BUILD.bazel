@@ -1,6 +1,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//build_defs/foundation:bun.bzl", "bun_script_test")
-load("//build_defs/native:platform_config.bzl", "NATIVE_LINUX_COMPATIBLE")
+load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
 load(":defs.bzl", "native_helper_test_data", "native_helper_unit_inputs", "native_installed_sql_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -9,16 +9,16 @@ exports_files(glob(["*.bzl", "*.mts"]))
 
 native_helper_unit_inputs(name = "unit_inputs")
 
-# A tiny constructed ELF exercises envelope formatting. Installed SQL below
+# A tiny constructed host binary exercises envelope formatting. Installed SQL below
 # separately consumes the actual Rust addon and broker, never this fixture.
-cc_binary(name = "envelope_fixture", srcs = ["envelope-fixture.c"], target_compatible_with = NATIVE_LINUX_COMPATIBLE)
+cc_binary(name = "envelope_fixture", srcs = ["envelope-fixture.c"], target_compatible_with = NATIVE_COMPATIBLE)
 
 bun_script_test(
     name = "package_test",
     entry_point = "package.test.mts",
     args = ["$(location :unit_inputs)", "$(location :envelope_fixture)"],
     data = [":unit_inputs", ":envelope_fixture"] + native_helper_test_data(),
-    target_compatible_with = NATIVE_LINUX_COMPATIBLE,
+    target_compatible_with = NATIVE_COMPATIBLE,
     size = "small",
 )
 
@@ -28,8 +28,13 @@ native_installed_sql_test(
     query = "//src/query/ts:npm",
     addon = "//src/native/node-addon:npm",
     broker = "//src/native/broker:npm",
-    runtime = "@node_frozen_native//:npm_linux_x64_gnu",
+    runtime = select({
+        "//build_defs/native:linux_x86_64": "@node_frozen_native//:archive",
+        "//build_defs/native:linux_aarch64_gnu_2_28": "@node_frozen_native_linux_arm64_gnu//:archive",
+        "//build_defs/native:macos_arm64": "@node_frozen_native_macos_arm64//:archive",
+        "//build_defs/native:windows_x64": "@node_frozen_native_windows_x64_msvc//:archive",
+    }),
     artifact_crate = "//src/native/broker:artifact_crate",
-    target_compatible_with = select({"//build_defs/native:linux_x86_64": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    target_compatible_with = NATIVE_COMPATIBLE,
     size = "medium",
 )

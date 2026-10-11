@@ -96,11 +96,21 @@ try {
   );
   const runtimeDirectory = path.join(held.directory, held.manifest.oliphaunt.runtimeRelativePath);
   const env = hostRuntimeEnvironment(runtimeDirectory, root);
+  const libraryDirectory = path.dirname(
+    path.join(held.directory, held.manifest.oliphaunt.libraryRelativePath),
+  );
+  if (process.platform === 'win32') env.PATH = [libraryDirectory, env.PATH].join(path.delimiter);
+  else {
+    const loader = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
+    env[loader] = [libraryDirectory, env[loader]].join(path.delimiter);
+  }
   for (const key of Object.keys(env))
-    if (/^(?:NODE_|BUN_|RUNFILES|TEST_SRCDIR)/u.test(key)) delete env[key];
+    if (/^(?:NODE_|BUN_|RUNFILES|TEST_SRCDIR)/iu.test(key)) delete env[key];
   env.NODE_PATH = '';
   env.NODE_OPTIONS = '';
   env.TMPDIR = path.join(root, 'tmp');
+  env.TMP = env.TMPDIR;
+  env.TEMP = env.TMPDIR;
   mkdirSync(env.TMPDIR);
   const consumer = path.join(root, 'consumer.mjs');
   writeFileSync(

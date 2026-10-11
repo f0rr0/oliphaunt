@@ -21,16 +21,18 @@ def _frozen_native_runtime_impl(ctx):
     for artifact in inputs:
         target = artifact["target"]
         name = target.replace("-", "_")
-        os = "android" if target.startswith("android-") else "osx" if target.startswith("macos-") else "linux"
+        os = "android" if target.startswith("android-") else "osx" if target.startswith("macos-") else "windows" if target.startswith("windows-") else "linux"
         cpu = "aarch64" if "arm64" in target else "x86_64"
         lines.extend([
             'filegroup(name = "archive_%s", srcs = [%s])' % (name, repr(artifact["name"])),
             'filegroup(name = "runtime_%s", srcs = glob(["%s/**"], exclude_directories = 1))' % (name, target),
             'filegroup(name = "library_%s", srcs = ["%s/%s"])' % (name, target, artifact["library"]),
             'filegroup(name = "headers_%s", srcs = ["%s/include/oliphaunt.h"])' % (name, target),
-            'cc_import(name = "_cc_%s", shared_library = "%s/%s", visibility = ["//visibility:private"], target_compatible_with = ["@platforms//os:%s", "@platforms//cpu:%s"])' % (name, target, artifact["library"], os, cpu),
+            'cc_import(name = "_cc_%s", shared_library = "%s/%s"%s, visibility = ["//visibility:private"], target_compatible_with = ["@platforms//os:%s", "@platforms//cpu:%s"])' % (name, target, artifact["library"], ', interface_library = "%s/%s"' % (target, artifact["interfaceLibrary"]) if artifact.get("interfaceLibrary") else "", os, cpu),
             'cc_library(name = "cc_%s", hdrs = ["%s/include/oliphaunt.h"], strip_include_prefix = "%s/include", deps = [":_cc_%s"], target_compatible_with = ["@platforms//os:%s", "@platforms//cpu:%s"])' % (name, target, target, name, os, cpu),
         ])
+        if artifact.get("interfaceLibrary"):
+            lines.append('filegroup(name = "interface_library_%s", srcs = ["%s/%s"])' % (name, target, artifact["interfaceLibrary"]))
     ctx.file("BUILD.bazel", "\n".join(lines) + "\n")
     return ctx.repo_metadata(reproducible = True)
 
@@ -45,6 +47,10 @@ frozen_native_runtime_repository = repository_rule(
         "targets": attr.string_list(mandatory = True),
         "bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),
         "converter": attr.label(default = Label("//build_defs/release:frozen-native-runtime.mts"), allow_single_file = True),
-        "helpers": attr.label_list(default = [Label("//tools/release:compatibility-version-parser.mts"), Label("//:tools/packaging/portable-archive.mts")], allow_files = True),
+        "helpers": attr.label_list(default = [
+            Label("//tools/release:compatibility-version-parser.mts"), Label("//:tools/packaging/portable-archive.mts"),
+            Label("//:tools/packaging/platform-binary-contract.mts"), Label("//:tools/packaging/windows-vc-runtime-closure.mts"),
+            Label("//:tools/packaging/windows-vc-runtime-policy.json"), Label("//tools/release:platform-compatibility-policy.mts"),
+        ], allow_files = True),
     },
 )

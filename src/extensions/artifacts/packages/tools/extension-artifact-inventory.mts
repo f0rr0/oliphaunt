@@ -495,7 +495,7 @@ function normalizeMetadata(row, label) {
   return metadata;
 }
 
-function moduleSuffix(target) {
+export function moduleSuffix(target) {
   if (target === 'windows-x64-msvc') return '.dll';
   if (target === 'macos-arm64' || target === 'ios-xcframework') return '.dylib';
   return '.so';

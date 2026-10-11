@@ -48,6 +48,12 @@ const CONTRIB_LICENSE = Object.freeze({
   upstreamSpdx: 'PostgreSQL',
   packageSpdx: 'MIT AND PostgreSQL',
 });
+export const PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS = Object.freeze([
+  'linux-x64-gnu',
+  'linux-arm64-gnu',
+  'macos-arm64',
+  'windows-x64-msvc',
+]);
 const OPENSSL_EMBEDDED_NATIVE_TARGETS = new Set([
   'android-arm64-v8a',
   'android-x86_64',
@@ -704,9 +710,9 @@ export function extensionUpstreamLicenseFileInventory(sqlNames) {
   );
 }
 
-/** The CPU-model implementation is acquired from this same immutable Bazel source pin. */
+/** Construction receipts bind bundled implementations to their immutable source pins. */
 export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
-  if (sqlName === 'pgcrypto' && ['linux-x64-gnu', 'linux-arm64-gnu'].includes(target)) {
+  if (sqlName === 'pgcrypto' && PGCRYPTO_NATIVE_CONSTRUCTION_TARGETS.includes(target)) {
     const license = releaseNoticeRows({ profile: 'contrib-native-openssl' }).find(
       (row) => row.id === 'openssl',
     );

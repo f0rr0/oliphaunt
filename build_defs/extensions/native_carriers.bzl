@@ -1,14 +1,15 @@
-"""Selected Linux extension final envelopes from their typed member producers."""
+"""Selected desktop extension final envelopes from their typed member producers."""
 
 load("@oliphaunt_metadata//:metadata.bzl", "EXTENSIONS", "EXTENSION_COMPATIBILITY", "EXTENSION_DEPENDENCIES", "EXTENSION_RECIPES", "EXTENSION_RELEASE_METADATA", "EXTENSION_SOURCES", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "bun_file_action", "bun_script_test")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
-load(":platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
+load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load(":smoke.bzl", "extension_smoke_plan")
 
-_TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/native:linux_aarch64_gnu_2_28": "linux-arm64-gnu"}
+_LINUX_TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/native:linux_aarch64_gnu_2_28": "linux-arm64-gnu"}
+_TARGETS = _LINUX_TARGETS | {"//build_defs/native:macos_arm64": "macos-arm64", "//build_defs/native:windows_x64": "windows-x64-msvc"}
 
 def native_extension_carrier_helpers():
     return [
@@ -114,8 +115,11 @@ _native_extension_carriers = rule(implementation = _carriers_impl, toolchains = 
              "_helpers": attr.label_list(default = native_extension_carrier_helpers(), allow_files = True)})
 
 def native_external_extension_carriers(sql_name, member = ":native_payload"):
-    _native_extension_carriers(name = "native_carriers", member = member, legal = native_extension_carrier_legal(sql_name), target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
-    metadata = {condition: native_external_carrier_metadata(sql_name, target) for condition, target in _TARGETS.items()}
+    # PostGIS's foreign dependency recipes are not inherited from generic desktop modules.
+    targets = _LINUX_TARGETS if sql_name == "postgis" else _TARGETS
+    compatible = NATIVE_EXTENSION_LINUX_COMPATIBLE if sql_name == "postgis" else NATIVE_EXTENSION_COMPATIBLE
+    _native_extension_carriers(name = "native_carriers", member = member, legal = native_extension_carrier_legal(sql_name), target_compatible_with = compatible)
+    metadata = {condition: native_external_carrier_metadata(sql_name, target) for condition, target in targets.items()}
     packages = []
     for ecosystem in ["github", "npm", "cargo"]:
         name = "native_" + ecosystem + "_shipping"
@@ -129,7 +133,7 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
                 row = _leaf(spec, ecosystem)
                 names[condition], roles[condition] = row["name"], row["role"]
         shipping_package(name = name, owner = extension_identity(sql_name), artifacts = [":" + name + "_files"], ecosystem = ecosystem,
-                         package_name = select(names), configuration = select(_TARGETS), role = select(roles), target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                         package_name = select(names), configuration = select(targets), role = select(roles), target_compatible_with = compatible)
         packages.append(":" + name)
     # These selected-target rows are inputs to owner-wide release assembly. A
     # single target's manifest cannot advertise the complete release asset set.
@@ -137,9 +141,9 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
         name = "native_" + group + "_shipping"
         native.filegroup(name = name + "_files", srcs = [":native_carriers"], output_group = group)
         shipping_package(name = name, owner = extension_identity(sql_name), artifacts = [":" + name + "_files"], ecosystem = "internal",
-                         package_name = sql_name + "-native-" + group, configuration = select(_TARGETS), role = "extension-release-" + group + "-input", target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+                         package_name = sql_name + "-native-" + group, configuration = select(targets), role = "extension-release-" + group + "-input", target_compatible_with = compatible)
         packages.append(":" + name)
-    shipping_export(name = "native_shipping_export", packages = packages, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE)
+    shipping_export(name = "native_shipping_export", packages = packages, target_compatible_with = compatible)
     native.filegroup(name = "native_carrier_spec", srcs = [":native_carriers"], output_group = "spec")
     extension_smoke_plan(name = "native_final_plan", members = [member], fixtures = ["//src/test-fixtures/extensions:sql"])
     plans = []
@@ -151,11 +155,13 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
     bun_script_test(name = "native_carriers_test", entry_point = "//build_defs/extensions:native_carriers_installed.test.mts",
                     args = ["$(location %s)" % label for label in inputs],
                     data = inputs + native_extension_carrier_helpers() + native_extension_carrier_legal(sql_name) + ["//src/native/sdks/ts:native_asset_sources", "//build_defs/extensions:native_carriers.mts", "//build_defs/extensions:native_carrier_install_helpers.mts"],
-                    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, size = "medium")
+                    target_compatible_with = NATIVE_EXTENSION_LINUX_COMPATIBLE, size = "medium")
 
 def _unit_inputs_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".json")
-    ctx.actions.write(output, json.encode(native_external_carrier_metadata("pgtap", "linux-x64-gnu")))
+    metadata = native_external_carrier_metadata("pgtap", "linux-x64-gnu")
+    metadata["compiledMember"] = native_external_carrier_metadata("pg_uuidv7", "linux-x64-gnu")
+    ctx.actions.write(output, json.encode(metadata))
     return [DefaultInfo(files = depset([output]))]
 
 native_extension_carrier_unit_inputs = rule(implementation = _unit_inputs_impl)

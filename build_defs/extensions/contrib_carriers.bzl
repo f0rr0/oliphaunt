@@ -6,10 +6,10 @@ load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 load(":extensions.bzl", "ExtensionMemberInfo", "extension_identity")
 load(":final_leaf.bzl", "ExtensionFinalLeafInfo")
 load(":native_carriers.bzl", "native_extension_carrier_helpers", "native_extension_carrier_legal")
-load(":platforms.bzl", NATIVE_EXTENSION_COMPATIBLE = "NATIVE_EXTENSION_LINUX_COMPATIBLE")
+load(":platforms.bzl", "NATIVE_EXTENSION_COMPATIBLE", "NATIVE_EXTENSION_LINUX_COMPATIBLE")
 load(":smoke.bzl", "extension_smoke_plan")
 
-_TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/native:linux_aarch64_gnu_2_28": "linux-arm64-gnu"}
+_TARGETS = {"//build_defs/native:linux_x86_64": "linux-x64-gnu", "//build_defs/native:linux_aarch64_gnu_2_28": "linux-arm64-gnu", "//build_defs/native:macos_arm64": "macos-arm64", "//build_defs/native:windows_x64": "windows-x64-msvc"}
 
 def native_contrib_carrier_legal():
     return ["//:LICENSE", "//:THIRD_PARTY_NOTICES.md", "//src/third-party/postgres:COPYRIGHT", "//src/third-party/postgres:source.toml", "//src/third-party/openssl:LICENSE.txt", "//src/third-party/openssl:source.toml"]
@@ -122,7 +122,7 @@ def native_contrib_carriers():
     bun_script_test(name = "native_carriers_test", entry_point = "//build_defs/extensions:contrib_carriers_installed.test.mts",
                     args = ["$(location %s)" % label for label in inputs],
                     data = {label: True for label in data}.keys(),
-                    target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, size = "medium")
+                    target_compatible_with = NATIVE_EXTENSION_LINUX_COMPATIBLE, size = "medium")
 
 def _unit_inputs_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name + ".json")

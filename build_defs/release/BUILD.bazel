@@ -2,6 +2,8 @@ load("//build_defs/foundation:bun.bzl", "bun_test")
 
 package(default_visibility = ["//visibility:public"])
 
+NATIVE_BINARY_HELPERS = ["//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts", "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts"]
+
 exports_files(glob(["*.bzl", "*.mts", "*-source.json", "*-releases.json", "*-completed-publication.json", "*-npm-*.json", "testdata/*.json"]))
 
 bun_test(
@@ -17,15 +19,15 @@ bun_test(
     data = ["frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json", "native-0.3.3-releases.json", "native-0.3.3-completed-publication.json",
         "//src/native/sdks/rust:release.toml", "//src/native/sdks/rust:Cargo.toml", "//tools/release:compatibility-version-parser.mts",
         "//src/native/sdks/kotlin:release.toml", "//src/native/sdks/kotlin/oliphaunt-android-gradle-plugin:src/main/resources/dev/oliphaunt/android/liboliphaunt.version",
-        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"],
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"] + NATIVE_BINARY_HELPERS,
     size = "small",
 )
 
 bun_test(
     name = "frozen_native_npm_test",
     entry_point = "frozen-native-npm.test.mts",
-    data = ["frozen-native-npm.mts", "frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json", "native-0.3.2-npm-linux-x64-gnu.json", "native-0.3.2-npm-linux-x64-gnu-attestations.json",
+    data = ["frozen-native-npm.mts", "frozen-native-runtime.mts", "native-0.3.2-releases.json", "native-0.3.2-completed-publication.json",
         "//src/native/sdks/ts:release.toml", "//src/native/sdks/ts:package.json", "//src/native/runtime:release.toml", "//tools/release:compatibility-version-parser.mts",
-        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts"],
+        "//:tools/packaging/portable-archive.mts", "//:tools/packaging/archive-directory.mts", "//:tools/packaging/testdata/release-fixture-utils.mts"] + glob(["*-npm-*.json"]) + NATIVE_BINARY_HELPERS,
     size = "small",
 )

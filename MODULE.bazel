@@ -378,6 +378,26 @@ frozen_native_runtime(
     targets = ["linux-x64-gnu"],
 )
 
+frozen_native_runtime(
+    name = "extension_frozen_native_macos",
+    releases = "//build_defs/release:native-0.3.3-releases.json",
+    completion = "//build_defs/release:native-0.3.3-completed-publication.json",
+    descriptor = "//src/extensions/external/postgis:release.toml",
+    compatibility = "//src/extensions/external/postgis:release.toml",
+    compatibility_path = "src/extensions/external/postgis/release.toml",
+    targets = ["macos-arm64"],
+)
+
+frozen_native_runtime(
+    name = "extension_frozen_native_windows",
+    releases = "//build_defs/release:native-0.3.3-releases.json",
+    completion = "//build_defs/release:native-0.3.3-completed-publication.json",
+    descriptor = "//src/extensions/external/postgis:release.toml",
+    compatibility = "//src/extensions/external/postgis:release.toml",
+    compatibility_path = "src/extensions/external/postgis/release.toml",
+    targets = ["windows-x64-msvc"],
+)
+
 installed_cargo_inputs = use_repo_rule("//build_defs/languages/installed:repositories.bzl", "installed_cargo_repository")
 installed_cargo_inputs(name = "installed_cargo_inputs", bun = "@bun_runtime//:bun")
 
@@ -395,6 +415,42 @@ frozen_native_npm(
     compatibility = "//src/native/sdks/ts:package.json",
     compatibility_path = "src/native/sdks/ts/package.json",
     target = "linux-x64-gnu",
+)
+
+frozen_native_npm(
+    name = "node_frozen_native_linux_arm64_gnu",
+    metadata = "//build_defs/release:native-0.3.2-npm-linux-arm64-gnu.json",
+    attestations = "//build_defs/release:native-0.3.2-npm-linux-arm64-gnu-attestations.json",
+    releases = "//build_defs/release:native-0.3.2-releases.json",
+    completion = "//build_defs/release:native-0.3.2-completed-publication.json",
+    descriptor = "//src/native/sdks/ts:release.toml",
+    compatibility = "//src/native/sdks/ts:package.json",
+    compatibility_path = "src/native/sdks/ts/package.json",
+    target = "linux-arm64-gnu",
+)
+
+frozen_native_npm(
+    name = "node_frozen_native_macos_arm64",
+    metadata = "//build_defs/release:native-0.3.2-npm-macos-arm64.json",
+    attestations = "//build_defs/release:native-0.3.2-npm-macos-arm64-attestations.json",
+    releases = "//build_defs/release:native-0.3.2-releases.json",
+    completion = "//build_defs/release:native-0.3.2-completed-publication.json",
+    descriptor = "//src/native/sdks/ts:release.toml",
+    compatibility = "//src/native/sdks/ts:package.json",
+    compatibility_path = "src/native/sdks/ts/package.json",
+    target = "macos-arm64",
+)
+
+frozen_native_npm(
+    name = "node_frozen_native_windows_x64_msvc",
+    metadata = "//build_defs/release:native-0.3.2-npm-windows-x64-msvc.json",
+    attestations = "//build_defs/release:native-0.3.2-npm-windows-x64-msvc-attestations.json",
+    releases = "//build_defs/release:native-0.3.2-releases.json",
+    completion = "//build_defs/release:native-0.3.2-completed-publication.json",
+    descriptor = "//src/native/sdks/ts:release.toml",
+    compatibility = "//src/native/sdks/ts:package.json",
+    compatibility_path = "src/native/sdks/ts/package.json",
+    target = "windows-x64-msvc",
 )
 
 # LLVM's GNU C++ ABI and helper runtime use this maintained pinned provider;
@@ -594,3 +650,7 @@ postgres(
 
 postmaster_wasix_libc = use_repo_rule("//build_defs/wasix/postmaster:repositories.bzl", "postmaster_wasix_libc_repository")
 postmaster_wasix_libc(name = "postmaster_wasix_libc")
+
+winflexbison = use_repo_rule("//build_defs/native:windows-generators.bzl", "windows_generators_repository")
+winflexbison(name = "winflexbison")
+register_toolchains("@winflexbison//:flex_toolchain", "@winflexbison//:bison_toolchain")

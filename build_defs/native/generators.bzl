@@ -55,24 +55,33 @@ postgres_perl = rule(
 )
 
 def _parser_action(ctx, scanner):
-    m4 = ctx.toolchains[_M4].m4_toolchain
     if scanner:
-        toolchain = ctx.toolchains[_FLEX].flex_toolchain
+        selected = ctx.toolchains[_FLEX]
+        toolchain = selected.flex_toolchain
         tool = toolchain.flex_tool
         environment = dict(toolchain.flex_env)
     else:
-        toolchain = ctx.toolchains[_BISON].bison_toolchain
+        selected = ctx.toolchains[_BISON]
+        toolchain = selected.bison_toolchain
         tool = toolchain.bison_tool
         environment = dict(toolchain.bison_env)
-    environment.update({
-        "M4": m4.m4_tool.executable.path,
-        "M4_SYSCMD_SHELL": ctx.executable._deny_shell.path,
-    })
+    inputs = [toolchain.all_files]
+    tools = [tool]
+    # The canonical Windows ports call their linked M4 implementation, which
+    # disables shell execution. Other maintained providers use declared M4.
+    if not getattr(selected, "embedded_m4", False):
+        m4 = ctx.toolchains[_M4].m4_toolchain
+        environment.update({
+            "M4": m4.m4_tool.executable.path,
+            "M4_SYSCMD_SHELL": ctx.executable._deny_shell.path,
+        })
+        inputs.append(m4.all_files)
+        tools.extend([m4.m4_tool, ctx.executable._deny_shell])
     ctx.actions.run(
         executable = tool,
         arguments = ctx.attr.options + ["-o", ctx.outputs.outs[0].path, ctx.file.src.path],
-        inputs = depset([ctx.file.src], transitive = [toolchain.all_files, m4.all_files]),
-        tools = [tool, m4.m4_tool, ctx.executable._deny_shell],
+        inputs = depset([ctx.file.src], transitive = inputs),
+        tools = tools,
         outputs = ctx.outputs.outs,
         env = environment,
         mnemonic = "PostgresFlex" if scanner else "PostgresBison",

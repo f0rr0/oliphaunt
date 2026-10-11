@@ -72,13 +72,21 @@ _PLATFORM_ATTRS = {
     "_aarch64": attr.label(default = "@platforms//cpu:aarch64"),
 }
 
+_PGTAP_TARGET_OS = {
+    "//build_defs/native:macos_arm64": "darwin",
+    "//build_defs/native:windows_x64": "MSWin32",
+    "//conditions:default": "linux",
+}
+PGTAP_TARGET_OS = select(_PGTAP_TARGET_OS)
+PGTAP_TARGET_OS_ARGS = select({condition: ["--os", os_name] for condition, os_name in _PGTAP_TARGET_OS.items()})
+
 def _pgtap_sql_impl(ctx):
     configuration = _require_native_profile(ctx)
     directory = ctx.actions.declare_directory(ctx.label.name + ".sql")
     args = ctx.actions.args()
     args.add("--source", ctx.file.control.dirname)
     args.add("--output", directory.path)
-    args.add("--os", {"macos-arm64": "darwin", "windows-x64-msvc": "MSWin32"}.get(configuration, "linux"))
+    args.add("--os", ctx.attr.target_os)
     args.add("--version", extension_default_version("pgtap"))
     perl = ctx.toolchains["@rules_perl//perl:exec_toolchain_type"].perl_runtime
     args.add("--perl", perl.interpreter)
@@ -99,13 +107,14 @@ _pgtap_sql = rule(
     attrs = dict(_PLATFORM_ATTRS, **{
         "inputs": attr.label_list(allow_files = True, mandatory = True),
         "control": attr.label(allow_single_file = True, mandatory = True),
+        "target_os": attr.string(mandatory = True, values = ["linux", "darwin", "MSWin32"]),
         "_generator": attr.label(default = "//build_defs/extensions:pgtap_sql", providers = [BunScriptInfo], cfg = "exec"),
     }),
     toolchains = ["@rules_perl//perl:exec_toolchain_type"],
 )
 
 def pgtap_sql(name, **kwargs):
-    _pgtap_sql(name = name, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, **kwargs)
+    _pgtap_sql(name = name, target_os = PGTAP_TARGET_OS, target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, **kwargs)
 
 def _perl_runtime_impl(ctx):
     perl = ctx.toolchains["@rules_perl//perl:exec_toolchain_type"].perl_runtime

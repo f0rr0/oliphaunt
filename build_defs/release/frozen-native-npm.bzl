@@ -18,7 +18,7 @@ def _frozen_native_npm_impl(ctx):
     if checked.return_code:
         fail("Frozen npm bytes are invalid:\n" + checked.stdout + checked.stderr)
     name = artifact["target"].replace("-", "_")
-    ctx.file("BUILD.bazel", 'package(default_visibility = ["//visibility:public"])\nexports_files(["inputs.json"])\nfilegroup(name = "npm_%s", srcs = [%s])\n' % (name, repr(artifact["filename"])))
+    ctx.file("BUILD.bazel", 'package(default_visibility = ["//visibility:public"])\nexports_files(["inputs.json"])\nfilegroup(name = "archive", srcs = [%s])\nfilegroup(name = "npm_%s", srcs = [":archive"])\n' % (repr(artifact["filename"]), name))
     return ctx.repo_metadata(reproducible = True)
 
 frozen_native_npm_repository = repository_rule(
@@ -35,6 +35,10 @@ frozen_native_npm_repository = repository_rule(
         "owner_descriptor": attr.label(default = Label("//src/native/runtime:release.toml"), allow_single_file = True),
         "bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),
         "converter": attr.label(default = Label("//build_defs/release:frozen-native-npm.mts"), allow_single_file = True),
-        "helpers": attr.label_list(default = [Label("//build_defs/release:frozen-native-runtime.mts"), Label("//tools/release:compatibility-version-parser.mts"), Label("//:tools/packaging/portable-archive.mts")], allow_files = True),
+        "helpers": attr.label_list(default = [
+            Label("//build_defs/release:frozen-native-runtime.mts"), Label("//tools/release:compatibility-version-parser.mts"), Label("//:tools/packaging/portable-archive.mts"),
+            Label("//:tools/packaging/platform-binary-contract.mts"), Label("//:tools/packaging/windows-vc-runtime-closure.mts"),
+            Label("//:tools/packaging/windows-vc-runtime-policy.json"), Label("//tools/release:platform-compatibility-policy.mts"),
+        ], allow_files = True),
     },
 )

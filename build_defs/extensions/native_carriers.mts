@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
+  moduleSuffix,
   validateExtensionArtifactArchive,
 } from '../../src/extensions/artifacts/packages/tools/extension-artifact-inventory.mts';
 import {
@@ -33,7 +34,7 @@ import {
   readPortableArchiveEntries,
 } from '../../tools/packaging/portable-archive.mts';
 import { stageReleaseNotices } from '../../tools/packaging/release-notices.mts';
-import { inspect } from './validate_member_payload.mts';
+import { inspect, validateNativeMemberModule } from './validate_member_payload.mts';
 
 interface Carrier {
   product: string;
@@ -63,13 +64,12 @@ export interface NativeCarrierSpec {
 }
 
 /** Apply the existing release platform policy before accepting a compiled member. */
-export function validateNativeShippingModule(bytes: Buffer, target: string) {
+export function validateNativeShippingModule(bytes: Buffer, target: string, modulePath: string) {
   const result = inspectPlatformBinaryBuffer(bytes, {
     target,
     label: 'native extension shipping module',
   });
-  assert.equal(result.format, 'elf', 'shipping module must be ELF');
-  assert.equal(bytes.readUInt16LE(16), 3, 'shipping module must be ET_DYN');
+  validateNativeMemberModule(bytes, target, modulePath);
   return result;
 }
 
@@ -109,7 +109,13 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
   );
   assert.deepEqual(canonical(actual.sql_files), canonical(artifact.extension_sql_file_names));
   assert.deepEqual(canonical(actual.sql_prefixes), canonical(artifact.extension_sql_file_prefixes));
-  assert.equal(actual.module_file, spec.descriptor['native-module-file'] ?? '');
+  const canonicalModule = spec.descriptor['native-module-file'] ?? '';
+  assert(
+    !canonicalModule || canonicalModule.endsWith('.so'),
+    'canonical native module must declare its .so stem',
+  );
+  const stem = canonicalModule ? canonicalModule.slice(0, -3) : null;
+  assert.equal(actual.module_file, stem === null ? '' : stem + moduleSuffix(spec.target));
   const nativeDependencyModules = canonical(artifact.native_dependency_modules).map((file) =>
     path.posix.basename(file),
   );
@@ -128,7 +134,6 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
     nativeConstructionLicenseFiles.map((row) => row.path),
     'construction notices differ from the immutable construction source',
   );
-  const stem = actual.module_file ? actual.module_file.slice(0, -3) : null;
   const startup = spec.descriptor.lifecycle['startup-config'] ?? [];
   const sharedPreloadLibraries = startup
     .flatMap((value: string) =>
@@ -240,7 +245,7 @@ export function assemblePublicNativeMember(spec: NativeCarrierSpec, output: stri
       const output = path.join(publicRoot, 'files', name);
       mkdirSync(path.dirname(output), { recursive: true });
       writeFileSync(output, entry.data(), { mode: name.startsWith('lib/') ? 0o755 : 0o644 });
-      if (name.startsWith('lib/')) validateNativeShippingModule(entry.data(), spec.target);
+      if (name.startsWith('lib/')) validateNativeShippingModule(entry.data(), spec.target, name);
     }
     stageExtensionUpstreamLicenses(spec.sqlName, path.join(publicRoot, 'files'));
     const legal = extensionCarrierLegalContract(spec.product, [spec.sqlName], {
