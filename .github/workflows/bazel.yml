@@ -333,11 +333,22 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Restore bounded Bazel action cache
+        id: bazel-cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.cache/oliphaunt/bazel-disk
+          key: bazel-disk-v1-${{ runner.os }}-${{ runner.arch }}-wasix-${{ hashFiles('.bazelversion') }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: |
+            bazel-disk-v1-${{ runner.os }}-${{ runner.arch }}-wasix-${{ hashFiles('.bazelversion') }}-
+
       - name: Qualify bridge, initdb shim ABI and source mode handling
         run: >-
           bash tools/dev/bazel.sh test --config=wasix-aot //build_defs/wasix:bridge_abi_test
           //build_defs/wasix:initdb_shim_abi_test
           //build_defs/wasix/postmaster:source_modes_test
+          --config=ci-cache --disk_cache="$HOME/.cache/oliphaunt/bazel-disk"
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
@@ -352,9 +363,10 @@ jobs:
             --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
             > "$input_root/github.json"
-          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" '[
+          jq -nc --arg cache "$RUNNER_TEMP/wasix-source-sdk-cache" --arg diskCache "$HOME/.cache/oliphaunt/bazel-disk" '[
             "--config=wasix-aot","--platforms=//build_defs/native:linux_x86_64_glibc_2_28",
             "--host_platform=//build_defs/native:linux_x86_64_glibc_2_28","--jobs=1","--local_test_jobs=1",
+            "--config=ci-cache","--disk_cache="+$diskCache,
             "--test_env=OLIPHAUNT_WASM_AOT_VERIFY=full","--test_env=XDG_CACHE_HOME="+$cache,"--test_env=RUST_TEST_THREADS=1"
           ]' > "$input_root/configuration.json"
           jq -nc '[
@@ -391,6 +403,7 @@ jobs:
           mkdir -p "$capture_root"
           test -z "$(git status --porcelain)"
           configuration=(--config=wasix-aot \
+            --config=ci-cache --disk_cache="$HOME/.cache/oliphaunt/bazel-disk" \
             --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
             --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=1)
           expression='kind("shipping_package", deps(//src/wasix/runtime:cargo_shipping_export, 1))'
@@ -426,9 +439,36 @@ jobs:
         run: |
           chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
           bash tools/dev/bazel.sh run --config=wasix-aot //src/wasix/sdks/ts:browser_sql_consumer \
+            --config=ci-cache --disk_cache="$HOME/.cache/oliphaunt/bazel-disk" \
             --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
             --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2 \
             -- "$chrome_binary" "$RUNNER_TEMP/chrome-host.json"
+
+      - name: Freeze bounded Bazel cache for transport
+        id: bazel-cache-ready
+        continue-on-error: true
+        if: ${{ !cancelled() && steps.bazel-cache.outputs.cache-hit != 'true' }}
+        run: |
+          # Cache transport is optional. Never snapshot a live writer or exceed
+          # the local budget if Bazel's idle garbage collector has not finished.
+          if ! bash tools/dev/bazel.sh shutdown; then
+            exit 0
+          fi
+          cache_root="$HOME/.cache/oliphaunt/bazel-disk"
+          if [[ -d "$cache_root" ]]; then
+            cache_kib="$(du -sk "$cache_root" | cut -f1)"
+            if [[ "$cache_kib" =~ ^[0-9]+$ ]] && (( cache_kib <= 2097152 )); then
+              printf 'ready=true\n' >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Save bounded Bazel action cache
+        continue-on-error: true
+        if: ${{ !cancelled() && steps.bazel-cache-ready.outputs.ready == 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.cache/oliphaunt/bazel-disk
+          key: ${{ steps.bazel-cache.outputs.cache-primary-key }}
 
   wasix-host:
     name: WASIX imported runtime (${{ matrix.platform }})

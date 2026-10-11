@@ -12,3 +12,8 @@ build --enable_runfiles
 
 # The LLVM serializer runs on Linux; serialized product targets remain separate.
 build:wasix-aot --extra_execution_platforms=//build_defs/wasix:llvm_serializer_linux_x86_64
+
+# Optional CI disk cache: callers supply an absolute --disk_cache path.
+build:ci-cache --experimental_disk_cache_gc_max_size=2G
+build:ci-cache --experimental_disk_cache_gc_idle_delay=0
+build:ci-cache --guard_against_concurrent_changes=full

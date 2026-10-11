@@ -103,14 +103,23 @@ function snapshot() {
   );
 }
 
-function bazel(command: string, args: string[], expectFailure = false) {
+function bazel(command: string, args: string[], expectFailure = false, base = outputBase) {
   const result = spawnSync(
     'bash',
-    [wrapper, ...startupOptions, command, '--repo_env=DO_NOT_TRACK=1', ...args],
+    [
+      wrapper,
+      ...startupOptions.map((option) =>
+        option.startsWith('--output_base=') ? `--output_base=${base}` : option,
+      ),
+      ...(base === outputBase ? [] : ['--host_jvm_args=-Xmx768m']),
+      command,
+      '--repo_env=DO_NOT_TRACK=1',
+      ...args,
+    ],
     {
       cwd: workspace,
       encoding: 'utf8',
-      timeout: 180_000,
+      timeout: command === 'shutdown' ? 30_000 : 180_000,
       maxBuffer: 16 * 1024 * 1024,
       env: subprocessEnvironment,
     },
@@ -327,12 +336,17 @@ function selection(changed: string[], expected: Product[], unclassified: string[
   return after;
 }
 
-function archives() {
-  const files = bazel('cquery', [
-    `${label}:alpha_archive + ${label}:beta_archive + ${label}:gamma_archive`,
-    '--output=files',
-    '--noshow_progress',
-  ])
+function archives(base = outputBase, consume = false) {
+  const files = bazel(
+    'cquery',
+    [
+      `${label}:alpha_archive + ${label}:beta_archive + ${label}:gamma_archive`,
+      '--output=files',
+      '--noshow_progress',
+    ],
+    false,
+    base,
+  )
     .stdout.trim()
     .split('\n');
   return Object.fromEntries(
@@ -342,6 +356,16 @@ function archives() {
       const bytes = readFileSync(path.join(workspace, file));
       const envelope = JSON.parse(bytes.toString());
       assert.equal(envelope.version, { alpha: '1.0.0', beta: '2.0.0', gamma: '3.0.0' }[product]);
+      if (consume) {
+        // Cache hits need not materialize binaries below the public archive outputs.
+        const binary = path.join(scratch, `cache-${product}.consumer`);
+        writeFileSync(binary, Buffer.from(envelope.executable, 'base64'), { mode: 0o755 });
+        assert.equal(
+          execFileSync(binary, { encoding: 'utf8', timeout: 10_000, env: subprocessEnvironment }),
+          readFileSync(path.join(fixture, `${product}.expected`), 'utf8'),
+          `${base}: physical ${product} archive consumer`,
+        );
+      }
       return [product, createHash('sha256').update(bytes).digest('hex')];
     }),
   ) as Record<Product, string>;
@@ -357,6 +381,69 @@ function unchanged(
     expected,
     'physical delivery changes must match the independent fixture truth',
   );
+}
+
+function diskCacheAcrossFreshBases() {
+  const cache = path.join(scratch, 'disk-cache');
+  const originalAlpha = model.alpha;
+  const phase = (name: string) => {
+    const base = path.join(scratch, `cache-${name}`);
+    assert.ok(!existsSync(base), 'disk cache proof requires a fresh output base');
+    const log = path.join(scratch, `cache-${name}.execution.json`);
+    try {
+      bazel(
+        'build',
+        [
+          ...products.map((product) => `${label}:${product}_archive`),
+          '--config=ci-cache',
+          `--disk_cache=${cache}`,
+          '--jobs=2',
+          '--noshow_progress',
+          `--execution_log_json_file=${log}`,
+        ],
+        false,
+        base,
+      );
+      const spawns = parseExecutionLog(readFileSync(log, 'utf8')).filter((spawn) =>
+        spawn.targetLabel?.startsWith(`${label}:`),
+      );
+      const executed = spawns
+        .filter((spawn) => !spawn.cacheHit)
+        .map((spawn) => ({
+          mnemonic: spawn.mnemonic,
+          target: targetName(spawn),
+        }));
+      const hits = spawns.filter((spawn) => spawn.cacheHit);
+      assert.ok(hits.every((spawn) => spawn.runner === 'disk cache hit'));
+      const hashes = archives(base, true);
+      console.log(JSON.stringify({ diskCacheScenario: name, executed, hits: hits.length, hashes }));
+      return { executed, hits, hashes };
+    } finally {
+      bazel('shutdown', [], false, base);
+    }
+  };
+  try {
+    const cold = phase('cold');
+    assert.equal(cold.executed.length, 15, 'cold fixture must execute its actual producer actions');
+    assert.equal(cold.hits.length, 0);
+    const restored = phase('restored');
+    assert.deepEqual(restored.executed, [], 'fresh output base must restore every producer action');
+    assert.equal(restored.hits.length, cold.executed.length);
+    unchanged(cold.hashes, restored.hashes, []);
+    model.alpha += 4;
+    writeModel();
+    const changed = phase('changed');
+    assert.deepEqual(changed.executed, [
+      { mnemonic: 'CppCompile', target: 'alpha_bin' },
+      { mnemonic: 'CppLink', target: 'alpha_bin' },
+      { mnemonic: 'FixturePackage', target: 'alpha_archive' },
+    ]);
+    assert.equal(changed.hits.length, cold.executed.length - changed.executed.length);
+    unchanged(cold.hashes, changed.hashes, ['alpha']);
+  } finally {
+    model.alpha = originalAlpha;
+    writeModel();
+  }
 }
 
 function realQueryShipping(name: string, allowedTargets: string[], expectedEnvelopes?: number) {
@@ -560,8 +647,9 @@ function realQueryShipping(name: string, allowedTargets: string[], expectedEnvel
 
 try {
   snapshot();
-  externalBunEntrypoints();
   writeModel();
+  diskCacheAcrossFreshBases();
+  externalBunEntrypoints();
   const allProduction = [
     'config',
     'shared',

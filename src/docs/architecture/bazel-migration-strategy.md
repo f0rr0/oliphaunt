@@ -55,7 +55,7 @@ does not admit a release or establish coverage of the other rows.
 | WASIX tools | All 17 final shipping outputs pass the canonical publication reader and frozen staging locally. An installed test resolves the actual candidate tools beside an integrity-pinned public SDK. | Fresh CI with the full-family guard; remaining native host behavior. |
 | Native extensions | Seven external extension envelopes pass installed Linux SQL/restart tests. All 32 contrib members produce canonical Linux GitHub/npm/Cargo envelopes; selective loading and actual static OpenSSL legal closure pass. | Full owner facades, all declared platform/mobile/WASIX outputs, and complete installed compositions. |
 | Apple and Windows | Native package/toolchain contracts and local SDK watching scenarios pass. Windows startup uses a short output base for generated Rust object paths. | Genuine fresh Xcode/MSVC execution, complete Apple slices, and installed application tests. |
-| Postmaster | The genuine sysroot, all 29 sealed modules, AOT images, carrier and `initdb` build and run locally. Canonical fence, ABI, memory and export checks pass. | Startup currently exits with an uncaught exception; SQL, concurrency/recovery, foreign hosts and final public envelopes remain unqualified. |
+| Postmaster | The genuine sysroot, all 29 sealed modules, AOT images, carrier and `initdb` build and run locally. Canonical fence, ABI, memory and export checks pass. The independent `longjmp` probe reproduces startup's unwind failure; registering FDEs instead of CIEs makes the unchanged probe succeed under a debugger. | Correct the linked-unwinder detection and pass both primitive probes without a debugger, then startup, SQL, concurrency/recovery, foreign hosts and final public envelopes. |
 | Construction evidence | The producing build emits shipping identities. Its BEP content-binds their bytes and configuration; physical inputs/outputs and required configured tests are checked. | Protected producer input lifetime, authenticated action-dump bytes, and loaded analysis/acquisition provenance. |
 | Release integration | Authenticated construction observations and explicitly opted-in controller metadata have focused regressions. Default publication inventory and frozen locks reject incomplete native admission. | All-product coverage, durable admitted baselines, one necessary-delivery/compatibility decision, and replacement of the active selector and gates. |
 
@@ -802,15 +802,24 @@ events as well as local policy checks.
 
 ## Cache, tests, and efficient verification
 
-Use one trusted remote action cache/CAS, declared toolchains and local action
-reuse. Repository download caching is a different function. Untrusted PRs must
-not write trusted publication cache results; isolate read/write policy and
-qualifying source contexts. Frozen candidate storage must survive cache eviction.
-[Remote caching](https://bazel.build/remote/caching).
+Local Bazel action reuse and declared toolchains are the baseline. The slow
+Linux WASIX job can transport Bazel's standard disk action cache with GitHub's
+existing cache service; no remote executor or separately hosted cache is
+required. The optional cache is scoped by OS, CPU, cohort and Bazel version,
+with immutable source keys and a matching restore prefix. Stop the writer
+before saving and skip snapshots above 2 GiB. Cache failure must not determine
+qualification success. The fixture verifies reuse from a fresh output base,
+selective invalidation and identical physical archive consumers; the actual
+WASIX job must establish the retained working set and speedup.
+[Disk cache collection](https://bazel.build/remote/caching#garbage-collection).
 
-Enforce isolation with server-side ACLs and scoped credentials, not a client
-flag an untrusted PR can override. Include an adversarial cache-write probe;
-trusted cached results must remain unavailable for unauthorized replacement.
+Untrusted PRs must not replace trusted publication cache results. GitHub's
+server-enforced PR-ref isolation provides that boundary for transported disk
+caches. A future shared remote action cache/CAS needs server-side ACLs and
+scoped credentials; a client flag is insufficient. Repository download caching
+is separate, and frozen candidate storage must survive cache eviction.
+[GitHub cache access restrictions](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache),
+[remote caching](https://bazel.build/remote/caching).
 
 A cold miss requested simultaneously by independent clients may duplicate work;
 remote caching is not global scheduling. Keep expensive producer-first cohort
