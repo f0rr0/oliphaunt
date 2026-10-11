@@ -143,7 +143,7 @@ def native_external_extension_carriers(sql_name, member = ":native_payload"):
     inputs += [":native_manifest_shipping_files", ":native_frozen_shipping_files"]
     bun_script_test(name = "native_carriers_test", entry_point = "//build_defs/extensions:native_carriers_installed.test.mts",
                     args = ["$(location %s)" % label for label in inputs],
-                    data = inputs + native_extension_carrier_helpers() + native_extension_carrier_legal(sql_name) + ["//src/native/sdks/ts:native_asset_sources", "//build_defs/extensions:native_carriers.mts"],
+                    data = inputs + native_extension_carrier_helpers() + native_extension_carrier_legal(sql_name) + ["//src/native/sdks/ts:native_asset_sources", "//build_defs/extensions:native_carriers.mts", "//build_defs/extensions:native_carrier_install_helpers.mts"],
                     target_compatible_with = NATIVE_EXTENSION_COMPATIBLE, size = "medium")
 
 def _unit_inputs_impl(ctx):

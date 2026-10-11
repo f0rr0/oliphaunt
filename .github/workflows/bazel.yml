@@ -92,7 +92,13 @@ jobs:
             host_tests+=(@icu//:windows_icu_smoke_test)
           fi
           if [[ "$TARGET_PLATFORM" != macos-arm64 ]]; then
-            bash tools/dev/bazel.sh test //:portable_tests "${host_tests[@]}" \
+            startup=()
+            if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
+              # MSVC still limits some object paths to MAX_PATH. Keep the whole
+              # job on one short base, including maintained Rust build tools.
+              startup=(--output_base="$RUNNER_TEMP/b")
+            fi
+            bash tools/dev/bazel.sh "${startup[@]}" test //:portable_tests "${host_tests[@]}" \
               --platforms="$profile" --host_platform="$profile" --jobs=2
             exit
           fi
@@ -241,6 +247,8 @@ jobs:
           //src/native/rust-bindings:unit_test
           //build_defs/native/carriers:package_test
           //build_defs/extensions:native_carriers_test
+          //build_defs/extensions:contrib_carriers_test
+          //src/extensions/contrib:native_carriers_test
           //build_defs/native/apple:framework_contract_test
           //build_defs/native/apple:swift_candidate_contract_test
           //build_defs/native/apple:mobile_seed_contract_test
@@ -361,9 +369,11 @@ jobs:
             "//src/database-resources:wasix_resource_test",
             "//src/wasix/postgres-tools/ts:installed_consumer_test"
           ]' > "$input_root/targets.json"
+          jq -nc '["postgres-tools-wasix"]' > "$input_root/complete-products.json"
           bash tools/dev/bun.sh tools/release/qualify-native-shipping.mts \
             --github-json "$input_root/github.json" --configuration-json "$input_root/configuration.json" \
             --shipping-export //src/wasix/postgres-tools:shipping_export --targets-json "$input_root/targets.json" \
+            --complete-products-json "$input_root/complete-products.json" \
             --output-directory "$RUNNER_TEMP/wasix-tools-build-capture"
 
       - name: Upload tools construction evidence
@@ -468,10 +478,15 @@ jobs:
         env:
           EXPECTED_SOURCE_COMMIT: ${{ needs.wasix.outputs.source_commit }}
           TARGET_PROFILE: ${{ matrix.profile }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
           test -z "$(git status --porcelain)"
-          bash tools/dev/bazel.sh test //src/wasix/sdks/rust:postgres_regression_test \
+          startup=()
+          if [[ "$TARGET_PLATFORM" == windows-x64 ]]; then
+            startup=(--output_base="$RUNNER_TEMP/b")
+          fi
+          bash tools/dev/bazel.sh "${startup[@]}" test //src/wasix/sdks/rust:postgres_regression_test \
             --platforms="$TARGET_PROFILE" --host_platform="$TARGET_PROFILE" \
             --repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT="$EXPECTED_SOURCE_COMMIT" \
             --repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS="$RUNNER_TEMP/wasix-cargo-inputs" \

@@ -2307,12 +2307,12 @@ export async function prepareBundleVerification(options, directory) {
   );
 }
 
-async function readGhBundleVerification(options) {
+export async function readGhBundleVerification(
+  options,
+  directory = process.env.OLIPHAUNT_ATTESTATION_VERIFICATION_DIR,
+) {
   const { bundle, bundlePath } = options;
-  const { stem } = bundleVerificationFile(
-    options,
-    process.env.OLIPHAUNT_ATTESTATION_VERIFICATION_DIR,
-  );
+  const { stem } = bundleVerificationFile(options, directory);
   const output = parseJsonBytes(
     await readBoundedRegularFile(
       stem + '.json',
@@ -2336,6 +2336,35 @@ async function readGhBundleVerification(options) {
   const statement = verified.verificationResult?.statement;
   requireObject(statement, `gh verification statement for ${bundlePath}`);
   return statementSubjects(statement, `gh verified statement for ${bundlePath}`);
+}
+
+/** Authenticate one subject without claiming publication of other signed subjects. */
+export async function verifyAttestationBundleSubject(
+  { bundlePath, file, name, sha256, repo, publisherSha },
+  { verifyBundleImpl = readGhBundleVerification } = {},
+) {
+  const absolute = path.resolve(bundlePath);
+  const bytes = await readBoundedRegularFile(
+    absolute,
+    MAX_ATTESTATION_BUNDLE_BYTES,
+    'asset attestation bundle',
+  );
+  const bundle = parseJsonBytes(bytes, 'asset attestation bundle');
+  const subjects = statementSubjects(decodeBundleStatement(bundle, absolute), absolute);
+  const matches = subjects.filter((subject) => subject.name === name && subject.sha256 === sha256);
+  if (matches.length !== 1) throw new Error('asset attestation must bind the exact subject digest');
+  const verified = await verifyBundleImpl({
+    bundle,
+    bundlePath: absolute,
+    file,
+    head: publisherSha,
+    repo: normalizedRepository(repo),
+  });
+  if (stableStringify(verified) !== stableStringify(subjects))
+    throw new Error(
+      'cryptographically verified asset subjects differ from supplied DSSE statement',
+    );
+  return { bundleSha256: sha256Bytes(bytes), subjects };
 }
 
 export async function verifyAttestationBundles(
@@ -2421,13 +2450,19 @@ async function readReceipt(file) {
 export async function writeImmutableReceipt(
   file,
   receipt,
-  { linkImpl = (source, target) => fs.link(source, target) } = {},
+  {
+    linkImpl = (source, target) => fs.link(source, target),
+    maximumBytes = MAX_ATTESTATION_RECEIPT_BYTES,
+  } = {},
 ) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0)
+    throw new Error('immutable receipt maximumBytes must be a positive safe integer');
   const absolute = path.resolve(file);
   const body = `${JSON.stringify(receipt, null, 2)}\n`;
-  if (Buffer.byteLength(body) > MAX_ATTESTATION_RECEIPT_BYTES) {
+  const size = Buffer.byteLength(body);
+  if (size > maximumBytes) {
     throw new Error(
-      `GitHub attestation receipt ${file} exceeds ${MAX_ATTESTATION_RECEIPT_BYTES} bytes`,
+      `GitHub attestation receipt ${file} is ${size} bytes, exceeds ${maximumBytes} bytes`,
     );
   }
   await fs.mkdir(path.dirname(absolute), { recursive: true });
@@ -2444,7 +2479,7 @@ export async function writeImmutableReceipt(
       if (error?.code !== 'EEXIST') throw error;
       const existing = await readBoundedRegularFile(
         absolute,
-        MAX_ATTESTATION_RECEIPT_BYTES,
+        maximumBytes,
         `GitHub attestation receipt ${file}`,
       );
       if (existing.toString('utf8') !== body) {

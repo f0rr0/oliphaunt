@@ -45,6 +45,8 @@ interface Carrier {
 }
 export interface NativeCarrierSpec {
   product: string;
+  owner?: string;
+  contrib?: Record<string, any>;
   version: string;
   sqlName: string;
   target: string;
@@ -71,7 +73,11 @@ export function validateNativeShippingModule(bytes: Buffer, target: string) {
 }
 
 export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<string, any>) {
-  assert.equal(actual.owner, spec.product, 'member owner differs from its release product');
+  assert.equal(
+    actual.owner,
+    spec.owner ?? spec.product,
+    'member owner differs from its release product',
+  );
   assert.equal(actual.version, spec.version, 'member version differs from its release product');
   assert.equal(actual.sql_name, spec.sqlName);
   assert.equal(actual.configuration, spec.target);
@@ -82,16 +88,24 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
   );
   assert.equal(actual.source_kind, spec.descriptor['source-kind']);
   assert.deepEqual(
-    actual.source,
+    spec.contrib ? actual.postgres_source : actual.source,
     spec.source,
     'member source pin differs from canonical acquisition',
   );
-  assert.equal(actual.default_version, spec.source['extension-control']['default-version']);
+  assert.equal(
+    actual.default_version,
+    spec.contrib
+      ? (spec.contrib['default-version'] ?? null)
+      : spec.source['extension-control']['default-version'],
+  );
   assert.equal(actual.creates_extension, spec.descriptor.lifecycle['create-extension']);
   const artifact = spec.recipe.artifacts ?? {};
   const canonical = (values: string[] = []) => [...values].sort();
   assert.deepEqual(canonical(actual.dependencies), canonical(spec.descriptor.dependencies));
-  assert.deepEqual(canonical(actual.data_files), canonical(artifact.data_files));
+  assert.deepEqual(
+    canonical(actual.data_files),
+    canonical(spec.contrib ? spec.contrib['data-files'] : artifact.data_files),
+  );
   assert.deepEqual(canonical(actual.sql_files), canonical(artifact.extension_sql_file_names));
   assert.deepEqual(canonical(actual.sql_prefixes), canonical(artifact.extension_sql_file_prefixes));
   assert.equal(actual.module_file, spec.descriptor['native-module-file'] ?? '');
@@ -104,13 +118,14 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
     'native dependency modules differ from the canonical recipe',
   );
   const nativeConstructionLicenseFiles =
-    spec.sqlName === 'vector' && spec.target === 'linux-x64-gnu'
+    (spec.sqlName === 'vector' && spec.target === 'linux-x64-gnu') ||
+    (spec.contrib && spec.sqlName === 'pgcrypto')
       ? nativeExtensionConstructionLicenseInventory(spec.sqlName, spec.target)
       : [];
   assert.deepEqual(
     actual.construction_licenses ?? [],
     nativeConstructionLicenseFiles.map((row) => row.path),
-    'construction notices differ from the immutable compiler-runtime source',
+    'construction notices differ from the immutable construction source',
   );
   const stem = actual.module_file ? actual.module_file.slice(0, -3) : null;
   const startup = spec.descriptor.lifecycle['startup-config'] ?? [];
@@ -141,7 +156,7 @@ export function frozenNativeMember(spec: NativeCarrierSpec, actual: Record<strin
   };
 }
 
-function writeJson(file: string, value: unknown) {
+export function writeJson(file: string, value: unknown) {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
 }
@@ -174,7 +189,18 @@ function exactArchive(directory: string, output: string) {
   writeFileSync(output, canonicalGzipSync(Buffer.concat(blocks)));
 }
 
-export function validateNativeCarrierIdentities(spec: NativeCarrierSpec) {
+export function nativeCarrierCompatibility(spec: NativeCarrierSpec) {
+  return {
+    extensionRuntimeContract: spec.compatibility.extension_runtime_contract,
+    nativeRuntimeProduct: spec.compatibility.native_runtime_product,
+    nativeRuntimeVersion: spec.compatibility.native_runtime_version,
+    postgresMajor: spec.compatibility.postgres_major,
+    wasixRuntimeProduct: spec.compatibility.wasix_runtime_product,
+    wasixRuntimeVersion: spec.compatibility.wasix_runtime_version,
+  };
+}
+
+export function nativeCarrierLeaves(spec: NativeCarrierSpec) {
   const facades = spec.carriers.filter((row) => row.ecosystem === 'npm' && row.target === null);
   assert.equal(facades.length, 1, 'canonical extension npm facade must be unique');
   const selected = ['npm', 'cargo'].map((ecosystem) => {
@@ -184,26 +210,28 @@ export function validateNativeCarrierIdentities(spec: NativeCarrierSpec) {
     );
     assert.equal(rows.length, 1, `canonical ${ecosystem} extension leaf must be unique`);
     const row = rows[0];
-    assert.equal(row.product, spec.product);
+    assert.equal(row.product, spec.owner ?? spec.product);
     assert.equal(row.version, spec.version);
     return row;
   });
+  return { npm: selected[0], cargo: selected[1] };
+}
+
+export function validateNativeCarrierIdentities(spec: NativeCarrierSpec) {
+  const selected = nativeCarrierLeaves(spec);
   assert.equal(
     path.basename(spec.outputs.github),
     `${spec.product}-${spec.version}-native-${spec.target}-runtime.tar.gz`,
   );
-  return { npm: selected[0], cargo: selected[1] };
+  return selected;
 }
 
-export function packageNativeCarriers(spec: NativeCarrierSpec) {
-  const identities = validateNativeCarrierIdentities(spec);
-  const actual = inspect(spec.archive, spec.sqlName, spec.product);
+export function assemblePublicNativeMember(spec: NativeCarrierSpec, output: string) {
+  const actual = inspect(spec.archive, spec.sqlName, spec.owner ?? spec.product);
   const metadata = frozenNativeMember(spec, actual);
-  const root = mkdtempSync(path.join(tmpdir(), 'native-extension-envelopes-'));
-  for (const output of Object.values(spec.outputs))
-    mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
+  const root = mkdtempSync(path.join(tmpdir(), 'native-extension-member-'));
+  mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
   try {
-    const productRoot = path.join(root, 'product');
     const publicRoot = path.join(root, 'public');
     mkdirSync(publicRoot, { recursive: true });
     for (const [name, entry] of readPortableArchiveEntries(realpathSync(spec.archive))) {
@@ -217,16 +245,10 @@ export function packageNativeCarriers(spec: NativeCarrierSpec) {
     const legal = extensionCarrierLegalContract(spec.product, [spec.sqlName], {
       family: 'native',
       target: spec.target,
+      memberContracts: [metadata],
     });
     stageReleaseNotices(publicRoot, { profile: legal.profile });
-    const compatibility = {
-      extensionRuntimeContract: spec.compatibility.extension_runtime_contract,
-      nativeRuntimeProduct: spec.compatibility.native_runtime_product,
-      nativeRuntimeVersion: spec.compatibility.native_runtime_version,
-      postgresMajor: spec.compatibility.postgres_major,
-      wasixRuntimeProduct: spec.compatibility.wasix_runtime_product,
-      wasixRuntimeVersion: spec.compatibility.wasix_runtime_version,
-    };
+    const compatibility = nativeCarrierCompatibility(spec);
     const properties: Record<string, string> = {
       packageLayout: 'oliphaunt-extension-artifact-v1',
       pgMajor: '18',
@@ -260,23 +282,78 @@ export function packageNativeCarriers(spec: NativeCarrierSpec) {
       path.join(publicRoot, 'manifest.properties'),
       EXTENSION_ARTIFACT_PROPERTY_KEYS.map((key) => `${key}=${properties[key]}\n`).join(''),
     );
-    exactArchive(publicRoot, spec.outputs.github);
+    exactArchive(publicRoot, output);
     validateExtensionArtifactArchive({
-      file: spec.outputs.github,
+      file: output,
       metadata,
       product: spec.product,
       target: spec.target,
       nativeRuntimeVersion: compatibility.nativeRuntimeVersion,
     });
     const asset = {
-      name: path.basename(spec.outputs.github),
+      name: path.basename(output),
       family: 'native',
       target: spec.target,
       kind: 'runtime',
       identity: null,
-      bytes: readFileSync(spec.outputs.github).length,
-      sha256: createHash('sha256').update(readFileSync(spec.outputs.github)).digest('hex'),
+      bytes: readFileSync(output).length,
+      sha256: createHash('sha256').update(readFileSync(output)).digest('hex'),
     };
+    return { metadata, asset };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+export function stageNativeRegistryCarriers(
+  spec: NativeCarrierSpec,
+  productRoot: string,
+  root: string,
+) {
+  const identities = nativeCarrierLeaves(spec);
+  const result = { staged: [], skipped: [] };
+  const npmRoot = stageExtensionNativeNpmPackages(
+    [productRoot],
+    path.join(root, 'npm'),
+    spec.target,
+    result,
+    { metaTargets: [] },
+  );
+  assert(npmRoot, `native npm packaging failed: ${result.skipped.join('; ')}`);
+  const npmFiles = result.staged.filter((file) => file.endsWith('.tgz'));
+  assert.equal(npmFiles.length, 1);
+  const npm = npmFiles[0];
+  const npmManifest = JSON.parse(
+    readPortableArchiveEntries(npm).get('package/package.json')!.data().toString('utf8'),
+  );
+  assert.equal(npmManifest.name, identities.npm.name);
+  assert.equal(npmManifest.version, identities.npm.version);
+  copyFileSync(npm, spec.outputs.npm);
+  const crates = packageNativeExtensionCargoCrates(
+    [productRoot],
+    path.join(root, 'cargo'),
+    spec.target,
+    true,
+    result,
+  );
+  assert(crates.length > 0, `native Cargo packaging failed: ${result.skipped.join('; ')}`);
+  assert(
+    crates.some((file) => path.basename(file) === `${identities.cargo.name}-${spec.version}.crate`),
+  );
+  mkdirSync(spec.outputs.cargo, { recursive: true });
+  for (const crate of crates)
+    copyFileSync(crate, path.join(spec.outputs.cargo, path.basename(crate)));
+}
+
+export function packageNativeCarriers(spec: NativeCarrierSpec) {
+  validateNativeCarrierIdentities(spec);
+  const { metadata, asset } = assemblePublicNativeMember(spec, spec.outputs.github);
+  const root = mkdtempSync(path.join(tmpdir(), 'native-extension-envelopes-'));
+  for (const output of Object.values(spec.outputs))
+    mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
+  try {
+    const productRoot = path.join(root, 'product');
+    const compatibility = nativeCarrierCompatibility(spec);
     mkdirSync(path.join(productRoot, 'release-assets'), { recursive: true });
     copyFileSync(spec.outputs.github, path.join(productRoot, 'release-assets', asset.name));
     const member = { ...metadata, assets: [asset] };
@@ -303,45 +380,11 @@ export function packageNativeCarriers(spec: NativeCarrierSpec) {
       path.join(productRoot, 'release-assets', `${spec.product}-${spec.version}-manifest.json`),
       spec.outputs.manifest,
     );
-    const result = { staged: [], skipped: [] };
-    const npmRoot = stageExtensionNativeNpmPackages(
-      [productRoot],
-      path.join(root, 'npm'),
-      spec.target,
-      result,
-      { metaTargets: [] },
-    );
-    assert(npmRoot, `native npm packaging failed: ${result.skipped.join('; ')}`);
-    const npmFiles = result.staged.filter((file) => file.endsWith('.tgz'));
-    assert.equal(npmFiles.length, 1);
-    const npm = npmFiles[0];
-    const npmManifest = JSON.parse(
-      readPortableArchiveEntries(npm).get('package/package.json')!.data().toString('utf8'),
-    );
-    assert.equal(npmManifest.name, identities.npm.name);
-    assert.equal(npmManifest.version, identities.npm.version);
-    copyFileSync(npm, spec.outputs.npm);
-    const crates = packageNativeExtensionCargoCrates(
-      [productRoot],
-      path.join(root, 'cargo'),
-      spec.target,
-      true,
-      result,
-    );
-    assert(crates.length > 0, `native Cargo packaging failed: ${result.skipped.join('; ')}`);
-    assert(
-      crates.some(
-        (file) => path.basename(file) === `${identities.cargo.name}-${spec.version}.crate`,
-      ),
-    );
-    mkdirSync(spec.outputs.cargo, { recursive: true });
-    for (const crate of crates)
-      copyFileSync(crate, path.join(spec.outputs.cargo, path.basename(crate)));
+    stageNativeRegistryCarriers(spec, productRoot, root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
-
 if (import.meta.main) {
   assert.equal(process.argv.length, 3, 'usage: native_carriers.mts <declared-inputs.json>');
   packageNativeCarriers(JSON.parse(readFileSync(process.argv[2], 'utf8')));

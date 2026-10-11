@@ -276,6 +276,7 @@ export function nativeExtensionCarrierLegal(
       family: 'native',
       target,
       carriesPayload,
+      memberContracts,
     });
     const construction = memberContracts.flatMap((member) =>
       validateNativeExtensionConstructionLicenseInventory(
@@ -284,7 +285,10 @@ export function nativeExtensionCarrierLegal(
         member.nativeConstructionLicenseFiles ?? [],
       ),
     );
-    return construction.length === 0
+    const incorporatesCompilerRuntime = construction.some((file) =>
+      file.path.startsWith('share/licenses/llvm-compiler-rt/'),
+    );
+    return !incorporatesCompilerRuntime
       ? legal
       : Object.freeze({
           ...legal,
@@ -364,6 +368,7 @@ function assertNpmExtensionRuntimeLegalArchive(
     const legal = nativeExtensionCarrierLegal(product, [sqlName], {
       carriesPayload: true,
       target,
+      memberContracts: memberContracts.filter((member) => member.sqlName === sqlName),
     });
     if (legal.upstreamMembers.length === 0) continue;
     const runtimeRelativePath = bundle ? memberRuntimeRelativePaths?.[sqlName] : 'runtime';
@@ -423,19 +428,20 @@ export function npmExtensionMemberContract(product, version, target, member) {
   const legal = nativeExtensionCarrierLegal(product, [inventory.sqlName], {
     target,
     carriesPayload: true,
+    memberContracts: [member],
   });
   const licenseFiles = Object.freeze(
     parseNpmExtensionLicenseFiles(
-      legal.upstreamMembers.length === 0
-        ? []
-        : [
-            ...extensionUpstreamLicenseFileInventory([inventory.sqlName]),
-            ...validateNativeExtensionConstructionLicenseInventory(
-              inventory.sqlName,
-              target,
-              nativeConstructionLicenseFiles,
-            ),
-          ].sort((a, b) => compareText(a.path, b.path)),
+      [
+        ...(legal.upstreamMembers.length === 0
+          ? []
+          : extensionUpstreamLicenseFileInventory([inventory.sqlName])),
+        ...validateNativeExtensionConstructionLicenseInventory(
+          inventory.sqlName,
+          target,
+          nativeConstructionLicenseFiles,
+        ),
+      ].sort((a, b) => compareText(a.path, b.path)),
       `${product}@${version}/${inventory.sqlName} npm extension licenseFiles`,
     ).map((file) => Object.freeze(file)),
   );

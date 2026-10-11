@@ -1,26 +1,33 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { type Stats, lstatSync, readdirSync } from 'node:fs';
-import { join, basename, posix, resolve } from 'node:path';
-import { member, safeRelative, stableRead, AGGREGATE_RELATIVE } from './receipt-files.mts';
-import { profileId, profile } from './linear-memory-profile.mts';
+import { lstatSync, readdirSync, type Stats } from 'node:fs';
+import { createRequire } from 'node:module';
+import { basename, join, posix, resolve } from 'node:path';
+import { verifyReceipt } from '../wasmer/bin/verify-postmaster-concurrency-contract.mts';
 import {
-  type Inventory,
+  installedClosureIdentityFromRecords,
+  requiredModules,
+  sideModulePolicy,
+} from './guest-build-provenance.mts';
+import { profile, profileId } from './linear-memory-profile.mts';
+import { AGGREGATE_RELATIVE, member, safeRelative, stableRead } from './receipt-files.mts';
+import {
   exactKeys,
-  requireSha,
+  type Inventory,
+  linearMemorySourceHashes,
   parseJson,
   readRegular,
-  linearMemorySourceHashes,
+  requireSha,
   validateExportChain,
 } from './sealed-export-chain.mts';
-import {
-  sideModulePolicy,
-  requiredModules,
-  installedClosureIdentityFromRecords,
-} from './guest-build-provenance.mts';
-import { verifyReceipt } from '../wasmer/bin/verify-postmaster-concurrency-contract.mts';
+
 const names = (value: string) => value.trim().split(/\s+/);
+// Historical text receipts retain their original runtime dependency closure.
+const nativeReceipts = () =>
+  createRequire(import.meta.url)(
+    '../../../../build_defs/wasix/postmaster/native-receipts.mts',
+  ) as typeof import('../../../../build_defs/wasix/postmaster/native-receipts.mts');
 const TOP_LEVEL_MANIFEST_KEYS = names(
   `format-version schema source-lane source-fingerprint core-profile guest-build-recipe-sha256 postgres-version target-triple host-abi engine compiler-config cpu-policy cpu-features wasmer-version wasmer-wasix-version wasmer-source-commit wasmer-patch-sha256 wasmer-cargo-lock-sha256 artifact-abi-version runtime-abi-id producer-recipe-sha256 executor-engine executor-sha256 executor-size linear-memory-profile wasm-features entrypoint artifacts`,
 );
@@ -93,9 +100,10 @@ export function parseReceipt(
   keys: string[],
   flags = false,
 ) {
-  const lines = text(readRegular(root, path, inventory))
-    .slice(0, -1)
-    .split('\n');
+  const contents = text(readRegular(root, path, inventory));
+  if (path === 'wasmer-build.receipt' && contents.startsWith('{'))
+    return nativeReceipts().nativeWasmerReceipt(parseJson(Buffer.from(contents)));
+  const lines = contents.slice(0, -1).split('\n');
   assert.equal(lines.length, keys.length, `${path} field count differs`);
   return Object.fromEntries(
     lines.map((line, index) => {
@@ -115,6 +123,14 @@ export function executorReceipt(
   inventory: Inventory,
   wasmer: { [key: string]: string },
 ) {
+  const contents = readRegular(root, 'postmaster-executor.receipt', inventory);
+  if (contents[0] === 123)
+    return nativeReceipts().nativeExecutorReceipt(
+      parseJson(contents),
+      wasmer,
+      identity(inventory, 'wasmer-build.receipt').sha256,
+      identity(inventory, 'bin/wasmer-headless'),
+    );
   const receipt = parseReceipt(
     root,
     inventory,
@@ -158,6 +174,8 @@ export function executorReceipt(
   return receipt;
 }
 export function guestReceipt(root: string, inventory?: Inventory) {
+  const contents = readRegular(root, 'guest-build.receipt', inventory);
+  if (contents[0] === 123) return nativeReceipts().nativeGuestReceipt(parseJson(contents));
   const receipt = parseReceipt(
     root,
     inventory,
@@ -337,6 +355,9 @@ export function verify(
   const wasmer = parseReceipt(root, inventory, 'wasmer-build.receipt', RECEIPT_KEYS);
   const executor = executorReceipt(root, inventory, wasmer),
     guest = guestReceipt(root, inventory);
+  const native = wasmer.schema === 'oliphaunt.wasix-postmaster.wasmer-build.native.v1';
+  equal(executor.schema.endsWith('.native.v1'), native, 'executor receipt family');
+  equal(guest.schema.endsWith('.native.v1'), native, 'guest receipt family');
   equal(
     identity(inventory, concurrencyPath).sha256,
     guest.final_wasm_concurrency_receipt_sha256,

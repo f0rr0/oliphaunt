@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -10,25 +11,9 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-  chmodSync,
 } from 'node:fs';
 import path from 'node:path';
-
 import {
-  assertReleaseNoticesInArchive,
-  stageReleaseNotices,
-} from '../../../../../tools/packaging/release-notices.mts';
-import {
-  assertExtensionUpstreamLicensesInArchive,
-  extensionCarrierLegalContract,
-  stageExtensionUpstreamLicenses,
-} from '../../../tools/extension-upstream-licenses.mts';
-
-import { createDeterministicTar } from '../../../../../tools/packaging/cargo-source-package.mts';
-import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
-import { canonicalGzipSync } from '../../../../../tools/packaging/portable-archive.mts';
-import {
-  ROOT,
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
@@ -39,18 +24,21 @@ import {
   extensionReleaseVersion,
   extensionSourceIdentity,
   extensionSqlNames,
+  ROOT,
 } from '../../../../../tools/release/release-artifact-targets.mts';
 import {
   swiftExtensionCarrierAssetName,
   writeSwiftExtensionCarrierManifest,
 } from '../../../../native/sdks/swift/tools/ios-carrier-manifest.mts';
-import { AOT_TARGET_TRIPLES } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import { assertCanonicalWasixAotManifest } from '../../../../wasix/runtime/tools/wasix-aot-manifest.mts';
+import { AOT_TARGET_TRIPLES } from '../../../../wasix/runtime/tools/wasix-cargo-artifact-contract.mts';
 import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstallSidecar,
   projectWasixExtensionInstallSidecar,
 } from '../../../contracts/wasix-extension-install.mts';
+import { bundleCarrierAssets as assembleBundleCarrierAssets } from './bundle-carrier-assets.mts';
+import { extensionRuntimeAssetContract } from './extension-runtime-asset-contract.mts';
 
 const PREFIX = 'build-extension-ci-artifacts.mts';
 
@@ -715,139 +703,11 @@ function stageMember(
 }
 
 function bundleCarrierAssets(product, version, productRoot, members, compatibility) {
-  const assetDir = path.join(productRoot, 'release-assets');
-  const stageRoot = path.join(productRoot, '.bundle-stage');
-  const groups = new Map();
-  for (const member of members) {
-    for (const asset of member.assets) {
-      const key = `${asset.family}\0${asset.target}`;
-      const group = groups.get(key) ?? { family: asset.family, target: asset.target, rows: [] };
-      group.rows.push({ sqlName: member.sqlName, asset });
-      groups.set(key, group);
-    }
-  }
-  const carrierAssets = [];
-  for (const group of [...groups.values()].sort((left, right) =>
-    compareText(`${left.family}\0${left.target}`, `${right.family}\0${right.target}`),
-  )) {
-    const memberNames = [...new Set(group.rows.map((row) => row.sqlName))].sort(compareText);
-    const expectedNames = members.map((member) => member.sqlName).sort(compareText);
-    if (JSON.stringify(memberNames) !== JSON.stringify(expectedNames)) {
-      fail(
-        `${product} ${group.family}/${group.target} bundle is missing exact members: expected ${expectedNames.join(',')}, got ${memberNames.join(',')}`,
-      );
-    }
-    const archiveRoot = `${product}-${version}-${group.family}-${group.target}-bundle`;
-    const stageDir = path.join(stageRoot, archiveRoot);
-    rmSync(stageDir, { recursive: true, force: true });
-    mkdirSync(stageDir, { recursive: true });
-    const manifestMembers = [];
-    for (const row of group.rows.sort((left, right) =>
-      compareText(
-        `${left.sqlName}\0${left.asset.kind}\0${left.asset.identity ?? ''}`,
-        `${right.sqlName}\0${right.asset.kind}\0${right.asset.identity ?? ''}`,
-      ),
-    )) {
-      const memberPath = `extensions/${row.sqlName}/${row.asset.name}`;
-      const source = path.join(ROOT, row.asset.path);
-      const destination = path.join(stageDir, ...memberPath.split('/'));
-      mkdirSync(path.dirname(destination), { recursive: true });
-      copyFileSync(source, destination);
-      chmodSync(destination, 0o644);
-      const copiedSha256 = sha256(destination);
-      const copiedBytes = statSync(destination).size;
-      if (copiedSha256 !== row.asset.sha256 || copiedBytes !== row.asset.bytes) {
-        fail(
-          `${product} ${group.family}/${group.target} changed ${row.sqlName} member bytes while staging ${memberPath}`,
-        );
-      }
-      const member = {
-        sqlName: row.sqlName,
-        kind: row.asset.kind,
-        identity: row.asset.identity ?? null,
-        path: memberPath,
-        sha256: row.asset.sha256,
-        bytes: row.asset.bytes,
-      };
-      manifestMembers.push(member);
-      row.asset.carrierAsset = `${archiveRoot}.tar.gz`;
-      row.asset.carrierRoot = archiveRoot;
-      row.asset.memberPath = memberPath;
-    }
-    const externalLicenseFiles = [];
-    for (const sqlName of memberNames) {
-      externalLicenseFiles.push(...stageExtensionUpstreamLicenses(sqlName, stageDir));
-    }
-    const legal = extensionCarrierLegalContract(product, memberNames, {
-      family: group.family,
-      target: group.target,
-    });
-    const stagedLicenseFiles = [...new Set(externalLicenseFiles)].sort(compareText);
-    if (JSON.stringify(stagedLicenseFiles) !== JSON.stringify(legal.licenseFiles)) {
-      fail(
-        `${product} ${group.family}/${group.target} staged upstream licenses differ from its legal contract: ` +
-          `expected ${legal.licenseFiles.join(',')}, got ${stagedLicenseFiles.join(',')}`,
-      );
-    }
-    const bundleManifest = path.join(stageDir, 'bundle-manifest.json');
-    writeFileSync(
-      bundleManifest,
-      `${JSON.stringify(
-        sortValue({
-          schema: 'oliphaunt-extension-bundle-v1',
-          product,
-          version,
-          compatibility,
-          family: group.family,
-          target: group.target,
-          licenseProfile: legal.profile,
-          licenseFiles: legal.licenseFiles,
-          members: manifestMembers,
-        }),
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    );
-    chmodSync(bundleManifest, 0o644);
-    stageReleaseNotices(stageDir, { profile: legal.profile });
-    const output = path.join(assetDir, `${archiveRoot}.tar.gz`);
-    writeFileSync(
-      output,
-      canonicalGzipSync(
-        createDeterministicTar(stageDir, archiveRoot, {
-          fail,
-          includeDirectories: false,
-          // Every bundle member is data. Windows filesystem modes are synthetic,
-          // so encode the portable carrier contract instead of copying stat bits.
-          fixedFileMode: 0o644,
-        }),
-      ),
-    );
-    assertReleaseNoticesInArchive(output, {
-      prefix: archiveRoot,
-      profile: legal.profile,
-    });
-    if (legal.upstreamMembers.length > 0) {
-      assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, output, {
-        prefix: archiveRoot,
-      });
-    }
-    carrierAssets.push({
-      name: path.basename(output),
-      path: rel(output),
-      sha256: sha256(output),
-      bytes: statSync(output).size,
-      family: group.family,
-      target: group.target,
-      kind: 'extension-bundle',
-      memberCount: memberNames.length,
-    });
-  }
-  rmSync(stageRoot, { recursive: true, force: true });
-  return carrierAssets;
+  return assembleBundleCarrierAssets(product, version, productRoot, members, compatibility, {
+    root: ROOT,
+    fail,
+  });
 }
-
 export function extensionReleasePropertiesText({
   product,
   releaseProduct = product,

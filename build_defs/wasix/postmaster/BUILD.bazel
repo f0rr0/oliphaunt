@@ -8,6 +8,25 @@ exports_files(glob(["*.bzl", "*.mts", "*.patch"]))
 
 exports_files(["postgres.BUILD.bazel", "libc.BUILD.bazel", "postgres-abi.c"])
 
+bun_test(name = "native_receipts_test", entry_point = "native-receipts.test.mts", data = ["native-receipts.mts"], size = "small")
+
+bun_test(
+    name = "receipt_reader_test",
+    entry_point = "receipt-reader.test.mts",
+    data = [
+        "//src/wasix/postmaster:lib/verify-sealed-carrier.mts",
+        "//src/wasix/postmaster:lib/guest-build-provenance.mts",
+        "//src/wasix/postmaster:lib/linear-memory-profile.mts",
+        "//src/wasix/postmaster:lib/receipt-files.mts",
+        "//src/wasix/postmaster:lib/sealed-export-chain.mts",
+        "//src/wasix/postmaster:wasmer/bin/verify-postmaster-concurrency-contract.mts",
+        "//src/wasix/postmaster:wasmer/bin/verify-postmaster-wasm-import.mts",
+        "//src/wasix/postmaster:wasmer/policies/sealed-side-modules.v1.tsv",
+        "//:tools/packaging/strict-json.mts",
+    ],
+    size = "small",
+)
+
 postgres_overlay_tests()
 
 bun_test(

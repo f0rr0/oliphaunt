@@ -17,6 +17,10 @@ export type NativeBuildGithub = {
   job: string;
 };
 export type NativeBuildFileCapture = { path: string; members: NativeOutputMember[] };
+export type NativeProducerCapture = {
+  aqueryFile: string;
+  shippingManifests: { path: string; contents: string }[];
+};
 export type NativeBuildCohortEvidence = {
   executionRoot: string;
   roots: NativeRoot[];
@@ -25,6 +29,8 @@ export type NativeBuildCohortEvidence = {
   buildEvents: unknown[];
   inputs: NativeBuildFileCapture[];
   outputs: NativeBuildFileCapture[];
+  /** Present only when shipping identities were emitted by the producing analysis. */
+  producerCapture?: NativeProducerCapture;
 };
 export type NativeBuildEvidence = {
   schema: 'oliphaunt-native-build-evidence-v1';
@@ -185,8 +191,8 @@ function captures(value: unknown, expected: string[], context: string) {
   return result;
 }
 
-function buildEvents(
-  cohort: NativeBuildCohortEvidence,
+export function nativeBuildEventIndex(
+  cohort: Pick<NativeBuildCohortEvidence, 'executionRoot' | 'buildEvents'>,
   bazelVersion: string,
   metadata: Record<string, string>,
 ) {
@@ -234,7 +240,7 @@ function buildEvents(
       });
     }
   }
-  const filesOf = (target: Row) => {
+  const filesOf = (target: Row, groupName?: string) => {
     const files = new Map<string, { sha256: string; size: number }>();
     const visitFile = (raw: unknown) => {
       const file = object(raw);
@@ -255,6 +261,7 @@ function buildEvents(
       visited.add(key);
     };
     for (const group of list(target.outputGroup ?? [])) {
+      if (groupName !== undefined && group.name !== groupName) continue;
       if (group.incomplete === true) throw new Error('native BEP output group is incomplete');
       for (const set of list(group.fileSets ?? [])) visit(text(set.id));
       for (const file of list(group.inlineFiles ?? [])) visitFile(file);
@@ -262,6 +269,85 @@ function buildEvents(
     return files;
   };
   return { invocationId, configs, completed, filesOf, events };
+}
+
+/** Native metadata is content-bound by BEP; the separate action dump has no native digest receipt. */
+export function nativeShippingManifestBindings(
+  raw: NativeProducerCapture,
+  bep: ReturnType<typeof nativeBuildEventIndex>,
+) {
+  const capture = object(raw) as NativeProducerCapture;
+  exactFields(capture, ['aqueryFile', 'shippingManifests'], 'native producer capture');
+  if (
+    !path.posix.isAbsolute(text(capture.aqueryFile)) &&
+    !path.win32.isAbsolute(capture.aqueryFile)
+  )
+    throw new Error('native producer requires an absolute after-build aquery file');
+  const commands = bep.events.filter(
+    (event) => event.structuredCommandLine?.commandLineLabel === 'canonical',
+  );
+  if (commands.length !== 1) throw new Error('native producer requires one canonical command line');
+  const options = list(commands[0].structuredCommandLine.sections).flatMap((section) =>
+    list(object(section).optionList?.option ?? []),
+  );
+  for (const [name, value] of [
+    ['experimental_aquery_dump_after_build_format', 'jsonproto'],
+    ['experimental_aquery_dump_after_build_output_file', capture.aqueryFile],
+  ]) {
+    const matches = options.filter((option) => option.optionName === name);
+    if (matches.length !== 1 || matches[0].optionValue !== value)
+      throw new Error(`native producer command line requires ${name}=${value}`);
+  }
+  const paths = new Set<string>();
+  const labels = new Set<string>();
+  const bindings = list(capture.shippingManifests).map((raw) => {
+    const manifest = object(raw);
+    exactFields(manifest, ['path', 'contents'], 'native shipping manifest');
+    const file = relative(manifest.path);
+    if (!file.startsWith('bazel-out/') || paths.has(file))
+      throw new Error('native shipping manifest requires a unique generated file');
+    paths.add(file);
+    if (typeof manifest.contents !== 'string')
+      throw new Error('native shipping manifest requires its exact UTF-8 contents');
+    const bytes = Buffer.from(manifest.contents, 'utf8');
+    const root = object(JSON.parse(manifest.contents)) as NativeRoot;
+    exactFields(root, ['label', 'package'], 'native shipping root');
+    const label = canonicalShippingLabel(text(root.label));
+    if (labels.has(label)) throw new Error('duplicate native shipping manifest root');
+    labels.add(label);
+    const pkg = object(root.package);
+    exactFields(
+      pkg,
+      ['product', 'version', 'ecosystem', 'name', 'configuration', 'role', 'outputs'],
+      'native shipping package',
+    );
+    for (const field of ['product', 'version', 'ecosystem', 'name', 'configuration', 'role'])
+      text(pkg[field]);
+    for (const output of list(pkg.outputs)) {
+      exactFields(object(output), ['path', 'owner'], 'native shipping output');
+      relative(output.path);
+      text(output.owner);
+    }
+    const targets = bep.completed.filter(
+      (target) => canonicalShippingLabel(target.label) === label,
+    );
+    if (targets.length !== 1 || targets[0].value.success !== true)
+      throw new Error(`native manifest requires one successful configured shipping root: ${label}`);
+    const target = targets[0];
+    if (!bep.configs.has(target.configuration))
+      throw new Error('native manifest target configuration is missing');
+    const files = bep.filesOf(target.value, 'shipping_manifest');
+    if (files.size !== 1 || !files.has(file))
+      throw new Error(`native shipping_manifest output group mismatch: ${label}`);
+    equal(
+      files.get(file),
+      { sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length },
+      'native BEP/shipping manifest digest',
+    );
+    return { root, configuration: target.configuration, path: file };
+  });
+  if (!bindings.length) throw new Error('native producer requires shipping manifests');
+  return bindings;
 }
 
 /** Validate content reported by the actual qualifying builder, including cache-backed success. */
@@ -272,6 +358,7 @@ export function validateNativeBuildEvidence(
     github: NativeBuildGithub;
     bazelVersion: string;
     requiredTests?: NativeRequiredTest[];
+    requireShippingAnalysis?: boolean;
   },
 ) {
   source(expected.source);
@@ -321,6 +408,7 @@ export function validateNativeBuildEvidence(
         'buildEvents',
         'inputs',
         'outputs',
+        ...(cohort.producerCapture === undefined ? [] : ['producerCapture']),
       ],
       'native build cohort',
     );
@@ -368,7 +456,7 @@ export function validateNativeBuildEvidence(
       cohort.roots.flatMap((root) => root.package.outputs.map((output) => relative(output.path))),
       'native output content',
     );
-    const bep = buildEvents(
+    const bep = nativeBuildEventIndex(
       cohort,
       expected.bazelVersion,
       nativeBuildMetadata(expected.source, expected.github),
@@ -376,6 +464,43 @@ export function validateNativeBuildEvidence(
     if (invocations.has(bep.invocationId))
       throw new Error('native evidence repeats a build invocation');
     invocations.add(bep.invocationId);
+    if (cohort.producerCapture !== undefined) {
+      const bindings = nativeShippingManifestBindings(cohort.producerCapture, bep);
+      equal(
+        bindings.map(({ root }) => root).sort((a, b) => a.label.localeCompare(b.label)),
+        [...cohort.roots].sort((a, b) => a.label.localeCompare(b.label)),
+        'native analysis shipping roots',
+      );
+      for (const { root, configuration } of bindings)
+        equal(
+          rootConfigurations.get(root.label),
+          configuration,
+          'native analysis shipping configuration',
+        );
+      const manifestView = buildShippingInputView(
+        {
+          schema: 'oliphaunt-bazel-shipping-v1',
+          scope: 'construction',
+          packages: bindings.map(({ root, path }) => ({
+            ...root.package,
+            outputs: [{ path, owner: root.label }],
+          })),
+        },
+        cohort.aquery,
+        {
+          configurationByOutput: new Map(
+            bindings.map(({ path, configuration }) => [path, configuration]),
+          ),
+        },
+      );
+      for (const product of Object.values(manifestView.products))
+        for (const action of product.actions) {
+          const definition = object(JSON.parse(action));
+          if (definition.mnemonic !== 'FileWrite' || definition.inputs.count !== 0)
+            throw new Error('native shipping manifest requires its configured FileWrite action');
+        }
+    } else if (expected.requireShippingAnalysis === true)
+      throw new Error('native qualification requires producing-analysis shipping manifests');
     for (const test of requiredTests ?? []) {
       const matches = (event: Row, field: string) =>
         event.id?.[field] !== undefined &&
@@ -481,12 +606,19 @@ export function validateNativeBuildEvidence(
     source: evidence.source,
     github: evidence.github,
     cohorts,
+    shippingAnalysis: evidence.cohorts.every((cohort) => cohort.producerCapture !== undefined)
+      ? ('bound' as const)
+      : ('unverified' as const),
     testQualification: requiredTests === undefined ? ('unverified' as const) : ('passed' as const),
     requiredTests: tests,
     releaseDecision: 'unverified' as const,
     unverified: [
       'authenticated producing workflow, attempt, job and immutable artifact',
       'immutable input lifetime from the producing build through content capture',
+      'native action-graph dump bytes authenticated by the producing invocation',
+      ...(evidence.cohorts.some((cohort) => cohort.producerCapture === undefined)
+        ? ['shipping identities and configurations bound to the producing analysis']
+        : []),
       ...(requiredTests === undefined
         ? ['declared mandatory test roots and successful BEP results']
         : []),

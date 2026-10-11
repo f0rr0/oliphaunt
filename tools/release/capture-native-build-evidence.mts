@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from 'node:crypto';
 /** Collect current configured contents after a successful build; this grants no release authority. */
 import { linkSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -8,10 +9,12 @@ import {
   type NativeBuildEvidence,
   type NativeBuildGithub,
   type NativeBuildSource,
+  nativeBuildEventIndex,
   nativeBuildMetadata,
+  nativeShippingManifestBindings,
   validateNativeBuildEvidence,
 } from './native-build-qualification.mts';
-import type { NativeRoot } from './native-publication-artifacts.mts';
+import { type NativeRoot, nativeOutputPath } from './native-publication-artifacts.mts';
 import {
   captureNativeInputMembers,
   captureNativeOutputMembers,
@@ -20,11 +23,9 @@ import { sourceIdentity } from './publication-lock.mts';
 
 export type NativeBuildCaptureCohort = {
   executionRoot: string;
-  roots: NativeRoot[];
-  cquery: unknown;
   aquery: unknown;
   buildEvents: unknown[];
-};
+} & ({ roots: NativeRoot[]; cquery: unknown } | { shippingRoots: string[]; aqueryFile: string });
 
 function object(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -89,19 +90,74 @@ export function captureNativeBuildEvidence({
     source,
     github,
     cohorts: cohorts.map((cohort) => {
+      let roots: NativeRoot[];
+      let rootConfigurations: { label: string; configuration: string }[];
+      let producerCapture: NativeBuildEvidence['cohorts'][number]['producerCapture'];
+      if ('shippingRoots' in cohort) {
+        const labels = array(cohort.shippingRoots).map((label) =>
+          canonicalShippingLabel(text(label)),
+        );
+        if (!labels.length || new Set(labels).size !== labels.length)
+          throw new Error('native producer requires unique selected shipping roots');
+        const bep = nativeBuildEventIndex(
+          cohort,
+          bazelVersion,
+          nativeBuildMetadata(source, github),
+        );
+        const shippingManifests = labels.map((label) => {
+          const targets = bep.completed.filter(
+            (target) => canonicalShippingLabel(target.label) === label,
+          );
+          if (targets.length !== 1 || targets[0].value.success !== true)
+            throw new Error(
+              `native producer requires one successful configured shipping root: ${label}`,
+            );
+          const files = bep.filesOf(targets[0].value, 'shipping_manifest');
+          if (files.size !== 1)
+            throw new Error(`native producer requires one shipping_manifest file: ${label}`);
+          const file = [...files.keys()][0];
+          const capture = captureNativeOutputMembers(cohort.executionRoot, file);
+          captures.push(capture);
+          const contents = readFileSync(nativeOutputPath(cohort.executionRoot, file), 'utf8');
+          const bytes = Buffer.from(contents, 'utf8');
+          const member = capture.members[0];
+          if (
+            capture.members.length !== 1 ||
+            member.type !== 'file' ||
+            member.size !== bytes.length ||
+            member.sha256 !== createHash('sha256').update(bytes).digest('hex')
+          )
+            throw new Error('native shipping manifest physical contents changed during capture');
+          capture.assertUnchanged();
+          return { path: file, contents };
+        });
+        producerCapture = { aqueryFile: cohort.aqueryFile, shippingManifests };
+        const bindings = nativeShippingManifestBindings(producerCapture, bep);
+        if (
+          JSON.stringify(bindings.map(({ root }) => canonicalShippingLabel(root.label)).sort()) !==
+          JSON.stringify([...labels].sort())
+        )
+          throw new Error('native selected/analysis shipping root coverage mismatch');
+        roots = bindings.map(({ root }) => root);
+        rootConfigurations = bindings.map(({ root, configuration }) => ({
+          label: root.label,
+          configuration,
+        }));
+      } else {
+        roots = cohort.roots;
+        rootConfigurations = nativeRootConfigurations(roots, cohort.cquery);
+      }
       const view = buildShippingInputView(
         {
           schema: 'oliphaunt-bazel-shipping-v1',
           scope: 'construction',
-          packages: cohort.roots.map((root) => root.package),
+          packages: roots.map((root) => root.package),
         },
         cohort.aquery,
       );
       const inputs = view.physicalInputs;
       const outputs = [
-        ...new Set(
-          cohort.roots.flatMap((root) => root.package.outputs.map((output) => output.path)),
-        ),
+        ...new Set(roots.flatMap((root) => root.package.outputs.map((output) => output.path))),
       ].sort();
       const capture = (file: string, output: boolean) => {
         const value = output
@@ -112,12 +168,13 @@ export function captureNativeBuildEvidence({
       };
       return {
         executionRoot: cohort.executionRoot,
-        roots: cohort.roots,
-        rootConfigurations: nativeRootConfigurations(cohort.roots, cohort.cquery),
+        roots,
+        rootConfigurations,
         aquery: cohort.aquery,
         buildEvents: cohort.buildEvents,
         inputs: inputs.map((file) => capture(file, false)),
         outputs: outputs.map((file) => capture(file, true)),
+        ...(producerCapture === undefined ? {} : { producerCapture }),
       };
     }),
   };
@@ -131,6 +188,98 @@ export function captureNativeBuildEvidence({
   };
 }
 
+/** Retain the native event index's protocol, excluding ambient invocation options and logs. */
+function retainedBuildEvents(evidence: NativeBuildEvidence, events: unknown[]) {
+  const pick = (raw: unknown, fields: string[]) => {
+    const value = object(raw);
+    return Object.fromEntries(
+      fields.filter((field) => value[field] !== undefined).map((field) => [field, value[field]]),
+    );
+  };
+  const identity = (raw: unknown) => {
+    const value = { ...object(raw) };
+    // Fetch URLs are unused by qualification and can contain credentials.
+    if (value.fetch !== undefined) value.fetch = pick(value.fetch, []);
+    return value;
+  };
+  const files = (raw: unknown) =>
+    array(raw ?? []).map((file) =>
+      pick(file, ['pathPrefix', 'name', 'digest', 'length', 'symlinkTargetPath']),
+    );
+  const sets = (raw: unknown) => array(raw ?? []).map((set) => pick(set, ['id']));
+  const metadataKeys = new Set(Object.keys(nativeBuildMetadata(evidence.source, evidence.github)));
+  const nativeOptions = new Set([
+    'experimental_aquery_dump_after_build_format',
+    'experimental_aquery_dump_after_build_output_file',
+    'output_groups',
+  ]);
+  return events.map((raw) => {
+    const event = object(raw);
+    const retained: Record<string, any> = pick(event, ['lastMessage']);
+    if (event.id !== undefined) retained.id = identity(event.id);
+    if (event.children !== undefined) retained.children = array(event.children).map(identity);
+    if (event.started !== undefined)
+      retained.started = pick(event.started, ['uuid', 'buildToolVersion']);
+    if (event.workspaceInfo !== undefined)
+      retained.workspaceInfo = pick(event.workspaceInfo, ['localExecRoot']);
+    if (event.configuration !== undefined)
+      retained.configuration = pick(event.configuration, [
+        'mnemonic',
+        'platformName',
+        'cpu',
+        'isTool',
+      ]);
+    if (event.buildMetadata !== undefined)
+      retained.buildMetadata = {
+        metadata: Object.fromEntries(
+          Object.entries(object(event.buildMetadata.metadata)).filter(([key]) =>
+            metadataKeys.has(key),
+          ),
+        ),
+      };
+    if (event.finished !== undefined)
+      retained.finished = {
+        ...pick(event.finished, ['overallSuccess']),
+        exitCode: pick(event.finished.exitCode, ['name', 'code']),
+      };
+    if (event.namedSetOfFiles !== undefined)
+      retained.namedSetOfFiles = {
+        files: files(event.namedSetOfFiles.files),
+        fileSets: sets(event.namedSetOfFiles.fileSets),
+      };
+    if (event.completed !== undefined)
+      retained.completed = {
+        ...pick(event.completed, ['success']),
+        outputGroup: array(event.completed.outputGroup ?? []).map((group) => ({
+          ...pick(group, ['name', 'incomplete']),
+          fileSets: sets(group.fileSets),
+          inlineFiles: files(group.inlineFiles),
+        })),
+      };
+    if (event.aborted !== undefined) retained.aborted = pick(event.aborted, ['reason']);
+    if (event.testSummary !== undefined)
+      retained.testSummary = pick(event.testSummary, ['overallStatus', 'totalRunCount']);
+    if (event.testResult !== undefined) retained.testResult = pick(event.testResult, ['status']);
+    if (event.structuredCommandLine?.commandLineLabel === 'canonical')
+      retained.structuredCommandLine = {
+        commandLineLabel: 'canonical',
+        sections: [
+          {
+            sectionLabel: 'command options',
+            optionList: {
+              option: array(event.structuredCommandLine.sections).flatMap((section) =>
+                array(section.optionList?.option ?? [])
+                  .filter((option) => nativeOptions.has(option.optionName))
+                  .map((option) => pick(option, ['optionName', 'optionValue'])),
+              ),
+            },
+          },
+        ],
+      };
+    return retained;
+  });
+}
+
 /** Publish one validated packet without replacing a previous capture. */
 export function writeNativeBuildEvidence(
   captured: ReturnType<typeof captureNativeBuildEvidence>,
@@ -142,7 +291,14 @@ export function writeNativeBuildEvidence(
   try {
     captured.assertUnchanged();
     const file = path.join(temporary, 'evidence.json');
-    writeFileSync(file, `${JSON.stringify(captured.evidence)}\n`, { flag: 'wx', mode: 0o600 });
+    const evidence = {
+      ...captured.evidence,
+      cohorts: captured.evidence.cohorts.map((cohort) => ({
+        ...cohort,
+        buildEvents: retainedBuildEvents(captured.evidence, cohort.buildEvents),
+      })),
+    };
+    writeFileSync(file, `${JSON.stringify(evidence)}\n`, { flag: 'wx', mode: 0o600 });
     captured.assertUnchanged();
     linkSync(file, output);
     return output;
@@ -192,6 +348,18 @@ function main() {
         buildEvents: jsonLines(buildEvents),
         executionRoot,
       });
+    } else if (option === '--producer-cohort') {
+      const roots = value();
+      const aquery = value();
+      const buildEvents = value();
+      const executionRoot = value();
+      cohorts.push({
+        shippingRoots: json(roots),
+        aqueryFile: path.resolve(aquery),
+        aquery: json(aquery),
+        buildEvents: jsonLines(buildEvents),
+        executionRoot,
+      });
     } else throw new Error(`unknown or repeated native capture argument: ${option}`);
   }
   if (metadata) {
@@ -205,7 +373,7 @@ function main() {
   }
   if (!githubFile || !output || !cohorts.length)
     throw new Error(
-      'usage: capture-native-build-evidence.mts --github-json FILE --cohort ROOTS.jsonl CQUERY.json AQUERY.json BEP.jsonl EXECROOT [--cohort ...] --output-directory DIR [--source-ref REF]',
+      'usage: capture-native-build-evidence.mts --github-json FILE --producer-cohort ROOT_LABELS.json AQUERY.json BEP.jsonl EXECROOT [--producer-cohort ...] --output-directory DIR [--source-ref REF]',
     );
   const captured = captureNativeBuildEvidence({
     source: sourceIdentity(ref ?? 'HEAD'),

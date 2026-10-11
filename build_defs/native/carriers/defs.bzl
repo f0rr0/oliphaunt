@@ -276,16 +276,22 @@ def _checksums_impl(ctx):
     files = ctx.files.archives
     spec = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     output = ctx.actions.declare_file("release-assets/" + ctx.attr.out)
-    ctx.actions.write(spec, json.encode({"expected": ctx.attr.expected, "files": [file.path for file in files], "output": output.path}))
-    bun_action(ctx, ctx.attr.tool, arguments = [spec.path], inputs = files + [spec], outputs = [output], mnemonic = "NativeProductChecksums")
-    return [DefaultInfo(files = depset([output]))]
+    copies = [ctx.actions.declare_file("release-assets/" + name) for name in ctx.attr.expected] if ctx.attr.assemble else []
+    data = {"expected": ctx.attr.expected, "files": [file.path for file in files], "output": output.path}
+    if ctx.attr.assemble:
+        data["copies"] = [file.path for file in copies]
+    ctx.actions.write(spec, json.encode(data))
+    bun_action(ctx, ctx.attr.tool, arguments = [spec.path], inputs = files + [spec], outputs = [output] + copies, mnemonic = "NativeProductReleaseAssets" if ctx.attr.assemble else "NativeProductChecksums")
+    groups = {file.basename: depset([file]) for file in copies}
+    groups["checksums"] = depset([output])
+    return [DefaultInfo(files = depset([output] + copies)), OutputGroupInfo(**groups)]
 
-_native_checksums = rule(implementation = _checksums_impl, attrs = {"archives": attr.label_list(allow_files = True, mandatory = True), "expected": attr.string_list(mandatory = True), "out": attr.string(mandatory = True), "tool": attr.label(default = Label("//build_defs/native/carriers:checksum_tool"), providers = [BunScriptInfo], cfg = "exec")})
+_native_checksums = rule(implementation = _checksums_impl, attrs = {"archives": attr.label_list(allow_files = True, mandatory = True), "expected": attr.string_list(mandatory = True), "out": attr.string(mandatory = True), "assemble": attr.bool(default = False), "tool": attr.label(default = Label("//build_defs/native/carriers:checksum_tool"), providers = [BunScriptInfo], cfg = "exec")})
 
-def native_checksum_manifest(name, product, archives, artifact_rows = NATIVE_RUNTIME_ARTIFACTS):
+def native_checksum_manifest(name, product, archives, artifact_rows = NATIVE_RUNTIME_ARTIFACTS, assemble = False):
     descriptor = PRODUCTS[product]
     rows = [row for row in artifact_rows if row["product"] == product and "github-release" in row["surfaces"]]
     checksums = [row for row in rows if row["kind"] == "checksums"]
     if len(checksums) != 1:
         fail("product checksum descriptor must be unique")
-    _native_checksums(name = name, archives = archives, expected = [row["asset"].replace("{version}", descriptor["version"]) for row in rows if row["kind"] != "checksums"], out = checksums[0]["asset"].replace("{version}", descriptor["version"]))
+    _native_checksums(name = name, archives = archives, expected = [row["asset"].replace("{version}", descriptor["version"]) for row in rows if row["kind"] != "checksums"], out = checksums[0]["asset"].replace("{version}", descriptor["version"]), assemble = assemble)

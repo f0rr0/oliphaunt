@@ -44,6 +44,25 @@ publication cutover remain migration gates. Moon and the current producer
 engines remain in use for products whose replacements have not passed those
 gates.
 
+### Implementation checkpoint
+
+This table records demonstrated construction and qualification. A passing row
+does not admit a release or establish coverage of the other rows.
+
+| Boundary | Demonstrated | Remaining before cutover |
+| --- | --- | --- |
+| Linux runtime and WASIX | Native runtime tests pass on both Linux CPUs. The Linux WASIX producer, installed browser SQL/OPFS/crash checks, and ARM consumer of its exact transferred Cargo archives pass in CI. | Fresh qualification of the current source and all declared host consumers. |
+| WASIX tools | All 17 final shipping outputs pass the canonical publication reader and frozen staging locally. An installed test resolves the actual candidate tools beside an integrity-pinned public SDK. | Fresh CI with the full-family guard; remaining native host behavior. |
+| Native extensions | Seven external extension envelopes pass installed Linux SQL/restart tests. All 32 contrib members produce canonical Linux GitHub/npm/Cargo envelopes; selective loading and actual static OpenSSL legal closure pass. | Full owner facades, all declared platform/mobile/WASIX outputs, and complete installed compositions. |
+| Apple and Windows | Native package/toolchain contracts and local SDK watching scenarios pass. Windows startup uses a short output base for generated Rust object paths. | Genuine fresh Xcode/MSVC execution, complete Apple slices, and installed application tests. |
+| Postmaster | The genuine sysroot, all 29 sealed modules, AOT images, carrier and `initdb` build and run locally. Canonical fence, ABI, memory and export checks pass. | Startup currently exits with an uncaught exception; SQL, concurrency/recovery, foreign hosts and final public envelopes remain unqualified. |
+| Construction evidence | The producing build emits shipping identities. Its BEP content-binds their bytes and configuration; physical inputs/outputs and required configured tests are checked. | Protected producer input lifetime, authenticated action-dump bytes, and loaded analysis/acquisition provenance. |
+| Release integration | Authenticated construction observations and explicitly opted-in controller metadata have focused regressions. Default publication inventory and frozen locks reject incomplete native admission. | All-product coverage, durable admitted baselines, one necessary-delivery/compatibility decision, and replacement of the active selector and gates. |
+
+The migration remains incomplete. Existing Moon qualification and release
+selection retain authority; these construction checkpoints cannot be used to
+justify publishing or to remove an existing gate.
+
 The audit baseline is main commit
 `8316eb419999f47d6d4a61a8444e6c5ef32caf46`, tree
 `91138aa6cc458471d81769e9d6543a1e3f99f0dc`. The workspace commit

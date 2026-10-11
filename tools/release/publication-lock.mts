@@ -38,6 +38,12 @@ import {
 } from '../packaging/portable-archive.mts';
 import { requireMatchingWasixRuntime } from './compatibility-version-policy.mts';
 import {
+  NATIVE_PUBLICATION_METADATA_KIND,
+  NATIVE_PUBLICATION_METADATA_MAX_BYTES,
+  nativePublicationMetadataArtifactRows,
+  validateNativePublicationMetadata,
+} from './native-publication-metadata-contract.mts';
+import {
   loadPublicationCatalog,
   PUBLICATION_CATALOG_SCHEMA,
   publicationCatalogDigest,
@@ -46,7 +52,6 @@ import {
 import {
   allArtifactTargets,
   contribCarrierDescriptor,
-  currentProductVersionSync,
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
@@ -1823,12 +1828,35 @@ function discoverProductArtifactsForSelection(
   roots,
   products,
   selectedProducts,
-  { nativeSourceBasis = undefined } = {},
+  {
+    nativeSourceBasis = undefined,
+    nativeMetadataProducts = [],
+    nativeMetadataSource = undefined,
+  } = {},
 ) {
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(
     compareText,
   );
   const artifacts = [];
+  for (const row of nativePublicationMetadataArtifactRows(products, nativeMetadataProducts)) {
+    const matches = files.filter((file) => path.basename(file) === row.name);
+    if (matches.length !== 1)
+      throw error(
+        `${row.product} requires exactly one controller-sealed native metadata file ${row.name}, found ${matches.length}`,
+      );
+    if (statSync(matches[0]).size > NATIVE_PUBLICATION_METADATA_MAX_BYTES)
+      throw error(
+        `${row.product} controller-sealed native metadata is ${statSync(matches[0]).size} bytes, exceeds ${NATIVE_PUBLICATION_METADATA_MAX_BYTES} bytes`,
+      );
+    validateNativePublicationMetadata(
+      JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(matches[0]))),
+      {
+        product: { id: row.product, version: row.version },
+        source: nativeMetadataSource,
+      },
+    );
+    artifacts.push(productArtifact({ ...row, file: matches[0] }));
+  }
   const contrib = contribCarrierDescriptor('publication-lock');
   const hasSelectedExtensionProducts = selectedProducts.some(
     (product) =>
@@ -2070,7 +2098,9 @@ export function buildPublicationCandidate({
   headRef = 'HEAD',
   allowMissing = false,
   nativeSourceBasis = undefined,
+  nativeMetadataProducts = [],
 } = {}) {
+  const source = sourceIdentity(headRef);
   const catalog = loadPublicationCatalog('publication-lock', { products });
   const fullCatalog = loadPublicationCatalog('publication-lock artifact classification');
   const selectedProducts = new Set(catalog.products.map((product) => product.id));
@@ -2082,6 +2112,8 @@ export function buildPublicationCandidate({
   assertWasixPublicationPackages(artifacts);
   const productArtifacts = discoverProductArtifacts(artifactRoots, catalog.products, {
     nativeSourceBasis,
+    nativeMetadataProducts,
+    nativeMetadataSource: source,
   });
   const carriers = [];
   const seenStableIds = new Set();
@@ -2141,7 +2173,8 @@ export function buildPublicationCandidate({
     schema: PUBLICATION_CANDIDATE_SCHEMA,
     catalogSchema: PUBLICATION_CATALOG_SCHEMA,
     catalogDigest: publicationCatalogDigest(catalog),
-    source: sourceIdentity(headRef),
+    source,
+    ...(nativeMetadataProducts.length ? { scope: 'construction' } : {}),
     products: catalog.products,
     carriers,
     productArtifacts,
@@ -2429,7 +2462,7 @@ function expectedProductArtifacts(product, hasSelectedExtensionProducts) {
   return rows;
 }
 
-export function expectedProductArtifactRows(products) {
+export function expectedProductArtifactRows(products, { nativeMetadataProducts = [] } = {}) {
   if (
     !Array.isArray(products) ||
     products.some(
@@ -2450,11 +2483,14 @@ export function expectedProductArtifactRows(products) {
       product.id === contrib.nativeOwner ||
       product.id === contrib.wasixOwner,
   );
-  return products
-    .flatMap((product) => expectedProductArtifacts(product, hasSelectedExtensionProducts))
-    .sort((left, right) =>
-      compareText(`${left.product}:${left.id}`, `${right.product}:${right.id}`),
-    );
+  return [
+    ...products.flatMap((product) =>
+      expectedProductArtifacts(product, hasSelectedExtensionProducts),
+    ),
+    ...nativePublicationMetadataArtifactRows(products, nativeMetadataProducts),
+  ].sort((left, right) =>
+    compareText(`${left.product}:${left.id}`, `${right.product}:${right.id}`),
+  );
 }
 
 function validateExtensionProductArtifactInventory(product, artifacts) {
@@ -2496,14 +2532,33 @@ function validateExtensionProductArtifactInventory(product, artifacts) {
 }
 
 function validateProductArtifactInventory(product, artifacts, { hasSelectedExtensionProducts }) {
+  const nativeMetadata = artifacts.filter(
+    (artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND,
+  );
+  const expectedNativeMetadata = nativePublicationMetadataArtifactRows(
+    [product],
+    nativeMetadata.length ? [product.id] : [],
+  );
+  if (nativeMetadata.length > 1) throw error(`${product.id} has ambiguous native metadata`);
+  for (const artifact of nativeMetadata) {
+    const expected = expectedNativeMetadata[0];
+    for (const key of ['id', 'product', 'role', 'kind', 'target', 'identity', 'name']) {
+      if (artifact[key] !== expected[key])
+        throw error(`${product.id} has noncanonical native metadata ${key}`);
+    }
+  }
+  const deliveryArtifacts = artifacts.filter(
+    (artifact) => artifact.kind !== NATIVE_PUBLICATION_METADATA_KIND,
+  );
   if (EXTENSION_PRODUCT_KINDS.has(product.kind)) {
-    validateExtensionProductArtifactInventory(product, artifacts);
+    validateExtensionProductArtifactInventory(product, deliveryArtifacts);
     return;
   }
 
-  const expected = expectedProductArtifacts(product, hasSelectedExtensionProducts).map(
-    ({ id }) => id,
-  );
+  const expected = [
+    ...expectedProductArtifacts(product, hasSelectedExtensionProducts),
+    ...expectedNativeMetadata,
+  ].map(({ id }) => id);
   const contrib = contribCarrierDescriptor('publication-lock');
   for (const family of ['native', 'wasix']) {
     const owner = family === 'native' ? contrib.nativeOwner : contrib.wasixOwner;
@@ -2556,6 +2611,15 @@ export function validatePublicationCandidate(candidate) {
   ) {
     throw error('candidate products, carriers, productArtifacts, and missing must be lists');
   }
+  if (
+    candidate.productArtifacts.some(
+      (artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND,
+    ) &&
+    candidate.scope !== 'construction'
+  )
+    throw error(
+      'native metadata requires construction scope until complete native admission is implemented',
+    );
   const products = new Map();
   for (const [index, product] of candidate.products.entries()) {
     requireObject(product, `candidate product ${index}`);
@@ -2752,7 +2816,11 @@ export function validatePublicationCandidate(candidate) {
 
 export function validatePublicationLock(lock) {
   requireObject(lock, 'publication lock');
-  if (lock.scope !== undefined || Object.hasOwn(lock, 'nativePayloads')) {
+  if (
+    lock.scope !== undefined ||
+    Object.hasOwn(lock, 'nativePayloads') ||
+    lock.productArtifacts?.some((artifact) => artifact.kind === NATIVE_PUBLICATION_METADATA_KIND)
+  ) {
     throw error('construction evidence cannot authorize a publication lock');
   }
   if (lock.schema !== PUBLICATION_LOCK_SCHEMA) {

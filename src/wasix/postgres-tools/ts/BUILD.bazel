@@ -6,7 +6,7 @@ load("@oliphaunt_metadata//:metadata.bzl", "PUBLICATION_CARRIERS")
 load("@javascript_packages//:defs.bzl", "javascript_type_links", TYPE_PACKAGES = "PACKAGES")
 load("@javascript_installed_packages//:defs.bzl", INSTALLED_PACKAGES = "PACKAGES")
 load("@javascript_installed_packages//:roots.bzl", "CONSUMER_TOOLS")
-load("//build_defs/languages/ts:defs.bzl", "installed_npm_consumer_test", "npm_dependency_closure", "source_sdk_publish_files")
+load("//build_defs/languages/ts:defs.bzl", "installed_npm_consumer_test", "npm_archive_package", "npm_dependency_closure", "source_sdk_publish_files")
 load("//build_defs/query:defs.bzl", "query_envelope")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
 
@@ -16,12 +16,15 @@ exports_files(["package.json", "tools/package.mts"])
 
 SDK = JAVASCRIPT["@oliphaunt/wasix-tools"]
 WASIX = JAVASCRIPT["@oliphaunt/wasix-ts"]
+QUERY = JAVASCRIPT["@oliphaunt/ts-query"]
+WASIX_DEPENDENCIES = WASIX["types"] | WASIX["packages"]
 
-javascript_type_links(SDK["types"])
+javascript_type_links(SDK["types"] | WASIX_DEPENDENCIES)
 
+# Project type bytes without forwarding package stores rooted in the SDK package.
 npm_package(
     name = "wasix_types",
-    srcs = ["//src/wasix/sdks/ts:module", "//src/wasix/sdks/ts:publish_manifest"],
+    srcs = ["//src/wasix/sdks/ts:module_types", "//src/wasix/sdks/ts:publish_manifest"],
     package = WASIX["name"],
     version = WASIX["version"],
     root_paths = ["src/wasix/sdks/ts"],
@@ -31,7 +34,20 @@ npm_package(
     include_transitive_types = False,
     replace_prefixes = {"publish_files/": ""},
 )
-npm_link_package(name = "node_modules/@oliphaunt/wasix-ts", src = ":wasix_types")
+npm_archive_package(
+    name = "query_package",
+    archive = "//src/query/ts:npm",
+    package_name = QUERY["name"],
+    version = QUERY["version"],
+)
+npm_link_package(name = "node_modules/@oliphaunt/ts-query", src = ":query_package")
+npm_link_package(
+    name = "node_modules/@oliphaunt/wasix-ts",
+    src = ":wasix_types",
+    deps = {":_javascript_" + key: name for name, key in WASIX_DEPENDENCIES.items()} | {
+        ":.aspect_rules_js/node_modules/@oliphaunt/ts-query": QUERY["name"],
+    },
+)
 js_library(name = "package_metadata", srcs = ["package.json"], deps = ["//src/wasix/postgres-tools:npm_types"])
 
 ts_project(

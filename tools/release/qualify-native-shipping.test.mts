@@ -18,6 +18,7 @@ import { type NativeShippingRequest, qualifyNativeShipping } from './qualify-nat
 
 const realCapture = fileURLToPath(new URL('./capture-native-build-evidence.mts', import.meta.url));
 const withSource = fileURLToPath(new URL('./with-source.sh', import.meta.url));
+const qualifiedReplay = fileURLToPath(new URL('./qualified-release-replay.sh', import.meta.url));
 
 function fixture(mode = 'success') {
   const directory = mkdtempSync(path.join(tmpdir(), 'qualify-native-shipping-'));
@@ -28,10 +29,10 @@ function fixture(mode = 'success') {
   const callsFile = path.join(directory, 'calls.jsonl');
   for (const name of ['src', 'tools/dev', 'tools/release'])
     mkdirSync(path.join(workspace, name), { recursive: true });
-  mkdirSync(path.join(executionRoot, 'bazel-out/bin'), { recursive: true });
+  mkdirSync(path.join(executionRoot, 'bazel-out/k8-fastbuild/bin'), { recursive: true });
   writeFileSync(path.join(workspace, 'src/input.mts'), 'declared source');
   symlinkSync(path.join(workspace, 'src'), path.join(executionRoot, 'src'), 'dir');
-  const output = 'bazel-out/bin/native.tar.gz';
+  const output = 'bazel-out/k8-fastbuild/bin/native.tar.gz';
   const outputBytes = Buffer.from('final archive');
   writeFileSync(path.join(executionRoot, output), outputBytes);
   const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -40,9 +41,10 @@ function fixture(mode = 'success') {
     `#!/usr/bin/env bash\nexec ${shellQuote(process.execPath)} "$@"\n`,
   );
   copyFileSync(withSource, path.join(workspace, 'tools/release/with-source.sh'));
+  copyFileSync(qualifiedReplay, path.join(workspace, 'tools/release/qualified-release-replay.sh'));
   writeFileSync(
     path.join(workspace, 'tools/release/capture-native-build-evidence.mts'),
-    `import {spawnSync} from 'node:child_process';\nimport {readFileSync,writeFileSync} from 'node:fs';\nconst state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));\nif(state.mode==='capture-race') writeFileSync('src/input.mts','changed during capture');\nconst result=spawnSync(process.execPath,[${JSON.stringify(realCapture)},...process.argv.slice(2)],{stdio:'inherit'});\nprocess.exit(result.status??1);\n`,
+    `import {spawnSync} from 'node:child_process';\nimport {readFileSync,writeFileSync} from 'node:fs';\nconst state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));\nif(state.mode==='capture-race') writeFileSync('src/input.mts','changed during capture');\nconst result=spawnSync(process.execPath,[${JSON.stringify(realCapture)},...process.argv.slice(2)],{stdio:'inherit'});\nif(state.mode==='capture-output-race' && result.status===0) writeFileSync(state.output,'changed after capture');\nprocess.exit(result.status??1);\n`,
   );
   writeFileSync(
     path.join(workspace, 'tools/dev/bazel.sh'),
@@ -55,7 +57,7 @@ import {execFileSync} from 'node:child_process';
 const state=JSON.parse(readFileSync(${JSON.stringify(stateFile)},'utf8'));
 const invocation=process.argv.slice(2);
 appendFileSync(${JSON.stringify(callsFile)},JSON.stringify(invocation)+'\\n');
-const args=invocation.slice(invocation.findIndex((arg:string)=>['test','cquery','aquery','info'].includes(arg)));
+const args=invocation.slice(invocation.findIndex((arg:string)=>['test','cquery','info'].includes(arg)));
 if(args[0]==='test') {
   if(state.mode==='build-failure') process.exit(1);
   if(state.mode==='build-race') writeFileSync('src/input.mts','changed during build');
@@ -65,15 +67,17 @@ if(args[0]==='test') {
     execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','changed source']);
   }
   const metadata=Object.fromEntries(args.filter((arg:string)=>arg.startsWith('--build_metadata=')).map((arg:string)=>{const value=arg.slice(17);const split=value.indexOf('=');return [value.slice(0,split),value.slice(split+1)];}));
-  const events=[...state.events,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
+  const aquery=args.find((arg:string)=>arg.startsWith('--experimental_aquery_dump_after_build_output_file=')).split('=').slice(1).join('=');
+  if(state.mode!=='dump-missing') writeFileSync(aquery,JSON.stringify(state.aquery));
+  if(state.mode==='manifest-tamper') writeFileSync(state.manifest,JSON.stringify({...state.root,package:{...state.root.package,version:'1.0.1'}})+'\\n');
+  const options=args.filter((arg:string)=>arg.startsWith('--')).map((arg:string)=>{const split=arg.indexOf('=');return {optionName:arg.slice(2,split<0?undefined:split),optionValue:split<0?'':arg.slice(split+1)};});
+  const canonical={id:{structuredCommandLine:{commandLineLabel:'canonical'}},structuredCommandLine:{commandLineLabel:'canonical',sections:[{sectionLabel:'command options',optionList:{option:options}}]}};
+  const events=[...state.events,canonical,{id:{buildMetadata:{}},buildMetadata:{metadata}},{id:{buildFinished:{}},finished:{exitCode:{name:'SUCCESS'}}},{id:{buildMetrics:{}},buildMetrics:{},lastMessage:true}];
   writeFileSync(args.find((arg:string)=>arg.startsWith('--build_event_json_file=')).slice(24),events.map((event:unknown)=>JSON.stringify(event)).join('\\n')+'\\n');
 } else if(args[0]==='info') console.log(state.executionRoot);
-else if(args[0]==='aquery') console.log(JSON.stringify(state.aquery));
-else if(args.some((arg:string)=>arg==='--starlark:expr=str(target.label)')) console.log('@@//fixture:shipping');
-else if(args.some((arg:string)=>arg==='--output=jsonproto')) console.log(JSON.stringify(state.cquery));
 else {
-  if(state.mode==='query-failure') process.exit(1);
-  console.log(JSON.stringify(state.root));
+  if(state.mode==='discovery-failure') process.exit(1);
+  console.log('@@//fixture:shipping');
 }
 `,
   );
@@ -103,7 +107,10 @@ else {
       outputs: [{ path: output, owner: '//fixture:package' }],
     },
   };
-  const paths = ['src/input.mts', output];
+  const manifest = 'bazel-out/k8-fastbuild/bin/shipping.shipping.json';
+  const manifestBytes = Buffer.from(`${JSON.stringify(root)}\n`);
+  writeFileSync(path.join(executionRoot, manifest), manifestBytes);
+  const paths = ['src/input.mts', output, manifest];
   const aquery = {
     pathFragments: paths.flatMap((file, index) =>
       file.split('/').map((name, part) => ({
@@ -116,7 +123,10 @@ else {
       id: index + 1,
       pathFragmentId: `${index}-${file.split('/').length - 1}`,
     })),
-    targets: [{ id: 1, label: '//fixture:package' }],
+    targets: [
+      { id: 1, label: '//fixture:package' },
+      { id: 2, label: root.label },
+    ],
     configuration: [{ id: 1, checksum: configuration }],
     depSetOfFiles: [{ id: 1, directArtifactIds: [1] }],
     actions: [
@@ -128,6 +138,14 @@ else {
         inputDepSetIds: [1],
         outputIds: [2],
         primaryOutputId: 2,
+      },
+      {
+        targetId: 2,
+        configurationId: 1,
+        actionKey: 'declared-shipping-manifest',
+        mnemonic: 'FileWrite',
+        outputIds: [3],
+        primaryOutputId: 3,
       },
     ],
   };
@@ -148,10 +166,25 @@ else {
       },
     },
     {
+      id: { namedSet: { id: 'shipping-manifest' } },
+      namedSetOfFiles: {
+        files: [
+          {
+            name: manifest,
+            digest: createHash('sha256').update(manifestBytes).digest('hex'),
+            length: String(manifestBytes.length),
+          },
+        ],
+      },
+    },
+    {
       id: { targetCompleted: { label: root.label, configuration: { id: configuration } } },
       completed: {
         success: true,
-        outputGroup: [{ name: 'default', fileSets: [{ id: 'outputs' }] }],
+        outputGroup: [
+          { name: 'default', fileSets: [{ id: 'outputs' }] },
+          { name: 'shipping_manifest', fileSets: [{ id: 'shipping-manifest' }] },
+        ],
       },
     },
   ];
@@ -160,13 +193,11 @@ else {
     JSON.stringify({
       mode,
       executionRoot,
+      output: path.join(executionRoot, output),
       root,
+      manifest: path.join(executionRoot, manifest),
       aquery,
       events,
-      cquery: {
-        results: [{ target: { rule: { name: root.label } }, configurationId: 1 }],
-        configurations: [{ id: 1, checksum: configuration }],
-      },
     }),
   );
   const request: NativeShippingRequest = {
@@ -217,15 +248,43 @@ for (const selection of ['explicit', 'export'])
       expect(builds).toHaveLength(1);
       expect(builds[0]).toContain('//fixture:shipping');
       expect(builds[0]).toContain('//fixture:consumer');
+      expect(builds[0]).toContain('--output_groups=+shipping_manifest');
+      expect(builds[0]).toContain('--experimental_aquery_dump_after_build_format=jsonproto');
+      expect(builds[0]).toContain(
+        `--experimental_aquery_dump_after_build_output_file=${path.join(f.outputDirectory, 'aquery.json')}`,
+      );
+      expect(calls.map((call) => call[0])).toEqual(
+        selection === 'export' ? ['cquery', 'test', 'info'] : ['test', 'info'],
+      );
       for (const call of calls)
         for (const flag of f.request.configuration) expect(call).toContain(flag);
       expect(existsSync(path.join(f.outputDirectory, 'build-events.jsonl'))).toBe(true);
-      expect(existsSync(path.join(f.outputDirectory, 'cquery.json'))).toBe(true);
+      expect(existsSync(path.join(f.outputDirectory, 'cquery.json'))).toBe(false);
+      expect(existsSync(path.join(f.outputDirectory, 'roots.jsonl'))).toBe(false);
       expect(existsSync(path.join(f.outputDirectory, 'aquery.json'))).toBe(true);
+      expect(evidence.cohorts[0].producerCapture.aqueryFile).toBe(
+        path.join(f.outputDirectory, 'aquery.json'),
+      );
     } finally {
       f.cleanup();
     }
   });
+
+test('complete-family validation rejects bytes changed after successful evidence capture', () => {
+  const f = fixture('capture-output-race');
+  try {
+    f.request.completeProducts = ['fixture'];
+    expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+      'native complete-family output differs from build evidence',
+    );
+    expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
+      false,
+    );
+    expect(f.calls().map((call) => call[0])).toEqual(['test', 'info']);
+  } finally {
+    f.cleanup();
+  }
+});
 
 test('rejects dirty source before any Bazel request', () => {
   const f = fixture();
@@ -238,6 +297,24 @@ test('rejects dirty source before any Bazel request', () => {
   }
 });
 
+for (const flag of ['--assume-unchanged', '--skip-worktree'])
+  test(`rejects ${flag} when git status hides a modified tracked input`, () => {
+    const f = fixture();
+    try {
+      execFileSync('git', ['update-index', flag, 'src/input.mts'], { cwd: f.workspace });
+      writeFileSync(path.join(f.workspace, 'src/input.mts'), 'hidden changed source');
+      expect(
+        execFileSync('git', ['status', '--porcelain'], { cwd: f.workspace, encoding: 'utf8' }),
+      ).toBe('');
+      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+        'index suppression flags',
+      );
+      expect(f.calls()).toEqual([]);
+    } finally {
+      f.cleanup();
+    }
+  });
+
 test('preserves startup argv before every command and configuration afterward', () => {
   const f = fixture();
   try {
@@ -249,7 +326,7 @@ test('preserves startup argv before every command and configuration afterward', 
     expect(calls.filter((call) => call[2] === 'test')).toHaveLength(1);
     for (const call of calls) {
       expect(call.slice(0, 2)).toEqual(startup);
-      expect(['test', 'cquery', 'aquery', 'info']).toContain(call[2]);
+      expect(['test', 'cquery', 'info']).toContain(call[2]);
       for (const flag of f.request.configuration) expect(call.indexOf(flag)).toBeGreaterThan(2);
     }
   } finally {
@@ -257,10 +334,40 @@ test('preserves startup argv before every command and configuration afterward', 
   }
 });
 
-for (const mode of ['build-race', 'head-race', 'build-failure', 'query-failure', 'capture-race'])
+for (const product of ['unknown-product', 'postgres-tools-wasix'])
+  test(`removes its packet when canonical complete-family coverage fails for ${product}`, () => {
+    const f = fixture();
+    try {
+      f.request.completeProducts = [product];
+      expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow(
+        product === 'unknown-product'
+          ? 'unknown selected product'
+          : 'incomplete native shipping coverage',
+      );
+      expect(f.calls().map((call) => call[0])).toEqual(['test', 'info']);
+      expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
+        false,
+      );
+      expect(existsSync(path.join(f.outputDirectory, 'build-events.jsonl'))).toBe(true);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+for (const mode of [
+  'build-race',
+  'head-race',
+  'build-failure',
+  'discovery-failure',
+  'capture-race',
+  'dump-missing',
+  'manifest-tamper',
+])
   test(`does not return evidence after ${mode}`, () => {
     const f = fixture(mode);
     try {
+      if (mode === 'discovery-failure')
+        f.request.shipping = { export: '//fixture:shipping_export' };
       expect(() => qualifyNativeShipping(f.request, f.workspace)).toThrow();
       expect(existsSync(path.join(f.outputDirectory, 'evidence/native-build-evidence.json'))).toBe(
         false,

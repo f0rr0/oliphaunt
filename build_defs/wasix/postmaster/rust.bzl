@@ -41,6 +41,7 @@ def postmaster_rust_targets(library_sources):
         patches = POSTMASTER_CARGO["patches"],
         root_sources = library_sources + ["executor/" + facts["source"] for facts in POSTMASTER_CARGO["roles"].values()],
     )
+    native.filegroup(name = "runtime_abi_contract", srcs = [":runtime_abi"], output_group = "contract")
     for role, dependencies, aliases in [
         ("executor", executor_deps, executor_aliases),
         ("compiler", compiler_deps, compiler_aliases),

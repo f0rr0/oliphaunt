@@ -391,7 +391,7 @@ try {
   writeNativeChecksums({ expected: [path.basename(github)], files: [github], output: checksum });
   assert.match(
     readFileSync(checksum, 'utf8'),
-    new RegExp(`^[0-9a-f]{64}  ${path.basename(github).replaceAll('.', '\\.')}\\n$`),
+    new RegExp(`^[0-9a-f]{64}  \\.\\/${path.basename(github).replaceAll('.', '\\.')}\\n$`),
   );
   assert.throws(
     () =>

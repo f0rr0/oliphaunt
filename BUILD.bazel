@@ -1,6 +1,7 @@
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "src/extensions/artifacts/packages/tools/bundle-carrier-assets.mts",
     ".prototools",
     "Cargo.toml",
     "Cargo.lock",
@@ -72,6 +73,8 @@ test_suite(
         "//build_defs/wasix:cargo_inputs_test",
         "//build_defs/wasix/postmaster:metadata_test",
         "//build_defs/wasix/postmaster:compile_metadata_test",
+        "//build_defs/wasix/postmaster:native_receipts_test",
+        "//build_defs/wasix/postmaster:receipt_reader_test",
         "//build_defs/wasix/postmaster:runtime_abi_test",
         "//build_defs/wasix/postmaster:libc_metadata_test",
         "//build_defs/wasix/postmaster:libc_headers_test",

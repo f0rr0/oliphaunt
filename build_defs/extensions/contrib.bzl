@@ -159,6 +159,9 @@ def native_contrib_members(crypto = None):
             srcs = ["@postgres//:contrib_" + directory.replace("-", "_") + "_resources"] if member.get("default-version") else [],
         )
         payload = name + "_native_payload"
+        construction_licenses = {}
+        if name == "pgcrypto":
+            construction_licenses = {"//src/third-party/openssl:LICENSE.txt": "share/licenses/openssl-native/LICENSE.txt", "//src/third-party/openssl:source.toml": "share/licenses/openssl-native/SOURCE.toml"}
         extension_member_payload(
             name = payload,
             sql_name = member["sql-name"],
@@ -166,6 +169,7 @@ def native_contrib_members(crypto = None):
             resources = [":" + resources],
             server_module = ":" + name + "_server.so",
             embedded_module = ":" + name + "_embedded.so",
+            construction_licenses = construction_licenses,
         )
         shipping_package(
             name = name + "_native_member",

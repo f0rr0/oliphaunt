@@ -706,8 +706,27 @@ export function extensionUpstreamLicenseFileInventory(sqlNames) {
 
 /** The CPU-model implementation is acquired from this same immutable Bazel source pin. */
 export function nativeExtensionConstructionLicenseInventory(sqlName, target) {
+  if (sqlName === 'pgcrypto' && ['linux-x64-gnu', 'linux-arm64-gnu'].includes(target)) {
+    const license = releaseNoticeRows({ profile: 'contrib-native-openssl' }).find(
+      (row) => row.id === 'openssl',
+    );
+    return Object.freeze(
+      [
+        {
+          path: 'share/licenses/openssl-native/LICENSE.txt',
+          sha256: createHash('sha256').update(readFileSync(license.source)).digest('hex'),
+          mode: '0644',
+        },
+        {
+          path: 'share/licenses/openssl-native/SOURCE.toml',
+          sha256: createHash('sha256').update(readFileSync(license.sourceManifest)).digest('hex'),
+          mode: '0644',
+        },
+      ].map(Object.freeze),
+    );
+  }
   if (sqlName !== 'vector' || target !== 'linux-x64-gnu') {
-    fail('compiler-runtime legal closure is declared only for native vector on linux-x64-gnu');
+    fail('native construction legal closure has no declared source for this member/target');
   }
   const source = JSON.parse(
     readFileSync(path.join(ROOT, 'build_defs/extensions/compiler_rt/source.json'), 'utf8'),
@@ -752,14 +771,14 @@ export function validateNativeExtensionConstructionLicenseInventory(sqlName, tar
   if (files.length === 0) return Object.freeze([]);
   const expected = nativeExtensionConstructionLicenseInventory(sqlName, target);
   if (JSON.stringify(files) !== JSON.stringify(expected))
-    fail('native construction legal inventory differs from the immutable compiler-runtime source');
+    fail('native construction legal inventory differs from the immutable construction source');
   return expected;
 }
 
 export function extensionCarrierLegalContract(
   product,
   sqlNames,
-  { family, target, carriesPayload = true } = {},
+  { family, target, carriesPayload = true, memberContracts = [] } = {},
 ) {
   if (
     typeof product !== 'string' ||
@@ -788,7 +807,17 @@ export function extensionCarrierLegalContract(
   if (product === CONTRIB_LICENSE.product) {
     const embedsOpenSsl =
       sqlNames.includes('pgcrypto') &&
-      (family === 'wasix' || OPENSSL_EMBEDDED_NATIVE_TARGETS.has(target));
+      (family === 'wasix' ||
+        OPENSSL_EMBEDDED_NATIVE_TARGETS.has(target) ||
+        memberContracts.some(
+          (member) =>
+            member.sqlName === 'pgcrypto' &&
+            validateNativeExtensionConstructionLicenseInventory(
+              member.sqlName,
+              target,
+              member.nativeConstructionLicenseFiles ?? [],
+            ).length > 0,
+        ));
     const profile = `${family === 'native' ? 'contrib-native' : 'contrib-wasix'}${embedsOpenSsl ? '-openssl' : ''}`;
     return Object.freeze({
       profile,

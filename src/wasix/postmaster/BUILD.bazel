@@ -20,6 +20,8 @@ filegroup(
     srcs = glob(["executor/src/**/*.rs"]),
 )
 
+filegroup(name = "postgres_overlays", srcs = glob(["postgres/overlays/wasix-core/src/**"]))
+
 postmaster_rust_targets(
     library_sources = glob(["executor/src/**/*.rs"], exclude = ["executor/src/bin/**/*.rs"]),
 )

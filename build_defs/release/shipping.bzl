@@ -4,23 +4,34 @@ load(":identity.bzl", "ReleaseIdentityInfo")
 
 ShippingInfo = provider(fields = ["product", "version", "ecosystem", "name", "configuration", "role", "files"])
 
+def _package(info):
+    return {
+        "product": info.product,
+        "version": info.version,
+        "ecosystem": info.ecosystem,
+        "name": info.name,
+        "configuration": info.configuration,
+        "role": info.role,
+        "outputs": [{"path": file.path, "owner": str(file.owner)} for file in info.files.to_list()],
+    }
+
 def _shipping_package_impl(ctx):
     owner = ctx.attr.owner[ReleaseIdentityInfo]
     files = depset(transitive = [artifact[DefaultInfo].files for artifact in ctx.attr.artifacts])
     if not files.to_list():
         fail("shipping package must contain actual output files")
-    return [
-        DefaultInfo(files = files),
-        ShippingInfo(
-            product = owner.id,
-            version = owner.version,
-            ecosystem = ctx.attr.ecosystem,
-            name = ctx.attr.package_name,
-            configuration = ctx.attr.configuration,
-            role = ctx.attr.role,
-            files = files,
-        ),
-    ]
+    info = ShippingInfo(
+        product = owner.id,
+        version = owner.version,
+        ecosystem = ctx.attr.ecosystem,
+        name = ctx.attr.package_name,
+        configuration = ctx.attr.configuration,
+        role = ctx.attr.role,
+        files = files,
+    )
+    manifest = ctx.actions.declare_file(ctx.label.name + ".shipping.json")
+    ctx.actions.write(manifest, json.encode({"label": str(ctx.label), "package": _package(info)}) + "\n")
+    return [DefaultInfo(files = files), info, OutputGroupInfo(shipping_manifest = depset([manifest]))]
 
 shipping_package = rule(
     implementation = _shipping_package_impl,
@@ -53,15 +64,7 @@ def _shipping_export_impl(ctx):
         if info.product in versions and versions[info.product] != info.version:
             fail("inconsistent shipping version for " + info.product)
         versions[info.product] = info.version
-        packages.append({
-            "product": info.product,
-            "version": info.version,
-            "ecosystem": info.ecosystem,
-            "name": info.name,
-            "configuration": info.configuration,
-            "role": info.role,
-            "outputs": [{"path": file.path, "owner": str(file.owner)} for file in info.files.to_list()],
-        })
+        packages.append(_package(info))
     output = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(output, json.encode({"schema": "oliphaunt-bazel-shipping-v1", "scope": "construction", "packages": packages}) + "\n")
     return [DefaultInfo(files = depset([output]))]

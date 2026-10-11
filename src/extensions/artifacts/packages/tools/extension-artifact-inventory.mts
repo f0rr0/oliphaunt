@@ -686,6 +686,7 @@ function canonicalLegalContract(metadata, target, label, product) {
     contract = extensionCarrierLegalContract(product, [metadata.sqlName], {
       family: 'native',
       target,
+      memberContracts: [metadata],
     });
   } catch (cause) {
     throw inventoryError(label, `cannot resolve canonical legal contract: ${cause.message}`);
@@ -724,7 +725,7 @@ function canonicalLegalContract(metadata, target, label, product) {
     metadata.nativeConstructionLicenseFiles,
   );
   for (const row of construction)
-    add(`files/${row.path}`, row.sha256, 'immutable compiler-runtime source');
+    add(`files/${row.path}`, row.sha256, 'immutable construction source');
   if (construction.length > 0)
     contract = {
       ...contract,

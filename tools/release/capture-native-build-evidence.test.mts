@@ -178,6 +178,347 @@ function fixture() {
   };
 }
 
+function producerFixture() {
+  const f = fixture();
+  const manifest = 'bazel-out/k8-opt/bin/src/shipping.shipping.json';
+  const aqueryFile = path.join(f.directory, 'native-after-build.json');
+  const graph = f.cohort.aquery;
+  const parts = manifest.split('/');
+  graph.pathFragments.push(
+    ...parts.map((label, part) => ({
+      id: `manifest-${part}`,
+      label,
+      ...(part ? { parentId: `manifest-${part - 1}` } : {}),
+    })),
+  );
+  graph.artifacts.push({ id: 5, pathFragmentId: `manifest-${parts.length - 1}` });
+  graph.targets.push({ id: 3, label: '//src:shipping' });
+  graph.configuration.push({ id: 2, checksum: 'c'.repeat(64), isTool: false });
+  const manifestAction = {
+    targetId: 3,
+    configurationId: 2,
+    actionKey: 'manifest-definition',
+    mnemonic: 'FileWrite',
+    inputDepSetIds: [],
+    outputIds: [5],
+    primaryOutputId: 5,
+  };
+  graph.actions.push(manifestAction);
+  mkdirSync(path.dirname(path.join(f.executionRoot, manifest)), { recursive: true });
+  const contents = `${JSON.stringify({
+    ...f.cohort.roots[0],
+    label: '@@//src:shipping',
+  })}\n`;
+  writeFileSync(path.join(f.executionRoot, manifest), contents);
+  const events: any[] = structuredClone(f.cohort.buildEvents);
+  events.splice(3, 0, {
+    id: { namedSet: { id: 'manifest' } },
+    namedSetOfFiles: {
+      files: [
+        {
+          pathPrefix: ['bazel-out', 'k8-opt', 'bin', 'src'],
+          name: 'shipping.shipping.json',
+          digest: createHash('sha256').update(contents).digest('hex'),
+          length: String(Buffer.byteLength(contents)),
+        },
+      ],
+    },
+  });
+  events
+    .find((event) => event.completed)
+    .completed.outputGroup.push({
+      name: 'shipping_manifest',
+      fileSets: [{ id: 'manifest' }],
+    });
+  events.splice(1, 0, {
+    id: { structuredCommandLine: { commandLineLabel: 'canonical' } },
+    structuredCommandLine: {
+      commandLineLabel: 'canonical',
+      sections: [
+        {
+          sectionLabel: 'command options',
+          optionList: {
+            option: [
+              {
+                optionName: 'experimental_aquery_dump_after_build_format',
+                optionValue: 'jsonproto',
+              },
+              {
+                optionName: 'experimental_aquery_dump_after_build_output_file',
+                optionValue: aqueryFile,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  const cohort = {
+    executionRoot: f.executionRoot,
+    aquery: f.cohort.aquery,
+    buildEvents: events,
+    shippingRoots: ['//src:shipping'],
+    aqueryFile,
+  };
+  const options = { ...f.options, cohorts: [cohort] };
+  return {
+    ...f,
+    manifest,
+    manifestAction,
+    contents,
+    events,
+    options,
+    capture: () => captureNativeBuildEvidence(options),
+  };
+}
+
+test('native producer derives exact roots from BEP manifests without a later query', () => {
+  const f = producerFixture();
+  try {
+    const captured = f.capture();
+    const cohort = captured.evidence.cohorts[0];
+    expect(cohort.roots).toEqual([{ ...f.cohort.roots[0], label: '@@//src:shipping' }]);
+    expect(cohort.rootConfigurations).toEqual([
+      { label: '@@//src:shipping', configuration: 'c'.repeat(64) },
+    ]);
+    expect(cohort.producerCapture?.shippingManifests).toEqual([
+      { path: f.manifest, contents: f.contents },
+    ]);
+    expect(captured.qualification.shippingAnalysis).toBe('bound');
+    expect(captured.qualification.releaseDecision).toBe('unverified');
+    expect(captured.qualification.unverified).toContain(
+      'native action-graph dump bytes authenticated by the producing invocation',
+    );
+    expect(
+      validateNativeBuildEvidence(captured.evidence, {
+        ...f.options,
+        requireShippingAnalysis: true,
+      }).shippingAnalysis,
+    ).toBe('bound');
+    writeFileSync(path.join(f.executionRoot, f.manifest), `${f.contents} `);
+    expect(() => captured.assertUnchanged()).toThrow(/changed after capture/);
+    expect(() => writeNativeBuildEvidence(captured, path.join(f.directory, 'evidence'))).toThrow();
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('old query-based evidence remains diagnostic and cannot satisfy native analysis policy', () => {
+  const f = fixture();
+  try {
+    const captured = f.capture();
+    expect(captured.qualification.shippingAnalysis).toBe('unverified');
+    expect(() =>
+      validateNativeBuildEvidence(captured.evidence, {
+        ...f.options,
+        requireShippingAnalysis: true,
+      }),
+    ).toThrow(/producing-analysis shipping manifests/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('serialized native evidence excludes ambient options and logs while retaining qualification facts', () => {
+  const f = producerFixture();
+  const secret = 'sentinel-invocation-secret';
+  const configuration = 'c'.repeat(64);
+  const consumer = '//src:consumer';
+  try {
+    f.events.find((event) => event.started).started.optionsDescription =
+      `--repo_env=TOKEN=${secret}`;
+    f.events.find((event) => event.configuration).configuration.makeVariable = { TOKEN: secret };
+    f.events.find((event) => event.buildMetadata).buildMetadata.metadata.UNUSED_TOKEN = secret;
+    const command = f.events.find((event) => event.structuredCommandLine).structuredCommandLine;
+    command.sections[0].optionList.option[0].combinedForm = secret;
+    command.sections[0].optionList.option.push(
+      { optionName: 'client_env', optionValue: `TOKEN=${secret}` },
+      { optionName: 'output_groups', optionValue: 'default,shipping_manifest' },
+    );
+    command.sections.push({ sectionLabel: 'executable', chunkList: { chunk: [secret] } });
+    const unused = [
+      { id: { unstructuredCommandLine: {} }, unstructuredCommandLine: { args: [secret] } },
+      { id: { optionsParsed: {} }, optionsParsed: { cmdLine: [secret] } },
+      {
+        id: { structuredCommandLine: { commandLineLabel: 'original' } },
+        structuredCommandLine: {
+          commandLineLabel: 'original',
+          sections: [{ chunkList: { chunk: [secret] } }],
+        },
+      },
+      { id: { progress: { opaqueCount: 1 } }, progress: { stdout: secret, stderr: secret } },
+      { id: { workspaceStatus: {} }, workspaceStatus: { item: [{ key: 'TOKEN', value: secret }] } },
+      {
+        id: { buildToolLogs: {} },
+        buildToolLogs: { log: [{ name: 'command', contents: secret, uri: secret }] },
+      },
+      {
+        id: { actionCompleted: { primaryOutput: 'unused' } },
+        action: { commandLine: [secret], strategyDetails: secret },
+      },
+      {
+        id: { execRequest: {} },
+        execRequest: { argv: [secret], environmentVariable: [{ name: 'TOKEN', value: secret }] },
+      },
+      {
+        id: { fetch: { url: `https://example.invalid/${secret}` } },
+        children: [{ fetch: { url: `https://example.invalid/${secret}` } }],
+      },
+    ];
+    const testEvents = [
+      {
+        id: { targetCompleted: { label: consumer, configuration: { id: configuration } } },
+        completed: { success: true },
+      },
+      {
+        id: {
+          testResult: {
+            label: consumer,
+            configuration: { id: configuration },
+            run: 1,
+            shard: 0,
+            attempt: 1,
+          },
+        },
+        testResult: { status: 'PASSED', testActionOutput: [{ contents: secret, uri: secret }] },
+      },
+      {
+        id: { testSummary: { label: consumer, configuration: { id: configuration } } },
+        testSummary: {
+          overallStatus: 'PASSED',
+          totalRunCount: 1,
+          passed: [{ contents: secret, uri: secret }],
+        },
+      },
+    ];
+    const named = f.events.find((event) => event.namedSetOfFiles);
+    named.namedSetOfFiles.files[0].uri = secret;
+    named.namedSetOfFiles.files[0].contents = secret;
+    f.events.splice(-1, 0, ...unused, ...testEvents);
+    const captured = f.capture();
+    const output = writeNativeBuildEvidence(captured, path.join(f.directory, 'evidence'));
+    const contents = readFileSync(output, 'utf8');
+    expect(contents).not.toContain(secret);
+    const packet = JSON.parse(contents);
+    const retained = packet.cohorts[0].buildEvents;
+    expect(retained.map((event: any) => event.id)).toEqual(
+      f.events.map((event) => ({ ...event.id, ...(event.id.fetch ? { fetch: {} } : {}) })),
+    );
+    expect(retained.at(-1).lastMessage).toBe(true);
+    expect(retained.find((event: any) => event.children).children).toEqual([{ fetch: {} }]);
+    expect(retained.find((event: any) => event.buildMetadata).buildMetadata.metadata).toEqual(
+      nativeBuildMetadata(f.options.source, f.options.github),
+    );
+    expect(
+      retained
+        .find((event: any) => event.structuredCommandLine)
+        .structuredCommandLine.sections[0].optionList.option.map(
+          (option: any) => option.optionName,
+        ),
+    ).toEqual([
+      'experimental_aquery_dump_after_build_format',
+      'experimental_aquery_dump_after_build_output_file',
+      'output_groups',
+    ]);
+    const result = validateNativeBuildEvidence(packet, {
+      ...f.options,
+      requireShippingAnalysis: true,
+      requiredTests: [{ label: consumer, configuration }],
+    });
+    expect(result.shippingAnalysis).toBe('bound');
+    expect(result.releaseDecision).toBe('unverified');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('native producer rejects missing, cross-configured, corrupt and misrouted manifest receipts', () => {
+  for (const mutate of [
+    (f: ReturnType<typeof producerFixture>) => {
+      f.options.cohorts[0].shippingRoots.push('//src:shipping');
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.options.cohorts[0].shippingRoots[0] = '//src:other';
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.events.find((e) => e.completed).completed.outputGroup.pop();
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.events.find(
+        (e) => e.namedSetOfFiles?.files[0]?.name === 'shipping.shipping.json',
+      ).namedSetOfFiles.files[0].digest = 'f'.repeat(64);
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.events.find((e) => e.completed).id.targetCompleted.configuration.id = 'missing';
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.events.splice(-1, 0, structuredClone(f.events.find((e) => e.completed)));
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.events
+        .find((e) => e.structuredCommandLine)
+        .structuredCommandLine.sections[0].optionList.option.pop();
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.events.find(
+        (e) => e.structuredCommandLine,
+      ).structuredCommandLine.sections[0].optionList.option[0].optionValue = 'textproto';
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      writeFileSync(path.join(f.executionRoot, f.manifest), f.contents.replace('1.0.0', '2.0.0'));
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.manifestAction.configurationId = 1;
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.manifestAction.targetId = 2;
+    },
+    (f: ReturnType<typeof producerFixture>) => {
+      f.manifestAction.mnemonic = 'ForeignWrite';
+    },
+  ]) {
+    const f = producerFixture();
+    try {
+      mutate(f);
+      expect(f.capture).toThrow();
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+test('packet validation independently rejects substituted root inventory and manifest contents', () => {
+  const f = producerFixture();
+  try {
+    const captured = f.capture();
+    for (const mutate of [
+      (packet: any) => {
+        packet.cohorts[0].roots[0].package.version = '9.0.0';
+      },
+      (packet: any) => {
+        packet.cohorts[0].rootConfigurations[0].configuration = 'wrong';
+      },
+      (packet: any) => {
+        packet.cohorts[0].producerCapture.shippingManifests[0].contents += ' ';
+      },
+      (packet: any) => {
+        packet.cohorts[0].producerCapture.shippingManifests.push(
+          packet.cohorts[0].producerCapture.shippingManifests[0],
+        );
+      },
+      (packet: any) => {
+        packet.cohorts[0].producerCapture.aqueryFile += '.other';
+      },
+    ]) {
+      const packet = structuredClone(captured.evidence);
+      mutate(packet);
+      expect(() => validateNativeBuildEvidence(packet, f.options)).toThrow();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('collector reads declared source/repository links and generated trees after cache-backed success', () => {
   const f = fixture();
   try {

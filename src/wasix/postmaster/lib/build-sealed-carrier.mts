@@ -1,26 +1,26 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict';
 import {
-  fchmodSync,
-  openSync,
   closeSync,
-  fsyncSync,
-  fstatSync,
-  writeFileSync,
   constants,
+  fchmodSync,
+  fstatSync,
+  fsyncSync,
+  openSync,
+  writeFileSync,
 } from 'node:fs';
-import { member } from './receipt-files.mts';
-import { dirname, basename } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { profile, profileId } from './linear-memory-profile.mts';
-import { readRegular, parseJson, requireSha } from './sealed-export-chain.mts';
+import { member } from './receipt-files.mts';
+import { parseJson, readRegular, requireSha } from './sealed-export-chain.mts';
 import {
-  guestReceipt,
-  sourceFingerprint,
   carrierTree,
+  guestReceipt,
   hashRegular,
+  sourceFingerprint,
 } from './verify-sealed-carrier.mts';
 
-function manifest(args: string[]) {
+export function manifest(args: string[]) {
   assert.equal(args.length, 22, 'manifest requires exact builder inputs');
   const [
     rows,

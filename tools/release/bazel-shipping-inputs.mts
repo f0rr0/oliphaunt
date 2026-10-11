@@ -67,6 +67,7 @@ function canonical(value: unknown): string {
 export function buildShippingInputView(
   exportValue: unknown,
   aqueryValue: unknown,
+  { configurationByOutput }: { configurationByOutput?: ReadonlyMap<string, string> } = {},
 ): ShippingInputView {
   const exported = row(exportValue);
   if (exported.schema !== 'oliphaunt-bazel-shipping-v1')
@@ -255,7 +256,10 @@ export function buildShippingInputView(
         return (
           action &&
           canonicalShippingLabel(required(targets, id(action.targetId)).label) ===
-            canonicalShippingLabel(output.owner)
+            canonicalShippingLabel(output.owner) &&
+          (configurationByOutput?.has(text(output.path)) !== true ||
+            required(configurations, id(action.configurationId)).checksum ===
+              configurationByOutput.get(text(output.path)))
         );
       });
       if (!key) throw new Error(`shipping output owner disagrees with aquery: ${output.path}`);
