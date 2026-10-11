@@ -122,7 +122,7 @@ function component(
   assert.equal(statSync(physical).isDirectory(), directory, `${input} has the wrong file type`);
   return {
     name,
-    // Preserve logical SDK aliases so a retarget is observed by file/dir watches.
+    // Preserve logical SDK paths for declared inputs and file/directory watches.
     path: path.resolve(input).replaceAll('\\', '/'),
     resolvedPath: physical.replaceAll('\\', '/'),
     directory,

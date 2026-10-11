@@ -96,9 +96,9 @@ bash tools/dev/bazel.sh test --config=wasix-aot \
   //src/wasix/runtime:aot_linux_x64_gnu_payload \
   //src/wasix/sdks/rust:postgres_regression_test \
   --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
-  --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2 \
+  --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=1 --local_test_jobs=1 \
   --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \
-  --test_env=XDG_CACHE_HOME="$sdk_cache" --test_arg=--test-threads=1
+  --test_env=XDG_CACHE_HOME="$sdk_cache" --test_env=RUST_TEST_THREADS=1
 ```
 
 With Chrome or Chromium installed, run the same actual browser consumer locally:
@@ -116,8 +116,10 @@ bash tools/dev/bazel.sh run --config=wasix-aot //src/wasix/sdks/ts:browser_sql_c
 The local labels identify an unmanaged workstation. The receipt records and
 rechecks the actual browser executable SHA, version, kernel and OS release hash.
 CI supplies its runner image/version labels through the same helper. This test
-installs the constructed SDK/query/runtime archives and executes both default
-and worker exports; it preserves its scratch directory and receipts on failure.
+installs the constructed SDK/query/runtime archives, executes both default and
+worker exports, and qualifies OPFS persistence, synchronous Worker transport and
+crash recovery against the declared standard seed. It preserves its scratch
+directory and receipts on failure.
 
 The `Native Bazel qualification` workflow uses the same Linux commands and
 declared profiles, alongside native macOS/Windows SDK and installed package
@@ -128,10 +130,32 @@ construction and final carrier gate passes.
 
 Shared construction stays on Linux to reproduce CI locally. macOS/Windows jobs
 provide licensed SDK construction and native execution where required. Cross-host
-consumers must receive exact final archives with their source, target and hash
-receipts through GitHub artifacts. The five-Cargo WASIX capture/importer helpers
-validate this construction boundary; foreign-host installed execution and release
-integration remain pending. No remote executor is needed for this handoff.
+consumers receive exact final archives with their source, target and hash receipts
+through GitHub artifacts. The WASIX producer captures the five core Cargo files
+from actual shipping roots; native host jobs download that producing job's immutable
+artifact ID and require the checkout commit to match its source receipt. The importer
+verifies each archive and compiles its extracted Rust sources and build script.
+macOS, Windows and Linux ARM64 then run the same seven SDK SQL scenarios without
+requesting Linux WASIX or AOT producers. This is a matching-source construction
+handoff; it does not select historical published versions or admit a release.
+Foreign-host execution and full carrier coverage must pass before cutover. No remote
+executor is needed for this handoff.
+
+Reproduce an imported Linux SDK consumer using a captured directory locally:
+
+```sh
+profile=//build_defs/native:linux_x86_64_glibc_2_28
+inputs=/absolute/path/to/wasix-cargo-construction
+source_commit="$(git rev-parse HEAD)"
+sdk_cache="$(mktemp -d)"
+bash tools/dev/bazel.sh test //src/wasix/sdks/rust:postgres_regression_test \
+  --platforms="$profile" --host_platform="$profile" \
+  --repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS="$inputs" \
+  --repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT="$source_commit" \
+  --jobs=2 --local_test_jobs=1 \
+  --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \
+  --test_env=XDG_CACHE_HOME="$sdk_cache" --test_env=RUST_TEST_THREADS=1
+```
 
 `@oliphaunt_metadata` imports existing release and extension manifests. Its
 identity targets have no payload dependencies. Construction exports describe

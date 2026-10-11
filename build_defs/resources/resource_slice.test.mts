@@ -1,28 +1,18 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   copyFileSync,
   cpSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import {
-  extractNativePayload,
-  assertMissingHostRuntime,
-} from '../native/host-runtime-test-helpers.mts';
-import {
-  archiveLogicalTreeRows,
-  extractPortableArchiveTree,
-  readPortableArchiveEntries,
-  readPortableTarZstdBufferEntries,
-} from '../../tools/packaging/portable-archive.mts';
 import { validateNativeIcuDataManifest } from '../../src/database-resources/contracts/icu-data.mts';
 import {
   filesystemTreeRows,
@@ -30,16 +20,28 @@ import {
   validateNativeClusterSeedDirectory,
   validatePgdataDirectories,
 } from '../../src/database-resources/contracts/native-manifest.mts';
+import { seedCarrierIdentities } from '../../src/database-resources/seeds/carrier-identities.mts';
 import { parseNativeMobileAbiReceipt } from '../../src/native/runtime/tools/native-mobile-abi-contract.mts';
 import { publishNativeDescriptor } from '../../src/native/sdks/ts/src/root-descriptor.ts';
 import { validateMavenCentralPublication } from '../../tools/packaging/maven-central-contract.mts';
-import { materializeArchive, run, seedEnvironment } from './shared.mts';
+import {
+  archiveLogicalTreeRows,
+  extractPortableArchiveTree,
+  readPortableArchiveEntries,
+  readPortableTarZstdBufferEntries,
+} from '../../tools/packaging/portable-archive.mts';
+import {
+  assertMissingHostRuntime,
+  extractNativePayload,
+} from '../native/host-runtime-test-helpers.mts';
+import { materializeArchive, nativeSeedHost, run, seedEnvironment } from './shared.mts';
 
 const [
   runtimeArchive,
   consumerInput,
   runtimeVersion,
   version,
+  seedSpecification,
   icuArchive,
   icuNpm,
   icuCargo,
@@ -48,6 +50,9 @@ const [
 ] = process.argv
   .slice(2)
   .map((value, index) => ([2, 3].includes(index) ? value : path.resolve(value)));
+const runtimeArtifact = JSON.parse(readFileSync(seedSpecification, 'utf8')).runtimeArtifact;
+const host = nativeSeedHost(runtimeArtifact);
+const target = host.target;
 assert.equal(seedInputs.length, 12);
 assert(process.env.TEST_TMPDIR, 'test requires a private Bazel scratch directory');
 const root = path.resolve(process.env.TEST_TMPDIR);
@@ -61,15 +66,15 @@ const runtime = path.join(root, 'runtime');
 await extractNativePayload(runtimeArchive, runtime);
 // This consumer must use the separate ICU carrier selected below.
 rmSync(path.join(runtime, 'share/icu'), { recursive: true, force: true });
-const consumer = path.join(root, 'consumer/bin/seed-consumer');
+const consumer = path.join(root, `consumer/bin/seed-consumer${host.executableSuffix}`);
 mkdirSync(path.dirname(consumer), { recursive: true });
 copyFileSync(consumerInput, consumer);
-chmodSync(consumer, 0o755);
+if (process.platform !== 'win32') chmodSync(consumer, 0o755);
 assert.equal(
   run(consumer, ['--version'], seedEnvironment(runtime, root), root).trim(),
   runtimeVersion,
 );
-const library = path.join(runtime, 'lib/liboliphaunt.so');
+const library = path.join(runtime, host.libraryRelativePath);
 renameSync(library, `${library}.removed`);
 try {
   assertMissingHostRuntime(
@@ -79,7 +84,7 @@ try {
       stdout: 'pipe',
       stderr: 'pipe',
     }),
-    'liboliphaunt.so',
+    path.basename(library),
   );
 } finally {
   renameSync(`${library}.removed`, library);
@@ -131,7 +136,16 @@ const profileContract = JSON.parse(
     'utf8',
   ),
 );
-for (const [index, profile] of ['standard', 'icu'].entries()) {
+const seedProfiles = Object.keys(
+  JSON.parse(
+    readFileSync(
+      new URL('../../src/database-resources/contracts/contract.json', import.meta.url),
+      'utf8',
+    ),
+  ).profiles,
+).sort();
+const identities = seedCarrierIdentities();
+for (const [index, profile] of seedProfiles.entries()) {
   let [archive, manifestFile, frozen, abiFile, npm, cargo] = seedInputs.slice(
     index * 6,
     (index + 1) * 6,
@@ -143,7 +157,7 @@ for (const [index, profile] of ['standard', 'icu'].entries()) {
   await extractNativePayload(frozen, tree);
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
   assert.equal(manifest.runtime.version, runtimeVersion);
-  assert.equal(manifest.runtime.target, 'linux-x64-gnu');
+  assert.equal(manifest.runtime.target, target);
   assert.equal(
     manifest.archive.sha256,
     createHash('sha256').update(readFileSync(archive)).digest('hex'),
@@ -151,22 +165,55 @@ for (const [index, profile] of ['standard', 'icu'].entries()) {
   assert.equal(
     manifest.source.postgresSha256,
     createHash('sha256')
-      .update(readFileSync(path.join(runtime, 'bin/postgres')))
+      .update(readFileSync(path.join(runtime, `bin/postgres${host.executableSuffix}`)))
       .digest('hex'),
   );
   assert.equal(
     manifest.source.initdbSha256,
     createHash('sha256')
-      .update(readFileSync(path.join(runtime, 'bin/initdb')))
+      .update(readFileSync(path.join(runtime, `bin/initdb${host.executableSuffix}`)))
       .digest('hex'),
   );
   const abi = parseNativeMobileAbiReceipt(readFileSync(abiFile, 'utf8'));
-  assert.equal(abi.get('target'), 'linux-x64-gnu');
+  assert.equal(abi.get('target'), target);
   validateNativeClusterSeedDirectory(tree, profile, {
-    target: 'linux-x64-gnu',
+    target,
     icuData: profile === 'icu' ? icuData : undefined,
   });
   const originalHash = logicalTreeSha256(filesystemTreeRows(path.join(tree, 'files')));
+  const seedEntries = readPortableArchiveEntries(archive);
+  assert.equal(logicalTreeSha256(archiveLogicalTreeRows(seedEntries, archive, '')), originalHash);
+  const directories = readdirSync(path.join(tree, 'files'), {
+    recursive: true,
+    withFileTypes: true,
+  })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) =>
+      path
+        .relative(path.join(tree, 'files'), path.join(entry.parentPath, entry.name))
+        .split(path.sep)
+        .join('/'),
+    )
+    .sort();
+  assert.deepEqual(
+    [...seedEntries]
+      .filter(([, entry]) => entry.isDirectory)
+      .map(([name]) => name)
+      .sort(),
+    directories,
+    'the final archive must preserve exactly the original PostgreSQL directories',
+  );
+  for (const [name, entry] of seedEntries) {
+    assert(
+      entry.isDirectory || (entry.isFile && !entry.isSymbolicLink),
+      `unexpected seed member ${name}`,
+    );
+    assert.equal(
+      entry.mode,
+      entry.isDirectory ? 0o755 : 0o644,
+      `unexpected seed member mode ${name}`,
+    );
+  }
   const pgdata = path.join(root, profile, 'consumer/pgdata');
   extractPortableArchiveTree(archive, pgdata);
   validatePgdataDirectories(pgdata);
@@ -230,6 +277,11 @@ for (const [index, profile] of ['standard', 'icu'].entries()) {
   );
   const packedNpm = readPortableArchiveEntries(npm);
   const packageJson = JSON.parse(member(packedNpm, 'package/package.json').data().toString());
+  const identity = identities.find(
+    (row) => row.family === 'native' && row.target === target && row.profile === profile,
+  );
+  assert(identity, 'the installed seed must have one canonical carrier identity');
+  assert.equal(packageJson.name, identity.npm);
   assert.equal(packageJson.version, version);
   assert.deepEqual(
     packageJson.dependencies ?? {},
@@ -245,9 +297,23 @@ for (const [index, profile] of ['standard', 'icu'].entries()) {
     ),
     originalHash,
   );
+  for (const [name, entry] of packedNpm) {
+    if (!name.startsWith(`package/${npmManifest.directory.path}/`)) continue;
+    assert.equal(
+      entry.mode,
+      entry.isDirectory ? 0o755 : 0o644,
+      `unexpected installed seed mode ${name}`,
+    );
+  }
   assert(npmManifest.directory.emptyDirectories.includes('pg_twophase'));
   const crateEntries = readPortableArchiveEntries(cargo);
-  const crateRoot = `oliphaunt-seed-native-linux-x64-gnu-${profile}-${version}`;
+  const crateRoot = `${identity.cargo}-${version}`;
+  const cargoManifest = Bun.TOML.parse(
+    member(crateEntries, `${crateRoot}/Cargo.toml`).data().toString(),
+  );
+  const cargoPackage = cargoManifest.package as { name: string; version: string };
+  assert.equal(cargoPackage.name, identity.cargo);
+  assert.equal(cargoPackage.version, version);
   assert(member(crateEntries, `${crateRoot}/seed.tar.zst`).data().equals(readFileSync(archive)));
   assert.equal(
     JSON.parse(member(crateEntries, `${crateRoot}/manifest.json`).data().toString()).runtime
@@ -260,14 +326,14 @@ for (const [index, profile] of ['standard', 'icu'].entries()) {
   writeFileSync(
     path.join(corrupted, 'manifest.properties'),
     readFileSync(path.join(corrupted, 'manifest.properties'), 'utf8').replace(
-      'target=linux-x64-gnu',
-      'target=macos-arm64',
+      `target=${target}`,
+      `target=${target === 'linux-x64-gnu' ? 'macos-arm64' : 'linux-x64-gnu'}`,
     ),
   );
   assert.throws(
     () =>
       validateNativeClusterSeedDirectory(corrupted, profile, {
-        target: 'linux-x64-gnu',
+        target,
         icuData: profile === 'icu' ? icuData : undefined,
       }),
     /target/,
@@ -276,12 +342,12 @@ for (const [index, profile] of ['standard', 'icu'].entries()) {
   assert.throws(
     () =>
       validateNativeClusterSeedDirectory(corrupted, profile, {
-        target: 'linux-x64-gnu',
+        target,
         icuData: profile === 'icu' ? icuData : undefined,
       }),
     /PostgreSQL.*expected 18/,
   );
 }
 console.log(
-  'ICU npm/Cargo/Maven and both Linux native seed carriers passed actual runtime, reopen, ABI, integrity and missing-library checks',
+  `ICU npm/Cargo/Maven and both ${target} native seed carriers passed actual runtime, reopen, ABI, integrity and missing-library checks`,
 );

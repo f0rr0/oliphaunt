@@ -1,17 +1,24 @@
+load("//build_defs/wasix/postmaster:rust.bzl", "postmaster_rust_targets")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "release.toml",
     "executor/Cargo.toml",
     "executor/Cargo.lock",
+    "executor/src/sealed.rs",
     "sources/wasmer.toml",
     "sources/wasmer-napi.toml",
     "sources/wasix-libc.toml",
     "wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch",
     "wasmer/patches/wasix-libc/0001-postgres-wasix-blockers.patch",
-])
+] + glob(["postgres/**"]))
 
 filegroup(
     name = "executor_sources",
     srcs = glob(["executor/src/**/*.rs"]),
+)
+
+postmaster_rust_targets(
+    library_sources = glob(["executor/src/**/*.rs"], exclude = ["executor/src/bin/**/*.rs"]),
 )

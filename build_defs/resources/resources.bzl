@@ -1,17 +1,31 @@
 """Declared resource construction; PostgreSQL seed bytes are intentionally unique."""
 
-load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "BunScriptInfo", "bun_action", "bun_test_entrypoint", "bun_test_entrypoint_args")
-load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "DATABASE_SEED_CARRIERS", "PRODUCTS", "PUBLICATION_CARRIERS")
+load("//build_defs/foundation:bun.bzl", "BUN_SOURCE_TOOLCHAINS", "BUN_TEST_ENTRYPOINT_ATTRS", "BunScriptInfo", "bun_action", "bun_script_test", "bun_test_entrypoint", "bun_test_entrypoint_args")
+load("@oliphaunt_metadata//:metadata.bzl", "DATABASE_RESOURCE_ARTIFACTS", "DATABASE_RESOURCE_CONTRACT", "DATABASE_SEED_CARRIERS", "NATIVE_RUNTIME_ARTIFACTS", "PRODUCTS", "PUBLICATION_CARRIERS")
 load("@oliphaunt_javascript_metadata//:metadata.bzl", "JAVASCRIPT")
 load("@aspect_rules_js//npm:providers.bzl", "NpmPackageInfo")
 load("//build_defs/release:shipping.bzl", "shipping_export", "shipping_package")
+load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
 
 NativeSeedInfo = provider(fields = ["frozen", "abi", "runtime", "profile", "target"])
 WasixSeedInfo = provider(fields = ["frozen", "runtime", "profile", "target"])
 SeedAssetsInfo = provider(fields = ["archive", "manifest"])
 
 _LINUX_X64 = ["@platforms//os:linux", "@platforms//cpu:x86_64"]
+_DESKTOP_PROFILES = {
+    "linux_x64": ("linux-x64-gnu", _LINUX_X64, "//build_defs/native:linux_x86_64"),
+    "linux_arm64": ("linux-arm64-gnu", ["@platforms//os:linux", "@platforms//cpu:aarch64"], "//build_defs/native:linux_aarch64"),
+    "macos_arm64": ("macos-arm64", ["@platforms//os:macos", "@platforms//cpu:aarch64"], "//build_defs/native:macos_arm64"),
+    "windows_x64": ("windows-x64-msvc", ["@platforms//os:windows", "@platforms//cpu:x86_64"], "//build_defs/native:windows_x64"),
+}
 _VERSION = PRODUCTS["database-resources"]["version"]
+
+def _runtime_artifact(target):
+    rows = [row for row in NATIVE_RUNTIME_ARTIFACTS
+            if row["product"] == "liboliphaunt-native" and row["kind"] == "native-runtime" and row["target"] == target]
+    if len(rows) != 1:
+        fail("native seed must consume exactly one canonical runtime artifact for " + target)
+    return {key: rows[0][key] for key in ["target", "npm_os", "npm_cpu", "library_relative_path"]}
 
 def _resource_compile_data_impl(ctx):
     output = ctx.actions.declare_file(ctx.attr.out)
@@ -40,6 +54,7 @@ def _action(ctx, specification, inputs, outputs, mnemonic, **kwargs):
     arguments = ctx.actions.args()
     arguments.add(spec)
     bun_action(ctx, ctx.attr._tool, arguments = [arguments], inputs = inputs + [spec], outputs = outputs, mnemonic = mnemonic, **kwargs)
+    return spec
 
 def _tool(label):
     return attr.label(default = Label(label), providers = [BunScriptInfo], cfg = "exec")
@@ -71,10 +86,11 @@ def _native_seed_impl(ctx):
         if len(files) != 1:
             fail("seed ABI header must have exactly one declared file")
         headers[relative] = files[0].path
-    _action(ctx, {
+    specification = _action(ctx, {
         "runtime": ctx.file.runtime.path,
         "profile": ctx.attr.profile,
         "target": ctx.attr.target,
+        "runtimeArtifact": _runtime_artifact(ctx.attr.target),
         "contract": DATABASE_RESOURCE_CONTRACT,
         "headers": headers,
         "icu": ctx.file.icu.path if ctx.file.icu else None,
@@ -83,7 +99,7 @@ def _native_seed_impl(ctx):
     }, [ctx.file.runtime] + ctx.files.configuration + ctx.files.headers + ([ctx.file.icu] if ctx.file.icu else []), [frozen, abi], "PostgresClusterSeed")
     return [DefaultInfo(files = depset([frozen, abi])),
             NativeSeedInfo(frozen = frozen, abi = abi, runtime = ctx.file.runtime, profile = ctx.attr.profile, target = ctx.attr.target),
-            OutputGroupInfo(frozen = depset([frozen]), abi = depset([abi]))]
+            OutputGroupInfo(frozen = depset([frozen]), abi = depset([abi]), specification = depset([specification]))]
 
 native_seed = rule(implementation = _native_seed_impl, attrs = {
     "runtime": attr.label(default = "//src/native/runtime:runtime_payload", allow_single_file = True),
@@ -317,7 +333,7 @@ def wasix_resource_test(name):
                          target_compatible_with = _LINUX_X64,
                          exec_compatible_with = _LINUX_X64 + ["@zig_sdk//libc:gnu.2.34"])
 
-def linux_resource_slice(name, templates):
+def native_resource_slice(name, templates):
     icu_row = [row for row in DATABASE_RESOURCE_ARTIFACTS if row["kind"] == "icu-data"][0]
     icu_payload(name = "icu_payload", out = icu_row["asset"].replace("{version}", _VERSION))
     icu_rows = _rows(["@oliphaunt/icu", "oliphaunt-icu", "dev.oliphaunt.runtime:oliphaunt-icu"])
@@ -326,10 +342,53 @@ def linux_resource_slice(name, templates):
     shipping_package(name = "icu_github", owner = "@oliphaunt_metadata//:product_database-resources", artifacts = [":icu_payload"], ecosystem = "github",
                      package_name = icu_row["asset"].replace("{version}", _VERSION), configuration = "portable", role = "github-release-asset")
     packages.append(":icu_github")
-    for profile in DATABASE_RESOURCE_CONTRACT["profiles"]:
-        prefix = "linux_x64_" + profile
-        native_seed(name = prefix + "_seed", profile = profile, icu = ":icu_payload" if profile == "icu" else None, target_compatible_with = _LINUX_X64)
-        native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
-        native.filegroup(name = prefix + "_abi", srcs = [":" + prefix + "_seed"], output_group = "abi")
-        packages.extend(native_seed_envelopes(prefix, "linux-x64-gnu", profile, ":" + prefix + "_seed", icu = ":icu_payload" if profile == "icu" else None, compatible = _LINUX_X64))
-    shipping_export(name = name, packages = packages)
+    platform_packages = {}
+    for architecture, (target, compatible, condition) in _DESKTOP_PROFILES.items():
+        selected = []
+        for profile in DATABASE_RESOURCE_CONTRACT["profiles"]:
+            prefix = architecture + "_" + profile
+            icu = ":icu_payload" if profile == "icu" else None
+            native_seed(name = prefix + "_seed", target = target, profile = profile, icu = icu,
+                        target_compatible_with = compatible, exec_compatible_with = compatible)
+            native.filegroup(name = prefix + "_frozen", srcs = [":" + prefix + "_seed"], output_group = "frozen")
+            native.filegroup(name = prefix + "_abi", srcs = [":" + prefix + "_seed"], output_group = "abi")
+            native.filegroup(name = prefix + "_specification", srcs = [":" + prefix + "_seed"], output_group = "specification")
+            selected.extend(native_seed_envelopes(prefix, target, profile, ":" + prefix + "_seed", icu = icu, compatible = compatible))
+        platform_packages[condition] = selected
+    shipping_export(name = name, packages = packages + select(platform_packages), target_compatible_with = NATIVE_COMPATIBLE)
+
+def linux_resource_slice(name, templates):
+    """Retain the original Linux entry point while sharing desktop construction."""
+    native_resource_slice(name = "native_shipping_export", templates = templates)
+    native.alias(name = name, actual = ":native_shipping_export", target_compatible_with = ["@platforms//os:linux"])
+
+def native_resource_test(name, compatible = NATIVE_COMPATIBLE):
+    """Qualify the selected host using actual frozen seeds and final carriers."""
+    seed_files = {}
+    targets = {}
+    for architecture, (target, _compatible, condition) in _DESKTOP_PROFILES.items():
+        seed_files[condition] = [":" + architecture + "_" + profile + "_" + group
+                                 for profile in sorted(DATABASE_RESOURCE_CONTRACT["profiles"])
+                                 for group in ["archive", "manifest", "frozen", "abi", "carriers_npm_files", "carriers_cargo_files"]]
+        targets[condition] = [":" + architecture + "_standard_specification"]
+    common = ["//src/native/runtime:runtime_payload", "//build_defs/resources:seed_consumer"]
+    icu = [":icu_payload", ":icu_carriers_npm_files", ":icu_carriers_cargo_files", ":icu_carriers_maven_files"]
+    bun_script_test(
+        name = name,
+        entry_point = "//build_defs/resources:resource_slice.test.mts",
+        args = ["$(location " + label + ")" for label in common] +
+               [PRODUCTS["liboliphaunt-native"]["version"], _VERSION] +
+               select({condition: ["$(location " + labels[0] + ")"] for condition, labels in targets.items()}) +
+               ["$(location " + label + ")" for label in icu] +
+               select({condition: ["$(location " + label + ")" for label in files] for condition, files in seed_files.items()}),
+        data = common + icu + select(seed_files) + select(targets) + [
+            "//build_defs/resources:helpers", "//build_defs/resources:shared.mts",
+            "//src/native/sdks/ts:src/root-descriptor.ts", "//src/native/sdks/ts:src/native/filesystem-durability.ts",
+            "//src/database-resources:contracts/profile-probe.json",
+        ],
+        target_compatible_with = compatible,
+        size = "medium",
+    )
+
+def linux_resource_test(name):
+    native_resource_test(name, compatible = ["@platforms//os:linux"])

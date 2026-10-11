@@ -1,6 +1,6 @@
 """Lazy native-host SDK profiles; incompatible client hosts fail acquisition."""
 
-load(":sdk-tree.bzl", "watch_sdk_directory")
+load(":sdk-tree.bzl", "apple_sdk_documentation_directories", "watch_sdk_directory")
 
 def _host_sdk_impl(ctx):
     expected_os = "mac os x" if ctx.attr.family == "apple" else "windows"
@@ -24,11 +24,32 @@ def _host_sdk_impl(ctx):
     for component in sdk["components"]:
         source = ctx.path(component["path"])
         if component["directory"]:
-            component_files[component["name"]] = [component["name"] + "/" + relative for relative in watch_sdk_directory(ctx, source)]
+            # Perl manual names include colons, which cannot be Bazel labels.
+            # Manual pages are not clang/Swift tools, headers, modules, or libs.
+            excluded = apple_sdk_documentation_directories(component["name"]) if ctx.attr.family == "apple" else []
+            component_files[component["name"]] = [component["name"] + "/" + relative for relative in watch_sdk_directory(ctx, source, excluded)]
         else:
             ctx.watch(source)
             component_files[component["name"]] = [component["name"]]
         ctx.symlink(source, component["name"])
+    # Collector observations derive from these executable bytes independently
+    # of the SDK's directory membership and ordinary action-file digests.
+    if ctx.attr.family == "apple":
+        for tool in ["/usr/bin/xcodebuild", "/usr/bin/sw_vers"]:
+            ctx.watch(ctx.path(tool))
+    for logical in sdk["tools"].values():
+        matched = False
+        for component in sdk["components"]:
+            if logical == component["name"]:
+                ctx.watch(ctx.path(component["path"]))
+                matched = True
+                break
+            if component["directory"] and logical.startswith(component["name"] + "/"):
+                ctx.watch(ctx.path(component["path"]).get_child(logical[len(component["name"]) + 1:]))
+                matched = True
+                break
+        if not matched:
+            fail("The selected host SDK tool has no declared component: " + logical)
     ctx.file("receipt.json", json.encode_indent(sdk))
     ctx.file("sdk.bzl", "HOST_SDK = " + repr(sdk) + "\n")
     ctx.file("unsupported.bat", "@echo off\r\necho This operation is not supported by the declared host compiler profile. 1>&2\r\nexit /b 1\r\n", executable = True)

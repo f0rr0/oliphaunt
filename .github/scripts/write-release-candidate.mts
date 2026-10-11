@@ -8,6 +8,7 @@ import {
   assertCandidateBindingShape,
   candidateQualificationMode,
   FULL_PAYLOAD_QUALIFICATION_MODE,
+  nativeBuildEvidenceBinding,
   nativeEvidenceBinding,
   PRODUCT_QUALIFICATION_MODE,
   wasixEvidenceBinding,
@@ -99,6 +100,24 @@ if (nativeRequired) {
   }
 }
 
+let nativeBuild;
+if (process.env.NATIVE_BUILD_EVIDENCE_ROOT?.trim()) {
+  try {
+    const origin = JSON.parse(requiredEnv('NATIVE_BUILD_ORIGIN_JSON'));
+    if (origin.github?.repository !== requiredEnv('GITHUB_REPOSITORY'))
+      throw new Error('native build producing repository differs from qualification');
+    nativeBuild = nativeBuildEvidenceBinding(requiredEnv('NATIVE_BUILD_EVIDENCE_ROOT'), {
+      sha: checkedOutSha,
+      tree,
+      origin,
+    });
+  } catch (error) {
+    fail(error.message);
+  }
+} else if (process.env.NATIVE_BUILD_ORIGIN_JSON?.trim()) {
+  fail('NATIVE_BUILD_EVIDENCE_ROOT is required with native build origin metadata');
+}
+
 const candidate = {
   schemaVersion: 2,
   repository: requiredEnv('GITHUB_REPOSITORY'),
@@ -122,6 +141,7 @@ const candidate = {
   evidence: {
     wasixReleaseRegression: wasixEvidence,
     nativeExtensionLifecycle: nativeEvidence,
+    ...(nativeBuild === undefined ? {} : { nativeBuild }),
   },
 };
 

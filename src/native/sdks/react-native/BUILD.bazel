@@ -80,8 +80,7 @@ query_envelope(
     },
 )
 
-filegroup(name = "construction_files", srcs = SOURCE_FILES + SDK_SRCS + [":module", ":commonjs", ":types", ":extension_projections", ":extension_metadata", ":broker_templates", ":app_plugin", ":react_native_config", ":codegen_check", ":resource_closure", ":ios_verifier", ":ios_stager"])
-shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":construction_files"], ecosystem = "internal", package_name = SDK["name"], configuration = "portable", role = "construction")
+shipping_package(name = "construction", owner = "@oliphaunt_metadata//:product_oliphaunt-react-native", artifacts = [":source_npm"], ecosystem = "internal", package_name = SDK["name"], configuration = "portable", role = "construction")
 shipping_export(name = "shipping_export", packages = [":construction"])
 
 CONSUMER_COMPILER_IDS = [key for root in COMPILER_INPUTS[SDK["name"]].values() for key in COMPILER_CLOSURES[root]]

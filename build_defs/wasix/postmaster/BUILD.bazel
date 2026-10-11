@@ -1,8 +1,52 @@
 load("//build_defs/foundation:bun.bzl", "bun_script_test", "bun_test")
+load(":postgres-overlay-test.bzl", "postgres_overlay_tests")
+load("@postmaster_compile_metadata//:cargo.bzl", "POSTMASTER_CARGO")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["metadata.mts", "repositories.bzl", "cargo-extension.bzl", "crate-monorepo-source.patch"])
+exports_files(glob(["*.bzl", "*.mts", "*.patch"]))
+
+exports_files(["postgres.BUILD.bazel", "libc.BUILD.bazel"])
+
+postgres_overlay_tests()
+
+bun_test(
+    name = "libc_metadata_test",
+    entry_point = "libc-metadata.test.mts",
+    data = ["libc-metadata.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "libc_headers_test",
+    entry_point = "libc-headers.test.mts",
+    data = ["libc-headers.mts", "testdata/mkalltypes.sed"],
+    size = "small",
+)
+
+bun_test(
+    name = "source_modes_test",
+    entry_point = "source-modes.test.mts",
+    data = ["source-modes.mts"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+alias(name = "llvm_zstd", actual = POSTMASTER_CARGO["compiler_zstd"])
+
+bun_test(
+    name = "compile_metadata_test",
+    entry_point = "compile-metadata.test.mts",
+    data = ["compile-metadata.mts"],
+    size = "small",
+)
+
+bun_test(
+    name = "runtime_abi_test",
+    entry_point = "runtime-abi.test.mts",
+    data = ["runtime-abi.mts", "compile-metadata.mts"],
+    size = "small",
+)
 
 bun_test(
     name = "metadata_test",

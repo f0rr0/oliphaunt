@@ -30,6 +30,17 @@ if OLIPHAUNT_EXTENSION_PHASE=android-package OLIPHAUNT_EXTENSION_PRODUCTS=olipha
   echo 'accepted missing static archive' >&2; exit 1
 fi
 grep -Eq 'no ELF binaries|missing Android static archive for vector' "$scratch/missing-static.log"
+# Construction outputs can contain utilities that are not part of any carrier.
+# Package-only qualification must inspect the selected staged static archive.
+fixture=src/extensions/artifacts/native/tools/create-artifact.test.mts
+bun "$fixture" prepare-android "$scratch"
+printf '#!/usr/bin/env sh\nexit 0\n' > "$scratch/strip"
+chmod +x "$scratch/strip"
+OLIPHAUNT_EXTENSION_PHASE=android-package OLIPHAUNT_EXTENSION_PRODUCTS=oliphaunt-extension-vector \
+  OLIPHAUNT_ANDROID_STRIP="$scratch/strip" bash "$producer"
+vector_archive="$(find "$scratch/assets" -name '*-vector-*-runtime.tar.gz')"
+[ -f "$vector_archive" ]
+bun "$fixture" verify-android "$scratch" "$vector_archive"
 rm -rf "$scratch/host"
 if OLIPHAUNT_EXTENSION_PHASE=android-package bash "$producer" > "$scratch/missing-host.log" 2>&1; then
   echo 'accepted missing Linux support' >&2; exit 1

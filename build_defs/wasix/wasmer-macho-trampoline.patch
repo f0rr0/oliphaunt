@@ -1,3 +1,4 @@
+diff --git a/src/translator/trampoline.rs b/src/translator/trampoline.rs
 --- a/src/translator/trampoline.rs
 +++ b/src/translator/trampoline.rs
 @@ -55,6 +55,16 @@
@@ -35,3 +36,22 @@
          trampoline_func
              .as_global_value()
              .set_linkage(Linkage::DLLExport);
+diff --git a/src/compiler.rs b/src/compiler.rs
+--- a/src/compiler.rs
++++ b/src/compiler.rs
+@@ -497,6 +497,15 @@
+             let got_data: Vec<u8> = vec![0; got_targets.len() * got_entry_size];
+             let mut got_relocs = vec![];
+ 
++            // Randomized set iteration must not become serialized GOT offsets.
++            let mut got_targets = got_targets.into_iter().collect::<Vec<_>>();
++            got_targets.sort_unstable_by_key(|target| match target {
++                RelocationTarget::LocalFunc(index) => (0_u8, index.as_u32()),
++                RelocationTarget::DynamicTrampoline(index) => (1, index.as_u32()),
++                RelocationTarget::LibCall(libcall) => (2, *libcall as u16 as u32),
++                RelocationTarget::CustomSection(index) => (3, index.as_u32()),
++            });
++
+             for (i, target) in got_targets.into_iter().enumerate() {
+                 got_relocs.push(wasmer_compiler::types::relocation::Relocation {
+                     kind: got_entry_reloc_kind,

@@ -1,4 +1,6 @@
 /** Declared construction inputs, not a publication or compatibility certificate. */
+import { createHash } from 'node:crypto';
+
 export interface ShippingProductInputs {
   version: string;
   packages: Record<string, unknown>[];
@@ -7,8 +9,10 @@ export interface ShippingProductInputs {
 }
 
 export interface ShippingInputView {
-  schema: 'oliphaunt-bazel-construction-inputs-v1';
+  schema: 'oliphaunt-bazel-construction-inputs-v2';
   products: Record<string, ShippingProductInputs>;
+  /** Complete reached action inputs, excluding only declared virtual Middleman outputs. */
+  physicalInputs: string[];
 }
 
 type Row = Record<string, unknown>;
@@ -44,9 +48,11 @@ function required<T>(map: Map<string, T>, key: string): T {
   if (value === undefined) throw new Error(`incomplete aquery graph: missing ${key}`);
   return value;
 }
-function label(value: unknown): string {
+/** Bazel prints the main repository as //, @// or @@// across its query/event APIs. */
+export function canonicalShippingLabel(value: unknown): string {
   return text(value).replace(/^@@?\/\//, '//');
 }
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -109,6 +115,11 @@ export function buildShippingInputView(
   };
   const products: ShippingInputView['products'] = {};
   const identities = new Set<string>();
+  const visitedByProduct = new Map<string, Set<string>>();
+  const actionDescriptions = new Map<Row, string>();
+  const sharedDefinitions = new Map<Row, string>();
+  const physicalInputs = new Set<string>();
+  const virtualOutputs = new Set<string>();
   const describeAction = (action: Row) => ({
     ...Object.fromEntries(
       Object.entries(action).filter(
@@ -123,7 +134,6 @@ export function buildShippingInputView(
           ].includes(name),
       ),
     ),
-    inputs: [...inputsOf(action)].map((input) => required(artifactPaths, input)).sort(),
     outputs: array(action.outputIds ?? [])
       .map((output) => required(artifactPaths, id(output)))
       .sort(),
@@ -131,19 +141,44 @@ export function buildShippingInputView(
       ? {}
       : { primaryOutput: required(artifactPaths, id(action.primaryOutputId)) }),
   });
+  const actionDescription = (action: Row, inputs: Set<string>) => {
+    const cached = actionDescriptions.get(action);
+    if (cached !== undefined) return cached;
+    const paths = [...new Set([...inputs].map((input) => required(artifactPaths, input)))].sort();
+    for (const path of paths) physicalInputs.add(path);
+    if (action.mnemonic === 'Middleman')
+      for (const output of array(action.outputIds ?? []))
+        virtualOutputs.add(required(artifactPaths, id(output)));
+    const description = canonical({
+      ...describeAction(action),
+      // Shared compiler headers are hashed once per action, never retained in every description.
+      inputs: {
+        count: paths.length,
+        sha256: createHash('sha256').update(JSON.stringify(paths)).digest('hex'),
+      },
+      target: canonicalShippingLabel(required(targets, id(action.targetId)).label),
+    });
+    actionDescriptions.set(action, description);
+    return description;
+  };
   const sharedActionDefinition = (action: Row, artifactPath: string) => {
+    const cached = sharedDefinitions.get(action);
+    if (cached !== undefined) return cached;
     text(action.actionKey);
     required(configurations, id(action.configurationId));
     const outputs = array(action.outputIds).map(id);
     const primary = id(action.primaryOutputId);
     if (!outputs.includes(primary))
       throw new Error(`primary output is missing from outputs for ${artifactPath}`);
-    return canonical({
+    const inputs = inputsOf(action);
+    const definition = canonical({
       ...describeAction(action),
       configurationId: action.configurationId,
-      inputs: [...inputsOf(action)].map((input) => required(artifactPaths, input)),
+      inputs: [...inputs].map((input) => required(artifactPaths, input)),
       outputs: outputs.map((output) => required(artifactPaths, output)),
     });
+    sharedDefinitions.set(action, definition);
+    return definition;
   };
   for (const value of array(graph.actions ?? [])) {
     const action = row(value);
@@ -190,8 +225,9 @@ export function buildShippingInputView(
     const view = products[product] ?? { version, packages: [], inputs: [], actions: [] };
     products[product] = view;
     const leaves = new Set(view.inputs);
-    const actionDescriptions = new Set(view.actions);
-    const visited = new Set<string>();
+    const descriptions = new Set(view.actions);
+    const visited = visitedByProduct.get(product) ?? new Set<string>();
+    visitedByProduct.set(product, visited);
     const visit = (key: string, stack: Set<string>) => {
       if (stack.has(key)) throw new Error('cycle in aquery producers');
       if (visited.has(key)) return;
@@ -205,12 +241,7 @@ export function buildShippingInputView(
         const inputs = inputsOf(action);
         for (const input of inputs) visit(input, new Set(stack).add(key));
         // ActionKey describes action declarations, not consumed content or a remote-cache key.
-        actionDescriptions.add(
-          canonical({
-            ...describeAction(action),
-            target: label(required(targets, id(action.targetId)).label),
-          }),
-        );
+        descriptions.add(actionDescription(action, inputs));
       }
       visited.add(key);
     };
@@ -222,7 +253,9 @@ export function buildShippingInputView(
       const key = keys.find((candidate) => {
         const action = producers.get(candidate);
         return (
-          action && label(required(targets, id(action.targetId)).label) === label(output.owner)
+          action &&
+          canonicalShippingLabel(required(targets, id(action.targetId)).label) ===
+            canonicalShippingLabel(output.owner)
         );
       });
       if (!key) throw new Error(`shipping output owner disagrees with aquery: ${output.path}`);
@@ -230,7 +263,7 @@ export function buildShippingInputView(
     }
     view.packages.push(pkg);
     view.inputs = [...leaves].sort();
-    view.actions = [...actionDescriptions].sort();
+    view.actions = [...descriptions].sort();
   }
   for (const view of Object.values(products))
     view.packages.sort((a, b) => {
@@ -238,7 +271,11 @@ export function buildShippingInputView(
       const right = canonical(b);
       return left < right ? -1 : left > right ? 1 : 0;
     });
-  return { schema: 'oliphaunt-bazel-construction-inputs-v1', products };
+  return {
+    schema: 'oliphaunt-bazel-construction-inputs-v2',
+    products,
+    physicalInputs: [...physicalInputs].filter((path) => !virtualOutputs.has(path)).sort(),
+  };
 }
 
 /** Each product uses its own completed baseline; unclassified paths require policy evidence. */
@@ -247,6 +284,8 @@ export function selectShippingChanges(
   after: ShippingInputView,
   changedPathsByProduct: Record<string, string[]>,
 ) {
+  if (after.schema !== 'oliphaunt-bazel-construction-inputs-v2')
+    throw new Error('unsupported construction input view');
   const affectedProducts: string[] = [];
   const unclassified = new Set<string>();
   const knownInputs = new Set([

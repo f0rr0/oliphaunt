@@ -18,7 +18,20 @@ def source_string_values(text):
         values[key.strip()] = value[1:-1]
     return values
 
+def postgres_overlay_paths(overlays):
+    """Validate declared regular-text overlays before acquiring PG sources."""
+    destinations = {}
+    for label, relative in overlays.items():
+        components = relative.split("/")
+        if not relative.startswith("src/") or any([part in ["", ".", ".."] for part in components]) or any([character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/" for character in relative.elems()]):
+            fail("invalid PostgreSQL overlay destination: " + relative)
+        if relative in destinations:
+            fail("duplicate PostgreSQL overlay destination: " + relative)
+        destinations[relative] = label
+    return {relative: destinations[relative] for relative in sorted(destinations)}
+
 def _postgres_repository_impl(ctx):
+    overlays = postgres_overlay_paths(ctx.attr.overlays)
     source = source_string_values(ctx.read(ctx.attr.source_manifest))
     for name in ["version", "url", "sha256"]:
         if name not in source:
@@ -32,6 +45,16 @@ def _postgres_repository_impl(ctx):
         sha256 = source["sha256"],
         stripPrefix = "postgresql-" + source["version"],
     )
+    # The authored postmaster recipe installs its six Git-100644 source blobs
+    # before the ordered series. Empty defaults preserve existing source trees.
+    for relative, label in overlays.items():
+        ctx.file(relative, ctx.read(label), executable = False)
+    if overlays:
+        ctx.read(ctx.attr.overlay_modes_tool)
+        ctx.watch(ctx.path(ctx.attr.overlay_bun))
+        result = ctx.execute([ctx.path(ctx.attr.overlay_bun), "--no-install", "--no-env-file", ctx.path(ctx.attr.overlay_modes_tool), "overlay", ctx.path("."), json.encode(overlays.keys())], quiet = True)
+        if result.return_code:
+            fail("Cannot apply declared PostgreSQL overlay modes: " + result.stderr)
     patches = []
     for line in ctx.read(ctx.attr.patch_series).splitlines():
         patch = line.strip()
@@ -43,6 +66,8 @@ def _postgres_repository_impl(ctx):
             label = Label("//src/native/runtime:" + patch[len("src/native/runtime/"):])
         elif patch.startswith("src/wasix/runtime/"):
             label = Label("//src/wasix/runtime:" + patch[len("src/wasix/runtime/"):])
+        elif patch.startswith("src/wasix/postmaster/"):
+            label = Label("//src/wasix/postmaster:" + patch[len("src/wasix/postmaster/"):])
         elif patch.startswith("src/third-party/postgres/"):
             label = Label("//src/third-party/postgres:" + patch[len("src/third-party/postgres/"):])
         else:
@@ -60,6 +85,9 @@ postgres_repository = repository_rule(
         "source_manifest": attr.label(default = "//src/third-party/postgres:source.toml", allow_single_file = True),
         "patch_series": attr.label(default = "//src/native/runtime:postgres/series", allow_single_file = True),
         "build_file": attr.label(default = "//build_defs/native:postgres.BUILD.bazel", allow_single_file = True),
+        "overlays": attr.label_keyed_string_dict(allow_files = True),
+        "overlay_modes_tool": attr.label(default = Label("//build_defs/wasix/postmaster:source-modes.mts"), allow_single_file = True),
+        "overlay_bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),
     },
 )
 

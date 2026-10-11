@@ -442,7 +442,7 @@ cargo_crates.from_cargo(
 )
 use_repo(cargo_crates, "wasix_seed_crates")
 
-# LLVM's Mach-O emitter needs a qualified section; its loader keeps the bare name.
+# Keep Mach-O sections valid and serialized GOT relocation ordering repeatable.
 cargo_crates.annotation(
     crate = "wasmer-compiler-llvm",
     version = "=7.2.1",
@@ -501,3 +501,68 @@ postmaster_crates.from_cargo(
     supported_platform_triples = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"],
 )
 use_repo(postmaster_crates, "postmaster_executor_crates", "postmaster_compiler_crates")
+
+# Core Cargo consumers use source construction on Linux or exact final-file inputs.
+wasix_runtime_carriers = use_repo_rule("//build_defs/wasix:carriers-repository.bzl", "wasix_runtime_carriers_repository")
+wasix_runtime_carriers(name = "wasix_runtime_carriers", bun = "@bun_runtime//:bun")
+# One-way compile facts from the conventional manifest and the two real hubs.
+postmaster_compile_metadata = use_repo_rule("//build_defs/wasix/postmaster:repositories.bzl", "postmaster_compile_metadata_repository")
+postmaster_compile_metadata(name = "postmaster_compile_metadata")
+
+# The compile metadata alias selects the actual compiler-context zstd crate.
+postmaster_crates.annotation(
+    crate = "llvm-sys",
+    version = "=221.0.1",
+    repositories = ["postmaster_compiler_crates"],
+    build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_files"],
+    build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_env"],
+    patches = ["//build_defs/wasix:llvm-sys-declared-prefix.patch"],
+    patch_args = ["-p1"],
+    link_deps = ["@oliphaunt//build_defs/wasix/postmaster:llvm_zstd"],
+    label_injections = {
+        "//build_defs/wasix:wasmer_llvm_files": "@oliphaunt",
+        "//build_defs/wasix:wasmer_llvm_gnu_link": "@oliphaunt",
+        "//build_defs/wasix:wasmer_llvm_gnu_files": "@oliphaunt",
+        "//build_defs/wasix/postmaster:llvm_zstd": "@oliphaunt",
+    },
+)
+postmaster_crates.annotation_select(
+    crate = "llvm-sys",
+    version = "=221.0.1",
+    repositories = ["postmaster_compiler_crates"],
+    triples = ["aarch64-unknown-linux-gnu"],
+    link_deps = ["@oliphaunt//build_defs/extensions/postgis:libxml2"],
+)
+postmaster_crates.annotation_select(
+    crate = "llvm-sys",
+    version = "=221.0.1",
+    repositories = ["postmaster_compiler_crates"],
+    triples = ["x86_64-unknown-linux-gnu"],
+    link_deps = [
+        "@oliphaunt//build_defs/extensions/postgis:libxml2",
+        "@oliphaunt//build_defs/wasix:wasmer_llvm_gnu_link",
+    ],
+    build_script_data = ["@oliphaunt//build_defs/wasix:wasmer_llvm_gnu_files"],
+    build_script_env_files = ["@oliphaunt//build_defs/wasix:wasmer_llvm_gnu_env"],
+)
+
+# The full postmaster uses its own patched PostgreSQL and libc source contexts.
+postgres(
+    name = "postmaster_postgres",
+    patch_series = "//src/wasix/postmaster:postgres/series",
+    build_file = "//build_defs/wasix/postmaster:postgres.BUILD.bazel",
+    overlays = {
+        "//src/wasix/postmaster:postgres/overlays/wasix-core/" + path: path
+        for path in [
+            "src/template/wasix-core",
+            "src/makefiles/Makefile.wasix-core",
+            "src/include/port/wasix-core.h",
+            "src/backend/postmaster/fork_process.c",
+            "src/backend/port/sysv_shmem.c",
+            "src/interfaces/libpq/wasix_encoding_shim.c",
+        ]
+    },
+)
+
+postmaster_wasix_libc = use_repo_rule("//build_defs/wasix/postmaster:repositories.bzl", "postmaster_wasix_libc_repository")
+postmaster_wasix_libc(name = "postmaster_wasix_libc")

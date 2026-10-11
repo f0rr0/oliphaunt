@@ -18,8 +18,8 @@ import {
 import path from 'node:path';
 import { requireSafeDirectoryChain } from '../packaging/release-directory-safety.mts';
 import {
-  nativeOutputPath,
   type NativeRoot,
+  nativeOutputPath,
   type PhysicalShippingCohort,
 } from './native-publication-artifacts.mts';
 import { ROOT } from './release-graph.mts';
@@ -132,12 +132,7 @@ export type NativeOutputMember =
   | { path: string; type: 'directory'; mode: number }
   | { path: string; type: 'file'; mode: number; size: number; sha256: string };
 
-/** Read one declared output, retaining physical modes without a shipping-mode policy. */
-export function captureNativeOutputMembers(executionRoot: string, output: string) {
-  if (!path.isAbsolute(executionRoot ?? ''))
-    throw new Error('native payload requires the captured absolute executionRoot');
-  const root = realpathSync(executionRoot);
-  const absolute = nativeOutputPath(root, safeRelative(output));
+function captureMembers(absolute: string, assertPath: () => void) {
   requireSafeDirectoryChain(path.dirname(absolute), { label: 'native output' });
   const outputs = [{ key: 'payload', relative: 'root', absolute }];
   const observed = identities(snapshot(outputs));
@@ -148,14 +143,37 @@ export function captureNativeOutputMembers(executionRoot: string, output: string
       ...member,
     })) as NativeOutputMember[],
     assertUnchanged() {
+      assertPath();
       requireSafeDirectoryChain(path.dirname(absolute), { label: 'native output' });
-      if (
-        nativeOutputPath(root, output) !== absolute ||
-        JSON.stringify(identities(snapshot(outputs))) !== expected
-      )
+      if (JSON.stringify(identities(snapshot(outputs))) !== expected)
         throw new Error('native payload bytes, modes or membership changed after capture');
     },
   };
+}
+
+/** Read one declared output, retaining physical modes without a shipping-mode policy. */
+export function captureNativeOutputMembers(executionRoot: string, output: string) {
+  if (!path.isAbsolute(executionRoot ?? ''))
+    throw new Error('native payload requires the captured absolute executionRoot');
+  const root = realpathSync(executionRoot);
+  const absolute = nativeOutputPath(root, safeRelative(output));
+  return captureMembers(absolute, () => {
+    if (nativeOutputPath(root, output) !== absolute)
+      throw new Error('native output path changed after capture');
+  });
+}
+
+/** Resolve an exact declared Bazel input; workspace/repository links are part of its execroot. */
+export function captureNativeInputMembers(executionRoot: string, input: string) {
+  if (!path.isAbsolute(executionRoot ?? ''))
+    throw new Error('native input requires the captured absolute executionRoot');
+  const root = realpathSync(executionRoot);
+  const declared = path.join(root, safeRelative(input));
+  const absolute = realpathSync(declared);
+  return captureMembers(absolute, () => {
+    if (realpathSync(declared) !== absolute)
+      throw new Error('native input path changed after capture');
+  });
 }
 
 /**

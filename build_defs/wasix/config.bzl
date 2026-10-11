@@ -109,6 +109,7 @@ WASIX_CONFIG = {
 }
 
 WASIX_COPTS = [
+    "-ffile-prefix-map=" + Label("@postgres_wasix//:src/include/pg_config.h.in").workspace_root + "/=postgres/",
     "-std=gnu11",
     "-O2",
     "-g0",

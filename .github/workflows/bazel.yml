@@ -83,6 +83,8 @@ jobs:
                 //src/native/postgres-tools:cargo_facade
                 //src/native/postgres-tools:installed_cargo_test
                 //src/native/postgres-tools:installed_carrier_test
+                //src/database-resources:native_resource_test
+                //src/database-resources:native_shipping_export
               )
               ;;
           esac
@@ -98,7 +100,8 @@ jobs:
           diagnostic_root="$RUNNER_TEMP/native-bazel-diagnostics"
           qualifier_output_base="$RUNNER_TEMP/native-bazel"
           mkdir -p "$diagnostic_root"
-          bash tools/dev/bazel.sh --output_base="$qualifier_output_base" test \
+          bash tools/dev/bazel.sh --output_base="$qualifier_output_base" \
+            --server_jvm_out="$diagnostic_root/server-jvm.out" test \
             //:portable_tests "${host_tests[@]}" \
             --platforms="$profile" --host_platform="$profile" --jobs=2 \
             --profile="$diagnostic_root/qualification.json.gz" \
@@ -119,10 +122,10 @@ jobs:
                 if [[ "$java_pid" =~ ^[0-9]+$ ]]; then
                   java_command="$(ps -p "$java_pid" -o comm= || true)"
                   case "$java_command" in
-                    java|*/java)
+                    java|*/java|bazel\(*\))
                       kill -QUIT "$java_pid" 2>/dev/null || true
                       sleep 2
-                      cp "$qualifier_output_base/server/jvm.out" "$diagnostic_root/jvm-8min.out" || true
+                      cp "$diagnostic_root/server-jvm.out" "$diagnostic_root/jvm-8min.out" || true
                       ;;
                   esac
                 fi
@@ -136,15 +139,16 @@ jobs:
           kill "$diagnostic_pid" 2>/dev/null || true
           wait "$diagnostic_pid" || true
           trap - EXIT
-          if [[ -f "$qualifier_output_base/server/jvm.out" ]]; then
-            cp "$qualifier_output_base/server/jvm.out" "$diagnostic_root/jvm-final.out" || true
+          if [[ -f "$diagnostic_root/server-jvm.out" ]]; then
+            cp "$diagnostic_root/server-jvm.out" "$diagnostic_root/jvm-final.out" || true
           fi
           exit "$qualifier_status"
 
       - name: Qualify declared macOS Swift SDK
         if: matrix.platform == 'macos-arm64'
         run: >-
-          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" test //build_defs/host:host_swift_smoke
+          bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel"
+          --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" test //build_defs/host:host_swift_smoke
           //src/native/sdks/swift:installed_consumer_test
           --platforms=//build_defs/host:apple_package_macos_arm64 --jobs=2
 
@@ -152,7 +156,8 @@ jobs:
         if: matrix.platform == 'macos-arm64'
         run: |
           for profile in ios_device_arm64 ios_simulator_arm64; do
-            bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" build -c opt \
+            bash tools/dev/bazel.sh --output_base="$RUNNER_TEMP/native-bazel" \
+              --server_jvm_out="$RUNNER_TEMP/native-bazel-diagnostics/server-jvm.out" build -c opt \
               //src/native/runtime:mobile_static_abi_consumer \
               //src/native/runtime:runtime_abi_binary \
               --platforms="//build_defs/host:$profile" \
@@ -170,7 +175,11 @@ jobs:
 
       - name: Exercise cold, incremental and coverage scenarios
         if: matrix.platform == 'linux-x64'
-        run: bash tools/dev/bun.sh tools/bazel/tests/conformance.mts
+        run: |
+          bash tools/dev/bun.sh tools/bazel/tests/conformance.mts
+          bazel_version="$(cat .bazelversion)"
+          bazel_binary="${XDG_CACHE_HOME:-$HOME/.cache}/oliphaunt/bazel/$bazel_version/bazel-$bazel_version-linux-x86_64"
+          bash tools/dev/bun.sh build_defs/host/sdk-tree-conformance.mts "$bazel_binary"
 
       - name: Upload macOS Bazel diagnostics
         if: ${{ always() && matrix.platform == 'macos-arm64' }}
@@ -234,7 +243,6 @@ jobs:
           //src/native/postgres-tools:installed_cargo_test
           //src/native/postgres-tools:installed_carrier_test
           //build_defs/resources:resource_contract_test
-          //src/database-resources:linux_resource_test
           //src/database-resources:android_datum64_standard_carriers
           //src/database-resources:android_datum64_icu_carriers
           //src/native/sdks/react-native:source_consumer_test
@@ -249,10 +257,74 @@ jobs:
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28
           --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2
 
+      - name: Qualify final native carriers and frozen resources
+        env:
+          TARGET_CPU: ${{ matrix.platform }}
+          QUALIFICATION_JOB_NAME: Linux runtime (${{ matrix.platform }})
+        run: |
+          profile="//build_defs/native:linux_${TARGET_CPU}_glibc_2_28"
+          capture_root="$RUNNER_TEMP/native-build-capture"
+          mkdir -p "$capture_root"
+          test -z "$(git status --porcelain)"
+          jq -nc --arg repository "$GITHUB_REPOSITORY" --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflowPath .github/workflows/bazel.yml --arg job "$QUALIFICATION_JOB_NAME" \
+            --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{repository:$repository,workflow:$workflow,workflowPath:$workflowPath,runId:$runId,runAttempt:$runAttempt,job:$job}' \
+            > "$capture_root/github.json"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/capture-native-build-evidence.mts --build-metadata \
+            --github-json "$capture_root/github.json" > "$capture_root/metadata-flags.txt"
+          mapfile -t metadata_flags < "$capture_root/metadata-flags.txt"
+          configuration=(-c opt --platforms="$profile" --host_platform="$profile" \
+            --java_runtime_version=remotejdk_17 --tool_java_runtime_version=remotejdk_17 --jobs=2)
+          shipping_roots=(
+            //src/native/runtime:native_github_shipping
+            //src/native/runtime:native_npm_shipping
+            //src/native/runtime:native_cargo_shipping
+            //src/native/runtime:native_payload_shipping
+            //src/native/postgres-tools:native_github_shipping
+            //src/native/postgres-tools:native_npm_shipping
+            //src/native/postgres-tools:native_cargo_shipping
+            //src/native/postgres-tools:native_payload_shipping
+            //src/native/postgres-tools:npm_facade_shipping
+            //src/native/postgres-tools:cargo_facade_shipping
+          )
+          bash tools/dev/bazel.sh test //src/database-resources:linux_resource_test \
+            "${shipping_roots[@]}" "${configuration[@]}" "${metadata_flags[@]}" \
+            --build_event_json_file="$capture_root/build-events.jsonl"
+          expression="set(${shipping_roots[*]})"
+          bash tools/dev/bazel.sh cquery "$expression" "${configuration[@]}" \
+            --output=starlark --starlark:file=tools/bazel/shipping.cquery.bzl > "$capture_root/roots.jsonl"
+          bash tools/dev/bazel.sh cquery "$expression" "${configuration[@]}" \
+            --output=jsonproto --proto:include_configurations > "$capture_root/cquery.json"
+          bash tools/dev/bazel.sh aquery "deps($expression)" "${configuration[@]}" \
+            --include_artifacts --include_commandline --output=jsonproto > "$capture_root/aquery.json"
+          execution_root="$(bash tools/dev/bazel.sh info execution_root)"
+          test -z "$(git status --porcelain)"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            tools/release/capture-native-build-evidence.mts \
+            --github-json "$capture_root/github.json" \
+            --cohort "$capture_root/roots.jsonl" "$capture_root/cquery.json" "$capture_root/aquery.json" \
+              "$capture_root/build-events.jsonl" "$execution_root" \
+            --output-directory "$capture_root/evidence"
+
+      - name: Upload native construction evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-build-evidence-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-build-capture/evidence/native-build-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
   wasix:
     name: Linux WASIX and installed browser
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # A measured cold producer request takes 82 minutes before browser host
+    # construction; share its base and allow the complete cold qualification.
+    timeout-minutes: 120
+    outputs:
+      source_commit: ${{ steps.wasix-cargo-capture.outputs.source_commit }}
+      cargo_artifact_id: ${{ steps.wasix-cargo-upload.outputs.artifact-id }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -261,10 +333,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Qualify bridge and initdb shim ABI
+      - name: Qualify bridge, initdb shim ABI and source mode handling
         run: >-
           bash tools/dev/bazel.sh test --config=wasix-aot //build_defs/wasix:bridge_abi_test
           //build_defs/wasix:initdb_shim_abi_test
+          //build_defs/wasix/postmaster:source_modes_test
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
           --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2
 
@@ -276,6 +349,8 @@ jobs:
           //src/wasix/runtime:aot_macos_arm64_payload
           //src/wasix/runtime:aot_windows_x64_msvc_payload
           //src/wasix/runtime:cargo
+          //src/wasix/sdks/ts:browser_sql_consumer
+          //build_defs/wasix:macos_aot_repeatability_test
           //src/wasix/sdks/rust:postgres_regression_test
           //src/database-resources:wasix_resource_test
           --platforms=//build_defs/native:linux_x86_64_glibc_2_28
@@ -285,12 +360,108 @@ jobs:
           --test_env=XDG_CACHE_HOME="$RUNNER_TEMP/wasix-source-sdk-cache"
           --test_env=RUST_TEST_THREADS=1
 
+      - name: Capture final WASIX Cargo inputs for native hosts
+        id: wasix-cargo-capture
+        run: |
+          capture_root="$RUNNER_TEMP/wasix-cargo-capture"
+          mkdir -p "$capture_root"
+          test -z "$(git status --porcelain)"
+          configuration=(--config=wasix-aot \
+            --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
+            --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=1)
+          expression='kind("shipping_package", deps(//src/wasix/runtime:cargo_shipping_export, 1))'
+          bash tools/dev/bazel.sh cquery "$expression" "${configuration[@]}" \
+            --output=starlark --starlark:file=tools/bazel/shipping.cquery.bzl > "$capture_root/roots.jsonl"
+          bash tools/dev/bazel.sh aquery "deps($expression)" "${configuration[@]}" \
+            --include_artifacts --include_commandline --output=jsonproto > "$capture_root/aquery.json"
+          execution_root="$(bash tools/dev/bazel.sh info execution_root)"
+          source_commit="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          jq -n --arg commit "$source_commit" --arg tree "$source_tree" --arg executionRoot "$execution_root" \
+            --slurpfile roots "$capture_root/roots.jsonl" --slurpfile aquery "$capture_root/aquery.json" \
+            '[{source:{commit:$commit,tree:$tree},executionRoot:$executionRoot,roots:$roots,aquery:$aquery[0]}]' \
+            > "$capture_root/cohorts.json"
+          test -z "$(git status --porcelain)"
+          bash tools/release/with-source.sh HEAD bash tools/dev/bun.sh \
+            build_defs/wasix/capture-cargo.mts "$capture_root/cohorts.json" \
+            target/wasix-cargo-construction HEAD
+          printf 'source_commit=%s\n' "$source_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Upload final WASIX Cargo inputs
+        id: wasix-cargo-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-bazel-wasix-cargo-inputs
+          path: target/wasix-cargo-construction
+          if-no-files-found: error
+          retention-days: 7
+
       # One Linux producer base supplies the real portable runtime and SDK
       # archives consumed by both browser exports. Chrome is a host input.
-      - name: Qualify installed browser SQL
+      - name: Qualify installed browser SQL, persistence and crash recovery
         run: |
           chrome_binary="$(bash tools/dev/bun.sh build_defs/wasix/browser/chrome-receipt.mts "$RUNNER_TEMP/chrome-host.json" "$ImageOS" "$ImageVersion")"
           bash tools/dev/bazel.sh run --config=wasix-aot //src/wasix/sdks/ts:browser_sql_consumer \
             --platforms=//build_defs/native:linux_x86_64_glibc_2_28 \
             --host_platform=//build_defs/native:linux_x86_64_glibc_2_28 --jobs=2 \
             -- "$chrome_binary" "$RUNNER_TEMP/chrome-host.json"
+
+  wasix-host:
+    name: WASIX imported runtime (${{ matrix.platform }})
+    needs: wasix
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            profile: //build_defs/native:linux_aarch64_glibc_2_28
+          - platform: macos-arm64
+            runner: macos-26
+            profile: //build_defs/host:native_macos_arm64
+          - platform: windows-x64
+            runner: windows-2025-vs2026
+            profile: //build_defs/host:native_windows_x64
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Select declared Apple SDK
+        if: matrix.platform == 'macos-arm64'
+        uses: ./.github/actions/setup-apple
+        with:
+          install-build-dependencies: "false"
+
+      - name: Select declared MSVC SDK
+        if: matrix.platform == 'windows-x64'
+        uses: ./.github/actions/setup-msvc
+
+      # The immutable ID comes from this run's successful Linux producer.
+      # Receipt/source/hash validation remains mandatory in the Bazel importer.
+      - name: Download final Linux-built WASIX Cargo inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.wasix.outputs.cargo_artifact_id }}
+          path: ${{ runner.temp }}/wasix-cargo-inputs
+
+      - name: Qualify imported AOT runtime on its native host
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ needs.wasix.outputs.source_commit }}
+          TARGET_PROFILE: ${{ matrix.profile }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          test -z "$(git status --porcelain)"
+          bash tools/dev/bazel.sh test //src/wasix/sdks/rust:postgres_regression_test \
+            --platforms="$TARGET_PROFILE" --host_platform="$TARGET_PROFILE" \
+            --repo_env=OLIPHAUNT_WASIX_SOURCE_COMMIT="$EXPECTED_SOURCE_COMMIT" \
+            --repo_env=OLIPHAUNT_WASIX_CARGO_INPUTS="$RUNNER_TEMP/wasix-cargo-inputs" \
+            --jobs=2 --local_test_jobs=1 \
+            --test_env=OLIPHAUNT_WASM_AOT_VERIFY=full \
+            --test_env=XDG_CACHE_HOME="$RUNNER_TEMP/wasix-imported-sdk-cache" \
+            --test_env=RUST_TEST_THREADS=1

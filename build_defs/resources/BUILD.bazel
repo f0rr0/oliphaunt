@@ -1,5 +1,6 @@
 load("//build_defs/foundation:bun.bzl", "bun_binary", "bun_test")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//build_defs/native:platform_config.bzl", "NATIVE_COMPATIBLE")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -32,6 +33,7 @@ filegroup(name = "helpers", srcs = [
     "//src/wasix/runtime:tools/wasix-runtime-npm-descriptor.mts",
     "//src/wasix/runtime:tools/wasix-runtime-npm-payload.mts",
     "//:tools/packaging/archive-directory.mts",
+    "//:tools/packaging/platform-binary-contract.mts",
     "//:tools/packaging/atomic-directory.mts",
     "//:tools/packaging/build-maven-artifact-manifest.mts",
     "//:tools/packaging/cargo-source-package.mts",
@@ -64,6 +66,10 @@ BOOTSTRAP_HELPERS = [
     "shared.mts", "//build_defs/native:host-runtime-test-helpers.mts",
     "//:tools/packaging/portable-archive.mts",
     "//:tools/packaging/archive-directory.mts",
+    "//:tools/packaging/platform-binary-contract.mts",
+    "//:tools/packaging/windows-vc-runtime-closure.mts",
+    "//:tools/packaging/windows-vc-runtime-policy.json",
+    "//tools/release:platform-compatibility-policy.mts",
     "//src/native/runtime:tools/native-mobile-abi-contract.mts",
     "//src/database-resources:seeds/native/tools/stage-native-cluster-seed.mts",
     "//src/database-resources:contracts/native-manifest.mts",
@@ -75,7 +81,9 @@ bun_binary(name = "native_seed", entry_point = "native_seed.mts", data = BOOTSTR
 bun_binary(name = "wasix_seed", entry_point = "wasix_seed.mts", data = [":helpers"])
 bun_binary(name = "seed_domain", entry_point = "seed_domain.mts", data = BOOTSTRAP_HELPERS)
 bun_binary(name = "abi_receipt", entry_point = "abi_receipt.mts", data = [
-    "shared.mts", "//src/native/runtime:tools/native-mobile-abi-contract.mts",
+    "shared.mts", "//build_defs/native:host-runtime-test-helpers.mts",
+    "//:tools/packaging/portable-archive.mts",
+    "//src/native/runtime:tools/native-mobile-abi-contract.mts",
     "//:tools/packaging/platform-binary-contract.mts", "//:tools/packaging/windows-vc-runtime-closure.mts",
     "//:tools/packaging/windows-vc-runtime-policy.json", "//tools/release:platform-compatibility-policy.mts",
 ])
@@ -86,8 +94,8 @@ cc_binary(
     name = "seed_consumer",
     srcs = ["seed_consumer.c"],
     deps = ["//src/native/runtime:liboliphaunt"],
-    copts = ["-std=c11", "-Wall", "-Wextra", "-Werror"],
-    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    copts = select({"//build_defs/native:windows_x64": ["/std:c11", "/W4", "/WX"], "//conditions:default": ["-std=c11", "-Wall", "-Wextra", "-Werror"]}),
+    target_compatible_with = NATIVE_COMPATIBLE,
 )
 
 bun_test(name = "resource_contract_test", entry_point = "resource_contract.test.mts", data = [

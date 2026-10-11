@@ -1,0 +1,9 @@
+load("@oliphaunt//build_defs/wasix/postmaster:libc.bzl", "patched_libc_targets")
+load(":source-inventory.bzl", "LIBC_SOURCES")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["source.json", "source-inventory.bzl", "Makefile-eh"])
+filegroup(name = "sources", srcs = glob(["**"], exclude = ["BUILD.bazel", "source.json", "source-inventory.bzl"]))
+
+patched_libc_targets(LIBC_SOURCES)

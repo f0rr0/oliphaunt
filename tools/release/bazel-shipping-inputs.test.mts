@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { buildShippingInputView, selectShippingChanges } from './bazel-shipping-inputs.mts';
 
 function fixture() {
@@ -280,4 +281,120 @@ test('partial, substituted or cyclic graphs fail closed', () => {
   ({ exported, graph } = fixture());
   graph.actions.shift();
   expect(() => buildShippingInputView(exported, graph)).toThrow('missing generated input producer');
+});
+
+test('compact descriptions bind exact sorted physical input sets and retain the full capture closure', () => {
+  const { exported, graph } = fixture();
+  const view = buildShippingInputView(exported, graph);
+  const actions = view.products.alpha.actions.map((action) => JSON.parse(action));
+  expect(view.schema).toBe('oliphaunt-bazel-construction-inputs-v2');
+  expect(view.physicalInputs).toEqual(['bazel-out/alpha.o', 'src/alpha.c', 'tools/packager']);
+  const packageInputs = ['bazel-out/alpha.o', 'tools/packager'];
+  expect(actions.find((action) => action.target === '//:package').inputs).toEqual({
+    count: packageInputs.length,
+    sha256: createHash('sha256').update(JSON.stringify(packageInputs)).digest('hex'),
+  });
+  expect(() =>
+    selectShippingChanges(
+      view.products,
+      { ...view, schema: 'oliphaunt-bazel-construction-inputs-v1' } as any,
+      { alpha: [] },
+    ),
+  ).toThrow('unsupported construction input view');
+});
+
+test('input-set factoring, ordering and query-local ID changes do not change normalized declarations', () => {
+  const { exported, graph } = fixture();
+  const before = buildShippingInputView(exported, graph);
+  graph.depSetOfFiles[1].directArtifactIds = [];
+  Reflect.set(graph.depSetOfFiles[1], 'transitiveDepSetIds', [3, 4]);
+  graph.depSetOfFiles.push({ id: 3, directArtifactIds: [3] }, { id: 4, directArtifactIds: [2] });
+  for (const set of graph.depSetOfFiles) {
+    set.id += 100;
+    const children = Reflect.get(set, 'transitiveDepSetIds');
+    if (children)
+      Reflect.set(set, 'transitiveDepSetIds', children.map((id: number) => id + 100).reverse());
+  }
+  for (const action of graph.actions)
+    action.inputDepSetIds = action.inputDepSetIds.map((id) => id + 100);
+  graph.depSetOfFiles.reverse();
+  graph.actions.reverse();
+  graph.pathFragments.reverse();
+  expect(buildShippingInputView(exported, graph)).toEqual(before);
+});
+
+test('same-count input edge swaps and command changes remain visible with identical source and capture unions', () => {
+  const { exported, graph } = fixture();
+  const before = buildShippingInputView(exported, graph);
+  graph.depSetOfFiles[0].directArtifactIds = [2];
+  graph.depSetOfFiles[1].directArtifactIds = [1, 3];
+  const swapped = buildShippingInputView(exported, graph);
+  expect(swapped.physicalInputs).toEqual(before.physicalInputs);
+  expect(swapped.products.alpha.inputs).toEqual(before.products.alpha.inputs);
+  expect(swapped.products.alpha.actions).not.toEqual(before.products.alpha.actions);
+  expect(selectShippingChanges(before.products, swapped, { alpha: [] }).affectedProducts).toEqual([
+    'alpha',
+  ]);
+  graph.actions[0].arguments.push('-DCHANGED=1');
+  const command = buildShippingInputView(exported, graph);
+  expect(command.physicalInputs).toEqual(swapped.physicalInputs);
+  expect(command.products.alpha.actions).not.toEqual(swapped.products.alpha.actions);
+});
+
+test('physical source aliases collapse only after validation and repository paths stay distinct', () => {
+  const { exported, graph } = fixture();
+  const before = buildShippingInputView(exported, graph);
+  graph.artifacts.push({ id: 5, pathFragmentId: 2 });
+  graph.depSetOfFiles[0].directArtifactIds.push(5);
+  expect(buildShippingInputView(exported, graph)).toEqual(before);
+  graph.pathFragments.push(
+    { id: 8, label: 'external' },
+    { id: 9, parentId: 8, label: 'dependency' },
+    { id: 10, parentId: 9, label: 'src' },
+    { id: 11, parentId: 10, label: 'alpha.c' },
+  );
+  graph.artifacts.push({ id: 6, pathFragmentId: 11 });
+  graph.depSetOfFiles[0].directArtifactIds.push(6);
+  const external = buildShippingInputView(exported, graph);
+  expect(external.physicalInputs).toContain('src/alpha.c');
+  expect(external.physicalInputs).toContain('external/dependency/src/alpha.c');
+  expect(external.products.alpha.actions).not.toEqual(before.products.alpha.actions);
+});
+
+test('only declared virtual Middleman outputs are removed from the physical closure', () => {
+  const { exported, graph } = fixture();
+  graph.actions[0].mnemonic = 'Middleman';
+  const view = buildShippingInputView(exported, graph);
+  expect(view.physicalInputs).toEqual(['src/alpha.c', 'tools/packager']);
+  expect(view.products.alpha.actions).toHaveLength(2);
+  graph.actions.shift();
+  expect(() => buildShippingInputView(exported, graph)).toThrow('missing generated input producer');
+});
+
+test('reused compiler headers remain complete without multiplying retained descriptions', () => {
+  const { exported, graph } = fixture();
+  for (let index = 0; index < 2048; index++) {
+    const id = 100 + index;
+    graph.pathFragments.push({ id, parentId: 1, label: `header-${index}.h` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.depSetOfFiles[0].directArtifactIds.push(id);
+  }
+  const compiler = graph.actions[0];
+  for (let index = 0; index < 128; index++) {
+    const id = 10000 + index;
+    graph.pathFragments.push({ id, parentId: 5, label: `object-${index}.o` });
+    graph.artifacts.push({ id, pathFragmentId: id });
+    graph.actions.push({
+      ...compiler,
+      actionKey: `compile-${index}`,
+      outputIds: [id],
+      primaryOutputId: id,
+    });
+    graph.depSetOfFiles[1].directArtifactIds.push(id);
+  }
+  const view = buildShippingInputView(exported, graph);
+  expect(view.products.alpha.inputs).toHaveLength(2050);
+  expect(view.physicalInputs).toHaveLength(2179);
+  expect(view.products.alpha.actions).toHaveLength(130);
+  expect(JSON.stringify(view).length).toBeLessThan(512_000);
 });

@@ -320,19 +320,23 @@ export function extractWasixCargoConstructionInputs(
     '',
   ].join('\n');
   writeFileSync(path.join(outputDirectory, 'BUILD.bazel'), rootBuild);
-  writeFileSync(path.join(outputDirectory, 'cargo.bzl'), `CARGO = ${starlark(projection.facts)}\n`);
+  writeFileSync(
+    path.join(outputDirectory, 'cargo.bzl'),
+    `CARGO = ${starlark(projection.facts)}\n\ndef packed_cargo_manifest_dir():\n    return Label("//:Cargo.toml").workspace_root + "/" + native.package_name()\n`,
+  );
   for (const name of PACKAGE_NAMES) {
     const memberPath = PACKAGE_PATHS.get(name)!;
     const payload = name === RUNTIME_PACKAGE ? 'payload/**' : 'artifacts/**';
     const build = [
       `load(${JSON.stringify(rustDefs)}, "cargo_generator", "cargo_library", "cargo_package_env")`,
       `load(${JSON.stringify(cratesDefs)}, "crate_deps")`,
-      `load("//:cargo.bzl", "CARGO")`,
+      `load("//:cargo.bzl", "CARGO", "packed_cargo_manifest_dir")`,
       'package(default_visibility = ["//visibility:public"])',
       'exports_files(["Cargo.toml"])',
       `filegroup(name = "packed_payload", srcs = glob([${JSON.stringify(payload)}]))`,
       'cargo_package_env(workspace_manifest = "//:Cargo.toml")',
-      'cargo_generator(srcs = ["build-support.rs"], data = [":packed_payload"], build_script_env = {"OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1", "OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST": "0"}, cargo_facts = CARGO, crate_dependencies = crate_deps)',
+      '# Generated includes must refer to declared package files, not pruned build-script runfiles.',
+      'cargo_generator(srcs = ["build-support.rs"], data = [":packed_payload"], build_script_env = {"CARGO_MANIFEST_DIR": packed_cargo_manifest_dir(), "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1", "OLIPHAUNT_ARTIFACT_CRATE_EMIT_CARGO_MANIFEST": "0"}, cargo_facts = CARGO, crate_dependencies = crate_deps)',
       'cargo_library(build_script = ":build_script", compile_data = [":packed_payload"], cargo_facts = CARGO, crate_dependencies = crate_deps)',
       '',
     ].join('\n');

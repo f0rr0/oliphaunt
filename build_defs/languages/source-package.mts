@@ -26,7 +26,7 @@ const CARGO_VIRTUAL_FILES = new Set(['Cargo.lock', 'Cargo.toml.orig', '.cargo_vc
 
 export function selectedSourceEntries(listing: string, entries: Record<string, Uint8Array>) {
   const selected: Record<string, Uint8Array> = {};
-  const names = listing.trim().split(/\r?\n/);
+  const names = listing.trim().replaceAll('\\', '/').split(/\r?\n/);
   for (const name of names) {
     if (CARGO_VIRTUAL_FILES.has(name)) continue;
     if (!Object.hasOwn(entries, name))

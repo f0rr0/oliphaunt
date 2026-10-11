@@ -5,11 +5,11 @@ package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml", "THIRD_PARTY_NOTICES.md"])
 
 PATH_DEPS = {
-    "liboliphaunt-wasix-portable": "//src/wasix/runtime/crates/assets:lib",
-    "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu": "//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:lib",
-    "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu": "//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:lib",
-    "liboliphaunt-wasix-aot-aarch64-apple-darwin": "//src/wasix/runtime/crates/aot/aarch64-apple-darwin:lib",
-    "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc": "//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:lib",
+    "liboliphaunt-wasix-portable": "@wasix_runtime_carriers//src/wasix/runtime/crates/assets:lib",
+    "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/x86_64-unknown-linux-gnu:lib",
+    "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/aarch64-unknown-linux-gnu:lib",
+    "liboliphaunt-wasix-aot-aarch64-apple-darwin": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/aarch64-apple-darwin:lib",
+    "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc": "@wasix_runtime_carriers//src/wasix/runtime/crates/aot/x86_64-pc-windows-msvc:lib",
 }
 
 cargo_package_env()

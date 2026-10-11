@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["SOURCE_VERSION", "version.bzl", "patches.bzl"] + glob(["src/**"]))
+
+# Immutable source acquisition is proved independently before compilation.
+filegroup(
+    name = "source_tree",
+    srcs = glob(["**"], exclude = ["BUILD.bazel", "SOURCE_VERSION", "version.bzl", "patches.bzl"]),
+)

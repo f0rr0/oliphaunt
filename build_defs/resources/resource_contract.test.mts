@@ -13,7 +13,78 @@ import { packageClusterSeed } from '../../src/database-resources/seeds/package.m
 import { readPortableArchiveEntries } from '../../tools/packaging/portable-archive.mts';
 import { releaseProfilePackageLicense } from '../../tools/packaging/release-notices.mts';
 import { bindSeedDomain } from './seed_domain.mts';
-import { materializeInputs } from './shared.mts';
+import { materializeInputs, nativeSeedHost, seedEnvironment } from './shared.mts';
+
+test('native bootstrap rejects a runtime for a different executor before filesystem mutation', () => {
+  const artifact = {
+    target: 'windows-x64-msvc',
+    npm_os: 'win32',
+    npm_cpu: 'x64',
+    library_relative_path: 'bin/oliphaunt.dll',
+  };
+  expect(nativeSeedHost(artifact, 'win32', 'x64')).toEqual({
+    target: artifact.target,
+    executableSuffix: '.exe',
+    memoryType: 'windows',
+    libraryRelativePath: 'bin/oliphaunt.dll',
+  });
+  expect(() => nativeSeedHost(artifact, 'linux', 'x64')).toThrow('executor OS');
+  expect(() => nativeSeedHost(artifact, 'win32', 'arm64')).toThrow('executor CPU');
+  expect(() => nativeSeedHost(artifact, 'freebsd', 'x64')).toThrow('unsupported');
+  expect(() =>
+    nativeSeedHost({ ...artifact, library_relative_path: '../ambient.dll' }, 'win32', 'x64'),
+  ).toThrow('canonical');
+  const mac = {
+    ...artifact,
+    target: 'macos-arm64',
+    npm_os: 'darwin',
+    npm_cpu: 'arm64',
+    library_relative_path: 'lib/liboliphaunt.dylib',
+  };
+  expect(nativeSeedHost(mac, 'darwin', 'arm64').memoryType).toBe('mmap');
+  expect(nativeSeedHost(mac, 'darwin', 'arm64').executableSuffix).toBe('');
+});
+
+test('seed loader environments consume only candidate libraries and the selected separate ICU data', () => {
+  const ambient = {
+    PATH: '/ambient/bin',
+    LD_LIBRARY_PATH: '/ambient/lib',
+    DYLD_LIBRARY_PATH: '/ambient/lib',
+    ICU_DATA: '/ambient/icu',
+    PGDATA: '/ambient/database',
+    secret: 'must-not-be-inherited',
+    SystemRoot: 'C:\\Windows',
+  };
+  for (const platform of ['linux', 'darwin', 'win32'] as const) {
+    const runtime = platform === 'win32' ? 'C:\\candidate' : '/candidate';
+    const root = platform === 'win32' ? 'C:\\private' : '/private';
+    const standard = seedEnvironment(runtime, root, undefined, platform, ambient);
+    expect(standard.PGDATA).toBeUndefined();
+    expect(standard.secret).toBeUndefined();
+    expect(standard.ICU_DATA).toBeUndefined();
+    expect(standard.OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY).toBe('1');
+    expect(standard.PATH).not.toContain('/ambient');
+    expect(standard.HOME).toBe(root);
+    expect(standard.TEMP).toBe(root);
+    if (platform === 'win32') {
+      expect(standard.PATH).toBe('C:\\candidate\\bin;C:\\Windows\\System32;C:\\Windows');
+      expect(standard.SystemRoot).toBe('C:\\Windows');
+      expect(standard.LD_LIBRARY_PATH).toBeUndefined();
+    } else {
+      expect(standard[platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH']).toBe(
+        '/candidate/lib',
+      );
+      expect(standard.SystemRoot).toBeUndefined();
+    }
+    const icu = seedEnvironment(runtime, root, '/selected/icu', platform, ambient);
+    expect(icu.ICU_DATA).toBe('/selected/icu');
+    expect(icu.OLIPHAUNT_INTERNAL_ICU_READY).toBe('1');
+    expect(icu.OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY).toBeUndefined();
+  }
+  expect(() => seedEnvironment('C:\\candidate', 'C:\\private', undefined, 'win32', {})).toThrow(
+    'SystemRoot',
+  );
+});
 
 test('declared input staging rejects paths that escape its private root', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'resource-contract-'));
@@ -69,7 +140,10 @@ test('seed envelopes preserve explicit historical runtime requirements and empty
     expect(manifest.runtime.compatibilityKey).toBe(
       contract.compatibilityKeys.native['linux-x64-gnu'],
     );
-    expect(readPortableArchiveEntries(result.archive).get('pg_twophase')?.isDirectory).toBe(true);
+    const entries = readPortableArchiveEntries(result.archive);
+    expect(entries.get('pg_twophase')?.isDirectory).toBe(true);
+    expect(entries.get('pg_twophase')?.mode).toBe(0o755);
+    expect(entries.get('global/pg_control')?.mode).toBe(0o644);
     const before = readFileSync(path.join(pgdata, 'global/pg_control'));
     await packageClusterSeed({ ...options, version: '0.2.3' });
     expect(readFileSync(path.join(pgdata, 'global/pg_control')).equals(before)).toBe(true);

@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { verifyReceipts } from '../../src/extensions/tests/native/tools/verify-native-extension-lifecycle-receipts.mts';
+import {
+  assertNativeBuildGithub,
+  validateNativeBuildEvidence,
+} from '../../tools/release/native-build-qualification.mts';
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -430,11 +434,78 @@ export function nativeEvidenceBinding(
   };
 }
 
+/** Origin metadata must come from the existing authenticated Actions download gate. */
+export function nativeBuildEvidenceBinding(evidenceRoot, { sha, tree, origin }) {
+  const file = 'native-build-evidence.json';
+  const { bytes, value } = strictJson(
+    path.join(path.resolve(evidenceRoot), file),
+    'native build evidence',
+  );
+  assert(
+    origin && typeof origin === 'object' && !Array.isArray(origin),
+    'native build origin is missing',
+  );
+  assert(
+    JSON.stringify(Object.keys(origin).sort()) === JSON.stringify(['artifact', 'github']),
+    'native build origin fields are invalid',
+  );
+  assertNativeBuildGithub(origin.github);
+  const artifact = origin.artifact;
+  assert(
+    artifact &&
+      JSON.stringify(Object.keys(artifact).sort()) ===
+        JSON.stringify(['digest', 'id', 'name', 'size']),
+    'native build immutable artifact fields are invalid',
+  );
+  positiveInteger(artifact.id, 'native build artifact ID');
+  positiveInteger(artifact.size, 'native build artifact size');
+  assert(
+    typeof artifact.name === 'string' && artifact.name.length > 0,
+    'native build artifact name is invalid',
+  );
+  assert(/^sha256:[0-9a-f]{64}$/u.test(artifact.digest), 'native build artifact digest is invalid');
+  const verified = validateNativeBuildEvidence(value, {
+    source: { commit: sha, tree },
+    github: origin.github,
+    bazelVersion: readFileSync(new URL('../../.bazelversion', import.meta.url), 'utf8').trim(),
+  });
+  return { ...verified, artifact, file, digest: sha256(bytes) };
+}
+
+function assertNativeBuildBindingShape(binding, candidate) {
+  assert(
+    binding?.scope === 'construction' && binding.releaseDecision === 'unverified',
+    'native build evidence cannot grant release authority',
+  );
+  assert(binding.file === 'native-build-evidence.json', 'native build evidence file is invalid');
+  assert(/^sha256:[0-9a-f]{64}$/u.test(binding.digest), 'native build evidence digest is invalid');
+  same(binding.source?.commit, candidate.sha, 'native build evidence source commit');
+  same(binding.source?.tree, candidate.tree, 'native build evidence source tree');
+  assertNativeBuildGithub(binding.github);
+  same(binding.github.repository, candidate.repository, 'native build evidence repository');
+  assert(
+    Array.isArray(binding.cohorts) && binding.cohorts.length > 0,
+    'native build configured cohorts are missing',
+  );
+  positiveInteger(binding.artifact?.id, 'native build artifact ID');
+  positiveInteger(binding.artifact?.size, 'native build artifact size');
+  assert(
+    typeof binding.artifact?.name === 'string' && binding.artifact.name.length > 0,
+    'native build artifact name is invalid',
+  );
+  assert(
+    /^sha256:[0-9a-f]{64}$/u.test(binding.artifact?.digest),
+    'native build immutable artifact digest is invalid',
+  );
+}
+
 export function assertCandidateBindingShape(candidate) {
   assert(
     candidate?.schemaVersion === 2,
     `release candidate schemaVersion must be 2, got ${candidate?.schemaVersion}`,
   );
+  if (Object.hasOwn(candidate.evidence ?? {}, 'nativeBuild'))
+    assertNativeBuildBindingShape(candidate.evidence.nativeBuild, candidate);
   assert(
     candidate.affectedPlan !== null && typeof candidate.affectedPlan === 'object',
     'release candidate affectedPlan is missing',

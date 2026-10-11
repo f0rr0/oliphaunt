@@ -10,6 +10,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files(glob(["*.bzl", "*.bazel", "*.sh", "*.mts", "*.c", "*.cc", "patches/*.patch"]))
 
 config_setting(name = "linux_x86_64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64"])
+config_setting(name = "linux_aarch64", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64"])
 config_setting(name = "linux_x86_64_gnu_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.28"])
 config_setting(name = "linux_aarch64_gnu_2_28", constraint_values = ["@platforms//os:linux", "@platforms//cpu:aarch64", "@zig_sdk//libc:gnu.2.28"])
 config_setting(name = "linux_opt", constraint_values = ["@platforms//os:linux"], values = {"compilation_mode": "opt"})

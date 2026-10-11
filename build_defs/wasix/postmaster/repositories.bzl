@@ -43,7 +43,7 @@ def _wasmer_impl(ctx):
     ctx.patch(ctx.path(ctx.attr.patch), strip = 1)
     ctx.file("source.json", json.encode({"wasmer": wasmer, "napi": napi}))
     ctx.file("BUILD.bazel", """package(default_visibility = ["//visibility:public"])
-exports_files(["Cargo.toml", "Cargo.lock", "source.json"])
+exports_files(["Cargo.toml", "Cargo.lock", "source.json", "lib/types/src/serialize.rs"])
 filegroup(name = "cargo_manifests", srcs = glob(["**/Cargo.toml"]))
 """)
     return ctx.repo_metadata(reproducible = True)
@@ -52,11 +52,16 @@ def _libc_impl(ctx):
     _read_inputs(ctx)
     source = _archive(ctx, ctx.attr.source_manifest, _LIBC_COMMIT, _LIBC_SHA256)
     ctx.patch(ctx.path(ctx.attr.patch), strip = 1)
+    ctx.read(ctx.attr.mode_converter)
+    result = ctx.execute([ctx.path(ctx.attr.bun), "--no-install", "--no-env-file", ctx.path(ctx.attr.mode_converter), "patch", ctx.path("."), ctx.path(ctx.attr.patch)], quiet = True)
+    if result.return_code:
+        fail("Cannot apply patch-declared libc new-file modes: " + result.stderr)
     ctx.file("source.json", json.encode(source))
-    ctx.file("BUILD.bazel", """package(default_visibility = ["//visibility:public"])
-exports_files(["source.json"])
-filegroup(name = "sources", srcs = glob(["**"], exclude = ["BUILD.bazel", "source.json"]))
-""")
+    ctx.read(ctx.attr.inventory_converter)
+    result = ctx.execute([ctx.path(ctx.attr.bun), ctx.path(ctx.attr.inventory_converter), ctx.path("."), ctx.path("source-inventory.bzl")], quiet = True)
+    if result.return_code:
+        fail("Cannot project canonical patched libc source inventory: " + result.stderr)
+    ctx.symlink(ctx.attr.build_file, "BUILD.bazel")
     return ctx.repo_metadata(reproducible = True)
 
 def _cargo_impl(ctx):
@@ -114,6 +119,9 @@ postmaster_wasix_libc_repository = repository_rule(
     attrs = dict(_COMMON, **{
         "source_manifest": attr.label(default = Label("//src/wasix/postmaster:sources/wasix-libc.toml"), allow_single_file = True),
         "patch": attr.label(default = Label("//src/wasix/postmaster:wasmer/patches/wasix-libc/0001-postgres-wasix-blockers.patch"), allow_single_file = True),
+        "inventory_converter": attr.label(default = Label("//build_defs/wasix/postmaster:libc-metadata.mts"), allow_single_file = True),
+        "mode_converter": attr.label(default = Label("//build_defs/wasix/postmaster:source-modes.mts"), allow_single_file = True),
+        "build_file": attr.label(default = Label("//build_defs/wasix/postmaster:libc.BUILD.bazel"), allow_single_file = True),
     }),
 )
 
@@ -127,4 +135,35 @@ postmaster_cargo_repository = repository_rule(
         "patch": attr.label(default = Label("//src/wasix/postmaster:wasmer/patches/wasmer/0001-postgres-wasix-blockers.patch"), allow_single_file = True),
         "roles": attr.string_dict(mandatory = True),
     }),
+)
+
+def _compile_metadata_impl(ctx):
+    for file in [ctx.attr.manifest, ctx.attr.executor, ctx.attr.compiler, ctx.attr.compiler_rendering, ctx.attr.converter]:
+        ctx.read(file)
+    ctx.watch(ctx.path(ctx.attr.bun))
+    result = ctx.execute([
+        ctx.path(ctx.attr.bun),
+        ctx.path(ctx.attr.converter),
+        ctx.path(ctx.attr.manifest),
+        ctx.path(ctx.attr.executor),
+        ctx.path(ctx.attr.compiler),
+        ctx.path(ctx.attr.compiler_rendering),
+        ctx.attr.compiler.workspace_name,
+        ctx.path("cargo.bzl"),
+    ], quiet = True)
+    if result.return_code:
+        fail("Cannot project actual postmaster Cargo compile facts: " + result.stderr)
+    ctx.file("BUILD.bazel", "exports_files([\"cargo.bzl\"], visibility = [\"//visibility:public\"])\n")
+    return ctx.repo_metadata(reproducible = True)
+
+postmaster_compile_metadata_repository = repository_rule(
+    implementation = _compile_metadata_impl,
+    attrs = {
+        "manifest": attr.label(default = Label("//src/wasix/postmaster:executor/Cargo.toml"), allow_single_file = True),
+        "executor": attr.label(default = Label("@postmaster_executor_crates//:cargo-bazel.json"), allow_single_file = True),
+        "compiler": attr.label(default = Label("@postmaster_compiler_crates//:cargo-bazel.json"), allow_single_file = True),
+        "compiler_rendering": attr.label(default = Label("@postmaster_compiler_crates//:crates.bzl"), allow_single_file = True),
+        "converter": attr.label(default = Label("//build_defs/wasix/postmaster:compile-metadata.mts"), allow_single_file = True),
+        "bun": attr.label(default = Label("@bun_runtime//:bun"), allow_single_file = True),
+    },
 )

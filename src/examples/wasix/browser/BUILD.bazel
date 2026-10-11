@@ -1,0 +1,11 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "opfs_fixtures",
+    srcs = [
+        "opfs-crash-probe-worker.ts",
+        "opfs-smoke.ts",
+        "opfs-transport-probe-worker.ts",
+        "resources.ts",
+    ],
+)

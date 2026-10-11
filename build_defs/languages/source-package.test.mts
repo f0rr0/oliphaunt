@@ -105,14 +105,22 @@ test('admits exactly Cargo-listed declared bytes and rejects undeclared source o
     'src/lib.rs': Buffer.from('pub fn api() {}'),
     'tests/private.rs': Buffer.from('private checkout test'),
   };
-  expect(
-    selectedSourceEntries('Cargo.lock\nCargo.toml\nCargo.toml.orig\nsrc/lib.rs\n', entries),
-  ).toEqual({
-    'Cargo.toml': entries['Cargo.toml'],
-    'src/lib.rs': entries['src/lib.rs'],
-  });
+  for (const listing of [
+    'Cargo.lock\nCargo.toml\nCargo.toml.orig\nsrc/lib.rs\n',
+    'Cargo.lock\r\nCargo.toml\r\nCargo.toml.orig\r\n.cargo_vcs_info.json\r\nsrc\\lib.rs\r\n',
+  ]) {
+    expect(selectedSourceEntries(listing, entries)).toEqual({
+      'Cargo.toml': entries['Cargo.toml'],
+      'src/lib.rs': entries['src/lib.rs'],
+    });
+  }
   expect(() => selectedSourceEntries('Cargo.toml\n../ambient.rs\n', entries)).toThrow('undeclared');
+  expect(() => selectedSourceEntries('Cargo.toml\n..\\ambient.rs\n', entries)).toThrow('undeclared');
+  expect(() => selectedSourceEntries('Cargo.toml\nC:\\ambient.rs\n', entries)).toThrow('undeclared');
   expect(() => selectedSourceEntries('Cargo.toml\nCargo.toml\n', entries)).toThrow('repeated');
+  expect(() =>
+    selectedSourceEntries('Cargo.toml\nsrc/lib.rs\nsrc\\lib.rs\n', entries),
+  ).toThrow('repeated');
   expect(() => selectedSourceEntries('src/lib.rs\n', entries)).toThrow('omitted');
 });
 

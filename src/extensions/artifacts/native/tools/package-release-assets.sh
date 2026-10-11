@@ -722,9 +722,6 @@ package_android_target() {
       ;;
     *) fail "Android target packager called for $target_id" ;;
   esac
-  if [ -n "$mobile_extensions" ]; then
-    tools/dev/bun.sh tools/packaging/platform-binary-contract.mts --target "$target_id" --root "$android_root/out"
-  fi
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact android_archive static_prefix
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue

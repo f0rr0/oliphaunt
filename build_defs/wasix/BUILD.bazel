@@ -3,10 +3,20 @@ load("//build_defs/foundation:bun.bzl", "bun_test")
 load(":llvm.bzl", "exec_files", "llvm_helper_runtime")
 load(":npm.bzl", "RUNTIME_NPM_HELPERS", "RUNTIME_NPM_NOTICES")
 load(":cargo.bzl", "RUNTIME_CARGO_HELPERS")
+load(":aot-repeatability.bzl", "wasix_aot_repeatability_test")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(glob(["*.bzl", "*.bazel", "*.mts", "*.patch"]))
+
+wasix_aot_repeatability_test(
+    name = "macos_aot_repeatability_test",
+    module = "//src/wasix/runtime:plpgsql",
+    size = "small",
+    tags = ["manual"],
+    target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64", "@zig_sdk//libc:gnu.2.34"],
+)
 
 
 bun_test(

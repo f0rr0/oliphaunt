@@ -194,6 +194,10 @@ def _consumer_launcher(ctx, mode, extra):
         data["runtimeAcquisition"] = _runfile(ctx, ctx.file.runtime_acquisition)
         data["manifest"] = _runfile(ctx, ctx.file.manifest)
         sources += [ctx.file.runtime_acquisition, ctx.file.manifest]
+        data["storageFixtures"] = {file.basename: _runfile(ctx, file) for file in ctx.files.storage_fixtures}
+        data["seedArchive"] = _runfile(ctx, ctx.file.seed_archive)
+        data["seedManifest"] = _runfile(ctx, ctx.file.seed_manifest)
+        sources += ctx.files.storage_fixtures + [ctx.file.seed_archive, ctx.file.seed_manifest]
     ctx.actions.write(specification, json.encode(data))
     arguments = [ctx.file._runner, specification, ctx.file.acquisition, node, ctx.file._driver] + extra
     code = bun_source_tree(ctx, ctx.label.name + ".sources", [ctx.file._runner, ctx.file._driver] + ctx.files._helpers)
@@ -231,6 +235,9 @@ def _consumer_impl(ctx):
     return _consumer_launcher(ctx, "package", [ctx.file.sdk, ctx.file.query, ctx.file.runtime, ctx.file.fixture, ctx.file.cdp, ctx.file.extensions])
 
 _SQL_CONSUMER_ATTRS = _CONSUMER_ATTRS | {
+    "storage_fixtures": attr.label(default = "//src/examples/wasix/browser:opfs_fixtures"),
+    "seed_archive": attr.label(default = "//src/database-resources:wasix_standard_archive", allow_single_file = True),
+    "seed_manifest": attr.label(default = "//src/database-resources:wasix_standard_manifest", allow_single_file = True),
     "manifest": attr.label(mandatory = True, allow_single_file = [".json"]),
     "fixture": attr.label(mandatory = True, allow_single_file = [".mts"]),
     "cdp": attr.label(mandatory = True, allow_single_file = [".mts"]),

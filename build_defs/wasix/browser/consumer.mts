@@ -163,13 +163,28 @@ if (mode === 'tools') {
   await copyFile(frozenConsumer, join(directory, 'consume.mts'));
   await copyFile(cdp, join(directory, 'browser-cdp.mts'));
   await copyFile(extensions, join(directory, 'extensions.mts'));
-  run(join(directory, 'consume.mts'), [directory, '[]'], {
+  for (const [name, source] of Object.entries(specification.storageFixtures) as [
+    string,
+    string,
+  ][]) {
+    await copyFile(join(runfiles, source), join(directory, name));
+  }
+  await mkdir(join(directory, 'public/wasix-assets'), { recursive: true });
+  await copyFile(
+    join(runfiles, specification.seedArchive),
+    join(directory, 'public/wasix-assets/cluster-seed-standard'),
+  );
+  await copyFile(
+    join(runfiles, specification.seedManifest),
+    join(directory, 'public/wasix-assets/cluster-seed-standard-manifest'),
+  );
+  run(join(directory, 'consume.mts'), [directory, '[]', '--opfs'], {
     OLIPHAUNT_BROWSER_CHROME: receipt.executable,
   });
   const proof = join(directory, 'browser-consumer-receipt.json');
   await writeFile(
     proof,
-    `${JSON.stringify({ archives, chrome: receipt, exports: ['default', 'worker'], sql: 'SELECT 42::int AS answer', answers: ['42', '42'] }, null, 2)}\n`,
+    `${JSON.stringify({ archives, chrome: receipt, exports: ['default', 'worker'], sql: 'SELECT 42::int AS answer', answers: ['42', '42'], opfs: { answers: '1,2,3', transport: 'synchronous-access', crashAnswer: '73', crashRelations: '48' } }, null, 2)}\n`,
   );
   console.log(
     `Browser default and worker SQL qualified with ${receipt.version} on ${receipt.hostImage}`,

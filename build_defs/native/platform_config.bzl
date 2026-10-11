@@ -18,6 +18,9 @@ _IOS = "@oliphaunt//build_defs/native:ios"
 _IOS_DEVICE = "@oliphaunt//build_defs/native:ios_arm64"
 _IOS_SIMULATOR = "@oliphaunt//build_defs/native:ios_arm64_simulator"
 
+# __FILE__ diagnostics must not contain Bazel's incidental repository counter.
+_POSTGRES_SOURCE_MAP = "-ffile-prefix-map=" + Label("@postgres//:src/include/pg_config.h.in").workspace_root + "/=postgres/"
+
 # glibc introduced strlcpy/strlcat in 2.38; lower ABI profiles must compile PG's
 # replacements. This is a toolchain-dependent fact, not a host configure probe.
 _GNU_228 = {key: value for key, value in LINUX_X86_64_CONFIG.items() if key not in ["HAVE_STRLCPY", "HAVE_STRLCAT"]} | {
@@ -122,11 +125,11 @@ NATIVE_HEADER_DEFINES = select({
 })
 NATIVE_COPTS = select({
     _WINDOWS: WINDOWS_COPTS,
-    "//conditions:default": ["-std=gnu11", "-fno-strict-aliasing", "-fwrapv", "-fexcess-precision=standard"],
+    "//conditions:default": ["-std=gnu11", "-fno-strict-aliasing", "-fwrapv", "-fexcess-precision=standard", _POSTGRES_SOURCE_MAP],
 })
 NATIVE_BACKEND_DEFINES = select({_WINDOWS: WINDOWS_BACKEND_DEFINES, "//conditions:default": []})
 NATIVE_WRAPPER_DEFINES = select({_WINDOWS: WINDOWS_WRAPPER_DEFINES, "//conditions:default": []})
-NATIVE_WRAPPER_COPTS = select({_WINDOWS: WINDOWS_COPTS, "//conditions:default": ["-std=gnu11", "-fno-strict-aliasing", "-fwrapv"]})
+NATIVE_WRAPPER_COPTS = select({_WINDOWS: WINDOWS_COPTS, "//conditions:default": ["-std=gnu11", "-fno-strict-aliasing", "-fwrapv", _POSTGRES_SOURCE_MAP]})
 NATIVE_BUILTIN_PLPGSQL_DEPS = select({_WINDOWS: ["@postgres//:plpgsql_builtin_windows"], "//conditions:default": ["@postgres//:plpgsql_embedded"]})
 NATIVE_PORT_ADDITIONAL_SOURCES = select({_WINDOWS: WINDOWS_PORT_SOURCES, "//conditions:default": []})
 NATIVE_PORT_CRC_SOURCES = select({_WINDOWS: WINDOWS_PORT_CRC_SOURCES, "//conditions:default": POSTGRES_PORT_CRC_GENERIC_SOURCES})

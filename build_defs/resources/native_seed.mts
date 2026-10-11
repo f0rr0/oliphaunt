@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { extractNativePayload } from '../native/host-runtime-test-helpers.mts';
-import { extractPortableArchiveTree } from '../../tools/packaging/portable-archive.mts';
-import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
+import { validateNativeIcuDataManifest } from '../../src/database-resources/contracts/icu-data.mts';
+import { installNativeClusterSeed } from '../../src/database-resources/seeds/native/tools/stage-native-cluster-seed.mts';
 import {
   nativeMobileAbiReceipt,
   parseNativeMobileAbiReceipt,
 } from '../../src/native/runtime/tools/native-mobile-abi-contract.mts';
-import { installNativeClusterSeed } from '../../src/database-resources/seeds/native/tools/stage-native-cluster-seed.mts';
-import { validateNativeIcuDataManifest } from '../../src/database-resources/contracts/icu-data.mts';
+import { createDeterministicTar } from '../../tools/packaging/archive-directory.mts';
+import { inspectPlatformBinaryBuffer } from '../../tools/packaging/platform-binary-contract.mts';
+import { extractPortableArchiveTree } from '../../tools/packaging/portable-archive.mts';
+import { extractNativePayload } from '../native/host-runtime-test-helpers.mts';
 import {
-  materializeInputs,
   materializeArchive,
+  materializeInputs,
+  nativeSeedHost,
   privateWork,
   readSpecification,
   run,
@@ -20,16 +22,23 @@ import {
 } from './shared.mts';
 
 const specification = readSpecification();
-assert.equal(
-  specification.target,
-  'linux-x64-gnu',
-  'only the qualified Linux x64 producer is constructed here',
-);
+const host = nativeSeedHost(specification.runtimeArtifact);
+assert.equal(specification.target, host.target);
 const output = path.resolve(specification.output);
 const work = privateWork(output);
 try {
   const runtime = path.join(work, 'runtime');
   await extractNativePayload(specification.runtime, runtime);
+  for (const binary of [
+    `bin/postgres${host.executableSuffix}`,
+    `bin/initdb${host.executableSuffix}`,
+    host.libraryRelativePath,
+  ]) {
+    inspectPlatformBinaryBuffer(readFileSync(path.join(runtime, binary)), {
+      target: specification.target,
+      label: binary,
+    });
+  }
   const abiRoot = materializeInputs(specification.headers, path.join(work, 'headers'));
   const abi = nativeMobileAbiReceipt(abiRoot, specification.target);
   parseNativeMobileAbiReceipt(abi);
@@ -49,7 +58,7 @@ try {
   mkdirSync(prepared);
   // PostgreSQL intentionally uses clock/PID/CSPRNG; this concrete tree is frozen intact.
   run(
-    path.join(runtime, 'bin/initdb'),
+    path.join(runtime, `bin/initdb${host.executableSuffix}`),
     [
       '-D',
       path.join(prepared, 'files'),
@@ -62,9 +71,9 @@ try {
       '-L',
       path.join(runtime, 'share/postgresql'),
       '-c',
-      'shared_memory_type=mmap',
+      `shared_memory_type=${host.memoryType}`,
       '-c',
-      'dynamic_shared_memory_type=mmap',
+      `dynamic_shared_memory_type=${host.memoryType}`,
       '-c',
       'max_connections=100',
       '-c',

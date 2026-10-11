@@ -2479,10 +2479,10 @@ index 3297890..4cfac63 100644
              .set_source(registry)
              .set_engine(engine);
 diff --git a/lib/compiler-llvm/src/compiler.rs b/lib/compiler-llvm/src/compiler.rs
-index b04e437..3950012 100644
+index b04e437..2c66a6d 100644
 --- a/lib/compiler-llvm/src/compiler.rs
 +++ b/lib/compiler-llvm/src/compiler.rs
-@@ -178,13 +178,17 @@ impl Compiler for LLVMCompiler {
+@@ -178,13 +178,17 @@
  
      fn deterministic_id(&self) -> String {
          format!(
@@ -2502,6 +2502,22 @@ index b04e437..3950012 100644
          )
      }
  
+@@ -497,6 +501,15 @@
+             let got_data: Vec<u8> = vec![0; got_targets.len() * got_entry_size];
+             let mut got_relocs = vec![];
+ 
++            // Randomized set iteration must not become serialized GOT offsets.
++            let mut got_targets = got_targets.into_iter().collect::<Vec<_>>();
++            got_targets.sort_unstable_by_key(|target| match target {
++                RelocationTarget::LocalFunc(index) => (0_u8, index.as_u32()),
++                RelocationTarget::DynamicTrampoline(index) => (1, index.as_u32()),
++                RelocationTarget::LibCall(libcall) => (2, *libcall as u16 as u32),
++                RelocationTarget::CustomSection(index) => (3, index.as_u32()),
++            });
++
+             for (i, target) in got_targets.into_iter().enumerate() {
+                 got_relocs.push(wasmer_compiler::types::relocation::Relocation {
+                     kind: got_entry_reloc_kind,
 diff --git a/lib/compiler-llvm/src/config.rs b/lib/compiler-llvm/src/config.rs
 index d732134..58918f0 100644
 --- a/lib/compiler-llvm/src/config.rs
